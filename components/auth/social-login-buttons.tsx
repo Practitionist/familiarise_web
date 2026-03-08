@@ -20,13 +20,13 @@ export function SocialLoginButtons({
   const { toast } = useToast();
 
   return (
-    <>
+    <div className="space-y-4">
       {AUTH_PROVIDERS.map((provider) => {
         const Icon = PROVIDER_ICONS[provider.id];
         return (
           <Button
             key={provider.id}
-            className={`w-full flex items-center justify-center ${provider.id !== "github" ? "mt-4" : ""} ${provider.className}`}
+            className={`w-full flex items-center justify-center ${provider.className}`}
             disabled={isLoading}
             onClick={() => {
               signIn.social({
@@ -45,6 +45,6 @@ export function SocialLoginButtons({
           </Button>
         );
       })}
-    </>
+    </div>
   );
 }

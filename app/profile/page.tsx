@@ -23,9 +23,8 @@ import {
   DialogClose,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { User } from "@prisma/client";
 import { authClient, signOut, useSession } from "@/lib/auth-client";
-import { AUTH_PROVIDERS } from "@/lib/auth-providers";
+import { AUTH_PROVIDERS, AuthProviderId } from "@/lib/auth-providers";
 import { PROVIDER_ICONS } from "@/components/auth/auth-icons";
 import { useRouter } from "next/navigation";
 import { useState, useEffect, useCallback } from "react";
@@ -143,7 +142,7 @@ export default function Profile() {
       });
 
       if (res.ok) {
-        const updatedUser: User = await res.json();
+        const { data: updatedUser } = await res.json();
         setName(updatedUser.name ?? "");
         setPhone(updatedUser.phone ?? "");
         setAddress(updatedUser.address ?? "");
@@ -183,6 +182,7 @@ export default function Profile() {
     }
 
     setSelectedFile(file);
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(URL.createObjectURL(file));
   };
 
@@ -208,9 +208,9 @@ export default function Profile() {
         });
         setUploadDialogOpen(false);
         setSelectedFile(null);
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
         setPreviewUrl(null);
-        // Force page reload to refresh session with new image
-        window.location.reload();
+        router.refresh();
       } else {
         toast({
           title: "Upload Failed",
@@ -241,7 +241,7 @@ export default function Profile() {
           description: "Your profile picture has been removed.",
         });
         setUploadDialogOpen(false);
-        window.location.reload();
+        router.refresh();
       } else {
         toast({
           title: "Error",
@@ -263,7 +263,7 @@ export default function Profile() {
   // Connected accounts handlers
   const handleLinkAccount = (providerId: string) => {
     authClient.linkSocial({
-      provider: providerId as "github" | "google" | "facebook",
+      provider: providerId as AuthProviderId,
       callbackURL: "/profile",
     });
   };
@@ -390,6 +390,7 @@ export default function Profile() {
                   setUploadDialogOpen(open);
                   if (!open) {
                     setSelectedFile(null);
+                    if (previewUrl) URL.revokeObjectURL(previewUrl);
                     setPreviewUrl(null);
                   }
                 }}

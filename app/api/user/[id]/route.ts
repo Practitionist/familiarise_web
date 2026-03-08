@@ -258,9 +258,11 @@ export async function DELETE(
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    // Revoke all sessions for the user before deletion
-    await prisma.session.deleteMany({ where: { userId: id } });
-    await prisma.user.delete({ where: { id: id } });
+    // Revoke all sessions for the user before deletion (atomic)
+    await prisma.$transaction([
+      prisma.session.deleteMany({ where: { userId: id } }),
+      prisma.user.delete({ where: { id: id } }),
+    ]);
 
     return NextResponse.json(
       { message: "User deleted successfully" },

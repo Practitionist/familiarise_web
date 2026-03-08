@@ -1307,8 +1307,15 @@ const uploadProfileImage = async (options: {
       };
     }
 
+    const MIME_TO_EXT: Record<string, string> = {
+      "image/jpeg": "jpg",
+      "image/jpg": "jpg",
+      "image/png": "png",
+      "image/webp": "webp",
+    };
+
     const timestamp = Date.now();
-    const fileExt = file.name.split(".").pop();
+    const fileExt = MIME_TO_EXT[file.type] || "jpg";
     const fileName = `avatar_${timestamp}.${fileExt}`;
     const folderPath = `avatars/${userId}`;
     const storagePath = `${folderPath}/${fileName}`;
