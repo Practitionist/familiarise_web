@@ -366,12 +366,24 @@ export async function handleRecordingFailed(
 
     // Notify all users linked to the slot (consultant + consultee)
     const userIds = meetingSession.slotOfAppointment.user.map((u) => u.id);
-    for (const userId of userIds) {
-      await notifyRecordingFailed(userId, {
-        streamCallId,
-        errorMessage: eventError?.message,
-        dashboardUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/dashboard`,
-      });
+    const notificationResults = await Promise.allSettled(
+      userIds.map((userId) =>
+        notifyRecordingFailed(userId, {
+          streamCallId,
+          errorMessage: eventError?.message,
+          dashboardUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/dashboard`,
+        }),
+      ),
+    );
+
+    const failures = notificationResults.filter(
+      (r) => r.status === "rejected",
+    );
+    if (failures.length > 0) {
+      streamLogger.warn(
+        `${failures.length}/${userIds.length} recording-failed notifications failed`,
+        { streamCallId },
+      );
     }
 
     streamLogger.info("Meeting session updated - recording failed", {

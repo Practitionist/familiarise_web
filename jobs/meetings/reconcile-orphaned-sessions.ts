@@ -90,7 +90,7 @@ export async function reconcileOrphanedSessions(): Promise<ReconciliationResult>
             `[reconcile-orphaned-sessions] Stream lookup failed for ${session.streamCallId}:`,
             streamError instanceof Error
               ? streamError.message
-              : String(streamError),
+              : JSON.stringify(streamError),
           );
         }
       } else {

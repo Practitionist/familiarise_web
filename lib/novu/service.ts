@@ -481,12 +481,12 @@ export async function notifyRecordingAvailable(
 }
 
 export async function notifyRecordingFailed(
-  consultantUserId: string,
+  subscriberId: string,
   payload: RecordingFailedPayload,
 ) {
   return triggerWorkflow(
     NOVU_WORKFLOWS.RECORDING_FAILED,
-    consultantUserId,
+    subscriberId,
     payload,
   );
 }

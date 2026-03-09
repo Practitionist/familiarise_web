@@ -1,8 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  reconcileOrphanedSessions,
-  disconnectDatabase,
-} from "@/jobs/meetings/reconcile-orphaned-sessions";
+import { reconcileOrphanedSessions } from "@/jobs/meetings/reconcile-orphaned-sessions";
 
 export async function POST(req: NextRequest) {
   try {
@@ -19,7 +16,6 @@ export async function POST(req: NextRequest) {
     }
 
     const result = await reconcileOrphanedSessions();
-    await disconnectDatabase();
 
     return NextResponse.json(result);
   } catch (error) {
