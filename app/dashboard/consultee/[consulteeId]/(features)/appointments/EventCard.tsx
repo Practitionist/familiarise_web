@@ -281,7 +281,7 @@ export function EventCard({
   const showSessionDetails =
     (type === "Subscription" || type === "Class") &&
     groupedSessions &&
-    groupedSessions.length > 1;
+    groupedSessions.length >= 1;
 
   // Enrich grouped sessions from allRawSlots (past + future) with isPast and completionStatus
   // Reuses the same consecutive-slot → session grouping logic as groupedSessions above
@@ -769,12 +769,9 @@ export function EventCard({
                               {formatSlotTime(session.startTime)} -{" "}
                               {formatSlotTime(session.endTime)}
                             </span>
-                            {session.isPast &&
-                              session.completionStatus !== "SCHEDULED" && (
-                                <SessionStatusBadge
-                                  status={session.completionStatus}
-                                />
-                              )}
+                            <SessionStatusBadge
+                              status={session.completionStatus}
+                            />
                           </div>
                         </div>
                       ))}
