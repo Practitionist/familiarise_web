@@ -324,7 +324,13 @@ export class SlotAllocationService {
           // Calculate required slots
           let requiredSlots: number;
           if (isReschedule) {
-            requiredSlots = tentativeSlotCount;
+            // Use calculateRequiredSlots instead of tentativeSlotCount.
+            // Class creation (crud-with-plan) creates 1 full-duration slot per appointment,
+            // but the allocation system works with 30-min slots (slotsPerSession per appointment).
+            // tentativeSlotCount would be 8 for an 8-session class, but we actually need 16
+            // (8 sessions × 2 thirty-minute slots each).
+            requiredSlots =
+              SlotCalculationService.calculateRequiredSlots(eventType, config);
           } else {
             const fullRequired =
               SlotCalculationService.calculateRequiredSlots(eventType, config);
@@ -577,9 +583,17 @@ export class SlotAllocationService {
           // Validate total slot count for recurring event types
           if (eventType === "subscription" || eventType === "class") {
             if (isReschedule) {
-              if (slots.length !== tentativeSlotCount) {
+              // Use calculateRequiredSlots instead of tentativeSlotCount.
+              // Class creation creates 1 full-duration slot per appointment,
+              // but the allocation system works with 30-min slots.
+              const rescheduleRequired =
+                SlotCalculationService.calculateRequiredSlots(
+                  eventType,
+                  config,
+                );
+              if (slots.length !== rescheduleRequired) {
                 throw new AllocationValidationError(
-                  `This reschedule requires exactly ${tentativeSlotCount} slots ` +
+                  `This reschedule requires exactly ${rescheduleRequired} slots ` +
                     `(replacing ${tentativeSlotCount} tentative slots), ` +
                     `but ${slots.length} were provided.`,
                 );
