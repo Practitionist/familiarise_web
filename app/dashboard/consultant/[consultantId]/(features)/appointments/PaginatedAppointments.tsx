@@ -1,6 +1,5 @@
 "use client";
 
-import { useMemo } from "react";
 import { usePagination } from "@/hooks/usePagination";
 import { Pagination } from "@/components/Pagination";
 import { BADGE_STYLES, getBadgeStyle } from "../../types";
@@ -30,22 +29,7 @@ export function PaginatedAppointments({
   badgeStyles,
   onManageTimings,
 }: PaginatedAppointmentsProps) {
-  // Expand appointments into individual slots for pagination
-  const expandedAppointments = useMemo(() => {
-    return appointments.flatMap((appointment) => {
-      if (
-        !appointment.slotsOfAppointment ||
-        appointment.slotsOfAppointment.length === 0
-      ) {
-        return [appointment];
-      }
-      return appointment.slotsOfAppointment.map((slot) => ({
-        ...appointment,
-        id: `${appointment.id}-${slot.id}`,
-        slotsOfAppointment: [slot],
-      }));
-    });
-  }, [appointments]);
+  const expandedAppointments = appointments;
 
   const {
     paginatedData,

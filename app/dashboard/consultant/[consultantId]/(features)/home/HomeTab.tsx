@@ -118,24 +118,7 @@ export function HomeTab({
     }
   };
 
-  // Process appointments - memoize expensive computations
-  const expandedAppointments = useMemo(
-    () =>
-      (appointments || []).flatMap((appointment) => {
-        if (
-          !appointment.slotsOfAppointment ||
-          appointment.slotsOfAppointment.length === 0
-        ) {
-          return [appointment];
-        }
-        return appointment.slotsOfAppointment.map((slot) => ({
-          ...appointment,
-          id: `${appointment.id}-${slot.id}`,
-          slotsOfAppointment: [slot],
-        }));
-      }),
-    [appointments],
-  );
+  const expandedAppointments = appointments || [];
 
   const todayAppointments = useMemo(
     () =>

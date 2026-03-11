@@ -218,27 +218,7 @@ export const calculateSessionProgress = (
   remainingSessions: number;
   progressPercentage: number;
 } => {
-  // `groupRecurringAppointments` expands SUBSCRIPTION/CLASS appointments into one entry per
-  // slot (for per-slot UI display). Deduplicate here to get one entry per session.
-  // Synthetic IDs have format `${originalAppointmentId}-${slotId}` (both cuid — no dashes),
-  // so split at the first `-` to recover the original appointment ID.
-  const appointmentType = groupAppointments[0]?.appointmentType;
-  const isRecurring =
-    appointmentType === "SUBSCRIPTION" || appointmentType === "CLASS";
-
-  let dedupedAppointments: TAppointment[];
-  if (isRecurring) {
-    const seen = new Set<string>();
-    dedupedAppointments = groupAppointments.filter((app) => {
-      const dashIdx = app.id.indexOf("-");
-      const baseId = dashIdx !== -1 ? app.id.substring(0, dashIdx) : app.id;
-      if (seen.has(baseId)) return false;
-      seen.add(baseId);
-      return true;
-    });
-  } else {
-    dedupedAppointments = groupAppointments;
-  }
+  const dedupedAppointments = groupAppointments;
 
   const totalSessions = dedupedAppointments.length;
   const completedSessions = dedupedAppointments.filter((app) => {
@@ -511,27 +491,7 @@ export const groupRecurringAppointments = (
       groups[groupKey] = [];
     }
 
-    // For SUBSCRIPTION and CLASS appointments with slots, create separate entries for each slot
-    // (because each slot represents a separate session)
-    // For CONSULTATION and WEBINAR appointments, keep all slots together
-    // (because all slots form one single event)
-    if (
-      appointment.slotsOfAppointment &&
-      appointment.slotsOfAppointment.length > 0 &&
-      (appointment.appointmentType === "SUBSCRIPTION" ||
-        appointment.appointmentType === "CLASS")
-    ) {
-      appointment.slotsOfAppointment.forEach((slot) => {
-        groups[groupKey].push({
-          ...appointment,
-          id: `${appointment.id}-${slot.id}`,
-          slotsOfAppointment: [slot],
-        });
-      });
-    } else {
-      // For appointments without slots or single-event types, add them as is
-      groups[groupKey].push(appointment);
-    }
+    groups[groupKey].push(appointment);
   });
 
   // Sort appointments within each group by start time
