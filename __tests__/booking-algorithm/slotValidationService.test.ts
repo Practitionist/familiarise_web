@@ -573,6 +573,61 @@ describe("validate: class event", () => {
     expect(result.isValid).toBe(false);
     expect(result.errors.some((e) => e.includes("max is 2"))).toBe(true);
   });
+
+  it("should accept cross-midnight sessions that span two UTC days", async () => {
+    // A 1-hour session starting at 23:30 UTC spans Saturday→Sunday:
+    // Slot 1: Saturday 23:30, Slot 2: Sunday 00:00
+    // The old per-day grouping would incorrectly flag Sunday as non-consecutive
+    // if another session also had slots on Sunday.
+    const crossMidnightConsultant = makeConsultantData({
+      scheduleType: ScheduleType.WEEKLY,
+      slotsOfAvailabilityWeekly: [
+        makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 23, 24), // Mon 23:00-24:00 UTC
+        makeWeeklyAvailabilitySlot(DayOfWeek.TUESDAY, 0, 1), // Tue 00:00-01:00 UTC
+        makeWeeklyAvailabilitySlot(DayOfWeek.TUESDAY, 10, 17), // Tue 10:00-17:00 UTC
+      ],
+    }) as any;
+
+    // Session 1: Mon 23:30 + Tue 00:00 (cross-midnight)
+    // Session 2: Tue 10:00 + Tue 10:30 (same day)
+    // Tuesday has slots at 00:00 and 10:00 — NOT consecutive within the day,
+    // but each session is internally consecutive → should PASS
+    const slots = [
+      new Date("2025-06-02T23:30:00Z"), // Mon 23:30
+      new Date("2025-06-03T00:00:00Z"), // Tue 00:00
+      new Date("2025-06-03T10:00:00Z"), // Tue 10:00
+      new Date("2025-06-03T10:30:00Z"), // Tue 10:30
+    ];
+
+    const result = await service.validate(
+      "class",
+      "event-1",
+      slots,
+      crossMidnightConsultant,
+      { callsPerWeek: 2, sessionDurationInHours: 1 },
+    );
+    expect(result.isValid).toBe(true);
+  });
+
+  it("should reject non-consecutive slots within a single session", async () => {
+    // Two slots with a gap (09:00 and 10:00) — not consecutive (missing 09:30)
+    const slots = [
+      new Date("2025-06-02T09:00:00Z"),
+      new Date("2025-06-02T10:00:00Z"),
+    ];
+
+    const result = await service.validate(
+      "class",
+      "event-1",
+      slots,
+      weeklyConsultant,
+      { callsPerWeek: 2, sessionDurationInHours: 1 },
+    );
+    expect(result.isValid).toBe(false);
+    expect(
+      result.errors.some((e) => e.includes("consecutive")),
+    ).toBe(true);
+  });
 });
 
 // ─── validate: invalid event type ───────────────────────────────────────────
