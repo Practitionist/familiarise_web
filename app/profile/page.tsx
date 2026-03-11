@@ -20,18 +20,19 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DialogClose,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { User } from "@prisma/client";
-import { useSession } from "@/lib/auth-client";
-import Image from "next/image";
-import { useState } from "react";
+import { authClient, signOut, useSession } from "@/lib/auth-client";
+import { AUTH_PROVIDERS, AuthProviderId } from "@/lib/auth-providers";
+import { PROVIDER_ICONS } from "@/components/auth/auth-icons";
+import { useRouter } from "next/navigation";
+import { useState, useEffect, useCallback } from "react";
 import { useToast } from "@/hooks/use-toast";
 import {
   User as UserIcon,
   Settings,
   Trash2,
-  Mail,
   Phone,
   MapPin,
   Cookie,
@@ -43,6 +44,10 @@ import {
   Shield,
   Camera,
   Upload,
+  Link2,
+  Check,
+  X,
+  Loader2,
 } from "lucide-react";
 import { motion } from "framer-motion";
 
@@ -59,37 +64,93 @@ const staggerChildren = {
   },
 };
 
+interface LinkedAccount {
+  id: string;
+  provider: string;
+  accountId: string;
+}
+
 export default function Profile() {
   const { data: session } = useSession();
   const { toast } = useToast();
+  const router = useRouter();
   const [name, setName] = useState(session?.user?.name ?? "");
   const [phone, setPhone] = useState(session?.user?.phone ?? "");
   const [address, setAddress] = useState(session?.user?.address ?? "");
+
+  // Profile picture state
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+
+  // Connected accounts state
+  const [linkedAccounts, setLinkedAccounts] = useState<LinkedAccount[]>([]);
+  const [isLoadingAccounts, setIsLoadingAccounts] = useState(true);
+
+  // Logout all devices state
+  const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  // Delete account state
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteConfirmEmail, setDeleteConfirmEmail] = useState("");
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+
+  // Sync form state when session loads
+  useEffect(() => {
+    if (session?.user) {
+      setName(session.user.name ?? "");
+      setPhone(session.user.phone ?? "");
+      setAddress(session.user.address ?? "");
+    }
+  }, [session?.user]);
+
+  // Load linked accounts
+  const loadLinkedAccounts = useCallback(async () => {
+    try {
+      setIsLoadingAccounts(true);
+      const { data, error } = await authClient.listAccounts();
+      if (!error && data) {
+        setLinkedAccounts(
+          data.map((a) => ({
+            id: a.id,
+            provider: a.providerId,
+            accountId: a.accountId,
+          })),
+        );
+      }
+    } catch {
+      console.error("Failed to load linked accounts");
+    } finally {
+      setIsLoadingAccounts(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadLinkedAccounts();
+  }, [loadLinkedAccounts]);
 
   const handleUpdateProfile = async (e: { preventDefault: () => void }) => {
     e.preventDefault();
     try {
       const res = await fetch(`/api/user/${session?.user?.id}`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, phone, address }),
       });
 
       if (res.ok) {
-        const updatedUser: User = await res.json();
+        const { data: updatedUser } = await res.json();
         setName(updatedUser.name ?? "");
         setPhone(updatedUser.phone ?? "");
         setAddress(updatedUser.address ?? "");
-
         toast({
           title: "Profile Updated",
           description: "Your profile has been updated successfully.",
-          variant: "default",
         });
       } else {
-        console.error("Failed to update profile");
         toast({
           title: "Error",
           description: "Failed to update profile. Please try again.",
@@ -103,6 +164,207 @@ export default function Profile() {
         description: "An unexpected error occurred.",
         variant: "destructive",
       });
+    }
+  };
+
+  // Profile picture handlers
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 2 * 1024 * 1024) {
+      toast({
+        title: "File too large",
+        description: "Please select an image under 2MB.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setSelectedFile(file);
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl(URL.createObjectURL(file));
+  };
+
+  const handleUploadProfilePicture = async () => {
+    if (!selectedFile) return;
+    setIsUploading(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+
+      const res = await fetch("/api/user/profile-image", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        toast({
+          title: "Profile Picture Updated",
+          description: "Your profile picture has been updated successfully.",
+        });
+        setUploadDialogOpen(false);
+        setSelectedFile(null);
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        setPreviewUrl(null);
+        router.refresh();
+      } else {
+        toast({
+          title: "Upload Failed",
+          description: data.error || "Failed to upload profile picture.",
+          variant: "destructive",
+        });
+      }
+    } catch {
+      toast({
+        title: "Upload Failed",
+        description: "An unexpected error occurred.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleDeleteProfilePicture = async () => {
+    setIsDeleting(true);
+    try {
+      const res = await fetch("/api/user/profile-image", { method: "DELETE" });
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        toast({
+          title: "Profile Picture Removed",
+          description: "Your profile picture has been removed.",
+        });
+        setUploadDialogOpen(false);
+        router.refresh();
+      } else {
+        toast({
+          title: "Error",
+          description: data.error || "Failed to remove profile picture.",
+          variant: "destructive",
+        });
+      }
+    } catch {
+      toast({
+        title: "Error",
+        description: "An unexpected error occurred.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  // Connected accounts handlers
+  const handleLinkAccount = (providerId: string) => {
+    authClient.linkSocial({
+      provider: providerId as AuthProviderId,
+      callbackURL: "/profile",
+    });
+  };
+
+  const handleUnlinkAccount = async (providerId: string) => {
+    try {
+      const { error } = await authClient.unlinkAccount({ providerId });
+      if (error) {
+        toast({
+          title: "Failed to Disconnect",
+          description: error.message || "Could not disconnect this account.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Account Disconnected",
+          description: `${providerId.charAt(0).toUpperCase() + providerId.slice(1)} account has been disconnected.`,
+        });
+        loadLinkedAccounts();
+      }
+    } catch {
+      toast({
+        title: "Error",
+        description: "An unexpected error occurred.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Logout all devices handler
+  const handleLogoutAllDevices = async () => {
+    setIsLoggingOut(true);
+    try {
+      await authClient.revokeOtherSessions();
+      toast({
+        title: "Sessions Revoked",
+        description: "All other sessions have been revoked. Signing you out...",
+      });
+      // Small delay to show the toast before signing out
+      setTimeout(() => {
+        signOut({
+          fetchOptions: {
+            onSuccess: () => router.push("/auth/signin"),
+          },
+        });
+      }, 1000);
+    } catch {
+      toast({
+        title: "Error",
+        description: "Failed to revoke sessions.",
+        variant: "destructive",
+      });
+      setIsLoggingOut(false);
+    }
+  };
+
+  // Delete account handler
+  const handleDeleteAccount = async () => {
+    if (deleteConfirmEmail !== session?.user?.email) {
+      toast({
+        title: "Email Mismatch",
+        description: "Please enter your email address exactly to confirm.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsDeletingAccount(true);
+    try {
+      const res = await fetch(`/api/user/${session?.user?.id}`, {
+        method: "DELETE",
+      });
+
+      if (res.ok) {
+        toast({
+          title: "Account Deleted",
+          description: "Your account has been permanently deleted.",
+        });
+        setTimeout(() => {
+          signOut({
+            fetchOptions: {
+              onSuccess: () => router.push("/"),
+            },
+          });
+        }, 1000);
+      } else {
+        const data = await res.json();
+        toast({
+          title: "Deletion Failed",
+          description: data.error || "Failed to delete account.",
+          variant: "destructive",
+        });
+      }
+    } catch {
+      toast({
+        title: "Error",
+        description: "An unexpected error occurred.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDeletingAccount(false);
     }
   };
 
@@ -120,7 +382,17 @@ export default function Profile() {
                   {session?.user?.name?.charAt(0) || "U"}
                 </AvatarFallback>
               </Avatar>
-              <Dialog>
+              <Dialog
+                open={uploadDialogOpen}
+                onOpenChange={(open) => {
+                  setUploadDialogOpen(open);
+                  if (!open) {
+                    setSelectedFile(null);
+                    if (previewUrl) URL.revokeObjectURL(previewUrl);
+                    setPreviewUrl(null);
+                  }
+                }}
+              >
                 <DialogTrigger asChild>
                   <button className="absolute bottom-0 right-0 h-10 w-10 rounded-full bg-white text-zinc-900 flex items-center justify-center shadow-lg hover:bg-zinc-100 transition-colors">
                     <Camera className="h-5 w-5" />
@@ -131,22 +403,60 @@ export default function Profile() {
                     <DialogTitle>Update Profile Picture</DialogTitle>
                     <DialogDescription>
                       Upload a new profile picture to personalize your account.
+                      Max 2MB (JPEG, PNG, WebP).
                     </DialogDescription>
                   </DialogHeader>
                   <div className="flex flex-col items-center gap-4 py-6">
-                    <div className="h-32 w-32 rounded-full bg-zinc-100 flex items-center justify-center">
-                      <Upload className="h-10 w-10 text-zinc-400" />
+                    <div className="h-32 w-32 rounded-full bg-zinc-100 flex items-center justify-center overflow-hidden">
+                      {previewUrl ? (
+                        <img
+                          src={previewUrl}
+                          alt="Preview"
+                          className="h-full w-full object-cover"
+                        />
+                      ) : session?.user?.image ? (
+                        <img
+                          src={session.user.image}
+                          alt="Current"
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <Upload className="h-10 w-10 text-zinc-400" />
+                      )}
                     </div>
                     <Input
                       id="profile-picture"
                       type="file"
-                      accept="image/*"
+                      accept="image/jpeg,image/png,image/webp"
                       className="max-w-xs"
+                      onChange={handleFileSelect}
                     />
                   </div>
-                  <DialogFooter className="gap-2">
-                    <Button variant="outline">Cancel</Button>
-                    <Button className="bg-zinc-900 hover:bg-zinc-800 text-white">
+                  <DialogFooter className="gap-2 sm:gap-0">
+                    {session?.user?.image && (
+                      <Button
+                        variant="destructive"
+                        onClick={handleDeleteProfilePicture}
+                        disabled={isDeleting || isUploading}
+                        className="mr-auto"
+                      >
+                        {isDeleting ? (
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        ) : null}
+                        Remove
+                      </Button>
+                    )}
+                    <DialogClose asChild>
+                      <Button variant="outline">Cancel</Button>
+                    </DialogClose>
+                    <Button
+                      className="bg-zinc-900 hover:bg-zinc-800 text-white"
+                      onClick={handleUploadProfilePicture}
+                      disabled={!selectedFile || isUploading}
+                    >
+                      {isUploading ? (
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      ) : null}
                       Upload
                     </Button>
                   </DialogFooter>
@@ -329,35 +639,233 @@ export default function Profile() {
                   </div>
                 </div>
 
-                <button className="w-full flex items-center gap-3 p-4 rounded-xl hover:bg-zinc-50 transition-colors text-left border border-transparent hover:border-zinc-100">
-                  <div className="h-10 w-10 rounded-lg bg-zinc-100 flex items-center justify-center">
-                    <LogOut className="h-5 w-5 text-zinc-600" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-medium text-zinc-900">
-                      Logout of all devices
-                    </p>
-                    <p className="text-sm text-zinc-500">
-                      Sign out from all active sessions
-                    </p>
-                  </div>
-                </button>
+                {/* Logout all devices */}
+                <Dialog
+                  open={logoutDialogOpen}
+                  onOpenChange={setLogoutDialogOpen}
+                >
+                  <DialogTrigger asChild>
+                    <button className="w-full flex items-center gap-3 p-4 rounded-xl hover:bg-zinc-50 transition-colors text-left border border-transparent hover:border-zinc-100">
+                      <div className="h-10 w-10 rounded-lg bg-zinc-100 flex items-center justify-center">
+                        <LogOut className="h-5 w-5 text-zinc-600" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="font-medium text-zinc-900">
+                          Logout of all devices
+                        </p>
+                        <p className="text-sm text-zinc-500">
+                          Sign out from all active sessions
+                        </p>
+                      </div>
+                    </button>
+                  </DialogTrigger>
+                  <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                      <DialogTitle>Logout of All Devices</DialogTitle>
+                      <DialogDescription>
+                        This will revoke all active sessions and sign you out.
+                        You will need to sign in again on all devices.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter className="gap-2">
+                      <DialogClose asChild>
+                        <Button variant="outline">Cancel</Button>
+                      </DialogClose>
+                      <Button
+                        variant="destructive"
+                        onClick={handleLogoutAllDevices}
+                        disabled={isLoggingOut}
+                      >
+                        {isLoggingOut ? (
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        ) : null}
+                        Logout All Devices
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
 
-                <button className="w-full flex items-center gap-3 p-4 rounded-xl hover:bg-red-50 transition-colors text-left border border-transparent hover:border-red-100 group">
-                  <div className="h-10 w-10 rounded-lg bg-red-50 group-hover:bg-red-100 flex items-center justify-center transition-colors">
-                    <Trash2 className="h-5 w-5 text-red-500" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-medium text-red-600">Delete Account</p>
-                    <p className="text-sm text-zinc-500">
-                      Permanently delete your account and data
-                    </p>
-                  </div>
-                </button>
+                {/* Delete account */}
+                <Dialog
+                  open={deleteDialogOpen}
+                  onOpenChange={(open) => {
+                    setDeleteDialogOpen(open);
+                    if (!open) setDeleteConfirmEmail("");
+                  }}
+                >
+                  <DialogTrigger asChild>
+                    <button className="w-full flex items-center gap-3 p-4 rounded-xl hover:bg-red-50 transition-colors text-left border border-transparent hover:border-red-100 group">
+                      <div className="h-10 w-10 rounded-lg bg-red-50 group-hover:bg-red-100 flex items-center justify-center transition-colors">
+                        <Trash2 className="h-5 w-5 text-red-500" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="font-medium text-red-600">
+                          Delete Account
+                        </p>
+                        <p className="text-sm text-zinc-500">
+                          Permanently delete your account and data
+                        </p>
+                      </div>
+                    </button>
+                  </DialogTrigger>
+                  <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                      <DialogTitle className="text-red-600">
+                        Delete Account
+                      </DialogTitle>
+                      <DialogDescription>
+                        This action is permanent and cannot be undone. All your
+                        data, including profiles, bookings, and preferences will
+                        be permanently deleted.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                      <div className="p-3 rounded-lg bg-red-50 border border-red-200">
+                        <p className="text-sm text-red-700">
+                          To confirm, type your email address:{" "}
+                          <span className="font-semibold">
+                            {session?.user?.email}
+                          </span>
+                        </p>
+                      </div>
+                      <Input
+                        placeholder="Enter your email to confirm"
+                        value={deleteConfirmEmail}
+                        onChange={(e) => setDeleteConfirmEmail(e.target.value)}
+                      />
+                    </div>
+                    <DialogFooter className="gap-2">
+                      <DialogClose asChild>
+                        <Button variant="outline">Cancel</Button>
+                      </DialogClose>
+                      <Button
+                        variant="destructive"
+                        onClick={handleDeleteAccount}
+                        disabled={
+                          isDeletingAccount ||
+                          deleteConfirmEmail !== session?.user?.email
+                        }
+                      >
+                        {isDeletingAccount ? (
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        ) : null}
+                        Delete My Account
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
               </CardContent>
             </Card>
           </motion.div>
         </div>
+
+        {/* Connected Accounts */}
+        <motion.div variants={fadeInUp} className="mt-6">
+          <Card className="border-zinc-200 shadow-sm hover:shadow-md transition-shadow">
+            <CardHeader className="pb-4">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-xl bg-emerald-50 flex items-center justify-center">
+                  <Link2 className="h-5 w-5 text-emerald-600" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">Connected Accounts</CardTitle>
+                  <CardDescription>
+                    Manage your linked social accounts. Signing in with any
+                    connected provider will access the same account.
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {isLoadingAccounts ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {/* Credential account (email/password) */}
+                  {linkedAccounts.some((a) => a.provider === "credential") && (
+                    <div className="flex items-center justify-between p-4 rounded-xl border border-zinc-100">
+                      <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 rounded-lg bg-zinc-100 flex items-center justify-center">
+                          <UserIcon className="h-5 w-5 text-zinc-600" />
+                        </div>
+                        <div>
+                          <p className="font-medium text-zinc-900">
+                            Email & Password
+                          </p>
+                          <p className="text-sm text-zinc-500">
+                            {session?.user?.email}
+                          </p>
+                        </div>
+                      </div>
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700">
+                        <Check className="h-3 w-3" />
+                        Connected
+                      </span>
+                    </div>
+                  )}
+
+                  {/* OAuth providers */}
+                  {AUTH_PROVIDERS.map((provider) => {
+                    const Icon = PROVIDER_ICONS[provider.id];
+                    const linked = linkedAccounts.find(
+                      (a) => a.provider === provider.id,
+                    );
+                    const canUnlink = linkedAccounts.length > 1;
+
+                    return (
+                      <div
+                        key={provider.id}
+                        className="flex items-center justify-between p-4 rounded-xl border border-zinc-100 hover:border-zinc-200 transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="h-10 w-10 rounded-lg bg-zinc-100 flex items-center justify-center">
+                            {Icon && <Icon className="h-5 w-5 text-zinc-600" />}
+                          </div>
+                          <div>
+                            <p className="font-medium text-zinc-900">
+                              {provider.label}
+                            </p>
+                            <p className="text-sm text-zinc-500">
+                              {linked ? "Account linked" : "Not connected"}
+                            </p>
+                          </div>
+                        </div>
+                        {linked ? (
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700">
+                              <Check className="h-3 w-3" />
+                              Connected
+                            </span>
+                            {canUnlink && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-zinc-500 hover:text-red-600 hover:bg-red-50"
+                                onClick={() => handleUnlinkAccount(provider.id)}
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleLinkAccount(provider.id)}
+                          >
+                            Connect
+                          </Button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
 
         {/* Cookie Preferences */}
         <motion.div variants={fadeInUp} className="mt-6">
