@@ -393,7 +393,7 @@ export function MultiSessionEventCard({
           open={actions.showReportDialog}
           onOpenChange={actions.setShowReportDialog}
           appointmentId={appointmentId}
-          appointmentType="SUBSCRIPTION"
+          appointmentType={type === "Class" ? "CLASS" : "SUBSCRIPTION"}
           appointmentStatus={appointmentStatus}
           consultantName={consultant}
           scheduledAt={scheduledAt}
