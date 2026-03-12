@@ -23,6 +23,7 @@ interface OverflowMenuProps {
   hasAppointmentId: boolean;
   isDev: boolean;
   canDevJoin: boolean;
+  isLoading?: boolean;
   onCancel: () => void;
   onReportIssue: () => void;
   onViewPlanDetails?: () => void;
@@ -35,6 +36,7 @@ export function OverflowMenu({
   hasAppointmentId,
   isDev,
   canDevJoin,
+  isLoading,
   onCancel,
   onReportIssue,
   onViewPlanDetails,
@@ -60,7 +62,7 @@ export function OverflowMenu({
         )}
         <DropdownMenuItem
           onClick={onReportIssue}
-          disabled={!hasAppointmentId}
+          disabled={!hasAppointmentId || isLoading}
         >
           <AlertCircle className="h-4 w-4 mr-2" />
           Report Issue
@@ -70,6 +72,7 @@ export function OverflowMenu({
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onClick={onCancel}
+              disabled={isLoading}
               className="text-red-600 focus:text-red-600"
             >
               <X className="h-4 w-4 mr-2" />

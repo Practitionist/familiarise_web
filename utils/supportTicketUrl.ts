@@ -59,7 +59,7 @@ export const ALL_ISSUE_TYPES = Object.values(SupportIssueType);
 
 export interface AppointmentContext {
   appointmentId: string;
-  appointmentType: "CONSULTATION" | "SUBSCRIPTION";
+  appointmentType: "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR";
   status: AppointmentStatus;
   consultantName?: string;
   scheduledAt?: string;

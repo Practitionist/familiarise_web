@@ -7,8 +7,7 @@ import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
 import type { TAppointment } from "@/types/appointment";
 import type { SlotOfAppointment } from "@prisma/client";
-
-const DEFAULT_MEETING_DURATION_MS = 60 * 60 * 1000;
+import { DEFAULT_MEETING_DURATION_MS } from "../types";
 
 interface UseEventActionsOptions {
   appointmentId?: string;
@@ -37,7 +36,6 @@ export function useEventActions({
   const [showConfirmReschedule, setShowConfirmReschedule] = useState(false);
   const [showReportDialog, setShowReportDialog] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
-  const [showDocumentUpload, setShowDocumentUpload] = useState(false);
 
   const getJoinableSlot = (): SlotOfAppointment | null => {
     if (!rawSlots || rawSlots.length === 0) return null;
@@ -225,8 +223,6 @@ export function useEventActions({
     setShowReportDialog,
     showCancelDialog,
     setShowCancelDialog,
-    showDocumentUpload,
-    setShowDocumentUpload,
     handleRescheduleClick,
     handleReschedule,
     handleCancelClick,

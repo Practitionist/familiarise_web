@@ -4,9 +4,11 @@ import { useState } from "react";
 import { format } from "date-fns";
 import { Video, Loader2, ChevronDown } from "lucide-react";
 import { cn } from "@/utils/tailwind";
-import type { SlotWithMeetingSession, SessionStatus } from "../types";
-
-const DEFAULT_MEETING_DURATION_MS = 60 * 60 * 1000;
+import {
+  DEFAULT_MEETING_DURATION_MS,
+  type SlotWithMeetingSession,
+  type SessionStatus,
+} from "../types";
 
 interface SessionTimelineProps {
   slots: SlotWithMeetingSession[];
@@ -90,7 +92,7 @@ export function SessionTimeline({
   return (
     <div className="space-y-1">
       {/* Dot summary when collapsed */}
-      {dotSummary && (
+      {dotSummary && dotSummary.length > 0 && (
         <div className="flex items-center gap-0.5 px-1 py-1 text-xs">
           <span className="text-zinc-400 mr-1">Sessions:</span>
           {dotSummary.map((dot, i) => (
@@ -128,7 +130,10 @@ export function SessionTimeline({
             }
           >
             {/* Status icon */}
-            <span className="text-sm shrink-0 w-5 text-center">
+            <span
+              className="text-sm shrink-0 w-5 text-center"
+              aria-label={status}
+            >
               {statusIcon[status]}
             </span>
 

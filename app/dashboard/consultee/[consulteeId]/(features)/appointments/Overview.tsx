@@ -8,10 +8,7 @@ import {
   TWebinarWithPlan,
   TTrialWithPlan,
 } from "@/hooks/useEvents";
-import {
-  getActualSlots,
-  getAllSlots,
-} from "../../utils/scheduleHelpers";
+import { getActualSlots, getAllSlots } from "../../utils/scheduleHelpers";
 import { OneOffEventCard } from "./components/OneOffEventCard";
 import { MultiSessionEventCard } from "./components/MultiSessionEventCard";
 import type { SlotOfAppointment } from "@prisma/client";
@@ -127,10 +124,7 @@ export function Overview({
       ? new Date(t.appointment.slotsOfAppointment[0].startsAt).getTime()
       : Infinity,
   }));
-  const sortedSubsAndTrials = sortByStatusAndTime([
-    ...subItems,
-    ...trialItems,
-  ]);
+  const sortedSubsAndTrials = sortByStatusAndTime([...subItems, ...trialItems]);
 
   // Prepare sorted webinar items
   const sortedWebinars = sortByStatusAndTime(
@@ -231,9 +225,7 @@ export function Overview({
                     type="Trial"
                     isTentative={firstSlot?.isTentative ?? false}
                     appointmentId={trial.appointment?.id}
-                    appointment={
-                      trial.appointment as TAppointment | undefined
-                    }
+                    appointment={trial.appointment as TAppointment | undefined}
                     rawSlots={rawSlots}
                   />
                 </div>
@@ -266,9 +258,7 @@ export function Overview({
                   isTentative={nextSlot?.isTentative ?? false}
                   appointmentId={subscription.appointments?.[0]?.id}
                   appointment={
-                    subscription.appointments?.[0] as
-                      | TAppointment
-                      | undefined
+                    subscription.appointments?.[0] as TAppointment | undefined
                   }
                   rawSlots={rawSlots}
                   allSlots={allSlotsData}
@@ -329,9 +319,7 @@ export function Overview({
                   type="Webinar"
                   isTentative={nextSlot?.isTentative ?? false}
                   appointmentId={webinar.appointment?.id}
-                  appointment={
-                    webinar.appointment as TAppointment | undefined
-                  }
+                  appointment={webinar.appointment as TAppointment | undefined}
                   rawSlots={rawSlots}
                   bookingStatus={bookingStatus}
                   waitlistPosition={waitlistPosition}

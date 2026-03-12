@@ -4,8 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Video, Loader2 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import type { SlotOfAppointment } from "@prisma/client";
-
-const DEFAULT_MEETING_DURATION_MS = 60 * 60 * 1000;
+import { DEFAULT_MEETING_DURATION_MS } from "../types";
 
 interface JoinButtonProps {
   slot: SlotOfAppointment | null;

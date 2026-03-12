@@ -54,10 +54,7 @@ export function StatusBadgeGroup({
           )}
         >
           <span
-            className={cn(
-              "h-1.5 w-1.5 rounded-full",
-              displayStatusStyle.dot,
-            )}
+            className={cn("h-1.5 w-1.5 rounded-full", displayStatusStyle.dot)}
           />
           {displayStatusStyle.label || displayStatus?.replace(/_/g, " ")}
         </Badge>

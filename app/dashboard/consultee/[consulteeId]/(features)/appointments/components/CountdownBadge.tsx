@@ -54,17 +54,18 @@ export function CountdownBadge({
   useEffect(() => {
     if (isEnded) return;
 
-    // Adjust timer frequency based on proximity
-    const minutes = Math.abs(diffMs) / 60000;
-    let interval: number;
-    if (minutes <= 1) interval = 1000; // every second when very close
-    else if (minutes <= 30) interval = 10000; // every 10s when imminent
-    else if (minutes <= 180) interval = 60000; // every minute when soon
-    else interval = 300000; // every 5 minutes when far
+    // Compute interval inside effect — only re-run when targetTime or isEnded change
+    const getInterval = () => {
+      const minutes = Math.abs(target - Date.now()) / 60000;
+      if (minutes <= 1) return 1000; // every second when very close
+      if (minutes <= 30) return 10000; // every 10s when imminent
+      if (minutes <= 180) return 60000; // every minute when soon
+      return 300000; // every 5 minutes when far
+    };
 
-    const id = setInterval(() => setNow(Date.now()), interval);
+    const id = setInterval(() => setNow(Date.now()), getInterval());
     return () => clearInterval(id);
-  }, [diffMs, isEnded]);
+  }, [target, isEnded]);
 
   if (isEnded) return null;
 
@@ -77,6 +78,7 @@ export function CountdownBadge({
         "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold tabular-nums",
         tierStyles[tier],
       )}
+      aria-label={isOngoing ? "Live session" : `Session starts in ${label}`}
     >
       {label}
     </span>

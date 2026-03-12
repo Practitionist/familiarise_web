@@ -9,7 +9,10 @@
  */
 
 import prisma from "../../lib/prisma";
-import { getStreamVideoClient, isStreamConfigured } from "../../lib/stream-client";
+import {
+  getStreamVideoClient,
+  isStreamConfigured,
+} from "../../lib/stream-client";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 export interface ReconciliationResult {
@@ -112,9 +115,7 @@ export async function reconcileOrphanedSessions(): Promise<ReconciliationResult>
       result.errors++;
       result.success = false;
       const msg = error instanceof Error ? error.message : String(error);
-      result.details.push(
-        `Session ${session.id} FAILED: ${msg}`,
-      );
+      result.details.push(`Session ${session.id} FAILED: ${msg}`);
       console.error(
         `[reconcile-orphaned-sessions] Failed to reconcile session ${session.id}:`,
         msg,

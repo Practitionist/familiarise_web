@@ -13,7 +13,13 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { motion } from "framer-motion";
-import { Clock, Calendar, CalendarClock, Loader2, CreditCard } from "lucide-react";
+import {
+  Clock,
+  Calendar,
+  CalendarClock,
+  Loader2,
+  CreditCard,
+} from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/utils/tailwind";
 import type { TAppointment } from "@/types/appointment";
@@ -93,8 +99,7 @@ export function OneOffEventCard({
     status?.toLowerCase() === "completed" ||
     status?.toLowerCase() === "expired";
 
-  const isPendingPayment =
-    status?.toUpperCase() === "APPROVED_PENDING_PAYMENT";
+  const isPendingPayment = status?.toUpperCase() === "APPROVED_PENDING_PAYMENT";
   const isApproved = status?.toUpperCase() === "APPROVED";
   const isDev = process.env.NODE_ENV === "development";
   const canDevJoin = isDev && rawSlots.length > 0 && !!appointment;
@@ -104,8 +109,12 @@ export function OneOffEventCard({
 
   const appointmentStatus: AppointmentStatus =
     status?.toLowerCase() === "completed" ? "COMPLETED" : "UPCOMING";
-  const appointmentType: "CONSULTATION" | "SUBSCRIPTION" =
-    type === "Trial" ? "SUBSCRIPTION" : "CONSULTATION";
+  const appointmentType: "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" =
+    type === "Trial"
+      ? "SUBSCRIPTION"
+      : type === "Webinar"
+        ? "WEBINAR"
+        : "CONSULTATION";
 
   const scheduledAt =
     rawSlots.length > 0
@@ -219,10 +228,14 @@ export function OneOffEventCard({
         )}
 
         {/* Action bar */}
-        <div className={cn(
-          "flex items-center gap-2",
-          showDocUpload && !isInactive ? "mt-3" : "mt-3 pt-3 border-t border-zinc-100",
-        )}>
+        <div
+          className={cn(
+            "flex items-center gap-2",
+            showDocUpload && !isInactive
+              ? "mt-3"
+              : "mt-3 pt-3 border-t border-zinc-100",
+          )}
+        >
           {!isTentative && isApproved && !isInactive ? (
             <>
               <div className="flex-1">
@@ -264,6 +277,7 @@ export function OneOffEventCard({
             hasAppointmentId={!!appointmentId}
             isDev={isDev}
             canDevJoin={canDevJoin && !actions.joinableSlot}
+            isLoading={actions.isLoading}
             onCancel={actions.handleCancelClick}
             onReportIssue={() => actions.setShowReportDialog(true)}
             onDevJoin={() => actions.handleJoinSession(rawSlots[0])}

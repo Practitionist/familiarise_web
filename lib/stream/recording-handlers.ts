@@ -376,9 +376,7 @@ export async function handleRecordingFailed(
       ),
     );
 
-    const failures = notificationResults.filter(
-      (r) => r.status === "rejected",
-    );
+    const failures = notificationResults.filter((r) => r.status === "rejected");
     if (failures.length > 0) {
       streamLogger.warn(
         `${failures.length}/${userIds.length} recording-failed notifications failed`,

@@ -38,7 +38,10 @@ import { cn } from "@/utils/tailwind";
 import type { TAppointment } from "@/types/appointment";
 import type { SlotOfAppointment } from "@prisma/client";
 import type { BookingStatus } from "@/components/ui/waitlist-status-badge";
-import type { SlotWithMeetingSession } from "../types";
+import {
+  DEFAULT_MEETING_DURATION_MS,
+  type SlotWithMeetingSession,
+} from "../types";
 
 import { CardHeader } from "./CardHeader";
 import { StatusBadgeGroup } from "./StatusBadgeGroup";
@@ -73,8 +76,6 @@ interface MultiSessionEventCardProps {
   collaborators?: CollaboratorInfo[];
   totalSessions?: number;
 }
-
-const DEFAULT_MEETING_DURATION_MS = 60 * 60 * 1000;
 
 function formatSlotDate(date: Date | string): string {
   const d = typeof date === "string" ? new Date(date) : date;
@@ -124,8 +125,7 @@ export function MultiSessionEventCard({
     status?.toLowerCase() === "completed" ||
     status?.toLowerCase() === "expired";
 
-  const isPendingPayment =
-    status?.toUpperCase() === "APPROVED_PENDING_PAYMENT";
+  const isPendingPayment = status?.toUpperCase() === "APPROVED_PENDING_PAYMENT";
   const isApproved = status?.toUpperCase() === "APPROVED";
   const isDev = process.env.NODE_ENV === "development";
   const canDevJoin = isDev && rawSlots.length > 0 && !!appointment;
@@ -336,10 +336,14 @@ export function MultiSessionEventCard({
         )}
 
         {/* Action bar — reschedule + overflow only (join is per-row in timeline) */}
-        <div className={cn(
-          "flex items-center gap-2",
-          showDocUpload && !isInactive ? "mt-3" : "mt-3 pt-3 border-t border-zinc-100",
-        )}>
+        <div
+          className={cn(
+            "flex items-center gap-2",
+            showDocUpload && !isInactive
+              ? "mt-3"
+              : "mt-3 pt-3 border-t border-zinc-100",
+          )}
+        >
           {!isTentative && isApproved && !isInactive ? (
             <Button
               variant="outline"
@@ -375,6 +379,7 @@ export function MultiSessionEventCard({
             hasAppointmentId={!!appointmentId}
             isDev={isDev}
             canDevJoin={canDevJoin && !actions.joinableSlot}
+            isLoading={actions.isLoading}
             onCancel={actions.handleCancelClick}
             onReportIssue={() => actions.setShowReportDialog(true)}
             onDevJoin={() => actions.handleJoinSession(rawSlots[0])}
@@ -408,8 +413,8 @@ export function MultiSessionEventCard({
               Reschedule Options
             </DialogTitle>
             <DialogDescription>
-              Choose how you&apos;d like to reschedule your{" "}
-              {type.toLowerCase()} sessions.
+              Choose how you&apos;d like to reschedule your {type.toLowerCase()}{" "}
+              sessions.
             </DialogDescription>
           </DialogHeader>
 
@@ -423,7 +428,14 @@ export function MultiSessionEventCard({
                 if (value === "entire") {
                   setSelectedSlotIds([]);
                 } else if (value === "individual") {
-                  setSelectedSlotIds(selectedSlotIds.slice(0, 1));
+                  // Auto-select first session when switching to individual mode
+                  const first =
+                    selectedSlotIds.length > 0
+                      ? selectedSlotIds.slice(0, 1)
+                      : groupedSessions.length > 0
+                        ? groupedSessions[0].slots.map((s) => s.id)
+                        : [];
+                  setSelectedSlotIds(first);
                 }
               }}
               className="space-y-3"
