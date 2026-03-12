@@ -1500,13 +1500,17 @@ export class SlotAllocationService {
         where: whereClause,
         include: {
           slotsOfAppointment: {
-            include: { user: { select: { id: true } } },
+            include: {
+              user: { select: { id: true } },
+              meetingSession: { select: { id: true, endedAt: true } },
+            },
           },
         },
       });
 
       let preservedSlotCount = 0;
       const enrolledUserIdSet = new Set<string>();
+      const imminentCutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 24h buffer
 
       for (const appointment of appointments) {
         const pastSlots = appointment.slotsOfAppointment.filter(
@@ -1516,27 +1520,38 @@ export class SlotAllocationService {
           (slot) => new Date(slot.endsAt) > now,
         );
 
-        preservedSlotCount += pastSlots.length;
+        // Guard: preserve slots that are imminent (<24h) or have active sessions
+        const protectedFutureSlots = futureSlots.filter(
+          (slot) =>
+            new Date(slot.startsAt) < imminentCutoff ||
+            (slot.meetingSession && !slot.meetingSession.endedAt),
+        );
+        const deletableFutureSlots = futureSlots.filter(
+          (slot) =>
+            new Date(slot.startsAt) >= imminentCutoff &&
+            (!slot.meetingSession || slot.meetingSession.endedAt !== null),
+        );
 
-        // Capture enrolled user IDs from future slots before deletion
-        for (const slot of futureSlots) {
+        preservedSlotCount += pastSlots.length + protectedFutureSlots.length;
+
+        // Capture enrolled user IDs from deletable future slots before deletion
+        for (const slot of deletableFutureSlots) {
           for (const user of (slot as any).user || []) {
             enrolledUserIdSet.add(user.id);
           }
         }
 
-        if (futureSlots.length > 0) {
-          // Delete only future slots
+        if (deletableFutureSlots.length > 0) {
           await tx.slotOfAppointment.deleteMany({
             where: {
               appointmentId: appointment.id,
-              id: { in: futureSlots.map((s) => s.id) },
+              id: { in: deletableFutureSlots.map((s) => s.id) },
             },
           });
         }
 
-        // If no past slots remain, delete the now-empty appointment
-        if (pastSlots.length === 0) {
+        // Only delete the appointment if no slots remain at all
+        if (pastSlots.length === 0 && protectedFutureSlots.length === 0) {
           await tx.appointment.delete({ where: { id: appointment.id } });
         }
       }
