@@ -624,9 +624,7 @@ describe("validate: class event", () => {
       { callsPerWeek: 2, sessionDurationInHours: 1 },
     );
     expect(result.isValid).toBe(false);
-    expect(
-      result.errors.some((e) => e.includes("consecutive")),
-    ).toBe(true);
+    expect(result.errors.some((e) => e.includes("consecutive"))).toBe(true);
   });
 });
 

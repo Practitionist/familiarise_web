@@ -268,8 +268,7 @@ export class SlotAllocationService {
                 (count, appt) =>
                   count +
                   appt.slotsOfAppointment.filter(
-                    (slot) =>
-                      !slot.isTentative && new Date(slot.endsAt) <= now,
+                    (slot) => !slot.isTentative && new Date(slot.endsAt) <= now,
                   ).length,
                 0,
               );
@@ -329,11 +328,15 @@ export class SlotAllocationService {
             // but the allocation system works with 30-min slots (slotsPerSession per appointment).
             // tentativeSlotCount would be 8 for an 8-session class, but we actually need 16
             // (8 sessions × 2 thirty-minute slots each).
-            requiredSlots =
-              SlotCalculationService.calculateRequiredSlots(eventType, config);
+            requiredSlots = SlotCalculationService.calculateRequiredSlots(
+              eventType,
+              config,
+            );
           } else {
-            const fullRequired =
-              SlotCalculationService.calculateRequiredSlots(eventType, config);
+            const fullRequired = SlotCalculationService.calculateRequiredSlots(
+              eventType,
+              config,
+            );
             // For in-progress reallocation, only allocate future slots
             requiredSlots = isInProgressReallocation
               ? fullRequired - pastConfirmedSlotCount
@@ -561,8 +564,7 @@ export class SlotAllocationService {
                 (count, appt) =>
                   count +
                   appt.slotsOfAppointment.filter(
-                    (slot) =>
-                      !slot.isTentative && new Date(slot.endsAt) <= now,
+                    (slot) => !slot.isTentative && new Date(slot.endsAt) <= now,
                   ).length,
                 0,
               );
@@ -605,8 +607,7 @@ export class SlotAllocationService {
                   eventType,
                   config,
                 );
-              const expectedFutureSlots =
-                fullRequired - pastConfirmedSlotCount;
+              const expectedFutureSlots = fullRequired - pastConfirmedSlotCount;
               if (slots.length !== expectedFutureSlots) {
                 throw new AllocationValidationError(
                   `In-progress ${eventType}: ${pastConfirmedSlotCount} past slot(s) preserved. ` +

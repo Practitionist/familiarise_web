@@ -244,8 +244,7 @@ export async function POST(request: NextRequest) {
                     // weekOffset positions the week, dayWithinWeek spaces meetings apart
                     // e.g. meetingsPerWeek=2 -> days 0,3 (Mon,Thu)
                     // e.g. meetingsPerWeek=3 -> days 0,2,4 (Mon,Wed,Fri)
-                    const weekOffset =
-                      Math.floor(index / meetingsPerWeek) * 7;
+                    const weekOffset = Math.floor(index / meetingsPerWeek) * 7;
                     const dayWithinWeek =
                       (index % meetingsPerWeek) *
                       Math.floor(7 / meetingsPerWeek);

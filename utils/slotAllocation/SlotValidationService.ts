@@ -824,9 +824,7 @@ export class SlotValidationService {
     // Grouping by UTC day is incorrect because cross-midnight sessions split
     // slots across two UTC dates, causing false "non-consecutive" errors.
     if (slotsPerSession > 1) {
-      const sortedSlots = [...slots].sort(
-        (a, b) => a.getTime() - b.getTime(),
-      );
+      const sortedSlots = [...slots].sort((a, b) => a.getTime() - b.getTime());
 
       for (let i = 0; i < sortedSlots.length; i += slotsPerSession) {
         const sessionSlots = sortedSlots.slice(i, i + slotsPerSession);

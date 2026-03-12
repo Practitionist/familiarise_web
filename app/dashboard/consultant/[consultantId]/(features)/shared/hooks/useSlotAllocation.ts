@@ -1,9 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { useToast } from "@/components/ui/use-toast";
-import {
-  TimeSlot,
-  calculateRequiredSlots,
-} from "../utils/calendarUtils";
+import { TimeSlot, calculateRequiredSlots } from "../utils/calendarUtils";
 import {
   AllocationAlgorithms,
   AllocationOptions,

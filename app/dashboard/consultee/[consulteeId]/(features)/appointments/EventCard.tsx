@@ -139,7 +139,8 @@ const SESSION_STATUS_STYLES: Record<
 function SessionStatusBadge({
   status,
 }: Readonly<{ status: SlotCompletionStatus }>) {
-  const style = SESSION_STATUS_STYLES[status] ?? SESSION_STATUS_STYLES.SCHEDULED;
+  const style =
+    SESSION_STATUS_STYLES[status] ?? SESSION_STATUS_STYLES.SCHEDULED;
   return (
     <span
       className={cn(
@@ -287,8 +288,7 @@ export function EventCard({
   // Reuses the same consecutive-slot → session grouping logic as groupedSessions above
   const allGroupedSessions = React.useMemo(() => {
     const sortedSlots = [...allRawSlots].sort(
-      (a, b) =>
-        new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
+      (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
     );
 
     const createSession = (slots: typeof sortedSlots) => {
@@ -702,7 +702,8 @@ export function EventCard({
 
         {/* Schedule Section */}
         <div className="flex-1">
-          {type === "Class" && actualSlots.length === 1 &&
+          {type === "Class" &&
+          actualSlots.length === 1 &&
           !showAllSessionsAccordion ? (
             <div className="bg-zinc-50 rounded-lg p-3 border border-zinc-100">
               <div className="flex items-center gap-2 text-xs text-zinc-500 mb-1.5">
