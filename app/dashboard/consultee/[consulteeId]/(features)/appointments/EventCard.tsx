@@ -56,6 +56,14 @@ import { CancelConfirmationDialog } from "./CancelConfirmationDialog";
 import type { AppointmentStatus } from "@/utils/supportTicketUrl";
 import type { TAppointment } from "@/types/appointment";
 import type { SlotOfAppointment } from "@prisma/client";
+
+// Mirror the Prisma enum locally — avoids type error when Prisma client hasn't been regenerated
+type SlotCompletionStatus =
+  | "SCHEDULED"
+  | "COMPLETED"
+  | "UNVERIFIED"
+  | "CANCELLED"
+  | "RESCHEDULED";
 import {
   WaitlistStatusBadge,
   type BookingStatus,
@@ -85,6 +93,7 @@ interface EventCardProps {
   className?: string;
   appointment?: TAppointment;
   rawSlots?: SlotOfAppointment[];
+  allRawSlots?: SlotOfAppointment[];
   pendingPaymentUrl?: string | null;
   // Booking status for webinars/classes
   bookingStatus?: BookingStatus;
@@ -108,6 +117,43 @@ const DEFAULT_MEETING_DURATION_MS = 60 * 60 * 1000;
 
 // Status configuration imported from shared statusConfig
 
+const SESSION_STATUS_STYLES: Record<
+  SlotCompletionStatus,
+  { bg: string; text: string; label: string }
+> = {
+  COMPLETED: { bg: "bg-green-50", text: "text-green-700", label: "Completed" },
+  UNVERIFIED: {
+    bg: "bg-amber-50",
+    text: "text-amber-700",
+    label: "Unverified",
+  },
+  SCHEDULED: { bg: "bg-zinc-100", text: "text-zinc-600", label: "Scheduled" },
+  CANCELLED: { bg: "bg-red-50", text: "text-red-700", label: "Cancelled" },
+  RESCHEDULED: {
+    bg: "bg-indigo-50",
+    text: "text-indigo-700",
+    label: "Rescheduled",
+  },
+};
+
+function SessionStatusBadge({
+  status,
+}: Readonly<{ status: SlotCompletionStatus }>) {
+  const style =
+    SESSION_STATUS_STYLES[status] ?? SESSION_STATUS_STYLES.SCHEDULED;
+  return (
+    <span
+      className={cn(
+        "text-[10px] font-medium px-1.5 py-0.5 rounded",
+        style.bg,
+        style.text,
+      )}
+    >
+      {style.label}
+    </span>
+  );
+}
+
 export function EventCard({
   title,
   consultant,
@@ -121,6 +167,7 @@ export function EventCard({
   className = "",
   appointment,
   rawSlots = [],
+  allRawSlots = [],
   pendingPaymentUrl,
   bookingStatus,
   waitlistPosition,
@@ -235,7 +282,64 @@ export function EventCard({
   const showSessionDetails =
     (type === "Subscription" || type === "Class") &&
     groupedSessions &&
-    groupedSessions.length > 1;
+    groupedSessions.length >= 1;
+
+  // Enrich grouped sessions from allRawSlots (past + future) with isPast and completionStatus
+  // Reuses the same consecutive-slot → session grouping logic as groupedSessions above
+  const allGroupedSessions = React.useMemo(() => {
+    const sortedSlots = [...allRawSlots].sort(
+      (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
+    );
+
+    const createSession = (slots: typeof sortedSlots) => {
+      if (slots.length === 0) return null;
+      const startTime = new Date(slots[0].startsAt);
+      const endTime = new Date(slots[slots.length - 1].endsAt);
+      return {
+        slots: [...slots],
+        startTime,
+        endTime,
+        isPast: endTime.getTime() < Date.now(),
+        completionStatus:
+          ((slots[0] as Record<string, unknown>)
+            .completionStatus as SlotCompletionStatus) ?? "SCHEDULED",
+      };
+    };
+
+    const sessions: NonNullable<ReturnType<typeof createSession>>[] = [];
+    let currentSessionSlots: typeof sortedSlots = [];
+
+    for (let i = 0; i < sortedSlots.length; i++) {
+      const slot = sortedSlots[i];
+      const prevSlot = sortedSlots[i - 1];
+
+      if (i === 0) {
+        currentSessionSlots.push(slot);
+      } else {
+        const prevEnd = prevSlot.endsAt
+          ? new Date(prevSlot.endsAt).getTime()
+          : new Date(prevSlot.startsAt).getTime() + DEFAULT_MEETING_DURATION_MS;
+        const currStart = new Date(slot.startsAt).getTime();
+
+        if (currStart === prevEnd) {
+          currentSessionSlots.push(slot);
+        } else {
+          const session = createSession(currentSessionSlots);
+          if (session) sessions.push(session);
+          currentSessionSlots = [slot];
+        }
+      }
+    }
+
+    const lastSession = createSession(currentSessionSlots);
+    if (lastSession) sessions.push(lastSession);
+
+    return sessions;
+  }, [allRawSlots]);
+
+  const showAllSessionsAccordion =
+    (type === "Class" || type === "Subscription") &&
+    allGroupedSessions.length >= 1;
 
   // Check if this is a subscription with multiple sessions (for reschedule options)
   const isMultiSessionSubscription =
@@ -598,7 +702,9 @@ export function EventCard({
 
         {/* Schedule Section */}
         <div className="flex-1">
-          {type === "Class" && actualSlots.length === 1 ? (
+          {type === "Class" &&
+          actualSlots.length === 1 &&
+          !showAllSessionsAccordion ? (
             <div className="bg-zinc-50 rounded-lg p-3 border border-zinc-100">
               <div className="flex items-center gap-2 text-xs text-zinc-500 mb-1.5">
                 <Calendar className="h-3.5 w-3.5" />
@@ -612,38 +718,69 @@ export function EventCard({
                 {formatSlotTime(actualSlots[0].endTime)}
               </div>
             </div>
-          ) : showSessionDetails ? (
-            <Accordion type="single" collapsible className="w-full">
-              <AccordionItem
-                value="sessions"
-                className="border border-zinc-100 rounded-lg overflow-hidden"
-              >
-                <AccordionTrigger className="py-2.5 px-3 hover:no-underline hover:bg-zinc-50 text-left [&[data-state=open]>svg]:rotate-180">
-                  <div className="flex items-center gap-2 text-sm text-zinc-700 font-medium">
-                    <Calendar className="h-4 w-4 text-zinc-400" />
-                    {groupedSessions.length} Sessions
-                  </div>
-                </AccordionTrigger>
-                <AccordionContent>
-                  <div className="px-3 pb-3 space-y-2 max-h-32 overflow-y-auto">
-                    {groupedSessions.map((session, index) => (
-                      <div
-                        key={index}
-                        className="flex items-center justify-between bg-zinc-50 p-2 rounded-lg text-xs"
-                      >
-                        <span className="text-zinc-700 font-medium">
-                          {formatSlotDate(session.startTime)}
-                        </span>
-                        <span className="text-zinc-500">
-                          {formatSlotTime(session.startTime)} -{" "}
-                          {formatSlotTime(session.endTime)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </AccordionContent>
-              </AccordionItem>
-            </Accordion>
+          ) : showAllSessionsAccordion ? (
+            <div className="space-y-2">
+              {/* Next Session */}
+              <div className="bg-zinc-50 rounded-lg p-3 border border-zinc-100">
+                <div className="flex items-center gap-2 text-xs text-zinc-500 mb-1">
+                  <Clock className="h-3.5 w-3.5" />
+                  <span>Next Session</span>
+                </div>
+                <div className="text-sm text-zinc-700">
+                  {date || "No upcoming sessions"}
+                </div>
+              </div>
+
+              {/* All Sessions Accordion */}
+              <Accordion type="single" collapsible className="w-full">
+                <AccordionItem
+                  value="all-sessions"
+                  className="border border-zinc-100 rounded-lg overflow-hidden"
+                >
+                  <AccordionTrigger className="py-2.5 px-3 hover:no-underline hover:bg-zinc-50 text-left [&[data-state=open]>svg]:rotate-180">
+                    <div className="flex items-center gap-2 text-sm text-zinc-700 font-medium">
+                      <CalendarRange className="h-4 w-4 text-zinc-400" />
+                      All Sessions ({allGroupedSessions.length})
+                    </div>
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    <div className="px-3 pb-3 space-y-1.5 max-h-48 overflow-y-auto">
+                      {allGroupedSessions.map((session, index) => (
+                        <div
+                          key={index}
+                          className={cn(
+                            "flex items-center justify-between p-2 rounded-lg text-xs",
+                            session.isPast
+                              ? "bg-zinc-50 opacity-60"
+                              : "bg-zinc-50",
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              "font-medium truncate",
+                              session.isPast
+                                ? "text-zinc-500"
+                                : "text-zinc-700",
+                            )}
+                          >
+                            {formatSlotDate(session.startTime)}
+                          </span>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-zinc-500">
+                              {formatSlotTime(session.startTime)} -{" "}
+                              {formatSlotTime(session.endTime)}
+                            </span>
+                            <SessionStatusBadge
+                              status={session.completionStatus}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
+            </div>
           ) : (type === "Consultation" || type === "Webinar") &&
             rawSlots.length > 0 ? (
             <div className="bg-zinc-50 rounded-lg p-3 border border-zinc-100">

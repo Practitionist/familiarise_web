@@ -260,10 +260,28 @@ export class SlotAllocationService {
           );
           const isReschedule = tentativeSlotCount > 0;
 
+          // Detect in-progress reallocation: past confirmed slots exist for recurring events
+          const now = new Date();
+          const pastConfirmedSlotCount = isReschedule
+            ? 0
+            : existingAppointments.reduce(
+                (count, appt) =>
+                  count +
+                  appt.slotsOfAppointment.filter(
+                    (slot) => !slot.isTentative && new Date(slot.endsAt) <= now,
+                  ).length,
+                0,
+              );
+          const isInProgressReallocation =
+            !isReschedule &&
+            pastConfirmedSlotCount > 0 &&
+            eventType === "class";
+
           // Guard: for classes, reject re-allocation when already fully scheduled.
           // Webinars are handled by the DB unique constraint on webinarId (P2002 → 409).
           // Classes have no such constraint, so we enforce it here to prevent
           // concurrent auto-allocate calls from creating duplicate session sets.
+          // For in-progress reallocation, only count FUTURE confirmed slots.
           if (
             eventType === "class" &&
             !isReschedule &&
@@ -271,35 +289,58 @@ export class SlotAllocationService {
           ) {
             const requiredForGuard =
               SlotCalculationService.calculateRequiredSlots(eventType, config);
-            if (existingNonTentativeSlotCount >= requiredForGuard) {
+            const futureNonTentativeSlotCount =
+              existingNonTentativeSlotCount - pastConfirmedSlotCount;
+            if (
+              !isInProgressReallocation &&
+              existingNonTentativeSlotCount >= requiredForGuard
+            ) {
               throw new AllocationConflictError(
                 `Event is already fully allocated with ${existingNonTentativeSlotCount} confirmed slot(s).`,
+              );
+            }
+            // For in-progress: only block if future slots alone meet the future requirement
+            if (
+              isInProgressReallocation &&
+              futureNonTentativeSlotCount >=
+                requiredForGuard - pastConfirmedSlotCount
+            ) {
+              throw new AllocationConflictError(
+                `Event's future slots are already fully allocated (${futureNonTentativeSlotCount} future slot(s), ${pastConfirmedSlotCount} past).`,
               );
             }
           }
 
           // Collect appointment IDs to exclude from conflict detection and weekly limits.
           // For reschedule: exclude tentative appointments (they'll be deleted)
-          // For initial allocation: exclude ALL existing appointments (they'll all be deleted)
+          // For initial/in-progress allocation: exclude ALL existing appointments (they'll be deleted or preserved)
           const appointmentIdsToExclude = isReschedule
             ? existingAppointments
                 .filter((a) => a.slotsOfAppointment.some((s) => s.isTentative))
                 .map((a) => a.id)
             : existingAppointments.map((a) => a.id);
 
-          // Calculate required slots - for reschedule, only replace tentative slots
+          // Calculate required slots
           let requiredSlots: number;
           if (isReschedule) {
-            // RESCHEDULE: Only find replacement slots for the tentative ones.
-            // For full reschedule (all tentative): requiredSlots = all slots
-            // For partial reschedule (some tentative): requiredSlots = tentative count only
-            requiredSlots = tentativeSlotCount;
-          } else {
-            // INITIAL ALLOCATION: Calculate from config
+            // Use calculateRequiredSlots instead of tentativeSlotCount.
+            // Class creation (crud-with-plan) creates 1 full-duration slot per appointment,
+            // but the allocation system works with 30-min slots (slotsPerSession per appointment).
+            // tentativeSlotCount would be 8 for an 8-session class, but we actually need 16
+            // (8 sessions × 2 thirty-minute slots each).
             requiredSlots = SlotCalculationService.calculateRequiredSlots(
               eventType,
               config,
             );
+          } else {
+            const fullRequired = SlotCalculationService.calculateRequiredSlots(
+              eventType,
+              config,
+            );
+            // For in-progress reallocation, only allocate future slots
+            requiredSlots = isInProgressReallocation
+              ? fullRequired - pastConfirmedSlotCount
+              : fullRequired;
           }
 
           const slotsPerCall = SlotCalculationService.getSlotsPerCall(
@@ -340,12 +381,14 @@ export class SlotAllocationService {
 
           // CRITICAL FIX: Delete existing appointments before creating new ones
           // For reschedules: only delete appointments with tentative slots (preserve confirmed ones)
+          // For in-progress: only delete future slots (preserve past confirmed ones)
           // For initial allocation: delete all (shouldn't be any, but safety measure)
-          await this.deleteExistingAppointments(
+          const { enrolledUserIds } = await this.deleteExistingAppointments(
             tx,
             eventType,
             eventId,
             isReschedule,
+            isInProgressReallocation,
           );
 
           // Create appointments
@@ -358,6 +401,16 @@ export class SlotAllocationService {
             consulteeUserId,
             config,
           );
+
+          // Reconnect enrolled users to new slots (for group events like classes)
+          if (enrolledUserIds.length > 0) {
+            await this.reconnectEnrolledUsers(
+              tx,
+              appointments,
+              enrolledUserIds,
+              consultant.userId,
+            );
+          }
 
           // Update event status
           await this.updateEventStatus(
@@ -503,9 +556,26 @@ export class SlotAllocationService {
           );
           const isReschedule = tentativeSlotCount > 0;
 
+          // Detect in-progress reallocation: past confirmed slots exist for recurring events
+          const now = new Date();
+          const pastConfirmedSlotCount = isReschedule
+            ? 0
+            : existingAppointments.reduce(
+                (count, appt) =>
+                  count +
+                  appt.slotsOfAppointment.filter(
+                    (slot) => !slot.isTentative && new Date(slot.endsAt) <= now,
+                  ).length,
+                0,
+              );
+          const isInProgressReallocation =
+            !isReschedule &&
+            pastConfirmedSlotCount > 0 &&
+            eventType === "class";
+
           // Collect appointment IDs to exclude from conflict detection and weekly limits.
           // For reschedule: exclude tentative appointments (they'll be deleted)
-          // For initial allocation: exclude ALL existing appointments (they'll all be deleted)
+          // For initial/in-progress allocation: exclude ALL existing appointments
           const appointmentIdsToExclude = isReschedule
             ? existingAppointments
                 .filter((a) => a.slotsOfAppointment.some((s) => s.isTentative))
@@ -513,15 +583,35 @@ export class SlotAllocationService {
             : existingAppointments.map((a) => a.id);
 
           // Validate total slot count for recurring event types
-          // For reschedule: only require replacement slots for tentative count
-          // For initial allocation: require full plan slot count
           if (eventType === "subscription" || eventType === "class") {
             if (isReschedule) {
-              if (slots.length !== tentativeSlotCount) {
+              // Use calculateRequiredSlots instead of tentativeSlotCount.
+              // Class creation creates 1 full-duration slot per appointment,
+              // but the allocation system works with 30-min slots.
+              const rescheduleRequired =
+                SlotCalculationService.calculateRequiredSlots(
+                  eventType,
+                  config,
+                );
+              if (slots.length !== rescheduleRequired) {
                 throw new AllocationValidationError(
-                  `This reschedule requires exactly ${tentativeSlotCount} slots ` +
+                  `This reschedule requires exactly ${rescheduleRequired} slots ` +
                     `(replacing ${tentativeSlotCount} tentative slots), ` +
                     `but ${slots.length} were provided.`,
+                );
+              }
+            } else if (isInProgressReallocation) {
+              // In-progress: only future slots expected, past ones are preserved
+              const fullRequired =
+                SlotCalculationService.calculateRequiredSlots(
+                  eventType,
+                  config,
+                );
+              const expectedFutureSlots = fullRequired - pastConfirmedSlotCount;
+              if (slots.length !== expectedFutureSlots) {
+                throw new AllocationValidationError(
+                  `In-progress ${eventType}: ${pastConfirmedSlotCount} past slot(s) preserved. ` +
+                    `Expected ${expectedFutureSlots} future slots, but ${slots.length} were provided.`,
                 );
               }
             } else if (
@@ -563,12 +653,14 @@ export class SlotAllocationService {
 
           // Delete existing appointments
           // For reschedules: only delete tentative slots (preserve confirmed ones)
+          // For in-progress: only delete future slots (preserve past confirmed ones)
           // For initial allocation: delete all
-          await this.deleteExistingAppointments(
+          const { enrolledUserIds } = await this.deleteExistingAppointments(
             tx,
             eventType,
             eventId,
             isReschedule,
+            isInProgressReallocation,
           );
 
           // Create appointments
@@ -581,6 +673,16 @@ export class SlotAllocationService {
             consulteeUserId,
             config,
           );
+
+          // Reconnect enrolled users to new slots (for group events like classes)
+          if (enrolledUserIds.length > 0) {
+            await this.reconnectEnrolledUsers(
+              tx,
+              appointments,
+              enrolledUserIds,
+              consultant.userId,
+            );
+          }
 
           // Update event status
           await this.updateEventStatus(
@@ -1306,19 +1408,54 @@ export class SlotAllocationService {
   }
 
   /**
+   * Reconnect enrolled users to newly created slots.
+   * Used during in-progress reallocation of group events (classes):
+   * when future slots are deleted and recreated, the enrolled users'
+   * M2M links are lost. This restores them on the new slots.
+   */
+  private static async reconnectEnrolledUsers(
+    tx: PrismaTransaction,
+    appointments: AppointmentWithSlots[],
+    enrolledUserIds: string[],
+    consultantUserId: string,
+  ): Promise<void> {
+    // Filter out the consultant (already connected via createAppointments)
+    const userIdsToConnect = enrolledUserIds.filter(
+      (id) => id !== consultantUserId,
+    );
+    if (userIdsToConnect.length === 0) return;
+
+    const connectData = userIdsToConnect.map((id) => ({ id }));
+    for (const appointment of appointments) {
+      for (const slot of appointment.slotsOfAppointment) {
+        await tx.slotOfAppointment.update({
+          where: { id: slot.id },
+          data: { user: { connect: connectData } },
+        });
+      }
+    }
+  }
+
+  /**
    * Delete existing appointments for an event
    *
    * @param onlyTentative - If true, only delete tentative SlotOfAppointment records,
    *                        preserving confirmed slots and their parent appointments.
    *                        Appointments are only deleted if they have zero remaining slots
    *                        after tentative slot removal. This is used for partial reschedules.
+   * @param preservePastSlots - If true (and onlyTentative is false), only delete future slots,
+   *                            preserving past confirmed slots and their MeetingSession records.
+   *                            Used for in-progress reallocation of classes/subscriptions.
+   * @returns preservedSlotCount - Number of past slots that were preserved.
+   * @returns enrolledUserIds - User IDs connected to deleted future slots (for reconnection).
    */
   private static async deleteExistingAppointments(
     tx: PrismaTransaction,
     eventType: EventType,
     eventId: string,
     onlyTentative: boolean = false,
-  ): Promise<void> {
+    preservePastSlots: boolean = false,
+  ): Promise<{ preservedSlotCount: number; enrolledUserIds: string[] }> {
     const relationField = this.getEventRelationField(eventType);
     const whereClause = {
       [`${relationField}Id`]: eventId,
@@ -1356,6 +1493,59 @@ export class SlotAllocationService {
           }
         }
       }
+      return { preservedSlotCount: 0, enrolledUserIds: [] };
+    } else if (preservePastSlots) {
+      // In-progress reallocation: only delete future slots, preserve past ones
+      const now = new Date();
+      const appointments = await tx.appointment.findMany({
+        where: whereClause,
+        include: {
+          slotsOfAppointment: {
+            include: { user: { select: { id: true } } },
+          },
+        },
+      });
+
+      let preservedSlotCount = 0;
+      const enrolledUserIdSet = new Set<string>();
+
+      for (const appointment of appointments) {
+        const pastSlots = appointment.slotsOfAppointment.filter(
+          (slot) => new Date(slot.endsAt) <= now,
+        );
+        const futureSlots = appointment.slotsOfAppointment.filter(
+          (slot) => new Date(slot.endsAt) > now,
+        );
+
+        preservedSlotCount += pastSlots.length;
+
+        // Capture enrolled user IDs from future slots before deletion
+        for (const slot of futureSlots) {
+          for (const user of (slot as any).user || []) {
+            enrolledUserIdSet.add(user.id);
+          }
+        }
+
+        if (futureSlots.length > 0) {
+          // Delete only future slots
+          await tx.slotOfAppointment.deleteMany({
+            where: {
+              appointmentId: appointment.id,
+              id: { in: futureSlots.map((s) => s.id) },
+            },
+          });
+        }
+
+        // If no past slots remain, delete the now-empty appointment
+        if (pastSlots.length === 0) {
+          await tx.appointment.delete({ where: { id: appointment.id } });
+        }
+      }
+
+      return {
+        preservedSlotCount,
+        enrolledUserIds: Array.from(enrolledUserIdSet),
+      };
     } else {
       // Full delete: remove all appointments for this event
       const existingAppointments = await tx.appointment.findMany({
@@ -1367,6 +1557,7 @@ export class SlotAllocationService {
           tx.appointment.delete({ where: { id: appointment.id } }),
         ),
       );
+      return { preservedSlotCount: 0, enrolledUserIds: [] };
     }
   }
 

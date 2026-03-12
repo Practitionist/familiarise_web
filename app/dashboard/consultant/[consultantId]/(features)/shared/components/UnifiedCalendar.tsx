@@ -276,31 +276,40 @@ function computeClassFooter(params: {
   selectedSlots: TimeSlot[];
   sessionDurationInHours?: number;
   totalSessions?: number;
+  pastCompletedSessions?: number;
 }): string {
-  const { selectedSlots, sessionDurationInHours, totalSessions } = params;
+  const {
+    selectedSlots,
+    sessionDurationInHours,
+    totalSessions,
+    pastCompletedSessions = 0,
+  } = params;
   const slotsPerSession = Math.ceil((sessionDurationInHours || 1) / 0.5);
   const scheduled = countCompletedSelectedClasses(
     selectedSlots,
     slotsPerSession,
   );
+  const totalScheduled = scheduled + pastCompletedSessions;
 
   const duration = sessionDurationInHours || 1;
   const durationText = duration === 1 ? "1 hour" : `${duration} hours`;
 
   if (typeof totalSessions === "number" && totalSessions > 0) {
-    const remaining = totalSessions - scheduled;
+    const remaining = totalSessions - totalScheduled;
 
-    if (scheduled === 0) {
-      return `📅 Schedule ${totalSessions} sessions (${durationText} each)`;
+    if (pastCompletedSessions > 0 && scheduled === 0) {
+      return `${pastCompletedSessions} past session${pastCompletedSessions !== 1 ? "s" : ""} completed | Schedule ${remaining} more (${durationText} each)`;
     } else if (remaining > 0) {
-      return `✅ ${scheduled} scheduled | ⏳ ${remaining} remaining (${durationText} each)`;
+      return pastCompletedSessions > 0
+        ? `✅ ${totalScheduled} of ${totalSessions} (${pastCompletedSessions} past + ${scheduled} new) | ⏳ ${remaining} remaining`
+        : `✅ ${scheduled} scheduled | ⏳ ${remaining} remaining (${durationText} each)`;
     } else {
       return `✅ All ${totalSessions} sessions scheduled`;
     }
   }
 
   // Fallback when total not known
-  return `Sessions scheduled: ${scheduled}`;
+  return `Sessions scheduled: ${totalScheduled}`;
 }
 
 export interface UnifiedCalendarProps {
@@ -399,6 +408,12 @@ export function UnifiedCalendar({
     [refetchEventSlots, refetchAppointments, onAllocationComplete],
   );
 
+  // Count past confirmed event slots for in-progress recurring events
+  const pastEventSlotCount = useMemo(() => {
+    const now = new Date();
+    return eventSlots.filter((s) => s.endTime <= now).length;
+  }, [eventSlots]);
+
   // Slot allocation hook
   const {
     selectedSlots,
@@ -435,6 +450,10 @@ export function UnifiedCalendar({
             ? countSundayWeeksInclusive(allowedStart, allowedEnd) *
               (callsPerWeek || 1)
             : undefined
+        : undefined,
+    pastConfirmedSlotCount:
+      eventType === "class" || eventType === "subscription"
+        ? pastEventSlotCount
         : undefined,
     onSuccess: handleAllocationSuccess,
   });
@@ -672,7 +691,25 @@ export function UnifiedCalendar({
         }
       }
 
-      // Block selection of unavailable, booked, or past slots
+      // Past "This Event" slots: allow deselection, block re-selection
+      if (isCurrentEventSlot && status.isInPast) {
+        const isCurrentlySelected = selectedSlots.some(
+          (s) => s.startTime.getTime() === slot.startTime.getTime(),
+        );
+        if (isCurrentlySelected) {
+          toggleSlot(slot);
+          return;
+        }
+        toast({
+          variant: "destructive",
+          title: "Past session",
+          description:
+            "This session has already passed. Navigate to a future week to schedule a replacement.",
+        });
+        return;
+      }
+
+      // Block selection of unavailable, booked, or past non-event slots
       if (status.isInPast) {
         toast({
           variant: "destructive",
@@ -797,7 +834,8 @@ export function UnifiedCalendar({
         // Black for this event's already booked slots
         cellClassName +=
           " bg-black text-white cursor-pointer hover:bg-gray-900 border-gray-800";
-        buttonText = "This Event";
+        cellClassName += status.isInPast ? " opacity-60" : "";
+        buttonText = status.isInPast ? "Past Session" : "This Event";
       } else if (status.isBookedForDisplay) {
         // Grey for other appointments
         cellClassName +=
@@ -874,7 +912,9 @@ export function UnifiedCalendar({
                               : "Class"}
                       </p>
                       <p className="text-muted-foreground text-[10px] mt-1">
-                        Click to reschedule
+                        {status.isInPast
+                          ? "Past session (completed)"
+                          : "Click to reschedule"}
                       </p>
                     </div>
                   ) : (
@@ -1227,10 +1267,17 @@ export function UnifiedCalendar({
                     slotLimits.maxSlots,
                   );
                 } else if (eventType === "class") {
+                  const slotsPerSession = Math.ceil(
+                    (sessionDurationInHours || 1) / 0.5,
+                  );
                   return computeClassFooter({
                     selectedSlots,
                     sessionDurationInHours,
                     totalSessions: slotLimits.totalSessions,
+                    pastCompletedSessions:
+                      pastEventSlotCount > 0
+                        ? Math.floor(pastEventSlotCount / slotsPerSession)
+                        : 0,
                   });
                 }
 

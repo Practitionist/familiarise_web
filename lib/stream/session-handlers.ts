@@ -84,16 +84,24 @@ export async function handleSessionEnded(
 
     const endedAt = new Date(created_at);
 
-    // Update meeting session with end time
-    await prisma.meetingSession.update({
-      where: { id: meetingSession.id },
-      data: {
-        endedAt,
-        endedReason: "session_timeout",
-        // Ensure recording is marked as stopped if still active
-        isRecording: false,
-      },
-    });
+    // Update meeting session and mark slot as completed atomically
+    await prisma.$transaction([
+      prisma.meetingSession.update({
+        where: { id: meetingSession.id },
+        data: {
+          endedAt,
+          endedReason: "session_timeout",
+          isRecording: false,
+        },
+      }),
+      prisma.slotOfAppointment.update({
+        where: { id: meetingSession.slotOfAppointmentId },
+        data: {
+          completionStatus: "COMPLETED",
+          completedAt: endedAt,
+        },
+      }),
+    ]);
 
     // Calculate session duration if we have a start reference
     const slotStartTime = meetingSession.slotOfAppointment.startsAt;
@@ -172,16 +180,24 @@ export async function handleCallEnded(
 
     const endedAt = new Date(created_at);
 
-    // Update meeting session with end time
-    await prisma.meetingSession.update({
-      where: { id: meetingSession.id },
-      data: {
-        endedAt,
-        endedReason: "call_ended",
-        // Ensure recording is marked as stopped if still active
-        isRecording: false,
-      },
-    });
+    // Update meeting session and mark slot as completed atomically
+    await prisma.$transaction([
+      prisma.meetingSession.update({
+        where: { id: meetingSession.id },
+        data: {
+          endedAt,
+          endedReason: "call_ended",
+          isRecording: false,
+        },
+      }),
+      prisma.slotOfAppointment.update({
+        where: { id: meetingSession.slotOfAppointmentId },
+        data: {
+          completionStatus: "COMPLETED",
+          completedAt: endedAt,
+        },
+      }),
+    ]);
 
     // Calculate session duration if we have a start reference
     const slotStartTime = meetingSession.slotOfAppointment.startsAt;

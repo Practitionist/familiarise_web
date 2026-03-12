@@ -235,14 +235,21 @@ export async function POST(request: NextRequest) {
               // Only create appointments if startDate is defined
               create: start
                 ? Array.from({
-                    // Calculate total sessions based on duration
-                    length:
-                      Math.ceil(durationInMonths * 4.33) * meetingsPerWeek,
+                    // Use totalSessions (meetingsPerWeek * durationInMonths * 4)
+                    // to stay in sync with ClassPlan.totalSessions
+                    length: totalSessions,
                   }).map((_, index) => {
                     const appointmentDate = new Date(start!);
+                    // Spread meetings evenly within each week:
+                    // weekOffset positions the week, dayWithinWeek spaces meetings apart
+                    // e.g. meetingsPerWeek=2 -> days 0,3 (Mon,Thu)
+                    // e.g. meetingsPerWeek=3 -> days 0,2,4 (Mon,Wed,Fri)
+                    const weekOffset = Math.floor(index / meetingsPerWeek) * 7;
+                    const dayWithinWeek =
+                      (index % meetingsPerWeek) *
+                      Math.floor(7 / meetingsPerWeek);
                     appointmentDate.setDate(
-                      appointmentDate.getDate() +
-                        Math.floor(index / meetingsPerWeek) * 7,
+                      appointmentDate.getDate() + weekOffset + dayWithinWeek,
                     );
                     const slotStart = new Date(appointmentDate);
                     const slotEnd = new Date(appointmentDate);

@@ -813,36 +813,30 @@ export class SlotValidationService {
       config.sessionDurationInHours,
     );
 
-    // Group slots by day and validate each day has complete sessions
-    const slotsByDay = SlotCalculationService.groupSlotsByDay(
-      slots.map((s) => ({
-        startTime: s,
-        endTime: new Date(s.getTime() + 30 * 60 * 1000),
-        isAvailable: true,
-        isBooked: false,
-      })),
-    );
-
-    slotsByDay.forEach((daySlots, dayKey) => {
-      const sorted = [...daySlots].sort(
-        (a, b) => a.startTime.getTime() - b.startTime.getTime(),
+    // Validate slot count is a multiple of slotsPerSession (incomplete session check)
+    if (slots.length % slotsPerSession !== 0) {
+      errors.push(
+        `[VALIDATION] ${slots.length} slots provided but needs multiples of ${slotsPerSession} (incomplete session)`,
       );
+    }
 
-      // Check if day has incomplete sessions
-      if (sorted.length % slotsPerSession !== 0) {
-        errors.push(
-          `[VALIDATION] Day ${dayKey} has ${sorted.length} slots but needs multiples of ${slotsPerSession} (incomplete session)`,
-        );
-      }
+    // Validate per-session consecutiveness (matches subscription validation).
+    // Grouping by UTC day is incorrect because cross-midnight sessions split
+    // slots across two UTC dates, causing false "non-consecutive" errors.
+    if (slotsPerSession > 1) {
+      const sortedSlots = [...slots].sort((a, b) => a.getTime() - b.getTime());
 
-      // Check consecutiveness within day
-      const consecutiveCheck = this.validateConsecutiveSlots(
-        sorted.map((s) => s.startTime),
-      );
-      if (!consecutiveCheck.isValid) {
-        errors.push(`[VALIDATION] Day ${dayKey} has non-consecutive slots`);
+      for (let i = 0; i < sortedSlots.length; i += slotsPerSession) {
+        const sessionSlots = sortedSlots.slice(i, i + slotsPerSession);
+        const consecutiveCheck = this.validateConsecutiveSlots(sessionSlots);
+        if (!consecutiveCheck.isValid) {
+          const sessionNum = Math.floor(i / slotsPerSession) + 1;
+          errors.push(
+            `[VALIDATION] Session ${sessionNum} slots must be consecutive (no gaps allowed)`,
+          );
+        }
       }
-    });
+    }
 
     // Validate weekly limits
     const slotsByWeek = SlotCalculationService.groupSlotsByWeek(

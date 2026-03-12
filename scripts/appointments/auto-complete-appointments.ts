@@ -461,6 +461,82 @@ async function completeTrials(): Promise<{
 }
 
 /**
+ * Mark individual SlotOfAppointment records with per-slot completion status.
+ * Runs BEFORE parent-level completion so that parent logic can rely on slot statuses.
+ *
+ * - Slots past buffer WITH MeetingSession.endedAt → COMPLETED
+ * - Slots past buffer WITHOUT MeetingSession → UNVERIFIED (may be offline sessions)
+ */
+async function completeIndividualSlots(): Promise<{
+  completed: number;
+  unverified: number;
+  errors: string[];
+}> {
+  const errors: string[] = [];
+  const bufferTime = new Date(
+    Date.now() - COMPLETION_BUFFER_HOURS * 60 * 60 * 1000,
+  );
+
+  try {
+    // Slots past buffer WITH MeetingSession.endedAt → COMPLETED
+    // Note: completedAt = cron run time (not session endedAt). Real-time
+    // completion via webhooks (session-handlers.ts) uses the actual endedAt.
+    // This cron is a fallback for missed webhooks, so the cron timestamp
+    // represents "when the system acknowledged completion."
+    const completedResult = await prisma.slotOfAppointment.updateMany({
+      where: {
+        completionStatus: "SCHEDULED",
+        endsAt: { lt: bufferTime },
+        meetingSession: { endedAt: { not: null } },
+      },
+      data: { completionStatus: "COMPLETED", completedAt: new Date() },
+    });
+
+    // Slots past buffer WITHOUT MeetingSession → UNVERIFIED
+    const unverifiedResult = await prisma.slotOfAppointment.updateMany({
+      where: {
+        completionStatus: "SCHEDULED",
+        endsAt: { lt: bufferTime },
+        meetingSession: null,
+      },
+      data: { completionStatus: "UNVERIFIED" },
+    });
+
+    // Slots with MeetingSession but no endedAt (orphaned sessions — call
+    // started but webhook never fired) → UNVERIFIED
+    const orphanedResult = await prisma.slotOfAppointment.updateMany({
+      where: {
+        completionStatus: "SCHEDULED",
+        endsAt: { lt: bufferTime },
+        meetingSession: { endedAt: null },
+      },
+      data: { completionStatus: "UNVERIFIED" },
+    });
+
+    if (
+      completedResult.count > 0 ||
+      unverifiedResult.count > 0 ||
+      orphanedResult.count > 0
+    ) {
+      console.log(
+        `   Slot-level: ${completedResult.count} completed, ${unverifiedResult.count + orphanedResult.count} unverified (${orphanedResult.count} orphaned)`,
+      );
+    }
+
+    return {
+      completed: completedResult.count,
+      unverified: unverifiedResult.count + orphanedResult.count,
+      errors,
+    };
+  } catch (error) {
+    const message = `Failed to complete individual slots: ${error instanceof Error ? error.message : "Unknown error"}`;
+    console.error(`   ❌ ${message}`);
+    errors.push(message);
+    return { completed: 0, unverified: 0, errors };
+  }
+}
+
+/**
  * Main function to auto-complete all eligible appointments
  */
 export async function autoCompleteAppointments(): Promise<AutoCompleteResult> {
@@ -470,6 +546,10 @@ export async function autoCompleteAppointments(): Promise<AutoCompleteResult> {
   console.log(
     `   Buffer time: ${COMPLETION_BUFFER_HOURS} hour(s) after session end`,
   );
+
+  // Complete individual slots first (per-slot status before parent-level)
+  const slotResult = await completeIndividualSlots();
+  allErrors.push(...slotResult.errors);
 
   // Complete webinars
   const webinarResult = await completeWebinars();
@@ -493,6 +573,9 @@ export async function autoCompleteAppointments(): Promise<AutoCompleteResult> {
 
   // Summary
   console.log("\n📊 Auto-Complete Summary:");
+  console.log(
+    `   Slots: ${slotResult.completed} completed, ${slotResult.unverified} unverified`,
+  );
   console.log(`   Webinars completed: ${webinarResult.completed}`);
   console.log(`   Classes completed: ${classResult.completed}`);
   console.log(`   Consultations completed: ${consultationResult.completed}`);

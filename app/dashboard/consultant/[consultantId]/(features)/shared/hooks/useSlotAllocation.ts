@@ -1,11 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { useToast } from "@/components/ui/use-toast";
-import {
-  TimeSlot,
-  calculateRequiredSlots,
-  countSundayWeeksInclusive,
-} from "../utils/calendarUtils";
-import { startOfWeek } from "date-fns";
+import { TimeSlot, calculateRequiredSlots } from "../utils/calendarUtils";
 import {
   AllocationAlgorithms,
   AllocationOptions,
@@ -168,6 +163,9 @@ export interface UseEventSlotAllocationOptions {
 
   /** Latest allowed slot date */
   endDate?: Date;
+
+  /** Number of confirmed past event slots (for in-progress recurring events) */
+  pastConfirmedSlotCount?: number;
 
   /** Preferred time slots (if any) */
   preferredTimeSlots?: TimeSlot[];
@@ -1245,6 +1243,8 @@ export function useEventSlotAllocation(
 
   // Required slots calculation
   const requiredSlots = useMemo(() => {
+    let rawRequired: number;
+
     // For subscriptions and classes, maxTotalCalls is set to the plan's totalSessions (authoritative).
     // Derive requiredSlots from it to stay consistent with backend validation.
     if (
@@ -1254,22 +1254,34 @@ export function useEventSlotAllocation(
       const slotsPerSession = Math.ceil(
         (options.sessionDurationInHours || 1) / 0.5,
       );
-      return options.maxTotalCalls * slotsPerSession;
-    }
-    // Use the appropriate duration field based on event type
-    const duration =
-      eventType === "consultation" || eventType === "webinar"
-        ? options.durationInHours
-        : options.sessionDurationInHours;
+      rawRequired = options.maxTotalCalls * slotsPerSession;
+    } else {
+      // Use the appropriate duration field based on event type
+      const duration =
+        eventType === "consultation" || eventType === "webinar"
+          ? options.durationInHours
+          : options.sessionDurationInHours;
 
-    return calculateRequiredSlots(
-      eventType,
-      options.durationInMonths,
-      options.callsPerWeek,
-      duration,
-      options.startDate,
-      options.endDate,
-    );
+      rawRequired = calculateRequiredSlots(
+        eventType,
+        options.durationInMonths,
+        options.callsPerWeek,
+        duration,
+        options.startDate,
+        options.endDate,
+      );
+    }
+
+    // For in-progress classes, subtract past confirmed slots so the consultant
+    // only needs to select FUTURE slots. Subscriptions don't need this because
+    // totalSessions from RequestSlotAllocationTab already accounts for
+    // rescheduling (only counting tentative sessions that need new times).
+    const pastCount = options.pastConfirmedSlotCount || 0;
+    if (eventType === "class" && pastCount > 0) {
+      return Math.max(0, rawRequired - pastCount);
+    }
+
+    return rawRequired;
   }, [
     eventType,
     options.maxTotalCalls,
@@ -1277,6 +1289,9 @@ export function useEventSlotAllocation(
     options.callsPerWeek,
     options.durationInHours,
     options.sessionDurationInHours,
+    options.startDate,
+    options.endDate,
+    options.pastConfirmedSlotCount,
   ]);
 
   // Current validation result
@@ -1539,8 +1554,11 @@ export function useEventSlotAllocation(
               }, 0);
               return currentSlots;
             }
-          } else if (newSelection.length > slotLimits.maxSlots) {
-            // Validate against slot limits for other event types
+          } else if (
+            newSelection.length >
+            slotLimits.maxSlots - (options.pastConfirmedSlotCount || 0)
+          ) {
+            // Validate against slot limits for other event types (adjusted for past slots)
             setTimeout(() => {
               setPendingToast({
                 variant: "destructive",
@@ -1655,72 +1673,9 @@ export function useEventSlotAllocation(
               return currentSlots;
             }
 
-            // Add past calls tracking - calls in the past are automatically completed
-            const currentDate = new Date();
-            currentDate.setHours(0, 0, 0, 0); // Start of today
-
-            // Calculate how many calls should be completed based on current date
-            // Use the same logic as the footer calculation for consistency
-            const allowedStart = options.startDate;
-            const allowedEnd = options.endDate;
-
-            let pastCallsCompleted: number;
-
-            if (allowedStart && allowedEnd) {
-              // Use the same logic as computeSubscriptionFooter
-              const prevSaturday = new Date(startOfWeek(currentDate));
-              prevSaturday.setDate(prevSaturday.getDate() - 1);
-              const pastEnd =
-                prevSaturday < allowedEnd ? prevSaturday : allowedEnd;
-              const pastWeeks =
-                pastEnd >= allowedStart
-                  ? countSundayWeeksInclusive(allowedStart, pastEnd)
-                  : 0;
-              pastCallsCompleted = pastWeeks * callsPerWeek;
-            } else {
-              // Fallback to simple calculation if dates not provided
-              const subscriptionStartDate = new Date(); // TODO: Get actual subscription start date from options
-              subscriptionStartDate.setHours(0, 0, 0, 0);
-
-              // Calculate weeks passed since subscription started
-              const weeksPassed = Math.floor(
-                (currentDate.getTime() - subscriptionStartDate.getTime()) /
-                  (7 * 24 * 60 * 60 * 1000),
-              );
-              pastCallsCompleted = Math.min(
-                weeksPassed * callsPerWeek,
-                maxTotalCalls,
-              );
-            }
-
-            // FIXED: Simple validation: count confirmed calls + past completed calls
-            // But don't count the call we're about to complete if it's completing an existing incomplete call
-            // FIXED: Validating total calls using simplified usage logic
-            // Calculate usage from newSelection directly to avoid double counting
-            const newSelectionByDay = groupSlotsByDay(newSelection);
-            let currentUsage = 0;
-
-            newSelectionByDay.forEach((daySlots) => {
-              // Subscriptions max 1 call per day logic:
-              // Any slots on a day (complete or partial) count as 1 usage
-              if (daySlots.length > 0) {
-                currentUsage++;
-              }
-            });
-
-            // For Total calls limit, we count "usage" (days with at least 1 slot)
-            const totalCallsIncludingPast = currentUsage + pastCallsCompleted;
-
-            if (totalCallsIncludingPast > maxTotalCalls) {
-              setTimeout(() => {
-                setPendingToast({
-                  variant: "destructive",
-                  title: "Session limit reached",
-                  description: `You can only select ${maxTotalCalls} session${maxTotalCalls !== 1 ? "s" : ""} in total. Deselect a session to choose a different time.`,
-                });
-              }, 0);
-              return currentSlots;
-            }
+            // Total call limit is already enforced by the first subscription
+            // check above (lines ~1461-1491) using countCompleteCallsInMap.
+            // No need for a duplicate pastCallsCompleted-based check here.
 
             const effectiveCallsSlotDay = slot.startTime.toDateString();
 
@@ -1783,9 +1738,6 @@ export function useEventSlotAllocation(
 
             if (currentCallProgress === 0 && newSelection.length > 0) {
               // Just completed a call
-              // Calculate progress including past calls using the same logic as above
-              const totalProgress = pastCallsCompleted + completedCalls;
-
               setTimeout(() => {
                 setPendingToast({
                   variant: "default",
@@ -1931,6 +1883,7 @@ export function useEventSlotAllocation(
         startDate: options.startDate,
         endDate: options.endDate,
         totalSessions: options.maxTotalCalls, // maxTotalCalls is already totalSessions-aware
+        pastConfirmedSlotCount: options.pastConfirmedSlotCount,
       };
 
       const result = await AllocationAlgorithms.manualAllocate(
