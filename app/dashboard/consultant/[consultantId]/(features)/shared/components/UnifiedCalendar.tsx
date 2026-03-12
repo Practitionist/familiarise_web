@@ -709,6 +709,21 @@ export function UnifiedCalendar({
         return;
       }
 
+      // Imminent "This Event" slots (<24h away): block deselection
+      if (isCurrentEventSlot && !status.isInPast) {
+        const now = new Date();
+        const imminentCutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+        if (slot.startTime < imminentCutoff) {
+          toast({
+            variant: "destructive",
+            title: "Session too soon",
+            description:
+              "This session starts within 24 hours and cannot be rescheduled.",
+          });
+          return;
+        }
+      }
+
       // Block selection of unavailable, booked, or past non-event slots
       if (status.isInPast) {
         toast({

@@ -1956,6 +1956,7 @@ export function useEventSlotAllocation(
           startDate: options.startDate,
           endDate: options.endDate,
           totalSessions: options.maxTotalCalls, // maxTotalCalls is already totalSessions-aware
+          pastConfirmedSlotCount: options.pastConfirmedSlotCount,
         };
 
         // For recurring events (subscription/class), the calendar UI only
