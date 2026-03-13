@@ -31,6 +31,7 @@ import { lockAutoAllocate, unlockAutoAllocate } from "@/utils/appointmentlock";
 import {
   DAY_OF_WEEK_TO_INDEX,
   isMinuteWithinWeeklySlot,
+  TWENTY_FOUR_HOURS_IN_MS,
 } from "./slotTimeUtils";
 import {
   AllocationValidationError,
@@ -1511,7 +1512,7 @@ export class SlotAllocationService {
 
       let preservedSlotCount = 0;
       const enrolledUserIdSet = new Set<string>();
-      const imminentCutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 24h buffer
+      const imminentCutoff = new Date(now.getTime() + TWENTY_FOUR_HOURS_IN_MS);
 
       for (const appointment of appointments) {
         const pastSlots = appointment.slotsOfAppointment.filter(
@@ -1537,7 +1538,7 @@ export class SlotAllocationService {
 
         // Capture enrolled user IDs from deletable future slots before deletion
         for (const slot of deletableFutureSlots) {
-          for (const user of (slot as any).user || []) {
+          for (const user of slot.user) {
             enrolledUserIdSet.add(user.id);
           }
         }

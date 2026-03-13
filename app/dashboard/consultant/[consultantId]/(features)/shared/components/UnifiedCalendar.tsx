@@ -9,6 +9,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { DAYS, INTERVALS } from "@/utils/timeSlotsMeta";
+import { TWENTY_FOUR_HOURS_IN_MS } from "@/utils/slotAllocation/slotTimeUtils";
 import {
   format,
   addDays,
@@ -712,7 +713,7 @@ export function UnifiedCalendar({
       // Imminent "This Event" slots (<24h away): block deselection
       if (isCurrentEventSlot && !status.isInPast) {
         const now = new Date();
-        const imminentCutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+        const imminentCutoff = new Date(now.getTime() + TWENTY_FOUR_HOURS_IN_MS);
         if (slot.startTime < imminentCutoff) {
           toast({
             variant: "destructive",
