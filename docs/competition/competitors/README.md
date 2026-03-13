@@ -1,7 +1,7 @@
 # Competitor Analysis Deep Dives
 
 > **Last Updated:** December 2024
-> **Main Analysis:** [../competitor-analysis.md](../competitor-analysis.md)
+> **Main Analysis:** [./competitor-analysis.md](./competitor-analysis.md)
 
 This folder contains detailed individual competitor analyses for Familiarise's key competitors in the expert marketplace / EdTech space.
 
@@ -182,12 +182,28 @@ This folder contains detailed individual competitor analyses for Familiarise's k
 
 ---
 
+## Updated Strategy Documents (March 2026)
+
+A comprehensive competitive strategy update is available in the parent [`docs/competition/`](../) folder. This includes:
+
+- **Threat matrix** with updated threat levels (Topmate & SuperProfile elevated to CRITICAL)
+- **5-layer moat strategy** and defensibility playbook
+- **Feature battlecard** with side-by-side comparisons across 7 competitors
+- **Pricing strategy**, go-to-market playbook, and anti-disintermediation tactics
+- **Regulatory moat**, switching cost analysis, and AI roadmap
+- **Private war-room docs** in [`private/`](../private/) (internal only — do not share)
+
+The documents in this folder (`docs/competition/competitors/`) contain the original December 2024 deep dives. For the latest strategic analysis, refer to the parent folder.
+
+---
+
 ## Updating This Documentation
 
 When updating competitor analysis:
 
 1. Add new competitors to this README index
 2. Create individual deep-dive file in format: `##-competitor-name.md`
-3. Update main [competitor-analysis.md](../competitor-analysis.md) summary
-4. Refresh "Last Updated" dates
-5. Re-evaluate threat levels quarterly
+3. Update main [competitor-analysis.md](./competitor-analysis.md) summary
+4. Update strategy docs in [`docs/competition/`](../) folder
+5. Refresh "Last Updated" dates
+6. Re-evaluate threat levels quarterly
