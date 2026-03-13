@@ -1,5 +1,3 @@
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -9,7 +7,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { AppointmentsType, RequestStatus } from "@prisma/client";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 interface Request {
@@ -26,7 +24,6 @@ interface Request {
 }
 
 export function RequestSlotAllocationTabMini() {
-  const router = useRouter();
   const params = useParams();
   const consultantId = params.consultantId as string;
   const [loading, setLoading] = useState(true);
@@ -125,16 +122,6 @@ export function RequestSlotAllocationTabMini() {
         </TableBody>
       </Table>
 
-      <div className="mt-4 flex justify-end pr-4">
-        <Button
-          variant="outline"
-          onClick={() =>
-            router.push(`/dashboard/consultant/${consultantId}/requests`)
-          }
-        >
-          See All Requests →
-        </Button>
-      </div>
       {requests.length === 0 && (
         <div className="p-4 text-center text-muted-foreground">
           No pending requests

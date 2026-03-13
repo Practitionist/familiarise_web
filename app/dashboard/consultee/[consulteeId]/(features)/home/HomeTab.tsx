@@ -8,9 +8,6 @@ import {
   ChevronLeft,
   Video,
   Users,
-  Check,
-  Crown,
-  Zap,
   Loader2,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -444,52 +441,6 @@ function MonthlyEventItem({
   );
 }
 
-// Premium Features Card - Modern gradient design
-function PremiumFeaturesCard() {
-  return (
-    <div className="bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-800 rounded-2xl border border-zinc-800 p-6 shadow-xl">
-      <div className="flex items-center gap-2 mb-4">
-        <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center">
-          <Crown className="h-4 w-4 text-white" />
-        </div>
-        <h3 className="font-semibold text-white">Unlock Premium</h3>
-      </div>
-
-      <div className="space-y-3 mb-6">
-        {[
-          "Unlimited Access to Expert Sessions",
-          "24/7 Priority Support",
-          "Exclusive Webinars & Workshops",
-        ].map((feature) => (
-          <div
-            key={feature}
-            className="flex items-center gap-2.5 text-sm text-zinc-300"
-          >
-            <div className="h-5 w-5 rounded-full bg-emerald-500/20 flex items-center justify-center">
-              <Check className="h-3 w-3 text-emerald-400" />
-            </div>
-            <span>{feature}</span>
-          </div>
-        ))}
-      </div>
-
-      <div className="mb-5">
-        <span className="text-3xl font-bold text-white">$99</span>
-        <span className="text-zinc-400">/month</span>
-        <p className="text-xs text-emerald-400 mt-1 flex items-center gap-1">
-          <Zap className="h-3 w-3" />
-          Save 20% with annual billing
-        </p>
-      </div>
-
-      <Button className="w-full bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white font-semibold h-11">
-        <Crown className="h-4 w-4 mr-2" />
-        Upgrade Now
-      </Button>
-    </div>
-  );
-}
-
 export default function HomeTab({
   userDetails,
   eventsData,
@@ -780,7 +731,6 @@ export default function HomeTab({
 
         {/* Right sidebar */}
         <div className="space-y-6">
-          <PremiumFeaturesCard />
           <PendingPaymentsWidget consulteeId={consulteeId} />
         </div>
       </motion.div>

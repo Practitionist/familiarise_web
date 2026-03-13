@@ -24,12 +24,14 @@ type ClientClassRegistrationProps = {
   readonly plan: ClassPlanProgram;
   maxParticipants?: number;
   waitlist?: Array<{ userId: string; position?: number | null }>;
+  consultantUserId?: string;
 };
 
 export function ClientClassRegistration({
   plan,
   maxParticipants,
   waitlist = [],
+  consultantUserId,
 }: ClientClassRegistrationProps) {
   const { id: classId, price, classes } = plan;
   const startDate = classes?.[0]?.startDate; // Corrected to startDate
@@ -47,7 +49,10 @@ export function ClientClassRegistration({
   // Calculate capacity - use plan's maxParticipants or prop override
   const effectiveMaxParticipants =
     maxParticipants ?? plan.maxParticipants ?? 100;
-  const currentParticipants = countUniqueParticipants(appointments);
+  const currentParticipants = countUniqueParticipants(
+    appointments,
+    consultantUserId ? [consultantUserId] : [],
+  );
   const isFull = currentParticipants >= effectiveMaxParticipants;
 
   // Check if user is on the waitlist

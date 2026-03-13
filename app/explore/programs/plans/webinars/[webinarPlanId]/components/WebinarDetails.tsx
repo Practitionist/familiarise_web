@@ -354,6 +354,7 @@ export function WebinarDetails({
                 appointment={plan.webinars?.[0]?.appointment}
                 maxParticipants={plan.maxParticipants ?? 100}
                 waitlist={plan.webinars?.[0]?.waitlist ?? []}
+                consultantUserId={plan.consultantProfile?.user?.id}
               />
             </div>
           </motion.div>

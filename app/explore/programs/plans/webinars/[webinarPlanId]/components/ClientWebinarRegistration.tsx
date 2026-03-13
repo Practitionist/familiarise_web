@@ -29,6 +29,7 @@ type ClientWebinarRegistrationProps = {
   } | null;
   maxParticipants?: number;
   waitlist?: Array<{ userId: string; position?: number | null }>;
+  consultantUserId?: string;
 };
 
 export function ClientWebinarRegistration({
@@ -41,6 +42,7 @@ export function ClientWebinarRegistration({
   appointment,
   maxParticipants = 100,
   waitlist = [],
+  consultantUserId,
 }: ClientWebinarRegistrationProps) {
   const { data: session } = useSession();
   const { formatPrice } = useCurrency();
@@ -54,8 +56,11 @@ export function ClientWebinarRegistration({
       slot.user?.some((u) => u.id === userId),
     );
 
-  // Check capacity using shared utility
-  const currentParticipants = countWebinarParticipants(appointment ?? null);
+  // Check capacity using shared utility — exclude consultant from participant count
+  const currentParticipants = countWebinarParticipants(
+    appointment ?? null,
+    consultantUserId ? [consultantUserId] : [],
+  );
   const isFull = currentParticipants >= maxParticipants;
 
   // Check if user is on the waitlist

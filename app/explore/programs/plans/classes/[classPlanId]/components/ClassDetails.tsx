@@ -424,6 +424,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                 plan={plan}
                 maxParticipants={plan.maxParticipants ?? undefined}
                 waitlist={plan.classes?.[0]?.waitlist ?? []}
+                consultantUserId={plan.consultantProfile?.user?.id}
               />
             </div>
           </motion.div>
