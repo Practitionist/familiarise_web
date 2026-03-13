@@ -1272,12 +1272,10 @@ export function useEventSlotAllocation(
       );
     }
 
-    // For in-progress classes, subtract past confirmed slots so the consultant
-    // only needs to select FUTURE slots. Subscriptions don't need this because
-    // totalSessions from RequestSlotAllocationTab already accounts for
-    // rescheduling (only counting tentative sessions that need new times).
+    // For in-progress classes/subscriptions, subtract past confirmed slots so
+    // the consultant only needs to select FUTURE slots.
     const pastCount = options.pastConfirmedSlotCount || 0;
-    if (eventType === "class" && pastCount > 0) {
+    if ((eventType === "class" || eventType === "subscription") && pastCount > 0) {
       return Math.max(0, rawRequired - pastCount);
     }
 
