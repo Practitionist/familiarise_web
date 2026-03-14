@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/tooltip";
 import { DAYS, INTERVALS } from "@/utils/timeSlotsMeta";
 import { TWENTY_FOUR_HOURS_IN_MS } from "@/utils/slotAllocation/slotTimeUtils";
+import { isRecurringEventType } from "@/utils/slotAllocation/types";
 import {
   format,
   addDays,
@@ -450,8 +451,7 @@ export function UnifiedCalendar({
     endDate: allowedEnd,
     // Provide dynamic maxTotalCalls so validation/toasts show the real limit.
     // Prefer totalSessions from plan (authoritative) over calendar-week calculation.
-    maxTotalCalls:
-      eventType === "subscription" || eventType === "class"
+    maxTotalCalls: isRecurringEventType(eventType)
         ? totalSessions && totalSessions > 0
           ? totalSessions
           : allowedStart && allowedEnd && callsPerWeek
@@ -459,8 +459,7 @@ export function UnifiedCalendar({
               (callsPerWeek || 1)
             : undefined
         : undefined,
-    pastConfirmedSlotCount:
-      eventType === "class" || eventType === "subscription"
+    pastConfirmedSlotCount: isRecurringEventType(eventType)
         ? pastEventSlotCount
         : undefined,
     onSuccess: handleAllocationSuccess,
@@ -503,7 +502,7 @@ export function UnifiedCalendar({
       } else {
         setConfigWarning(null);
       }
-    } else if (eventType === "subscription" || eventType === "class") {
+    } else if (isRecurringEventType(eventType)) {
       if (!sessionDurationInHours || sessionDurationInHours <= 0) {
         setConfigWarning(
           `${eventType === "subscription" ? "Session" : "Class"} duration not configured. Using 1-hour default.`,

@@ -14,6 +14,7 @@
  */
 
 import "./setup";
+import { isRecurringEventType } from "@/utils/slotAllocation/types";
 
 // ─── Module Mocks ───────────────────────────────────────────────────────────
 
@@ -1476,8 +1477,7 @@ describe("Edge cases", () => {
         eventFactories[eventType](),
       );
 
-      const slots =
-        eventType === "subscription" || eventType === "class"
+      const slots = isRecurringEventType(eventType)
           ? ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"]
           : ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"];
 

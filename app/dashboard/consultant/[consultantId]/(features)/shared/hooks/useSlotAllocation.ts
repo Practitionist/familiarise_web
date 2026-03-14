@@ -7,6 +7,7 @@ import {
   AllocationResult,
 } from "../utils/allocationAlgorithms";
 import { AllocationService } from "../utils/allocationService";
+import { isRecurringEventType } from "@/utils/slotAllocation/types";
 
 /**
  * ENHANCED EVENT SLOT ALLOCATION HOOK
@@ -1252,10 +1253,7 @@ export function useEventSlotAllocation(
 
     // For subscriptions and classes, maxTotalCalls is set to the plan's totalSessions (authoritative).
     // Derive requiredSlots from it to stay consistent with backend validation.
-    if (
-      (eventType === "subscription" || eventType === "class") &&
-      options.maxTotalCalls
-    ) {
+    if (isRecurringEventType(eventType) && options.maxTotalCalls) {
       const slotsPerSession = Math.ceil(
         (options.sessionDurationInHours || 1) / 0.5,
       );
@@ -1280,7 +1278,7 @@ export function useEventSlotAllocation(
     // For in-progress classes/subscriptions, subtract past confirmed slots so
     // the consultant only needs to select FUTURE slots.
     const pastCount = options.pastConfirmedSlotCount || 0;
-    if ((eventType === "class" || eventType === "subscription") && pastCount > 0) {
+    if (isRecurringEventType(eventType) && pastCount > 0) {
       return Math.max(0, rawRequired - pastCount);
     }
 
@@ -1967,7 +1965,7 @@ export function useEventSlotAllocation(
         // needs slots spanning the entire scheduling period. Fetch them.
         let slotsForAllocation = availableSlots;
         if (
-          (eventType === "subscription" || eventType === "class") &&
+          isRecurringEventType(eventType) &&
           options.startDate &&
           options.endDate &&
           options.consultantId

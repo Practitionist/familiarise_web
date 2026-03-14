@@ -23,6 +23,7 @@ import {
   PrismaTransaction,
   ConsultantAllocationData,
   EventConfig,
+  isRecurringEventType,
 } from "./types";
 import { SlotCalculationService } from "./SlotCalculationService";
 import { SlotValidationService } from "./SlotValidationService";
@@ -276,7 +277,7 @@ export class SlotAllocationService {
           const isInProgressReallocation =
             !isReschedule &&
             pastConfirmedSlotCount > 0 &&
-            (eventType === "class" || eventType === "subscription");
+            isRecurringEventType(eventType);
 
           // Guard: for classes/subscriptions, reject re-allocation when already fully scheduled.
           // Webinars are handled by the DB unique constraint on webinarId (P2002 → 409).
@@ -284,7 +285,7 @@ export class SlotAllocationService {
           // concurrent auto-allocate calls from creating duplicate session sets.
           // For in-progress reallocation, only count FUTURE confirmed slots.
           if (
-            (eventType === "class" || eventType === "subscription") &&
+            isRecurringEventType(eventType) &&
             !isReschedule &&
             existingNonTentativeSlotCount > 0
           ) {
@@ -572,7 +573,7 @@ export class SlotAllocationService {
           const isInProgressReallocation =
             !isReschedule &&
             pastConfirmedSlotCount > 0 &&
-            (eventType === "class" || eventType === "subscription");
+            isRecurringEventType(eventType);
 
           // Collect appointment IDs to exclude from conflict detection and weekly limits.
           // For reschedule: exclude tentative appointments (they'll be deleted)
@@ -584,7 +585,7 @@ export class SlotAllocationService {
             : existingAppointments.map((a) => a.id);
 
           // Validate total slot count for recurring event types
-          if (eventType === "subscription" || eventType === "class") {
+          if (isRecurringEventType(eventType)) {
             if (isReschedule) {
               // Use calculateRequiredSlots instead of tentativeSlotCount.
               // Class creation creates 1 full-duration slot per appointment,
