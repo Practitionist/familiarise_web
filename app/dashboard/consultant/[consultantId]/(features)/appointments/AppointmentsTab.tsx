@@ -569,6 +569,7 @@ export function AppointmentsTab({
                               {/* Management buttons inline with user name */}
                               <div className="flex items-center gap-2 ml-4">
                                 {groupStatus !== "Completed" &&
+                                  groupStatus !== "Cancelled" &&
                                   canManageGroupTimings(groupAppointments) && (
                                   <Button
                                     variant="outline"

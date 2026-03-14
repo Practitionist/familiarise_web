@@ -598,6 +598,9 @@ export const getGroupStatus = (appointments: TAppointment[]): string => {
   const type = firstAppointment.appointmentType;
 
   if (type === "SUBSCRIPTION" && firstAppointment.subscription) {
+    if (firstAppointment.subscription.requestStatus === "CANCELLED")
+      return "Cancelled";
+
     const now = new Date();
     const startDate = new Date(
       firstAppointment.subscription.schedulingPeriodStartsAt,
@@ -618,6 +621,8 @@ export const getGroupStatus = (appointments: TAppointment[]): string => {
   }
 
   if (type === "CLASS" && firstAppointment.class) {
+    if (firstAppointment.class.status === "CANCELLED") return "Cancelled";
+
     const now = new Date();
 
     // Check if any sessions are completed, same as subscription
