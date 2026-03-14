@@ -439,9 +439,14 @@ function getSlotLimits(
       );
       // FIXED: Calculate actual call count for maxSlots (not slot count)
       const totalCalls = Math.ceil(requiredSlots / subscriptionSessionSlots);
+      const rawMaxCalls = options.maxTotalCalls || totalCalls;
+      // Subtract past completed sessions so the interactive guard caps at remaining sessions
+      const pastSessions = Math.floor(
+        (options.pastConfirmedSlotCount || 0) / subscriptionSessionSlots,
+      );
       return {
         minSlots: requiredSlots,
-        maxSlots: options.maxTotalCalls || totalCalls, // ✅ Use call count, not slot count
+        maxSlots: rawMaxCalls - pastSessions, // ✅ Cap at remaining sessions for in-progress events
         slotsPerSession: subscriptionSessionSlots,
         totalSessions: totalCalls, // ✅ Also use call count for sessions
       };

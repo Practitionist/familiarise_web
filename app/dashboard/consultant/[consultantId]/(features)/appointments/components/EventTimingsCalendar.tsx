@@ -30,12 +30,16 @@ interface EventTimingsCalendarProps {
   isOpen: boolean;
   onClose: () => void;
   appointment: TAppointment;
+  completedSessions?: number;
+  groupTotalSessions?: number;
 }
 
 export function EventTimingsCalendar({
   isOpen,
   onClose,
   appointment,
+  completedSessions,
+  groupTotalSessions,
 }: EventTimingsCalendarProps) {
   const params = useParams();
 
@@ -125,8 +129,14 @@ export function EventTimingsCalendar({
     switch (appointment.appointmentType) {
       case "CONSULTATION":
         return "Select consecutive time slots for your consultation. All slots must be on the same day.";
-      case "SUBSCRIPTION":
-        return `Schedule ${eventDetails.callsPerWeek} call${eventDetails.callsPerWeek !== 1 ? "s" : ""} per week for ${eventDetails.durationInMonths} month${eventDetails.durationInMonths !== 1 ? "s" : ""}. Each call is ${eventDetails.sessionDurationInHours || 1} hour${(eventDetails.sessionDurationInHours || 1) > 1 ? "s" : ""}.`;
+      case "SUBSCRIPTION": {
+        const baseText = `Schedule ${eventDetails.callsPerWeek} call${eventDetails.callsPerWeek !== 1 ? "s" : ""} per week for ${eventDetails.durationInMonths} month${eventDetails.durationInMonths !== 1 ? "s" : ""}. Each call is ${eventDetails.sessionDurationInHours || 1} hour${(eventDetails.sessionDurationInHours || 1) > 1 ? "s" : ""}.`;
+        if (completedSessions && completedSessions > 0 && groupTotalSessions) {
+          const remaining = groupTotalSessions - completedSessions;
+          return `${baseText} ${completedSessions} of ${groupTotalSessions} sessions completed — select times for the remaining ${remaining}.`;
+        }
+        return baseText;
+      }
       case "WEBINAR":
         return "Select consecutive time slots for your webinar session.";
       case "CLASS": {
@@ -134,7 +144,12 @@ export function EventTimingsCalendar({
         const durationText =
           sessionDuration === 1 ? "1 hour" : `${sessionDuration} hours`;
         const meetingsPerWeek = eventDetails.meetingsPerWeek || 1;
-        return `Schedule ${meetingsPerWeek} meeting${meetingsPerWeek !== 1 ? "s" : ""} per week. Each session is ${durationText}.`;
+        const classBaseText = `Schedule ${meetingsPerWeek} meeting${meetingsPerWeek !== 1 ? "s" : ""} per week. Each session is ${durationText}.`;
+        if (completedSessions && completedSessions > 0 && groupTotalSessions) {
+          const remaining = groupTotalSessions - completedSessions;
+          return `${classBaseText} ${completedSessions} of ${groupTotalSessions} sessions completed — select times for the remaining ${remaining}.`;
+        }
+        return classBaseText;
       }
       default:
         return "Select time slots for your event.";

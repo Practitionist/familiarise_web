@@ -77,6 +77,10 @@ export function AppointmentsTab({
   const searchParams = useSearchParams();
   const [selectedAppointment, setSelectedAppointment] =
     useState<TAppointment | null>(null);
+  const [selectedGroupProgress, setSelectedGroupProgress] = useState<{
+    completedSessions: number;
+    totalSessions: number;
+  } | null>(null);
   const [groupPagination, setGroupPagination] = useState<
     Map<string, { currentPage: number; showAll: boolean }>
   >(new Map());
@@ -461,11 +465,12 @@ export function AppointmentsTab({
                             key={classEvent.id}
                             title={classEvent.classPlan.title}
                             subtitle={`${classEvent.classPlan.meetingsPerWeek} meeting${classEvent.classPlan.meetingsPerWeek !== 1 ? "s" : ""}/week · ${classEvent.classPlan.totalSessions} sessions · ${classEvent.classPlan.sessionDurationInHours}h each`}
-                            onSetSchedule={() =>
+                            onSetSchedule={() => {
                               setSelectedAppointment(
                                 buildSyntheticClassAppointment(classEvent),
-                              )
-                            }
+                              );
+                              setSelectedGroupProgress(null);
+                            }}
                           />
                         ))}
                       </div>
@@ -479,11 +484,12 @@ export function AppointmentsTab({
                             key={webinarEvent.id}
                             title={webinarEvent.webinarPlan.title}
                             subtitle={`Single session · ${webinarEvent.webinarPlan.durationInHours}h`}
-                            onSetSchedule={() =>
+                            onSetSchedule={() => {
                               setSelectedAppointment(
                                 buildSyntheticWebinarAppointment(webinarEvent),
-                              )
-                            }
+                              );
+                              setSelectedGroupProgress(null);
+                            }}
                           />
                         ))}
                       </div>
@@ -568,9 +574,14 @@ export function AppointmentsTab({
                                     variant="outline"
                                     size="sm"
                                     className="h-8 text-xs px-3"
-                                    onClick={() =>
-                                      setSelectedAppointment(firstAppointment)
-                                    }
+                                    onClick={() => {
+                                      setSelectedAppointment(firstAppointment);
+                                      setSelectedGroupProgress(
+                                        completedSessions > 0
+                                          ? { completedSessions, totalSessions }
+                                          : null,
+                                      );
+                                    }}
                                   >
                                     <Clock className="w-3 h-3 mr-1" />
                                     Timings
@@ -771,11 +782,12 @@ export function AppointmentsTab({
                                                 variant="outline"
                                                 size="sm"
                                                 className="h-8 text-xs px-3"
-                                                onClick={() =>
+                                                onClick={() => {
                                                   setSelectedAppointment(
                                                     appointment,
-                                                  )
-                                                }
+                                                  );
+                                                  setSelectedGroupProgress(null);
+                                                }}
                                               >
                                                 <Clock className="w-3 h-3 mr-1" />
                                                 Timings
@@ -944,8 +956,13 @@ export function AppointmentsTab({
       {selectedAppointment && (
         <EventTimingsCalendar
           isOpen={!!selectedAppointment}
-          onClose={() => setSelectedAppointment(null)}
+          onClose={() => {
+            setSelectedAppointment(null);
+            setSelectedGroupProgress(null);
+          }}
           appointment={selectedAppointment}
+          completedSessions={selectedGroupProgress?.completedSessions}
+          groupTotalSessions={selectedGroupProgress?.totalSessions}
         />
       )}
     </div>
