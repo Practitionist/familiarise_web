@@ -204,7 +204,7 @@ export function DashboardSidebar({
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto p-3">
+      <nav className="flex-1 overflow-y-auto scrollbar-hide p-3">
         {/* Render sectioned navigation if navSections is provided */}
         {navSections.length > 0 ? (
           <div className="space-y-4">
