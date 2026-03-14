@@ -23,6 +23,7 @@ import {
   PrismaTransaction,
   ConsultantAllocationData,
   EventConfig,
+  isRecurringEventType,
 } from "./types";
 import { SlotCalculationService } from "./SlotCalculationService";
 import { SlotValidationService } from "./SlotValidationService";
@@ -31,6 +32,7 @@ import { lockAutoAllocate, unlockAutoAllocate } from "@/utils/appointmentlock";
 import {
   DAY_OF_WEEK_TO_INDEX,
   isMinuteWithinWeeklySlot,
+  TWENTY_FOUR_HOURS_IN_MS,
 } from "./slotTimeUtils";
 import {
   AllocationValidationError,
@@ -275,15 +277,15 @@ export class SlotAllocationService {
           const isInProgressReallocation =
             !isReschedule &&
             pastConfirmedSlotCount > 0 &&
-            eventType === "class";
+            isRecurringEventType(eventType);
 
-          // Guard: for classes, reject re-allocation when already fully scheduled.
+          // Guard: for classes/subscriptions, reject re-allocation when already fully scheduled.
           // Webinars are handled by the DB unique constraint on webinarId (P2002 → 409).
-          // Classes have no such constraint, so we enforce it here to prevent
+          // Classes/subscriptions have no such constraint, so we enforce it here to prevent
           // concurrent auto-allocate calls from creating duplicate session sets.
           // For in-progress reallocation, only count FUTURE confirmed slots.
           if (
-            eventType === "class" &&
+            isRecurringEventType(eventType) &&
             !isReschedule &&
             existingNonTentativeSlotCount > 0
           ) {
@@ -571,7 +573,7 @@ export class SlotAllocationService {
           const isInProgressReallocation =
             !isReschedule &&
             pastConfirmedSlotCount > 0 &&
-            eventType === "class";
+            isRecurringEventType(eventType);
 
           // Collect appointment IDs to exclude from conflict detection and weekly limits.
           // For reschedule: exclude tentative appointments (they'll be deleted)
@@ -583,7 +585,7 @@ export class SlotAllocationService {
             : existingAppointments.map((a) => a.id);
 
           // Validate total slot count for recurring event types
-          if (eventType === "subscription" || eventType === "class") {
+          if (isRecurringEventType(eventType)) {
             if (isReschedule) {
               // Use calculateRequiredSlots instead of tentativeSlotCount.
               // Class creation creates 1 full-duration slot per appointment,
@@ -1511,7 +1513,7 @@ export class SlotAllocationService {
 
       let preservedSlotCount = 0;
       const enrolledUserIdSet = new Set<string>();
-      const imminentCutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 24h buffer
+      const imminentCutoff = new Date(now.getTime() + TWENTY_FOUR_HOURS_IN_MS);
 
       for (const appointment of appointments) {
         const pastSlots = appointment.slotsOfAppointment.filter(
@@ -1537,7 +1539,7 @@ export class SlotAllocationService {
 
         // Capture enrolled user IDs from deletable future slots before deletion
         for (const slot of deletableFutureSlots) {
-          for (const user of (slot as any).user || []) {
+          for (const user of slot.user) {
             enrolledUserIdSet.add(user.id);
           }
         }
