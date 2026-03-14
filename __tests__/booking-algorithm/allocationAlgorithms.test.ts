@@ -224,6 +224,50 @@ describe("AllocationAlgorithms.manualAllocate", () => {
     expect(result.error).toContain("Expected 4 slots but received 8");
   });
 
+  it("should adjust required slots for in-progress subscription with past slots", async () => {
+    // Subscription: 2 calls/week × 4 weeks = 8 total required (1hr = 2 slots each)
+    // Past: 4 slots (2 sessions completed)
+    // Expected: 4 future slots needed
+    const futureSlots = makeFutureConsecutiveSlots("2025-06-02T09:00:00Z", 4);
+    const result = await AllocationAlgorithms.manualAllocate(
+      futureSlots as any,
+      {
+        eventType: "subscription",
+        eventId: "sub-1",
+        sessionDurationInHours: 1,
+        callsPerWeek: 2,
+        durationInMonths: 1,
+        startDate: new Date("2025-05-01"),
+        endDate: new Date("2025-06-30"),
+        totalSessions: 4,
+        pastConfirmedSlotCount: 4,
+      },
+    );
+    expect(result.success).toBe(true);
+  });
+
+  it("should reject wrong slot count for in-progress subscription", async () => {
+    // Subscription: 4 total sessions × 2 slots = 8 total required
+    // Past: 4 slots → need 4 future, but providing 8
+    const futureSlots = makeFutureConsecutiveSlots("2025-06-02T09:00:00Z", 8);
+    const result = await AllocationAlgorithms.manualAllocate(
+      futureSlots as any,
+      {
+        eventType: "subscription",
+        eventId: "sub-1",
+        sessionDurationInHours: 1,
+        callsPerWeek: 2,
+        durationInMonths: 1,
+        startDate: new Date("2025-05-01"),
+        endDate: new Date("2025-06-30"),
+        totalSessions: 4,
+        pastConfirmedSlotCount: 4,
+      },
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Expected 4 slots but received 8");
+  });
+
   it("should not adjust required slots for non-recurring events", async () => {
     // Consultation: pastConfirmedSlotCount should be ignored
     const slots = makeFutureConsecutiveSlots("2025-06-01T09:00:00Z", 2);

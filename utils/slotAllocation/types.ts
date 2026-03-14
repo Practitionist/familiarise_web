@@ -18,6 +18,20 @@ export type AllocationMode = "auto" | "manual" | "requested";
 export type EventType = "consultation" | "subscription" | "webinar" | "class";
 
 /**
+ * Event types that are recurring (have multiple sessions over time).
+ * Used to guard past-session subtraction, reallocation logic, etc.
+ */
+export const RECURRING_EVENT_TYPES: ReadonlyArray<EventType> = [
+  "class",
+  "subscription",
+] as const;
+
+/** Type-safe check for whether an event type is recurring */
+export function isRecurringEventType(eventType: string): boolean {
+  return (RECURRING_EVENT_TYPES as ReadonlyArray<string>).includes(eventType);
+}
+
+/**
  * Request structure for slot allocation
  */
 export interface AllocationRequest {

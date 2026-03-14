@@ -98,7 +98,7 @@ export function DashboardShell({
         {/* Main Content */}
         <main className="flex-1 lg:ml-64 min-h-screen bg-zinc-100">
           {/* Mobile Header Bar */}
-          <div className="sticky top-maintenance z-[9999] overflow-visible flex items-center gap-3 px-4 py-3 bg-white border-b border-zinc-200 lg:hidden">
+          <div className="sticky top-maintenance z-50 overflow-visible flex items-center gap-3 px-4 py-3 bg-white border-b border-zinc-200 lg:hidden">
             <Button
               variant="ghost"
               size="icon"
@@ -123,11 +123,11 @@ export function DashboardShell({
 
           {/* Desktop header - full navbar or simple header actions */}
           {navbar ? (
-            <div className="hidden lg:block relative z-[9999] overflow-visible">
+            <div className="hidden lg:block sticky top-0 z-50 overflow-visible">
               {navbar}
             </div>
           ) : headerActions ? (
-            <div className="hidden lg:flex items-center justify-end gap-2 px-6 py-2 border-b border-zinc-200/50 bg-white/80 backdrop-blur-xl relative z-[9999] overflow-visible">
+            <div className="hidden lg:flex items-center justify-end gap-2 px-6 py-2 border-b border-zinc-200/50 bg-white/80 backdrop-blur-xl relative z-50 overflow-visible">
               {headerActions}
             </div>
           ) : null}
