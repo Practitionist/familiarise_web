@@ -125,17 +125,25 @@ export function EventTimingsCalendar({
     onClose();
   };
 
+  const appendProgressText = (
+    baseText: string,
+    completed?: number,
+    total?: number,
+  ): string => {
+    if (completed && completed > 0 && total) {
+      const remaining = total - completed;
+      return `${baseText} ${completed} of ${total} sessions completed — select times for the remaining ${remaining}.`;
+    }
+    return baseText;
+  };
+
   const getDescriptionText = () => {
     switch (appointment.appointmentType) {
       case "CONSULTATION":
         return "Select consecutive time slots for your consultation. All slots must be on the same day.";
       case "SUBSCRIPTION": {
         const baseText = `Schedule ${eventDetails.callsPerWeek} call${eventDetails.callsPerWeek !== 1 ? "s" : ""} per week for ${eventDetails.durationInMonths} month${eventDetails.durationInMonths !== 1 ? "s" : ""}. Each call is ${eventDetails.sessionDurationInHours || 1} hour${(eventDetails.sessionDurationInHours || 1) > 1 ? "s" : ""}.`;
-        if (completedSessions && completedSessions > 0 && groupTotalSessions) {
-          const remaining = groupTotalSessions - completedSessions;
-          return `${baseText} ${completedSessions} of ${groupTotalSessions} sessions completed — select times for the remaining ${remaining}.`;
-        }
-        return baseText;
+        return appendProgressText(baseText, completedSessions, groupTotalSessions);
       }
       case "WEBINAR":
         return "Select consecutive time slots for your webinar session.";
@@ -145,11 +153,7 @@ export function EventTimingsCalendar({
           sessionDuration === 1 ? "1 hour" : `${sessionDuration} hours`;
         const meetingsPerWeek = eventDetails.meetingsPerWeek || 1;
         const classBaseText = `Schedule ${meetingsPerWeek} meeting${meetingsPerWeek !== 1 ? "s" : ""} per week. Each session is ${durationText}.`;
-        if (completedSessions && completedSessions > 0 && groupTotalSessions) {
-          const remaining = groupTotalSessions - completedSessions;
-          return `${classBaseText} ${completedSessions} of ${groupTotalSessions} sessions completed — select times for the remaining ${remaining}.`;
-        }
-        return classBaseText;
+        return appendProgressText(classBaseText, completedSessions, groupTotalSessions);
       }
       default:
         return "Select time slots for your event.";
