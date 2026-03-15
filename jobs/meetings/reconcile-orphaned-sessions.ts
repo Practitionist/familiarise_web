@@ -103,10 +103,19 @@ export async function reconcileOrphanedSessions(): Promise<ReconciliationResult>
         result.streamNotFound++;
       }
 
-      await prisma.meetingSession.update({
-        where: { id: session.id },
-        data: { endedAt, endedReason },
-      });
+      await prisma.$transaction([
+        prisma.meetingSession.update({
+          where: { id: session.id },
+          data: { endedAt, endedReason },
+        }),
+        prisma.slotOfAppointment.update({
+          where: { id: session.slotOfAppointmentId },
+          data: {
+            completionStatus: "COMPLETED",
+            completedAt: endedAt,
+          },
+        }),
+      ]);
 
       result.details.push(
         `Session ${session.id} (call: ${session.streamCallId}): ${endedReason}`,

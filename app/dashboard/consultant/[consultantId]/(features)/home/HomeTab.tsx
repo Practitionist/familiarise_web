@@ -123,7 +123,7 @@ function QuickStatsPanel({
     queryKey: ["consultant-earnings-summary", consultantId],
     queryFn: async () => {
       const res = await fetch("/api/consultant/earnings?limit=0");
-      if (!res.ok) return null;
+      if (!res.ok) throw new Error(`Earnings fetch failed: ${res.status}`);
       return res.json();
     },
     staleTime: 60_000,

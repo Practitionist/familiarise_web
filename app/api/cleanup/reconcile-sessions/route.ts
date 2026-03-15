@@ -4,7 +4,9 @@ import { reconcileOrphanedSessions } from "@/jobs/meetings/reconcile-orphaned-se
 export async function POST(req: NextRequest) {
   try {
     const authHeader = req.headers.get("authorization");
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    const cronSecret =
+      process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
+    if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
       return NextResponse.json(
         {
           error: "Unauthorized",

@@ -105,7 +105,10 @@ export function OneOffEventCard({
   const canDevJoin = isDev && rawSlots.length > 0 && !!appointment;
 
   const showDocUpload =
-    (type === "Consultation" || type === "Trial") && !!appointmentId;
+    (type === "Consultation" || type === "Trial") &&
+    !!appointmentId &&
+    !isPendingPayment &&
+    !isInactive;
 
   const appointmentStatus: AppointmentStatus =
     status?.toLowerCase() === "completed" ? "COMPLETED" : "UPCOMING";
@@ -217,7 +220,7 @@ export function OneOffEventCard({
         )}
 
         {/* Document upload — full width, above action buttons */}
-        {showDocUpload && !isInactive && (
+        {showDocUpload && (
           <div className="mt-3 pt-3 border-t border-zinc-100">
             <DocumentUpload
               appointmentId={appointmentId!}

@@ -66,6 +66,20 @@ function extractCollaborators(
   );
 }
 
+// For multi-session events, find the next upcoming slot time (not the first historical one)
+function getNextSlotTime(
+  slots: Array<{ startsAt: string | Date }> | undefined | null,
+): number {
+  if (!slots?.length) return Infinity;
+  const now = Date.now();
+  const upcoming = slots.find(
+    (s) => new Date(s.startsAt).getTime() > now,
+  );
+  return upcoming
+    ? new Date(upcoming.startsAt).getTime()
+    : new Date(slots[0].startsAt).getTime();
+}
+
 // Helper to check if a status is inactive (greyed out)
 function isInactiveStatus(status: string): boolean {
   const inactive = ["cancelled", "rejected", "completed", "expired"];
@@ -112,9 +126,7 @@ export function Overview({
     kind: "subscription" as const,
     data: s,
     status: s.requestStatus.toString(),
-    firstSlotTime: s.appointments?.[0]?.slotsOfAppointment?.[0]
-      ? new Date(s.appointments[0].slotsOfAppointment[0].startsAt).getTime()
-      : Infinity,
+    firstSlotTime: getNextSlotTime(s.appointments?.[0]?.slotsOfAppointment),
   }));
   const trialItems = trials.map((t) => ({
     kind: "trial" as const,
@@ -142,9 +154,7 @@ export function Overview({
     classes.map((c) => ({
       data: c,
       status: c.status.toString(),
-      firstSlotTime: c.appointments?.[0]?.slotsOfAppointment?.[0]
-        ? new Date(c.appointments[0].slotsOfAppointment[0].startsAt).getTime()
-        : Infinity,
+      firstSlotTime: getNextSlotTime(c.appointments?.[0]?.slotsOfAppointment),
     })),
   );
 
@@ -170,7 +180,7 @@ export function Overview({
             });
             const nextSlot = rawSlots[0];
             return (
-              <div key={consultation.id} className="flex-shrink-0 w-[300px]">
+              <div key={consultation.id} className="flex-shrink-0 w-full sm:w-[300px]">
                 <OneOffEventCard
                   title={consultation.consultationPlan.title}
                   consultant={
@@ -211,7 +221,7 @@ export function Overview({
                 []) as SlotOfAppointment[];
               const firstSlot = rawSlots[0];
               return (
-                <div key={trial.id} className="flex-shrink-0 w-[300px]">
+                <div key={trial.id} className="flex-shrink-0 w-full sm:w-[300px]">
                   <OneOffEventCard
                     title={trial.subscriptionPlan.title}
                     consultant={
@@ -243,7 +253,7 @@ export function Overview({
             }) as SlotWithMeetingSession[];
             const nextSlot = rawSlots[0];
             return (
-              <div key={subscription.id} className="flex-shrink-0 w-[300px]">
+              <div key={subscription.id} className="flex-shrink-0 w-full sm:w-[300px]">
                 <MultiSessionEventCard
                   title={subscription.subscriptionPlan.title}
                   consultant={
@@ -307,7 +317,7 @@ export function Overview({
             );
 
             return (
-              <div key={webinar.id} className="flex-shrink-0 w-[300px]">
+              <div key={webinar.id} className="flex-shrink-0 w-full sm:w-[300px]">
                 <OneOffEventCard
                   title={webinar.webinarPlan.title}
                   consultant={
@@ -374,7 +384,7 @@ export function Overview({
             );
 
             return (
-              <div key={classItem.id} className="flex-shrink-0 w-[300px]">
+              <div key={classItem.id} className="flex-shrink-0 w-full sm:w-[300px]">
                 <MultiSessionEventCard
                   title={classItem.classPlan.title}
                   consultant={

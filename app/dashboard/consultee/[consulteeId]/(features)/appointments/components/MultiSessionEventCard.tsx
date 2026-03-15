@@ -129,7 +129,11 @@ export function MultiSessionEventCard({
   const isApproved = status?.toUpperCase() === "APPROVED";
   const isDev = process.env.NODE_ENV === "development";
   const canDevJoin = isDev && rawSlots.length > 0 && !!appointment;
-  const showDocUpload = type === "Subscription" && !!appointmentId;
+  const showDocUpload =
+    type === "Subscription" &&
+    !!appointmentId &&
+    !isPendingPayment &&
+    !isInactive;
 
   const appointmentStatus: AppointmentStatus =
     status?.toLowerCase() === "completed" ? "COMPLETED" : "UPCOMING";
@@ -305,7 +309,7 @@ export function MultiSessionEventCard({
         )}
 
         {/* Document upload — full width, subscriptions only */}
-        {showDocUpload && !isInactive && (
+        {showDocUpload && (
           <div className="mt-3 pt-3 border-t border-zinc-100">
             <DocumentUpload
               appointmentId={appointmentId!}

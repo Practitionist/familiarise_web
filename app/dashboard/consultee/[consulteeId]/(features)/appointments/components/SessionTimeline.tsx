@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { format } from "date-fns";
 import { Video, Loader2, ChevronDown } from "lucide-react";
 import { cn } from "@/utils/tailwind";
@@ -110,22 +110,31 @@ export function SessionTimeline({
   const sessions = groupSlotsBySession(nonTentativeSlots);
   const showExpand = sessions.length > COLLAPSED_LIMIT;
 
+  // Pre-compute session statuses once to avoid repeated getSlotStatus calls
+  const sessionStatuses = useMemo(
+    () =>
+      new Map(
+        sessions.map((session) => [
+          session.appointmentId,
+          getSessionStatus(session),
+        ]),
+      ),
+    [sessions],
+  );
+
   // When collapsed and > COLLAPSED_LIMIT: show dot summary + next upcoming/joinable sessions
   const visibleSessions =
     showExpand && !expanded
       ? (() => {
-          // Find first upcoming/joinable index
           const firstUpcomingIdx = sessions.findIndex((session) => {
-            const status = getSessionStatus(session);
+            const status = sessionStatuses.get(session.appointmentId)!;
             return status === "upcoming" || status === "joinable";
           });
 
           if (firstUpcomingIdx === -1) {
-            // All past — show last 3
             return sessions.slice(-3);
           }
 
-          // Show the joinable/upcoming and 2 surrounding
           const startIdx = Math.max(0, firstUpcomingIdx - 1);
           return sessions.slice(startIdx, startIdx + 3);
         })()
@@ -135,7 +144,7 @@ export function SessionTimeline({
   const dotSummary =
     showExpand && !expanded
       ? sessions.map((session) => {
-          const st = getSessionStatus(session);
+          const st = sessionStatuses.get(session.appointmentId)!;
           if (st === "completed") return "\u2705";
           if (st === "noRecord") return "\u26A0\uFE0F";
           if (st === "joinable") return "\u25C9";
@@ -159,7 +168,7 @@ export function SessionTimeline({
 
       {/* Session rows (one row per appointment group) */}
       {visibleSessions.map((session) => {
-        const status = getSessionStatus(session);
+        const status = sessionStatuses.get(session.appointmentId)!;
         const isJoinable = status === "joinable";
         const joinableSlot = isJoinable ? getJoinableSlot(session) : undefined;
 
@@ -183,7 +192,12 @@ export function SessionTimeline({
             tabIndex={isJoinable ? 0 : undefined}
             onKeyDown={
               isJoinable && joinableSlot
-                ? (e) => e.key === "Enter" && onJoinSlot(joinableSlot)
+                ? (e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onJoinSlot(joinableSlot);
+                    }
+                  }
                 : undefined
             }
           >

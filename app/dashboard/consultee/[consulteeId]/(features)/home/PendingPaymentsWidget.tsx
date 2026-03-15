@@ -34,7 +34,8 @@ interface PendingPaymentsWidgetProps {
 
 /**
  * Sidebar widget showing pending payments.
- * Always renders — shows empty state when no payments, amber alert when payments exist.
+ * Returns null during initial load, then shows empty state when
+ * no payments or amber alert when payments exist.
  */
 export function PendingPaymentsWidget({
   consulteeId,
