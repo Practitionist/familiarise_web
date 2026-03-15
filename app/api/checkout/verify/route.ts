@@ -121,6 +121,8 @@ function getPaymentStatusMessage(status: string): string {
       return "Payment is still being processed. Please wait a few moments and refresh the page.";
     case "FAILED":
       return "Payment failed. Please try again with a different payment method.";
+    case "EXPIRED":
+      return "Payment session expired. Please start a new checkout.";
     default:
       return "Payment status is unknown. Please contact support.";
   }

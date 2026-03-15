@@ -35,7 +35,7 @@ interface ReportIssueDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   appointmentId: string;
-  appointmentType: "CONSULTATION" | "SUBSCRIPTION";
+  appointmentType: "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS";
   appointmentStatus: AppointmentStatus;
   consultantName: string;
   scheduledAt?: string;
@@ -153,7 +153,13 @@ export function ReportIssueDialog({
   };
 
   const typeLabel =
-    appointmentType === "CONSULTATION" ? "Consultation" : "Subscription";
+    appointmentType === "CONSULTATION"
+      ? "Consultation"
+      : appointmentType === "WEBINAR"
+        ? "Webinar"
+        : appointmentType === "CLASS"
+          ? "Class"
+          : "Subscription";
   const statusLabel =
     appointmentStatus === "COMPLETED" ? "Completed" : "Upcoming";
 

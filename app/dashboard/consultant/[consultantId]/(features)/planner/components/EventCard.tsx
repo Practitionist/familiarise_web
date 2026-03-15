@@ -263,8 +263,7 @@ export function EventCard({
   const startDate = getEventStartDate(event);
 
   const isLiveSession = eventType === "webinar" || eventType === "class";
-  const durationSuffix =
-    isRecurringEventType(eventType) ? "/mo" : "";
+  const durationSuffix = isRecurringEventType(eventType) ? "/mo" : "";
 
   // Check if subscription plan has free trial enabled
   const hasFreeTrialEnabled =

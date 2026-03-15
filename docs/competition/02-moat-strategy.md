@@ -22,11 +22,11 @@ This document defines five layers of defensibility, how each compounds over time
 
 Familiarise supports four distinct service types:
 
-| Service Type | What It Replaces |
-|---|---|
-| 1-on-1 Consultations | Topmate, Calendly + Stripe + Zoom |
-| Webinars | WebinarJam, Livestorm, Zoom Webinars |
-| Classes (multi-session) | Teachable, Thinkific, manual scheduling |
+| Service Type              | What It Replaces                           |
+| ------------------------- | ------------------------------------------ |
+| 1-on-1 Consultations      | Topmate, Calendly + Stripe + Zoom          |
+| Webinars                  | WebinarJam, Livestorm, Zoom Webinars       |
+| Classes (multi-session)   | Teachable, Thinkific, manual scheduling    |
 | Subscriptions (recurring) | Patreon, Buy Me a Coffee, manual invoicing |
 
 No competitor offers all four in one platform. Topmate has consultations only. SuperProfile has digital products but no integrated sessions. GrowthSchool has cohort courses but no 1-on-1.
@@ -63,15 +63,15 @@ That's 5+ migration steps across 3+ platforms. The friction is enormous. Most wo
 
 ### Non-Portable Data Assets
 
-| Data Type | Portability | Why It Matters |
-|---|---|---|
-| Reviews & Ratings | Cannot export | Social proof. A creator with 50 five-star reviews on Familiarise has zero reviews on Topmate. Starting over means starting from zero trust. |
-| Session Recordings | Platform-hosted | Creators can reference past sessions. Seekers can see clips. Recordings are stored on our infrastructure. |
-| Analytics History | Cannot export | Revenue trends, booking patterns, peak hours, conversion rates, popular services. Months of analytics history is irreplaceable. |
-| Chat History | Cannot export | Ongoing conversations with clients. Context, follow-ups, shared files, rapport — all trapped in our Stream.io chat. |
-| Client Relationships | Partially portable | A creator knows their clients' names, but the booking history, session notes, review exchanges, and payment records live on Familiarise. |
-| Scheduling Preferences | Cannot export | Availability patterns, buffer times, timezone configurations, slot templates — all configured and optimized over months. |
-| Collaborator Network | Cannot export | Co-hosting relationships, revenue splits, shared events — all platform-specific. |
+| Data Type              | Portability        | Why It Matters                                                                                                                              |
+| ---------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Reviews & Ratings      | Cannot export      | Social proof. A creator with 50 five-star reviews on Familiarise has zero reviews on Topmate. Starting over means starting from zero trust. |
+| Session Recordings     | Platform-hosted    | Creators can reference past sessions. Seekers can see clips. Recordings are stored on our infrastructure.                                   |
+| Analytics History      | Cannot export      | Revenue trends, booking patterns, peak hours, conversion rates, popular services. Months of analytics history is irreplaceable.             |
+| Chat History           | Cannot export      | Ongoing conversations with clients. Context, follow-ups, shared files, rapport — all trapped in our Stream.io chat.                         |
+| Client Relationships   | Partially portable | A creator knows their clients' names, but the booking history, session notes, review exchanges, and payment records live on Familiarise.    |
+| Scheduling Preferences | Cannot export      | Availability patterns, buffer times, timezone configurations, slot templates — all configured and optimized over months.                    |
+| Collaborator Network   | Cannot export      | Co-hosting relationships, revenue splits, shared events — all platform-specific.                                                            |
 
 ### The Compound Effect
 
@@ -106,14 +106,14 @@ After 6 months, a creator's Familiarise profile is a comprehensive record of the
 
 Our video and chat infrastructure is built on Stream.io, integrated directly into the platform. Here's what that means in practice versus the competition:
 
-| Experience | Familiarise | Topmate / Others |
-|---|---|---|
-| Joining a session | Click "Join" in-app. Camera/mic ready. | Get Zoom link in email. Open Zoom. Enter meeting ID. Wait for host. |
-| Chat before session | Message the consultant directly in-platform. | Email or WhatsApp (if they share their number). |
-| Chat after session | Continue the conversation in the same thread. | Email follow-up. Hope they respond. |
-| Session recording | Automatic. Stored on platform. Accessible to both parties. | Zoom cloud recording (if enabled). Download from Zoom. Share via Google Drive. |
-| Rescheduling | In-app. One click. | Email back and forth. Find a new Zoom link. |
-| Payment | Handled before session. Automatic. | Stripe checkout → Zoom link → hope the link works. |
+| Experience          | Familiarise                                                | Topmate / Others                                                               |
+| ------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Joining a session   | Click "Join" in-app. Camera/mic ready.                     | Get Zoom link in email. Open Zoom. Enter meeting ID. Wait for host.            |
+| Chat before session | Message the consultant directly in-platform.               | Email or WhatsApp (if they share their number).                                |
+| Chat after session  | Continue the conversation in the same thread.              | Email follow-up. Hope they respond.                                            |
+| Session recording   | Automatic. Stored on platform. Accessible to both parties. | Zoom cloud recording (if enabled). Download from Zoom. Share via Google Drive. |
+| Rescheduling        | In-app. One click.                                         | Email back and forth. Find a new Zoom link.                                    |
+| Payment             | Handled before session. Automatic.                         | Stripe checkout → Zoom link → hope the link works.                             |
 
 ### The Habit Loop
 
@@ -152,14 +152,14 @@ We don't have this problem. Booking → session → follow-up is one continuous 
 
 ### The Regulatory Landscape
 
-| Requirement | Familiarise | Topmate |
-|---|---|---|
-| RBI PA Compliance | On roadmap, designed for compliance | No confirmed RBI PA license |
-| GST Compliance | Built into invoicing | Unclear for Indian transactions |
-| Payment Gateway | Razorpay (India-native) + Stripe (international) | Stripe only |
-| UPI Support | Yes (via Razorpay) | No |
-| Data Localization | Indian data on Indian servers (Supabase) | Unclear |
-| Payout Reliability | Razorpay settlement (T+2 standard) | Frequent complaints about delays |
+| Requirement        | Familiarise                                      | Topmate                          |
+| ------------------ | ------------------------------------------------ | -------------------------------- |
+| RBI PA Compliance  | On roadmap, designed for compliance              | No confirmed RBI PA license      |
+| GST Compliance     | Built into invoicing                             | Unclear for Indian transactions  |
+| Payment Gateway    | Razorpay (India-native) + Stripe (international) | Stripe only                      |
+| UPI Support        | Yes (via Razorpay)                               | No                               |
+| Data Localization  | Indian data on Indian servers (Supabase)         | Unclear                          |
+| Payout Reliability | Razorpay settlement (T+2 standard)               | Frequent complaints about delays |
 
 ### The Trust Deficit Opportunity
 
@@ -195,19 +195,23 @@ When a creator Googles "Topmate payout problems" or "Topmate alternatives," we s
 ### Types of Network Effects on Familiarise
 
 **1. Cross-Side Network Effects (Supply ↔ Demand)**
+
 - More experts → more variety for seekers → more seekers join
 - More seekers → more bookings for experts → more experts join
 - This is the classic marketplace flywheel. It's slow to start and powerful once spinning.
 
 **2. Same-Side Network Effects (Supply ↔ Supply)**
+
 - Collaborator system: experts co-host webinars and classes → each expert brings their audience → combined audience is larger than either alone
 - Revenue splits incentivize collaboration → collaboration creates content → content attracts seekers
 
 **3. Data Network Effects**
+
 - More sessions → more reviews → better quality signals → better matching → higher conversion → more sessions
 - More analytics data → better recommendations → higher booking rates → more data
 
 **4. Content Network Effects**
+
 - Session recordings → clips shared on social media → organic traffic → new users
 - Webinar replays → evergreen content → SEO value → organic discovery
 - Reviews → trust signals → higher conversion → more reviews
@@ -269,13 +273,13 @@ We are not the first mover. Topmate is. Preplaced is. GrowthSchool is. Being sec
 
 ## Moat Timeline — Honest Assessment
 
-| Period | Moat Strength | Vulnerability | Priority |
-|---|---|---|---|
-| **Month 1-3** | NONE. All advantages are copyable. | A creator can leave with zero switching cost. We're competing purely on features and commission. | Ship fast. Get creators on. Get sessions happening. Every session generates data we can compound. |
-| **Month 3-6** | WEAK. Data starts accumulating. | Reviews are sparse. Analytics are thin. Network effects are zero. But multi-service users are starting to consolidate. | Push multi-service adoption aggressively. Get creators from 1 service type to 2-3. Each additional service doubles switching cost. |
-| **Month 6-12** | MODERATE. Reviews + analytics + recordings create real switching cost. | A well-funded competitor could still poach creators with an aggressive migration offer. But they'd need to replicate 6 months of reviews and data. | Focus on data-driven features: analytics dashboards, weekly summaries, review highlights. Make the data visible and valuable. |
-| **Year 1-2** | STRONG. Network effects start compounding. Organic discovery grows. | Only a major platform (Google, LinkedIn, etc.) entering the space could disrupt at this point. | Brand building. Community building. Let the flywheel spin. Invest in SEO and content marketing to capture organic traffic. |
-| **Year 2+** | DEEP. Full moat activated. | Disruption would require a 10x better product AND a migration tool that ports reviews/data. Nearly impossible. | Expand verticals. Expand geographies. The moat funds the growth. |
+| Period         | Moat Strength                                                          | Vulnerability                                                                                                                                      | Priority                                                                                                                           |
+| -------------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| **Month 1-3**  | NONE. All advantages are copyable.                                     | A creator can leave with zero switching cost. We're competing purely on features and commission.                                                   | Ship fast. Get creators on. Get sessions happening. Every session generates data we can compound.                                  |
+| **Month 3-6**  | WEAK. Data starts accumulating.                                        | Reviews are sparse. Analytics are thin. Network effects are zero. But multi-service users are starting to consolidate.                             | Push multi-service adoption aggressively. Get creators from 1 service type to 2-3. Each additional service doubles switching cost. |
+| **Month 6-12** | MODERATE. Reviews + analytics + recordings create real switching cost. | A well-funded competitor could still poach creators with an aggressive migration offer. But they'd need to replicate 6 months of reviews and data. | Focus on data-driven features: analytics dashboards, weekly summaries, review highlights. Make the data visible and valuable.      |
+| **Year 1-2**   | STRONG. Network effects start compounding. Organic discovery grows.    | Only a major platform (Google, LinkedIn, etc.) entering the space could disrupt at this point.                                                     | Brand building. Community building. Let the flywheel spin. Invest in SEO and content marketing to capture organic traffic.         |
+| **Year 2+**    | DEEP. Full moat activated.                                             | Disruption would require a 10x better product AND a migration tool that ports reviews/data. Nearly impossible.                                     | Expand verticals. Expand geographies. The moat funds the growth.                                                                   |
 
 ---
 
@@ -314,10 +318,10 @@ This is how marketplaces win. Not with features. With accumulated, compounding, 
 
 ## Action Items
 
-| Layer | Immediate Action (Month 1) | Quarter 1 Action | Half-Year Action |
-|---|---|---|---|
-| Multi-Service | Ship all 4 service types at launch | Prompt 1-service creators to try a second | Target: 40% of active creators using 2+ services |
-| Data | Implement review prompts after every session | Launch weekly analytics email | Build exportable "practice report" (ironically, making data visible increases its lock-in value) |
-| Experience | Ensure Stream.io sessions are stable and fast | Optimize booking-to-session flow to under 3 clicks | Track session NPS; target >8.5 |
-| Trust | Publish payout SLA on landing page | Track and publish payout reliability stats | Get RBI PA compliance documented |
-| Network Effects | Build referral credit system | Launch collaborator features | Measure organic vs paid acquisition ratio; target 30% organic by month 6 |
+| Layer           | Immediate Action (Month 1)                    | Quarter 1 Action                                   | Half-Year Action                                                                                 |
+| --------------- | --------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Multi-Service   | Ship all 4 service types at launch            | Prompt 1-service creators to try a second          | Target: 40% of active creators using 2+ services                                                 |
+| Data            | Implement review prompts after every session  | Launch weekly analytics email                      | Build exportable "practice report" (ironically, making data visible increases its lock-in value) |
+| Experience      | Ensure Stream.io sessions are stable and fast | Optimize booking-to-session flow to under 3 clicks | Track session NPS; target >8.5                                                                   |
+| Trust           | Publish payout SLA on landing page            | Track and publish payout reliability stats         | Get RBI PA compliance documented                                                                 |
+| Network Effects | Build referral credit system                  | Launch collaborator features                       | Measure organic vs paid acquisition ratio; target 30% organic by month 6                         |

@@ -60,6 +60,7 @@ export const NOVU_WORKFLOWS = {
 
   // Recordings
   RECORDING_AVAILABLE: "recording-available",
+  RECORDING_FAILED: "recording-failed",
 
   // Referrals
   REFERRAL_BONUS_EARNED: "referral-bonus-earned",
@@ -225,6 +226,12 @@ export type RecordingPayload = {
   consultantName: string;
   consulteeName?: string;
   recordingUrl: string;
+  dashboardUrl: string;
+};
+
+export type RecordingFailedPayload = {
+  streamCallId: string;
+  errorMessage?: string;
   dashboardUrl: string;
 };
 

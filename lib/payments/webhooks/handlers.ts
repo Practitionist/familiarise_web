@@ -572,6 +572,15 @@ export async function handlePaymentFailure(paymentIntentId: string) {
       return;
     }
 
+    // Guard against EXPIRED → FAILED transition.
+    // Once a payment is expired by cleanup jobs, a late failure webhook should not overwrite it.
+    if (payment.paymentStatus === PaymentStatus.EXPIRED) {
+      console.log(
+        `Payment ${paymentIntentId} already EXPIRED. Ignoring late failure webhook.`,
+      );
+      return;
+    }
+
     await tx.payment.update({
       where: { id: payment.id },
       data: { paymentStatus: PaymentStatus.FAILED },

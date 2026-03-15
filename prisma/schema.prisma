@@ -1525,6 +1525,7 @@ enum PaymentStatus {
   PENDING
   SUCCEEDED
   FAILED
+  EXPIRED
 }
 
 model Refund {

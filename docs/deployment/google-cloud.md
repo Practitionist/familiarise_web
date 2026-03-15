@@ -23,23 +23,23 @@
 
 ## Project Overview
 
-| Property | Value |
-|---|---|
-| GCP Project ID | `familiarise` |
-| GCP Project Number | `384845845365` |
-| Billing account | Linked to `<team-admin-email>` |
-| GCP Console | `https://console.cloud.google.com/?project=familiarise` |
-| Auth Platform | `https://console.cloud.google.com/auth/clients?project=familiarise` |
-| OAuth brand | `familiarise` |
+| Property           | Value                                                               |
+| ------------------ | ------------------------------------------------------------------- |
+| GCP Project ID     | `familiarise`                                                       |
+| GCP Project Number | `384845845365`                                                      |
+| Billing account    | Linked to `<team-admin-email>`                                      |
+| GCP Console        | `https://console.cloud.google.com/?project=familiarise`             |
+| Auth Platform      | `https://console.cloud.google.com/auth/clients?project=familiarise` |
+| OAuth brand        | `familiarise`                                                       |
 
 ### OAuth clients in this project
 
-| Name | Type | Client ID (prefix) | Purpose |
-|---|---|---|---|
+| Name                     | Type            | Client ID (prefix)     | Purpose                          |
+| ------------------------ | --------------- | ---------------------- | -------------------------------- |
 | `familiarise-web-client` | Web application | `384845845365-8eac...` | **Primary — production website** |
-| `familiarise-mac` | Desktop | `384845845365-42ti...` | macOS desktop app (future) |
-| `Android client 1` | Android | `384845845365-6bg1...` | Android app (future) |
-| `iOS client 1` | iOS | `384845845365-cbj7...` | iOS app (future) |
+| `familiarise-mac`        | Desktop         | `384845845365-42ti...` | macOS desktop app (future)       |
+| `Android client 1`       | Android         | `384845845365-6bg1...` | Android app (future)             |
+| `iOS client 1`           | iOS             | `384845845365-cbj7...` | iOS app (future)                 |
 
 > **Only `familiarise-web-client` is relevant to the web app deployment.**
 > Do not edit the other clients unless you are working on mobile/desktop.
@@ -52,11 +52,13 @@ The GCP console was redesigned in 2025. The old path "APIs & Services → Creden
 now lives under a new top-level section called **Google Auth Platform**.
 
 **New path to OAuth clients:**
+
 ```
 console.cloud.google.com → Google Auth Platform → Clients
 ```
 
 Or directly:
+
 ```
 https://console.cloud.google.com/auth/clients?project=familiarise
 ```
@@ -147,11 +149,11 @@ open the GCP Console and discover the correct client.
 
 ### Client: `familiarise-web-client`
 
-| Field | Value |
-|---|---|
-| Full Client ID | `$GOOGLE_CLIENT_ID` |
-| Type | Web application |
-| Created | August 17, 2025 |
+| Field                | Value                               |
+| -------------------- | ----------------------------------- |
+| Full Client ID       | `$GOOGLE_CLIENT_ID`                 |
+| Type                 | Web application                     |
+| Created              | August 17, 2025                     |
 | Client secret suffix | `****TyRB` (created March 15, 2026) |
 
 ### Authorized JavaScript Origins
@@ -159,12 +161,12 @@ open the GCP Console and discover the correct client.
 These are the domains where your frontend JavaScript runs. Google checks that
 the sign-in request comes from one of these origins.
 
-| URI | Purpose |
-|---|---|
-| `http://localhost:3000` | Local development |
+| URI                               | Purpose                |
+| --------------------------------- | ---------------------- |
+| `http://localhost:3000`           | Local development      |
 | `https://familiarise.netlify.app` | Netlify default domain |
-| `https://familiarisenow.com` | Production |
-| `https://dev.familiarisenow.com` | Dev branch staging |
+| `https://familiarisenow.com`      | Production             |
+| `https://dev.familiarisenow.com`  | Dev branch staging     |
 
 > **Rule:** Add an origin for every domain where your frontend is deployed.
 > Do NOT add backend URLs (Supabase, APIs, etc.) — these are not JavaScript origins.
@@ -175,12 +177,12 @@ the sign-in request comes from one of these origins.
 These are the exact URLs Google will redirect to after the user grants permission.
 The path must match exactly what BetterAuth sends in the OAuth request.
 
-| URI | Purpose |
-|---|---|
-| `http://localhost:3000/api/auth/callback/google` | Local development |
+| URI                                                        | Purpose                |
+| ---------------------------------------------------------- | ---------------------- |
+| `http://localhost:3000/api/auth/callback/google`           | Local development      |
 | `https://familiarise.netlify.app/api/auth/callback/google` | Netlify default domain |
-| `https://familiarisenow.com/api/auth/callback/google` | Production |
-| `https://dev.familiarisenow.com/api/auth/callback/google` | Dev branch staging |
+| `https://familiarisenow.com/api/auth/callback/google`      | Production             |
+| `https://dev.familiarisenow.com/api/auth/callback/google`  | Dev branch staging     |
 
 > **Critical path detail:** The path is `/api/auth/callback/google` — not
 > `/auth/callback`, not `/api/auth/google/callback`.
@@ -191,11 +193,11 @@ The path must match exactly what BetterAuth sends in the OAuth request.
 
 The old configuration had these entries — all wrong:
 
-| Old URI | Why it was wrong |
-|---|---|
-| `http://localhost:3000/auth/callback` | Wrong path — missing `/api/` prefix |
-| `https://familiarise.com/auth/callback` | Wrong domain (`familiarise.com` ≠ `familiarisenow.com`) AND wrong path |
-| `https://familiarise.netlify.app/auth/callback` | Wrong path |
+| Old URI                                                      | Why it was wrong                                                           |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| `http://localhost:3000/auth/callback`                        | Wrong path — missing `/api/` prefix                                        |
+| `https://familiarise.com/auth/callback`                      | Wrong domain (`familiarise.com` ≠ `familiarisenow.com`) AND wrong path     |
+| `https://familiarise.netlify.app/auth/callback`              | Wrong path                                                                 |
 | `https://<supabase-project-id>.supabase.co/auth/v1/callback` | Supabase Auth callback from before BetterAuth migration — completely wrong |
 
 The Supabase entry (`/auth/v1/callback`) was a remnant of the previous auth
@@ -209,9 +211,9 @@ It was harmless but misleading and has been removed.
 For Google OAuth sign-in to work, the following APIs must be enabled
 in the `familiarise` GCP project:
 
-| API | Status | Purpose |
-|---|---|---|
-| `people.googleapis.com` | ✅ ENABLED | Fetch user's name, email, profile photo after sign-in |
+| API                           | Status      | Purpose                                                            |
+| ----------------------------- | ----------- | ------------------------------------------------------------------ |
+| `people.googleapis.com`       | ✅ ENABLED  | Fetch user's name, email, profile photo after sign-in              |
 | Google Auth Platform (OAuth2) | ✅ Built-in | Core OAuth2 flow — always active, not a separately-toggled service |
 
 ### How to verify via gcloud
@@ -352,6 +354,7 @@ socialProviders: {
 ```
 
 BetterAuth handles the full OAuth2 PKCE flow:
+
 1. User clicks "Sign in with Google"
 2. BetterAuth redirects to `accounts.google.com/o/oauth2/auth` with:
    - `client_id` = `GOOGLE_CLIENT_ID`
@@ -365,11 +368,13 @@ BetterAuth handles the full OAuth2 PKCE flow:
 ### The callback route
 
 The callback is handled by the catch-all BetterAuth route:
+
 ```
 app/api/auth/[...all]/route.ts
 ```
 
 This single file handles all BetterAuth routes including:
+
 - `POST /api/auth/sign-in/email`
 - `GET  /api/auth/callback/google`
 - `GET  /api/auth/callback/github`
@@ -378,11 +383,11 @@ This single file handles all BetterAuth routes including:
 
 ### Environment variables required
 
-| Variable | Where set | Value |
-|---|---|---|
-| `GOOGLE_CLIENT_ID` | Netlify + `.env` | `$GOOGLE_CLIENT_ID` |
-| `GOOGLE_CLIENT_SECRET` | Netlify + `.env` | `$GOOGLE_CLIENT_SECRET` |
-| `BETTER_AUTH_URL` | Netlify + `.env` | `https://familiarisenow.com` (prod) / `http://localhost:3000` (local) |
+| Variable               | Where set        | Value                                                                 |
+| ---------------------- | ---------------- | --------------------------------------------------------------------- |
+| `GOOGLE_CLIENT_ID`     | Netlify + `.env` | `$GOOGLE_CLIENT_ID`                                                   |
+| `GOOGLE_CLIENT_SECRET` | Netlify + `.env` | `$GOOGLE_CLIENT_SECRET`                                               |
+| `BETTER_AUTH_URL`      | Netlify + `.env` | `https://familiarisenow.com` (prod) / `http://localhost:3000` (local) |
 
 `BETTER_AUTH_URL` determines the `redirect_uri` that BetterAuth sends to Google.
 If this is wrong, Google rejects the callback with `redirect_uri_mismatch`.
@@ -422,6 +427,7 @@ after the user approves the consent screen.
 
 **Cause:** The `redirect_uri` BetterAuth sent to Google doesn't exactly match
 any entry in "Authorized redirect URIs". Common causes:
+
 - `BETTER_AUTH_URL` is set to `localhost` in production → generates a localhost
   redirect URI which isn't registered for production
 - Path is wrong (e.g. `/auth/callback` instead of `/api/auth/callback/google`)
@@ -441,6 +447,7 @@ The URL will contain `redirect_uri=...` as a query parameter.
 **Cause:** `GOOGLE_CLIENT_ID` or `GOOGLE_CLIENT_SECRET` is wrong.
 
 **Debug checklist:**
+
 - Verify the numeric prefix of `GOOGLE_CLIENT_ID` matches the GCP project number
 - Verify the secret hasn't been rotated/deleted in GCP Console
 - Verify the client type is "Web application" (not Desktop or Android)
@@ -455,6 +462,7 @@ Netlify env vars. This makes BetterAuth send `redirect_uri=http://localhost:3000
 to Google — which fails because that URI is not registered for the production domain.
 
 **Fix:**
+
 ```bash
 netlify env:set BETTER_AUTH_URL "https://familiarisenow.com" --context production
 netlify env:set BETTER_AUTH_URL "https://familiarisenow.com" --context branch-deploy
@@ -502,9 +510,9 @@ in the GCP Console UI or via the REST API with an access token.
 
 As of late 2025, the GCP Console reorganised auth settings:
 
-| Old path | New path |
-|---|---|
-| APIs & Services → Credentials | Google Auth Platform → Clients |
+| Old path                               | New path                                   |
+| -------------------------------------- | ------------------------------------------ |
+| APIs & Services → Credentials          | Google Auth Platform → Clients             |
 | APIs & Services → OAuth consent screen | Google Auth Platform → Branding / Audience |
 
 Both paths may exist simultaneously during the transition period. The new
@@ -546,9 +554,9 @@ gcloud services list --enabled --filter="name:people.googleapis.com"
 
 ### GCP Console direct links
 
-| Resource | URL |
-|---|---|
-| OAuth Clients list | `https://console.cloud.google.com/auth/clients?project=familiarise` |
+| Resource                           | URL                                                                                           |
+| ---------------------------------- | --------------------------------------------------------------------------------------------- |
+| OAuth Clients list                 | `https://console.cloud.google.com/auth/clients?project=familiarise`                           |
 | `familiarise-web-client` edit page | `https://console.cloud.google.com/auth/clients/<google-client-id-prefix>?project=familiarise` |
-| Enabled APIs | `https://console.cloud.google.com/apis/dashboard?project=familiarise` |
-| Project settings | `https://console.cloud.google.com/iam-admin/settings?project=familiarise` |
+| Enabled APIs                       | `https://console.cloud.google.com/apis/dashboard?project=familiarise`                         |
+| Project settings                   | `https://console.cloud.google.com/iam-admin/settings?project=familiarise`                     |

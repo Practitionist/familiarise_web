@@ -284,7 +284,7 @@ export default function WaitlistsPage() {
                       variant="outline"
                       onClick={() =>
                         router.push(
-                          `/explore/programs/plans/${type}s/${plan.id}`,
+                          `/explore/programs/plans/${type === "class" ? "classes" : "webinars"}/${plan.id}`,
                         )
                       }
                     >

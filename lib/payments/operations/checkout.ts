@@ -293,7 +293,9 @@ export async function calculateAmountAndValidate(
         const classInstance = await tx.class.findUnique({
           where: { id: validatedData.eventId },
           include: {
-            classPlan: true,
+            classPlan: {
+              include: { consultantProfile: true },
+            },
             appointments: {
               include: {
                 slotsOfAppointment: {
@@ -311,10 +313,12 @@ export async function calculateAmountAndValidate(
         }
 
         plan = classInstance.classPlan;
+        const classConsultantUserId = plan.consultantProfile?.userId;
         // FIX: Count unique participants, not total slots
         // A user enrolled in a class with 8 sessions should count as 1 participant, not 8
         const currentClassParticipants = countUniqueParticipants(
           classInstance.appointments,
+          classConsultantUserId ? [classConsultantUserId] : [],
         );
 
         if (currentClassParticipants >= plan.maxParticipants) {
@@ -964,7 +968,9 @@ async function revalidateInsideLock(
         const classInstance = await tx.class.findUnique({
           where: { id: data.eventId },
           include: {
-            classPlan: true,
+            classPlan: {
+              include: { consultantProfile: true },
+            },
             appointments: {
               include: {
                 slotsOfAppointment: {
@@ -980,8 +986,10 @@ async function revalidateInsideLock(
         if (!classInstance) throw new Error("Class not found");
 
         // FIX: Count unique participants, not total slots
+        const ownerUserId = classInstance.classPlan.consultantProfile?.userId;
         const currentParticipants = countUniqueParticipants(
           classInstance.appointments,
+          ownerUserId ? [ownerUserId] : [],
         );
 
         if (currentParticipants >= classInstance.classPlan.maxParticipants) {
@@ -1341,7 +1349,9 @@ export async function handleClassCheckout(
   const classInstance = await tx.class.findUnique({
     where: { id: data.eventId },
     include: {
-      classPlan: true,
+      classPlan: {
+        include: { consultantProfile: true },
+      },
       waitlist: true,
       appointments: {
         include: {
@@ -1360,10 +1370,12 @@ export async function handleClassCheckout(
   }
 
   const plan = classInstance.classPlan;
+  const consultantUserId = plan.consultantProfile?.userId;
 
   // OPT-2: Use extracted utility for participant counting
   const currentParticipants = countUniqueParticipants(
     classInstance.appointments,
+    consultantUserId ? [consultantUserId] : [],
   );
 
   // Check if max participants reached

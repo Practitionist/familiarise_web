@@ -143,7 +143,11 @@ export function EventTimingsCalendar({
         return "Select consecutive time slots for your consultation. All slots must be on the same day.";
       case "SUBSCRIPTION": {
         const baseText = `Schedule ${eventDetails.callsPerWeek} call${eventDetails.callsPerWeek !== 1 ? "s" : ""} per week for ${eventDetails.durationInMonths} month${eventDetails.durationInMonths !== 1 ? "s" : ""}. Each call is ${eventDetails.sessionDurationInHours || 1} hour${(eventDetails.sessionDurationInHours || 1) > 1 ? "s" : ""}.`;
-        return appendProgressText(baseText, completedSessions, groupTotalSessions);
+        return appendProgressText(
+          baseText,
+          completedSessions,
+          groupTotalSessions,
+        );
       }
       case "WEBINAR":
         return "Select consecutive time slots for your webinar session.";
@@ -153,7 +157,11 @@ export function EventTimingsCalendar({
           sessionDuration === 1 ? "1 hour" : `${sessionDuration} hours`;
         const meetingsPerWeek = eventDetails.meetingsPerWeek || 1;
         const classBaseText = `Schedule ${meetingsPerWeek} meeting${meetingsPerWeek !== 1 ? "s" : ""} per week. Each session is ${durationText}.`;
-        return appendProgressText(classBaseText, completedSessions, groupTotalSessions);
+        return appendProgressText(
+          classBaseText,
+          completedSessions,
+          groupTotalSessions,
+        );
       }
       default:
         return "Select time slots for your event.";

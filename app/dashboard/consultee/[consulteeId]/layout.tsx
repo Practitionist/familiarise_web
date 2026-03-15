@@ -136,6 +136,13 @@ function AuthRequired() {
   );
 }
 
+function getGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour >= 5 && hour < 12) return "Good morning";
+  if (hour >= 12 && hour < 17) return "Good afternoon";
+  return "Good evening";
+}
+
 // Top navigation for consultee - flat items
 function ConsulteeNav({
   consulteeId,
@@ -200,6 +207,11 @@ function ConsulteeNav({
               <Skeleton className="h-8 w-8 rounded-full" />
             ) : (
               <div className="flex items-center gap-2">
+                {userName && (
+                  <span className="hidden lg:block text-sm text-zinc-500 whitespace-nowrap">
+                    {getGreeting()}, {userName.split(" ")[0]}
+                  </span>
+                )}
                 <NotificationInbox />
                 <UserDropdown
                   userName={userName}

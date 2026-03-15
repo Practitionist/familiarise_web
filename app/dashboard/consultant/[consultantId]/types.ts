@@ -91,9 +91,6 @@ export interface WithBadgeStyle {
 // Props for each tab component
 export interface HomeTabProps {
   appointments: TAppointment[];
-  activities: IActivity[];
-  approvals: IApproval[];
-  badgeStyles: BadgeStyleMap;
   onUpdate?: () => void;
 }
 

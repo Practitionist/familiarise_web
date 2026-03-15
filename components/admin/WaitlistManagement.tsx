@@ -331,7 +331,7 @@ function EventGroupCard({
             </Table>
             <div className="mt-3 pt-3 border-t">
               <Link
-                href={`/explore/programs/plans/${firstEntry?.eventType}s/${firstEntry?.planId}`}
+                href={`/explore/programs/plans/${firstEntry?.eventType === "class" ? "classes" : "webinars"}/${firstEntry?.planId}`}
                 className="text-sm text-blue-600 hover:underline"
               >
                 View Event Page →
@@ -670,7 +670,7 @@ export function WaitlistManagement() {
                         </TableCell>
                         <TableCell>
                           <Link
-                            href={`/explore/programs/plans/${entry.eventType}s/${entry.planId}`}
+                            href={`/explore/programs/plans/${entry.eventType === "class" ? "classes" : "webinars"}/${entry.planId}`}
                             className="text-blue-600 hover:underline text-sm"
                           >
                             {entry.eventTitle}

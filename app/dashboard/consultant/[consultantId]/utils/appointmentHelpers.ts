@@ -622,7 +622,9 @@ export const getGroupStatus = (appointments: TAppointment[]): string => {
   }
 
   if (type === "CLASS" && firstAppointment.class) {
-    if (firstAppointment.class.status === "CANCELLED") { return "Cancelled"; }
+    if (firstAppointment.class.status === "CANCELLED") {
+      return "Cancelled";
+    }
 
     const now = new Date();
 

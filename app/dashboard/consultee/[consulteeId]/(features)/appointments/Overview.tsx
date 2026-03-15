@@ -8,15 +8,12 @@ import {
   TWebinarWithPlan,
   TTrialWithPlan,
 } from "@/hooks/useEvents";
-import { EventWithType } from "../../utils/getMetadata";
-import {
-  getAllSlots,
-  getActualNextSlotTime,
-  getActualSlots,
-} from "../../utils/scheduleHelpers";
-import { EventCard } from "./EventCard";
+import { getActualSlots, getAllSlots } from "../../utils/scheduleHelpers";
+import { OneOffEventCard } from "./components/OneOffEventCard";
+import { MultiSessionEventCard } from "./components/MultiSessionEventCard";
 import type { SlotOfAppointment } from "@prisma/client";
 import type { TAppointment } from "@/types/appointment";
+import type { SlotWithMeetingSession } from "./types";
 import React, { useRef, useState, useEffect, useCallback } from "react";
 import {
   ChevronLeft,
@@ -47,33 +44,11 @@ interface DashboardCardProps {
   title: string;
   icon: typeof Calendar;
   accentColor: string;
-  items: Array<{
-    id: string;
-    title: string;
-    consultant: string;
-    date: string;
-    image?: string | null;
-    status: string;
-    type: "Subscription" | "Class" | "Consultation" | "Webinar" | "Trial";
-    isTentative: boolean;
-    actualSlots?: Array<{
-      startTime: Date;
-      endTime: Date;
-    }>;
-    appointmentId?: string;
-    appointment?: TAppointment;
-    rawSlots?: SlotOfAppointment[];
-    allRawSlots?: SlotOfAppointment[];
-    pendingPaymentUrl?: string | null;
-    // Booking status for webinars/classes
-    bookingStatus?: BookingStatus;
-    waitlistPosition?: number;
-    // Collaborators for webinars/classes
-    collaborators?: CollaboratorInfo[];
-  }>;
+  itemCount: number;
+  children: React.ReactNode;
 }
 
-// Extract collaborators from a webinar or class plan (data exists from API but not in the base type)
+// Extract collaborators from a webinar or class plan
 function extractCollaborators(
   plan: Record<string, unknown>,
 ): CollaboratorInfo[] {
@@ -91,24 +66,16 @@ function extractCollaborators(
   );
 }
 
-// Helper functions
-function formatDateFromSlot(slotInfo: SlotOfAppointment): string {
-  return new Date(slotInfo.startsAt).toLocaleString();
-}
-
-function getNoSlotMessage(_type: string): string {
-  return "No slots available";
-}
-
-function getValidAppointmentSlots(event: EventWithType): Array<{
-  startTime: Date;
-  endTime: Date;
-}> {
-  const slots = getActualSlots(event);
-  return slots.map((slot) => ({
-    startTime: new Date(slot.startsAt),
-    endTime: new Date(slot.endsAt || slot.startsAt),
-  }));
+// For multi-session events, find the next upcoming slot time (not the first historical one)
+function getNextSlotTime(
+  slots: Array<{ startsAt: string | Date }> | undefined | null,
+): number {
+  if (!slots?.length) return Infinity;
+  const now = Date.now();
+  const upcoming = slots.find((s) => new Date(s.startsAt).getTime() > now);
+  return upcoming
+    ? new Date(upcoming.startsAt).getTime()
+    : new Date(slots[0].startsAt).getTime();
 }
 
 // Helper to check if a status is inactive (greyed out)
@@ -118,22 +85,14 @@ function isInactiveStatus(status: string): boolean {
 }
 
 // Sort items: active first, then inactive. Within each group, sort chronologically
-function sortEventItems<
-  T extends { status: string; actualSlots?: Array<{ startTime: Date }> },
+function sortByStatusAndTime<
+  T extends { status: string; firstSlotTime?: number },
 >(items: T[]): T[] {
   return [...items].sort((a, b) => {
     const aInactive = isInactiveStatus(a.status);
     const bInactive = isInactiveStatus(b.status);
-
-    // Active items come first
-    if (aInactive !== bInactive) {
-      return aInactive ? 1 : -1;
-    }
-
-    // Within the same group, sort chronologically by first slot
-    const aTime = a.actualSlots?.[0]?.startTime?.getTime() ?? Infinity;
-    const bTime = b.actualSlots?.[0]?.startTime?.getTime() ?? Infinity;
-    return aTime - bTime;
+    if (aInactive !== bInactive) return aInactive ? 1 : -1;
+    return (a.firstSlotTime ?? Infinity) - (b.firstSlotTime ?? Infinity);
   });
 }
 
@@ -149,6 +108,54 @@ export function Overview({
   webinars,
   trials,
 }: Readonly<OverviewProps>) {
+  // Prepare sorted consultation items
+  const sortedConsultations = sortByStatusAndTime(
+    consultations.map((c) => ({
+      data: c,
+      status: c.requestStatus.toString(),
+      firstSlotTime: c.appointment?.slotsOfAppointment?.[0]
+        ? new Date(c.appointment.slotsOfAppointment[0].startsAt).getTime()
+        : Infinity,
+    })),
+  );
+
+  // Prepare sorted subscription + trial items
+  const subItems = subscriptions.map((s) => ({
+    kind: "subscription" as const,
+    data: s,
+    status: s.requestStatus.toString(),
+    firstSlotTime: getNextSlotTime(s.appointments?.[0]?.slotsOfAppointment),
+  }));
+  const trialItems = trials.map((t) => ({
+    kind: "trial" as const,
+    data: t,
+    status: t.status,
+    firstSlotTime: t.appointment?.slotsOfAppointment?.[0]
+      ? new Date(t.appointment.slotsOfAppointment[0].startsAt).getTime()
+      : Infinity,
+  }));
+  const sortedSubsAndTrials = sortByStatusAndTime([...subItems, ...trialItems]);
+
+  // Prepare sorted webinar items
+  const sortedWebinars = sortByStatusAndTime(
+    webinars.map((w) => ({
+      data: w,
+      status: w.status.toString(),
+      firstSlotTime: w.appointment?.slotsOfAppointment?.[0]
+        ? new Date(w.appointment.slotsOfAppointment[0].startsAt).getTime()
+        : Infinity,
+    })),
+  );
+
+  // Prepare sorted class items
+  const sortedClasses = sortByStatusAndTime(
+    classes.map((c) => ({
+      data: c,
+      status: c.status.toString(),
+      firstSlotTime: getNextSlotTime(c.appointments?.[0]?.slotsOfAppointment),
+    })),
+  );
+
   return (
     <motion.div
       initial="hidden"
@@ -156,277 +163,265 @@ export function Overview({
       className="space-y-8"
       data-testid="overview-grid"
     >
+      {/* Consultations */}
       <motion.div variants={fadeInUp}>
         <DashboardCard
           title="Consultations"
           icon={Video}
           accentColor="blue"
-          items={sortEventItems(
-            consultations.map((consultation) => {
-              const slotInfo = getActualNextSlotTime({
-                ...consultation,
-                type: "Consultation",
-              });
-              const rawSlots = getActualSlots({
-                ...consultation,
-                type: "Consultation",
-              });
-              return {
-                id: consultation.id,
-                title: consultation.consultationPlan.title,
-                consultant:
-                  consultation.consultationPlan.consultantProfile?.user?.name ??
-                  "Unknown Consultant",
-                date: slotInfo
-                  ? formatDateFromSlot(slotInfo)
-                  : getNoSlotMessage("Consultation"),
-                image:
-                  consultation.consultationPlan.consultantProfile?.user?.image,
-                status: consultation.requestStatus.toString(),
-                type: "Consultation" as const,
-                isTentative: slotInfo?.isTentative ?? false,
-                actualSlots: getValidAppointmentSlots({
-                  ...consultation,
-                  type: "Consultation",
-                }),
-                appointmentId: consultation.appointment?.id,
-                appointment: consultation.appointment as
-                  | TAppointment
-                  | undefined,
-                rawSlots,
-                pendingPaymentUrl: consultation.pendingPaymentUrl,
-              };
-            }),
-          )}
-        />
+          itemCount={sortedConsultations.length}
+        >
+          {sortedConsultations.map(({ data: consultation }) => {
+            const rawSlots = getActualSlots({
+              ...consultation,
+              type: "Consultation",
+            });
+            const nextSlot = rawSlots[0];
+            return (
+              <div
+                key={consultation.id}
+                className="flex-shrink-0 w-full sm:w-[300px]"
+              >
+                <OneOffEventCard
+                  title={consultation.consultationPlan.title}
+                  consultant={
+                    consultation.consultationPlan.consultantProfile?.user
+                      ?.name ?? "Unknown Consultant"
+                  }
+                  image={
+                    consultation.consultationPlan.consultantProfile?.user?.image
+                  }
+                  status={consultation.requestStatus.toString()}
+                  type="Consultation"
+                  isTentative={nextSlot?.isTentative ?? false}
+                  appointmentId={consultation.appointment?.id}
+                  appointment={
+                    consultation.appointment as TAppointment | undefined
+                  }
+                  rawSlots={rawSlots}
+                  pendingPaymentUrl={consultation.pendingPaymentUrl}
+                />
+              </div>
+            );
+          })}
+        </DashboardCard>
       </motion.div>
 
+      {/* Subscriptions + Trials */}
       <motion.div variants={fadeInUp}>
         <DashboardCard
           title="Subscriptions"
           icon={Calendar}
           accentColor="violet"
-          items={sortEventItems([
-            // Regular subscriptions
-            ...subscriptions.map((subscription) => {
-              const slotInfo = getActualNextSlotTime({
-                ...subscription,
-                type: "Subscription",
-              });
-              const rawSlots = getActualSlots({
-                ...subscription,
-                type: "Subscription",
-              });
-              const allRawSlots = getAllSlots({
-                ...subscription,
-                type: "Subscription",
-              });
-              return {
-                id: subscription.id,
-                title: subscription.subscriptionPlan.title,
-                consultant:
-                  subscription.subscriptionPlan.consultantProfile?.user?.name ??
-                  "Unknown Consultant",
-                date: slotInfo
-                  ? formatDateFromSlot(slotInfo)
-                  : getNoSlotMessage("Subscription"),
-                image:
-                  subscription.subscriptionPlan.consultantProfile?.user?.image,
-                status: subscription.requestStatus.toString(),
-                type: "Subscription" as const,
-                isTentative: slotInfo?.isTentative ?? false,
-                actualSlots: getValidAppointmentSlots({
-                  ...subscription,
-                  type: "Subscription",
-                }),
-                appointmentId: subscription.appointments?.[0]?.id,
-                appointment: subscription.appointments?.[0] as
-                  | TAppointment
-                  | undefined,
-                rawSlots,
-                allRawSlots,
-                pendingPaymentUrl: subscription.pendingPaymentUrl,
-              };
-            }),
-            // Free trials (grouped under subscriptions)
-            ...trials.map((trial) => {
-              const rawSlots = trial.appointment?.slotsOfAppointment ?? [];
+          itemCount={sortedSubsAndTrials.length}
+        >
+          {sortedSubsAndTrials.map((item) => {
+            if (item.kind === "trial") {
+              const trial = item.data;
+              const rawSlots = (trial.appointment?.slotsOfAppointment ??
+                []) as SlotOfAppointment[];
               const firstSlot = rawSlots[0];
-              return {
-                id: trial.id,
-                title: trial.subscriptionPlan.title,
-                consultant:
-                  trial.subscriptionPlan.consultantProfile?.user?.name ??
-                  "Unknown Consultant",
-                date: firstSlot
-                  ? formatDateFromSlot(firstSlot as SlotOfAppointment)
-                  : "Awaiting schedule",
-                image: trial.subscriptionPlan.consultantProfile?.user?.image,
-                status: trial.status,
-                type: "Trial" as const,
-                isTentative: firstSlot?.isTentative ?? false,
-                actualSlots: rawSlots.map((slot) => ({
-                  startTime: new Date(slot.startsAt),
-                  endTime: slot.endsAt
-                    ? new Date(slot.endsAt)
-                    : new Date(
-                        new Date(slot.startsAt).getTime() + 30 * 60 * 1000,
-                      ),
-                })),
-                appointmentId: trial.appointment?.id,
-                appointment: trial.appointment as TAppointment | undefined,
-                rawSlots: rawSlots as SlotOfAppointment[],
-              };
-            }),
-          ])}
-        />
+              return (
+                <div
+                  key={trial.id}
+                  className="flex-shrink-0 w-full sm:w-[300px]"
+                >
+                  <OneOffEventCard
+                    title={trial.subscriptionPlan.title}
+                    consultant={
+                      trial.subscriptionPlan.consultantProfile?.user?.name ??
+                      "Unknown Consultant"
+                    }
+                    image={
+                      trial.subscriptionPlan.consultantProfile?.user?.image
+                    }
+                    status={trial.status}
+                    type="Trial"
+                    isTentative={firstSlot?.isTentative ?? false}
+                    appointmentId={trial.appointment?.id}
+                    appointment={trial.appointment as TAppointment | undefined}
+                    rawSlots={rawSlots}
+                  />
+                </div>
+              );
+            }
+
+            const subscription = item.data;
+            const rawSlots = getActualSlots({
+              ...subscription,
+              type: "Subscription",
+            });
+            const allSlotsData = getAllSlots({
+              ...subscription,
+              type: "Subscription",
+            }) as SlotWithMeetingSession[];
+            const nextSlot = rawSlots[0];
+            return (
+              <div
+                key={subscription.id}
+                className="flex-shrink-0 w-full sm:w-[300px]"
+              >
+                <MultiSessionEventCard
+                  title={subscription.subscriptionPlan.title}
+                  consultant={
+                    subscription.subscriptionPlan.consultantProfile?.user
+                      ?.name ?? "Unknown Consultant"
+                  }
+                  image={
+                    subscription.subscriptionPlan.consultantProfile?.user?.image
+                  }
+                  status={subscription.requestStatus.toString()}
+                  type="Subscription"
+                  isTentative={nextSlot?.isTentative ?? false}
+                  appointmentId={subscription.appointments?.[0]?.id}
+                  appointment={
+                    subscription.appointments?.[0] as TAppointment | undefined
+                  }
+                  rawSlots={rawSlots}
+                  allSlots={allSlotsData}
+                  pendingPaymentUrl={subscription.pendingPaymentUrl}
+                />
+              </div>
+            );
+          })}
+        </DashboardCard>
       </motion.div>
 
+      {/* Webinars */}
       <motion.div variants={fadeInUp}>
         <DashboardCard
           title="Webinars"
           icon={Users}
           accentColor="amber"
-          items={sortEventItems(
-            webinars.map((webinar) => {
-              const slotInfo = getActualNextSlotTime({
-                ...webinar,
-                type: "Webinar",
-              });
-              const rawSlots = getActualSlots({
-                ...webinar,
-                type: "Webinar",
-              });
+          itemCount={sortedWebinars.length}
+        >
+          {sortedWebinars.map(({ data: webinar }) => {
+            const rawSlots = getActualSlots({
+              ...webinar,
+              type: "Webinar",
+            });
+            const nextSlot = rawSlots[0];
 
-              // Determine booking status from appointment and waitlist
-              const hasConfirmedSlot =
-                (webinar.appointment?.slotsOfAppointment?.length ?? 0) > 0;
-              const waitlistEntry = webinar.waitlist?.[0];
+            const hasConfirmedSlot =
+              (webinar.appointment?.slotsOfAppointment?.length ?? 0) > 0;
+            const waitlistEntry = webinar.waitlist?.[0];
 
-              let bookingStatus: BookingStatus = null;
-              let waitlistPosition: number | undefined;
-
-              if (hasConfirmedSlot) {
-                bookingStatus = "CONFIRMED";
-              } else if (waitlistEntry) {
-                if (waitlistEntry.status === "NOTIFIED") {
-                  bookingStatus = "NOTIFIED";
-                } else if (waitlistEntry.status === "WAITING") {
-                  bookingStatus = "WAITLISTED";
-                  waitlistPosition = waitlistEntry.position ?? undefined;
-                }
+            let bookingStatus: BookingStatus = null;
+            let waitlistPosition: number | undefined;
+            if (hasConfirmedSlot) {
+              bookingStatus = "CONFIRMED";
+            } else if (waitlistEntry) {
+              if (waitlistEntry.status === "NOTIFIED") {
+                bookingStatus = "NOTIFIED";
+              } else if (waitlistEntry.status === "WAITING") {
+                bookingStatus = "WAITLISTED";
+                waitlistPosition = waitlistEntry.position ?? undefined;
               }
+            }
 
-              // Extract collaborators for display
-              const collaborators = extractCollaborators(
-                webinar.webinarPlan as unknown as Record<string, unknown>,
-              );
+            const collaborators = extractCollaborators(
+              webinar.webinarPlan as unknown as Record<string, unknown>,
+            );
 
-              return {
-                id: webinar.id,
-                title: webinar.webinarPlan.title,
-                consultant:
-                  webinar.webinarPlan.consultantProfile?.user?.name ??
-                  "Unknown Consultant",
-                date: slotInfo
-                  ? formatDateFromSlot(slotInfo)
-                  : getNoSlotMessage("Webinar"),
-                image: webinar.webinarPlan.consultantProfile?.user?.image,
-                status: webinar.status.toString(),
-                type: "Webinar" as const,
-                isTentative: slotInfo?.isTentative ?? false,
-                actualSlots: getValidAppointmentSlots({
-                  ...webinar,
-                  type: "Webinar",
-                }),
-                appointmentId: webinar.appointment?.id,
-                appointment: webinar.appointment as TAppointment | undefined,
-                rawSlots,
-                bookingStatus,
-                waitlistPosition,
-                collaborators,
-              };
-            }),
-          )}
-        />
+            return (
+              <div
+                key={webinar.id}
+                className="flex-shrink-0 w-full sm:w-[300px]"
+              >
+                <OneOffEventCard
+                  title={webinar.webinarPlan.title}
+                  consultant={
+                    webinar.webinarPlan.consultantProfile?.user?.name ??
+                    "Unknown Consultant"
+                  }
+                  image={webinar.webinarPlan.consultantProfile?.user?.image}
+                  status={webinar.status.toString()}
+                  type="Webinar"
+                  isTentative={nextSlot?.isTentative ?? false}
+                  appointmentId={webinar.appointment?.id}
+                  appointment={webinar.appointment as TAppointment | undefined}
+                  rawSlots={rawSlots}
+                  bookingStatus={bookingStatus}
+                  waitlistPosition={waitlistPosition}
+                  collaborators={collaborators}
+                />
+              </div>
+            );
+          })}
+        </DashboardCard>
       </motion.div>
 
+      {/* Classes */}
       <motion.div variants={fadeInUp}>
         <DashboardCard
           title="Classes"
           icon={BookOpen}
           accentColor="emerald"
-          items={sortEventItems(
-            classes.map((classItem) => {
-              const slotInfo = getActualNextSlotTime({
-                ...classItem,
-                type: "Class",
-              });
-              const rawSlots = getActualSlots({
-                ...classItem,
-                type: "Class",
-              });
-              const allRawSlots = getAllSlots({
-                ...classItem,
-                type: "Class",
-              });
+          itemCount={sortedClasses.length}
+        >
+          {sortedClasses.map(({ data: classItem }) => {
+            const rawSlots = getActualSlots({
+              ...classItem,
+              type: "Class",
+            });
+            const allSlotsData = getAllSlots({
+              ...classItem,
+              type: "Class",
+            }) as SlotWithMeetingSession[];
+            const nextSlot = rawSlots[0];
 
-              // Determine booking status from appointments and waitlist
-              const hasConfirmedSlot =
-                classItem.appointments?.some(
-                  (a) => (a.slotsOfAppointment?.length ?? 0) > 0,
-                ) ?? false;
-              const waitlistEntry = classItem.waitlist?.[0];
+            const hasConfirmedSlot =
+              classItem.appointments?.some(
+                (a) => (a.slotsOfAppointment?.length ?? 0) > 0,
+              ) ?? false;
+            const waitlistEntry = classItem.waitlist?.[0];
 
-              let bookingStatus: BookingStatus = null;
-              let waitlistPosition: number | undefined;
-
-              if (hasConfirmedSlot) {
-                bookingStatus = "CONFIRMED";
-              } else if (waitlistEntry) {
-                if (waitlistEntry.status === "NOTIFIED") {
-                  bookingStatus = "NOTIFIED";
-                } else if (waitlistEntry.status === "WAITING") {
-                  bookingStatus = "WAITLISTED";
-                  waitlistPosition = waitlistEntry.position ?? undefined;
-                }
+            let bookingStatus: BookingStatus = null;
+            let waitlistPosition: number | undefined;
+            if (hasConfirmedSlot) {
+              bookingStatus = "CONFIRMED";
+            } else if (waitlistEntry) {
+              if (waitlistEntry.status === "NOTIFIED") {
+                bookingStatus = "NOTIFIED";
+              } else if (waitlistEntry.status === "WAITING") {
+                bookingStatus = "WAITLISTED";
+                waitlistPosition = waitlistEntry.position ?? undefined;
               }
+            }
 
-              // Extract collaborators for display
-              const collaborators = extractCollaborators(
-                classItem.classPlan as unknown as Record<string, unknown>,
-              );
+            const collaborators = extractCollaborators(
+              classItem.classPlan as unknown as Record<string, unknown>,
+            );
 
-              return {
-                id: classItem.id,
-                title: classItem.classPlan.title,
-                consultant:
-                  classItem.classPlan.consultantProfile?.user?.name ??
-                  "Unknown Consultant",
-                date: slotInfo
-                  ? formatDateFromSlot(slotInfo)
-                  : getNoSlotMessage("Class"),
-                image: classItem.classPlan.consultantProfile?.user?.image,
-                status: classItem.status.toString(),
-                type: "Class" as const,
-                isTentative: slotInfo?.isTentative ?? false,
-                actualSlots: getValidAppointmentSlots({
-                  ...classItem,
-                  type: "Class",
-                }),
-                appointmentId: classItem.appointments?.[0]?.id,
-                appointment: classItem.appointments?.[0] as
-                  | TAppointment
-                  | undefined,
-                rawSlots,
-                allRawSlots,
-                bookingStatus,
-                waitlistPosition,
-                collaborators,
-              };
-            }),
-          )}
-        />
+            return (
+              <div
+                key={classItem.id}
+                className="flex-shrink-0 w-full sm:w-[300px]"
+              >
+                <MultiSessionEventCard
+                  title={classItem.classPlan.title}
+                  consultant={
+                    classItem.classPlan.consultantProfile?.user?.name ??
+                    "Unknown Consultant"
+                  }
+                  image={classItem.classPlan.consultantProfile?.user?.image}
+                  status={classItem.status.toString()}
+                  type="Class"
+                  isTentative={nextSlot?.isTentative ?? false}
+                  appointmentId={classItem.appointments?.[0]?.id}
+                  appointment={
+                    classItem.appointments?.[0] as TAppointment | undefined
+                  }
+                  rawSlots={rawSlots}
+                  allSlots={allSlotsData}
+                  bookingStatus={bookingStatus}
+                  waitlistPosition={waitlistPosition}
+                  collaborators={collaborators}
+                />
+              </div>
+            );
+          })}
+        </DashboardCard>
       </motion.div>
     </motion.div>
   );
@@ -436,7 +431,8 @@ function DashboardCard({
   title,
   icon: Icon,
   accentColor,
-  items,
+  itemCount,
+  children,
 }: Readonly<DashboardCardProps>) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
@@ -499,7 +495,7 @@ function DashboardCard({
 
   useEffect(() => {
     const container = scrollContainerRef.current;
-    if (!container || items.length === 0 || isMobile) {
+    if (!container || itemCount === 0 || isMobile) {
       setCanScrollLeft(false);
       setCanScrollRight(false);
       return;
@@ -520,7 +516,7 @@ function DashboardCard({
       window.removeEventListener("resize", updateScrollButtonStates);
       observer.disconnect();
     };
-  }, [items, updateScrollButtonStates, isMobile]);
+  }, [itemCount, updateScrollButtonStates, isMobile]);
 
   const handleScroll = (direction: "left" | "right") => {
     if (scrollContainerRef.current && !isMobile) {
@@ -539,7 +535,7 @@ function DashboardCard({
     }
   };
 
-  if (!items.length) {
+  if (!itemCount) {
     return (
       <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
         <div className="flex items-center gap-3 px-6 py-4 border-b border-zinc-100">
@@ -579,7 +575,7 @@ function DashboardCard({
           </div>
           <h2 className="font-semibold text-zinc-900 text-lg">{title}</h2>
           <span className="text-sm text-zinc-400 font-medium">
-            {items.length} {items.length === 1 ? "item" : "items"}
+            {itemCount} {itemCount === 1 ? "item" : "items"}
           </span>
         </div>
 
@@ -614,28 +610,7 @@ function DashboardCard({
       <div className="p-5">
         {isMobile ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {items.map((item) => (
-              <div key={item.id}>
-                <EventCard
-                  title={item.title}
-                  consultant={item.consultant}
-                  date={item.date}
-                  status={item.status}
-                  image={item.image}
-                  type={item.type}
-                  isTentative={item.isTentative}
-                  actualSlots={item.actualSlots}
-                  appointmentId={item.appointmentId}
-                  appointment={item.appointment}
-                  rawSlots={item.rawSlots}
-                  allRawSlots={item.allRawSlots}
-                  pendingPaymentUrl={item.pendingPaymentUrl}
-                  bookingStatus={item.bookingStatus}
-                  waitlistPosition={item.waitlistPosition}
-                  collaborators={item.collaborators}
-                />
-              </div>
-            ))}
+            {children}
           </div>
         ) : (
           <div
@@ -643,28 +618,7 @@ function DashboardCard({
             className="flex gap-4 overflow-x-auto pb-2 scrollbar-hide"
             style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
           >
-            {items.map((item) => (
-              <div key={item.id} className="flex-shrink-0 w-[300px]">
-                <EventCard
-                  title={item.title}
-                  consultant={item.consultant}
-                  date={item.date}
-                  status={item.status}
-                  image={item.image}
-                  type={item.type}
-                  isTentative={item.isTentative}
-                  actualSlots={item.actualSlots}
-                  appointmentId={item.appointmentId}
-                  appointment={item.appointment}
-                  rawSlots={item.rawSlots}
-                  allRawSlots={item.allRawSlots}
-                  pendingPaymentUrl={item.pendingPaymentUrl}
-                  bookingStatus={item.bookingStatus}
-                  waitlistPosition={item.waitlistPosition}
-                  collaborators={item.collaborators}
-                />
-              </div>
-            ))}
+            {children}
           </div>
         )}
       </div>

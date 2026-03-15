@@ -17,26 +17,26 @@ This isn't a theoretical marketplace leakage problem. In India, disintermediatio
 
 ### WhatsApp Dominance
 
-| Metric | Value |
-|---|---|
-| WhatsApp users in India | 500M+ |
-| Daily usage | Average 38 minutes/day |
-| Business adoption | 15M+ Business accounts |
-| Payment integration | WhatsApp Pay (UPI) available |
-| Open rate | 98% (vs 20-25% for email) |
-| Voice/video call | Built-in, free, good quality |
+| Metric                  | Value                        |
+| ----------------------- | ---------------------------- |
+| WhatsApp users in India | 500M+                        |
+| Daily usage             | Average 38 minutes/day       |
+| Business adoption       | 15M+ Business accounts       |
+| Payment integration     | WhatsApp Pay (UPI) available |
+| Open rate               | 98% (vs 20-25% for email)    |
+| Voice/video call        | Built-in, free, good quality |
 
 WhatsApp isn't just a messaging app in India. It's the operating system for informal business. Every tutor, consultant, and freelancer schedules through WhatsApp. Every payment happens through UPI. The entire transaction lifecycle exists outside any platform.
 
 ### UPI Makes It Frictionless
 
-| Feature | Platform Payment | Direct UPI |
-|---|---|---|
-| Fee | 10% commission | 0% |
-| Speed | T+2 settlement | Instant |
+| Feature  | Platform Payment           | Direct UPI              |
+| -------- | -------------------------- | ----------------------- |
+| Fee      | 10% commission             | 0%                      |
+| Speed    | T+2 settlement             | Instant                 |
 | Friction | Login → checkout → gateway | Scan QR or enter UPI ID |
-| Receipt | Platform invoice | UPI confirmation |
-| Habit | New behavior | Existing behavior |
+| Receipt  | Platform invoice           | UPI confirmation        |
+| Habit    | New behavior               | Existing behavior       |
 
 A consultee sending ₹2,000 via Google Pay takes 10 seconds and is free. Booking through Familiarise takes 2 minutes, costs the consultant ₹200, and requires the consultee to create an account. The math is brutally clear.
 
@@ -51,42 +51,50 @@ In India, exchanging WhatsApp numbers after a professional interaction is expect
 Every consultant-consultee pair will follow this progression. The question is not IF, but WHEN.
 
 ### Stage 1: First Session (On-Platform)
+
 ```
 Consultee discovers consultant → books on Familiarise → pays through platform
 → session happens via Stream.io → both parties are happy
 ```
+
 **Platform captures: 100% of GMV**
 
 ### Stage 2: Post-Session Contact Exchange
+
 ```
 Session ends → consultant says "Here's my WhatsApp, reach out anytime"
 → consultee adds consultant on WhatsApp → moves to WhatsApp for communication
 ```
+
 **Trigger: Personal rapport established. Platform chat feels formal/cold compared to WhatsApp.**
 
 ### Stage 3: Mixed Behavior (Sessions 2-4)
+
 ```
 Consultee messages on WhatsApp → "Can we do another session?"
 → some book through Familiarise (out of habit or convenience)
 → some book directly ("I'll send you ₹2,000 on GPay, let's do Tuesday 7pm")
 ```
+
 **Platform captures: 30-70% of sessions**
 
 ### Stage 4: Full Disintermediation (Session 5+)
+
 ```
 All scheduling via WhatsApp → all payments via UPI → all calls via WhatsApp/Meet
 → Familiarise is completely bypassed
 ```
+
 **Platform captures: 0% of ongoing GMV**
 
 ### Timeline Estimate
 
-| Consultant Type | Time to Full Disintermediation | Reason |
-|---|---|---|
-| Price-sensitive (low volume) | 1-2 sessions | Every ₹200 saved matters |
-| Moderate volume | 3-5 sessions | Convenience wins over habit |
-| High volume / professional | 5-10 sessions or never | Values platform features (analytics, recordings, compliance) |
-| Subscription-based | Delayed significantly | Auto-billing is easier than chasing UPI transfers |
+| Consultant Type              | Time to Full Disintermediation | Reason                                                       |
+| ---------------------------- | ------------------------------ | ------------------------------------------------------------ |
+| Price-sensitive (low volume) | 1-2 sessions                   | Every ₹200 saved matters                                     |
+| Moderate volume              | 3-5 sessions                   | Convenience wins over habit                                  |
+| High volume / professional   | 5-10 sessions or never         | Values platform features (analytics, recordings, compliance) |
+| Subscription-based           | Delayed significantly          | Auto-billing is easier than chasing UPI transfers            |
 
 ---
 
@@ -96,15 +104,15 @@ Before diving into solutions, let's be clear about what doesn't work:
 
 ### Failed Tactics (Learned from Other Marketplaces)
 
-| Tactic | Why It Fails in India |
-|---|---|
-| **Block phone number sharing in chat** | Trivial to circumvent (image of number, coded reference, verbal during session). Also a DPDPA violation if we're scanning personal communications. Destroys trust instantly. |
-| **Watermark sessions with contact-sharing warnings** | Hostile UX. Signals that we distrust our users. Consultants will refuse to use the platform. |
-| **Non-compete / exclusivity clauses** | Unenforceable for micro-transactions in Indian courts. Legal costs exceed recovery. Creates terrible PR. |
-| **Withhold payouts for suspected off-platform activity** | Turns us into Topmate. The payout trust crisis is our biggest weapon against them — we cannot replicate it. |
-| **Report/penalize consultants** | They leave, badmouth us, take their audience. We lose the supply side. |
-| **Restrict video to prevent relationship building** | Defeats the purpose of the platform. Worse sessions = less retention. |
-| **Mandatory platform booking for returning clients** | Cannot enforce. Client can claim they're a "new" client each time. |
+| Tactic                                                   | Why It Fails in India                                                                                                                                                        |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Block phone number sharing in chat**                   | Trivial to circumvent (image of number, coded reference, verbal during session). Also a DPDPA violation if we're scanning personal communications. Destroys trust instantly. |
+| **Watermark sessions with contact-sharing warnings**     | Hostile UX. Signals that we distrust our users. Consultants will refuse to use the platform.                                                                                 |
+| **Non-compete / exclusivity clauses**                    | Unenforceable for micro-transactions in Indian courts. Legal costs exceed recovery. Creates terrible PR.                                                                     |
+| **Withhold payouts for suspected off-platform activity** | Turns us into Topmate. The payout trust crisis is our biggest weapon against them — we cannot replicate it.                                                                  |
+| **Report/penalize consultants**                          | They leave, badmouth us, take their audience. We lose the supply side.                                                                                                       |
+| **Restrict video to prevent relationship building**      | Defeats the purpose of the platform. Worse sessions = less retention.                                                                                                        |
+| **Mandatory platform booking for returning clients**     | Cannot enforce. Client can claim they're a "new" client each time.                                                                                                           |
 
 **The fundamental truth:** In a two-sided marketplace with low switching costs, any punishment of the supply side is suicide. The supply side (consultants) has all the leverage because they bring the demand (their audience).
 
@@ -117,6 +125,7 @@ Before diving into solutions, let's be clear about what doesn't work:
 The session quality must be SO much better on Familiarise that both parties prefer it to a WhatsApp call.
 
 **Video quality:**
+
 - Stream.io HD vs WhatsApp (compressed, often poor in low bandwidth)
 - Stable connection with server-side relaying vs P2P (WhatsApp drops calls frequently on Indian mobile networks)
 - Screen sharing (critical for tech consultations) — one-click vs janky WhatsApp screen share
@@ -138,6 +147,7 @@ The session quality must be SO much better on Familiarise that both parties pref
 The moment a session ends, the next booking must be ONE CLICK away — faster than texting "same time next week?" on WhatsApp.
 
 **Immediate post-session flow:**
+
 ```
 Session ends → screen shows:
   [⭐ Rate this session]
@@ -156,6 +166,7 @@ Session ends → screen shows:
 
 **Subscription auto-billing:**
 For recurring consultations, the subscription model eliminates rebooking entirely:
+
 - Auto-charges monthly
 - Auto-schedules next session based on preferences
 - Zero friction. Zero opportunity for "let me just UPI you instead."
@@ -168,25 +179,25 @@ Build assets on-platform that neither party can recreate on WhatsApp.
 
 **For the consultant:**
 
-| Asset | WhatsApp Equivalent | Our Advantage |
-|---|---|---|
-| 50+ reviews | None — WhatsApp has no review system | New clients trust reviews. Can't build social proof on WhatsApp. |
-| Session recording library | None | 200 recorded sessions is a professional archive |
-| Revenue analytics | None — UPI has no analytics | Monthly trends, peak hours, conversion rates |
-| GST-compliant invoices | Manual or none | Professional consultants need this for tax filing |
-| Client CRM (implicit) | WhatsApp contact list | Booking history, session notes, review history per client |
-| Public profile with SEO | WhatsApp bio (invisible to Google) | Google-indexed profile page drives organic discovery |
-| Collaborator network | Manual coordination | Revenue splits, co-hosted events, shared audiences |
+| Asset                     | WhatsApp Equivalent                  | Our Advantage                                                    |
+| ------------------------- | ------------------------------------ | ---------------------------------------------------------------- |
+| 50+ reviews               | None — WhatsApp has no review system | New clients trust reviews. Can't build social proof on WhatsApp. |
+| Session recording library | None                                 | 200 recorded sessions is a professional archive                  |
+| Revenue analytics         | None — UPI has no analytics          | Monthly trends, peak hours, conversion rates                     |
+| GST-compliant invoices    | Manual or none                       | Professional consultants need this for tax filing                |
+| Client CRM (implicit)     | WhatsApp contact list                | Booking history, session notes, review history per client        |
+| Public profile with SEO   | WhatsApp bio (invisible to Google)   | Google-indexed profile page drives organic discovery             |
+| Collaborator network      | Manual coordination                  | Revenue splits, co-hosted events, shared audiences               |
 
 **For the consultee:**
 
-| Asset | WhatsApp Equivalent | Our Advantage |
-|---|---|---|
-| Session recordings | None | Can re-watch sessions. Immensely valuable for learning. |
-| Consultant discovery | Ask friends for recommendations | Browse verified profiles with reviews |
-| Payment protection | UPI is irrecoverable | Platform-mediated refunds for no-shows |
-| Scheduling | "When are you free?" back-and-forth | One-click booking with real-time availability |
-| Receipt / tax documentation | UPI screenshot | Proper invoice for expense claims |
+| Asset                       | WhatsApp Equivalent                 | Our Advantage                                           |
+| --------------------------- | ----------------------------------- | ------------------------------------------------------- |
+| Session recordings          | None                                | Can re-watch sessions. Immensely valuable for learning. |
+| Consultant discovery        | Ask friends for recommendations     | Browse verified profiles with reviews                   |
+| Payment protection          | UPI is irrecoverable                | Platform-mediated refunds for no-shows                  |
+| Scheduling                  | "When are you free?" back-and-forth | One-click booking with real-time availability           |
+| Receipt / tax documentation | UPI screenshot                      | Proper invoice for expense claims                       |
 
 ### Layer 4: Economic Alignment
 
@@ -224,11 +235,11 @@ You're paying ₹3,000 to save ₹2,000 and 7 hours. Net cost: ₹1,000/month fo
 **Volume discounts:**
 
 | Monthly Sessions | Commission Rate |
-|---|---|
-| 1-10 | 10% |
-| 11-30 | 8% |
-| 31-50 | 6% |
-| 50+ | 5% |
+| ---------------- | --------------- |
+| 1-10             | 10%             |
+| 11-30            | 8%              |
+| 31-50            | 6%              |
+| 50+              | 5%              |
 
 This rewards loyalty and makes the commission feel progressive, not flat.
 
@@ -241,6 +252,7 @@ Consultants who join in the first 3 months get a permanent 5% rate (after the 0%
 The ultimate anti-disintermediation weapon is generating NEW demand that the consultant cannot get on WhatsApp.
 
 **SEO-indexed profiles:**
+
 - Each consultant profile is a Google-indexed landing page
 - Optimized for long-tail keywords: "best {skill} consultant in India"
 - 50 profiles = 50 pages competing for search traffic
@@ -248,16 +260,19 @@ The ultimate anti-disintermediation weapon is generating NEW demand that the con
 - These consultees have NO WhatsApp relationship with the consultant. The platform IS the relationship.
 
 **Category pages:**
+
 - "Top React.js consultants" → browsable category with reviews and ratings
 - Drives organic traffic to multiple consultants simultaneously
 - Consultees discover through the platform, not through the consultant's personal network
 
 **Referral system:**
+
 - Consultees get ₹200 credit for referring another consultee
 - Referred consultees book through the platform (they have no off-platform relationship)
 - Creates a demand channel that's platform-native
 
 **Featured placement:**
+
 - Active consultants get featured spots on homepage and category pages
 - This is essentially free advertising for consultants — but only available on-platform
 - A consultant who goes off-platform loses their featured spot
@@ -270,17 +285,18 @@ The ultimate anti-disintermediation weapon is generating NEW demand that the con
 
 ### What We Will Lose
 
-| Segment | Expected Off-Platform Rate | Revenue Impact | Acceptable? |
-|---|---|---|---|
-| One-time consultees (single session) | 0% (no repeat, no leakage) | None | Yes |
-| Repeat consultees (2-5 sessions) | 30-50% | Moderate | Partially |
-| Loyal consultees (5+ sessions, same consultant) | 50-70% of sessions | Significant | Expected — these are the hardest to retain |
-| Subscription consultees | 10-20% | Low | Yes — auto-billing is strong retention |
-| Platform-discovered consultees | 5-15% | Low | Yes — they have no off-platform relationship initially |
+| Segment                                         | Expected Off-Platform Rate | Revenue Impact | Acceptable?                                            |
+| ----------------------------------------------- | -------------------------- | -------------- | ------------------------------------------------------ |
+| One-time consultees (single session)            | 0% (no repeat, no leakage) | None           | Yes                                                    |
+| Repeat consultees (2-5 sessions)                | 30-50%                     | Moderate       | Partially                                              |
+| Loyal consultees (5+ sessions, same consultant) | 50-70% of sessions         | Significant    | Expected — these are the hardest to retain             |
+| Subscription consultees                         | 10-20%                     | Low            | Yes — auto-billing is strong retention                 |
+| Platform-discovered consultees                  | 5-15%                      | Low            | Yes — they have no off-platform relationship initially |
 
 ### The Math We Need
 
 If average consultant does 20 sessions/month:
+
 - 5 from platform discovery (SEO, referrals) → 100% on-platform
 - 5 subscriptions → 90% on-platform (auto-billing)
 - 5 repeat clients who stay on-platform → 100% on-platform
@@ -296,6 +312,7 @@ Total off-platform: 5 out of 20 = 25%
 ## Month-by-Month Implementation
 
 ### Month 1: Foundation
+
 - [ ] One-click rebook button after every session
 - [ ] Auto-recording for all sessions
 - [ ] Post-session email with recording link + rebook CTA
@@ -304,6 +321,7 @@ Total off-platform: 5 out of 20 = 25%
 - [ ] Value breakdown in consultant dashboard ("your 10% bought you…")
 
 ### Month 2-3: Retention
+
 - [ ] Subscription billing (auto-charge, auto-schedule)
 - [ ] Analytics dashboard for consultants
 - [ ] Follow-up email sequence (T+1h, T+24h, T+7d, T+30d)
@@ -311,6 +329,7 @@ Total off-platform: 5 out of 20 = 25%
 - [ ] WhatsApp notification integration (booking confirmations, reminders)
 
 ### Month 3-6: Lock-In
+
 - [ ] Volume-based commission tiers live
 - [ ] Category pages with browsable consultant listings
 - [ ] Referral credit system active
@@ -319,6 +338,7 @@ Total off-platform: 5 out of 20 = 25%
 - [ ] AI session summaries (Phase 1)
 
 ### Month 6-12: Network Effects
+
 - [ ] Platform-generated demand > 20% of total bookings
 - [ ] 50+ consultants with 20+ reviews each
 - [ ] Organic search traffic growing month-over-month
@@ -331,23 +351,23 @@ Total off-platform: 5 out of 20 = 25%
 
 ### Track Weekly
 
-| Metric | Target | Red Flag |
-|---|---|---|
-| Repeat booking rate (same pair, platform) | 40%+ | < 25% |
-| Time to second booking (same pair) | < 14 days | > 30 days |
-| Subscription retention rate | 80%+ monthly | < 60% |
-| Platform-sourced bookings (%) | 20%+ by month 6 | < 10% |
-| Consultant with 20+ reviews (%) | 30%+ by month 6 | < 10% |
-| Post-session review completion | 50%+ | < 25% |
-| Automated follow-up → rebook conversion | 10%+ | < 3% |
+| Metric                                    | Target          | Red Flag  |
+| ----------------------------------------- | --------------- | --------- |
+| Repeat booking rate (same pair, platform) | 40%+            | < 25%     |
+| Time to second booking (same pair)        | < 14 days       | > 30 days |
+| Subscription retention rate               | 80%+ monthly    | < 60%     |
+| Platform-sourced bookings (%)             | 20%+ by month 6 | < 10%     |
+| Consultant with 20+ reviews (%)           | 30%+ by month 6 | < 10%     |
+| Post-session review completion            | 50%+            | < 25%     |
+| Automated follow-up → rebook conversion   | 10%+            | < 3%      |
 
 ### Track Monthly
 
-| Metric | Target | Red Flag |
-|---|---|---|
-| Consultant MAU retention | 60%+ | < 40% |
-| Revenue per active consultant | ₹15K+ | < ₹5K |
-| Off-platform signal (aggregate phone sharing %) | < 30% | > 50% |
+| Metric                                               | Target             | Red Flag     |
+| ---------------------------------------------------- | ------------------ | ------------ |
+| Consultant MAU retention                             | 60%+               | < 40%        |
+| Revenue per active consultant                        | ₹15K+              | < ₹5K        |
+| Off-platform signal (aggregate phone sharing %)      | < 30%              | > 50%        |
 | New consultee source (organic vs referred vs direct) | 20%+ organic by M6 | < 5% organic |
 
 ---

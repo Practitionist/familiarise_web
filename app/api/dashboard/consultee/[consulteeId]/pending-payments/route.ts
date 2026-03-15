@@ -9,7 +9,9 @@ import {
 
 /**
  * GET /api/dashboard/consultee/[consulteeId]/pending-payments
- * Fetch all consultations and subscriptions that are APPROVED_PENDING_PAYMENT for this consultee
+ * Fetch pending payments for this consultee from two sources:
+ * 1. Consultations/subscriptions with APPROVED_PENDING_PAYMENT status (awaiting checkout)
+ * 2. Payment records with paymentStatus PENDING (checkout initiated, awaiting gateway confirmation)
  */
 export async function GET(
   request: Request,
@@ -29,10 +31,10 @@ export async function GET(
       return forbiddenResponse("You can only access your own pending payments");
     }
 
-    // Fetch consultee profile to get their ID
+    // Fetch consultee profile to get their userId
     const consulteeProfile = await prisma.consulteeProfile.findUnique({
       where: { id: consulteeId },
-      select: { id: true },
+      select: { id: true, userId: true },
     });
 
     if (!consulteeProfile) {
@@ -42,98 +44,106 @@ export async function GET(
       );
     }
 
-    // Fetch consultations with APPROVED_PENDING_PAYMENT status
-    const pendingConsultations = await prisma.consultation.findMany({
-      where: {
-        requestedById: consulteeId,
-        requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+    const planInclude = {
+      select: {
+        title: true,
+        consultantProfile: {
+          select: {
+            user: { select: { name: true } },
+          },
+        },
       },
-      include: {
-        consultationPlan: {
+    } as const;
+
+    // Fetch all three data sources in parallel
+    const [pendingConsultations, pendingSubscriptions, pendingGatewayPayments] =
+      await Promise.all([
+        // Source 1: Consultations with APPROVED_PENDING_PAYMENT status
+        prisma.consultation.findMany({
+          where: {
+            requestedById: consulteeId,
+            requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+          },
           include: {
-            consultantProfile: {
+            consultationPlan: {
               include: {
-                user: {
-                  select: {
-                    name: true,
+                consultantProfile: {
+                  include: {
+                    user: { select: { name: true } },
                   },
                 },
               },
             },
           },
-        },
-        appointment: {
-          include: {
-            payment: {
-              where: {
-                paymentStatus: {
-                  in: ["PENDING"],
-                },
-              },
-              orderBy: {
-                createdAt: "desc",
-              },
-              take: 1,
-            },
-          },
-        },
-      },
-      orderBy: {
-        updatedAt: "desc",
-      },
-    });
+          orderBy: { updatedAt: "desc" },
+        }),
 
-    // Fetch subscriptions with APPROVED_PENDING_PAYMENT status
-    const pendingSubscriptions = await prisma.subscription.findMany({
-      where: {
-        requestedById: consulteeId,
-        requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
-      },
-      include: {
-        subscriptionPlan: {
+        // Source 2: Subscriptions with APPROVED_PENDING_PAYMENT status
+        prisma.subscription.findMany({
+          where: {
+            requestedById: consulteeId,
+            requestStatus: RequestStatus.APPROVED_PENDING_PAYMENT,
+          },
           include: {
-            consultantProfile: {
+            subscriptionPlan: {
               include: {
-                user: {
-                  select: {
-                    name: true,
+                consultantProfile: {
+                  include: {
+                    user: { select: { name: true } },
                   },
                 },
               },
             },
           },
-        },
-        appointments: {
+          orderBy: { updatedAt: "desc" },
+        }),
+
+        // Source 3: Payment records with PENDING gateway status (non-expired only)
+        prisma.payment.findMany({
+          where: {
+            userId: consulteeProfile.userId,
+            paymentStatus: "PENDING",
+            OR: [
+              // Has explicit expiresAt that's still in the future
+              { expiresAt: { gt: new Date() } },
+              // No expiresAt but created within last 30 min (default checkout window)
+              {
+                expiresAt: null,
+                createdAt: { gt: new Date(Date.now() - 30 * 60 * 1000) },
+              },
+            ],
+          },
           include: {
-            payment: {
-              where: {
-                paymentStatus: {
-                  in: ["PENDING"],
+            appointment: {
+              select: {
+                appointmentType: true,
+                consultation: {
+                  select: { consultationPlan: planInclude },
+                },
+                subscription: {
+                  select: { subscriptionPlan: planInclude },
+                },
+                webinar: {
+                  select: { webinarPlan: planInclude },
+                },
+                class: {
+                  select: { classPlan: planInclude },
                 },
               },
-              orderBy: {
-                createdAt: "desc",
-              },
-              take: 1,
             },
           },
-          take: 1,
-        },
-      },
-      orderBy: {
-        updatedAt: "desc",
-      },
-    });
+          orderBy: { createdAt: "desc" },
+        }),
+      ]);
 
-    // Transform data into a consistent format
-    const pendingPayments = [
+    // Transform approval-pending consultations
+    const approvalPendingItems = [
       ...pendingConsultations.map((consultation) => {
-        const payment = consultation.appointment?.payment?.[0];
         const expiresAt = new Date(
           consultation.updatedAt.getTime() + 48 * 60 * 60 * 1000,
         ); // 48 hours from approval
         const isExpiringSoon =
-          expiresAt.getTime() - Date.now() < 24 * 60 * 60 * 1000; // < 24 hours
+          expiresAt.getTime() - Date.now() < 24 * 60 * 60 * 1000;
 
         return {
           id: consultation.id,
@@ -148,15 +158,15 @@ export async function GET(
           approvedAt: consultation.updatedAt.toISOString(),
           expiresAt: expiresAt.toISOString(),
           isExpiringSoon,
+          source: "approval_pending" as const,
         };
       }),
       ...pendingSubscriptions.map((subscription) => {
-        const payment = subscription.appointments?.[0]?.payment?.[0];
         const expiresAt = new Date(
           subscription.updatedAt.getTime() + 48 * 60 * 60 * 1000,
-        ); // 48 hours from approval
+        );
         const isExpiringSoon =
-          expiresAt.getTime() - Date.now() < 24 * 60 * 60 * 1000; // < 24 hours
+          expiresAt.getTime() - Date.now() < 24 * 60 * 60 * 1000;
 
         return {
           id: subscription.id,
@@ -171,10 +181,59 @@ export async function GET(
           approvedAt: subscription.updatedAt.toISOString(),
           expiresAt: expiresAt.toISOString(),
           isExpiringSoon,
+          source: "approval_pending" as const,
         };
       }),
+    ];
+
+    // Transform gateway-pending payments
+    const gatewayPendingItems = pendingGatewayPayments.map((payment) => {
+      const apt = payment.appointment;
+      const planTitle =
+        apt?.consultation?.consultationPlan?.title ??
+        apt?.subscription?.subscriptionPlan?.title ??
+        apt?.webinar?.webinarPlan?.title ??
+        apt?.class?.classPlan?.title ??
+        "Payment";
+      const consultantName =
+        apt?.consultation?.consultationPlan?.consultantProfile?.user?.name ??
+        apt?.subscription?.subscriptionPlan?.consultantProfile?.user?.name ??
+        apt?.webinar?.webinarPlan?.consultantProfile?.user?.name ??
+        apt?.class?.classPlan?.consultantProfile?.user?.name ??
+        "Consultant";
+      const type =
+        (apt?.appointmentType?.toLowerCase() as
+          | "consultation"
+          | "subscription"
+          | "webinar"
+          | "class") || "consultation";
+
+      // Gateway-pending payments expire based on expiresAt or default to 30 min from creation
+      const expiresAt =
+        payment.expiresAt ||
+        new Date(payment.createdAt.getTime() + 30 * 60 * 1000);
+      const isExpiringSoon = expiresAt.getTime() - Date.now() < 10 * 60 * 1000; // < 10 min
+
+      return {
+        id: payment.id,
+        type,
+        title: planTitle,
+        consultantName,
+        amount: payment.amount,
+        currency: payment.currency,
+        paymentUrl: "",
+        approvedAt: payment.createdAt.toISOString(),
+        expiresAt: expiresAt.toISOString(),
+        isExpiringSoon,
+        source: "gateway_pending" as const,
+      };
+    });
+
+    // Merge and sort: expiring soon first, then by date (newest first)
+    const pendingPayments = [
+      ...approvalPendingItems,
+      ...gatewayPendingItems,
     ].sort((a, b) => {
-      // Sort by expiring soon first, then by approval date (newest first)
       if (a.isExpiringSoon && !b.isExpiringSoon) return -1;
       if (!a.isExpiringSoon && b.isExpiringSoon) return 1;
       return (

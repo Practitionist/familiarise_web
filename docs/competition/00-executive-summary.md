@@ -10,15 +10,15 @@ Familiarise is an India-first consultation SaaS marketplace — "Shopify for Kno
 
 The Indian creator economy is valued at **$1.46-12.28B** (2025) and growing at **22.2% CAGR**. Creator-influenced spending is projected to exceed **$1T by 2030**. The expert consultation niche is a subset of this, dominated by one clear leader:
 
-| Player | Scale | Funding | Revenue | Threat |
-|--------|-------|---------|---------|--------|
-| **Topmate** | 300K creators, 1M users | $1.13M | $68K/yr (!) | CRITICAL |
-| **SuperProfile** | 38K creators, 4M users | Undisclosed | Unknown | CRITICAL |
-| **GrowthSchool** | Large cohort base | $5M (Sequoia) | $8.11M/yr | HIGH |
-| **Preplaced** | 600 mentors | Undisclosed | Unknown | HIGH |
-| **Metvy** | Growing, 8 languages | $188K | ₹1.22Cr/yr | MEDIUM |
-| **ProPeers** | Early stage | Unfunded | Minimal | MEDIUM |
-| **Familiarise** | **0 users** | Bootstrapped | $0 | — |
+| Player           | Scale                   | Funding       | Revenue     | Threat   |
+| ---------------- | ----------------------- | ------------- | ----------- | -------- |
+| **Topmate**      | 300K creators, 1M users | $1.13M        | $68K/yr (!) | CRITICAL |
+| **SuperProfile** | 38K creators, 4M users  | Undisclosed   | Unknown     | CRITICAL |
+| **GrowthSchool** | Large cohort base       | $5M (Sequoia) | $8.11M/yr   | HIGH     |
+| **Preplaced**    | 600 mentors             | Undisclosed   | Unknown     | HIGH     |
+| **Metvy**        | Growing, 8 languages    | $188K         | ₹1.22Cr/yr  | MEDIUM   |
+| **ProPeers**     | Early stage             | Unfunded      | Minimal     | MEDIUM   |
+| **Familiarise**  | **0 users**             | Bootstrapped  | $0          | —        |
 
 ## Our 3 Unfair Advantages
 
@@ -42,4 +42,4 @@ We have zero users, no mobile app, no AI features, no brand recognition, and a 2
 
 ---
 
-*Detailed analysis in the documents below. Private war-room docs in `private/`.*
+_Detailed analysis in the documents below. Private war-room docs in `private/`._

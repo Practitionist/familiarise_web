@@ -8,10 +8,10 @@ import {
   ChevronLeft,
   Video,
   Users,
-  Check,
-  Crown,
-  Zap,
   Loader2,
+  CheckCircle2,
+  Clock,
+  BookOpen,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -444,48 +444,89 @@ function MonthlyEventItem({
   );
 }
 
-// Premium Features Card - Modern gradient design
-function PremiumFeaturesCard() {
+// Learning Stats Panel — derives all stats from processed events
+function LearningStatsPanel({ events }: { events: ProcessedEvent[] }) {
+  const stats = useMemo(() => {
+    const now = new Date();
+    let completedSlots = 0;
+    let hoursLearned = 0;
+    const activePrograms = new Set<string>();
+    const experts = new Set<string>();
+
+    for (const event of events) {
+      experts.add(event.consultantName);
+      let hasUpcoming = false;
+      for (const slot of event.slots) {
+        if (slot.endsAt < now) {
+          completedSlots++;
+          hoursLearned +=
+            (slot.endsAt.getTime() - slot.startsAt.getTime()) / 3_600_000;
+        }
+        if (slot.startsAt > now) hasUpcoming = true;
+      }
+      if (hasUpcoming) activePrograms.add(event.id);
+    }
+
+    return {
+      completedSlots,
+      hoursLearned: Math.round(hoursLearned * 10) / 10,
+      activePrograms: activePrograms.size,
+      experts: experts.size,
+    };
+  }, [events]);
+
+  const rows = [
+    {
+      icon: CheckCircle2,
+      label: "Sessions Completed",
+      value: stats.completedSlots,
+      color: "text-emerald-600 bg-emerald-50",
+    },
+    {
+      icon: Clock,
+      label: "Hours Learned",
+      value: stats.hoursLearned,
+      color: "text-blue-600 bg-blue-50",
+    },
+    {
+      icon: BookOpen,
+      label: "Active Programs",
+      value: stats.activePrograms,
+      color: "text-violet-600 bg-violet-50",
+    },
+    {
+      icon: Users,
+      label: "Experts Consulted",
+      value: stats.experts,
+      color: "text-amber-600 bg-amber-50",
+    },
+  ];
+
   return (
-    <div className="bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-800 rounded-2xl border border-zinc-800 p-6 shadow-xl">
-      <div className="flex items-center gap-2 mb-4">
-        <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center">
-          <Crown className="h-4 w-4 text-white" />
-        </div>
-        <h3 className="font-semibold text-white">Unlock Premium</h3>
-      </div>
-
-      <div className="space-y-3 mb-6">
-        {[
-          "Unlimited Access to Expert Sessions",
-          "24/7 Priority Support",
-          "Exclusive Webinars & Workshops",
-        ].map((feature) => (
-          <div
-            key={feature}
-            className="flex items-center gap-2.5 text-sm text-zinc-300"
-          >
-            <div className="h-5 w-5 rounded-full bg-emerald-500/20 flex items-center justify-center">
-              <Check className="h-3 w-3 text-emerald-400" />
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {rows.map((row) => (
+        <div
+          key={row.label}
+          className="bg-white rounded-xl border border-zinc-200 shadow-sm p-4 flex flex-col gap-3"
+        >
+          <div className="flex items-center gap-2.5">
+            <div
+              className={cn(
+                "h-9 w-9 rounded-lg flex items-center justify-center shrink-0",
+                row.color,
+              )}
+            >
+              <row.icon className="h-4.5 w-4.5" />
             </div>
-            <span>{feature}</span>
+            <span className="text-sm text-zinc-500 font-medium">
+              {row.label}
+            </span>
           </div>
-        ))}
-      </div>
-
-      <div className="mb-5">
-        <span className="text-3xl font-bold text-white">$99</span>
-        <span className="text-zinc-400">/month</span>
-        <p className="text-xs text-emerald-400 mt-1 flex items-center gap-1">
-          <Zap className="h-3 w-3" />
-          Save 20% with annual billing
-        </p>
-      </div>
-
-      <Button className="w-full bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white font-semibold h-11">
-        <Crown className="h-4 w-4 mr-2" />
-        Upgrade Now
-      </Button>
+          <p className="text-2xl font-bold text-zinc-900 tabular-nums">
+            {row.label === "Hours Learned" ? `${row.value}h` : row.value}
+          </p>
+        </div>
+      ))}
     </div>
   );
 }
@@ -600,43 +641,17 @@ export default function HomeTab({
         </div>
       )}
 
-      {/* Welcome Section - Dark elegant hero */}
-      <motion.div variants={fadeInUp}>
-        <div className="bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-800 rounded-2xl p-8 border border-zinc-800 shadow-2xl relative overflow-hidden">
-          {/* Subtle grid pattern */}
-          <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:32px_32px]" />
-
-          <div className="relative">
-            <h1 className="text-3xl md:text-4xl font-bold text-white mb-2">
-              Welcome back, {userDetails.name?.split(" ")[0]}
-            </h1>
-            <p className="text-zinc-400 text-lg">
-              Here's what's coming up in your learning journey
-            </p>
-
-            <div className="mt-6 flex flex-wrap gap-3">
-              <Button
-                onClick={() =>
-                  router.push(
-                    `/dashboard/consultee/${consulteeId}/appointments`,
-                  )
-                }
-                className="bg-white hover:bg-zinc-100 text-zinc-900 font-semibold h-11 px-5"
-              >
-                <Calendar className="h-4 w-4 mr-2" />
-                View Schedule
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => router.push("/explore/experts")}
-                className="border-zinc-700 bg-zinc-800/50 text-white hover:bg-zinc-800 h-11 px-5"
-              >
-                <Users className="h-4 w-4 mr-2" />
-                Find Experts
-              </Button>
-            </div>
-          </div>
+      {/* Welcome + Learning Stats */}
+      <motion.div variants={fadeInUp} className="space-y-5">
+        <div>
+          <h1 className="text-2xl font-bold text-zinc-900">
+            Welcome back, {userDetails.name?.split(" ")[0]}
+          </h1>
+          <p className="text-sm text-zinc-500 mt-1">
+            Here&apos;s an overview of your learning journey
+          </p>
         </div>
+        <LearningStatsPanel events={processedEvents} />
       </motion.div>
 
       {/* Upcoming Sessions - Dark cards with horizontal scroll */}
@@ -778,9 +793,8 @@ export default function HomeTab({
           </div>
         </div>
 
-        {/* Right sidebar */}
-        <div className="space-y-6">
-          <PremiumFeaturesCard />
+        {/* Right sidebar — stretch to match monthly schedule */}
+        <div className="lg:h-full">
           <PendingPaymentsWidget consulteeId={consulteeId} />
         </div>
       </motion.div>

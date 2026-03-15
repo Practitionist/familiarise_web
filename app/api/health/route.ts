@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getMaintenanceState } from "@/lib/maintenance";
+import prisma from "@/lib/prisma";
 
 type BetterStackHealth = {
   configured: boolean;
@@ -68,6 +69,19 @@ export async function GET(request: Request) {
   const includeBetterStack =
     new URL(request.url).searchParams.get("includeBetterStack") === "1";
 
+  let database: "connected" | "unreachable" = "connected";
+  try {
+    let timeoutId: ReturnType<typeof setTimeout>;
+    await Promise.race([
+      prisma.$queryRaw`SELECT 1`.finally(() => clearTimeout(timeoutId)),
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error("DB timeout")), 5000);
+      }),
+    ]);
+  } catch {
+    database = "unreachable";
+  }
+
   const [maintenanceState, betterstack] = await Promise.all([
     getMaintenanceState(),
     includeBetterStack
@@ -78,8 +92,11 @@ export async function GET(request: Request) {
         }),
   ]);
 
+  const status = database === "unreachable" ? "degraded" : "healthy";
+
   return NextResponse.json({
-    status: "healthy",
+    status,
+    database,
     maintenance: {
       phase: maintenanceState.phase,
       reason: maintenanceState.reason,

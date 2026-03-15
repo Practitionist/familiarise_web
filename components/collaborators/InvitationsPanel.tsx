@@ -18,7 +18,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { formatCurrencyAmount } from "@/utils/formatting";
+import { formatCurrencyFromMajorUnit } from "@/utils/formatting";
 
 // ─── Shared schedule types ───────────────────────────────────────────────────
 
@@ -831,7 +831,7 @@ function HostedPlanCard({
             </p>
             {plan.price > 0 && (
               <p className="text-xs text-zinc-500">
-                {formatCurrencyAmount(plan.price, "INR")}
+                {formatCurrencyFromMajorUnit(plan.price, "INR")}
               </p>
             )}
           </div>
@@ -1140,7 +1140,7 @@ export function InvitationsPanel() {
                       {collab.planPrice > 0 && (
                         <span className="text-xs text-zinc-500">
                           &middot; Plan price{" "}
-                          {formatCurrencyAmount(collab.planPrice, "INR")}
+                          {formatCurrencyFromMajorUnit(collab.planPrice, "INR")}
                         </span>
                       )}
                     </div>

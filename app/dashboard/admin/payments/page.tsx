@@ -19,7 +19,7 @@ import {
   PaymentStatus,
   AppointmentsType,
 } from "@prisma/client";
-import { formatCurrencyAmount } from "@/utils/formatting";
+import { formatCurrencyFromMajorUnit } from "@/utils/formatting";
 import type { PaymentListResponse, Payment } from "@/types/payments";
 
 // Fetch payments with filters
@@ -136,6 +136,7 @@ export default function AdminPaymentsPage() {
                 <SelectItem value="PENDING">Pending</SelectItem>
                 <SelectItem value="SUCCEEDED">Succeeded</SelectItem>
                 <SelectItem value="FAILED">Failed</SelectItem>
+                <SelectItem value="EXPIRED">Expired</SelectItem>
               </SelectContent>
             </Select>
 
@@ -250,7 +251,7 @@ export default function AdminPaymentsPage() {
                           {payment.paymentIntent?.substring(0, 20)}...
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-900">
-                          {formatCurrencyAmount(
+                          {formatCurrencyFromMajorUnit(
                             payment.amount,
                             payment.currency,
                           )}
@@ -262,7 +263,9 @@ export default function AdminPaymentsPage() {
                                 ? "bg-green-100 text-green-800"
                                 : payment.paymentStatus === "PENDING"
                                   ? "bg-yellow-100 text-yellow-800"
-                                  : "bg-red-100 text-red-800"
+                                  : payment.paymentStatus === "EXPIRED"
+                                    ? "bg-zinc-100 text-zinc-500"
+                                    : "bg-red-100 text-red-800"
                             }`}
                           >
                             {payment.paymentStatus}
