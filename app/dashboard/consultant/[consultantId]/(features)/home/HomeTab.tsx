@@ -52,18 +52,12 @@ import {
 
 import { getBadgeStyle } from "../../types";
 import { TAppointment } from "@/types/appointment";
+import { getInitials } from "@/utils/formatting";
 import { RequestSlotAllocationTabMini } from "../requests/RequestSlotAllocationTabMini";
 
 interface HomeTabProps {
   appointments: TAppointment[];
   consultantId: string;
-}
-
-function getInitials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
 const staggerChildren = {
