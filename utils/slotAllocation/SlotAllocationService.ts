@@ -1464,11 +1464,19 @@ export class SlotAllocationService {
     } as Prisma.AppointmentWhereInput;
 
     if (onlyTentative) {
-      // Find appointments with tentative slots for this event
+      // Find appointments with tentative slots for this event.
+      // Include user links on tentative slots so we can re-connect enrolled
+      // participants (e.g. class/webinar registrants) to the newly created slots.
       const appointments = await tx.appointment.findMany({
         where: whereClause,
-        include: { slotsOfAppointment: true },
+        include: {
+          slotsOfAppointment: {
+            include: { user: { select: { id: true } } },
+          },
+        },
       });
+
+      const enrolledUserIdSet = new Set<string>();
 
       for (const appointment of appointments) {
         const hasConfirmed = appointment.slotsOfAppointment.some(
@@ -1479,6 +1487,15 @@ export class SlotAllocationService {
         );
 
         if (hasTentative) {
+          // Capture enrolled users from tentative slots before deletion
+          for (const slot of appointment.slotsOfAppointment) {
+            if (slot.isTentative) {
+              for (const user of slot.user) {
+                enrolledUserIdSet.add(user.id);
+              }
+            }
+          }
+
           // Delete only tentative slots using a direct query (not stale IDs)
           await tx.slotOfAppointment.deleteMany({
             where: {
@@ -1495,7 +1512,10 @@ export class SlotAllocationService {
           }
         }
       }
-      return { preservedSlotCount: 0, enrolledUserIds: [] };
+      return {
+        preservedSlotCount: 0,
+        enrolledUserIds: Array.from(enrolledUserIdSet),
+      };
     } else if (preservePastSlots) {
       // In-progress reallocation: only delete future slots, preserve past ones
       const now = new Date();
@@ -1564,17 +1584,36 @@ export class SlotAllocationService {
         enrolledUserIds: Array.from(enrolledUserIdSet),
       };
     } else {
-      // Full delete: remove all appointments for this event
+      // Full delete: remove all appointments for this event.
+      // Capture enrolled user IDs BEFORE deletion so group-event participants
+      // (e.g. webinar registrants) can be reconnected to the new slots.
       const existingAppointments = await tx.appointment.findMany({
         where: whereClause,
+        include: {
+          slotsOfAppointment: {
+            include: { user: { select: { id: true } } },
+          },
+        },
       });
+
+      const enrolledUserIdSet = new Set<string>();
+      for (const appointment of existingAppointments) {
+        for (const slot of appointment.slotsOfAppointment) {
+          for (const user of slot.user) {
+            enrolledUserIdSet.add(user.id);
+          }
+        }
+      }
 
       await Promise.all(
         existingAppointments.map((appointment) =>
           tx.appointment.delete({ where: { id: appointment.id } }),
         ),
       );
-      return { preservedSlotCount: 0, enrolledUserIds: [] };
+      return {
+        preservedSlotCount: 0,
+        enrolledUserIds: Array.from(enrolledUserIdSet),
+      };
     }
   }
 

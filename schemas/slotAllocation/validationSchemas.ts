@@ -99,35 +99,19 @@ export const validationRequestSchema = z.object({
  * Used by: All API routes for validating URL path parameters
  *
  * Validates:
- * - ID is a valid UUID or CUID format
+ * - ID is a non-empty alphanumeric string (allows hyphens and underscores)
  *
- * UUID format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
- * CUID format: cxxxxxxxxxxxxxxxxxxxxxxxxx
- *
- * COMPATIBILITY FIX:
- * Different Prisma models use different ID formats based on schema.prisma:
- * - UUID events: Consultation (@default(uuid()))
- * - CUID events: Subscription, Webinar, Class (all @default(cuid()))
- * - CUID plans: ConsultationPlan, SubscriptionPlan, WebinarPlan, ClassPlan
+ * Accepts UUID, CUID, and slug-style IDs (e.g. test-webinar-001).
  */
 export const eventIdSchema = z
   .string()
   .min(1, { message: "Event ID is required" })
+  .max(255, { message: "Event ID is too long" })
   .refine(
-    (id) => {
-      // UUID format: 8-4-4-4-12 hexadecimal characters
-      const uuidRegex =
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      // CUID format: lowercase letter + 23-24 lowercase alphanumeric chars
-      // CUIDv1 (Prisma <5): 'c' + 24 chars = 25 total
-      // CUIDv2 (Prisma 5+): letter + 23 chars = 24 total
-      const cuidRegex = /^[a-z][a-z0-9]{23,24}$/;
-
-      return uuidRegex.test(id) || cuidRegex.test(id);
-    },
+    (id) => /^[a-zA-Z0-9_-]+$/.test(id),
     {
       message:
-        "Event ID must be a valid UUID or CUID format (received invalid format)",
+        "Event ID must contain only alphanumeric characters, hyphens, or underscores",
     },
   );
 
