@@ -157,6 +157,7 @@ export async function GET(
             }
           : null,
         receiptUrl: p.receiptUrl,
+        expiresAt: p.expiresAt,
         createdAt: p.createdAt,
       };
     });

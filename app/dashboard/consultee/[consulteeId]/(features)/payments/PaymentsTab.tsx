@@ -34,6 +34,7 @@ interface PaymentItem {
     value: number;
   } | null;
   receiptUrl: string | null;
+  expiresAt: string | null;
   createdAt: string;
 }
 
@@ -94,6 +95,66 @@ function formatDate(date: string): string {
     month: "short",
     year: "numeric",
   });
+}
+
+const GATEWAY_LABELS: Record<string, string> = {
+  STRIPE: "Stripe",
+  RAZORPAY: "Razorpay",
+  LEMON_SQUEEZY: "Lemon Squeezy",
+  XFLOW: "Xflow",
+};
+
+function formatGateway(gateway: string): string {
+  return GATEWAY_LABELS[gateway] || gateway;
+}
+
+function formatDateTime(date: string): string {
+  return new Date(date).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
+function formatRelativeTime(date: Date): string {
+  const now = new Date();
+  const diffMs = date.getTime() - now.getTime();
+  const absDiffMs = Math.abs(diffMs);
+  const isPast = diffMs < 0;
+
+  const minutes = Math.floor(absDiffMs / (1000 * 60));
+  const hours = Math.floor(absDiffMs / (1000 * 60 * 60));
+  const days = Math.floor(absDiffMs / (1000 * 60 * 60 * 24));
+
+  let relative: string;
+  if (minutes < 1) relative = "just now";
+  else if (minutes < 60) relative = `${minutes}m`;
+  else if (hours < 24) relative = `${hours}h ${minutes % 60}m`;
+  else relative = `${days}d ago`;
+
+  if (minutes < 1) return relative;
+  return isPast ? `${relative} ago` : `in ${relative}`;
+}
+
+function getExpiryInfo(payment: PaymentItem): {
+  datetime: string;
+  relative: string;
+  isExpired: boolean;
+} | null {
+  if (payment.status !== "PENDING") return null;
+
+  const expiresAt = payment.expiresAt
+    ? new Date(payment.expiresAt)
+    : new Date(new Date(payment.createdAt).getTime() + 30 * 60 * 1000);
+
+  return {
+    datetime: formatDateTime(expiresAt.toISOString()),
+    relative: formatRelativeTime(expiresAt),
+    isExpired: expiresAt <= new Date(),
+  };
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -221,7 +282,13 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                         Amount
                       </th>
                       <th className="text-left px-4 py-3 font-medium text-zinc-600">
+                        Method
+                      </th>
+                      <th className="text-left px-4 py-3 font-medium text-zinc-600">
                         Status
+                      </th>
+                      <th className="text-left px-4 py-3 font-medium text-zinc-600">
+                        Expires
                       </th>
                       <th className="text-center px-4 py-3 font-medium text-zinc-600">
                         Invoice
@@ -270,8 +337,47 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                               </span>
                             )}
                           </td>
+                          <td className="px-4 py-3 text-zinc-600 whitespace-nowrap text-xs">
+                            {formatGateway(payment.paymentGateway)}
+                          </td>
                           <td className="px-4 py-3">
                             <StatusBadge status={payment.status} />
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            {(() => {
+                              const expiry = getExpiryInfo(payment);
+                              if (!expiry) {
+                                return (
+                                  <span className="text-zinc-300">—</span>
+                                );
+                              }
+                              return (
+                                <div>
+                                  <span
+                                    className={cn(
+                                      "text-xs",
+                                      expiry.isExpired
+                                        ? "text-red-500"
+                                        : "text-zinc-600",
+                                    )}
+                                  >
+                                    {expiry.datetime}
+                                  </span>
+                                  <span
+                                    className={cn(
+                                      "block text-xs",
+                                      expiry.isExpired
+                                        ? "text-red-400"
+                                        : "text-amber-600",
+                                    )}
+                                  >
+                                    {expiry.isExpired
+                                      ? `Expired ${expiry.relative}`
+                                      : `Expires ${expiry.relative}`}
+                                  </span>
+                                </div>
+                              );
+                            })()}
                           </td>
                           <td className="px-4 py-3 text-center">
                             {invoice ? (
