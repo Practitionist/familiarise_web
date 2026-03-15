@@ -139,12 +139,28 @@ function formatRelativeTime(date: Date): string {
   return isPast ? `${relative} ago` : `in ${relative}`;
 }
 
+/**
+ * Derive UI display status: if PENDING but expiresAt is past, show EXPIRED
+ * so the user doesn't see a misleading amber "PENDING" badge while the
+ * cleanup cron hasn't run yet.
+ */
+function getDisplayStatus(payment: PaymentItem): string {
+  if (payment.status !== "PENDING") return payment.status;
+
+  const expiresAt = payment.expiresAt
+    ? new Date(payment.expiresAt)
+    : new Date(new Date(payment.createdAt).getTime() + 30 * 60 * 1000);
+
+  return expiresAt <= new Date() ? "EXPIRED" : "PENDING";
+}
+
 function getExpiryInfo(payment: PaymentItem): {
   datetime: string;
   relative: string;
   isExpired: boolean;
 } | null {
-  if (payment.status !== "PENDING") return null;
+  // Show expiry info for PENDING (countdown) and EXPIRED (how long ago)
+  if (payment.status !== "PENDING" && payment.status !== "EXPIRED") return null;
 
   const expiresAt = payment.expiresAt
     ? new Date(payment.expiresAt)
@@ -161,6 +177,7 @@ const STATUS_STYLES: Record<string, string> = {
   SUCCEEDED: "bg-emerald-50 text-emerald-700",
   COMPLETED: "bg-emerald-50 text-emerald-700",
   PENDING: "bg-amber-50 text-amber-700",
+  EXPIRED: "bg-zinc-100 text-zinc-500",
   FAILED: "bg-red-50 text-red-700",
   REFUNDED: "bg-blue-50 text-blue-700",
   CANCELLED: "bg-zinc-100 text-zinc-600",
@@ -298,6 +315,7 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                   <tbody className="divide-y divide-zinc-50">
                     {data.payments.map((payment) => {
                       const invoice = invoiceByPaymentId.get(payment.id);
+                      const displayStatus = getDisplayStatus(payment);
                       return (
                         <tr key={payment.id} className="hover:bg-zinc-50">
                           <td className="px-4 py-3 text-zinc-600 whitespace-nowrap">
@@ -341,7 +359,7 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                             {formatGateway(payment.paymentGateway)}
                           </td>
                           <td className="px-4 py-3">
-                            <StatusBadge status={payment.status} />
+                            <StatusBadge status={displayStatus} />
                           </td>
                           <td className="px-4 py-3 whitespace-nowrap">
                             {(() => {
@@ -353,27 +371,18 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                               }
                               return (
                                 <div>
-                                  <span
-                                    className={cn(
-                                      "text-xs",
-                                      expiry.isExpired
-                                        ? "text-red-500"
-                                        : "text-zinc-600",
-                                    )}
-                                  >
+                                  <span className="text-xs text-zinc-500">
                                     {expiry.datetime}
                                   </span>
                                   <span
                                     className={cn(
                                       "block text-xs",
                                       expiry.isExpired
-                                        ? "text-red-400"
+                                        ? "text-zinc-400"
                                         : "text-amber-600",
                                     )}
                                   >
-                                    {expiry.isExpired
-                                      ? `Expired ${expiry.relative}`
-                                      : `Expires ${expiry.relative}`}
+                                    {expiry.relative}
                                   </span>
                                 </div>
                               );
@@ -404,7 +413,8 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                                   </TooltipContent>
                                 </Tooltip>
                               </TooltipProvider>
-                            ) : payment.status === "FAILED" ? (
+                            ) : displayStatus === "FAILED" ||
+                              displayStatus === "EXPIRED" ? (
                               <span className="text-xs text-zinc-300">—</span>
                             ) : (
                               <TooltipProvider>

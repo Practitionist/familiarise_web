@@ -28,6 +28,7 @@ function outputToGitHubActions(result: PaymentReconciliationResult): void {
       `reconciled_count=${result.reconciledCount}`,
       `succeeded_count=${result.succeededCount}`,
       `failed_count=${result.failedCount}`,
+      `expired_count=${result.expiredCount}`,
       `skipped_count=${result.skippedCount}`,
       `success=${result.success}`,
     ].join("\n");
@@ -64,6 +65,7 @@ async function main(): Promise<void> {
     console.log(`   Reconciled: ${result.reconciledCount}`);
     console.log(`   Succeeded (needs review): ${result.succeededCount}`);
     console.log(`   Failed: ${result.failedCount}`);
+    console.log(`   Expired: ${result.expiredCount}`);
     console.log(`   Skipped: ${result.skippedCount}`);
     console.log(`   Success: ${result.success}`);
 

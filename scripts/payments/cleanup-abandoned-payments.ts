@@ -211,10 +211,10 @@ export async function cleanupAbandonedPayments(): Promise<CleanupResult> {
                 payment.paymentGateway,
               );
 
-              // Update payment status to FAILED
+              // Update payment status to EXPIRED (timed out, not a gateway rejection)
               await tx.payment.update({
                 where: { id: payment.id },
-                data: { paymentStatus: PaymentStatus.FAILED },
+                data: { paymentStatus: PaymentStatus.EXPIRED },
               });
             } catch (paymentError) {
               const errorMessage =
@@ -446,12 +446,12 @@ export async function cleanupExpiredApprovalPendingPayments(): Promise<CleanupRe
             );
           }
 
-          // Mark expired payments as failed
+          // Mark expired payments as EXPIRED (timed out, not a gateway rejection)
           if (consultation.appointment?.payment) {
             for (const payment of consultation.appointment.payment) {
               await tx.payment.update({
                 where: { id: payment.id },
-                data: { paymentStatus: PaymentStatus.FAILED },
+                data: { paymentStatus: PaymentStatus.EXPIRED },
               });
             }
           }

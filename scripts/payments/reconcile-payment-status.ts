@@ -32,6 +32,7 @@ export interface PaymentReconciliationResult {
   reconciledCount: number;
   succeededCount: number;
   failedCount: number;
+  expiredCount: number;
   skippedCount: number;
   errors: string[];
   timestamp: string;
@@ -147,7 +148,7 @@ function mapGatewayStatus(
       case "requires_action":
         return PaymentStatus.PENDING;
       case "canceled":
-        return PaymentStatus.FAILED;
+        return PaymentStatus.EXPIRED;
       default:
         return null;
     }
@@ -159,6 +160,8 @@ function mapGatewayStatus(
       case "created":
       case "attempted":
         return PaymentStatus.PENDING;
+      case "expired":
+        return PaymentStatus.EXPIRED;
       case "failed":
         return PaymentStatus.FAILED;
       default:
@@ -177,6 +180,7 @@ export async function reconcilePaymentStatus(): Promise<PaymentReconciliationRes
   let reconciledCount = 0;
   let succeededCount = 0;
   let failedCount = 0;
+  let expiredCount = 0;
   let skippedCount = 0;
 
   const minAge = new Date(Date.now() - MIN_AGE_MINUTES * 60 * 1000);
@@ -280,6 +284,8 @@ export async function reconcilePaymentStatus(): Promise<PaymentReconciliationRes
         console.log(
           `   ⚠️ Payment succeeded - may need manual appointment creation!`,
         );
+      } else if (mappedStatus === PaymentStatus.EXPIRED) {
+        expiredCount++;
       } else if (mappedStatus === PaymentStatus.FAILED) {
         failedCount++;
       }
@@ -294,6 +300,7 @@ export async function reconcilePaymentStatus(): Promise<PaymentReconciliationRes
   console.log(`   Reconciled: ${reconciledCount}`);
   console.log(`   Succeeded (needs review): ${succeededCount}`);
   console.log(`   Failed: ${failedCount}`);
+  console.log(`   Expired: ${expiredCount}`);
   console.log(`   Skipped: ${skippedCount}`);
 
   if (succeededCount > 0) {
@@ -309,6 +316,7 @@ export async function reconcilePaymentStatus(): Promise<PaymentReconciliationRes
     reconciledCount,
     succeededCount,
     failedCount,
+    expiredCount,
     skippedCount,
     errors,
     timestamp: new Date().toISOString(),

@@ -136,6 +136,7 @@ export default function AdminPaymentsPage() {
                 <SelectItem value="PENDING">Pending</SelectItem>
                 <SelectItem value="SUCCEEDED">Succeeded</SelectItem>
                 <SelectItem value="FAILED">Failed</SelectItem>
+                <SelectItem value="EXPIRED">Expired</SelectItem>
               </SelectContent>
             </Select>
 
@@ -262,7 +263,9 @@ export default function AdminPaymentsPage() {
                                 ? "bg-green-100 text-green-800"
                                 : payment.paymentStatus === "PENDING"
                                   ? "bg-yellow-100 text-yellow-800"
-                                  : "bg-red-100 text-red-800"
+                                  : payment.paymentStatus === "EXPIRED"
+                                    ? "bg-zinc-100 text-zinc-500"
+                                    : "bg-red-100 text-red-800"
                             }`}
                           >
                             {payment.paymentStatus}

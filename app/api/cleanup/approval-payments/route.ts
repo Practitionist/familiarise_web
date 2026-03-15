@@ -162,11 +162,11 @@ export async function GET(req: NextRequest) {
             if (reverted) subscriptionsReverted++;
           }
 
-          // Mark payment as FAILED (expired)
+          // Mark payment as EXPIRED (timed out, not a gateway rejection)
           await tx.payment.update({
             where: { id: payment.id },
             data: {
-              paymentStatus: PaymentStatus.FAILED,
+              paymentStatus: PaymentStatus.EXPIRED,
               description: payment.description
                 ? `${payment.description} - Expired after 48 hours`
                 : "Payment expired after 48 hours",
