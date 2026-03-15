@@ -379,8 +379,8 @@ async function processDirectory(
     const stat = await fs.promises.stat(fullPath);
 
     if (stat.isDirectory()) {
-      // Skip [...nextauth] directory as it's handled differently
-      if (entry === "[...nextauth]") continue;
+      // Skip [...all] directory (BetterAuth catch-all handler)
+      if (entry === "[...all]") continue;
 
       // Create a new folder in Postman
       const folderName = entry.replace(/^\[|\]$/g, ""); // Remove [] from dynamic route params
