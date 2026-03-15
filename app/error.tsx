@@ -29,7 +29,9 @@ export default function GlobalError({
         </CardHeader>
         <CardContent>
           <p className="text-muted-foreground">
-            {error.message || "An unexpected error occurred. Please try again."}
+            {process.env.NODE_ENV === "development"
+              ? error.message || "An unexpected error occurred."
+              : "An unexpected error occurred. Please try again."}
           </p>
           {error.digest && (
             <p className="text-xs text-muted-foreground mt-2">

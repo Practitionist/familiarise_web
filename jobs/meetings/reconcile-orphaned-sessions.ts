@@ -103,6 +103,9 @@ export async function reconcileOrphanedSessions(): Promise<ReconciliationResult>
         result.streamNotFound++;
       }
 
+      const completionStatus =
+        endedReason === "reconciled" ? "COMPLETED" : "UNVERIFIED";
+
       await prisma.$transaction([
         prisma.meetingSession.update({
           where: { id: session.id },
@@ -111,7 +114,7 @@ export async function reconcileOrphanedSessions(): Promise<ReconciliationResult>
         prisma.slotOfAppointment.update({
           where: { id: session.slotOfAppointmentId },
           data: {
-            completionStatus: "COMPLETED",
+            completionStatus,
             completedAt: endedAt,
           },
         }),

@@ -359,7 +359,7 @@ export async function handleRecordingFailed(
         durationInMinutes: 0,
         recordedAt: new Date(),
         streamCallId,
-        status: "FAILED" as RecordingStatus,
+        status: RecordingStatus.FAILED,
         meetingSessionId: meetingSession.id,
       },
     });
