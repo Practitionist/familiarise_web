@@ -209,7 +209,10 @@ export default function AdminRefundsPage() {
                           {refund.refundId?.substring(0, 20)}...
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-900">
-                          {formatCurrencyFromMajorUnit(refund.amount, refund.currency)}
+                          {formatCurrencyFromMajorUnit(
+                            refund.amount,
+                            refund.currency,
+                          )}
                         </td>
                         <td className="px-4 py-3 text-sm">
                           <span

@@ -358,7 +358,8 @@ export async function checkEventAvailability(params: {
       throw new Error("Webinar not found");
     }
 
-    const webinarConsultantUserId = webinar.webinarPlan.consultantProfile?.userId;
+    const webinarConsultantUserId =
+      webinar.webinarPlan.consultantProfile?.userId;
     const currentParticipants = countWebinarParticipants(
       webinar.appointment,
       webinarConsultantUserId ? [webinarConsultantUserId] : [],
@@ -402,12 +403,14 @@ export async function checkEventAvailability(params: {
     }
 
     // Count unique participants across all appointments, excluding the consultant
-    const classConsultantUserId = classInstance.classPlan.consultantProfile?.userId;
+    const classConsultantUserId =
+      classInstance.classPlan.consultantProfile?.userId;
     const uniqueParticipantIds = new Set<string>();
     for (const appointment of classInstance.appointments) {
       for (const slot of appointment.slotsOfAppointment) {
         for (const user of slot.user) {
-          if (classConsultantUserId && user.id === classConsultantUserId) continue;
+          if (classConsultantUserId && user.id === classConsultantUserId)
+            continue;
           uniqueParticipantIds.add(user.id);
         }
       }

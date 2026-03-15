@@ -356,7 +356,10 @@ export default function PaymentDetailsPage({ params }: PageProps) {
                 >
                   <div>
                     <p className="font-medium">
-                      {formatCurrencyFromMajorUnit(refund.amount, refund.currency)}
+                      {formatCurrencyFromMajorUnit(
+                        refund.amount,
+                        refund.currency,
+                      )}
                     </p>
                     <p className="text-sm text-gray-500">{refund.reason}</p>
                     <p className="text-xs text-gray-400 mt-1">

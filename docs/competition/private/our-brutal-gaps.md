@@ -60,22 +60,22 @@ We don't have one. Not a native app, not a PWA. Desktop only.
 
 ### Competitors Who Have This
 
-| Competitor | Mobile | How |
-|---|---|---|
-| Topmate | Yes | iOS + Android apps |
-| GrowthSchool | Yes | App-based learning |
-| Metvy | Yes | Mobile-first, React Native |
-| ProPeers | Yes | iOS app |
-| Familiarise | **No** | — |
+| Competitor   | Mobile | How                        |
+| ------------ | ------ | -------------------------- |
+| Topmate      | Yes    | iOS + Android apps         |
+| GrowthSchool | Yes    | App-based learning         |
+| Metvy        | Yes    | Mobile-first, React Native |
+| ProPeers     | Yes    | iOS app                    |
+| Familiarise  | **No** | —                          |
 
 ### Fix Timeline
 
-| Phase | Timeline | Effort |
-|---|---|---|
-| Responsive web optimization | Month 1 (should already be done) | Low |
-| Progressive Web App (PWA) | Month 1-3 | Medium |
-| React Native MVP | Month 6-9 | High |
-| Full native app | Month 12+ | Very High |
+| Phase                       | Timeline                         | Effort    |
+| --------------------------- | -------------------------------- | --------- |
+| Responsive web optimization | Month 1 (should already be done) | Low       |
+| Progressive Web App (PWA)   | Month 1-3                        | Medium    |
+| React Native MVP            | Month 6-9                        | High      |
+| Full native app             | Month 12+                        | Very High |
 
 ### Risk If Unfixed
 
@@ -99,13 +99,13 @@ AI is table stakes for 2026 tech products. We have zero AI features.
 
 ### Who Has What
 
-| Competitor | AI Features |
-|---|---|
-| Topmate | AI-powered expert discovery |
-| Metvy | AI matching, adaptive learning |
-| GrowthSchool | Gen AI-powered upskilling |
-| upGrad | AI personalization |
-| Familiarise | **Nothing** |
+| Competitor   | AI Features                    |
+| ------------ | ------------------------------ |
+| Topmate      | AI-powered expert discovery    |
+| Metvy        | AI matching, adaptive learning |
+| GrowthSchool | Gen AI-powered upskilling      |
+| upGrad       | AI personalization             |
+| Familiarise  | **Nothing**                    |
 
 ### Why This Matters
 
@@ -115,11 +115,11 @@ AI is table stakes for 2026 tech products. We have zero AI features.
 
 ### Fix Timeline
 
-| Phase | Feature | Timeline | Cost |
-|---|---|---|---|
-| Phase 1 | Smart search + session summaries | Month 3-6 | ~$50-150/month (OpenAI API) |
-| Phase 2 | Creator-consultee matching | Month 6-9 | ~$100-300/month |
-| Phase 3 | Recommendation engine | Month 9-12 | Depends on data volume |
+| Phase   | Feature                          | Timeline   | Cost                        |
+| ------- | -------------------------------- | ---------- | --------------------------- |
+| Phase 1 | Smart search + session summaries | Month 3-6  | ~$50-150/month (OpenAI API) |
+| Phase 2 | Creator-consultee matching       | Month 6-9  | ~$100-300/month             |
+| Phase 3 | Recommendation engine            | Month 9-12 | Depends on data volume      |
 
 ### Risk If Unfixed
 
@@ -144,11 +144,11 @@ We don't integrate with WhatsApp at all.
 
 ### Fix Timeline
 
-| Feature | Timeline | Cost |
-|---|---|---|
-| WhatsApp Business API for notifications | Month 1-3 | ~₹5K-15K/month |
-| WhatsApp booking flow | Month 3-6 | Medium engineering effort |
-| WhatsApp reminder integration | Month 1-2 | Low effort via WhatsApp Business API |
+| Feature                                 | Timeline  | Cost                                 |
+| --------------------------------------- | --------- | ------------------------------------ |
+| WhatsApp Business API for notifications | Month 1-3 | ~₹5K-15K/month                       |
+| WhatsApp booking flow                   | Month 3-6 | Medium engineering effort            |
+| WhatsApp reminder integration           | Month 1-2 | Low effort via WhatsApp Business API |
 
 ### Risk If Unfixed
 
@@ -160,11 +160,11 @@ In India, no WhatsApp = invisible. This is our most urgent gap after mobile.
 
 ### The Reality
 
-| Metric | Us | Topmate | GrowthSchool | Metvy |
-|---|---|---|---|---|
-| Team size | 2-3 | Unknown (~10-20 est.) | 150 | 201-500 |
-| Funding | $0 | $1.13M | $5M | $188K |
-| Revenue | $0 | $68K/yr | $8.11M/yr | ₹1.22Cr/yr |
+| Metric    | Us  | Topmate               | GrowthSchool | Metvy      |
+| --------- | --- | --------------------- | ------------ | ---------- |
+| Team size | 2-3 | Unknown (~10-20 est.) | 150          | 201-500    |
+| Funding   | $0  | $1.13M                | $5M          | $188K      |
+| Revenue   | $0  | $68K/yr               | $8.11M/yr    | ₹1.22Cr/yr |
 
 ### What This Means
 
@@ -177,6 +177,7 @@ In India, no WhatsApp = invisible. This is our most urgent gap after mobile.
 ### The Honest Timeline
 
 With 2-3 people:
+
 - Feature development: 1 major feature per 2-4 weeks
 - Bug fixes: Ongoing, competes with feature work
 - Marketing: Founder-led, maybe 10 hours/week
@@ -204,12 +205,12 @@ Stream.io is our biggest technical differentiator (integrated video + chat) AND 
 
 **The cliff:**
 
-| Trigger | Estimated Monthly Cost |
-|---|---|
-| Revenue exceeds ₹8.5L (~$9.4K) | ~₹36K/month ($400) |
-| Funding exceeds $100K | ~₹36K/month |
-| Team exceeds 5 people | ~₹36K/month |
-| Enterprise plan (at scale) | ~₹90K-180K/month |
+| Trigger                        | Estimated Monthly Cost |
+| ------------------------------ | ---------------------- |
+| Revenue exceeds ₹8.5L (~$9.4K) | ~₹36K/month ($400)     |
+| Funding exceeds $100K          | ~₹36K/month            |
+| Team exceeds 5 people          | ~₹36K/month            |
+| Enterprise plan (at scale)     | ~₹90K-180K/month       |
 
 ### Why This Is Dangerous
 
@@ -219,13 +220,13 @@ Stream.io is our biggest technical differentiator (integrated video + chat) AND 
 
 ### The Break-Even Math
 
-| Monthly GMV | Commission (10%) | Stream.io Cost | Net After Stream | Margin |
-|---|---|---|---|---|
-| ₹5L | ₹50K | ₹0 (free tier) | ₹50K | 100% |
-| ₹8.5L (cliff) | ₹85K | ₹36K | ₹49K | 57% |
-| ₹15L | ₹1.5L | ₹36K | ₹1.14L | 76% |
-| ₹30L | ₹3L | ₹36K-72K | ₹2.28L-2.64L | 76-88% |
-| ₹50L+ | ₹5L | ₹72K-180K | ₹3.2L-4.28L | 64-86% |
+| Monthly GMV   | Commission (10%) | Stream.io Cost | Net After Stream | Margin |
+| ------------- | ---------------- | -------------- | ---------------- | ------ |
+| ₹5L           | ₹50K             | ₹0 (free tier) | ₹50K             | 100%   |
+| ₹8.5L (cliff) | ₹85K             | ₹36K           | ₹49K             | 57%    |
+| ₹15L          | ₹1.5L            | ₹36K           | ₹1.14L           | 76%    |
+| ₹30L          | ₹3L              | ₹36K-72K       | ₹2.28L-2.64L     | 76-88% |
+| ₹50L+         | ₹5L              | ₹72K-180K      | ₹3.2L-4.28L      | 64-86% |
 
 **Unit economics only work at ₹15L+ monthly GMV.** Below that, Stream.io eats too much of the margin.
 
@@ -257,14 +258,14 @@ Stream.io is our biggest technical differentiator (integrated video + chat) AND 
 
 ### Fix Timeline
 
-| Action | Timeline | Impact |
-|---|---|---|
-| Launch landing page with clear value prop | Month 1 | Foundation |
-| SEO-optimized consultant profiles (50+ pages) | Month 1-3 | Long-term compounding |
-| LinkedIn company page + content | Month 1 | Professional credibility |
-| First 5 case studies / testimonials | Month 2-3 | Social proof |
-| First press/media mention | Month 3-6 | Credibility signal |
-| "Familiarise" becoming a search term | Month 12+ | Brand moat |
+| Action                                        | Timeline  | Impact                   |
+| --------------------------------------------- | --------- | ------------------------ |
+| Launch landing page with clear value prop     | Month 1   | Foundation               |
+| SEO-optimized consultant profiles (50+ pages) | Month 1-3 | Long-term compounding    |
+| LinkedIn company page + content               | Month 1   | Professional credibility |
+| First 5 case studies / testimonials           | Month 2-3 | Social proof             |
+| First press/media mention                     | Month 3-6 | Credibility signal       |
+| "Familiarise" becoming a search term          | Month 12+ | Brand moat               |
 
 ---
 
@@ -285,6 +286,7 @@ As of March 2026, Familiarise has no registered business entity. We're operating
 ### The Plan
 
 Sole Proprietorship (recommended in CFO plan) is being registered. This is the right call:
+
 - Section 44AD: 0% effective tax on first ₹50L revenue.
 - Low compliance burden.
 - Can convert to Pvt Ltd later when revenue/funding justifies it.
@@ -300,6 +302,7 @@ Cannot launch Razorpay production integration. Cannot process payments. Cannot g
 ### The Reality
 
 Our system has been tested with synthetic data and small-scale E2E tests. It has never handled:
+
 - 100 concurrent users
 - 50 simultaneous video calls
 - 1,000 bookings in a day
@@ -311,15 +314,15 @@ Our system has been tested with synthetic data and small-scale E2E tests. It has
 
 ### Known Fragility Points
 
-| Component | Concern | Severity |
-|---|---|---|
-| Supabase free tier | 500MB database, limited connections, egress limits | HIGH at scale |
-| Upstash Redis | Free tier limits | MEDIUM |
-| Netlify Functions | 10s timeout (free), 26s (Pro) — webhook handlers could timeout | HIGH |
-| Stream.io | Concurrent call limits on Maker Plan | Unknown |
-| Resend | Email sending limits, deliverability cold start | MEDIUM |
-| Prisma connection pooling | PgBouncer configuration for serverless | MEDIUM |
-| `bcrypt` native module | May not work on serverless — need `bcryptjs` | KNOWN ISSUE |
+| Component                 | Concern                                                        | Severity      |
+| ------------------------- | -------------------------------------------------------------- | ------------- |
+| Supabase free tier        | 500MB database, limited connections, egress limits             | HIGH at scale |
+| Upstash Redis             | Free tier limits                                               | MEDIUM        |
+| Netlify Functions         | 10s timeout (free), 26s (Pro) — webhook handlers could timeout | HIGH          |
+| Stream.io                 | Concurrent call limits on Maker Plan                           | Unknown       |
+| Resend                    | Email sending limits, deliverability cold start                | MEDIUM        |
+| Prisma connection pooling | PgBouncer configuration for serverless                         | MEDIUM        |
+| `bcrypt` native module    | May not work on serverless — need `bcryptjs`                   | KNOWN ISSUE   |
 
 ### Mitigation
 
@@ -335,6 +338,7 @@ Our system has been tested with synthetic data and small-scale E2E tests. It has
 ### The Reality
 
 Our 10% commission rate is theoretical. We've never tested:
+
 - Will creators accept 10%?
 - Will the founding 0% → 10% transition cause churn?
 - Is 10% enough to cover our costs (especially after Stream.io cliff)?
@@ -342,12 +346,12 @@ Our 10% commission rate is theoretical. We've never tested:
 
 ### The Risk Scenarios
 
-| Scenario | Impact |
-|---|---|
-| 10% is too high, creators go to SuperProfile (₹99/mo flat) | We lose price-sensitive creators |
-| 10% is too low, we can't cover Stream.io + infra costs | We burn cash and eventually shut down |
-| 0% founding period creates entitlement, creators resist ANY commission later | We have 50 creators who refuse to pay |
-| Topmate drops to 5% to compete | Price war we can't win without funding |
+| Scenario                                                                     | Impact                                 |
+| ---------------------------------------------------------------------------- | -------------------------------------- |
+| 10% is too high, creators go to SuperProfile (₹99/mo flat)                   | We lose price-sensitive creators       |
+| 10% is too low, we can't cover Stream.io + infra costs                       | We burn cash and eventually shut down  |
+| 0% founding period creates entitlement, creators resist ANY commission later | We have 50 creators who refuse to pay  |
+| Topmate drops to 5% to compete                                               | Price war we can't win without funding |
 
 ### Mitigation
 
@@ -359,18 +363,18 @@ Our 10% commission rate is theoretical. We've never tested:
 
 ## Gap Summary — Sorted by Urgency
 
-| # | Gap | Severity | Blocker? | Fix Timeline |
-|---|---|---|---|---|
-| 1 | Zero users | EXISTENTIAL | Yes — nothing else matters | Month 1-3 (founding program) |
-| 2 | No company registration | HIGH | Yes — can't process payments | Week 1 (in progress) |
-| 3 | No mobile experience | HIGH | No, but limits addressable market by 90% | Month 1-3 (PWA) |
-| 4 | No WhatsApp integration | HIGH | No, but limits India engagement | Month 1-3 |
-| 5 | Stream.io cost cliff | HIGH | No, but destroys margins at scale | Month 6+ (negotiate/alternatives) |
-| 6 | 2-3 person team | HIGH | No, but limits execution speed | Ongoing (hire when revenue allows) |
-| 7 | No brand recognition | HIGH | No, but limits trust and discovery | Month 1+ (content, SEO, outreach) |
-| 8 | No AI features | MEDIUM-HIGH | No | Month 3-6 |
-| 9 | Untested at scale | MEDIUM | No, until first real load | Month 1 (load test before launch) |
-| 10 | Commission unvalidated | MEDIUM | No, until founding period ends | Month 3-6 (gradual transition) |
+| #   | Gap                     | Severity    | Blocker?                                 | Fix Timeline                       |
+| --- | ----------------------- | ----------- | ---------------------------------------- | ---------------------------------- |
+| 1   | Zero users              | EXISTENTIAL | Yes — nothing else matters               | Month 1-3 (founding program)       |
+| 2   | No company registration | HIGH        | Yes — can't process payments             | Week 1 (in progress)               |
+| 3   | No mobile experience    | HIGH        | No, but limits addressable market by 90% | Month 1-3 (PWA)                    |
+| 4   | No WhatsApp integration | HIGH        | No, but limits India engagement          | Month 1-3                          |
+| 5   | Stream.io cost cliff    | HIGH        | No, but destroys margins at scale        | Month 6+ (negotiate/alternatives)  |
+| 6   | 2-3 person team         | HIGH        | No, but limits execution speed           | Ongoing (hire when revenue allows) |
+| 7   | No brand recognition    | HIGH        | No, but limits trust and discovery       | Month 1+ (content, SEO, outreach)  |
+| 8   | No AI features          | MEDIUM-HIGH | No                                       | Month 3-6                          |
+| 9   | Untested at scale       | MEDIUM      | No, until first real load                | Month 1 (load test before launch)  |
+| 10  | Commission unvalidated  | MEDIUM      | No, until founding period ends           | Month 3-6 (gradual transition)     |
 
 ---
 

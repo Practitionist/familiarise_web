@@ -212,8 +212,7 @@ export async function GET(
       const expiresAt =
         payment.expiresAt ||
         new Date(payment.createdAt.getTime() + 30 * 60 * 1000);
-      const isExpiringSoon =
-        expiresAt.getTime() - Date.now() < 10 * 60 * 1000; // < 10 min
+      const isExpiringSoon = expiresAt.getTime() - Date.now() < 10 * 60 * 1000; // < 10 min
 
       return {
         id: payment.id,

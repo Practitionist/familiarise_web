@@ -43,9 +43,7 @@ function getSessionStatus(session: SessionGroup): SessionStatus {
   const slotStatuses = session.slots.map(getSlotStatus);
   if (slotStatuses.some((s) => s === "joinable")) return "joinable";
   if (slotStatuses.every((s) => s === "completed")) return "completed";
-  if (
-    slotStatuses.every((s) => s === "completed" || s === "noRecord")
-  )
+  if (slotStatuses.every((s) => s === "completed" || s === "noRecord"))
     return "noRecord";
   return "upcoming";
 }
@@ -58,9 +56,7 @@ function getJoinableSlot(
 }
 
 /** Group a flat array of slots by appointmentId into sessions. */
-function groupSlotsBySession(
-  slots: SlotWithMeetingSession[],
-): SessionGroup[] {
+function groupSlotsBySession(slots: SlotWithMeetingSession[]): SessionGroup[] {
   const groups = new Map<string, SlotWithMeetingSession[]>();
   for (const slot of slots) {
     const key = slot.appointmentId;
@@ -271,9 +267,7 @@ export function SessionTimeline({
               expanded && "rotate-180",
             )}
           />
-          {expanded
-            ? "Show less"
-            : `Show all ${sessions.length} sessions`}
+          {expanded ? "Show less" : `Show all ${sessions.length} sessions`}
         </button>
       )}
     </div>

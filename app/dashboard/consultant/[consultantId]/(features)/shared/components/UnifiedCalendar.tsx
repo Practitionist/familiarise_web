@@ -452,16 +452,16 @@ export function UnifiedCalendar({
     // Provide dynamic maxTotalCalls so validation/toasts show the real limit.
     // Prefer totalSessions from plan (authoritative) over calendar-week calculation.
     maxTotalCalls: isRecurringEventType(eventType)
-        ? totalSessions && totalSessions > 0
-          ? totalSessions
-          : allowedStart && allowedEnd && callsPerWeek
-            ? countSundayWeeksInclusive(allowedStart, allowedEnd) *
-              (callsPerWeek || 1)
-            : undefined
-        : undefined,
+      ? totalSessions && totalSessions > 0
+        ? totalSessions
+        : allowedStart && allowedEnd && callsPerWeek
+          ? countSundayWeeksInclusive(allowedStart, allowedEnd) *
+            (callsPerWeek || 1)
+          : undefined
+      : undefined,
     pastConfirmedSlotCount: isRecurringEventType(eventType)
-        ? pastEventSlotCount
-        : undefined,
+      ? pastEventSlotCount
+      : undefined,
     onSuccess: handleAllocationSuccess,
   });
 
@@ -719,7 +719,9 @@ export function UnifiedCalendar({
       // Imminent "This Event" slots (<24h away): block deselection
       if (isCurrentEventSlot && !status.isInPast) {
         const now = new Date();
-        const imminentCutoff = new Date(now.getTime() + TWENTY_FOUR_HOURS_IN_MS);
+        const imminentCutoff = new Date(
+          now.getTime() + TWENTY_FOUR_HOURS_IN_MS,
+        );
         if (slot.startTime < imminentCutoff) {
           toast({
             variant: "destructive",

@@ -8,6 +8,7 @@
 ## Purpose
 
 For every competitor, we answer two questions:
+
 1. **What could they do to destroy us?** (Their kill-shot against us)
 2. **What do we do to counter?** (Our kill-shot against them)
 
@@ -17,7 +18,7 @@ This is the honest, unfiltered version. The investor-friendly version is in `01-
 
 ## 1. Topmate — CRITICAL THREAT
 
-*(Detailed analysis in `war-room-topmate.md`. Summary here for cross-reference.)*
+_(Detailed analysis in `war-room-topmate.md`. Summary here for cross-reference.)_
 
 ### Their Kill-Shot Against Us
 
@@ -55,6 +56,7 @@ This is the honest, unfiltered version. The investor-friendly version is in `01-
 ### Our Kill-Shot Against Them
 
 SuperProfile's weakness is that they're a Swiss Army knife — many tools, none best-in-class. They don't have:
+
 - Integrated video (they use Zoom links, same as Topmate)
 - Session recordings
 - Real-time chat
@@ -224,25 +226,27 @@ SuperProfile's weakness is that they're a Swiss Army knife — many tools, none 
 
 ## 9. Vulnerability Ranking — When We're Most At Risk
 
-| Period | Biggest Threat | Why |
-|---|---|---|
-| **Month 1-3** | A well-funded competitor copying our launch features | We have zero switching costs. Any creator who signs up could leave tomorrow. |
-| **Month 3-6** | Topmate launching a "migration retention" program | They'll notice us eventually. Expect "stay on Topmate, get 5% commission" offers targeted at creators we're courting. |
-| **Month 6-12** | SuperProfile expanding into consultations | SuperProfile is our closest threat in terms of market timing. If they ship video + scheduling, they'd be a serious alternative. |
-| **Year 1-2** | GrowthSchool launching a creator marketplace | If GrowthSchool decides to let their instructors run independent 1-on-1s, their brand and user base could overwhelm us. |
-| **Year 2+** | Big tech (LinkedIn, Google, WhatsApp) | At this point only platform-level threats can disrupt a functioning marketplace with network effects. |
+| Period         | Biggest Threat                                       | Why                                                                                                                             |
+| -------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| **Month 1-3**  | A well-funded competitor copying our launch features | We have zero switching costs. Any creator who signs up could leave tomorrow.                                                    |
+| **Month 3-6**  | Topmate launching a "migration retention" program    | They'll notice us eventually. Expect "stay on Topmate, get 5% commission" offers targeted at creators we're courting.           |
+| **Month 6-12** | SuperProfile expanding into consultations            | SuperProfile is our closest threat in terms of market timing. If they ship video + scheduling, they'd be a serious alternative. |
+| **Year 1-2**   | GrowthSchool launching a creator marketplace         | If GrowthSchool decides to let their instructors run independent 1-on-1s, their brand and user base could overwhelm us.         |
+| **Year 2+**    | Big tech (LinkedIn, Google, WhatsApp)                | At this point only platform-level threats can disrupt a functioning marketplace with network effects.                           |
 
 ---
 
 ## 10. The Honest Truth About Our Position
 
 ### What we have:
+
 - Better product (integrated video, 4 service types, native payments)
 - Better economics (10% real, not 16-18% hidden)
 - Clean reputation (zero complaints, because zero users)
 - Regulatory readiness (Razorpay + RBI PA path)
 
 ### What we don't have:
+
 - Users. Zero.
 - Brand recognition. Zero.
 - Revenue. Zero.
@@ -252,7 +256,9 @@ SuperProfile's weakness is that they're a Swiss Army knife — many tools, none 
 - Team size advantage. 2-3 people vs teams of 10-150.
 
 ### The window:
+
 We have approximately **12-18 months** before our feature advantages erode. In that window, we need to:
+
 1. Get 50+ active creators generating reviews and recordings (data moat)
 2. Reach ₹5L+ monthly GMV (proves the model)
 3. Build organic discovery (SEO, referrals)

@@ -571,23 +571,28 @@ export function AppointmentsTab({
                                 {groupStatus !== "Completed" &&
                                   groupStatus !== "Cancelled" &&
                                   canManageGroupTimings(groupAppointments) && (
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-8 text-xs px-3"
-                                    onClick={() => {
-                                      setSelectedAppointment(firstAppointment);
-                                      setSelectedGroupProgress(
-                                        completedSessions > 0
-                                          ? { completedSessions, totalSessions }
-                                          : null,
-                                      );
-                                    }}
-                                  >
-                                    <Clock className="w-3 h-3 mr-1" />
-                                    Timings
-                                  </Button>
-                                )}
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-8 text-xs px-3"
+                                      onClick={() => {
+                                        setSelectedAppointment(
+                                          firstAppointment,
+                                        );
+                                        setSelectedGroupProgress(
+                                          completedSessions > 0
+                                            ? {
+                                                completedSessions,
+                                                totalSessions,
+                                              }
+                                            : null,
+                                        );
+                                      }}
+                                    >
+                                      <Clock className="w-3 h-3 mr-1" />
+                                      Timings
+                                    </Button>
+                                  )}
                                 {supportsParticipantManagement(
                                   firstAppointment,
                                 ) && (
@@ -787,7 +792,9 @@ export function AppointmentsTab({
                                                   setSelectedAppointment(
                                                     appointment,
                                                   );
-                                                  setSelectedGroupProgress(null);
+                                                  setSelectedGroupProgress(
+                                                    null,
+                                                  );
                                                 }}
                                               >
                                                 <Clock className="w-3 h-3 mr-1" />

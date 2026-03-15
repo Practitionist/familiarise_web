@@ -124,7 +124,9 @@ export function PendingPaymentsWidget({
     <div
       className={cn(
         "rounded-2xl border shadow-sm overflow-hidden h-full flex flex-col",
-        hasExpiring ? "bg-amber-50 border-amber-300" : "bg-white border-amber-200",
+        hasExpiring
+          ? "bg-amber-50 border-amber-300"
+          : "bg-white border-amber-200",
       )}
     >
       <div
@@ -155,7 +157,10 @@ export function PendingPaymentsWidget({
                   </p>
                 </div>
                 <span className="text-sm font-semibold text-zinc-900 tabular-nums shrink-0">
-                  {formatCurrencyFromMajorUnit(payment.amount, payment.currency)}
+                  {formatCurrencyFromMajorUnit(
+                    payment.amount,
+                    payment.currency,
+                  )}
                 </span>
               </div>
               <div className="flex items-center justify-between mt-2.5">

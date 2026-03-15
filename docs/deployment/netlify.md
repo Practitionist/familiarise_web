@@ -24,19 +24,19 @@
 
 ## Overview
 
-| Property | Value |
-|---|---|
-| Platform | Netlify (Pro plan — `nf_team_pro`) |
-| Site name | `familiarise` |
-| Site ID | `$NETLIFY_SITE_ID` |
-| Production URL | `https://familiarisenow.com` |
-| Dev branch URL | `https://dev.familiarisenow.com` |
-| Netlify default URL | `https://familiarise.netlify.app` |
-| Dev branch Netlify URL | `https://dev--familiarise.netlify.app` |
-| Netlify admin | `https://app.netlify.com/projects/familiarise` |
-| Netlify account | `Practitionist-Deploys` (email: `<team-admin-email>`) |
-| GitHub repo | `https://github.com/Practitionist/familiarise_web` |
-| DNS managed by | Netlify DNS (zone ID: `$NETLIFY_DNS_ZONE_ID`) |
+| Property               | Value                                                 |
+| ---------------------- | ----------------------------------------------------- |
+| Platform               | Netlify (Pro plan — `nf_team_pro`)                    |
+| Site name              | `familiarise`                                         |
+| Site ID                | `$NETLIFY_SITE_ID`                                    |
+| Production URL         | `https://familiarisenow.com`                          |
+| Dev branch URL         | `https://dev.familiarisenow.com`                      |
+| Netlify default URL    | `https://familiarise.netlify.app`                     |
+| Dev branch Netlify URL | `https://dev--familiarise.netlify.app`                |
+| Netlify admin          | `https://app.netlify.com/projects/familiarise`        |
+| Netlify account        | `Practitionist-Deploys` (email: `<team-admin-email>`) |
+| GitHub repo            | `https://github.com/Practitionist/familiarise_web`    |
+| DNS managed by         | Netlify DNS (zone ID: `$NETLIFY_DNS_ZONE_ID`)         |
 
 ---
 
@@ -53,11 +53,11 @@ feat/* / fix/*  ──► dev  ──► prod
 
 ### Branch → Deploy mapping
 
-| Git branch | Netlify context | URL |
-|---|---|---|
-| `prod` | production | `https://familiarisenow.com` |
-| `dev` | branch-deploy | `https://dev.familiarisenow.com` |
-| any PR branch | deploy-preview | `https://deploy-preview-NNN--familiarise.netlify.app` |
+| Git branch    | Netlify context | URL                                                   |
+| ------------- | --------------- | ----------------------------------------------------- |
+| `prod`        | production      | `https://familiarisenow.com`                          |
+| `dev`         | branch-deploy   | `https://dev.familiarisenow.com`                      |
+| any PR branch | deploy-preview  | `https://deploy-preview-NNN--familiarise.netlify.app` |
 
 ### Allowed branches
 
@@ -70,6 +70,7 @@ Via the API it's the `build_settings.allowed_branches` array.
 ### Why `prod` and not `main`?
 
 The production branch is named `prod` (not `main` or `master`). This is intentional:
+
 - `dev` is where active development happens and gets reviewed as a staging environment
 - `prod` only receives merges from `dev` after QA sign-off
 - `main` does not exist in this repo — don't create it
@@ -84,16 +85,17 @@ The `.env.sample` file is the canonical reference for what vars are needed.
 
 ### Critical auth variables
 
-| Variable | Production value | Local dev value | Notes |
-|---|---|---|---|
-| `BETTER_AUTH_SECRET` | `<your-better-auth-secret>` | same | 32+ char base64 secret for signing BetterAuth sessions |
-| `BETTER_AUTH_URL` | `https://familiarisenow.com` | `http://localhost:3000` | **This was the root cause of the invalid origin bug** — see below |
-| `BETTER_AUTH_TRUSTED_ORIGINS` | `https://familiarisenow.com` | `http://localhost:3000` | Comma-separated additional allowed CORS origins |
-| `NEXT_PUBLIC_APP_URL` | `https://familiarisenow.com` | `http://localhost:3000` | Used by auth client + for building absolute URLs (e.g. referral links) |
+| Variable                      | Production value             | Local dev value         | Notes                                                                  |
+| ----------------------------- | ---------------------------- | ----------------------- | ---------------------------------------------------------------------- |
+| `BETTER_AUTH_SECRET`          | `<your-better-auth-secret>`  | same                    | 32+ char base64 secret for signing BetterAuth sessions                 |
+| `BETTER_AUTH_URL`             | `https://familiarisenow.com` | `http://localhost:3000` | **This was the root cause of the invalid origin bug** — see below      |
+| `BETTER_AUTH_TRUSTED_ORIGINS` | `https://familiarisenow.com` | `http://localhost:3000` | Comma-separated additional allowed CORS origins                        |
+| `NEXT_PUBLIC_APP_URL`         | `https://familiarisenow.com` | `http://localhost:3000` | Used by auth client + for building absolute URLs (e.g. referral links) |
 
 ### Why `BETTER_AUTH_URL` is the most important variable
 
 BetterAuth uses `BETTER_AUTH_URL` as the canonical base URL for:
+
 1. **Origin validation** — it rejects auth requests whose `Origin` header doesn't match this URL or `trustedOrigins`
 2. **Cookie domain** — session cookies are scoped to this domain
 3. **OAuth callbacks** — the redirect URI sent to providers (Google, GitHub, etc.) is built from this URL
@@ -103,6 +105,7 @@ If this is set to `http://localhost:3000` in production (as it was initially), e
 ### Setting env vars in Netlify
 
 Via the Netlify CLI:
+
 ```bash
 # Set for production only
 netlify env:set BETTER_AUTH_URL "https://familiarisenow.com" --context production
@@ -127,11 +130,13 @@ netlify env:list --json
 
 When we audited the Netlify env vars, we found `NEXTAUTH_SECRET` and `NEXTAUTH_URL`
 still set from a previous NextAuth migration. These were **removed** because:
+
 - The app uses BetterAuth, not NextAuth
 - Stale vars create confusion and can shadow real vars in some frameworks
 - `NEXTAUTH_URL=http://localhost:3000` was harmless for BetterAuth but misleading
 
 Removed via:
+
 ```bash
 netlify env:unset NEXTAUTH_SECRET
 netlify env:unset NEXTAUTH_URL
@@ -142,6 +147,7 @@ netlify env:unset NEXTAUTH_URL
 ## The BetterAuth / "Invalid Origin" Incident
 
 ### Symptoms
+
 - Login on `familiarisenow.com` fails immediately after clicking "Sign In"
 - Browser console shows a `400` or `403` from `/api/auth/sign-in/email`
 - Error message in the response body: `"invalid origin"`
@@ -171,6 +177,7 @@ would still reject production requests.
 ### Fix applied
 
 **`lib/auth.ts`** — added three new top-level fields:
+
 ```typescript
 export const auth = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET,
@@ -183,6 +190,7 @@ export const auth = betterAuth({
 ```
 
 **`lib/auth-client.ts`** — added `baseURL` so the client knows where to send requests:
+
 ```typescript
 export const authClient = createAuthClient({
   baseURL: process.env.NEXT_PUBLIC_APP_URL,
@@ -191,6 +199,7 @@ export const authClient = createAuthClient({
 ```
 
 **Netlify env vars** — fixed via CLI:
+
 ```bash
 netlify env:set BETTER_AUTH_URL "https://familiarisenow.com" --context production
 netlify env:set BETTER_AUTH_URL "https://familiarisenow.com" --context branch-deploy
@@ -245,6 +254,7 @@ netlify sites:list
 ```
 
 Example output:
+
 ```
 familiarise - $NETLIFY_SITE_ID
   url:  https://familiarisenow.com
@@ -285,21 +295,21 @@ authoritative nameserver — you do NOT manage DNS at a separate registrar
 
 ### Record types you'll see
 
-| Type | Purpose |
-|---|---|
-| `NETLIFY` | Netlify's proprietary A-record equivalent. Points to a Netlify site. Handles Anycast routing + automatic SSL provisioning. Use this for apex and www records. |
-| `CNAME` | Standard alias record. Can point to any hostname. Netlify accepts CNAMEs to `*.netlify.app` domains but SSL provisioning requires extra steps. |
-| `NETLIFYv6` | Same as `NETLIFY` but for IPv6 |
-| `TXT` | Text records — used for domain verification (Google Search Console, etc.) |
-| `MX` | Mail exchange records — not relevant for the app |
+| Type        | Purpose                                                                                                                                                       |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NETLIFY`   | Netlify's proprietary A-record equivalent. Points to a Netlify site. Handles Anycast routing + automatic SSL provisioning. Use this for apex and www records. |
+| `CNAME`     | Standard alias record. Can point to any hostname. Netlify accepts CNAMEs to `*.netlify.app` domains but SSL provisioning requires extra steps.                |
+| `NETLIFYv6` | Same as `NETLIFY` but for IPv6                                                                                                                                |
+| `TXT`       | Text records — used for domain verification (Google Search Console, etc.)                                                                                     |
+| `MX`        | Mail exchange records — not relevant for the app                                                                                                              |
 
 ### Current DNS records
 
-| Type | Hostname | Target | Purpose |
-|---|---|---|---|
-| `NETLIFY` | `familiarisenow.com` | `familiarise.netlify.app` | Production site |
-| `NETLIFY` | `www.familiarisenow.com` | `familiarise.netlify.app` | www redirect to prod |
-| `NETLIFY` | `dev.familiarisenow.com` | `familiarise.netlify.app` | Dev branch deploy |
+| Type      | Hostname                   | Target                    | Purpose                   |
+| --------- | -------------------------- | ------------------------- | ------------------------- |
+| `NETLIFY` | `familiarisenow.com`       | `familiarise.netlify.app` | Production site           |
+| `NETLIFY` | `www.familiarisenow.com`   | `familiarise.netlify.app` | www redirect to prod      |
+| `NETLIFY` | `dev.familiarisenow.com`   | `familiarise.netlify.app` | Dev branch deploy         |
 | `NETLIFY` | `*.dev.familiarisenow.com` | `familiarise.netlify.app` | Wildcard for dev subpaths |
 
 > **Note on the `NETLIFY` type for `dev.familiarisenow.com`:** Even though the value
@@ -344,6 +354,7 @@ This was the most complex part of the deployment setup. Here's the full story.
 ### Goal
 
 We wanted:
+
 - `familiarisenow.com` → serves the `prod` branch
 - `dev.familiarisenow.com` → serves the `dev` branch (for staging/testing)
 
@@ -375,6 +386,7 @@ content, the opposite of what we wanted.
 #### Attempt 3: CNAME record to `dev--familiarise.netlify.app`
 
 Creating a plain `CNAME` record:
+
 ```
 dev.familiarisenow.com  CNAME  dev--familiarise.netlify.app
 ```
@@ -387,6 +399,7 @@ Without SSL, browsers would show a certificate error.
 #### What actually worked: top-level `branch_deploy_custom_domain`
 
 The correct API call:
+
 ```bash
 netlify api updateSite --data '{
   "site_id": "$NETLIFY_SITE_ID",
@@ -398,6 +411,7 @@ netlify api updateSite --data '{
 
 This sets the `branch_deploy_custom_domain` field **at the top level** of the site
 object. When set, Netlify:
+
 1. Automatically creates `NETLIFY` type DNS records for `dev.familiarisenow.com`
    and `*.dev.familiarisenow.com`
 2. Provisions SSL for these hostnames via Let's Encrypt
@@ -453,6 +467,7 @@ the Google OAuth flow will fail with `redirect_uri_mismatch`.
 ### Google Client ID and Secret
 
 These are stored in Netlify env vars:
+
 - `GOOGLE_CLIENT_ID` = stored in Netlify (see `netlify env:list --json` — look for the `384845845365-` prefix confirming it belongs to the `familiarise` GCP project)
 - `GOOGLE_CLIENT_SECRET` = stored in Netlify (check `netlify env:list --json`)
 
@@ -542,6 +557,7 @@ for d in json.load(sys.stdin)[:8]:
 ```
 
 States you'll see:
+
 - `building` — build in progress
 - `ready` — deployed successfully
 - `error` — build failed (check Netlify dashboard for logs)
@@ -567,6 +583,7 @@ in non-interactive scripts.
 
 **Fix:** Always use `netlify env:list --json` to get machine-readable output
 without prompts:
+
 ```bash
 netlify env:list --json
 ```
@@ -581,6 +598,7 @@ netlify env:list --json
 folder with `state.json` is missing.
 
 **Fix:**
+
 ```bash
 netlify link --id $NETLIFY_SITE_ID
 ```
@@ -597,6 +615,7 @@ This creates `.netlify/state.json` in the repo root (gitignored automatically).
 are mixed-case (`Dns` not `DNS`).
 
 **Fix:** Use `netlify api --list | grep -i dns` to find exact names:
+
 ```
 deleteDnsRecord    ← correct
 deleteDNSRecord    ← wrong
@@ -614,6 +633,7 @@ object, not nested under `build_settings`. The Netlify UI and some docs imply
 otherwise.
 
 **Fix:** Inspect the raw site object first to see where fields live:
+
 ```bash
 netlify api getSite --data '{"site_id": "..."}' | python3 -c "
 import sys, json
@@ -649,6 +669,7 @@ Do not try to change the value to `dev--familiarise.netlify.app`.
 Others return arrays, not objects.
 
 **Fix:**
+
 ```bash
 # Handle potentially-array responses
 netlify api getDNSForSite --data '...' | python3 -c "
@@ -670,6 +691,7 @@ env vars. This was accidentally copied from the local `.env` file when the
 Netlify project was first configured.
 
 **Fix:**
+
 ```bash
 netlify env:set BETTER_AUTH_URL "https://familiarisenow.com" --context production
 netlify env:set BETTER_AUTH_URL "https://familiarisenow.com" --context branch-deploy

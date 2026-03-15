@@ -365,9 +365,7 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                             {(() => {
                               const expiry = getExpiryInfo(payment);
                               if (!expiry) {
-                                return (
-                                  <span className="text-zinc-300">—</span>
-                                );
+                                return <span className="text-zinc-300">—</span>;
                               }
                               return (
                                 <div>

@@ -170,7 +170,7 @@ export function MultiSessionEventCard({
   // Grouped sessions for reschedule dialog — group by appointmentId
   const groupedSessions = React.useMemo(() => {
     const nonTentative = rawSlots.filter((slot) => !slot.isTentative);
-    const groups = new Map<string, (typeof nonTentative)>();
+    const groups = new Map<string, typeof nonTentative>();
     for (const slot of nonTentative) {
       const key = slot.appointmentId;
       if (!groups.has(key)) groups.set(key, []);

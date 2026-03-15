@@ -523,9 +523,7 @@ function LearningStatsPanel({ events }: { events: ProcessedEvent[] }) {
             </span>
           </div>
           <p className="text-2xl font-bold text-zinc-900 tabular-nums">
-            {row.label === "Hours Learned"
-              ? `${row.value}h`
-              : row.value}
+            {row.label === "Hours Learned" ? `${row.value}h` : row.value}
           </p>
         </div>
       ))}

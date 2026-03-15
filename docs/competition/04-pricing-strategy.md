@@ -10,16 +10,16 @@
 
 Before setting our pricing, here's what every relevant player charges:
 
-| Platform | Commission Model | Effective Take Rate (India) | Payment Gateway | UPI Support |
-|---|---|---|---|---|
-| **Topmate** | 10% commission | 16-18% (Stripe 3% + forex 3-5% + 10%) | Stripe only | No |
-| **Preplaced** | 20% commission | ~23% (20% + gateway fees) | Not disclosed | Unknown |
-| **SuperProfile** | ₹99/month flat | ₹99/month + gateway fees (~2%) | Multiple | Yes |
-| **GrowthSchool** | Platform-controlled | N/A (instructors paid fixed fee) | Platform-controlled | N/A |
-| **Clarity.fm** | 15% commission | ~18% (15% + gateway fees) | Stripe | No |
-| **Superpeer** | 15% commission | ~18% (15% + gateway fees) | Stripe | No |
-| **Maven** | 10% commission | ~13% (10% + gateway fees) | Stripe | No |
-| **Familiarise** | 10% commission | **10% + 0% UPI gateway** | Razorpay + Stripe | **Yes** |
+| Platform         | Commission Model    | Effective Take Rate (India)           | Payment Gateway     | UPI Support |
+| ---------------- | ------------------- | ------------------------------------- | ------------------- | ----------- |
+| **Topmate**      | 10% commission      | 16-18% (Stripe 3% + forex 3-5% + 10%) | Stripe only         | No          |
+| **Preplaced**    | 20% commission      | ~23% (20% + gateway fees)             | Not disclosed       | Unknown     |
+| **SuperProfile** | ₹99/month flat      | ₹99/month + gateway fees (~2%)        | Multiple            | Yes         |
+| **GrowthSchool** | Platform-controlled | N/A (instructors paid fixed fee)      | Platform-controlled | N/A         |
+| **Clarity.fm**   | 15% commission      | ~18% (15% + gateway fees)             | Stripe              | No          |
+| **Superpeer**    | 15% commission      | ~18% (15% + gateway fees)             | Stripe              | No          |
+| **Maven**        | 10% commission      | ~13% (10% + gateway fees)             | Stripe              | No          |
+| **Familiarise**  | 10% commission      | **10% + 0% UPI gateway**              | Razorpay + Stripe   | **Yes**     |
 
 The critical insight: **For Indian transactions via UPI, our effective take rate is 10% total. Topmate's is 16-18%.** This is a 6-8% cost advantage per transaction, and it's structural — it cannot be closed unless Topmate switches to an Indian payment gateway.
 
@@ -29,17 +29,18 @@ The critical insight: **For Indian transactions via UPI, our effective take rate
 
 ### Phase 0: Founding Cohort (Pre-Launch)
 
-| Parameter | Value |
-|---|---|
-| Commission | **0%** |
-| Duration | 3 months from launch |
-| Target | First 30-50 consultants (hand-picked) |
+| Parameter     | Value                                                                          |
+| ------------- | ------------------------------------------------------------------------------ |
+| Commission    | **0%**                                                                         |
+| Duration      | 3 months from launch                                                           |
+| Target        | First 30-50 consultants (hand-picked)                                          |
 | Qualification | Invited only. Must have existing audience (1K+ social followers or equivalent) |
 
 **Rationale:**
 The first 30-50 creators determine the platform's DNA. We need high-quality, active consultants who will generate sessions, reviews, and content. Charging them 0% removes every objection. They join because there's literally no financial risk.
 
 **Rules:**
+
 - 0% commission for 3 calendar months from their first session
 - After 3 months, they transition to Phase 1 pricing (10%)
 - If they've generated 20+ sessions in those 3 months, they get a loyalty rate of 8% for the next 3 months
@@ -51,13 +52,13 @@ The first 30-50 creators determine the platform's DNA. We need high-quality, act
 
 ### Phase 1: Launch (Months 1-3)
 
-| Parameter | Value |
-|---|---|
-| Standard Commission | **10%** |
-| Topmate Migration Rate | **5%** (for 3 months) |
-| Gateway Fee (UPI) | 0% |
-| Gateway Fee (Cards/Netbanking) | ~2% (passed to buyer or absorbed — TBD) |
-| Gateway Fee (International/Stripe) | ~3% (passed to buyer) |
+| Parameter                          | Value                                   |
+| ---------------------------------- | --------------------------------------- |
+| Standard Commission                | **10%**                                 |
+| Topmate Migration Rate             | **5%** (for 3 months)                   |
+| Gateway Fee (UPI)                  | 0%                                      |
+| Gateway Fee (Cards/Netbanking)     | ~2% (passed to buyer or absorbed — TBD) |
+| Gateway Fee (International/Stripe) | ~3% (passed to buyer)                   |
 
 **Standard Commission: 10%**
 
@@ -68,6 +69,7 @@ This matches Topmate's headline rate but our effective rate is lower because of 
 Any creator who can demonstrate an active Topmate account (screenshot of dashboard with bookings) gets 5% commission for their first 3 months on Familiarise.
 
 Requirements:
+
 - Screenshot of Topmate dashboard showing at least 5 completed sessions
 - Active Topmate profile link
 - Agreement to deactivate Topmate profile after migrating (honor system — we can't enforce this, but we ask)
@@ -81,23 +83,25 @@ At 5% commission, we need 2x the volume to generate the same revenue. This is a 
 
 ### Phase 2: Growth (Months 4-9)
 
-| Parameter | Value |
-|---|---|
-| Standard Commission | **10%** |
-| High-Volume Rate | **8%** (for creators earning >₹50K/month) |
-| Qualification | Rolling 3-month average GMV >₹50K/month |
+| Parameter           | Value                                     |
+| ------------------- | ----------------------------------------- |
+| Standard Commission | **10%**                                   |
+| High-Volume Rate    | **8%** (for creators earning >₹50K/month) |
+| Qualification       | Rolling 3-month average GMV >₹50K/month   |
 
 **High-Volume Incentive:**
 
 Creators who consistently generate >₹50K/month in bookings get a reduced 8% rate. This rewards loyalty, incentivizes growth, and prevents high-value creators from shopping for lower rates.
 
 **Mechanics:**
+
 - Calculated on rolling 3-month average
 - Reviewed monthly
 - If they drop below ₹50K/month average, they revert to 10% next month
 - Communicated proactively: "Congratulations! You've earned our preferred creator rate of 8%."
 
 **Why ₹50K/month threshold:**
+
 - ₹50K/month × 10% = ₹5K commission to us
 - ₹50K/month × 8% = ₹4K commission to us
 - We sacrifice ₹1K/month to retain a high-value creator
@@ -108,12 +112,12 @@ Creators who consistently generate >₹50K/month in bookings get a reduced 8% ra
 
 ### Phase 3: Maturity (Months 10+)
 
-| Tier | Price Range | Commission | Rationale |
-|---|---|---|---|
-| **Budget** | ₹299 - ₹999/hr | 20% | High volume, low margin. Platform provides significant value relative to session price. |
-| **Everyday** | ₹1,000 - ₹3,000/hr | 18% | Bread-and-butter segment. Balanced commission. |
-| **Premium** | ₹3,000 - ₹10,000/hr | 15% | High-value sessions. Lower commission retains these creators. |
-| **Luxury** | ₹10,000+/hr | 12% | Top-tier experts. Flight risk to DIY solutions. Lowest commission to keep them on platform. |
+| Tier         | Price Range         | Commission | Rationale                                                                                   |
+| ------------ | ------------------- | ---------- | ------------------------------------------------------------------------------------------- |
+| **Budget**   | ₹299 - ₹999/hr      | 20%        | High volume, low margin. Platform provides significant value relative to session price.     |
+| **Everyday** | ₹1,000 - ₹3,000/hr  | 18%        | Bread-and-butter segment. Balanced commission.                                              |
+| **Premium**  | ₹3,000 - ₹10,000/hr | 15%        | High-value sessions. Lower commission retains these creators.                               |
+| **Luxury**   | ₹10,000+/hr         | 12%        | Top-tier experts. Flight risk to DIY solutions. Lowest commission to keep them on platform. |
 
 **Rationale for Inverse Tiering:**
 
@@ -125,12 +129,12 @@ Inverse tiering keeps luxury creators on the platform (where they generate massi
 
 In addition to commission, offer optional premium tools:
 
-| Tool | Price | Value |
-|---|---|---|
-| Advanced Analytics | ₹499/month | Cohort analysis, conversion funnels, revenue forecasting |
-| Priority Support | ₹299/month | 4-hour response time, dedicated account manager |
-| Featured Listing | ₹999/month | Boosted placement in marketplace search results |
-| Custom Branding | ₹1,499/month | Remove Familiarise branding from booking page |
+| Tool               | Price        | Value                                                    |
+| ------------------ | ------------ | -------------------------------------------------------- |
+| Advanced Analytics | ₹499/month   | Cohort analysis, conversion funnels, revenue forecasting |
+| Priority Support   | ₹299/month   | 4-hour response time, dedicated account manager          |
+| Featured Listing   | ₹999/month   | Boosted placement in marketplace search results          |
+| Custom Branding    | ₹1,499/month | Remove Familiarise branding from booking page            |
 
 These are additive revenue streams that don't increase commission. Creators who want them pay for them. Creators who don't, don't. No pressure.
 
@@ -144,14 +148,14 @@ This is our single biggest structural advantage over Topmate for the Indian mark
 
 A creator on Topmate charges ₹1,000 for a session. Here's what actually happens:
 
-| Step | Amount | Who Pays |
-|---|---|---|
-| Session price | ₹1,000 | Seeker |
-| Stripe processing fee (2.9% + 30¢) | ~₹30 | Deducted from creator |
-| Topmate commission (10%) | ₹100 | Deducted from creator |
-| **Subtotal after fees** | **₹870** | Creator receives (in USD) |
-| Forex conversion (USD → INR) | -3% to 5% loss | Creator absorbs on payout |
-| **Actual creator payout** | **₹825 - ₹845** | Into Indian bank account |
+| Step                               | Amount          | Who Pays                  |
+| ---------------------------------- | --------------- | ------------------------- |
+| Session price                      | ₹1,000          | Seeker                    |
+| Stripe processing fee (2.9% + 30¢) | ~₹30            | Deducted from creator     |
+| Topmate commission (10%)           | ₹100            | Deducted from creator     |
+| **Subtotal after fees**            | **₹870**        | Creator receives (in USD) |
+| Forex conversion (USD → INR)       | -3% to 5% loss  | Creator absorbs on payout |
+| **Actual creator payout**          | **₹825 - ₹845** | Into Indian bank account  |
 
 **Effective take rate: 15.5% - 17.5%**
 
@@ -161,12 +165,12 @@ The creator thinks they're paying 10%. They're actually paying 15-18%. The forex
 
 Same ₹1,000 session. Here's what happens with Razorpay UPI:
 
-| Step | Amount | Who Pays |
-|---|---|---|
-| Session price | ₹1,000 | Seeker |
-| UPI gateway fee | ₹0 (0%) | N/A |
-| Familiarise commission (10%) | ₹100 | Deducted from creator |
-| **Creator payout** | **₹900** | Into Indian bank account |
+| Step                         | Amount   | Who Pays                 |
+| ---------------------------- | -------- | ------------------------ |
+| Session price                | ₹1,000   | Seeker                   |
+| UPI gateway fee              | ₹0 (0%)  | N/A                      |
+| Familiarise commission (10%) | ₹100     | Deducted from creator    |
+| **Creator payout**           | **₹900** | Into Indian bank account |
 
 **Effective take rate: 10.0%**
 
@@ -174,13 +178,13 @@ No forex. No Stripe fee on UPI. No hidden costs. ₹900 is ₹900.
 
 ### The Savings Per Transaction
 
-| Monthly GMV | Creator Payout (Topmate) | Creator Payout (Familiarise) | Creator Saves |
-|---|---|---|---|
-| ₹10,000 | ₹8,250 - ₹8,450 | ₹9,000 | ₹550 - ₹750/month |
-| ₹25,000 | ₹20,625 - ₹21,125 | ₹22,500 | ₹1,375 - ₹1,875/month |
-| ₹50,000 | ₹41,250 - ₹42,250 | ₹45,000 | ₹2,750 - ₹3,750/month |
-| ₹1,00,000 | ₹82,500 - ₹84,500 | ₹90,000 | ₹5,500 - ₹7,500/month |
-| ₹5,00,000 | ₹4,12,500 - ₹4,22,500 | ₹4,50,000 | ₹27,500 - ₹37,500/month |
+| Monthly GMV | Creator Payout (Topmate) | Creator Payout (Familiarise) | Creator Saves           |
+| ----------- | ------------------------ | ---------------------------- | ----------------------- |
+| ₹10,000     | ₹8,250 - ₹8,450          | ₹9,000                       | ₹550 - ₹750/month       |
+| ₹25,000     | ₹20,625 - ₹21,125        | ₹22,500                      | ₹1,375 - ₹1,875/month   |
+| ₹50,000     | ₹41,250 - ₹42,250        | ₹45,000                      | ₹2,750 - ₹3,750/month   |
+| ₹1,00,000   | ₹82,500 - ₹84,500        | ₹90,000                      | ₹5,500 - ₹7,500/month   |
+| ₹5,00,000   | ₹4,12,500 - ₹4,22,500    | ₹4,50,000                    | ₹27,500 - ₹37,500/month |
 
 **At ₹1L/month GMV, a creator saves ₹5,500-7,500/month by using Familiarise instead of Topmate.** That's ₹66,000-90,000/year. Real money.
 
@@ -203,14 +207,14 @@ Blended effective rate for Indian creators (estimate): **10% commission + ~0.6% 
 
 ## Minimum Pricing Floors
 
-| Service Type | Minimum Price | Rationale |
-|---|---|---|
-| Consultation (15 min) | ₹299 | ₹299 × 10% = ₹30 commission. Below this, platform costs exceed commission revenue per transaction. |
-| Consultation (30 min) | ₹499 | Prevents "₹99 consultation" race-to-bottom that devalues the entire marketplace. |
-| Consultation (1 hour) | ₹999 | Signals that this is a professional platform, not a discount bazaar. |
-| Webinar (per attendee) | ₹199 | Low enough for accessible events, high enough to cover Stream.io per-session costs. |
-| Subscription (monthly) | ₹999 | Recurring revenue must justify platform infrastructure costs. Sub-₹999 subscriptions churn fast and generate negligible commission. |
-| Class (per session) | ₹399 | Multi-session classes require significant platform resources (scheduling, recordings, materials). Floor ensures viability. |
+| Service Type           | Minimum Price | Rationale                                                                                                                           |
+| ---------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Consultation (15 min)  | ₹299          | ₹299 × 10% = ₹30 commission. Below this, platform costs exceed commission revenue per transaction.                                  |
+| Consultation (30 min)  | ₹499          | Prevents "₹99 consultation" race-to-bottom that devalues the entire marketplace.                                                    |
+| Consultation (1 hour)  | ₹999          | Signals that this is a professional platform, not a discount bazaar.                                                                |
+| Webinar (per attendee) | ₹199          | Low enough for accessible events, high enough to cover Stream.io per-session costs.                                                 |
+| Subscription (monthly) | ₹999          | Recurring revenue must justify platform infrastructure costs. Sub-₹999 subscriptions churn fast and generate negligible commission. |
+| Class (per session)    | ₹399          | Multi-session classes require significant platform resources (scheduling, recordings, materials). Floor ensures viability.          |
 
 ### Why Floors Matter
 
@@ -238,18 +242,18 @@ Floors give new creators permission to charge fairly. Many first-time consultant
 
 ### Fixed Monthly Costs
 
-| Cost | Amount | Notes |
-|---|---|---|
-| Supabase (DB + Auth) | ~₹2,500 | Free tier initially, grows with usage |
-| Stream.io (Video + Chat) | ₹0 → ₹36,000 | Free tier until ~₹8.5L revenue or 5+ team |
-| Vercel (Hosting) | ~₹1,500 | Pro plan |
-| Upstash (Redis) | ~₹500 | Rate limiting + caching |
-| Novu (Notifications) | ~₹500 | Free tier initially |
-| Resend (Email) | ~₹325 | Transactional email |
-| Domain + DNS | ~₹200 | Annual amortized |
-| Shubham (Dev) | ₹10,000 | Base salary |
-| Miscellaneous | ~₹3,300 | Buffer for unexpected costs |
-| **Total** | **~₹19,325/month** | Pre-Stream.io cliff |
+| Cost                     | Amount             | Notes                                     |
+| ------------------------ | ------------------ | ----------------------------------------- |
+| Supabase (DB + Auth)     | ~₹2,500            | Free tier initially, grows with usage     |
+| Stream.io (Video + Chat) | ₹0 → ₹36,000       | Free tier until ~₹8.5L revenue or 5+ team |
+| Vercel (Hosting)         | ~₹1,500            | Pro plan                                  |
+| Upstash (Redis)          | ~₹500              | Rate limiting + caching                   |
+| Novu (Notifications)     | ~₹500              | Free tier initially                       |
+| Resend (Email)           | ~₹325              | Transactional email                       |
+| Domain + DNS             | ~₹200              | Annual amortized                          |
+| Shubham (Dev)            | ₹10,000            | Base salary                               |
+| Miscellaneous            | ~₹3,300            | Buffer for unexpected costs               |
+| **Total**                | **~₹19,325/month** | Pre-Stream.io cliff                       |
 
 ### Break-Even Calculation
 
@@ -273,15 +277,15 @@ At ₹1,000 average transaction: ₹2,06,000 GMV/month
 
 ### Growth Scenarios
 
-| Scenario | Monthly GMV | Transactions | Net Commission Revenue | Profit/Loss |
-|---|---|---|---|---|
-| Pre-launch | ₹0 | 0 | ₹0 | -₹19,325 |
-| Month 1 | ₹50,000 | 50 | ₹4,700 | -₹14,625 |
-| Month 3 | ₹1,50,000 | 150 | ₹14,100 | -₹5,225 |
-| Month 6 (break-even) | ₹2,10,000 | 210 | ₹19,740 | +₹415 |
-| Month 9 | ₹5,00,000 | 500 | ₹47,000 | +₹27,675 |
-| Month 12 | ₹10,00,000 | 1,000 | ₹94,000 | +₹74,675 |
-| Month 18 | ₹25,00,000 | 2,500 | ₹2,35,000 | +₹2,15,675 |
+| Scenario             | Monthly GMV | Transactions | Net Commission Revenue | Profit/Loss |
+| -------------------- | ----------- | ------------ | ---------------------- | ----------- |
+| Pre-launch           | ₹0          | 0            | ₹0                     | -₹19,325    |
+| Month 1              | ₹50,000     | 50           | ₹4,700                 | -₹14,625    |
+| Month 3              | ₹1,50,000   | 150          | ₹14,100                | -₹5,225     |
+| Month 6 (break-even) | ₹2,10,000   | 210          | ₹19,740                | +₹415       |
+| Month 9              | ₹5,00,000   | 500          | ₹47,000                | +₹27,675    |
+| Month 12             | ₹10,00,000  | 1,000        | ₹94,000                | +₹74,675    |
+| Month 18             | ₹25,00,000  | 2,500        | ₹2,35,000              | +₹2,15,675  |
 
 **Note:** Month 12+ projections assume Stream.io remains on free tier. If we hit the free tier cliff (₹8.5L revenue), add ₹36,000/month to fixed costs. New break-even at that point: ~₹5.5L GMV/month.
 
@@ -289,10 +293,10 @@ At ₹1,000 average transaction: ₹2,06,000 GMV/month
 
 This is the single biggest cost risk in our model:
 
-| Trigger | Stream.io Cost |
-|---|---|
-| <₹8.5L platform revenue | ₹0/month (free tier) |
-| >₹8.5L platform revenue OR >5 team members OR $100K funding | ~₹36,000/month |
+| Trigger                                                     | Stream.io Cost       |
+| ----------------------------------------------------------- | -------------------- |
+| <₹8.5L platform revenue                                     | ₹0/month (free tier) |
+| >₹8.5L platform revenue OR >5 team members OR $100K funding | ~₹36,000/month       |
 
 At ₹36,000/month additional cost, our new break-even becomes:
 
@@ -311,13 +315,13 @@ This section exists because the temptation will be strong. When SuperProfile cha
 
 ### The Commission Race to Zero
 
-| If we charge... | Revenue at ₹10L GMV | Can we sustain? |
-|---|---|---|
-| 10% | ₹1,00,000 | Yes |
-| 8% | ₹80,000 | Tight |
-| 5% | ₹50,000 | Barely |
-| 3% | ₹30,000 | No — below break-even at scale |
-| 0% (SuperProfile model) | ₹0 from commission | Need subscription revenue or VC funding |
+| If we charge...         | Revenue at ₹10L GMV | Can we sustain?                         |
+| ----------------------- | ------------------- | --------------------------------------- |
+| 10%                     | ₹1,00,000           | Yes                                     |
+| 8%                      | ₹80,000             | Tight                                   |
+| 5%                      | ₹50,000             | Barely                                  |
+| 3%                      | ₹30,000             | No — below break-even at scale          |
+| 0% (SuperProfile model) | ₹0 from commission  | Need subscription revenue or VC funding |
 
 SuperProfile's ₹99/month model generates ~₹37.6L/month at 38K creators. But most of those creators are likely inactive. If 10% are active (3,800), that's ₹3.76L/month. A team of 5-10 people costs more than that. The model doesn't work without either VC subsidy or a dramatic increase in paying subscribers.
 
@@ -327,15 +331,15 @@ SuperProfile's ₹99/month model generates ~₹37.6L/month at 38K creators. But 
 
 The argument we need to win is not "we're cheapest" but "we make you more money":
 
-| Value Driver | How It Increases Creator Revenue |
-|---|---|
-| Integrated video | Higher session completion rate (no Zoom link failures). Fewer no-shows. |
+| Value Driver          | How It Increases Creator Revenue                                                                                             |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Integrated video      | Higher session completion rate (no Zoom link failures). Fewer no-shows.                                                      |
 | Marketplace discovery | Organic bookings from seekers who find the creator through platform search. New revenue the creator wouldn't get on Topmate. |
-| Multi-service | A creator who adds webinars to their consultation practice increases total revenue by 40-60% (estimated). |
-| Reviews & ratings | Social proof increases booking conversion rate. More bookings from the same traffic. |
-| Analytics | Data-driven pricing decisions. Creators who see their demand curves can optimize pricing. |
-| Scheduling automation | Less time managing calendar = more available slots = more bookings. |
-| Reliable payouts | Creator confidence. No anxiety about whether they'll get paid. They invest more time on the platform. |
+| Multi-service         | A creator who adds webinars to their consultation practice increases total revenue by 40-60% (estimated).                    |
+| Reviews & ratings     | Social proof increases booking conversion rate. More bookings from the same traffic.                                         |
+| Analytics             | Data-driven pricing decisions. Creators who see their demand curves can optimize pricing.                                    |
+| Scheduling automation | Less time managing calendar = more available slots = more bookings.                                                          |
+| Reliable payouts      | Creator confidence. No anxiety about whether they'll get paid. They invest more time on the platform.                        |
 
 **If Familiarise helps a creator earn ₹1,00,000/month instead of ₹80,000/month on Topmate, they'll happily pay 10% (₹10,000) instead of Topmate's effective 17% (₹13,600).** They earn more AND pay less. That's the pitch.
 
@@ -352,6 +356,7 @@ The argument we need to win is not "we're cheapest" but "we make you more money"
 1. **Don't panic-match.** 5% commission on Topmate is still ~8-10% effective (5% + Stripe fees + forex). Our 10% with UPI is still cheaper or comparable.
 
 2. **Emphasize total cost, not headline rate:**
+
    ```
    "Topmate says 5%. Your bank statement says 8-10%.
     Familiarise says 10%. Your bank statement says 10%.

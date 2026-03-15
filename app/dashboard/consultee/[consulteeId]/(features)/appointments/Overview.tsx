@@ -72,9 +72,7 @@ function getNextSlotTime(
 ): number {
   if (!slots?.length) return Infinity;
   const now = Date.now();
-  const upcoming = slots.find(
-    (s) => new Date(s.startsAt).getTime() > now,
-  );
+  const upcoming = slots.find((s) => new Date(s.startsAt).getTime() > now);
   return upcoming
     ? new Date(upcoming.startsAt).getTime()
     : new Date(slots[0].startsAt).getTime();
@@ -180,7 +178,10 @@ export function Overview({
             });
             const nextSlot = rawSlots[0];
             return (
-              <div key={consultation.id} className="flex-shrink-0 w-full sm:w-[300px]">
+              <div
+                key={consultation.id}
+                className="flex-shrink-0 w-full sm:w-[300px]"
+              >
                 <OneOffEventCard
                   title={consultation.consultationPlan.title}
                   consultant={
@@ -221,7 +222,10 @@ export function Overview({
                 []) as SlotOfAppointment[];
               const firstSlot = rawSlots[0];
               return (
-                <div key={trial.id} className="flex-shrink-0 w-full sm:w-[300px]">
+                <div
+                  key={trial.id}
+                  className="flex-shrink-0 w-full sm:w-[300px]"
+                >
                   <OneOffEventCard
                     title={trial.subscriptionPlan.title}
                     consultant={
@@ -253,7 +257,10 @@ export function Overview({
             }) as SlotWithMeetingSession[];
             const nextSlot = rawSlots[0];
             return (
-              <div key={subscription.id} className="flex-shrink-0 w-full sm:w-[300px]">
+              <div
+                key={subscription.id}
+                className="flex-shrink-0 w-full sm:w-[300px]"
+              >
                 <MultiSessionEventCard
                   title={subscription.subscriptionPlan.title}
                   consultant={
@@ -317,7 +324,10 @@ export function Overview({
             );
 
             return (
-              <div key={webinar.id} className="flex-shrink-0 w-full sm:w-[300px]">
+              <div
+                key={webinar.id}
+                className="flex-shrink-0 w-full sm:w-[300px]"
+              >
                 <OneOffEventCard
                   title={webinar.webinarPlan.title}
                   consultant={
@@ -384,7 +394,10 @@ export function Overview({
             );
 
             return (
-              <div key={classItem.id} className="flex-shrink-0 w-full sm:w-[300px]">
+              <div
+                key={classItem.id}
+                className="flex-shrink-0 w-full sm:w-[300px]"
+              >
                 <MultiSessionEventCard
                   title={classItem.classPlan.title}
                   consultant={

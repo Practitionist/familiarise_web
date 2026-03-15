@@ -15,10 +15,7 @@ import {
   DashboardContent,
 } from "@/components/dashboard/DashboardShell";
 import { StatCard } from "@/components/dashboard/StatCard";
-import {
-  DataCard,
-  EmptyState,
-} from "@/components/dashboard/DataCard";
+import { DataCard, EmptyState } from "@/components/dashboard/DataCard";
 import {
   Calendar,
   Clock,
@@ -415,14 +412,14 @@ export function HomeTab({
                             <Clock className="h-3.5 w-3.5" />
                             <span>
                               {startTime
-                                ? formatAppointmentTime(
-                                    startTime.toISOString(),
-                                  )
+                                ? formatAppointmentTime(startTime.toISOString())
                                 : "TBD"}
                             </span>
                           </div>
 
-                          <Badge className={`flex-shrink-0 ${getBadgeStyle(status)}`}>
+                          <Badge
+                            className={`flex-shrink-0 ${getBadgeStyle(status)}`}
+                          >
                             {status}
                           </Badge>
 
