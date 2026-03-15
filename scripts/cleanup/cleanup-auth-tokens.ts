@@ -7,7 +7,7 @@
  * This catches cases where:
  * - Users abandon email verification flows
  * - Password reset links expire unused
- * - Sessions expire but are not cleaned up by NextAuth
+ * - Sessions expire but are not cleaned up by BetterAuth
  *
  * This module exports the core cleanup function.
  * It is imported by:

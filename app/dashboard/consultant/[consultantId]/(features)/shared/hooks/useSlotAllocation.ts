@@ -7,6 +7,7 @@ import {
   AllocationResult,
 } from "../utils/allocationAlgorithms";
 import { AllocationService } from "../utils/allocationService";
+import { isRecurringEventType } from "@/utils/slotAllocation/types";
 
 /**
  * ENHANCED EVENT SLOT ALLOCATION HOOK
@@ -439,9 +440,14 @@ function getSlotLimits(
       );
       // FIXED: Calculate actual call count for maxSlots (not slot count)
       const totalCalls = Math.ceil(requiredSlots / subscriptionSessionSlots);
+      const rawMaxCalls = options.maxTotalCalls || totalCalls;
+      // Subtract past completed sessions so the interactive guard caps at remaining sessions
+      const pastSessions = Math.floor(
+        (options.pastConfirmedSlotCount || 0) / subscriptionSessionSlots,
+      );
       return {
         minSlots: requiredSlots,
-        maxSlots: options.maxTotalCalls || totalCalls, // ✅ Use call count, not slot count
+        maxSlots: rawMaxCalls - pastSessions, // ✅ Cap at remaining sessions for in-progress events
         slotsPerSession: subscriptionSessionSlots,
         totalSessions: totalCalls, // ✅ Also use call count for sessions
       };
@@ -1247,10 +1253,7 @@ export function useEventSlotAllocation(
 
     // For subscriptions and classes, maxTotalCalls is set to the plan's totalSessions (authoritative).
     // Derive requiredSlots from it to stay consistent with backend validation.
-    if (
-      (eventType === "subscription" || eventType === "class") &&
-      options.maxTotalCalls
-    ) {
+    if (isRecurringEventType(eventType) && options.maxTotalCalls) {
       const slotsPerSession = Math.ceil(
         (options.sessionDurationInHours || 1) / 0.5,
       );
@@ -1272,12 +1275,10 @@ export function useEventSlotAllocation(
       );
     }
 
-    // For in-progress classes, subtract past confirmed slots so the consultant
-    // only needs to select FUTURE slots. Subscriptions don't need this because
-    // totalSessions from RequestSlotAllocationTab already accounts for
-    // rescheduling (only counting tentative sessions that need new times).
+    // For in-progress classes/subscriptions, subtract past confirmed slots so
+    // the consultant only needs to select FUTURE slots.
     const pastCount = options.pastConfirmedSlotCount || 0;
-    if (eventType === "class" && pastCount > 0) {
+    if (isRecurringEventType(eventType) && pastCount > 0) {
       return Math.max(0, rawRequired - pastCount);
     }
 
@@ -1956,6 +1957,7 @@ export function useEventSlotAllocation(
           startDate: options.startDate,
           endDate: options.endDate,
           totalSessions: options.maxTotalCalls, // maxTotalCalls is already totalSessions-aware
+          pastConfirmedSlotCount: options.pastConfirmedSlotCount,
         };
 
         // For recurring events (subscription/class), the calendar UI only
@@ -1963,7 +1965,7 @@ export function useEventSlotAllocation(
         // needs slots spanning the entire scheduling period. Fetch them.
         let slotsForAllocation = availableSlots;
         if (
-          (eventType === "subscription" || eventType === "class") &&
+          isRecurringEventType(eventType) &&
           options.startDate &&
           options.endDate &&
           options.consultantId

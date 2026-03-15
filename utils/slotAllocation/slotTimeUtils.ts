@@ -13,6 +13,9 @@
 
 import { DayOfWeek, Prisma } from "@prisma/client";
 
+/** 24 hours expressed in milliseconds */
+export const TWENTY_FOUR_HOURS_IN_MS = 24 * 60 * 60 * 1000;
+
 /**
  * Convert minutes-since-midnight-UTC to "HH:MM" string
  * @param minutes - Minutes since midnight (0-1439)

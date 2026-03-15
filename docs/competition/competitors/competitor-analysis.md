@@ -7,6 +7,8 @@
 
 ## Executive Summary
 
+> **Note (March 2026):** An updated competitive strategy with threat matrix, moat analysis, feature battlecards, pricing strategy, go-to-market playbook, and private war-room documents is available in the [`docs/competition/`](../) folder. This document (December 2024) contains the original analysis and remains useful for historical context.
+
 Familiarise operates in the **expert services marketplace / EdTech** space, competing against various players ranging from simple booking platforms (Topmate) to full-fledged education giants (upGrad). This analysis reveals that Familiarise has significant **technical advantages** but needs to focus on **market positioning, growth, and differentiation** to compete effectively.
 
 ### Key Findings

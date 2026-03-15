@@ -16,6 +16,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
+import { isRecurringEventType } from "@/utils/slotAllocation/types";
 import { WebinarStatus, ClassStatus } from "@prisma/client";
 import {
   Event,
@@ -263,7 +264,7 @@ export function EventCard({
 
   const isLiveSession = eventType === "webinar" || eventType === "class";
   const durationSuffix =
-    eventType === "subscription" || eventType === "class" ? "/mo" : "";
+    isRecurringEventType(eventType) ? "/mo" : "";
 
   // Check if subscription plan has free trial enabled
   const hasFreeTrialEnabled =

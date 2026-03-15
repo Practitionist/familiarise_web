@@ -451,7 +451,7 @@ export type PreferredSchedule = z.infer<typeof PreferredScheduleSchema>;
 
 export const CookiePreferenceSchema = z.object({
   // Essential: Required for core functionality - authentication, security, CSRF tokens
-  // Cannot be disabled by users. Examples: NextAuth session, security tokens
+  // Cannot be disabled by users. Examples: BetterAuth session, security tokens
   essential: z.boolean().default(true),
 
   // Analytics: Usage tracking and performance measurement

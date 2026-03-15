@@ -5,6 +5,7 @@ import {
   validateSlotDistribution,
 } from "./calendarUtils";
 import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
+import { isRecurringEventType } from "@/utils/slotAllocation/types";
 import { AllocationService } from "./allocationService";
 
 /**
@@ -97,7 +98,7 @@ export class AllocationAlgorithms {
       // For in-progress recurring events, subtract past confirmed slots
       const pastCount = options.pastConfirmedSlotCount || 0;
       const requiredSlots =
-        options.eventType === "class" && pastCount > 0
+        isRecurringEventType(options.eventType) && pastCount > 0
           ? Math.max(0, rawRequired - pastCount)
           : rawRequired;
 
@@ -224,7 +225,7 @@ export class AllocationAlgorithms {
     try {
       // Calculate required slots based on event type
       // Pass durationInHours for consultations/webinars, sessionDurationInHours for subscriptions/classes
-      const requiredSlots = calculateRequiredSlots(
+      const rawRequired = calculateRequiredSlots(
         options.eventType,
         options.durationInMonths,
         options.callsPerWeek,
@@ -233,6 +234,13 @@ export class AllocationAlgorithms {
         options.endDate,
         options.totalSessions,
       );
+
+      // For in-progress recurring events, subtract past confirmed slots
+      const pastCount = options.pastConfirmedSlotCount || 0;
+      const requiredSlots =
+        isRecurringEventType(options.eventType) && pastCount > 0
+          ? Math.max(0, rawRequired - pastCount)
+          : rawRequired;
 
       let selectedSlots: TimeSlot[] = [];
       let strategy = "";
