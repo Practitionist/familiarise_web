@@ -98,11 +98,20 @@ export async function GET(
           orderBy: { updatedAt: "desc" },
         }),
 
-        // Source 3: Payment records with PENDING gateway status
+        // Source 3: Payment records with PENDING gateway status (non-expired only)
         prisma.payment.findMany({
           where: {
             userId: consulteeProfile.userId,
             paymentStatus: "PENDING",
+            OR: [
+              // Has explicit expiresAt that's still in the future
+              { expiresAt: { gt: new Date() } },
+              // No expiresAt but created within last 30 min (default checkout window)
+              {
+                expiresAt: null,
+                createdAt: { gt: new Date(Date.now() - 30 * 60 * 1000) },
+              },
+            ],
           },
           include: {
             appointment: {
