@@ -16,6 +16,14 @@ interface SessionTimelineProps {
   onJoinSlot: (slot: SlotWithMeetingSession) => void;
 }
 
+/** A group of slots belonging to the same appointment (= one session). */
+interface SessionGroup {
+  appointmentId: string;
+  slots: SlotWithMeetingSession[];
+  startTime: Date;
+  endTime: Date;
+}
+
 function getSlotStatus(slot: SlotWithMeetingSession): SessionStatus {
   const now = Date.now();
   const start = new Date(slot.startsAt).getTime();
@@ -30,11 +38,56 @@ function getSlotStatus(slot: SlotWithMeetingSession): SessionStatus {
   return "upcoming";
 }
 
+/** Derive session-level status from constituent slot statuses. */
+function getSessionStatus(session: SessionGroup): SessionStatus {
+  const slotStatuses = session.slots.map(getSlotStatus);
+  if (slotStatuses.some((s) => s === "joinable")) return "joinable";
+  if (slotStatuses.every((s) => s === "completed")) return "completed";
+  if (
+    slotStatuses.every((s) => s === "completed" || s === "noRecord")
+  )
+    return "noRecord";
+  return "upcoming";
+}
+
+/** Find the first joinable slot within a session (for the join action). */
+function getJoinableSlot(
+  session: SessionGroup,
+): SlotWithMeetingSession | undefined {
+  return session.slots.find((s) => getSlotStatus(s) === "joinable");
+}
+
+/** Group a flat array of slots by appointmentId into sessions. */
+function groupSlotsBySession(
+  slots: SlotWithMeetingSession[],
+): SessionGroup[] {
+  const groups = new Map<string, SlotWithMeetingSession[]>();
+  for (const slot of slots) {
+    const key = slot.appointmentId;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(slot);
+  }
+  return Array.from(groups.entries())
+    .map(([appointmentId, sessionSlots]) => {
+      const sorted = sessionSlots.sort(
+        (a, b) =>
+          new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
+      );
+      return {
+        appointmentId,
+        slots: sorted,
+        startTime: new Date(sorted[0].startsAt),
+        endTime: new Date(sorted[sorted.length - 1].endsAt),
+      };
+    })
+    .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+}
+
 const statusIcon: Record<SessionStatus, string> = {
-  completed: "✅",
-  noRecord: "⚠️",
-  joinable: "◉",
-  upcoming: "○",
+  completed: "\u2705",
+  noRecord: "\u26A0\uFE0F",
+  joinable: "\u25C9",
+  upcoming: "\u25CB",
 };
 
 const statusLabel: Record<SessionStatus, string> = {
@@ -54,38 +107,39 @@ export function SessionTimeline({
   const [expanded, setExpanded] = useState(false);
 
   const nonTentativeSlots = slots.filter((s) => !s.isTentative);
-  const showExpand = nonTentativeSlots.length > COLLAPSED_LIMIT;
+  const sessions = groupSlotsBySession(nonTentativeSlots);
+  const showExpand = sessions.length > COLLAPSED_LIMIT;
 
-  // When collapsed and > COLLAPSED_LIMIT: show dot summary + next upcoming/joinable slots
-  const visibleSlots =
+  // When collapsed and > COLLAPSED_LIMIT: show dot summary + next upcoming/joinable sessions
+  const visibleSessions =
     showExpand && !expanded
       ? (() => {
           // Find first upcoming/joinable index
-          const firstUpcomingIdx = nonTentativeSlots.findIndex((s) => {
-            const status = getSlotStatus(s);
+          const firstUpcomingIdx = sessions.findIndex((session) => {
+            const status = getSessionStatus(session);
             return status === "upcoming" || status === "joinable";
           });
 
           if (firstUpcomingIdx === -1) {
             // All past — show last 3
-            return nonTentativeSlots.slice(-3);
+            return sessions.slice(-3);
           }
 
           // Show the joinable/upcoming and 2 surrounding
           const startIdx = Math.max(0, firstUpcomingIdx - 1);
-          return nonTentativeSlots.slice(startIdx, startIdx + 3);
+          return sessions.slice(startIdx, startIdx + 3);
         })()
-      : nonTentativeSlots;
+      : sessions;
 
-  // Dot summary for collapsed view
+  // Dot summary for collapsed view (one dot per session)
   const dotSummary =
     showExpand && !expanded
-      ? nonTentativeSlots.map((s) => {
-          const st = getSlotStatus(s);
-          if (st === "completed") return "✅";
-          if (st === "noRecord") return "⚠️";
-          if (st === "joinable") return "◉";
-          return "○";
+      ? sessions.map((session) => {
+          const st = getSessionStatus(session);
+          if (st === "completed") return "\u2705";
+          if (st === "noRecord") return "\u26A0\uFE0F";
+          if (st === "joinable") return "\u25C9";
+          return "\u25CB";
         })
       : null;
 
@@ -103,15 +157,15 @@ export function SessionTimeline({
         </div>
       )}
 
-      {/* Slot rows */}
-      {visibleSlots.map((slot) => {
-        const status = getSlotStatus(slot);
+      {/* Session rows (one row per appointment group) */}
+      {visibleSessions.map((session) => {
+        const status = getSessionStatus(session);
         const isJoinable = status === "joinable";
-        const startDate = new Date(slot.startsAt);
+        const joinableSlot = isJoinable ? getJoinableSlot(session) : undefined;
 
         return (
           <div
-            key={slot.id}
+            key={session.appointmentId}
             className={cn(
               "flex items-center gap-2 px-2 py-1.5 rounded-md text-xs transition-colors",
               isJoinable
@@ -120,12 +174,16 @@ export function SessionTimeline({
               status === "completed" && "opacity-70",
               status === "noRecord" && "opacity-80",
             )}
-            onClick={isJoinable ? () => onJoinSlot(slot) : undefined}
+            onClick={
+              isJoinable && joinableSlot
+                ? () => onJoinSlot(joinableSlot)
+                : undefined
+            }
             role={isJoinable ? "button" : undefined}
             tabIndex={isJoinable ? 0 : undefined}
             onKeyDown={
-              isJoinable
-                ? (e) => e.key === "Enter" && onJoinSlot(slot)
+              isJoinable && joinableSlot
+                ? (e) => e.key === "Enter" && onJoinSlot(joinableSlot)
                 : undefined
             }
           >
@@ -137,22 +195,24 @@ export function SessionTimeline({
               {statusIcon[status]}
             </span>
 
-            {/* Date + time */}
+            {/* Date + time range */}
             <div className="flex-1 min-w-0">
               <span className="font-medium text-zinc-700">
-                {format(startDate, "MMM d")}
+                {format(session.startTime, "MMM d")}
               </span>
               <span className="text-zinc-400 ml-2">
-                {format(startDate, "h:mm a")}
+                {format(session.startTime, "h:mm a")}
+                {" - "}
+                {format(session.endTime, "h:mm a")}
               </span>
             </div>
 
             {/* Action / status label */}
-            {isJoinable ? (
+            {isJoinable && joinableSlot ? (
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  onJoinSlot(slot);
+                  onJoinSlot(joinableSlot);
                 }}
                 disabled={isJoining}
                 className="flex items-center gap-1 px-2 py-0.5 rounded bg-green-600 text-white text-[10px] font-semibold hover:bg-green-700 disabled:opacity-50"
@@ -199,7 +259,7 @@ export function SessionTimeline({
           />
           {expanded
             ? "Show less"
-            : `Show all ${nonTentativeSlots.length} sessions`}
+            : `Show all ${sessions.length} sessions`}
         </button>
       )}
     </div>

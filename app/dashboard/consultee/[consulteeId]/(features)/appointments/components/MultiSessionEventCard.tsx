@@ -139,72 +139,52 @@ export function MultiSessionEventCard({
       ? new Date(rawSlots[0].startsAt).toISOString()
       : undefined;
 
-  // Progress calculation
+  // Progress calculation — count sessions (appointment groups), not individual slots
   const nonTentativeSlots = allSlots.filter((s) => !s.isTentative);
-  const completedCount = nonTentativeSlots.filter((s) => {
-    const now = Date.now();
-    const end = s.endsAt
-      ? new Date(s.endsAt).getTime()
-      : new Date(s.startsAt).getTime() + DEFAULT_MEETING_DURATION_MS;
-    return now > end && s.meetingSession?.endedAt;
-  }).length;
-  const total = totalSessions || nonTentativeSlots.length || 1;
+  const sessionGroups = React.useMemo(() => {
+    const slots = allSlots.filter((s) => !s.isTentative);
+    const groups = new Map<string, SlotWithMeetingSession[]>();
+    for (const s of slots) {
+      const key = s.appointmentId;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(s);
+    }
+    return groups;
+  }, [allSlots]);
+  const totalSessionCount = sessionGroups.size || 1;
+  const completedCount = Array.from(sessionGroups.values()).filter((group) =>
+    group.every((s) => {
+      const end = s.endsAt
+        ? new Date(s.endsAt).getTime()
+        : new Date(s.startsAt).getTime() + DEFAULT_MEETING_DURATION_MS;
+      return Date.now() > end && s.meetingSession?.endedAt;
+    }),
+  ).length;
+  const total = totalSessions || totalSessionCount;
   const progressPercent = Math.round((completedCount / total) * 100);
 
-  // Grouped sessions for reschedule dialog
+  // Grouped sessions for reschedule dialog — group by appointmentId
   const groupedSessions = React.useMemo(() => {
-    const sortedSlots = rawSlots
-      .filter((slot) => !slot.isTentative)
-      .sort(
-        (a, b) =>
-          new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
-      );
-
-    const sessions: Array<{
-      slots: typeof sortedSlots;
-      startTime: Date;
-      endTime: Date;
-    }> = [];
-    let currentSessionSlots: typeof sortedSlots = [];
-
-    for (let i = 0; i < sortedSlots.length; i++) {
-      const slot = sortedSlots[i];
-      const prevSlot = sortedSlots[i - 1];
-
-      if (i === 0) {
-        currentSessionSlots.push(slot);
-      } else {
-        const prevEnd = prevSlot.endsAt
-          ? new Date(prevSlot.endsAt).getTime()
-          : new Date(prevSlot.startsAt).getTime() + DEFAULT_MEETING_DURATION_MS;
-        const currStart = new Date(slot.startsAt).getTime();
-
-        if (currStart === prevEnd) {
-          currentSessionSlots.push(slot);
-        } else {
-          if (currentSessionSlots.length > 0) {
-            sessions.push({
-              slots: [...currentSessionSlots],
-              startTime: new Date(currentSessionSlots[0].startsAt),
-              endTime: new Date(
-                currentSessionSlots[currentSessionSlots.length - 1].endsAt,
-              ),
-            });
-          }
-          currentSessionSlots = [slot];
-        }
-      }
+    const nonTentative = rawSlots.filter((slot) => !slot.isTentative);
+    const groups = new Map<string, (typeof nonTentative)>();
+    for (const slot of nonTentative) {
+      const key = slot.appointmentId;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(slot);
     }
-    if (currentSessionSlots.length > 0) {
-      sessions.push({
-        slots: [...currentSessionSlots],
-        startTime: new Date(currentSessionSlots[0].startsAt),
-        endTime: new Date(
-          currentSessionSlots[currentSessionSlots.length - 1].endsAt,
-        ),
-      });
-    }
-    return sessions;
+    return Array.from(groups.values())
+      .map((slots) => {
+        const sorted = slots.sort(
+          (a, b) =>
+            new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
+        );
+        return {
+          slots: sorted,
+          startTime: new Date(sorted[0].startsAt),
+          endTime: new Date(sorted[sorted.length - 1].endsAt),
+        };
+      })
+      .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
   }, [rawSlots]);
 
   const sessionsWithDynamicProps = groupedSessions.map((session) => ({
