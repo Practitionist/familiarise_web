@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
         const startTime = Date.now();
         try {
           const response = await fetch(
-            `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/api/slots/request-for-approval`,
+            `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/slots/request-for-approval`,
             {
               method: "POST",
               headers: {
