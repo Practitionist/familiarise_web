@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { reconcileOrphanedSessions } from "@/jobs/meetings/reconcile-orphaned-sessions";
+import { getMaintenanceState } from "@/lib/maintenance";
 
 export async function POST(req: NextRequest) {
   try {
@@ -14,6 +15,14 @@ export async function POST(req: NextRequest) {
             "Please provide a valid authorization header with the CRON_SECRET",
         },
         { status: 401 },
+      );
+    }
+
+    const { phase } = await getMaintenanceState();
+    if (phase === "OFFLINE") {
+      return NextResponse.json(
+        { error: "Service unavailable", message: "Maintenance in progress" },
+        { status: 503 },
       );
     }
 

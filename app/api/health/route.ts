@@ -71,11 +71,12 @@ export async function GET(request: Request) {
 
   let database: "connected" | "unreachable" = "connected";
   try {
+    let timeoutId: ReturnType<typeof setTimeout>;
     await Promise.race([
-      prisma.$queryRaw`SELECT 1`,
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("DB timeout")), 5000),
-      ),
+      prisma.$queryRaw`SELECT 1`.finally(() => clearTimeout(timeoutId)),
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error("DB timeout")), 5000);
+      }),
     ]);
   } catch {
     database = "unreachable";

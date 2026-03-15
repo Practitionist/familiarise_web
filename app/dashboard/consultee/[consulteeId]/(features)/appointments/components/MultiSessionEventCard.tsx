@@ -412,13 +412,16 @@ export function MultiSessionEventCard({
                 if (value === "entire") {
                   setSelectedSlotIds([]);
                 } else if (value === "individual") {
-                  // Auto-select first session when switching to individual mode
-                  const first =
-                    selectedSlotIds.length > 0
-                      ? selectedSlotIds.slice(0, 1)
-                      : groupedSessions.length > 0
-                        ? groupedSessions[0].slots.map((s) => s.id)
-                        : [];
+                  // Auto-select the session containing the first selected slot
+                  const firstSelectedId = selectedSlotIds[0];
+                  const sessionWithFirst = groupedSessions.find((session) =>
+                    session.slots.some((s) => s.id === firstSelectedId),
+                  );
+                  const first = sessionWithFirst
+                    ? sessionWithFirst.slots.map((s) => s.id)
+                    : groupedSessions.length > 0
+                      ? groupedSessions[0].slots.map((s) => s.id)
+                      : [];
                   setSelectedSlotIds(first);
                 }
               }}
