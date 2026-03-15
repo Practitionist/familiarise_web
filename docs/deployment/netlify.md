@@ -28,15 +28,15 @@
 |---|---|
 | Platform | Netlify (Pro plan — `nf_team_pro`) |
 | Site name | `familiarise` |
-| Site ID | `1a1ad7d0-fda0-4efe-9d58-aa0ce0fd6d5c` |
+| Site ID | `$NETLIFY_SITE_ID` |
 | Production URL | `https://familiarisenow.com` |
 | Dev branch URL | `https://dev.familiarisenow.com` |
 | Netlify default URL | `https://familiarise.netlify.app` |
 | Dev branch Netlify URL | `https://dev--familiarise.netlify.app` |
 | Netlify admin | `https://app.netlify.com/projects/familiarise` |
-| Netlify account | `Practitionist-Deploys` (email: `teetangh@gmail.com`) |
+| Netlify account | `Practitionist-Deploys` (email: `<team-admin-email>`) |
 | GitHub repo | `https://github.com/Practitionist/familiarise_web` |
-| DNS managed by | Netlify DNS (zone ID: `6965c518bcb320a5fb8f7135`) |
+| DNS managed by | Netlify DNS (zone ID: `$NETLIFY_DNS_ZONE_ID`) |
 
 ---
 
@@ -86,7 +86,7 @@ The `.env.sample` file is the canonical reference for what vars are needed.
 
 | Variable | Production value | Local dev value | Notes |
 |---|---|---|---|
-| `BETTER_AUTH_SECRET` | `mtOLtDSpKQCVk66q3+NNs6o4Ph/stv8db5x791LZoUQ=` | same | 32+ char base64 secret for signing BetterAuth sessions |
+| `BETTER_AUTH_SECRET` | `<your-better-auth-secret>` | same | 32+ char base64 secret for signing BetterAuth sessions |
 | `BETTER_AUTH_URL` | `https://familiarisenow.com` | `http://localhost:3000` | **This was the root cause of the invalid origin bug** — see below |
 | `BETTER_AUTH_TRUSTED_ORIGINS` | `https://familiarisenow.com` | `http://localhost:3000` | Comma-separated additional allowed CORS origins |
 | `NEXT_PUBLIC_APP_URL` | `https://familiarisenow.com` | `http://localhost:3000` | Used by auth client + for building absolute URLs (e.g. referral links) |
@@ -231,7 +231,7 @@ The CLI needs to know which Netlify site the current directory maps to.
 Run this once in the repo root:
 
 ```bash
-netlify link --id 1a1ad7d0-fda0-4efe-9d58-aa0ce0fd6d5c
+netlify link --id $NETLIFY_SITE_ID
 ```
 
 This creates a `.netlify/` folder (gitignored automatically) that stores the site ID.
@@ -246,7 +246,7 @@ netlify sites:list
 
 Example output:
 ```
-familiarise - 1a1ad7d0-fda0-4efe-9d58-aa0ce0fd6d5c
+familiarise - $NETLIFY_SITE_ID
   url:  https://familiarisenow.com
   repo: https://github.com/Practitionist/familiarise_web
 ```
@@ -261,11 +261,11 @@ All method names are camelCase versions of the OpenAPI operation IDs.
 netlify api --list
 
 # Get site details
-netlify api getSite --data '{"site_id": "1a1ad7d0-fda0-4efe-9d58-aa0ce0fd6d5c"}'
+netlify api getSite --data '{"site_id": "$NETLIFY_SITE_ID"}'
 
 # Update site settings
 netlify api updateSite --data '{
-  "site_id": "1a1ad7d0-fda0-4efe-9d58-aa0ce0fd6d5c",
+  "site_id": "$NETLIFY_SITE_ID",
   "body": { "branch_deploy_custom_domain": "dev.familiarisenow.com" }
 }'
 ```
@@ -279,7 +279,7 @@ netlify api updateSite --data '{
 ## DNS Architecture on Netlify
 
 The domain `familiarisenow.com` is managed entirely by **Netlify DNS**
-(DNS zone ID: `6965c518bcb320a5fb8f7135`). This means Netlify is the
+(DNS zone ID: `$NETLIFY_DNS_ZONE_ID`). This means Netlify is the
 authoritative nameserver — you do NOT manage DNS at a separate registrar
 (GoDaddy, Namecheap, etc.) for this domain.
 
@@ -312,11 +312,11 @@ authoritative nameserver — you do NOT manage DNS at a separate registrar
 
 ```bash
 # Get zone ID and all records
-netlify api getDNSForSite --data '{"site_id": "1a1ad7d0-fda0-4efe-9d58-aa0ce0fd6d5c"}'
+netlify api getDNSForSite --data '{"site_id": "$NETLIFY_SITE_ID"}'
 
 # Create a DNS record
 netlify api createDnsRecord --data '{
-  "zone_id": "6965c518bcb320a5fb8f7135",
+  "zone_id": "$NETLIFY_DNS_ZONE_ID",
   "body": {
     "type": "NETLIFY",
     "hostname": "example.familiarisenow.com",
@@ -327,7 +327,7 @@ netlify api createDnsRecord --data '{
 
 # Delete a DNS record (you need the record ID first)
 netlify api deleteDnsRecord --data '{
-  "zone_id": "6965c518bcb320a5fb8f7135",
+  "zone_id": "$NETLIFY_DNS_ZONE_ID",
   "dns_record_id": "<record-id-from-get>"
 }'
 ```
@@ -389,7 +389,7 @@ Without SSL, browsers would show a certificate error.
 The correct API call:
 ```bash
 netlify api updateSite --data '{
-  "site_id": "1a1ad7d0-fda0-4efe-9d58-aa0ce0fd6d5c",
+  "site_id": "$NETLIFY_SITE_ID",
   "body": {
     "branch_deploy_custom_domain": "dev.familiarisenow.com"
   }
@@ -409,7 +409,7 @@ object. When set, Netlify:
 ### How to inspect the full site object
 
 ```bash
-netlify api getSite --data '{"site_id": "1a1ad7d0-fda0-4efe-9d58-aa0ce0fd6d5c"}' \
+netlify api getSite --data '{"site_id": "$NETLIFY_SITE_ID"}' \
   | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
@@ -432,7 +432,7 @@ registered as an **Authorized redirect URI**.
 ### Steps to update
 
 1. Go to [console.cloud.google.com](https://console.cloud.google.com) → **APIs & Services → Credentials**
-2. Click the OAuth 2.0 Client ID: `960368356660-asolvvp09q7qv0fo2mv8ke9e3csd573r`
+2. Click the OAuth 2.0 Client ID named **`familiarise-web-client`** (the Web application type)
 3. Under **Authorized JavaScript origins**, add:
    - `https://familiarisenow.com`
    - `https://dev.familiarisenow.com`
@@ -453,7 +453,7 @@ the Google OAuth flow will fail with `redirect_uri_mismatch`.
 ### Google Client ID and Secret
 
 These are stored in Netlify env vars:
-- `GOOGLE_CLIENT_ID` = `960368356660-asolvvp09q7qv0fo2mv8ke9e3csd573r.apps.googleusercontent.com`
+- `GOOGLE_CLIENT_ID` = stored in Netlify (see `netlify env:list --json` — look for the `384845845365-` prefix confirming it belongs to the `familiarise` GCP project)
 - `GOOGLE_CLIENT_SECRET` = stored in Netlify (check `netlify env:list --json`)
 
 > **Security note:** Never commit these to the repo. The `.env` file is gitignored
@@ -533,7 +533,7 @@ git checkout dev
 ```bash
 # View recent deploys (non-interactive)
 netlify api listSiteDeploys \
-  --data '{"site_id": "1a1ad7d0-fda0-4efe-9d58-aa0ce0fd6d5c"}' \
+  --data '{"site_id": "$NETLIFY_SITE_ID"}' \
   | python3 -c "
 import sys, json
 for d in json.load(sys.stdin)[:8]:
@@ -582,7 +582,7 @@ folder with `state.json` is missing.
 
 **Fix:**
 ```bash
-netlify link --id 1a1ad7d0-fda0-4efe-9d58-aa0ce0fd6d5c
+netlify link --id $NETLIFY_SITE_ID
 ```
 
 This creates `.netlify/state.json` in the repo root (gitignored automatically).
@@ -729,19 +729,19 @@ netlify env:set NEXT_PUBLIC_APP_URL "https://familiarisenow.com" --context produ
 netlify env:unset OLD_VARIABLE_NAME
 
 # Inspect site configuration
-netlify api getSite --data '{"site_id": "1a1ad7d0-fda0-4efe-9d58-aa0ce0fd6d5c"}' | python3 -m json.tool
+netlify api getSite --data '{"site_id": "$NETLIFY_SITE_ID"}' | python3 -m json.tool
 
 # Inspect DNS records
-netlify api getDNSForSite --data '{"site_id": "1a1ad7d0-fda0-4efe-9d58-aa0ce0fd6d5c"}' | python3 -m json.tool
+netlify api getDNSForSite --data '{"site_id": "$NETLIFY_SITE_ID"}' | python3 -m json.tool
 
 # Set branch deploy custom domain
 netlify api updateSite --data '{
-  "site_id": "1a1ad7d0-fda0-4efe-9d58-aa0ce0fd6d5c",
+  "site_id": "$NETLIFY_SITE_ID",
   "body": { "branch_deploy_custom_domain": "dev.familiarisenow.com" }
 }'
 
 # Recent deploys
-netlify api listSiteDeploys --data '{"site_id": "1a1ad7d0-fda0-4efe-9d58-aa0ce0fd6d5c"}' \
+netlify api listSiteDeploys --data '{"site_id": "$NETLIFY_SITE_ID"}' \
   | python3 -c "import sys,json; [print(d['state'],d['branch'],d['created_at'][:19]) for d in json.load(sys.stdin)[:5]]"
 
 # Trigger a manual production redeploy

@@ -85,3 +85,5 @@ docs/finances/private/
 
 # Other Repos
 node-payment-main/
+# Local Netlify folder
+.netlify
