@@ -10,14 +10,15 @@ import {
   AlertCircle,
   Clock,
   ExternalLink,
+  Loader2,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
-import { formatCurrencyAmount } from "@/utils/formatting";
+import { formatCurrencyFromMajorUnit } from "@/utils/formatting";
 import { cn } from "@/utils/tailwind";
 
 interface PendingPayment {
   id: string;
-  type: "consultation" | "subscription";
+  type: "consultation" | "subscription" | "webinar" | "class";
   title: string;
   consultantName: string;
   amount: number;
@@ -25,7 +26,8 @@ interface PendingPayment {
   paymentUrl: string;
   approvedAt: string;
   expiresAt: string;
-  isExpiringSoon: boolean; // < 24 hours
+  isExpiringSoon: boolean;
+  source?: "approval_pending" | "gateway_pending";
 }
 
 interface PendingPaymentsWidgetProps {
@@ -34,8 +36,9 @@ interface PendingPaymentsWidgetProps {
 
 /**
  * Sidebar widget showing pending payments.
- * Returns null during initial load, then shows empty state when
- * no payments or amber alert when payments exist.
+ * Shows two types:
+ * 1. Approval-pending: consultant approved, awaiting checkout (shows "Pay Now")
+ * 2. Gateway-pending: payment initiated, awaiting gateway confirmation (shows "Processing")
  */
 export function PendingPaymentsWidget({
   consulteeId,
@@ -137,62 +140,80 @@ export function PendingPaymentsWidget({
         </h3>
       </div>
       <div className="divide-y divide-amber-100 flex-1">
-        {pendingPayments.map((payment) => (
-          <div key={payment.id} className="px-5 py-3.5">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-zinc-900 truncate">
-                  {payment.title}
-                </p>
-                <p className="text-xs text-zinc-500 mt-0.5 truncate">
-                  with {payment.consultantName}
-                </p>
+        {pendingPayments.map((payment) => {
+          const isGatewayPending = payment.source === "gateway_pending";
+
+          return (
+            <div key={payment.id} className="px-5 py-3.5">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-zinc-900 truncate">
+                    {payment.title}
+                  </p>
+                  <p className="text-xs text-zinc-500 mt-0.5 truncate">
+                    with {payment.consultantName}
+                  </p>
+                </div>
+                <span className="text-sm font-semibold text-zinc-900 tabular-nums shrink-0">
+                  {formatCurrencyFromMajorUnit(payment.amount, payment.currency)}
+                </span>
               </div>
-              <span className="text-sm font-semibold text-zinc-900 tabular-nums shrink-0">
-                {formatCurrencyAmount(payment.amount, payment.currency)}
-              </span>
-            </div>
-            <div className="flex items-center justify-between mt-2.5">
-              <div className="flex items-center gap-1 text-xs text-zinc-500">
-                <Clock className="h-3 w-3" />
-                {payment.isExpiringSoon ? (
-                  <span className="text-red-600 font-medium">
-                    Expires{" "}
-                    {formatDistanceToNow(new Date(payment.expiresAt), {
-                      addSuffix: true,
-                    })}
+              <div className="flex items-center justify-between mt-2.5">
+                <div className="flex items-center gap-1 text-xs text-zinc-500">
+                  <Clock className="h-3 w-3" />
+                  {payment.isExpiringSoon ? (
+                    <span className="text-red-600 font-medium">
+                      Expires{" "}
+                      {formatDistanceToNow(new Date(payment.expiresAt), {
+                        addSuffix: true,
+                      })}
+                    </span>
+                  ) : isGatewayPending ? (
+                    <span>
+                      Initiated{" "}
+                      {formatDistanceToNow(new Date(payment.approvedAt), {
+                        addSuffix: true,
+                      })}
+                    </span>
+                  ) : (
+                    <span>
+                      Approved{" "}
+                      {formatDistanceToNow(new Date(payment.approvedAt), {
+                        addSuffix: true,
+                      })}
+                    </span>
+                  )}
+                </div>
+                {isGatewayPending ? (
+                  <span className="inline-flex items-center gap-1 h-7 px-3 text-xs font-semibold text-amber-700 bg-amber-100 rounded-md">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Processing
                   </span>
                 ) : (
-                  <span>
-                    Approved{" "}
-                    {formatDistanceToNow(new Date(payment.approvedAt), {
-                      addSuffix: true,
-                    })}
-                  </span>
+                  <Button
+                    size="sm"
+                    className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
+                    onClick={() => {
+                      if (
+                        payment.paymentUrl &&
+                        /^https?:\/\//.test(payment.paymentUrl)
+                      ) {
+                        window.open(
+                          payment.paymentUrl,
+                          "_blank",
+                          "noopener,noreferrer",
+                        );
+                      }
+                    }}
+                  >
+                    Pay Now
+                    <ExternalLink className="ml-1 h-3 w-3" />
+                  </Button>
                 )}
               </div>
-              <Button
-                size="sm"
-                className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
-                onClick={() => {
-                  if (
-                    payment.paymentUrl &&
-                    /^https?:\/\//.test(payment.paymentUrl)
-                  ) {
-                    window.open(
-                      payment.paymentUrl,
-                      "_blank",
-                      "noopener,noreferrer",
-                    );
-                  }
-                }}
-              >
-                Pay Now
-                <ExternalLink className="ml-1 h-3 w-3" />
-              </Button>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
       {pendingPayments.length > 1 && (
         <div className="px-5 py-3 border-t border-amber-100">

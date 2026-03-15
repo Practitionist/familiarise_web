@@ -103,6 +103,42 @@ export function formatCurrencyAmount(
 }
 
 /**
+ * Format an amount already in major currency units for display.
+ * Use this when the source value is in rupees/dollars/euros
+ * (e.g., Payment.amount, Refund.amount, Invoice.amount, plan.price).
+ *
+ * Use formatCurrencyAmount() instead when the source is in paise/cents
+ * (e.g., ReferralCredit.amount, ConsultantEarnings.consultantShare, Dispute.amount).
+ *
+ * @param amount   - Amount in major units (e.g., 14990 rupees = ₹14,990, 100 dollars = $100)
+ * @param currency - ISO 4217 currency code (required)
+ *
+ * @example
+ * formatCurrencyFromMajorUnit(14990, "INR") // "₹14,990.00"
+ * formatCurrencyFromMajorUnit(100, "USD")   // "$100.00"
+ * formatCurrencyFromMajorUnit(500, "JPY")   // "¥500"
+ */
+export function formatCurrencyFromMajorUnit(
+  amount: number,
+  currency: string,
+): string {
+  const upper = currency.toUpperCase();
+  const locale = CURRENCY_LOCALE_MAP[upper] || "en-IN";
+  const fractionDigits = ZERO_DECIMAL_CURRENCIES.has(upper)
+    ? 0
+    : THREE_DECIMAL_CURRENCIES.has(upper)
+      ? 3
+      : 2;
+
+  return new Intl.NumberFormat(locale, {
+    style: "currency",
+    currency: upper,
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  }).format(amount);
+}
+
+/**
  * Extract initials from a person's name.
  * Single-word names return the first two characters; multi-word names
  * return the first character of the first and last words.

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { formatCurrencyAmount } from "@/utils/formatting";
+import { formatCurrencyFromMajorUnit } from "@/utils/formatting";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -316,7 +316,7 @@ export default function StaffRefundsPage() {
                       </div>
                     </TableCell>
                     <TableCell className="font-medium">
-                      {formatCurrencyAmount(refund.amount, refund.currency)}
+                      {formatCurrencyFromMajorUnit(refund.amount, refund.currency)}
                     </TableCell>
                     <TableCell className="text-sm text-zinc-600 dark:text-zinc-400">
                       {refund.paymentGateway}

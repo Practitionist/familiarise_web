@@ -3,7 +3,10 @@
 import { useMemo } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
-import { formatCurrencyAmount } from "@/utils/formatting";
+import {
+  formatCurrencyAmount,
+  formatCurrencyFromMajorUnit,
+} from "@/utils/formatting";
 import { cn } from "@/utils/tailwind";
 import { CreditCard, Gift, Download, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -155,7 +158,7 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
         <div className="bg-white rounded-xl border border-zinc-200 p-4">
           <p className="text-sm text-zinc-500">Total Spent</p>
           <p className="text-2xl font-bold text-zinc-900">
-            {formatCurrencyAmount(totalSpent, "INR")}
+            {formatCurrencyFromMajorUnit(totalSpent, "INR")}
           </p>
           <p className="text-xs text-zinc-400 mt-1">
             {data.payments.filter((p) => p.status === "SUCCEEDED").length}{" "}
@@ -246,7 +249,7 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                           </td>
                           <td className="px-4 py-3 text-right whitespace-nowrap">
                             <span className="font-medium text-zinc-900">
-                              {formatCurrencyAmount(
+                              {formatCurrencyFromMajorUnit(
                                 payment.amount,
                                 payment.currency,
                               )}
@@ -254,7 +257,7 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                             {payment.taxAmount && payment.taxAmount > 0 && (
                               <span className="block text-xs text-zinc-400">
                                 incl.{" "}
-                                {formatCurrencyAmount(
+                                {formatCurrencyFromMajorUnit(
                                   payment.taxAmount,
                                   payment.currency,
                                 )}{" "}
@@ -283,7 +286,7 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                                         // TODO: Replace with actual PDF download when @react-pdf/renderer is integrated
                                         // Will call: GET /api/invoices/{invoice.id}/pdf
                                         window.alert(
-                                          `PDF download coming soon.\n\nInvoice: ${invoice.invoiceNumber}\nAmount: ${formatCurrencyAmount(invoice.amount, "INR")}`,
+                                          `PDF download coming soon.\n\nInvoice: ${invoice.invoiceNumber}\nAmount: ${formatCurrencyFromMajorUnit(invoice.amount, "INR")}`,
                                         );
                                       }}
                                     >
