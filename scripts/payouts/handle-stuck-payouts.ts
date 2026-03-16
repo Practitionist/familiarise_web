@@ -33,6 +33,7 @@ export interface StuckPayoutsResult {
   reconciledCount: number;
   retriedCount: number;
   failedCount: number;
+  skippedCount: number;
   errors: string[];
   timestamp: string;
 }
@@ -171,6 +172,7 @@ export async function handleStuckPayouts(): Promise<StuckPayoutsResult> {
   let reconciledCount = 0;
   let retriedCount = 0;
   let failedCount = 0;
+  let skippedCount = 0;
 
   const stuckThreshold = new Date(
     Date.now() - STUCK_THRESHOLD_HOURS * 60 * 60 * 1000,
@@ -256,6 +258,7 @@ export async function handleStuckPayouts(): Promise<StuckPayoutsResult> {
     } else if (payout.provider === PaymentGateway.RAZORPAY) {
       if (!razorpayConfigured) {
         console.log(`   Skipping - Razorpay credentials not configured`);
+        skippedCount++;
         continue;
       }
       gatewayStatus = await getRazorpayPayoutStatus(payout.providerPayoutId);
@@ -322,6 +325,7 @@ export async function handleStuckPayouts(): Promise<StuckPayoutsResult> {
   console.log(`   Reconciled: ${reconciledCount}`);
   console.log(`   Reset for retry: ${retriedCount}`);
   console.log(`   Permanently failed: ${failedCount}`);
+  console.log(`   Skipped: ${skippedCount}`);
 
   return {
     success: errors.length === 0,
@@ -329,6 +333,7 @@ export async function handleStuckPayouts(): Promise<StuckPayoutsResult> {
     reconciledCount,
     retriedCount,
     failedCount,
+    skippedCount,
     errors,
     timestamp: new Date().toISOString(),
   };
