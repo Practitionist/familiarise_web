@@ -21,15 +21,18 @@ jobs:
     name: Send Expiration Reminders
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
 
       - name: Install dependencies
@@ -39,7 +42,7 @@ jobs:
         run: npx prisma generate
 
       - name: Run reminder sender
-        run: npx ts-node scripts/waitlist/send-expiration-reminders.ts
+        run: npx tsx scripts/waitlist/send-expiration-reminders.ts
         env:
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
 

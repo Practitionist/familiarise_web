@@ -36,6 +36,12 @@ function outputToGitHubActions(result: PayoutReconciliationResult): void {
     fs.appendFileSync(outputFile, outputs + "\n");
   }
 
+  if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+    console.log(
+      `::warning::Razorpay credentials not configured — Razorpay records were skipped`,
+    );
+  }
+
   if (result.discrepancies.length > 0) {
     console.log(
       `::warning::${result.discrepancies.length} payout status discrepancies found and reconciled!`,

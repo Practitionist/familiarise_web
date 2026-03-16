@@ -36,6 +36,12 @@ function outputToGitHubActions(result: PaymentReconciliationResult): void {
     fs.appendFileSync(outputFile, outputs + "\n");
   }
 
+  if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+    console.log(
+      `::warning::Razorpay credentials not configured — Razorpay records were skipped`,
+    );
+  }
+
   if (result.succeededCount > 0) {
     console.log(
       `::warning::${result.succeededCount} payments found succeeded - may need manual appointment creation!`,
