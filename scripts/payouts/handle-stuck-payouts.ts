@@ -191,6 +191,11 @@ export async function handleStuckPayouts(): Promise<StuckPayoutsResult> {
     },
   });
 
+  const razorpayConfigured = !!(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET);
+  if (!razorpayConfigured) {
+    console.warn("⚠️ Razorpay credentials not configured — Razorpay records will be skipped");
+  }
+
   console.log(
     `Found ${stuckPayouts.length} payouts stuck in PROCESSING for >${STUCK_THRESHOLD_HOURS}h`,
   );
@@ -249,6 +254,10 @@ export async function handleStuckPayouts(): Promise<StuckPayoutsResult> {
     if (payout.provider === PaymentGateway.STRIPE) {
       gatewayStatus = await getStripePayoutStatus(payout.providerPayoutId);
     } else if (payout.provider === PaymentGateway.RAZORPAY) {
+      if (!razorpayConfigured) {
+        console.log(`   Skipping - Razorpay credentials not configured`);
+        continue;
+      }
       gatewayStatus = await getRazorpayPayoutStatus(payout.providerPayoutId);
     }
 

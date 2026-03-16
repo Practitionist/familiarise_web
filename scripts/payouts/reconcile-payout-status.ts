@@ -199,6 +199,11 @@ export async function reconcilePayoutStatus(): Promise<PayoutReconciliationResul
     orderBy: { updatedAt: "asc" },
   });
 
+  const razorpayConfigured = !!(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET);
+  if (!razorpayConfigured) {
+    console.warn("⚠️ Razorpay credentials not configured — Razorpay records will be skipped");
+  }
+
   console.log(
     `Found ${stalePayouts.length} stale PENDING/PROCESSING payouts to reconcile`,
   );
@@ -233,6 +238,11 @@ export async function reconcilePayoutStatus(): Promise<PayoutReconciliationResul
     if (payout.provider === PaymentGateway.STRIPE) {
       gatewayStatus = await getStripePayoutStatus(payout.providerPayoutId);
     } else if (payout.provider === PaymentGateway.RAZORPAY) {
+      if (!razorpayConfigured) {
+        console.log(`   Skipping - Razorpay credentials not configured`);
+        skippedCount++;
+        continue;
+      }
       gatewayStatus = await getRazorpayPayoutStatus(payout.providerPayoutId);
     } else {
       console.log(`   Skipping - unsupported gateway: ${payout.provider}`);

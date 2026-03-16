@@ -34,6 +34,12 @@ function outputToGitHubActions(result: StuckPayoutsResult): void {
     fs.appendFileSync(outputFile, outputs + "\n");
   }
 
+  if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+    console.log(
+      `::warning::Razorpay credentials not configured — Razorpay records were skipped`,
+    );
+  }
+
   if (result.failedCount > 0) {
     console.log(
       `::warning::${result.failedCount} payouts permanently failed after max retries`,

@@ -21,6 +21,9 @@ jobs:
     name: Process Expired Notifications
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
 
     steps:
       - name: Checkout repository
@@ -39,7 +42,7 @@ jobs:
         run: npx prisma generate
 
       - name: Run expiration processor
-        run: npx ts-node scripts/waitlist/process-expired-notifications.ts
+        run: npx tsx scripts/waitlist/process-expired-notifications.ts
         env:
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
 
