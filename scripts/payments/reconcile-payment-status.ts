@@ -206,6 +206,11 @@ export async function reconcilePaymentStatus(): Promise<PaymentReconciliationRes
     orderBy: { createdAt: "asc" },
   });
 
+  const razorpayConfigured = !!(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET);
+  if (!razorpayConfigured) {
+    console.warn("⚠️ Razorpay credentials not configured — Razorpay records will be skipped");
+  }
+
   console.log(
     `Found ${stalePendingPayments.length} stale PENDING payments to reconcile`,
   );
@@ -234,6 +239,11 @@ export async function reconcilePaymentStatus(): Promise<PaymentReconciliationRes
     if (payment.paymentGateway === PaymentGateway.STRIPE) {
       gatewayStatus = await getStripePaymentStatus(payment.paymentIntent);
     } else if (payment.paymentGateway === PaymentGateway.RAZORPAY) {
+      if (!razorpayConfigured) {
+        console.log(`   Skipping - Razorpay credentials not configured`);
+        skippedCount++;
+        continue;
+      }
       // For Razorpay, paymentIntent might be orderId
       gatewayStatus = await getRazorpayPaymentStatus(payment.paymentIntent);
     } else {
