@@ -57,6 +57,24 @@ import { reconcileDocumentStorage } from "@/scripts/cleanup/reconcile-document-s
 import { alertOrphanedPayments } from "@/scripts/alerts/alert-orphaned-payments";
 
 import { getSession } from "@/lib/auth-server";
+import { getMaintenanceState } from "@/lib/maintenance-edge";
+
+// Financial job IDs that must not run during DEGRADED maintenance.
+// These interact with payment gateways or mutate financial state.
+const FINANCIAL_JOB_IDS = new Set([
+  "cleanup-abandoned-payments",
+  "cleanup-approval-payments",
+  "reconcile-refunds",
+  "cascade-refund-earnings",
+  "handle-lost-disputes",
+  "create-payout-batch",
+  "process-payouts",
+  "handle-stuck-payouts",
+  "release-earnings",
+  "reconcile-payment-status",
+  "reconcile-payout-status",
+]);
+
 // Job ID to function mapping
 type JobResult = {
   success: boolean;
@@ -373,11 +391,32 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
+    // 5. Check maintenance mode — block financial jobs in DEGRADED
+    const maintenanceState = await getMaintenanceState();
+    if (maintenanceState.phase === "DEGRADED" && FINANCIAL_JOB_IDS.has(jobId)) {
+      return NextResponse.json(
+        {
+          error: `Job "${jobId}" is blocked during DEGRADED maintenance to protect payment integrity. End maintenance mode first.`,
+          phase: "DEGRADED",
+        },
+        { status: 503 },
+      );
+    }
+    if (maintenanceState.phase === "OFFLINE") {
+      return NextResponse.json(
+        {
+          error: `All system jobs are blocked during OFFLINE maintenance. End maintenance mode first.`,
+          phase: "OFFLINE",
+        },
+        { status: 503 },
+      );
+    }
+
     console.log(
       `[System Jobs] ${user.name || user.email} (${user.role}) running job: ${jobId}`,
     );
 
-    // 5. Execute the job
+    // 6. Execute the job
     const result = await jobFunction();
 
     console.log(`[System Jobs] Job ${jobId} completed:`, {

@@ -97,7 +97,15 @@ export function UserDropdown({
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem
-          onClick={() => signOut()}
+          onClick={() =>
+            signOut({
+              fetchOptions: {
+                onSuccess: () => {
+                  window.location.href = "/auth/signin";
+                },
+              },
+            })
+          }
           className="cursor-pointer text-red-600 focus:text-red-600 focus:bg-red-50"
         >
           <LogOut className="mr-2 h-4 w-4" />

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import prisma from "@/lib/prisma";
 import {
-  getCollaborators,
+  getCollaboratorsForUser,
   inviteCollaborator,
 } from "@/lib/collaborators/service";
 import { inviteClassCollaboratorSchema } from "@/schemas/collaborators";
@@ -18,8 +18,18 @@ export async function GET(
     }
 
     const { planId } = await params;
-    const collaborators = await getCollaborators("class", planId);
-    return NextResponse.json({ data: collaborators });
+    const result = await getCollaboratorsForUser(
+      "class",
+      planId,
+      session.user.id,
+    );
+
+    if (result.status === "not_found")
+      return NextResponse.json({ error: "Plan not found" }, { status: 404 });
+    if (result.status === "forbidden")
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+    return NextResponse.json({ data: result.data });
   } catch (error) {
     console.error("Error fetching class collaborators:", error);
     return NextResponse.json(
@@ -89,7 +99,10 @@ export async function POST(
     });
     if (existingCollab) {
       return NextResponse.json(
-        { error: "This consultant already has an active or pending collaboration on this plan" },
+        {
+          error:
+            "This consultant already has an active or pending collaboration on this plan",
+        },
         { status: 409 },
       );
     }
@@ -105,7 +118,10 @@ export async function POST(
 
     if (!collab) {
       return NextResponse.json(
-        { error: "Failed to invite. Revenue share may exceed limit (max 90% total for collaborators)." },
+        {
+          error:
+            "Failed to invite. Revenue share may exceed limit (max 90% total for collaborators).",
+        },
         { status: 400 },
       );
     }

@@ -17,7 +17,6 @@ import { ZodError } from "zod";
 import { sendPaymentSuccessEmail, sendPaymentFailedEmail } from "@/lib/email";
 import {
   createEarningsFromPayment,
-  refundEarnings,
   createInvoiceFromPayment,
   type AppointmentType,
 } from "@/lib/payments/payouts";
@@ -271,7 +270,8 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
   // Failures here are logged but do NOT roll back the payment.
   // The `sync-payment-earnings` and related background jobs serve as safety nets.
 
-  const { paymentId, appointmentId, userId, userName, amount, currency } = txResult;
+  const { paymentId, appointmentId, userId, userName, amount, currency } =
+    txResult;
 
   // --- Earnings creation ---
   try {
@@ -325,8 +325,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
           ?.consultantProfile ||
         paymentWithAppointment.appointment.webinar?.webinarPlan
           ?.consultantProfile ||
-        paymentWithAppointment.appointment.class?.classPlan
-          ?.consultantProfile;
+        paymentWithAppointment.appointment.class?.classPlan?.consultantProfile;
 
       if (consultantProfile) {
         const appointmentTypeMap: Record<string, AppointmentType> = {
@@ -345,10 +344,16 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
             ...paymentWithAppointment.appointment,
             consultantProfile: { id: consultantProfile.id },
             webinar: paymentWithAppointment.appointment.webinar
-              ? { webinarPlanId: paymentWithAppointment.appointment.webinar.webinarPlanId }
+              ? {
+                  webinarPlanId:
+                    paymentWithAppointment.appointment.webinar.webinarPlanId,
+                }
               : null,
             class: paymentWithAppointment.appointment.class
-              ? { classPlanId: paymentWithAppointment.appointment.class.classPlanId }
+              ? {
+                  classPlanId:
+                    paymentWithAppointment.appointment.class.classPlanId,
+                }
               : null,
           },
         };
@@ -453,10 +458,8 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     });
 
     const consultantProfileData =
-      appointmentForNotif?.consultation?.consultationPlan
-        ?.consultantProfile ||
-      appointmentForNotif?.subscription?.subscriptionPlan
-        ?.consultantProfile ||
+      appointmentForNotif?.consultation?.consultationPlan?.consultantProfile ||
+      appointmentForNotif?.subscription?.subscriptionPlan?.consultantProfile ||
       appointmentForNotif?.webinar?.webinarPlan?.consultantProfile ||
       appointmentForNotif?.class?.classPlan?.consultantProfile;
 
@@ -565,6 +568,15 @@ export async function handlePaymentFailure(paymentIntentId: string) {
     if (payment.paymentStatus === PaymentStatus.SUCCEEDED) {
       console.warn(
         `Payment ${paymentIntentId} already SUCCEEDED. Ignoring late failure webhook.`,
+      );
+      return;
+    }
+
+    // Guard against EXPIRED → FAILED transition.
+    // Once a payment is expired by cleanup jobs, a late failure webhook should not overwrite it.
+    if (payment.paymentStatus === PaymentStatus.EXPIRED) {
+      console.log(
+        `Payment ${paymentIntentId} already EXPIRED. Ignoring late failure webhook.`,
       );
       return;
     }
@@ -1083,17 +1095,20 @@ async function cleanupFailedPaymentAppointment(
         where: { appointmentId },
       });
       if (remainingSlots === 0) {
+        // Soft-delete: transition to EXPIRED status instead of hard-deleting
+        // to preserve audit trails for support/disputes/refunds
         if (appointment.consultation) {
-          await tx.consultation.delete({
+          await tx.consultation.update({
             where: { id: appointment.consultation.id },
+            data: { requestStatus: RequestStatus.EXPIRED },
           });
         }
         if (appointment.subscription) {
-          await tx.subscription.delete({
+          await tx.subscription.update({
             where: { id: appointment.subscription.id },
+            data: { requestStatus: RequestStatus.EXPIRED },
           });
         }
-        await tx.appointment.delete({ where: { id: appointmentId } });
       }
     }
   }

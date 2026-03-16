@@ -16,10 +16,10 @@ const Review: React.FC<Readonly<TConsultantReview>> = ({
   return (
     <div className="flex items-start space-x-4 p-4 bg-white rounded-lg shadow-sm">
       <Avatar className="w-10 h-10">
-        {reviewerImage && <AvatarImage src={reviewerImage} alt={reviewerName} />}
-        <AvatarFallback>
-          {reviewerName.charAt(0).toUpperCase()}
-        </AvatarFallback>
+        {reviewerImage && (
+          <AvatarImage src={reviewerImage} alt={reviewerName} />
+        )}
+        <AvatarFallback>{reviewerName.charAt(0).toUpperCase()}</AvatarFallback>
       </Avatar>
       <div className="flex-1">
         <div className="flex items-center justify-between mb-2">
@@ -28,7 +28,7 @@ const Review: React.FC<Readonly<TConsultantReview>> = ({
               {reviewerName}
             </h4>
             <p className="text-xs text-gray-500">
-              {new Date(createdAt).toLocaleDateString()}
+              {new Date(createdAt).toLocaleDateString("en-IN")}
             </p>
           </div>
           <div className="flex items-center">

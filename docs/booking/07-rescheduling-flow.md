@@ -125,11 +125,11 @@ flowchart TD
 
 For multi-session subscriptions, a dialog (`showRescheduleDialog`) presents three options:
 
-| Option | What it does | When to use |
-|--------|-------------|-------------|
-| **Individual Session** | Reschedule exactly 1 session | "My Tuesday 3pm this week doesn't work" |
-| **Multiple Sessions** | Reschedule 2 or more specific sessions | "I'm traveling next week, move both sessions" |
-| **Entire Subscription** | Reschedule every remaining session | "I need to change my entire schedule" |
+| Option                  | What it does                           | When to use                                   |
+| ----------------------- | -------------------------------------- | --------------------------------------------- |
+| **Individual Session**  | Reschedule exactly 1 session           | "My Tuesday 3pm this week doesn't work"       |
+| **Multiple Sessions**   | Reschedule 2 or more specific sessions | "I'm traveling next week, move both sessions" |
+| **Entire Subscription** | Reschedule every remaining session     | "I need to change my entire schedule"         |
 
 When "Individual Session" or "Multiple Sessions" is selected, the dialog shows a list of all sessions in the subscription with checkboxes. Each session shows its date, time, and status. Sessions that start within 24 hours have their checkboxes **disabled** with a visual indicator explaining why (the 24-hour restriction).
 
@@ -215,12 +215,12 @@ The consultant's dashboard includes a **Requests** tab (`RequestSlotAllocationTa
 
 The consultant sees color-coded badges on rescheduled requests:
 
-| Badge | Color | Condition | Meaning |
-|-------|-------|-----------|---------|
-| **Full Reschedule** | Blue | All slots are tentative | The entire booking needs new times |
-| **Individual Session** | Amber | Exactly 1 slot is tentative | One session needs a new time |
-| **Multiple Sessions** | Amber | 2+ slots are tentative (but not all) | Several sessions need new times |
-| *(No badge)* | -- | No tentative slots | Fresh booking, not a reschedule |
+| Badge                  | Color | Condition                            | Meaning                            |
+| ---------------------- | ----- | ------------------------------------ | ---------------------------------- |
+| **Full Reschedule**    | Blue  | All slots are tentative              | The entire booking needs new times |
+| **Individual Session** | Amber | Exactly 1 slot is tentative          | One session needs a new time       |
+| **Multiple Sessions**  | Amber | 2+ slots are tentative (but not all) | Several sessions need new times    |
+| _(No badge)_           | --    | No tentative slots                   | Fresh booking, not a reschedule    |
 
 ### Slot Display
 
@@ -235,10 +235,10 @@ This makes it immediately clear which sessions are affected by the reschedule.
 
 The consultant has two buttons for handling any pending request:
 
-| Button | Action | When to use |
-|--------|--------|-------------|
-| **Use Requested Times** | Accept the times the consultee proposed | Consultee submitted preferred times and they work |
-| **Allocate Slots** | Run the auto-allocation algorithm to find new times | Need the system to find optimal times |
+| Button                  | Action                                              | When to use                                       |
+| ----------------------- | --------------------------------------------------- | ------------------------------------------------- |
+| **Use Requested Times** | Accept the times the consultee proposed             | Consultee submitted preferred times and they work |
+| **Allocate Slots**      | Run the auto-allocation algorithm to find new times | Need the system to find optimal times             |
 
 #### Option A: "Use Requested Times" (useRequestedSlots)
 
@@ -385,11 +385,11 @@ sequenceDiagram
 
 Reschedules are categorized into three types based on how many slots are affected:
 
-| Type | `rescheduleType` value | When used | Example |
-|------|----------------------|-----------|---------|
-| Entire booking | `entire_booking` | No `slotIds` provided, or non-subscription type | User reschedules a consultation (always entire) or an entire 18-session subscription |
-| Individual session | `individual_session` | `slotIds` contains exactly 1 slot | User picks 1 session out of 18 to move to a different day |
-| Multiple sessions | `multiple_sessions` | `slotIds` contains 2+ slots | User picks 5 sessions out of 18 to reschedule |
+| Type               | `rescheduleType` value | When used                                       | Example                                                                              |
+| ------------------ | ---------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Entire booking     | `entire_booking`       | No `slotIds` provided, or non-subscription type | User reschedules a consultation (always entire) or an entire 18-session subscription |
+| Individual session | `individual_session`   | `slotIds` contains exactly 1 slot               | User picks 1 session out of 18 to move to a different day                            |
+| Multiple sessions  | `multiple_sessions`    | `slotIds` contains 2+ slots                     | User picks 5 sessions out of 18 to reschedule                                        |
 
 The type is determined by the API based on the `slotIds` array length:
 
@@ -449,6 +449,7 @@ graph TD
 ```
 
 Key relationships:
+
 - **Subscription** 1 ---> N **Appointments** (one per session)
 - **Appointment** 1 ---> N **SlotOfAppointment** (time blocks within that session; typically 2 per 1-hour session since slots are 30 minutes each)
 
@@ -610,7 +611,10 @@ if (isReschedule) {
   requiredSlots = existingNonTentativeSlotCount + tentativeSlotCount;
 } else {
   // INITIAL ALLOCATION: Calculate from config
-  requiredSlots = SlotCalculationService.calculateRequiredSlots(eventType, config);
+  requiredSlots = SlotCalculationService.calculateRequiredSlots(
+    eventType,
+    config,
+  );
 }
 ```
 
@@ -618,12 +622,12 @@ if (isReschedule) {
 
 Using our example:
 
-| Count | Value | Explanation |
-|-------|-------|-------------|
-| `existingNonTentativeSlotCount` | 90 | Slots that are confirmed and not being rescheduled |
-| `tentativeSlotCount` | 6 | Slots marked for rescheduling |
-| `isReschedule` | `true` | Because `tentativeSlotCount > 0` |
-| `requiredSlots` | 96 | `90 + 6 = 96` (the original total) |
+| Count                           | Value  | Explanation                                        |
+| ------------------------------- | ------ | -------------------------------------------------- |
+| `existingNonTentativeSlotCount` | 90     | Slots that are confirmed and not being rescheduled |
+| `tentativeSlotCount`            | 6      | Slots marked for rescheduling                      |
+| `isReschedule`                  | `true` | Because `tentativeSlotCount > 0`                   |
+| `requiredSlots`                 | 96     | `90 + 6 = 96` (the original total)                 |
 
 The algorithm now knows: "I need 96 total slots. 90 are already confirmed. I need to find new times for 6 slots." It will replace the 6 tentative slots with 6 new confirmed slots, leaving the 90 confirmed ones untouched.
 
@@ -667,9 +671,9 @@ Requires an active session. Returns `401 Unauthorized` if not authenticated.
 
 ### Query Parameters
 
-| Parameter | Required | Values | Description |
-|-----------|----------|--------|-------------|
-| `type` | Yes | `CONSULTATION`, `SUBSCRIPTION`, `WEBINAR`, `CLASS` | Determines event-type-specific behavior (which related entity to update, whether partial reschedule is allowed) |
+| Parameter | Required | Values                                             | Description                                                                                                     |
+| --------- | -------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `type`    | Yes      | `CONSULTATION`, `SUBSCRIPTION`, `WEBINAR`, `CLASS` | Determines event-type-specific behavior (which related entity to update, whether partial reschedule is allowed) |
 
 ### Request Body
 
@@ -679,10 +683,10 @@ Requires an active session. Returns `401 Unauthorized` if not authenticated.
 }
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `slotIds` | `string[]` | No | Specific slot IDs to reschedule. Only meaningful for `SUBSCRIPTION` type. Omit for entire booking reschedule. |
-| `slotId` | `string` | No | Legacy single-slot format. Converted to `[slotId]` array internally. Exists for backward compatibility. |
+| Field     | Type       | Required | Description                                                                                                   |
+| --------- | ---------- | -------- | ------------------------------------------------------------------------------------------------------------- |
+| `slotIds` | `string[]` | No       | Specific slot IDs to reschedule. Only meaningful for `SUBSCRIPTION` type. Omit for entire booking reschedule. |
+| `slotId`  | `string`   | No       | Legacy single-slot format. Converted to `[slotId]` array internally. Exists for backward compatibility.       |
 
 If the body is empty, unparseable, or missing the slot fields, the system treats it as "reschedule everything" (no specific slot selection).
 
@@ -697,23 +701,23 @@ If the body is empty, unparseable, or missing the slot fields, the system treats
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `success` | `boolean` | Always `true` on 200 |
-| `rescheduleType` | `string` | One of `entire_booking`, `individual_session`, `multiple_sessions` |
-| `slotsAffected` | `number` | Count of individual slots (not sessions) marked tentative |
-| `message` | `string` | Human-readable status message |
+| Field            | Type      | Description                                                        |
+| ---------------- | --------- | ------------------------------------------------------------------ |
+| `success`        | `boolean` | Always `true` on 200                                               |
+| `rescheduleType` | `string`  | One of `entire_booking`, `individual_session`, `multiple_sessions` |
+| `slotsAffected`  | `number`  | Count of individual slots (not sessions) marked tentative          |
+| `message`        | `string`  | Human-readable status message                                      |
 
 ### Error Responses
 
-| Status | Condition | Error Class | Example Message |
-|--------|-----------|-------------|-----------------|
-| 401 | Not authenticated | -- | `Unauthorized` |
-| 400 | Invalid request body or missing `type` | -- | Varies |
-| 400 | Slot within 24 hours | `ReschedulePolicyError` | `Cannot reschedule: slot starts in 18 hours (minimum 24 hours required)` |
-| 404 | Appointment not found | `AppointmentNotFoundError` | `appointment not found: apt_123` |
-| 404 | Slot ID not found in subscription | `AppointmentNotFoundError` | `slot not found: slot_xyz, slot_abc` |
-| 500 | Transaction failure or unexpected error | -- | `Failed to request reschedule` |
+| Status | Condition                               | Error Class                | Example Message                                                          |
+| ------ | --------------------------------------- | -------------------------- | ------------------------------------------------------------------------ |
+| 401    | Not authenticated                       | --                         | `Unauthorized`                                                           |
+| 400    | Invalid request body or missing `type`  | --                         | Varies                                                                   |
+| 400    | Slot within 24 hours                    | `ReschedulePolicyError`    | `Cannot reschedule: slot starts in 18 hours (minimum 24 hours required)` |
+| 404    | Appointment not found                   | `AppointmentNotFoundError` | `appointment not found: apt_123`                                         |
+| 404    | Slot ID not found in subscription       | `AppointmentNotFoundError` | `slot not found: slot_xyz, slot_abc`                                     |
+| 500    | Transaction failure or unexpected error | --                         | `Failed to request reschedule`                                           |
 
 ### Transaction Details
 
@@ -729,12 +733,12 @@ The entire operation runs inside a Prisma `$transaction` with a 60-second timeou
 
 ### Comparison Table
 
-| Event Type | Partial reschedule? | Status field updated | New status value | Notes |
-|------------|-------------------|---------------------|-----------------|-------|
-| **Consultation** | No (always entire) | `requestStatus` | `PENDING` | Single session, single appointment. All slots marked tentative. |
-| **Subscription** | Yes (via `slotIds`) | `requestStatus` | `PENDING` | Supports all three reschedule types. See Known Issues for status behavior on partial reschedule. |
-| **Webinar** | No (always entire) | `status` | `SCHEDULED` | All slots marked tentative. Uses `status` not `requestStatus` because webinars have a different state model. |
-| **Class** | No (always entire) | `status` | `SCHEDULED` | Same as webinar. Uses `status` instead of `requestStatus`. |
+| Event Type       | Partial reschedule? | Status field updated | New status value | Notes                                                                                                        |
+| ---------------- | ------------------- | -------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------ |
+| **Consultation** | No (always entire)  | `requestStatus`      | `PENDING`        | Single session, single appointment. All slots marked tentative.                                              |
+| **Subscription** | Yes (via `slotIds`) | `requestStatus`      | `PENDING`        | Supports all three reschedule types. See Known Issues for status behavior on partial reschedule.             |
+| **Webinar**      | No (always entire)  | `status`             | `SCHEDULED`      | All slots marked tentative. Uses `status` not `requestStatus` because webinars have a different state model. |
+| **Class**        | No (always entire)  | `status`             | `SCHEDULED`      | Same as webinar. Uses `status` instead of `requestStatus`.                                                   |
 
 ### Why Different Status Fields?
 
@@ -808,17 +812,18 @@ stateDiagram-v2
 
 ### State Transition Table
 
-| From State | To State | Trigger | Database Change |
-|------------|----------|---------|-----------------|
-| Allocated (confirmed) | Tentative | Consultee calls POST /reschedule | `isTentative` = `true` |
-| Tentative | Re-allocated (confirmed) | Consultant approves/allocates | `isTentative` = `false`, `startsAt`/`endsAt` updated |
-| Tentative | Abandoned | No action for 7+ days | No change (still `isTentative` = `true`) |
-| Abandoned | Cleaned up | Cron job fires | Slot record deleted |
-| Re-allocated | Tentative | Consultee reschedules again | `isTentative` = `true` |
+| From State            | To State                 | Trigger                          | Database Change                                      |
+| --------------------- | ------------------------ | -------------------------------- | ---------------------------------------------------- |
+| Allocated (confirmed) | Tentative                | Consultee calls POST /reschedule | `isTentative` = `true`                               |
+| Tentative             | Re-allocated (confirmed) | Consultant approves/allocates    | `isTentative` = `false`, `startsAt`/`endsAt` updated |
+| Tentative             | Abandoned                | No action for 7+ days            | No change (still `isTentative` = `true`)             |
+| Abandoned             | Cleaned up               | Cron job fires                   | Slot record deleted                                  |
+| Re-allocated          | Tentative                | Consultee reschedules again      | `isTentative` = `true`                               |
 
 ### What "Tentative" Means in Practice
 
 A tentative slot is a slot that:
+
 - Still exists in the database (not deleted).
 - Still has its old `startsAt` and `endsAt` values (the times it was originally scheduled for).
 - Is flagged with `isTentative: true` so the system knows it needs new times.
@@ -835,17 +840,17 @@ Understanding the difference between rescheduling and cancellation is important 
 
 ### Side-by-Side Comparison
 
-| Aspect | Reschedule | Cancellation |
-|--------|-----------|--------------|
-| **Intent** | Change the time, keep the booking | End the booking entirely |
-| **Payment** | No payment operation. Original payment reused. | Refund may be issued (full or partial depending on policy). |
-| **Slots** | Marked `isTentative: true`, awaiting new times | Deleted or marked cancelled |
-| **Event status** | Reverts to `PENDING` / `SCHEDULED` | Changes to `CANCELLED` |
-| **Consultant action needed** | Yes -- must re-allocate slots | No -- booking is done |
-| **Consultee can undo** | No (but can reschedule again after re-allocation) | No (must rebook and pay again) |
-| **Earnings impact** | None. Consultant earnings unchanged. | Earnings may be clawed back or adjusted. |
-| **Time restriction** | 24 hours before any affected slot | Varies by cancellation policy |
-| **Partial support** | Yes (for subscriptions: individual/multiple sessions) | Depends on implementation |
+| Aspect                       | Reschedule                                            | Cancellation                                                |
+| ---------------------------- | ----------------------------------------------------- | ----------------------------------------------------------- |
+| **Intent**                   | Change the time, keep the booking                     | End the booking entirely                                    |
+| **Payment**                  | No payment operation. Original payment reused.        | Refund may be issued (full or partial depending on policy). |
+| **Slots**                    | Marked `isTentative: true`, awaiting new times        | Deleted or marked cancelled                                 |
+| **Event status**             | Reverts to `PENDING` / `SCHEDULED`                    | Changes to `CANCELLED`                                      |
+| **Consultant action needed** | Yes -- must re-allocate slots                         | No -- booking is done                                       |
+| **Consultee can undo**       | No (but can reschedule again after re-allocation)     | No (must rebook and pay again)                              |
+| **Earnings impact**          | None. Consultant earnings unchanged.                  | Earnings may be clawed back or adjusted.                    |
+| **Time restriction**         | 24 hours before any affected slot                     | Varies by cancellation policy                               |
+| **Partial support**          | Yes (for subscriptions: individual/multiple sessions) | Depends on implementation                                   |
 
 ### Flow Comparison Diagram
 
@@ -873,13 +878,13 @@ flowchart LR
 
 ### When Should a User Reschedule vs Cancel?
 
-| Situation | Recommended Action | Why |
-|-----------|--------------------|-----|
-| "I can't make Tuesday but Thursday works" | Reschedule | Same service, different time. No payment friction. |
-| "I no longer need this service" | Cancel | The booking serves no purpose. |
-| "The consultant isn't a good fit" | Cancel | Rescheduling won't fix a fit problem. |
-| "I'm traveling for 2 weeks" | Reschedule (specific sessions) | Only move the affected sessions, keep the rest. |
-| "I want to pause for 3 months" | Depends on policy | May need cancellation + rebooking, or a subscription pause feature. |
+| Situation                                 | Recommended Action             | Why                                                                 |
+| ----------------------------------------- | ------------------------------ | ------------------------------------------------------------------- |
+| "I can't make Tuesday but Thursday works" | Reschedule                     | Same service, different time. No payment friction.                  |
+| "I no longer need this service"           | Cancel                         | The booking serves no purpose.                                      |
+| "The consultant isn't a good fit"         | Cancel                         | Rescheduling won't fix a fit problem.                               |
+| "I'm traveling for 2 weeks"               | Reschedule (specific sessions) | Only move the affected sessions, keep the rest.                     |
+| "I want to pause for 3 months"            | Depends on policy              | May need cancellation + rebooking, or a subscription pause feature. |
 
 ---
 
@@ -887,14 +892,14 @@ flowchart LR
 
 Rescheduling does **not** trigger any payment operations:
 
-| Concern | Behavior |
-|---------|----------|
-| New charge | None. No new payment is created. |
-| Refund | None. No refund is issued. |
-| Payment record | Stays `SUCCEEDED`, unmodified. |
-| Consultant earnings | Status unchanged (`PENDING` / `READY` / `PAID`). |
-| Hold period | Not reset -- continues from original payment timestamp. |
-| Invoice | Unchanged. Original invoice remains valid. |
+| Concern             | Behavior                                                |
+| ------------------- | ------------------------------------------------------- |
+| New charge          | None. No new payment is created.                        |
+| Refund              | None. No refund is issued.                              |
+| Payment record      | Stays `SUCCEEDED`, unmodified.                          |
+| Consultant earnings | Status unchanged (`PENDING` / `READY` / `PAID`).        |
+| Hold period         | Not reset -- continues from original payment timestamp. |
+| Invoice             | Unchanged. Original invoice remains valid.              |
 
 The original payment covers the new slots once the consultant re-allocates. From the payment system's perspective, a reschedule is invisible -- it only affects appointment slots and event statuses, not financial records.
 
@@ -912,7 +917,10 @@ The original payment covers the new slots once the consultant re-allocates. From
 
 ```typescript
 if (hoursUntilSlot < MINIMUM_HOURS_BEFORE_RESCHEDULE) {
-  throw new ReschedulePolicyError(hoursUntilSlot, MINIMUM_HOURS_BEFORE_RESCHEDULE);
+  throw new ReschedulePolicyError(
+    hoursUntilSlot,
+    MINIMUM_HOURS_BEFORE_RESCHEDULE,
+  );
 }
 ```
 
@@ -947,6 +955,7 @@ if (slotsToReschedule.length !== slotIds.length) {
 **System behavior:** The tentative slots remain in the database indefinitely. The event status stays `PENDING`.
 
 **Consequences:**
+
 - The consultee's booking appears "stuck" in a pending state.
 - The tentative slots still hold their old times, but those times are no longer valid.
 - The auto-allocation algorithm will continue to detect this as a reschedule (`tentativeSlotCount > 0`) on any future allocation attempt.
@@ -1069,6 +1078,7 @@ In practice, this edge case is unlikely because sessions rarely span midnight. B
 **Why this matters:** This is a direct user-facing confusion. If a consultee reschedules 3 sessions (6 slots), they see "6 sessions marked for rescheduling" and may think the system malfunctioned, rescheduling more than they intended.
 
 **Example:**
+
 - Subscription: 18 sessions, each 2 hours (4 slots of 30 minutes each).
 - Consultee reschedules 5 sessions.
 - API returns `slotsAffected: 20` (5 sessions x 4 slots).
@@ -1079,12 +1089,12 @@ In practice, this edge case is unlikely because sessions rarely span midnight. B
 
 ### Fix Roadmap
 
-| Phase | Scope | Issues Fixed | Breaking Change? |
-|-------|-------|-------------|-----------------|
-| Phase 1 | API response + status logic | #2 (PENDING status), #5 (slot vs session count) | No |
-| Phase 2 | Schema migration | #3 (tracking field) | No (additive) |
-| Phase 3 | New endpoint | #1 (slotIds to appointmentIds) | Yes |
-| Phase 4 | Optimization | #4 (session-aware validation) | No |
+| Phase   | Scope                       | Issues Fixed                                    | Breaking Change? |
+| ------- | --------------------------- | ----------------------------------------------- | ---------------- |
+| Phase 1 | API response + status logic | #2 (PENDING status), #5 (slot vs session count) | No               |
+| Phase 2 | Schema migration            | #3 (tracking field)                             | No (additive)    |
+| Phase 3 | New endpoint                | #1 (slotIds to appointmentIds)                  | Yes              |
+| Phase 4 | Optimization                | #4 (session-aware validation)                   | No               |
 
 ---
 

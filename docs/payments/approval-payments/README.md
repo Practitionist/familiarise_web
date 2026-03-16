@@ -40,12 +40,12 @@ sequenceDiagram
 
 ## Documents
 
-| # | Document | Description |
-|---|----------|-------------|
-| 01 | [Architecture](./01-architecture.md) | System components, approval state machine, payment link generation |
-| 02 | [API Reference](./02-api-reference.md) | Endpoints for approval, payment link, status checking |
-| 03 | [Cron Schedules](./03-cron-schedules.md) | Auto-expiry jobs for unpaid approval links |
-| 04 | [Distributed Locking](./04-distributed-locking.md) | Race condition prevention during approval |
-| 05 | [Email Notifications](./05-email-notifications.md) | Payment link emails, reminders, expiry notices |
-| 06 | [Testing](./06-testing.md) | Test scenarios and verification steps |
-| 07 | [Troubleshooting](./07-troubleshooting.md) | Common issues and debugging guide |
+| #   | Document                                           | Description                                                        |
+| --- | -------------------------------------------------- | ------------------------------------------------------------------ |
+| 01  | [Architecture](./01-architecture.md)               | System components, approval state machine, payment link generation |
+| 02  | [API Reference](./02-api-reference.md)             | Endpoints for approval, payment link, status checking              |
+| 03  | [Cron Schedules](./03-cron-schedules.md)           | Auto-expiry jobs for unpaid approval links                         |
+| 04  | [Distributed Locking](./04-distributed-locking.md) | Race condition prevention during approval                          |
+| 05  | [Email Notifications](./05-email-notifications.md) | Payment link emails, reminders, expiry notices                     |
+| 06  | [Testing](./06-testing.md)                         | Test scenarios and verification steps                              |
+| 07  | [Troubleshooting](./07-troubleshooting.md)         | Common issues and debugging guide                                  |

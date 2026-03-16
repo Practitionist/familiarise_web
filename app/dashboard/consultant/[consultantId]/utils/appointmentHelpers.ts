@@ -218,8 +218,10 @@ export const calculateSessionProgress = (
   remainingSessions: number;
   progressPercentage: number;
 } => {
-  const totalSessions = groupAppointments.length;
-  const completedSessions = groupAppointments.filter((app) => {
+  const dedupedAppointments = groupAppointments;
+
+  const totalSessions = dedupedAppointments.length;
+  const completedSessions = dedupedAppointments.filter((app) => {
     const slotTimes = getSlotTimes(app);
     return (
       slotTimes.length > 0 &&
@@ -489,27 +491,7 @@ export const groupRecurringAppointments = (
       groups[groupKey] = [];
     }
 
-    // For SUBSCRIPTION and CLASS appointments with slots, create separate entries for each slot
-    // (because each slot represents a separate session)
-    // For CONSULTATION and WEBINAR appointments, keep all slots together
-    // (because all slots form one single event)
-    if (
-      appointment.slotsOfAppointment &&
-      appointment.slotsOfAppointment.length > 0 &&
-      (appointment.appointmentType === "SUBSCRIPTION" ||
-        appointment.appointmentType === "CLASS")
-    ) {
-      appointment.slotsOfAppointment.forEach((slot) => {
-        groups[groupKey].push({
-          ...appointment,
-          id: `${appointment.id}-${slot.id}`,
-          slotsOfAppointment: [slot],
-        });
-      });
-    } else {
-      // For appointments without slots or single-event types, add them as is
-      groups[groupKey].push(appointment);
-    }
+    groups[groupKey].push(appointment);
   });
 
   // Sort appointments within each group by start time
@@ -616,6 +598,10 @@ export const getGroupStatus = (appointments: TAppointment[]): string => {
   const type = firstAppointment.appointmentType;
 
   if (type === "SUBSCRIPTION" && firstAppointment.subscription) {
+    if (firstAppointment.subscription.requestStatus === "CANCELLED") {
+      return "Cancelled";
+    }
+
     const now = new Date();
     const startDate = new Date(
       firstAppointment.subscription.schedulingPeriodStartsAt,
@@ -636,6 +622,10 @@ export const getGroupStatus = (appointments: TAppointment[]): string => {
   }
 
   if (type === "CLASS" && firstAppointment.class) {
+    if (firstAppointment.class.status === "CANCELLED") {
+      return "Cancelled";
+    }
+
     const now = new Date();
 
     // Check if any sessions are completed, same as subscription

@@ -11,17 +11,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle } from "lucide-react";
-import { useCurrency } from "@/lib/hooks/useCurrency";
+import { useCurrency } from "@/hooks/useCurrency";
 import { JoinWaitlistButton } from "@/components/waitlist/JoinWaitlistButton";
 import { WaitlistBadge } from "@/components/waitlist/WaitlistBadge";
 import { countWebinarParticipants } from "@/lib/payments/utils/participants";
-
-// Redefine SessionStatus (or import if moved to a shared file)
-type SessionStatus =
-  | "Upcoming"
-  | "Happening Now"
-  | "Completed"
-  | "To be announced";
+import type { TSessionStatus } from "../types";
 
 type ClientWebinarRegistrationProps = {
   webinarPlanId: string; // The WebinarPlan ID (for URL path)
@@ -29,12 +23,13 @@ type ClientWebinarRegistrationProps = {
   price: number;
   currency?: string | null;
   nextSessionDate?: Date;
-  sessionStatus: SessionStatus;
+  sessionStatus: TSessionStatus;
   appointment?: {
     slotsOfAppointment?: Array<{ user?: Array<{ id: string }> }>;
   } | null;
   maxParticipants?: number;
   waitlist?: Array<{ userId: string; position?: number | null }>;
+  consultantUserId?: string;
 };
 
 export function ClientWebinarRegistration({
@@ -47,6 +42,7 @@ export function ClientWebinarRegistration({
   appointment,
   maxParticipants = 100,
   waitlist = [],
+  consultantUserId,
 }: ClientWebinarRegistrationProps) {
   const { data: session } = useSession();
   const { formatPrice } = useCurrency();
@@ -60,8 +56,11 @@ export function ClientWebinarRegistration({
       slot.user?.some((u) => u.id === userId),
     );
 
-  // Check capacity using shared utility
-  const currentParticipants = countWebinarParticipants(appointment ?? null);
+  // Check capacity using shared utility — exclude consultant from participant count
+  const currentParticipants = countWebinarParticipants(
+    appointment ?? null,
+    consultantUserId ? [consultantUserId] : [],
+  );
   const isFull = currentParticipants >= maxParticipants;
 
   // Check if user is on the waitlist

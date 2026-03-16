@@ -4,11 +4,11 @@
 
 Booking operations use a three-layer concurrency protection model to prevent double-booking, race conditions, and data corruption:
 
-| Layer | Mechanism | Scope | Purpose |
-| ----- | --------- | ----- | ------- |
-| 1 | Redis distributed lock | Cross-process | Serializes concurrent requests for the same resource |
-| 2 | Prisma interactive transaction | Database | Atomic multi-statement operations with isolation |
-| 3 | Conflict validation (inside tx) | Application | Detects overlapping slots from already-committed data |
+| Layer | Mechanism                       | Scope         | Purpose                                               |
+| ----- | ------------------------------- | ------------- | ----------------------------------------------------- |
+| 1     | Redis distributed lock          | Cross-process | Serializes concurrent requests for the same resource  |
+| 2     | Prisma interactive transaction  | Database      | Atomic multi-statement operations with isolation      |
+| 3     | Conflict validation (inside tx) | Application   | Detects overlapping slots from already-committed data |
 
 All three layers are required. Redis locks alone cannot guarantee consistency because they can expire under slow operations. Database transactions alone cannot prevent two processes from simultaneously passing validation checks on the same data. Conflict validation inside the transaction is the final safety net.
 
@@ -58,16 +58,17 @@ sequenceDiagram
 
 Six lock functions cover all booking-related operations. Each wraps the core `acquireLockWithRetry()` function with a domain-specific key pattern and error message.
 
-| Function | Key Pattern | Default TTL | Purpose |
-| -------- | ----------- | ----------- | ------- |
-| `lockConsultationApproval` | `consultation-approval:{consultationId}` | 60s | Prevents concurrent approval of the same consultation |
-| `lockSubscriptionApproval` | `subscription-approval:{subscriptionId}` | 60s | Prevents concurrent approval of the same subscription |
-| `lockSlotBooking` | `slot-booking:{consultantProfileId}:{slotStartTimeInUTC}` | 60s | Prevents double-booking a specific consultant time slot |
-| `lockTrialSlot` | `trial-slot-booking:{consultantProfileId}:{slotStartTimeInUTC}` | 60s | Prevents double-booking during trial scheduling |
-| `lockEventCheckout` | `event-checkout:{appointmentType}:{eventOrPlanId}` | 60s | Serializes checkout for a specific event (webinar/class/subscription) |
-| `lockAppointment` | `appointment-lock:{appointmentId}` | 300s (5 min) | Legacy lock for appointment-level operations (cancel, reschedule) |
+| Function                   | Key Pattern                                                     | Default TTL  | Purpose                                                               |
+| -------------------------- | --------------------------------------------------------------- | ------------ | --------------------------------------------------------------------- |
+| `lockConsultationApproval` | `consultation-approval:{consultationId}`                        | 60s          | Prevents concurrent approval of the same consultation                 |
+| `lockSubscriptionApproval` | `subscription-approval:{subscriptionId}`                        | 60s          | Prevents concurrent approval of the same subscription                 |
+| `lockSlotBooking`          | `slot-booking:{consultantProfileId}:{slotStartTimeInUTC}`       | 60s          | Prevents double-booking a specific consultant time slot               |
+| `lockTrialSlot`            | `trial-slot-booking:{consultantProfileId}:{slotStartTimeInUTC}` | 60s          | Prevents double-booking during trial scheduling                       |
+| `lockEventCheckout`        | `event-checkout:{appointmentType}:{eventOrPlanId}`              | 60s          | Serializes checkout for a specific event (webinar/class/subscription) |
+| `lockAppointment`          | `appointment-lock:{appointmentId}`                              | 300s (5 min) | Legacy lock for appointment-level operations (cancel, reschedule)     |
 
 All locks use Redis `SET key value NX PX ttl`:
+
 - **NX** -- only set if key does not exist (mutual exclusion)
 - **PX** -- expire in milliseconds (auto-cleanup on crash)
 
@@ -85,13 +86,13 @@ Lock acquisition retries up to 10 times with exponential backoff and jitter.
 
 **Default configuration** (`DEFAULT_RETRY_CONFIG`):
 
-| Parameter | Value | Description |
-| --------- | ----- | ----------- |
-| `retryCount` | 10 | Maximum retry attempts |
-| `retryDelay` | 200ms | Base delay between retries |
-| `retryJitter` | 200ms | Random jitter added to each delay |
+| Parameter            | Value  | Description                        |
+| -------------------- | ------ | ---------------------------------- |
+| `retryCount`         | 10     | Maximum retry attempts             |
+| `retryDelay`         | 200ms  | Base delay between retries         |
+| `retryJitter`        | 200ms  | Random jitter added to each delay  |
 | `exponentialBackoff` | `true` | Doubles base delay on each attempt |
-| `driftFactor` | 0.01 | Clock drift compensation (1%) |
+| `driftFactor`        | 0.01   | Clock drift compensation (1%)      |
 
 **Delay formula** (`calculateRetryDelay`):
 
@@ -102,12 +103,12 @@ delay = (retryDelay * 2^attempt) + random(0, retryJitter)
 Example delays per attempt:
 
 | Attempt | Base (ms) | + Jitter Range (ms) | Total Range (ms) |
-| ------- | --------- | ------------------- | ----------------- |
-| 0 | 200 | 0--200 | 200--400 |
-| 1 | 400 | 0--200 | 400--600 |
-| 2 | 800 | 0--200 | 800--1000 |
-| 3 | 1600 | 0--200 | 1600--1800 |
-| 4 | 3200 | 0--200 | 3200--3400 |
+| ------- | --------- | ------------------- | ---------------- |
+| 0       | 200       | 0--200              | 200--400         |
+| 1       | 400       | 0--200              | 400--600         |
+| 2       | 800       | 0--200              | 800--1000        |
+| 3       | 1600      | 0--200              | 1600--1800       |
+| 4       | 3200      | 0--200              | 3200--3400       |
 
 The effective TTL is reduced by the drift factor: `effectiveTTL = floor(ttl * (1 - driftFactor))`. For a 60-second lock, the effective TTL is 59,400ms. This accounts for clock skew between the application server and Redis.
 
@@ -169,9 +170,9 @@ Standard distributed locks serialize access to one client at a time. For multi-p
 
 ### Redis Keys
 
-| Key | Type | TTL | Purpose |
-| --- | ---- | --- | ------- |
-| `event-counter:{eventType}:{eventId}` | Integer (counter) | 5 min | Current number of active reservations |
+| Key                                                       | Type                 | TTL   | Purpose                                     |
+| --------------------------------------------------------- | -------------------- | ----- | ------------------------------------------- |
+| `event-counter:{eventType}:{eventId}`                     | Integer (counter)    | 5 min | Current number of active reservations       |
 | `event-reservation:{eventType}:{eventId}:{reservationId}` | String (slot number) | 5 min | Individual reservation tracking for cleanup |
 
 ### Operations
@@ -280,12 +281,12 @@ The 5-minute TTL (300,000ms) covers the payment completion window. If a user aba
 
 All slot allocation and cancellation operations run inside Prisma interactive transactions. Transaction timeouts vary by operation complexity:
 
-| Operation | Timeout | Max Wait | Source |
-| --------- | ------- | -------- | ------ |
-| Slot allocation (auto/manual/requested) | 120s | Default | `SlotAllocationService.ts` |
-| Appointment cancellation | 30s | 10s | `appointments/[id]/cancel/route.ts` |
-| Payment transactions | 30s | 5s | `lib/payments/core/transactions.ts` |
-| Webinar CRUD | 10s | 5s | `events/webinars/crud-with-plan/route.ts` |
+| Operation                               | Timeout | Max Wait | Source                                    |
+| --------------------------------------- | ------- | -------- | ----------------------------------------- |
+| Slot allocation (auto/manual/requested) | 120s    | Default  | `SlotAllocationService.ts`                |
+| Appointment cancellation                | 30s     | 10s      | `appointments/[id]/cancel/route.ts`       |
+| Payment transactions                    | 30s     | 5s       | `lib/payments/core/transactions.ts`       |
+| Webinar CRUD                            | 10s     | 5s       | `events/webinars/crud-with-plan/route.ts` |
 
 The transaction provides two guarantees:
 
@@ -310,17 +311,17 @@ try {
 
 ## Race Condition Scenarios
 
-| Scenario | Protection Mechanism | Key/Strategy |
-| -------- | -------------------- | ------------ |
-| Two users book the same consultant slot | `lockSlotBooking` | `slot-booking:{profileId}:{slotTime}` -- serializes access to the specific slot |
-| Two admins approve the same consultation | `lockConsultationApproval` | `consultation-approval:{id}` -- only one approval proceeds |
-| Two admins approve the same subscription | `lockSubscriptionApproval` | `subscription-approval:{id}` -- only one approval proceeds |
-| Multiple webinar checkouts at capacity | Event slot semaphore | `acquireEventSlot` atomic Lua INCR with max check |
-| Multiple class checkouts at capacity | Event slot semaphore | Same semaphore pattern, different `eventType` |
-| Two users schedule the same trial slot | `lockTrialSlot` | `trial-slot-booking:{profileId}:{slotTime}` |
-| Concurrent cancel and reschedule on same appointment | `lockAppointment` | `appointment-lock:{appointmentId}` -- 5 min TTL |
-| Lock expires during slow DB operation | `extendLock` heartbeat | Extends TTL without releasing; 120s transaction timeout aligned with extended lock |
-| Client crashes while holding lock | Redis TTL auto-expiry | Lock expires after TTL, no manual intervention needed |
-| Lock released by wrong client | Safe release Lua script | `GET` + `DEL` atomic with value verification |
-| Slot passes validation but conflicts at commit | Prisma transaction isolation | Transaction rollback on constraint violation |
-| Payment abandoned mid-checkout (events) | Semaphore TTL expiry | 5 min TTL auto-frees the reserved slot |
+| Scenario                                             | Protection Mechanism         | Key/Strategy                                                                       |
+| ---------------------------------------------------- | ---------------------------- | ---------------------------------------------------------------------------------- |
+| Two users book the same consultant slot              | `lockSlotBooking`            | `slot-booking:{profileId}:{slotTime}` -- serializes access to the specific slot    |
+| Two admins approve the same consultation             | `lockConsultationApproval`   | `consultation-approval:{id}` -- only one approval proceeds                         |
+| Two admins approve the same subscription             | `lockSubscriptionApproval`   | `subscription-approval:{id}` -- only one approval proceeds                         |
+| Multiple webinar checkouts at capacity               | Event slot semaphore         | `acquireEventSlot` atomic Lua INCR with max check                                  |
+| Multiple class checkouts at capacity                 | Event slot semaphore         | Same semaphore pattern, different `eventType`                                      |
+| Two users schedule the same trial slot               | `lockTrialSlot`              | `trial-slot-booking:{profileId}:{slotTime}`                                        |
+| Concurrent cancel and reschedule on same appointment | `lockAppointment`            | `appointment-lock:{appointmentId}` -- 5 min TTL                                    |
+| Lock expires during slow DB operation                | `extendLock` heartbeat       | Extends TTL without releasing; 120s transaction timeout aligned with extended lock |
+| Client crashes while holding lock                    | Redis TTL auto-expiry        | Lock expires after TTL, no manual intervention needed                              |
+| Lock released by wrong client                        | Safe release Lua script      | `GET` + `DEL` atomic with value verification                                       |
+| Slot passes validation but conflicts at commit       | Prisma transaction isolation | Transaction rollback on constraint violation                                       |
+| Payment abandoned mid-checkout (events)              | Semaphore TTL expiry         | 5 min TTL auto-frees the reserved slot                                             |

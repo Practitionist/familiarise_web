@@ -99,9 +99,8 @@ export function ResourcesTab({ data, onRefresh }: ResourcesTabProps) {
 
   // Find the first tab that has events
   const defaultTab =
-    EVENT_TYPES.find(
-      (t) => data[t.key as keyof ResourcesData].length > 0,
-    )?.key || "consultations";
+    EVENT_TYPES.find((t) => data[t.key as keyof ResourcesData].length > 0)
+      ?.key || "consultations";
 
   return (
     <motion.div

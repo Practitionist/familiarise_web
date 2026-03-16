@@ -23,6 +23,7 @@ import {
   ApprovalLock,
 } from "@/utils/appointmentlock";
 import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
+import { isMinuteWithinWeeklySlot } from "@/utils/slotAllocation/slotTimeUtils";
 import {
   countUniqueParticipants,
   isUserEnrolled,
@@ -79,7 +80,7 @@ type SubscriptionCheckoutResult = {
 function buildPaymentMetadata(
   data: CheckoutInput,
   userId: string,
-): { appointmentId: string; appointmentType: string;[key: string]: string } {
+): { appointmentId: string; appointmentType: string; [key: string]: string } {
   return {
     appointmentId: "pending",
     appointmentType: data.appointmentType,
@@ -292,7 +293,9 @@ export async function calculateAmountAndValidate(
         const classInstance = await tx.class.findUnique({
           where: { id: validatedData.eventId },
           include: {
-            classPlan: true,
+            classPlan: {
+              include: { consultantProfile: true },
+            },
             appointments: {
               include: {
                 slotsOfAppointment: {
@@ -310,10 +313,12 @@ export async function calculateAmountAndValidate(
         }
 
         plan = classInstance.classPlan;
+        const classConsultantUserId = plan.consultantProfile?.userId;
         // FIX: Count unique participants, not total slots
         // A user enrolled in a class with 8 sessions should count as 1 participant, not 8
         const currentClassParticipants = countUniqueParticipants(
           classInstance.appointments,
+          classConsultantUserId ? [classConsultantUserId] : [],
         );
 
         if (currentClassParticipants >= plan.maxParticipants) {
@@ -448,39 +453,90 @@ export async function validateSlotAvailability(
     throw new Error(timingError);
   }
 
+  // 0b. Validate slot falls within the specified availability window
+  if (data.slotOfAvailabilityWeeklyId) {
+    const avail = await tx.slotOfAvailabilityWeekly.findUnique({
+      where: { id: data.slotOfAvailabilityWeeklyId },
+      include: { consultantProfile: { select: { userId: true } } },
+    });
+    if (!avail) {
+      throw new Error("Availability slot not found");
+    }
+    // Verify the availability slot belongs to the correct consultant
+    if (
+      consultantUserId &&
+      avail.consultantProfile.userId !== consultantUserId
+    ) {
+      throw new Error(
+        "Availability slot does not belong to the specified consultant",
+      );
+    }
+    // Overnight-aware check: use shared utility instead of same-day-only guard
+    const candidateDay = slotStart.getUTCDay();
+    const candidateMinutes =
+      slotStart.getUTCHours() * 60 + slotStart.getUTCMinutes();
+    const slotDurationMinutes = Math.round(
+      (slotEnd.getTime() - slotStart.getTime()) / (60 * 1000),
+    );
+    if (
+      !isMinuteWithinWeeklySlot(
+        candidateDay,
+        candidateMinutes,
+        slotDurationMinutes,
+        avail.startDay,
+        avail.startTimeUtc,
+        avail.endTimeUtc,
+        avail.utcOffsetMinutes,
+      )
+    ) {
+      throw new Error(
+        "Selected slot does not fall within the specified availability window",
+      );
+    }
+  } else if (data.slotOfAvailabilityCustomId) {
+    const avail = await tx.slotOfAvailabilityCustom.findUnique({
+      where: { id: data.slotOfAvailabilityCustomId },
+      include: { consultantProfile: { select: { userId: true } } },
+    });
+    if (!avail) {
+      throw new Error("Custom availability slot not found");
+    }
+    // Verify the custom availability slot belongs to the correct consultant
+    if (
+      consultantUserId &&
+      avail.consultantProfile.userId !== consultantUserId
+    ) {
+      throw new Error(
+        "Availability slot does not belong to the specified consultant",
+      );
+    }
+    if (slotStart < avail.startsAt || slotEnd > avail.endsAt) {
+      throw new Error(
+        "Selected slot does not fall within the specified availability window",
+      );
+    }
+  }
+
   // 1. Check for confirmed overlapping appointments FOR THIS CONSULTANT ONLY
-  // FIX: Previously checked ALL consultants globally, now filters by specific consultant
+  // FIX Bug #05: Use canonical overlap predicate that catches all 4 overlap shapes
+  // (partial start, partial end, full containment, and exact match)
   const existingBooking = await tx.slotOfAppointment.findFirst({
     where: {
       AND: [
-        {
-          OR: [
-            {
-              AND: [
-                { startsAt: { lte: slotStart } },
-                { endsAt: { gt: slotStart } },
-              ],
-            },
-            {
-              AND: [
-                { startsAt: { lt: slotEnd } },
-                { endsAt: { gte: slotEnd } },
-              ],
-            },
-          ],
-        },
+        { startsAt: { lt: slotEnd } },
+        { endsAt: { gt: slotStart } },
         { isTentative: false }, // Only confirmed bookings
         // FIX: Filter by consultant - only check slots belonging to this consultant
         ...(consultantUserId
           ? [
-            {
-              user: {
-                some: {
-                  id: consultantUserId,
+              {
+                user: {
+                  some: {
+                    id: consultantUserId,
+                  },
                 },
               },
-            },
-          ]
+            ]
           : []),
       ],
     },
@@ -491,38 +547,25 @@ export async function validateSlotAvailability(
   }
 
   // 2. Check for duplicate tentative bookings by the same user FOR THIS CONSULTANT
+  // FIX Bug #05: Use canonical overlap predicate
   if (userId) {
     const recentAttempt = await tx.slotOfAppointment.findFirst({
       where: {
         AND: [
-          {
-            OR: [
-              {
-                AND: [
-                  { startsAt: { lte: slotStart } },
-                  { endsAt: { gt: slotStart } },
-                ],
-              },
-              {
-                AND: [
-                  { startsAt: { lt: slotEnd } },
-                  { endsAt: { gte: slotEnd } },
-                ],
-              },
-            ],
-          },
+          { startsAt: { lt: slotEnd } },
+          { endsAt: { gt: slotStart } },
           { isTentative: true },
           // FIX: Filter by consultant - only check tentative slots for this consultant
           ...(consultantUserId
             ? [
-              {
-                user: {
-                  some: {
-                    id: consultantUserId,
+                {
+                  user: {
+                    some: {
+                      id: consultantUserId,
+                    },
                   },
                 },
-              },
-            ]
+              ]
             : []),
           {
             appointment: {
@@ -563,37 +606,24 @@ export async function validateSlotAvailability(
   }
 
   // 3. Check for excessive tentative bookings (rate limiting) FOR THIS CONSULTANT
+  // FIX Bug #05: Use canonical overlap predicate
   const tentativeCount = await tx.slotOfAppointment.count({
     where: {
       AND: [
-        {
-          OR: [
-            {
-              AND: [
-                { startsAt: { lte: slotStart } },
-                { endsAt: { gt: slotStart } },
-              ],
-            },
-            {
-              AND: [
-                { startsAt: { lt: slotEnd } },
-                { endsAt: { gte: slotEnd } },
-              ],
-            },
-          ],
-        },
+        { startsAt: { lt: slotEnd } },
+        { endsAt: { gt: slotStart } },
         { isTentative: true },
         // FIX: Filter by consultant - only count tentative slots for this consultant
         ...(consultantUserId
           ? [
-            {
-              user: {
-                some: {
-                  id: consultantUserId,
+              {
+                user: {
+                  some: {
+                    id: consultantUserId,
+                  },
                 },
               },
-            },
-          ]
+            ]
           : []),
         {
           appointment: {
@@ -640,17 +670,21 @@ export async function validateSlotAvailability(
 /**
  * Get plan data needed for lock acquisition
  * Returns consultant profile info for slot-based locking
+ *
+ * FIX Bug #04: Changed from userId to id (consultantProfileId) to match
+ * the lock key used in request-for-approval flow. All slot locks must use
+ * the same identity (consultantProfileId) to prevent parallel bypass.
  */
 async function getPlanDataForLock(
   data: CheckoutInput,
-): Promise<{ consultantProfile?: { userId: string } }> {
-  // For CONSULTATION and SUBSCRIPTION, we need consultant ID for slot locking
+): Promise<{ consultantProfile?: { id: string } }> {
+  // For CONSULTATION and SUBSCRIPTION, we need consultant profile ID for slot locking
   if (data.appointmentType === "CONSULTATION") {
     const plan = await prisma.consultationPlan.findUnique({
       where: { id: data.planId },
       select: {
         consultantProfile: {
-          select: { userId: true },
+          select: { id: true },
         },
       },
     });
@@ -663,7 +697,7 @@ async function getPlanDataForLock(
       where: { id: data.planId },
       select: {
         consultantProfile: {
-          select: { userId: true },
+          select: { id: true },
         },
       },
     });
@@ -681,20 +715,20 @@ async function getPlanDataForLock(
  */
 async function acquireCheckoutLock(
   data: CheckoutInput,
-  planData: { consultantProfile?: { userId: string } },
+  planData: { consultantProfile?: { id: string } },
 ): Promise<ApprovalLock | null> {
   const appointmentType = data.appointmentType;
 
   // Strategy A: Slot-based locking (CONSULTATION + direct SUBSCRIPTION)
+  // FIX Bug #04: Use consultantProfileId (not userId) to match request-for-approval lock key
   if (data.slotStartTimeInUTC && data.slotEndTimeInUTC) {
-    // Get consultant user ID from plan
-    let consultantUserId: string;
+    let consultantProfileId: string;
 
     if (
       appointmentType === "CONSULTATION" ||
       appointmentType === "SUBSCRIPTION"
     ) {
-      consultantUserId = planData.consultantProfile!.userId;
+      consultantProfileId = planData.consultantProfile!.id;
     } else {
       // For WEBINAR/CLASS with slots (shouldn't happen but handle gracefully)
       throw new Error(
@@ -707,13 +741,13 @@ async function acquireCheckoutLock(
         event: "checkout_lock_acquiring",
         type: "slot-based",
         appointmentType,
-        consultantUserId,
+        consultantProfileId,
         slot: data.slotStartTimeInUTC,
         timestamp: new Date().toISOString(),
       }),
     );
 
-    return await lockSlotBooking(consultantUserId, data.slotStartTimeInUTC);
+    return await lockSlotBooking(consultantProfileId, data.slotStartTimeInUTC);
   }
 
   // Strategy B: Event-based locking (WEBINAR, CLASS, scheduling-period SUBSCRIPTION)
@@ -934,7 +968,9 @@ async function revalidateInsideLock(
         const classInstance = await tx.class.findUnique({
           where: { id: data.eventId },
           include: {
-            classPlan: true,
+            classPlan: {
+              include: { consultantProfile: true },
+            },
             appointments: {
               include: {
                 slotsOfAppointment: {
@@ -950,8 +986,10 @@ async function revalidateInsideLock(
         if (!classInstance) throw new Error("Class not found");
 
         // FIX: Count unique participants, not total slots
+        const ownerUserId = classInstance.classPlan.consultantProfile?.userId;
         const currentParticipants = countUniqueParticipants(
           classInstance.appointments,
+          ownerUserId ? [ownerUserId] : [],
         );
 
         if (currentParticipants >= classInstance.classPlan.maxParticipants) {
@@ -990,13 +1028,17 @@ export async function handleConsultationCheckout(
     throw new Error("Consultation plan not found");
   }
 
+  // userId is the consultee's user ID (passed by caller — no extra DB lookup needed)
+  const consultantUserId = plan.consultantProfile.user.id;
+  const consulteeUserId = userId;
+
   // Validate slot availability
   // FIX: Pass consultant user ID to filter by consultant
   await validateSlotAvailability(
     tx,
     data,
     consulteeProfileId,
-    plan.consultantProfile.user.id,
+    consultantUserId,
   );
 
   // Create consultation
@@ -1012,18 +1054,41 @@ export async function handleConsultationCheckout(
     },
   });
 
-  // Create appointment
+  // Create appointment with 30-min slot chunks (consistent with SlotAllocationService).
+  // Each SlotOfAppointment is exactly 30 minutes so conflict detection works correctly.
+  // Both consultant and consultee are connected so the user-scoped conflict filter works.
+  const SLOT_MS = 30 * 60 * 1000;
+  const startTime = new Date(data.slotStartTimeInUTC!);
+  const endTime = new Date(data.slotEndTimeInUTC!);
+  const slotChunks: { startsAt: Date; endsAt: Date }[] = [];
+  let cur = new Date(startTime);
+  while (cur < endTime) {
+    slotChunks.push({
+      startsAt: new Date(cur),
+      endsAt: new Date(cur.getTime() + SLOT_MS),
+    });
+    cur = new Date(cur.getTime() + SLOT_MS);
+  }
+  if (slotChunks.length === 0)
+    throw new Error("Invalid slot: start must be before end");
+
   const appointment = await tx.appointment.create({
     data: {
       appointmentType: AppointmentsType.CONSULTATION,
       consultationId: consultation.id,
       slotsOfAppointment: {
-        create: {
-          startsAt: new Date(data.slotStartTimeInUTC!),
-          endsAt: new Date(data.slotEndTimeInUTC!),
+        create: slotChunks.map((chunk) => ({
+          startsAt: chunk.startsAt,
+          endsAt: chunk.endsAt,
           isTentative: !skipPayment,
-          user: { connect: { id: userId } },
-        },
+          // Connect BOTH consultant and consultee so the user-scoped conflict
+          // filter in validateNoConflicts (user.some.id === consultantUserId)
+          // can see this slot. dev branch only connected the consultee, which
+          // left the slot invisible to auto/manual allocation conflict checks.
+          user: {
+            connect: [{ id: consultantUserId }, { id: consulteeUserId }],
+          },
+        })),
       },
     },
   });
@@ -1162,7 +1227,7 @@ export async function handleWebinarCheckout(
   tx: Prisma.TransactionClient,
   data: CheckoutInput,
   userId: string,
-  skipPayment: boolean,
+  _skipPayment: boolean,
 ) {
   const webinar = await tx.webinar.findUnique({
     where: { id: data.eventId },
@@ -1196,20 +1261,10 @@ export async function handleWebinarCheckout(
   ]);
 
   // Check if max participants reached
+  // NOTE: Waitlist creation happens OUTSIDE the transaction in handleCheckout's catch block,
+  // because creating it here (inside the transaction) would be rolled back on throw.
   if (currentParticipants >= plan.maxParticipants) {
-    if (skipPayment) {
-      // Add to waitlist
-      await tx.waitlist.create({
-        data: {
-          userId,
-          webinarId: webinar.id,
-        },
-      });
-
-      throw new Error("Webinar is full. Added to waitlist.");
-    } else {
-      throw new Error("Webinar is full");
-    }
+    throw new Error("Webinar is full");
   }
 
   // FIX Issue #5: Validate webinar is scheduled before allowing booking
@@ -1268,21 +1323,18 @@ export async function handleWebinarCheckout(
     });
   }
 
-  // Add user to webinar (appointment is guaranteed to exist here)
-  if (appointment) {
-    await tx.slotOfAppointment.create({
-      data: {
-        appointmentId: appointment.id,
-        startsAt:
-          webinar.appointment?.slotsOfAppointment[0]?.startsAt || new Date(),
-        endsAt:
-          webinar.appointment?.slotsOfAppointment[0]?.endsAt || new Date(),
-        isTentative: !skipPayment,
-        user: {
-          connect: { id: userId },
+  // Add user to webinar by linking them to ALL existing slots.
+  // Webinar participants attend the entire session, so they must be
+  // connected to every SlotOfAppointment (not given a new duplicate slot).
+  if (appointment && appointment.slotsOfAppointment.length > 0) {
+    for (const slot of appointment.slotsOfAppointment) {
+      await tx.slotOfAppointment.update({
+        where: { id: slot.id },
+        data: {
+          user: { connect: { id: userId } },
         },
-      },
-    });
+      });
+    }
   }
 
   return { appointment, plan, amount: plan.price };
@@ -1292,12 +1344,14 @@ export async function handleClassCheckout(
   tx: Prisma.TransactionClient,
   data: CheckoutInput,
   userId: string,
-  skipPayment: boolean,
+  _skipPayment: boolean,
 ) {
   const classInstance = await tx.class.findUnique({
     where: { id: data.eventId },
     include: {
-      classPlan: true,
+      classPlan: {
+        include: { consultantProfile: true },
+      },
       waitlist: true,
       appointments: {
         include: {
@@ -1316,27 +1370,19 @@ export async function handleClassCheckout(
   }
 
   const plan = classInstance.classPlan;
+  const consultantUserId = plan.consultantProfile?.userId;
 
   // OPT-2: Use extracted utility for participant counting
   const currentParticipants = countUniqueParticipants(
     classInstance.appointments,
+    consultantUserId ? [consultantUserId] : [],
   );
 
   // Check if max participants reached
+  // NOTE: Waitlist creation happens OUTSIDE the transaction in handleCheckout's catch block,
+  // because creating it here (inside the transaction) would be rolled back on throw.
   if (currentParticipants >= plan.maxParticipants) {
-    if (skipPayment) {
-      // Add to waitlist
-      await tx.waitlist.create({
-        data: {
-          userId,
-          classId: classInstance.id,
-        },
-      });
-
-      throw new Error("Class is full. Added to waitlist.");
-    } else {
-      throw new Error("Class is full");
-    }
+    throw new Error("Class is full");
   }
 
   // H5 FIX: Validate class hasn't already ended (all sessions past).
@@ -1357,39 +1403,20 @@ export async function handleClassCheckout(
     throw new Error("You are already enrolled in this class");
   }
 
-  // Create SlotOfAppointment for the user for ALL class appointments (sessions)
-  const createdSlots = [];
+  // Link user to ALL existing slots of ALL class appointments (sessions).
+  // Class participants attend every session, so they must be connected to
+  // every existing SlotOfAppointment (not given duplicate slots).
+  let linkedSlotCount = 0;
   for (const appointment of classInstance.appointments) {
-    // Get timing from the first existing slot or use appointment times
-    const existingSlot = appointment.slotsOfAppointment[0];
-
-    // Step 1: Create the slot without user connection
-    const slot = await tx.slotOfAppointment.create({
-      data: {
-        appointmentId: appointment.id,
-        startsAt:
-          existingSlot?.startsAt ||
-          appointment.slotsOfAppointment[0]?.startsAt ||
-          new Date(),
-        endsAt:
-          existingSlot?.endsAt ||
-          appointment.slotsOfAppointment[0]?.endsAt ||
-          new Date(),
-        isTentative: !skipPayment,
-      },
-    });
-
-    // Step 2: Connect user to slot in a separate update (fixes FK constraint issue)
-    await tx.slotOfAppointment.update({
-      where: { id: slot.id },
-      data: {
-        user: {
-          connect: { id: userId },
+    for (const slot of appointment.slotsOfAppointment) {
+      await tx.slotOfAppointment.update({
+        where: { id: slot.id },
+        data: {
+          user: { connect: { id: userId } },
         },
-      },
-    });
-
-    createdSlots.push(slot);
+      });
+      linkedSlotCount++;
+    }
   }
 
   // Return the first appointment for compatibility
@@ -1402,7 +1429,7 @@ export async function handleClassCheckout(
     appointment: firstAppointment,
     plan,
     amount: plan.price,
-    slotsCreated: createdSlots.length,
+    slotsLinked: linkedSlotCount,
   };
 }
 
@@ -1432,8 +1459,15 @@ export async function handleCheckout(
 
   try {
     // STEP 1: Calculate amount and fetch plan data (OUTSIDE LOCK - just pricing)
-    const { amount, originalAmount, taxAmount, currency, discountCodeId, consulteeProfileId, creditsApplied } =
-      await calculateAmountAndValidate(validatedData, userId);
+    const {
+      amount,
+      originalAmount,
+      taxAmount,
+      currency,
+      discountCodeId,
+      consulteeProfileId,
+      creditsApplied,
+    } = await calculateAmountAndValidate(validatedData, userId);
 
     // Get plan data for consultant ID (needed for lock acquisition)
     const planData = await getPlanDataForLock(validatedData);
@@ -1588,15 +1622,23 @@ export async function handleCheckout(
             // creditsApplied is in rupees (from TX1), convert to paise for comparison
             // with totalAvailable (paise) and for applyCreditsToPayment (works in paise)
             const creditsAppliedInPaise = creditsApplied * 100;
-            const actualCreditsInPaise = Math.min(totalAvailable, creditsAppliedInPaise);
+            const actualCreditsInPaise = Math.min(
+              totalAvailable,
+              creditsAppliedInPaise,
+            );
 
             if (actualCreditsInPaise > 0) {
-              await applyCreditsToPayment(userId, actualCreditsInPaise, tx, payment.id);
+              await applyCreditsToPayment(
+                userId,
+                actualCreditsInPaise,
+                tx,
+                payment.id,
+              );
               console.log(
                 `🎁 Applied ${actualCreditsInPaise} paise (₹${creditsApplied}) referral credits for user ${userId}` +
-                (actualCreditsInPaise !== creditsAppliedInPaise
-                  ? ` (requested ${creditsAppliedInPaise} paise, available ${totalAvailable} paise)`
-                  : ""),
+                  (actualCreditsInPaise !== creditsAppliedInPaise
+                    ? ` (requested ${creditsAppliedInPaise} paise, available ${totalAvailable} paise)`
+                    : ""),
               );
             }
 
@@ -1607,13 +1649,16 @@ export async function handleCheckout(
             if (actualCreditsInPaise < creditsAppliedInPaise) {
               throw new Error(
                 `CREDIT_SHORTFALL: expected ${creditsAppliedInPaise} paise credits but only ${actualCreditsInPaise} available. ` +
-                `Payment ${payment.id} amount is stale. Aborting for retry.`,
+                  `Payment ${payment.id} amount is stale. Aborting for retry.`,
               );
             }
             actualCreditsApplied = creditsApplied; // In rupees for return value
           }
 
-          return { appointmentId: createdAppointment?.id, creditsApplied: actualCreditsApplied };
+          return {
+            appointmentId: createdAppointment?.id,
+            creditsApplied: actualCreditsApplied,
+          };
         },
         {
           timeout: 25000,
@@ -1718,7 +1763,8 @@ export async function handleCheckout(
               };
 
               const earningsAppointmentType =
-                appointmentTypeMap[validatedData.appointmentType] || "CONSULTATION";
+                appointmentTypeMap[validatedData.appointmentType] ||
+                "CONSULTATION";
 
               const paymentForEarnings = {
                 ...paymentWithAppointment,
@@ -1726,10 +1772,17 @@ export async function handleCheckout(
                   ...paymentWithAppointment.appointment,
                   consultantProfile: { id: consultantProfile.id },
                   webinar: paymentWithAppointment.appointment.webinar
-                    ? { webinarPlanId: paymentWithAppointment.appointment.webinar.webinarPlanId }
+                    ? {
+                        webinarPlanId:
+                          paymentWithAppointment.appointment.webinar
+                            .webinarPlanId,
+                      }
                     : null,
                   class: paymentWithAppointment.appointment.class
-                    ? { classPlanId: paymentWithAppointment.appointment.class.classPlanId }
+                    ? {
+                        classPlanId:
+                          paymentWithAppointment.appointment.class.classPlanId,
+                      }
                     : null,
                 },
               };
@@ -1793,6 +1846,57 @@ export async function handleCheckout(
         );
       }
 
+      // Waitlist creation for full webinar — must happen OUTSIDE the transaction
+      // (transaction was rolled back above, so any tx.waitlist.create would be lost)
+      // NOTE: The capacity check in revalidateInsideLock also throws "Webinar is full",
+      // but that lands in the outer catch(error) block, not here. Both are handled.
+      if (
+        dbError instanceof Error &&
+        dbError.message === "Webinar is full" &&
+        validatedData.appointmentType === "WEBINAR" &&
+        validatedData.eventId
+      ) {
+        try {
+          await prisma.waitlist.create({
+            data: { userId, webinarId: validatedData.eventId },
+          });
+          throw new Error("Webinar is full. Added to waitlist.");
+        } catch (waitlistError) {
+          console.error("[WAITLIST CREATE ERROR]", waitlistError);
+          // Re-throw if it's our own "Added to waitlist" error
+          if (
+            waitlistError instanceof Error &&
+            waitlistError.message.includes("Added to waitlist")
+          ) {
+            throw waitlistError;
+          }
+          // Waitlist creation failed (e.g., already on waitlist) — fall through
+        }
+      }
+
+      // Waitlist creation for full class — same pattern as webinar above
+      if (
+        dbError instanceof Error &&
+        dbError.message === "Class is full" &&
+        validatedData.appointmentType === "CLASS" &&
+        validatedData.eventId
+      ) {
+        try {
+          await prisma.waitlist.create({
+            data: { userId, classId: validatedData.eventId },
+          });
+          throw new Error("Class is full. Added to waitlist.");
+        } catch (waitlistError) {
+          console.error("[WAITLIST CREATE ERROR]", waitlistError);
+          if (
+            waitlistError instanceof Error &&
+            waitlistError.message.includes("Added to waitlist")
+          ) {
+            throw waitlistError;
+          }
+        }
+      }
+
       // Preserve specific error messages (duplicate registration, full capacity, etc.)
       if (dbError instanceof Error) {
         const preservedMessages = [
@@ -1802,6 +1906,8 @@ export async function handleCheckout(
           "cancelled",
           "ended",
           "not been scheduled",
+          "already have a pending or active subscription",
+          "overlapping dates",
         ];
         if (preservedMessages.some((msg) => dbError.message.includes(msg))) {
           throw dbError;
@@ -1822,6 +1928,50 @@ export async function handleCheckout(
         throw new Error(
           "Another user is currently booking this slot. Please wait a few seconds and try again.",
         );
+      }
+
+      // Waitlist creation for full webinar — handles capacity check from revalidateInsideLock
+      // (which runs OUTSIDE the inner try/catch(dbError), so errors land here)
+      if (
+        error.message === "Webinar is full" &&
+        validatedData.appointmentType === "WEBINAR" &&
+        validatedData.eventId
+      ) {
+        try {
+          await prisma.waitlist.create({
+            data: { userId, webinarId: validatedData.eventId },
+          });
+          throw new Error("Webinar is full. Added to waitlist.");
+        } catch (waitlistError) {
+          if (
+            waitlistError instanceof Error &&
+            waitlistError.message.includes("Added to waitlist")
+          ) {
+            throw waitlistError;
+          }
+          // Waitlist creation failed (e.g., already on waitlist) — rethrow original
+        }
+      }
+
+      // Waitlist creation for full class — same pattern as webinar above
+      if (
+        error.message === "Class is full" &&
+        validatedData.appointmentType === "CLASS" &&
+        validatedData.eventId
+      ) {
+        try {
+          await prisma.waitlist.create({
+            data: { userId, classId: validatedData.eventId },
+          });
+          throw new Error("Class is full. Added to waitlist.");
+        } catch (waitlistError) {
+          if (
+            waitlistError instanceof Error &&
+            waitlistError.message.includes("Added to waitlist")
+          ) {
+            throw waitlistError;
+          }
+        }
       }
     }
     throw error;

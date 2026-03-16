@@ -22,7 +22,19 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     $transaction: jest.fn(),
+    consultation: { findUnique: jest.fn() },
+    subscription: { findUnique: jest.fn() },
+    webinar: { findUnique: jest.fn() },
+    class: { findUnique: jest.fn() },
   },
+}));
+
+// Mock appointmentlock to avoid @upstash/redis ESM import issues in Jest
+jest.mock("../../utils/appointmentlock", () => ({
+  lockAutoAllocate: jest
+    .fn()
+    .mockResolvedValue({ key: "mock-key", value: "mock-value" }),
+  unlockAutoAllocate: jest.fn().mockResolvedValue(undefined),
 }));
 
 // Mock SlotValidationService to isolate unit under test
@@ -147,9 +159,25 @@ beforeEach(() => {
   jest.setSystemTime(new Date("2025-01-01T00:00:00Z"));
 
   mockTx = makeMockTx();
-  (prisma.$transaction as jest.Mock).mockImplementation(
-    async (callback: any) => callback(mockTx),
+  (prisma.$transaction as jest.Mock).mockImplementation(async (callback: any) =>
+    callback(mockTx),
   );
+
+  // Setup top-level prisma mocks for getConsultantProfileId() pre-fetch
+  // (runs outside the transaction to acquire consultant-level lock)
+  const consultantProfileId = "consultant-profile-1";
+  (prisma.consultation.findUnique as jest.Mock).mockResolvedValue({
+    consultationPlan: { consultantProfileId },
+  });
+  (prisma.subscription.findUnique as jest.Mock).mockResolvedValue({
+    subscriptionPlan: { consultantProfileId },
+  });
+  (prisma.webinar.findUnique as jest.Mock).mockResolvedValue({
+    webinarPlan: { consultantProfileId },
+  });
+  (prisma.class.findUnique as jest.Mock).mockResolvedValue({
+    classPlan: { consultantProfileId },
+  });
 
   mockValidateFn.mockReset();
   mockValidateFn.mockResolvedValue({
@@ -355,10 +383,7 @@ describe("Manual allocation", () => {
       createCall.data.slotsOfAppointment.create[0].user.connect;
 
     expect(userConnect).toEqual(
-      expect.arrayContaining([
-        { id: "consultant-1" },
-        { id: "consultee-1" },
-      ]),
+      expect.arrayContaining([{ id: "consultant-1" }, { id: "consultee-1" }]),
     );
   });
 
@@ -415,7 +440,11 @@ describe("Manual allocation", () => {
   it("should delete existing appointments before creating new ones", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
     // Simulate existing appointments to delete
-    mockTx.appointment.findMany.mockResolvedValue([{ id: "old-apt-1" }]);
+    // First findMany: reschedule detection (needs slotsOfAppointment)
+    // Second findMany: deleteExistingAppointments full-delete path
+    mockTx.appointment.findMany.mockResolvedValue([
+      { id: "old-apt-1", slotsOfAppointment: [] },
+    ]);
 
     await SlotAllocationService.allocate({
       eventType: "consultation",
@@ -459,9 +488,7 @@ describe("Manual allocation", () => {
     });
 
     const createCall = mockTx.appointment.create.mock.calls[0][0];
-    expect(createCall.data.appointmentType).toBe(
-      AppointmentsType.SUBSCRIPTION,
-    );
+    expect(createCall.data.appointmentType).toBe(AppointmentsType.SUBSCRIPTION);
     expect(createCall.data.subscription).toEqual({
       connect: { id: "sub-1" },
     });
@@ -526,9 +553,7 @@ describe("Requested slot allocation", () => {
     mockTx.consultation.findUnique.mockResolvedValue(
       makeConsultationEvent({
         appointment: {
-          slotsOfAppointment: [
-            { startsAt: new Date("2025-01-06T10:00:00Z") },
-          ],
+          slotsOfAppointment: [{ startsAt: new Date("2025-01-06T10:00:00Z") }],
         },
       }),
     );
@@ -1005,6 +1030,7 @@ describe("fetchEventData - config extraction", () => {
         schedulingPeriodStartsAt: expect.any(Date),
         schedulingPeriodEndsAt: expect.any(Date),
       }),
+      expect.any(Array), // appointmentIdsToExclude
     );
   });
 
@@ -1024,6 +1050,7 @@ describe("fetchEventData - config extraction", () => {
       expect.any(Array),
       expect.objectContaining({ userId: "consultant-1" }),
       expect.objectContaining({ durationInHours: 1 }),
+      expect.any(Array), // appointmentIdsToExclude
     );
   });
 
@@ -1035,10 +1062,7 @@ describe("fetchEventData - config extraction", () => {
           meetingsPerWeek: 2,
           sessionDurationInHours: 1.5,
           consultantProfile: makeConsultantProfile(),
-          classContents: [
-            { hoursAllotted: 1 },
-            { hoursAllotted: 2 },
-          ],
+          classContents: [{ hoursAllotted: 1 }, { hoursAllotted: 2 }],
         },
         // 1 week with meetingsPerWeek=2, 1.5hr sessions (3 slots each) → requires 6 slots
         schedulingPeriodEndsAt: new Date("2025-01-10T00:00:00Z"),
@@ -1069,6 +1093,7 @@ describe("fetchEventData - config extraction", () => {
         callsPerWeek: 2,
         sessionDurationInHours: 1.5,
       }),
+      expect.any(Array), // appointmentIdsToExclude
     );
   });
 });
@@ -1143,7 +1168,14 @@ describe("updateEventStatus", () => {
   });
 
   it("should set SCHEDULED with scheduling period for class", async () => {
-    mockTx.class.findUnique.mockResolvedValue(makeClassEvent());
+    // Use a class without pre-set scheduling period — updateEventStatus should
+    // derive schedulingPeriodStartsAt/EndsAt from the first allocated slot
+    mockTx.class.findUnique.mockResolvedValue(
+      makeClassEvent({
+        schedulingPeriodStartsAt: null,
+        schedulingPeriodEndsAt: null,
+      }),
+    );
 
     await SlotAllocationService.allocate({
       eventType: "class",
@@ -1240,8 +1272,7 @@ describe("createAppointments - grouping and validation", () => {
     });
 
     const slotsCreated =
-      mockTx.appointment.create.mock.calls[0][0].data.slotsOfAppointment
-        .create;
+      mockTx.appointment.create.mock.calls[0][0].data.slotsOfAppointment.create;
     for (const slot of slotsCreated) {
       expect(slot.isTentative).toBe(false);
     }
@@ -1283,10 +1314,11 @@ describe("createAppointments - grouping and validation", () => {
 describe("deleteExistingAppointments", () => {
   it("should delete all existing appointments for manual allocation", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
-    // findMany for delete returns existing appointments
+    // findMany for reschedule detection and delete returns existing appointments
+    // Must include slotsOfAppointment for reschedule detection in manualAllocate
     mockTx.appointment.findMany.mockResolvedValue([
-      { id: "old-1" },
-      { id: "old-2" },
+      { id: "old-1", slotsOfAppointment: [] },
+      { id: "old-2", slotsOfAppointment: [] },
     ]);
 
     await SlotAllocationService.allocate({
@@ -1341,8 +1373,7 @@ describe("Edge cases", () => {
 
     expect(result.success).toBe(true);
     const slotsCreated =
-      mockTx.appointment.create.mock.calls[0][0].data.slotsOfAppointment
-        .create;
+      mockTx.appointment.create.mock.calls[0][0].data.slotsOfAppointment.create;
     expect(slotsCreated).toHaveLength(1);
   });
 
@@ -1430,8 +1461,8 @@ describe("Edge cases", () => {
       "class",
     ] as const) {
       const freshTx = makeMockTx();
-      (prisma.$transaction as jest.Mock).mockImplementation(
-        async (cb: any) => cb(freshTx),
+      (prisma.$transaction as jest.Mock).mockImplementation(async (cb: any) =>
+        cb(freshTx),
       );
 
       const eventFactories = {
@@ -1445,10 +1476,7 @@ describe("Edge cases", () => {
         eventFactories[eventType](),
       );
 
-      const slots =
-        eventType === "subscription" || eventType === "class"
-          ? ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"]
-          : ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"];
+      const slots = ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"];
 
       await SlotAllocationService.allocate({
         eventType,
@@ -1462,5 +1490,114 @@ describe("Edge cases", () => {
       // Correct model was updated
       expect(freshTx[eventType].update).toHaveBeenCalled();
     }
+  });
+});
+
+// ─── Manual allocation distributed lock (TEST-2) ────────────────────────────
+
+describe("Manual allocation - distributed lock", () => {
+  it("should acquire and release consultant-level lock for manual allocation", async () => {
+    const {
+      lockAutoAllocate,
+      unlockAutoAllocate,
+    } = require("../../utils/appointmentlock");
+
+    mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
+
+    await SlotAllocationService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    // Lock should have been acquired with the consultant profile ID
+    expect(lockAutoAllocate).toHaveBeenCalledWith("consultant-profile-1");
+    // Lock should have been released in finally block
+    expect(unlockAutoAllocate).toHaveBeenCalled();
+  });
+
+  it("should release lock even when transaction fails", async () => {
+    const {
+      lockAutoAllocate,
+      unlockAutoAllocate,
+    } = require("../../utils/appointmentlock");
+
+    // Make the transaction throw
+    (prisma.$transaction as jest.Mock).mockRejectedValueOnce(
+      new Error("DB connection lost"),
+    );
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    expect(result.success).toBe(false);
+    // Lock should still be released even after error
+    expect(unlockAutoAllocate).toHaveBeenCalled();
+  });
+
+  it("should return 409 when lock acquisition fails", async () => {
+    const { lockAutoAllocate } = require("../../utils/appointmentlock");
+
+    // Simulate lock contention
+    lockAutoAllocate.mockRejectedValueOnce(
+      new Error("Lock acquisition failed: resource is locked"),
+    );
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.httpStatus).toBe(409);
+    expect(result.errorCode).toBe("LOCK_CONTENTION");
+  });
+});
+
+// ─── Auto allocation with IST timezone (TEST-1 integration) ─────────────────
+
+describe("Auto allocation - timezone day shift", () => {
+  it("should find slots for IST consultant with Monday availability", async () => {
+    // IST consultant (UTC+5:30) with Monday 09:00-17:00 local
+    // = UTC Monday 03:30-11:30
+    // startTimeUtc = 210 (03:30), endTimeUtc = 690 (11:30)
+    // utcOffsetMinutes = 330
+    mockTx.consultation.findUnique.mockResolvedValue(
+      makeConsultationEvent({
+        consultationPlan: {
+          durationInHours: 1,
+          consultantProfile: makeConsultantProfile({
+            user: { id: "consultant-1", timezone: "Asia/Kolkata" },
+            slotsOfAvailabilityWeekly: [
+              makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 3, 11, 330),
+            ],
+          }),
+        },
+      }),
+    );
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "auto",
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockTx.appointment.create).toHaveBeenCalledTimes(1);
+
+    // Verify the created slots are on a Monday in UTC
+    const createCall = mockTx.appointment.create.mock.calls[0][0];
+    const firstSlot = createCall.data.slotsOfAppointment.create[0];
+    const slotDate = new Date(firstSlot.startsAt);
+    expect(slotDate.getUTCDay()).toBe(1); // Monday
+    expect(slotDate.getUTCHours()).toBeGreaterThanOrEqual(3);
+    expect(slotDate.getUTCHours()).toBeLessThan(11);
   });
 });

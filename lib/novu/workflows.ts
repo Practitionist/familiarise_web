@@ -60,6 +60,7 @@ export const NOVU_WORKFLOWS = {
 
   // Recordings
   RECORDING_AVAILABLE: "recording-available",
+  RECORDING_FAILED: "recording-failed",
 
   // Referrals
   REFERRAL_BONUS_EARNED: "referral-bonus-earned",
@@ -70,6 +71,11 @@ export const NOVU_WORKFLOWS = {
   COLLABORATOR_INVITED: "collaborator-invited",
   COLLABORATOR_ACCEPTED: "collaborator-accepted",
   COLLABORATOR_REMOVED: "collaborator-removed",
+
+  // Maintenance
+  MAINTENANCE_SCHEDULED: "maintenance-scheduled",
+  MAINTENANCE_STARTED: "maintenance-started",
+  MAINTENANCE_ENDED: "maintenance-ended",
 } as const;
 
 export type NovuWorkflowId =
@@ -223,6 +229,12 @@ export type RecordingPayload = {
   dashboardUrl: string;
 };
 
+export type RecordingFailedPayload = {
+  streamCallId: string;
+  errorMessage?: string;
+  dashboardUrl: string;
+};
+
 export type ConsultantApplicationPayload = {
   applicantName: string;
   applicantEmail: string;
@@ -274,4 +286,10 @@ export type CollaboratorRemovedPayload = {
   planTitle: string;
   planType: string;
   dashboardUrl: string;
+};
+
+export type MaintenancePayload = {
+  phase: string;
+  reason?: string;
+  estimatedEnd?: string;
 };

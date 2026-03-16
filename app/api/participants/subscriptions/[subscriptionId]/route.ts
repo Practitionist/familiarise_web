@@ -1,15 +1,33 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import {
+  requireApiAuth,
+  isPrivileged,
+  forbiddenResponse,
+} from "@/lib/auth-helpers";
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ subscriptionId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { subscriptionId } = await params;
+    // Non-privileged users can only view participants for subscriptions they own as consultant
     const subscription = await prisma.subscription.findUnique({
       where: {
         id: subscriptionId,
+        ...(isPrivileged(session.user.role)
+          ? {}
+          : {
+              subscriptionPlan: {
+                consultantProfileId:
+                  session.user.consultantProfileId ?? "__none__",
+              },
+            }),
       },
       include: {
         subscriptionPlan: true,
@@ -71,6 +89,14 @@ export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ subscriptionId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
+  if (!isPrivileged(session.user.role) && !session.user.consultantProfileId) {
+    return forbiddenResponse("Only consultants can remove participants");
+  }
+
   try {
     const { subscriptionId } = await params;
 
@@ -82,8 +108,19 @@ export async function DELETE(
     }
 
     // Find the subscription
+    // Non-privileged users can only modify subscriptions they own as consultant
     const subscription = await prisma.subscription.findUnique({
-      where: { id: subscriptionId },
+      where: {
+        id: subscriptionId,
+        ...(isPrivileged(session.user.role)
+          ? {}
+          : {
+              subscriptionPlan: {
+                consultantProfileId:
+                  session.user.consultantProfileId ?? "__none__",
+              },
+            }),
+      },
       include: {
         appointments: {
           include: {

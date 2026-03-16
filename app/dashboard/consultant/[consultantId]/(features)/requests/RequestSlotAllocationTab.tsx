@@ -74,6 +74,7 @@ interface Request {
   startDate?: Date;
   endDate?: Date;
   bookingSource?: "DIRECT_CHECKOUT" | "REQUEST_SUBMITTED"; // Booking source - direct checkout or request submitted
+  totalSessions?: number; // Authoritative session count from plan (overrides weeks × callsPerWeek)
   // Reschedule info
   tentativeSlotCount?: number;
   totalSlotCount?: number;
@@ -117,14 +118,17 @@ async function fetchDataFromApi<T>(
       };
     }
   } catch (err) {
-    console.error(`Error fetching ${url}:`, err);
     let message = "An unknown error occurred while fetching data.";
     // Specifically check for the browser's network error
     if (err instanceof TypeError && err.message === "Failed to fetch") {
+      // Use warn (not error) — this is a transient network hiccup, not a code bug
+      console.warn(
+        `Network error fetching ${url}: server temporarily unreachable`,
+      );
       message =
         "Network error: Could not connect to the server. Please check your internet connection.";
     } else if (err instanceof Error) {
-      // Use message from other error types
+      console.error(`Error fetching ${url}:`, err);
       message = err.message;
     }
     return { ok: false, data: null, error: message };
@@ -249,29 +253,44 @@ export function RequestSlotAllocationTab({
                 isTentative: slot.isTentative ?? false,
               })),
               status: subscription.requestStatus,
-              // FIXED: Use accurate week counting instead of hardcoded * 4
-              requiredSlots: (() => {
-                const startDate = subscription.schedulingPeriodStartsAt
-                  ? new Date(subscription.schedulingPeriodStartsAt)
-                  : undefined;
-                const endDate = subscription.schedulingPeriodEndsAt
-                  ? new Date(subscription.schedulingPeriodEndsAt)
-                  : undefined;
-                const callsPerWeek =
-                  subscription.subscriptionPlan?.callsPerWeek ?? 0;
-
-                if (startDate && endDate) {
-                  const weeks = countSundayWeeksInclusive(startDate, endDate);
-                  return weeks * callsPerWeek * slotsPerSession;
-                }
-                // Fallback to month-based calculation if dates not set
-                return (
-                  callsPerWeek *
-                    4 *
-                    (subscription.subscriptionPlan?.durationInMonths ?? 0) *
-                    slotsPerSession || 0
-                );
-              })(),
+              // When rescheduling (tentative slots exist), only require replacing those slots
+              requiredSlots:
+                tentativeCount > 0
+                  ? tentativeCount
+                  : (() => {
+                      const totalSessions =
+                        subscription.subscriptionPlan?.totalSessions;
+                      if (totalSessions && totalSessions > 0) {
+                        return totalSessions * slotsPerSession;
+                      }
+                      // Fallback: week-based calculation
+                      const startDate = subscription.schedulingPeriodStartsAt
+                        ? new Date(subscription.schedulingPeriodStartsAt)
+                        : undefined;
+                      const endDate = subscription.schedulingPeriodEndsAt
+                        ? new Date(subscription.schedulingPeriodEndsAt)
+                        : undefined;
+                      const callsPerWeek =
+                        subscription.subscriptionPlan?.callsPerWeek ?? 0;
+                      if (startDate && endDate) {
+                        const weeks = countSundayWeeksInclusive(
+                          startDate,
+                          endDate,
+                        );
+                        return weeks * callsPerWeek * slotsPerSession;
+                      }
+                      return (
+                        callsPerWeek *
+                          4 *
+                          (subscription.subscriptionPlan?.durationInMonths ??
+                            0) *
+                          slotsPerSession || 0
+                      );
+                    })(),
+              totalSessions:
+                tentativeCount > 0
+                  ? tentativeCount / slotsPerSession
+                  : subscription.subscriptionPlan?.totalSessions,
               durationInMonths: subscription.subscriptionPlan?.durationInMonths,
               callsPerWeek: subscription.subscriptionPlan?.callsPerWeek,
               sessionDurationInHours: sessionDuration,
@@ -375,6 +394,35 @@ export function RequestSlotAllocationTab({
     }
   };
 
+  const handleDecline = async (request: Request) => {
+    if (request.type !== AppointmentsType.CONSULTATION) return;
+    try {
+      const response = await fetch(`/api/events/consultations/${request.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "REJECTED" }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to decline request");
+      }
+      toast({
+        title: "Request declined",
+        description: "The consultation request has been declined.",
+        variant: "default",
+      });
+      setRequests((prev) => prev.filter((r) => r.id !== request.id));
+      onUpdate();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description:
+          error instanceof Error ? error.message : "Failed to decline request",
+        variant: "destructive",
+      });
+    }
+  };
+
   // Handle allocation complete from UnifiedCalendar
   const handleAllocationComplete = async () => {
     toast({
@@ -434,197 +482,220 @@ export function RequestSlotAllocationTab({
           Allocate slots for subscription and class requests
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Type</TableHead>
-              <TableHead>Title</TableHead>
-              <TableHead>Requested By</TableHead>
-              <TableHead>Requested At</TableHead>
-              <TableHead>Requested Times</TableHead>
-              <TableHead>Required Slots</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {requests.map((request) => (
-              <TableRow key={request.id}>
-                <TableCell>{request.type}</TableCell>
-                <TableCell>{request.title}</TableCell>
-                <TableCell>{request.requestedBy.user.name}</TableCell>
-                <TableCell>
-                  {new Date(request.requestedAt).toLocaleString()}
-                </TableCell>
-                <TableCell>
-                  {/* Reschedule indicator */}
-                  {request.tentativeSlotCount !== undefined &&
-                    request.tentativeSlotCount > 0 &&
-                    request.totalSlotCount !== undefined && (
-                      <div className="mb-2">
-                        {request.tentativeSlotCount ===
-                        request.totalSlotCount ? (
-                          <div className="flex items-center gap-1.5 text-xs font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded-md">
-                            <RefreshCw className="h-3 w-3" />
-                            Full Reschedule (all {request.totalSlotCount}{" "}
-                            session
-                            {request.totalSlotCount !== 1 ? "s" : ""})
-                          </div>
-                        ) : request.tentativeSlotCount === 1 ? (
-                          <div className="flex items-center gap-1.5 text-xs font-medium text-amber-600 bg-amber-50 px-2 py-1 rounded-md">
-                            <AlertTriangle className="h-3 w-3" />
-                            Individual Session (1 of {
-                              request.totalSlotCount
-                            }{" "}
-                            needs new time)
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-1.5 text-xs font-medium text-amber-600 bg-amber-50 px-2 py-1 rounded-md">
-                            <AlertTriangle className="h-3 w-3" />
-                            Multiple Sessions ({
-                              request.tentativeSlotCount
-                            } of {request.totalSlotCount} need new times)
+      <CardContent className="p-0 sm:p-6">
+        <div className="overflow-x-auto w-full">
+          <Table className="w-full min-w-[820px]">
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-[110px]">Type</TableHead>
+                <TableHead className="w-[150px]">Title</TableHead>
+                <TableHead className="w-[130px]">Requested By</TableHead>
+                <TableHead className="w-[130px]">Requested At</TableHead>
+                <TableHead>Requested Times</TableHead>
+                <TableHead className="w-[90px] text-center">
+                  Required Slots
+                </TableHead>
+                <TableHead className="w-[120px]">Status</TableHead>
+                <TableHead className="w-[150px]">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {requests.map((request) => (
+                <TableRow key={request.id}>
+                  <TableCell>{request.type}</TableCell>
+                  <TableCell>{request.title}</TableCell>
+                  <TableCell>{request.requestedBy.user.name}</TableCell>
+                  <TableCell>
+                    {new Date(request.requestedAt).toLocaleString()}
+                  </TableCell>
+                  <TableCell>
+                    {/* Reschedule indicator */}
+                    {request.tentativeSlotCount !== undefined &&
+                      request.tentativeSlotCount > 0 &&
+                      request.totalSlotCount !== undefined && (
+                        <div className="mb-2">
+                          {request.tentativeSlotCount ===
+                          request.totalSlotCount ? (
+                            <div className="flex items-center gap-1.5 text-xs font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded-md">
+                              <RefreshCw className="h-3 w-3" />
+                              Full Reschedule (all {request.totalSlotCount}{" "}
+                              session
+                              {request.totalSlotCount !== 1 ? "s" : ""})
+                            </div>
+                          ) : request.tentativeSlotCount === 1 ? (
+                            <div className="flex items-center gap-1.5 text-xs font-medium text-amber-600 bg-amber-50 px-2 py-1 rounded-md">
+                              <AlertTriangle className="h-3 w-3" />
+                              Individual Session (1 of {
+                                request.totalSlotCount
+                              }{" "}
+                              needs new time)
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5 text-xs font-medium text-amber-600 bg-amber-50 px-2 py-1 rounded-md">
+                              <AlertTriangle className="h-3 w-3" />
+                              Multiple Sessions ({
+                                request.tentativeSlotCount
+                              } of {request.totalSlotCount} need new times)
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                    {request.requestedSlots &&
+                    request.requestedSlots.length > 0 ? (
+                      <div className="space-y-1">
+                        {request.requestedSlots
+                          .slice(0, 5)
+                          .map((slot, index) => {
+                            const date = new Date(slot.startsAt);
+                            const isValidDate = !isNaN(date.getTime());
+
+                            return (
+                              <div
+                                key={`${request.id}-slot-${index}`}
+                                className={`flex items-center gap-1.5 text-sm ${
+                                  slot.isTentative
+                                    ? "text-amber-600"
+                                    : "text-muted-foreground"
+                                }`}
+                              >
+                                {slot.isTentative ? (
+                                  <AlertTriangle className="h-3 w-3 flex-shrink-0" />
+                                ) : (
+                                  <CheckCircle2 className="h-3 w-3 flex-shrink-0 text-green-500" />
+                                )}
+                                <span>
+                                  {isValidDate
+                                    ? date.toLocaleString()
+                                    : "Invalid date"}
+                                </span>
+                                {slot.isTentative && (
+                                  <span className="text-xs text-amber-500">
+                                    (needs rescheduling)
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        {request.requestedSlots.length > 5 && (
+                          <div className="text-xs text-muted-foreground pl-5">
+                            ... and {request.requestedSlots.length - 5} more
+                            slot
+                            {request.requestedSlots.length - 5 !== 1 ? "s" : ""}
                           </div>
                         )}
                       </div>
-                    )}
+                    ) : request.requestedTimes &&
+                      request.requestedTimes.length > 0 ? (
+                      // Fallback to old format if requestedSlots not available
+                      <div className="space-y-1">
+                        {request.requestedTimes
+                          .slice(0, 5)
+                          .map((time, index) => {
+                            const date = new Date(time);
+                            const isValidDate = !isNaN(date.getTime());
 
-                  {request.requestedSlots &&
-                  request.requestedSlots.length > 0 ? (
-                    <div className="space-y-1">
-                      {request.requestedSlots.slice(0, 5).map((slot, index) => {
-                        const date = new Date(slot.startsAt);
-                        const isValidDate = !isNaN(date.getTime());
-
-                        return (
-                          <div
-                            key={`${request.id}-slot-${index}`}
-                            className={`flex items-center gap-1.5 text-sm ${
-                              slot.isTentative
-                                ? "text-amber-600"
-                                : "text-muted-foreground"
-                            }`}
-                          >
-                            {slot.isTentative ? (
-                              <AlertTriangle className="h-3 w-3 flex-shrink-0" />
-                            ) : (
-                              <CheckCircle2 className="h-3 w-3 flex-shrink-0 text-green-500" />
-                            )}
-                            <span>
-                              {isValidDate
-                                ? date.toLocaleString()
-                                : "Invalid date"}
-                            </span>
-                            {slot.isTentative && (
-                              <span className="text-xs text-amber-500">
-                                (needs rescheduling)
-                              </span>
-                            )}
+                            return (
+                              <div
+                                key={`${request.id}-time-${index}`}
+                                className="text-sm"
+                              >
+                                {isValidDate
+                                  ? date.toLocaleString()
+                                  : "Invalid date"}
+                              </div>
+                            );
+                          })}
+                        {request.requestedTimes.length > 5 && (
+                          <div className="text-xs text-muted-foreground">
+                            ... and {request.requestedTimes.length - 5} more
+                            slot
+                            {request.requestedTimes.length - 5 !== 1 ? "s" : ""}
                           </div>
-                        );
-                      })}
-                      {request.requestedSlots.length > 5 && (
-                        <div className="text-xs text-muted-foreground pl-5">
-                          ... and {request.requestedSlots.length - 5} more slot
-                          {request.requestedSlots.length - 5 !== 1 ? "s" : ""}
+                        )}
+                      </div>
+                    ) : request.type === AppointmentsType.SUBSCRIPTION &&
+                      request.startDate &&
+                      request.endDate ? (
+                      <div className="text-sm">
+                        <div className="font-medium text-blue-600">
+                          Scheduling Period
                         </div>
-                      )}
-                    </div>
-                  ) : request.requestedTimes &&
-                    request.requestedTimes.length > 0 ? (
-                    // Fallback to old format if requestedSlots not available
-                    <div className="space-y-1">
-                      {request.requestedTimes.slice(0, 5).map((time, index) => {
-                        const date = new Date(time);
-                        const isValidDate = !isNaN(date.getTime());
-
-                        return (
-                          <div
-                            key={`${request.id}-time-${index}`}
-                            className="text-sm"
-                          >
-                            {isValidDate
-                              ? date.toLocaleString()
-                              : "Invalid date"}
-                          </div>
-                        );
-                      })}
-                      {request.requestedTimes.length > 5 && (
                         <div className="text-xs text-muted-foreground">
-                          ... and {request.requestedTimes.length - 5} more slot
-                          {request.requestedTimes.length - 5 !== 1 ? "s" : ""}
+                          {request.startDate.toLocaleDateString()} -{" "}
+                          {request.endDate.toLocaleDateString()}
                         </div>
+                      </div>
+                    ) : (
+                      <div className="text-sm text-muted-foreground">
+                        Not available
+                      </div>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-center">
+                    {request.requiredSlots}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-col gap-1">
+                      <Badge
+                        variant={getRequestStatusBadgeVariant(request.status)}
+                      >
+                        {request.status}
+                      </Badge>
+                      {request.status ===
+                        RequestStatus.APPROVED_PENDING_PAYMENT && (
+                        <PaymentRequiredBadge variant="full" />
                       )}
                     </div>
-                  ) : request.type === AppointmentsType.SUBSCRIPTION &&
-                    request.startDate &&
-                    request.endDate ? (
-                    <div className="text-sm">
-                      <div className="font-medium text-blue-600">
-                        Scheduling Period
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {request.startDate.toLocaleDateString()} -{" "}
-                        {request.endDate.toLocaleDateString()}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-sm text-muted-foreground">
-                      Not available
-                    </div>
-                  )}
-                </TableCell>
-                <TableCell>{request.requiredSlots}</TableCell>
-                <TableCell>
-                  <div className="flex flex-col gap-1">
-                    <Badge
-                      variant={getRequestStatusBadgeVariant(request.status)}
-                    >
-                      {request.status}
-                    </Badge>
-                    {request.status ===
-                      RequestStatus.APPROVED_PENDING_PAYMENT && (
-                      <PaymentRequiredBadge variant="full" />
-                    )}
-                  </div>
-                </TableCell>
-                <TableCell>
-                  {request.status === RequestStatus.PENDING && (
-                    <>
-                      {/* Hide "Use Requested Times" button for directly booked consultations (Bug #8 fix) */}
-                      {request.requestedTimes &&
-                        request.requestedTimes.length > 0 &&
-                        request.bookingSource === "REQUEST_SUBMITTED" && (
+                  </TableCell>
+                  <TableCell>
+                    {request.status === RequestStatus.PENDING && (
+                      <div className="flex flex-col gap-1.5">
+                        {/* Hide "Use Requested Times" for directly booked consultations (Bug #8 fix) */}
+                        {request.requestedTimes &&
+                          request.requestedTimes.length > 0 &&
+                          request.bookingSource === "REQUEST_SUBMITTED" && (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              className="w-full"
+                              onClick={() => {
+                                setSelectedRequestForDialog(request);
+                                setRequestedSlotsDialogOpen(true);
+                              }}
+                            >
+                              Use Requested Times
+                            </Button>
+                          )}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full"
+                          onClick={() => {
+                            setSelectedRequest(request);
+                            setDialogOpen(true);
+                          }}
+                        >
+                          Allocate Slots
+                        </Button>
+                        {request.type === AppointmentsType.CONSULTATION && (
                           <Button
-                            variant="secondary"
+                            variant="destructive"
                             size="sm"
-                            className="mr-2"
-                            onClick={() => {
-                              setSelectedRequestForDialog(request);
-                              setRequestedSlotsDialogOpen(true);
-                            }}
+                            className="w-full"
+                            onClick={() => handleDecline(request)}
                           >
-                            Use Requested Times
+                            Decline
                           </Button>
                         )}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          setSelectedRequest(request);
-                          setDialogOpen(true);
-                        }}
-                      >
-                        Allocate Slots
-                      </Button>
-                    </>
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+                      </div>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
 
         {/* Single Allocation Dialog - moved outside map loop to prevent multiple dialogs */}
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -708,6 +779,11 @@ export function RequestSlotAllocationTab({
                 }
                 allowedStart={selectedRequest.startDate}
                 allowedEnd={selectedRequest.endDate}
+                totalSessions={
+                  selectedRequest.type === "SUBSCRIPTION"
+                    ? selectedRequest.totalSessions
+                    : undefined
+                }
               />
             )}
           </DialogContent>

@@ -15,7 +15,7 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useState } from "react";
 import { PaymentGateway, DisputeStatus } from "@prisma/client";
-import { formatCurrencyAmount } from "@/lib/utils";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import type { Dispute, DisputeListResponse } from "@/types/disputes";
 
 // Fetch disputes with filters
@@ -239,7 +239,10 @@ export default function AdminDisputesPage() {
                             {dispute.disputeId?.substring(0, 20)}...
                           </td>
                           <td className="px-4 py-3 text-sm text-gray-900">
-                            {formatCurrencyAmount(dispute.amount, dispute.currency)}
+                            {formatCurrencyAmount(
+                              dispute.amount,
+                              dispute.currency,
+                            )}
                           </td>
                           <td className="px-4 py-3 text-sm">
                             <span

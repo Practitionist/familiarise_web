@@ -2,11 +2,11 @@
 
 import { useRef } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { TConsultantProfile } from "@/types/consultant";
+import type { IConsultantCardData } from "@/types/consultant";
 import ExpertMiniCard from "./ExpertMiniCard";
 
 interface ExpertRowProps {
-  experts: TConsultantProfile[];
+  experts: IConsultantCardData[];
   badge?: "trending" | "new";
   isLoading?: boolean;
 }

@@ -15,17 +15,17 @@ import { experienceValidation } from "@/schemas/shared";
 // #region Shared Zod Schema Definitions
 
 export const SlotWeeklyCreateInputSchema = z.object({
-  dayOfWeekForStartsAt: z.nativeEnum(DayOfWeek),
-  availabilityStartsAt: z.string(),
-  dayOfWeekForEndsAt: z.nativeEnum(DayOfWeek),
-  availabilityEndsAt: z.string(),
+  startDay: z.nativeEnum(DayOfWeek),
+  startTimeUtc: z.number().int().min(0).max(1439),
+  endDay: z.nativeEnum(DayOfWeek),
+  endTimeUtc: z.number().int().min(0).max(1439),
 });
 
 export const SlotCustomCreateInputSchema = z.object({
-  availabilityStartsAt: z
+  startsAt: z
     .string()
     .datetime({ message: "Invalid start datetime string for custom slot" }),
-  availabilityEndsAt: z
+  endsAt: z
     .string()
     .datetime({ message: "Invalid end datetime string for custom slot" }),
 });
@@ -641,12 +641,8 @@ export function transformOnboardingFormToServerData(
             slotsOfAvailabilityCustom: formData.customSlots?.length
               ? {
                   create: formData.customSlots.map((slot) => ({
-                    availabilityStartsAt: new Date(
-                      slot.availabilityStartsAt,
-                    ).toISOString(),
-                    availabilityEndsAt: new Date(
-                      slot.availabilityEndsAt,
-                    ).toISOString(),
+                    startsAt: new Date(slot.startsAt).toISOString(),
+                    endsAt: new Date(slot.endsAt).toISOString(),
                   })),
                 }
               : undefined,

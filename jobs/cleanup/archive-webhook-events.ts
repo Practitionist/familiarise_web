@@ -13,6 +13,7 @@ import {
   type WebhookArchiveResult,
 } from "../../scripts/cleanup/archive-webhook-events";
 import fs from "fs";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 /**
  * Output results to GitHub Actions
@@ -49,6 +50,7 @@ function outputToGitHubActions(result: WebhookArchiveResult): void {
  * Main entry point
  */
 async function main(): Promise<void> {
+  await abortIfMaintenance("archive-webhook-events");
   console.log("🗄️ Starting webhook event archive job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 

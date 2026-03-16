@@ -1,6 +1,6 @@
 "use client";
 
-import { cn } from "@/lib/utils";
+import { cn } from "@/utils/tailwind";
 import {
   CreditCard,
   Home,
@@ -22,6 +22,7 @@ import {
   BarChart3,
   Clock,
   Megaphone,
+  Wrench,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
@@ -60,6 +61,7 @@ const sidebarItems = [
   { name: "Subscriptions", icon: RefreshCw, path: "subscriptions" },
   { name: "Metrics", icon: BarChart3, path: "metrics" },
   { name: "System Jobs", icon: Play, path: "system-jobs" },
+  { name: "Maintenance", icon: Wrench, path: "maintenance" },
   { name: "Settings", icon: Settings, path: "settings" },
 ];
 
@@ -181,7 +183,7 @@ export default function StaffDashboardLayout({
   // Show loading state only if we don't have userDetails yet (still determining access)
   if ((isSessionLoading || isLoadingUser) && !userDetails) {
     return (
-      <div className="flex h-screen bg-zinc-50 dark:bg-zinc-950">
+      <div className="flex h-screen-maintenance bg-zinc-50 dark:bg-zinc-950">
         {/* Sidebar skeleton */}
         <aside className="w-64 border-r border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4">
           <Skeleton className="h-8 w-32 mb-6" />
@@ -202,7 +204,7 @@ export default function StaffDashboardLayout({
 
   return (
     <NovuProvider>
-      <div className="flex h-screen bg-zinc-50 dark:bg-zinc-950">
+      <div className="flex h-screen-maintenance bg-zinc-50 dark:bg-zinc-950">
         {/* Sidebar */}
         <aside
           className={cn(

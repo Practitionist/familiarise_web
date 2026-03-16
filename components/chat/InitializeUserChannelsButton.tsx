@@ -7,6 +7,11 @@ import { useState } from "react";
 
 interface InitializeUserChannelsButtonProps {
   userId: string;
+  /**
+   * When true (default), bypasses the per-session dedup guard so a full
+   * add + stale-membership-cleanup resync always runs on click.
+   */
+  force?: boolean;
   variant?:
     | "default"
     | "destructive"
@@ -22,6 +27,7 @@ interface InitializeUserChannelsButtonProps {
 
 export const InitializeUserChannelsButton = ({
   userId,
+  force = true,
   variant = "default",
   size = "default",
   className = "",
@@ -45,7 +51,7 @@ export const InitializeUserChannelsButton = ({
 
     try {
       // console.log(`Initializing channels for user via action: ${userId}`);
-      const result = await syncUserEventChannels(userId);
+      const result = await syncUserEventChannels(userId, force);
 
       toast({
         title: "Success",

@@ -38,7 +38,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import { useCurrency, SUPPORTED_CURRENCIES } from "@/lib/hooks/useCurrency";
+import { useCurrency, SUPPORTED_CURRENCIES } from "@/hooks/useCurrency";
 import { useAnnouncementBar } from "@/providers/AnnouncementBarProvider";
 import familiariseLogoTransparent from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif";
 import familiariseLogoWhite from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_white.avif";
@@ -88,7 +88,10 @@ const EXPLORE_CATEGORIES: NavCategoryChip[] = [
   { label: "Creative Arts", href: "/explore/experts?domain=Creative Arts" },
   { label: "Education", href: "/explore/experts?domain=Education" },
   { label: "Health", href: "/explore/experts?domain=Health" },
-  { label: "Personal Dev", href: "/explore/experts?domain=Personal Development" },
+  {
+    label: "Personal Dev",
+    href: "/explore/experts?domain=Personal Development",
+  },
 ];
 
 const USE_CASE_ITEMS: NavDropdownItem[] = [
@@ -196,9 +199,7 @@ function DesktopDropdownPanel({
               href={item.disabled ? "/contactus" : item.href}
               onClick={onClose}
               className={`flex items-start gap-3 px-3 py-2.5 rounded-lg transition-colors ${
-                item.disabled
-                  ? "opacity-60 cursor-default"
-                  : "hover:bg-zinc-50"
+                item.disabled ? "opacity-60 cursor-default" : "hover:bg-zinc-50"
               }`}
             >
               <div className="mt-0.5 w-8 h-8 rounded-lg bg-zinc-100 flex items-center justify-center shrink-0">
@@ -297,10 +298,7 @@ function DesktopNavItem({
       </button>
       <AnimatePresence>
         {open && (
-          <DesktopDropdownPanel
-            group={group}
-            onClose={() => setOpen(false)}
-          />
+          <DesktopDropdownPanel group={group} onClose={() => setOpen(false)} />
         )}
       </AnimatePresence>
     </div>
@@ -352,7 +350,13 @@ const Navbar = () => {
   if (excludeNavbar) return null;
 
   const handleSignOut = () => {
-    signOut();
+    signOut({
+      fetchOptions: {
+        onSuccess: () => {
+          window.location.href = "/auth/signin";
+        },
+      },
+    });
     closeMenu();
   };
 
@@ -374,9 +378,7 @@ const Navbar = () => {
             : "bg-white/90 backdrop-blur-xl border-b border-zinc-200 shadow-sm"
         }`}
         style={{
-          top: isAnnouncementVisible
-            ? "var(--announcement-bar-height, 0px)"
-            : "0px",
+          top: `calc(var(--maintenance-banner-height, 0px) + ${isAnnouncementVisible ? "var(--announcement-bar-height, 0px)" : "0px"})`,
         }}
       >
         <div className="container mx-auto px-4 md:px-6">
@@ -598,9 +600,7 @@ const Navbar = () => {
                           {group.items.map((item) => (
                             <Link
                               key={item.href + item.label}
-                              href={
-                                item.disabled ? "/contactus" : item.href
-                              }
+                              href={item.disabled ? "/contactus" : item.href}
                               onClick={closeMenu}
                               className={`block px-4 py-2.5 rounded-lg transition-colors ${
                                 item.disabled

@@ -1,6 +1,9 @@
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { fetchWebinarPlanDetail } from "@/lib/data/plan-details";
+import { apiError } from "@/lib/errors";
+import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 
 export async function GET(
   request: NextRequest,
@@ -8,79 +11,26 @@ export async function GET(
 ) {
   try {
     const { webinarPlanId } = await params;
-    const webinarPlan = await prisma.webinarPlan.findUniqueOrThrow({
-      where: { id: webinarPlanId },
-      include: {
-        consultantProfile: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
-              },
-            },
-            domain: true,
-            subDomains: true,
-            tags: true,
-          },
-        },
-        webinars: {
-          include: {
-            appointment: {
-              include: {
-                slotsOfAppointment: {
-                  include: {
-                    user: {
-                      select: { id: true },
-                    },
-                  },
-                },
-                payment: true,
-              },
-            },
-            waitlist: {
-              select: {
-                userId: true,
-                position: true,
-                status: true,
-              },
-            },
-          },
-        },
-        topics: true,
-        collaborators: {
-          where: { status: "ACCEPTED" },
-          include: {
-            consultantProfile: {
-              include: {
-                user: {
-                  select: { id: true, name: true, image: true },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
+    const webinarPlan = await fetchWebinarPlanDetail(webinarPlanId);
 
-    return NextResponse.json({ data: webinarPlan }, { status: 200 });
-  } catch (error) {
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2025"
-    ) {
+    if (!webinarPlan) {
       return NextResponse.json(
         { error: "Webinar plan not found" },
         { status: 404 },
       );
     }
-    console.error("Error fetching webinar plan:", error);
+
     return NextResponse.json(
-      { error: "An error occurred while fetching the webinar plan" },
-      { status: 500 },
+      { data: webinarPlan },
+      {
+        status: 200,
+        headers: {
+          "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
+        },
+      },
     );
+  } catch (error) {
+    return apiError({ tag: "[WebinarPlan.GET]", error });
   }
 }
 
@@ -88,6 +38,10 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ webinarPlanId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { webinarPlanId } = await params;
     const body = await request.json();
@@ -115,7 +69,15 @@ export async function PUT(
     }
 
     const webinarPlan = await prisma.webinarPlan.update({
-      where: { id: webinarPlanId },
+      where: {
+        id: webinarPlanId,
+        ...(isPrivileged(session.user.role)
+          ? {}
+          : {
+              consultantProfileId:
+                session.user.consultantProfileId ?? "__none__",
+            }),
+      },
       data: {
         title: body.title,
         description: body.description,
@@ -127,11 +89,10 @@ export async function PUT(
         prerequisites: body.prerequisites,
         materialProvided: body.materialProvided,
         learningOutcomes: body.learningOutcomes,
-        consultantProfile: body.consultantProfileId
-          ? {
-              connect: { id: body.consultantProfileId },
-            }
-          : undefined,
+        consultantProfile:
+          isPrivileged(session.user.role) && body.consultantProfileId
+            ? { connect: { id: body.consultantProfileId } }
+            : undefined,
         topics: body.topicIds
           ? {
               set: body.topicIds.map((id: string) => ({ id })),
@@ -170,11 +131,7 @@ export async function PUT(
         { status: 404 },
       );
     }
-    console.error("Error updating webinar plan:", error);
-    return NextResponse.json(
-      { error: "An error occurred while updating the webinar plan" },
-      { status: 500 },
-    );
+    return apiError({ tag: "[WebinarPlan.PUT]", error });
   }
 }
 
@@ -182,8 +139,32 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ webinarPlanId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { webinarPlanId } = await params;
+
+    // Verify existence + ownership in one query (non-owners get 404, not 403)
+    const existingPlan = await prisma.webinarPlan.findUnique({
+      where: {
+        id: webinarPlanId,
+        ...(isPrivileged(session.user.role)
+          ? {}
+          : {
+              consultantProfileId:
+                session.user.consultantProfileId ?? "__none__",
+            }),
+      },
+      select: { id: true },
+    });
+    if (!existingPlan) {
+      return NextResponse.json(
+        { error: "Webinar plan not found" },
+        { status: 404 },
+      );
+    }
 
     // Check if there are any associated webinars
     const associatedWebinars = await prisma.webinar.findMany({
@@ -207,7 +188,10 @@ export async function DELETE(
 
     if (activeCollaborators > 0) {
       return NextResponse.json(
-        { error: "Cannot delete webinar plan with active collaborators. Remove or notify collaborators first." },
+        {
+          error:
+            "Cannot delete webinar plan with active collaborators. Remove or notify collaborators first.",
+        },
         { status: 400 },
       );
     }
@@ -245,10 +229,6 @@ export async function DELETE(
         { status: 404 },
       );
     }
-    console.error("Error deleting webinar plan:", error);
-    return NextResponse.json(
-      { error: "An error occurred while deleting the webinar plan" },
-      { status: 500 },
-    );
+    return apiError({ tag: "[WebinarPlan.DELETE]", error });
   }
 }

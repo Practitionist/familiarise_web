@@ -213,7 +213,9 @@ export function EventCarousel({
 
   const handleEdit = (event: Event) => {
     if (eventType === "webinar" && isWebinarEvent(event)) {
-      (onEdit as (e: PlannerWebinarEvent) => void)(event as PlannerWebinarEvent);
+      (onEdit as (e: PlannerWebinarEvent) => void)(
+        event as PlannerWebinarEvent,
+      );
     } else if (eventType === "class" && isClassEvent(event)) {
       (onEdit as (e: PlannerClassEvent) => void)(event as PlannerClassEvent);
     } else if (eventType === "consultation" && isConsultationPlanEvent(event)) {
@@ -300,8 +302,16 @@ export function EventCarousel({
                   ? pendingTrialCounts[event.id ?? ""]
                   : undefined
               }
-              collaboratorRole={"collaboratorRole" in event ? (event as { collaboratorRole: string }).collaboratorRole : undefined}
-              isCollaborated={"isCollaborated" in event ? (event as { isCollaborated: boolean }).isCollaborated : undefined}
+              collaboratorRole={
+                "collaboratorRole" in event
+                  ? (event as { collaboratorRole: string }).collaboratorRole
+                  : undefined
+              }
+              isCollaborated={
+                "isCollaborated" in event
+                  ? (event as { isCollaborated: boolean }).isCollaborated
+                  : undefined
+              }
               onEdit={() => handleEdit(event)}
               onDelete={() => handleDeleteClick(event)}
               onTrialsClick={
@@ -312,8 +322,12 @@ export function EventCarousel({
                   : undefined
               }
               onJoinMeeting={
-                onJoinMeeting && (eventType === "webinar" || eventType === "class")
-                  ? () => onJoinMeeting(event as PlannerWebinarEvent & PlannerClassEvent)
+                onJoinMeeting &&
+                (eventType === "webinar" || eventType === "class")
+                  ? () =>
+                      onJoinMeeting(
+                        event as PlannerWebinarEvent & PlannerClassEvent,
+                      )
                   : undefined
               }
               canJoinNow={joinableEventIds?.has(event.id ?? "") ?? false}

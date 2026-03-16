@@ -1,27 +1,13 @@
-import React from "react";
-import { TSlotTiming } from "@/types/slots";
-import { DayOfWeek } from "@prisma/client";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import React, { useMemo, useState } from "react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
+  ChevronUp,
+} from "lucide-react";
 import { roundTime, timeToMinutes } from "../utils/time";
-
-// Better typing for original slot data
-type OriginalSlotData = {
-  id: string;
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
-};
-
-interface ProcessedSlot {
-  id: string;
-  localStartTime: string;
-  localEndTime: string;
-  originalSlot: OriginalSlotData;
-  isAllocated?: boolean;
-  bookingStatus?: "available" | "partially-booked" | "fully-booked";
-  slotStartTimeInUTC?: string;
-  slotEndTimeInUTC?: string;
-  type?: "WEEKLY" | "CUSTOM";
-}
+import { mergeConsecutiveSlotsForDisplay } from "../utils/mergeSlots";
+import type { ProcessedSlot } from "../types";
 
 interface DayWithSlots {
   date: Date;
@@ -34,33 +20,37 @@ interface CustomAvailabilityProps {
   onNextWeek?: () => void;
 }
 
-// Day mapping for TSlotTiming
-const dayMap: Record<number, DayOfWeek> = {
-  0: DayOfWeek.SUNDAY,
-  1: DayOfWeek.MONDAY,
-  2: DayOfWeek.TUESDAY,
-  3: DayOfWeek.WEDNESDAY,
-  4: DayOfWeek.THURSDAY,
-  5: DayOfWeek.FRIDAY,
-  6: DayOfWeek.SATURDAY,
-};
+const VISIBLE_SLOT_COUNT = 5;
 
 export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
   days,
   onPrevWeek,
   onNextWeek,
 }) => {
-  // Sort slots chronologically for each day
-  const sortedDays = React.useMemo(() => {
-    return days.map((day) => ({
-      ...day,
-      slots: day.slots.slice().sort((a, b) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  // Sort and merge consecutive slots for each day
+  const mergedDays = useMemo(() => {
+    return days.map((day) => {
+      const sorted = day.slots.slice().sort((a, b) => {
         return (
           timeToMinutes(a.localStartTime) - timeToMinutes(b.localStartTime)
         );
-      }),
-    }));
+      });
+      return {
+        ...day,
+        slots: mergeConsecutiveSlotsForDisplay(sorted),
+      };
+    });
   }, [days]);
+
+  // Check if any day has more slots than the visible limit
+  const totalHidden = useMemo(() => {
+    return mergedDays.reduce((sum, day) => {
+      const excess = day.slots.length - VISIBLE_SLOT_COUNT;
+      return sum + (excess > 0 ? excess : 0);
+    }, 0);
+  }, [mergedDays]);
 
   // Get the date for booked slots in user timezone
   const getBookedSlotDate = (slot: ProcessedSlot) => {
@@ -102,7 +92,7 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
           <div className="flex-1 min-w-0">
             {/* Date headers */}
             <div className="grid grid-cols-7 gap-4 mb-6">
-              {sortedDays.map(({ date }) => (
+              {mergedDays.map(({ date }) => (
                 <div key={date.toISOString()} className="text-center">
                   <div className="bg-gradient-to-b from-gray-100 to-gray-200/80 px-3 py-2 rounded-xl border border-gray-300/50 shadow-sm">
                     <div className="text-sm font-semibold text-gray-800">
@@ -121,82 +111,110 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
 
             {/* Slots grid */}
             <div className="grid grid-cols-7 gap-4">
-              {sortedDays.map(({ date, slots: daySlots }) => (
-                <div key={date.toISOString()} className="space-y-2">
-                  {daySlots.length > 0 ? (
-                    daySlots.map((slot) => {
-                      const bookingStatus = slot.bookingStatus || "available";
-                      const isFullyBooked = bookingStatus === "fully-booked";
-                      const isPartiallyBooked =
-                        bookingStatus === "partially-booked";
-                      const bookedDate =
-                        isFullyBooked || isPartiallyBooked || slot.isAllocated
-                          ? getBookedSlotDate(slot)
-                          : "";
+              {mergedDays.map(({ date, slots: daySlots }) => {
+                const visibleSlots = isExpanded
+                  ? daySlots
+                  : daySlots.slice(0, VISIBLE_SLOT_COUNT);
 
-                      return (
-                        <div
-                          key={slot.id}
-                          className={`
-                            w-full min-h-[4.5rem] px-2 py-2 text-xs rounded-xl
-                            border shadow-lg backdrop-blur-sm relative overflow-hidden
-                            ${
-                              isFullyBooked
-                                ? "bg-gradient-to-br from-gray-300 to-gray-400 text-gray-600 border-gray-300 shadow-gray-400/20"
-                                : isPartiallyBooked
-                                  ? "bg-gradient-to-br from-amber-200 to-amber-300 border-amber-400 text-amber-900 shadow-amber-400/25"
-                                  : slot.isAllocated
-                                    ? "bg-gradient-to-br from-orange-200 to-orange-300 border-orange-400 text-orange-900 shadow-orange-400/20"
-                                    : "bg-gradient-to-br from-emerald-100 to-emerald-200 text-emerald-800 border-emerald-300 shadow-emerald-400/20"
-                            }
-                          `}
-                        >
-                          {/* Glossy overlay for buttons */}
-                          <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-xl pointer-events-none" />
+                return (
+                  <div key={date.toISOString()} className="space-y-2">
+                    {visibleSlots.length > 0 ? (
+                      visibleSlots.map((slot) => {
+                        const bookingStatus = slot.bookingStatus || "available";
+                        const isFullyBooked = bookingStatus === "fully-booked";
+                        const isPartiallyBooked =
+                          bookingStatus === "partially-booked";
+                        const bookedDate =
+                          isFullyBooked || isPartiallyBooked || slot.isAllocated
+                            ? getBookedSlotDate(slot)
+                            : "";
 
-                          <div className="relative flex flex-col items-center justify-center h-full space-y-1">
-                            {/* Time range in one line */}
-                            <div className="font-medium leading-tight text-center text-[11px]">
-                              {roundTime(slot.localStartTime)} -{" "}
-                              {roundTime(slot.localEndTime)}
-                            </div>
+                        return (
+                          <div
+                            key={slot.id}
+                            className={`
+                              w-full min-h-[4.5rem] px-2 py-2 text-xs rounded-xl
+                              border shadow-lg backdrop-blur-sm relative overflow-hidden
+                              ${
+                                isFullyBooked
+                                  ? "bg-gradient-to-br from-gray-300 to-gray-400 text-gray-600 border-gray-300 shadow-gray-400/20"
+                                  : isPartiallyBooked
+                                    ? "bg-gradient-to-br from-amber-200 to-amber-300 border-amber-400 text-amber-900 shadow-amber-400/25"
+                                    : slot.isAllocated
+                                      ? "bg-gradient-to-br from-orange-200 to-orange-300 border-orange-400 text-orange-900 shadow-orange-400/20"
+                                      : "bg-gradient-to-br from-emerald-100 to-emerald-200 text-emerald-800 border-emerald-300 shadow-emerald-400/20"
+                              }
+                            `}
+                          >
+                            {/* Glossy overlay for buttons */}
+                            <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-xl pointer-events-none" />
 
-                            {/* Status and date for booked/allocated slots */}
-                            {isFullyBooked && (
-                              <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
-                                Booked
-                                <br />
-                                {bookedDate && `(${bookedDate})`}
+                            <div className="relative flex flex-col items-center justify-center h-full space-y-1">
+                              {/* Time range in one line */}
+                              <div className="font-medium leading-tight text-center text-[11px]">
+                                {roundTime(slot.localStartTime)} -{" "}
+                                {roundTime(slot.localEndTime)}
                               </div>
-                            )}
-                            {isPartiallyBooked && (
-                              <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
-                                Partially
-                                <br />
-                                Booked {bookedDate && `(${bookedDate})`}
-                              </div>
-                            )}
-                            {slot.isAllocated &&
-                              !isFullyBooked &&
-                              !isPartiallyBooked && (
+
+                              {/* Status and date for booked/allocated slots */}
+                              {isFullyBooked && (
                                 <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
-                                  Request
+                                  Booked
                                   <br />
-                                  Approval {bookedDate && `(${bookedDate})`}
+                                  {bookedDate && `(${bookedDate})`}
                                 </div>
                               )}
+                              {isPartiallyBooked && (
+                                <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
+                                  Partially
+                                  <br />
+                                  Booked {bookedDate && `(${bookedDate})`}
+                                </div>
+                              )}
+                              {slot.isAllocated &&
+                                !isFullyBooked &&
+                                !isPartiallyBooked && (
+                                  <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
+                                    Request
+                                    <br />
+                                    Approval {bookedDate && `(${bookedDate})`}
+                                  </div>
+                                )}
+                            </div>
                           </div>
-                        </div>
-                      );
-                    })
-                  ) : (
-                    <div className="min-h-[4.5rem] flex items-center justify-center text-xs text-gray-400 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border border-gray-200 shadow-sm">
-                      No slots
-                    </div>
-                  )}
-                </div>
-              ))}
+                        );
+                      })
+                    ) : (
+                      <div className="min-h-[4.5rem] flex items-center justify-center text-xs text-gray-400 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border border-gray-200 shadow-sm">
+                        No slots
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
+
+            {/* Single expand/collapse button for the entire week */}
+            {totalHidden > 0 && (
+              <div className="flex justify-center mt-4">
+                <button
+                  onClick={() => setIsExpanded((prev) => !prev)}
+                  className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 rounded-xl border border-emerald-200 transition-colors cursor-pointer shadow-sm"
+                >
+                  {isExpanded ? (
+                    <>
+                      <ChevronUp className="w-3.5 h-3.5" />
+                      Show less
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="w-3.5 h-3.5" />
+                      Show {totalHidden} more slots
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Right arrow */}

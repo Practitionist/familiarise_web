@@ -7,6 +7,7 @@ import { formatInTimeZone, fromZonedTime, toZonedTime } from "date-fns-tz";
 // Assuming TSlotTiming is defined in a types file
 import { TSlotTiming } from "@/types/slots";
 import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
+import { minuteUtcToDate } from "@/utils/slotAllocation/slotTimeUtils";
 
 export async function GET(
   req: NextRequest,
@@ -29,7 +30,7 @@ export async function GET(
 
     const consultantProfile = await prisma.consultantProfile.findUnique({
       where: { id: consultantId },
-      select: { scheduleType: true },
+      select: { scheduleType: true, userId: true },
     });
 
     if (!consultantProfile) {
@@ -59,7 +60,7 @@ export async function GET(
     }
 
     slots = filterSlots(slots, userDayStart, userDayEnd);
-    slots = await removeBookedSlots(slots);
+    slots = await removeBookedSlots(slots, consultantProfile.userId);
     slots = filterExpiredSlots(slots);
 
     const totalSlots = slots.length;
@@ -98,14 +99,14 @@ async function getWeeklySlots(
     where: {
       consultantProfileId: consultantId,
       OR: [
-        { dayOfWeekForStartsAt: userDayOfWeek },
+        { startDay: userDayOfWeek },
         {
-          dayOfWeekForStartsAt: previousDayOfWeek,
-          dayOfWeekForEndsAt: userDayOfWeek,
+          startDay: previousDayOfWeek,
+          endDay: userDayOfWeek,
         },
       ],
     },
-    orderBy: { availabilityStartsAt: "asc" },
+    orderBy: { startTimeUtc: "asc" },
   });
 
   return weeklySlots.map((slot) =>
@@ -122,22 +123,10 @@ async function getCustomSlots(
   const customSlots = await prisma.slotOfAvailabilityCustom.findMany({
     where: {
       consultantProfileId: consultantId,
-      OR: [
-        {
-          availabilityStartsAt: {
-            gte: utcDayStart,
-            lt: utcDayEnd,
-          },
-        },
-        {
-          availabilityEndsAt: {
-            gt: utcDayStart,
-            lte: utcDayEnd,
-          },
-        },
-      ],
+      startsAt: { lt: utcDayEnd },
+      endsAt: { gt: utcDayStart },
     },
-    orderBy: { availabilityStartsAt: "asc" },
+    orderBy: { startsAt: "asc" },
   });
 
   return customSlots.map((slot) => mapCustomSlotToTiming(slot, userTimeZone));
@@ -155,13 +144,21 @@ function filterSlots(
   });
 }
 
-async function removeBookedSlots(slots: TSlotTiming[]): Promise<TSlotTiming[]> {
+async function removeBookedSlots(
+  slots: TSlotTiming[],
+  consultantUserId: string,
+): Promise<TSlotTiming[]> {
   const appointments = await prisma.appointment.findMany({
     where: {
       slotsOfAppointment: {
         some: {
           startsAt: {
             in: slots.map((s) => parseISO(s.slotStartTimeInUTC)),
+          },
+          // Scope to this consultant only — prevents Consultant A's bookings
+          // from incorrectly hiding Consultant B's availability
+          user: {
+            some: { id: consultantUserId },
           },
         },
       },
@@ -211,7 +208,7 @@ function getDayOfWeek(date: Date): DayOfWeek {
     DayOfWeek.FRIDAY,
     DayOfWeek.SATURDAY,
   ];
-  return days[date.getDay()];
+  return days[date.getUTCDay()];
 }
 
 function getPreviousDayOfWeek(day: DayOfWeek): DayOfWeek {
@@ -241,20 +238,24 @@ function setToUserDate(date: Date, userDate: Date): Date {
 function mapWeeklySlotToTiming(
   slot: {
     id: string;
-    availabilityStartsAt: Date;
-    availabilityEndsAt: Date;
-    dayOfWeekForStartsAt: DayOfWeek;
-    dayOfWeekForEndsAt: DayOfWeek;
+    startTimeUtc: number;
+    endTimeUtc: number;
+    startDay: DayOfWeek;
+    endDay: DayOfWeek;
   },
   userDate: Date,
   userTimeZone: string,
 ): TSlotTiming {
-  const slotStart = toZonedTime(slot.availabilityStartsAt, userTimeZone);
-  const slotEnd = toZonedTime(slot.availabilityEndsAt, userTimeZone);
+  // Convert Int minutes to concrete Date objects on the userDate
+  const startDateUtc = minuteUtcToDate(slot.startTimeUtc, userDate);
+  const endDateUtc = minuteUtcToDate(slot.endTimeUtc, userDate);
+
+  const slotStart = toZonedTime(startDateUtc, userTimeZone);
+  const slotEnd = toZonedTime(endDateUtc, userTimeZone);
   const adjustedStart = setToUserDate(slotStart, userDate);
   const adjustedEnd = setToUserDate(slotEnd, userDate);
 
-  if (slot.dayOfWeekForStartsAt !== slot.dayOfWeekForEndsAt) {
+  if (slot.startDay !== slot.endDay) {
     adjustedEnd.setDate(adjustedEnd.getDate() + 1);
   }
 
@@ -265,7 +266,7 @@ function mapWeeklySlotToTiming(
       userTimeZone,
       "yyyy-MM-dd'T'HH:mm:ssXXX",
     ),
-    dayOfWeek: slot.dayOfWeekForStartsAt,
+    dayOfWeek: slot.startDay,
     slotStartTimeInUTC: formatInTimeZone(
       fromZonedTime(adjustedStart, userTimeZone),
       "UTC",
@@ -287,13 +288,13 @@ function mapWeeklySlotToTiming(
 function mapCustomSlotToTiming(
   slot: {
     id: string;
-    availabilityStartsAt: Date;
-    availabilityEndsAt: Date;
+    startsAt: Date;
+    endsAt: Date;
   },
   userTimeZone: string,
 ): TSlotTiming {
-  const slotStart = toZonedTime(slot.availabilityStartsAt, userTimeZone);
-  const slotEnd = toZonedTime(slot.availabilityEndsAt, userTimeZone);
+  const slotStart = toZonedTime(slot.startsAt, userTimeZone);
+  const slotEnd = toZonedTime(slot.endsAt, userTimeZone);
 
   // Get the day of week for the slot's start time
   const dayOfWeek = getDayOfWeek(slotStart);
@@ -307,12 +308,12 @@ function mapCustomSlotToTiming(
     ),
     dayOfWeek,
     slotStartTimeInUTC: formatInTimeZone(
-      slot.availabilityStartsAt,
+      slot.startsAt,
       "UTC",
       "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
     ),
     slotEndTimeInUTC: formatInTimeZone(
-      slot.availabilityEndsAt,
+      slot.endsAt,
       "UTC",
       "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
     ),

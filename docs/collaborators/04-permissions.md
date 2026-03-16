@@ -12,12 +12,12 @@ The permission system controls what collaborators can do on plans they're invite
 
 ```typescript
 type Permission =
-  | "edit"        // Edit plan details (title, description, etc.)
-  | "publish"     // Publish/unpublish the plan
-  | "invite"      // Invite other collaborators
-  | "analytics"   // View analytics and stats
-  | "manage"      // Manage participants and waitlists
-  | "schedule"    // Create events and set timings (HOST-ONLY, never granted to collaborators)
+  | "edit" // Edit plan details (title, description, etc.)
+  | "publish" // Publish/unpublish the plan
+  | "invite" // Invite other collaborators
+  | "analytics" // View analytics and stats
+  | "manage" // Manage participants and waitlists
+  | "schedule"; // Create events and set timings (HOST-ONLY, never granted to collaborators)
 ```
 
 ---
@@ -27,24 +27,24 @@ type Permission =
 ### Webinar Roles
 
 | Permission | CO_HOST | MODERATOR | GUEST_SPEAKER | TECHNICAL_SUPPORT |
-|------------|---------|-----------|---------------|-------------------|
-| edit | Yes | No | No | No |
-| publish | Yes | No | No | No |
-| invite | Yes | No | No | No |
-| analytics | Yes | Yes | No | No |
-| manage | Yes | Yes | No | No |
-| schedule | **No** | **No** | **No** | **No** |
+| ---------- | ------- | --------- | ------------- | ----------------- |
+| edit       | Yes     | No        | No            | No                |
+| publish    | Yes     | No        | No            | No                |
+| invite     | Yes     | No        | No            | No                |
+| analytics  | Yes     | Yes       | No            | No                |
+| manage     | Yes     | Yes       | No            | No                |
+| schedule   | **No**  | **No**    | **No**        | **No**            |
 
 ### Class Roles
 
 | Permission | CO_INSTRUCTOR | TEACHING_ASSISTANT | GUEST_LECTURER | CONTENT_CREATOR |
-|------------|---------------|-------------------|----------------|-----------------|
-| edit | Yes | No | No | Yes |
-| publish | Yes | No | No | No |
-| invite | Yes | No | No | No |
-| analytics | Yes | Yes | No | No |
-| manage | Yes | Yes | No | No |
-| schedule | **No** | **No** | **No** | **No** |
+| ---------- | ------------- | ------------------ | -------------- | --------------- |
+| edit       | Yes           | No                 | No             | Yes             |
+| publish    | Yes           | No                 | No             | No              |
+| invite     | Yes           | No                 | No             | No              |
+| analytics  | Yes           | Yes                | No             | No              |
+| manage     | Yes           | Yes                | No             | No              |
+| schedule   | **No**        | **No**             | **No**         | **No**          |
 
 **Scheduling is always host-only.** No collaborator role grants scheduling permission. Only the plan owner can create events, set times, and manage slots.
 
@@ -117,6 +117,7 @@ A host invites someone as GUEST_SPEAKER (which by default has no permissions), b
 ```
 
 When `permissions` JSON exists:
+
 - Only the permissions listed as `true` are granted
 - Missing keys are treated as `false`
 - Role defaults are ignored entirely
@@ -141,13 +142,13 @@ export async function PUT(request, { params }) {
   const canEdit = await checkWebinarPermission(
     profile.id,
     webinarPlanId,
-    "edit"
+    "edit",
   );
 
   if (!canEdit) {
     return NextResponse.json(
       { error: "You don't have permission to edit this plan" },
-      { status: 403 }
+      { status: 403 },
     );
   }
 

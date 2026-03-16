@@ -8,6 +8,7 @@ import {
 } from "@prisma/client";
 import { startOfWeek } from "date-fns";
 import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
+import { minuteUtcToDate } from "@/utils/slotAllocation/slotTimeUtils";
 
 // Core types for the unified calendar system
 export interface TimeSlot {
@@ -128,27 +129,13 @@ export function mapWeeklySlots(
   while (iterDate <= endDate) {
     const dayOfWeek = iterDate.getDay();
     const matchingSlots = consultantData.slotsOfAvailabilityWeekly.filter(
-      (slot) => DAY_INDEX[slot.dayOfWeekForStartsAt] === dayOfWeek,
+      (slot) => DAY_INDEX[slot.startDay] === dayOfWeek,
     );
 
     matchingSlots.forEach((slot) => {
-      const startTime = new Date(slot.availabilityStartsAt);
-      const endTime = new Date(slot.availabilityEndsAt);
-
-      // FIXED: Create new date objects to avoid mutations
-      const slotStartTime = new Date(iterDate);
-      // FIX: Use UTC methods to match server-side SlotValidationService which
-      // uses getUTCHours(). Previously used local-time .setHours() which caused
-      // timezone-dependent mismatches between calendar display and server validation.
-      slotStartTime.setUTCHours(
-        startTime.getUTCHours(),
-        startTime.getUTCMinutes(),
-        0,
-        0,
-      );
-
-      const slotEndTime = new Date(iterDate);
-      slotEndTime.setUTCHours(endTime.getUTCHours(), endTime.getUTCMinutes(), 0, 0);
+      // startTimeUtc/endTimeUtc are Int (minutes since midnight UTC, 0-1439)
+      const slotStartTime = minuteUtcToDate(slot.startTimeUtc, iterDate);
+      const slotEndTime = minuteUtcToDate(slot.endTimeUtc, iterDate);
 
       // Handle slots that cross midnight
       if (slotEndTime <= slotStartTime) {
@@ -200,8 +187,8 @@ export function mapCustomSlots(
   const slots: TimeSlot[] = [];
 
   consultantData.slotsOfAvailabilityCustom.forEach((slot) => {
-    const startTime = new Date(slot.availabilityStartsAt);
-    const endTime = new Date(slot.availabilityEndsAt);
+    const startTime = new Date(slot.startsAt);
+    const endTime = new Date(slot.endsAt);
 
     // Create intervals with configurable duration for the custom slot
     let currentInterval = new Date(startTime);
@@ -352,6 +339,7 @@ export function calculateRequiredSlots(
   durationInHours?: number,
   startDate?: Date,
   endDate?: Date,
+  totalSessions?: number,
 ): number {
   return SlotCalculationService.calculateRequiredSlots(eventType, {
     durationInMonths,
@@ -360,6 +348,7 @@ export function calculateRequiredSlots(
     sessionDurationInHours: durationInHours,
     schedulingPeriodStartsAt: startDate,
     schedulingPeriodEndsAt: endDate,
+    totalSessions,
   });
 }
 
@@ -367,13 +356,17 @@ export function calculateRequiredSlots(
  * Count the number of distinct Sunday-start weeks overlapping [start, end].
  * Delegates to SlotCalculationService.countWeeks as the single source of truth.
  */
-export const countSundayWeeksInclusive = SlotCalculationService.countWeeks.bind(SlotCalculationService);
+export const countSundayWeeksInclusive = SlotCalculationService.countWeeks.bind(
+  SlotCalculationService,
+);
 
 /**
  * Get the Sunday at 00:00:00 of the week that contains the given date.
  * Delegates to SlotCalculationService.startOfWeekSunday as the single source of truth.
  */
-export const startOfWeekSunday = SlotCalculationService.startOfWeekSunday.bind(SlotCalculationService);
+export const startOfWeekSunday = SlotCalculationService.startOfWeekSunday.bind(
+  SlotCalculationService,
+);
 
 /**
  * Validates selected slots for a specific event type
@@ -557,6 +550,8 @@ export function getAppointmentTitle(appointment: Appointment): string {
       return appointment.webinar?.webinarPlan?.title || "Webinar";
     case AppointmentsType.CLASS:
       return appointment.class?.classPlan?.title || "Class";
+    case AppointmentsType.TRIAL:
+      return "Trial Session";
     default:
       return "Unknown Appointment";
   }

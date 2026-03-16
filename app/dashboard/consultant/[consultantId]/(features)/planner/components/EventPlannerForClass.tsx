@@ -59,6 +59,7 @@ import { PlannerService } from "../services/planner";
 import { ClassEvent, ClassPlannerProps } from "../types/event";
 import { PlanMaterialsUpload } from "./PlanMaterialsUpload";
 import { CollaboratorsTab } from "@/components/collaborators/CollaboratorsTab";
+import { PlanImageUploader } from "@/components/plans/PlanImageUploader";
 
 export function EventPlannerForClass({
   isOpen,
@@ -287,8 +288,7 @@ export function EventPlannerForClass({
           prerequisites: formData.prerequisites ?? null,
           materialProvided: formData.materialProvided ?? null,
           learningOutcomes: formData.learningOutcomes,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          topics: formData.topics as any,
+          topics: formData.topics,
           consultantProfileId: consultantId,
           consultantProfile: null,
           certificateProvided: formData.certificateProvided ?? false,
@@ -316,6 +316,7 @@ export function EventPlannerForClass({
               contentUrl: content.contentUrl || null,
             }),
           ),
+          imageUrl: initialData?.classPlan?.imageUrl ?? null,
           createdAt: initialData?.classPlan?.createdAt ?? now,
           updatedAt: now,
         },
@@ -930,6 +931,21 @@ export function EventPlannerForClass({
                   )}
                 />
               </FormSection>
+
+              {/* Cover Image Section - Only show when editing an existing plan */}
+              {initialData?.classPlan?.id && (
+                <FormSection
+                  title="Cover Image"
+                  description="Upload a cover image for your class"
+                  icon={Upload}
+                >
+                  <PlanImageUploader
+                    planType="class-plans"
+                    planId={initialData.classPlan.id}
+                    currentImageUrl={initialData.classPlan.imageUrl}
+                  />
+                </FormSection>
+              )}
 
               {/* Materials Section - Only show when editing an existing plan */}
               {initialData?.id && (

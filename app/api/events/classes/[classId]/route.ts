@@ -1,13 +1,27 @@
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import {
+  requireApiAuth,
+  isPrivileged,
+  forbiddenResponse,
+  authorizeEventAccess,
+} from "@/lib/auth-helpers";
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ classId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { classId } = await params;
+
+    const authz = await authorizeEventAccess(session, "class", classId);
+    if (authz) return authz;
+
     const classData = await prisma.class.findUniqueOrThrow({
       where: { id: classId },
       include: {
@@ -58,12 +72,27 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ classId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { classId } = await params;
     const body = await request.json();
 
+    // Only the owning consultant or ADMIN/STAFF can update a class instance
     const classData = await prisma.class.update({
-      where: { id: classId },
+      where: {
+        id: classId,
+        ...(isPrivileged(session.user.role)
+          ? {}
+          : {
+              classPlan: {
+                consultantProfileId:
+                  session.user.consultantProfileId ?? "__none__",
+              },
+            }),
+      },
       data: {
         schedulingPeriodStartsAt: body.schedulingPeriodStartsAt,
         schedulingPeriodEndsAt: body.schedulingPeriodEndsAt,
@@ -101,6 +130,12 @@ export async function PUT(
 
     return NextResponse.json({ data: classData }, { status: 200 });
   } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2025"
+    ) {
+      return NextResponse.json({ error: "Class not found" }, { status: 404 });
+    }
     console.error(error);
     return NextResponse.json(
       { error: "Internal Server Error" },
@@ -113,11 +148,26 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ classId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { classId } = await params;
 
+    // Only the owning consultant or ADMIN/STAFF can delete a class instance
     const classData = await prisma.class.delete({
-      where: { id: classId },
+      where: {
+        id: classId,
+        ...(isPrivileged(session.user.role)
+          ? {}
+          : {
+              classPlan: {
+                consultantProfileId:
+                  session.user.consultantProfileId ?? "__none__",
+              },
+            }),
+      },
       include: {
         classPlan: {
           include: {
@@ -148,6 +198,12 @@ export async function DELETE(
 
     return NextResponse.json({ data: classData }, { status: 200 });
   } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2025"
+    ) {
+      return NextResponse.json({ error: "Class not found" }, { status: 404 });
+    }
     console.error(error);
     return NextResponse.json(
       { error: "Internal Server Error" },

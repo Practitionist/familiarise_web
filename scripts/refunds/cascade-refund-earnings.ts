@@ -100,7 +100,10 @@ export async function cascadeRefundToEarnings(): Promise<RefundEarningCascadeRes
         const errorMessage =
           error instanceof Error ? error.message : String(error);
         errors.push(`Earnings ${earnings.id}: ${errorMessage}`);
-        console.error(`❌ Error updating earnings ${earnings.id}:`, errorMessage);
+        console.error(
+          `❌ Error updating earnings ${earnings.id}:`,
+          errorMessage,
+        );
         errorCount++;
       }
     }

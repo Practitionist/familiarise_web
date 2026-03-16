@@ -2,20 +2,20 @@
 
 ## Event Type Comparison
 
-| Aspect                   | Consultation              | Subscription                                             | Webinar                   | Class                                                       | Trial                                   |
-| ------------------------ | ------------------------- | -------------------------------------------------------- | ------------------------- | ----------------------------------------------------------- | ---------------------------------------- |
-| **Relationship**         | 1:1                       | 1:1                                                      | 1:many                    | 1:many                                                      | 1:1                                      |
-| **Frequency**            | One-time                  | Recurring                                                | One-time                  | Recurring                                                   | One-time (free)                          |
-| **Duration field**       | `durationInHours` (total) | `sessionDurationInHours` (per call) + `durationInMonths` | `durationInHours` (total) | `sessionDurationInHours` (per session) + `durationInMonths` | Fixed 0.5h (1 slot)                      |
-| **Slot grouping**        | Consecutive + same day    | 1 call/day max, consecutive within day                   | Consecutive               | Max 2-3 sessions/day, consecutive within session            | Single slot                              |
-| **Scheduling period**    | None                      | Required [startDate, endDate]                            | None                      | Required [startDate, endDate]                               | None                                     |
-| **Appointments created** | 1                         | 1 per call (many)                                        | 1                         | 1 per session (many)                                        | 1                                        |
-| **Weekly limit**         | N/A                       | `callsPerWeek` (0-7)                                     | N/A                       | `meetingsPerWeek`                                           | N/A                                      |
-| **Status field**         | `requestStatus`           | `requestStatus`                                          | `status`                  | `status`                                                    | `status` (TrialSessionStatus)            |
-| **Allocation modes**     | auto, manual, requested   | auto, manual, requested                                  | auto, manual              | auto, manual                                                | Consultant-scheduled                     |
-| **Min duration**         | 0.5h                      | 0.5h per session                                         | 0.5h                      | 0.5h per session                                            | 0.5h (fixed)                             |
-| **Payment**              | Required                  | Required                                                 | Required                  | Required                                                    | Free                                     |
-| **Uniqueness**           | Multiple allowed          | Multiple allowed                                         | Multiple allowed          | Multiple allowed                                            | One per consultant per consultee         |
+| Aspect                   | Consultation              | Subscription                                             | Webinar                   | Class                                                       | Trial                            |
+| ------------------------ | ------------------------- | -------------------------------------------------------- | ------------------------- | ----------------------------------------------------------- | -------------------------------- |
+| **Relationship**         | 1:1                       | 1:1                                                      | 1:many                    | 1:many                                                      | 1:1                              |
+| **Frequency**            | One-time                  | Recurring                                                | One-time                  | Recurring                                                   | One-time (free)                  |
+| **Duration field**       | `durationInHours` (total) | `sessionDurationInHours` (per call) + `durationInMonths` | `durationInHours` (total) | `sessionDurationInHours` (per session) + `durationInMonths` | Fixed 0.5h (1 slot)              |
+| **Slot grouping**        | Consecutive + same day    | 1 call/day max, consecutive within day                   | Consecutive               | Max 2-3 sessions/day, consecutive within session            | Single slot                      |
+| **Scheduling period**    | None                      | Required [startDate, endDate]                            | None                      | Required [startDate, endDate]                               | None                             |
+| **Appointments created** | 1                         | 1 per call (many)                                        | 1                         | 1 per session (many)                                        | 1                                |
+| **Weekly limit**         | N/A                       | `callsPerWeek` (0-7)                                     | N/A                       | `meetingsPerWeek`                                           | N/A                              |
+| **Status field**         | `requestStatus`           | `requestStatus`                                          | `status`                  | `status`                                                    | `status` (TrialSessionStatus)    |
+| **Allocation modes**     | auto, manual, requested   | auto, manual, requested                                  | auto, manual              | auto, manual                                                | Consultant-scheduled             |
+| **Min duration**         | 0.5h                      | 0.5h per session                                         | 0.5h                      | 0.5h per session                                            | 0.5h (fixed)                     |
+| **Payment**              | Required                  | Required                                                 | Required                  | Required                                                    | Free                             |
+| **Uniqueness**           | Multiple allowed          | Multiple allowed                                         | Multiple allowed          | Multiple allowed                                            | One per consultant per consultee |
 
 ---
 
@@ -193,8 +193,8 @@ eventIdSchema = z
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
         id,
       ) || // UUID
-      /^c[a-z0-9]{24}$/i.test(id)
-    ); // CUID
+      /^[a-z][a-z0-9]{23,24}$/.test(id)
+    ); // CUID (v1: 25 chars, v2: 24 chars)
   });
 ```
 
@@ -233,8 +233,9 @@ This catches partial overlaps that exact-match would miss.
 
 **Schedule matching** (weekly availability):
 
-- Uses `dayOfWeekForStartsAt` enum as the source of truth for day-of-week
-- Compares time-of-day only (hours:minutes), not full DateTime
+- Uses `startDay`/`endDay` DayOfWeek enum as the source of truth for day-of-week
+- Compares `startTimeUtc`/`endTimeUtc` Int fields (minutes since midnight UTC, 0-1439)
+- Handles overnight (cross-midnight) slots where `endTimeUtc <= startTimeUtc`
 - Slot must start >= availability start AND end <= availability end
 
 ### Layer 3: Database Constraints
@@ -256,18 +257,16 @@ Consultants configure one of two schedule types:
 
 Recurring weekly patterns stored in `SlotOfAvailabilityWeekly`:
 
-- `dayOfWeekForStartsAt`: DayOfWeek enum (SUNDAY, MONDAY, ..., SATURDAY) -- **source of truth** for which day
-- `availabilityStartsAt`: DateTime with time-of-day (date portion may be a reference date)
-- `availabilityEndsAt`: DateTime with end time
-
-The `dayOfWeekForStartsAt` enum must be used instead of `getUTCDay()` on the DateTime, because the stored DateTime may use arbitrary reference dates (e.g., Jan 6-12, 2025 seed data or 1970 epoch from client).
+- `startDay`: DayOfWeek enum (SUNDAY, MONDAY, ..., SATURDAY) -- **source of truth** for which day
+- `startTimeUtc`: Int (minutes since midnight UTC, 0-1439)
+- `endTimeUtc`: Int (minutes since midnight UTC, 0-1439)
 
 ### Custom
 
 Specific date/time ranges stored in `SlotOfAvailabilityCustom`:
 
-- `availabilityStartsAt`: Exact DateTime
-- `availabilityEndsAt`: Exact DateTime
+- `startsAt`: Exact DateTime
+- `endsAt`: Exact DateTime
 - Validated using overlap detection: `proposedStart < availEnd AND availStart < proposedEnd`
 
 The `scheduleType` field on `ConsultantProfile` determines which availability set is used.

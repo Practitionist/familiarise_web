@@ -87,7 +87,8 @@ export async function createEarningsFromPayment({
   }
 
   // Calculate collaborator splits if applicable
-  let splits: { consultantProfileId: string; share: number; role: string }[] = [];
+  let splits: { consultantProfileId: string; share: number; role: string }[] =
+    [];
   if (planType && planId) {
     splits = await calculateRevenueSplit(planType, planId, totalConsultantPool);
   }
@@ -103,7 +104,9 @@ export async function createEarningsFromPayment({
           where: { paymentId: payment.id, consultantProfileId },
         });
         if (existingEarnings) {
-          console.warn(`Earnings already exist for payment ${payment.id}. Skipping.`);
+          console.warn(
+            `Earnings already exist for payment ${payment.id}. Skipping.`,
+          );
           return existingEarnings.id;
         }
 
@@ -155,7 +158,9 @@ export async function createEarningsFromPayment({
           where: { paymentId: payment.id, consultantProfileId },
         });
         if (existingEarnings) {
-          console.warn(`Earnings already exist for payment ${payment.id}. Skipping.`);
+          console.warn(
+            `Earnings already exist for payment ${payment.id}. Skipping.`,
+          );
           return existingEarnings.id;
         }
 

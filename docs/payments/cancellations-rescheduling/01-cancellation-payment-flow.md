@@ -38,18 +38,18 @@ When an appointment is cancelled, the payment system must handle potential refun
 
 The system tracks structured cancellation reasons for analytics:
 
-| Category | Reason | Code |
-|----------|--------|------|
-| User-initiated | Scheduling conflict | `SCHEDULE_CONFLICT` |
-| User-initiated | Found another option | `FOUND_ALTERNATIVE` |
-| User-initiated | Cannot afford it | `FINANCIAL_REASONS` |
-| User-initiated | Unexpected situation | `PERSONAL_EMERGENCY` |
-| User-initiated | No longer needed | `NO_LONGER_NEEDED` |
-| Consultant-initiated | Can't make it | `CONSULTANT_UNAVAILABLE` |
-| Consultant-initiated | Has an emergency | `CONSULTANT_EMERGENCY` |
-| System-initiated | Payment couldn't process | `PAYMENT_FAILED` |
-| System-initiated | Booking expired | `EXPIRED` |
-| Other | Catchall | `OTHER` |
+| Category             | Reason                   | Code                     |
+| -------------------- | ------------------------ | ------------------------ |
+| User-initiated       | Scheduling conflict      | `SCHEDULE_CONFLICT`      |
+| User-initiated       | Found another option     | `FOUND_ALTERNATIVE`      |
+| User-initiated       | Cannot afford it         | `FINANCIAL_REASONS`      |
+| User-initiated       | Unexpected situation     | `PERSONAL_EMERGENCY`     |
+| User-initiated       | No longer needed         | `NO_LONGER_NEEDED`       |
+| Consultant-initiated | Can't make it            | `CONSULTANT_UNAVAILABLE` |
+| Consultant-initiated | Has an emergency         | `CONSULTANT_EMERGENCY`   |
+| System-initiated     | Payment couldn't process | `PAYMENT_FAILED`         |
+| System-initiated     | Booking expired          | `EXPIRED`                |
+| Other                | Catchall                 | `OTHER`                  |
 
 **Code location:** `app/api/appointments/[appointmentId]/cancel/route.ts`
 
@@ -60,15 +60,18 @@ The system tracks structured cancellation reasons for analytics:
 When an admin decides to refund a cancelled appointment:
 
 **Phase 1: Create PENDING Refund (atomic transaction)**
+
 - Validates payment status is `SUCCEEDED`
 - Checks if consultant earnings have been `PAID` (blocks unless `forceRefund: true`)
 - Creates refund record with `PENDING` status
 
 **Phase 2: Call Payment Gateway (outside transaction)**
+
 - Routes to Stripe or Razorpay based on original payment gateway
 - Gateway processes the actual money reversal
 
 **Phase 3: Update Status**
+
 - Refund record updated to `SUCCEEDED` or `FAILED`
 
 **Code location:** `app/api/payments/refunds/route.ts`
@@ -91,15 +94,15 @@ When a refund succeeds, consultant earnings must be reversed. This happens **asy
 
 ### Earnings Refund Eligibility
 
-| Earnings Status | Can be Refunded? | Notes |
-|----------------|-----------------|-------|
-| `PENDING` | Yes | Still in hold period |
-| `HELD` | Yes | Under dispute |
-| `READY` | Yes | Available for payout but not yet sent |
-| `PAID` | No* | Already in consultant's bank |
-| `REFUNDED` | N/A | Already refunded (idempotent skip) |
+| Earnings Status | Can be Refunded? | Notes                                 |
+| --------------- | ---------------- | ------------------------------------- |
+| `PENDING`       | Yes              | Still in hold period                  |
+| `HELD`          | Yes              | Under dispute                         |
+| `READY`         | Yes              | Available for payout but not yet sent |
+| `PAID`          | No\*             | Already in consultant's bank          |
+| `REFUNDED`      | N/A              | Already refunded (idempotent skip)    |
 
-*Can be force-refunded with `forceRefund: true` — platform absorbs the loss.
+\*Can be force-refunded with `forceRefund: true` — platform absorbs the loss.
 
 **Code location:** `lib/payments/payouts/earnings-service.ts` → `refundEarnings()`
 

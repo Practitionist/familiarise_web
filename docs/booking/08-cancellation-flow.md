@@ -84,14 +84,14 @@ flowchart TD
 
 The current authorization model for cancellation is deliberately simple. Here is what is checked and what is not:
 
-| Check | Performed? | Details |
-|-------|-----------|---------|
-| Is the user authenticated? | Yes | `getSession()` must return a valid session |
-| Is the user the consultant? | No | Not checked |
-| Is the user the consultee? | No | Not checked |
-| Is the user an admin? | No | Not checked |
-| Is the appointment in a cancellable state? | No | Any status can be cancelled |
-| Has the event already started? | No | Not checked |
+| Check                                      | Performed? | Details                                    |
+| ------------------------------------------ | ---------- | ------------------------------------------ |
+| Is the user authenticated?                 | Yes        | `getSession()` must return a valid session |
+| Is the user the consultant?                | No         | Not checked                                |
+| Is the user the consultee?                 | No         | Not checked                                |
+| Is the user an admin?                      | No         | Not checked                                |
+| Is the appointment in a cancellable state? | No         | Any status can be cancelled                |
+| Has the event already started?             | No         | Not checked                                |
 
 **What this means in practice**: Any authenticated user who knows an appointment ID can cancel it. The system currently relies on the frontend to enforce role-based access (only showing cancel buttons to the relevant parties). The `cancelledBy` field in the audit trail records who performed the cancellation, which can be used for post-hoc accountability.
 
@@ -120,10 +120,10 @@ export const CancelAppointmentSchema = z.object({
 });
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `reason` | `CancellationReason` (enum) | No | Categorized reason for cancellation |
-| `notes` | `string` | No | Free-text notes explaining the cancellation |
+| Field    | Type                        | Required | Description                                 |
+| -------- | --------------------------- | -------- | ------------------------------------------- |
+| `reason` | `CancellationReason` (enum) | No       | Categorized reason for cancellation         |
+| `notes`  | `string`                    | No       | Free-text notes explaining the cancellation |
 
 ### CancellationReason Enum
 
@@ -131,18 +131,18 @@ The enum values are organized by who initiates the cancellation. This categoriza
 
 Defined in `schemas/enums.ts`:
 
-| Category | Value | Typical Use Case |
-|----------|-------|------------------|
-| User-initiated | `SCHEDULE_CONFLICT` | The consultee has a conflicting commitment |
-| User-initiated | `FOUND_ALTERNATIVE` | The consultee found another consultant |
-| User-initiated | `FINANCIAL_REASONS` | The consultee can no longer afford the session |
-| User-initiated | `PERSONAL_EMERGENCY` | Unforeseen personal circumstances |
-| User-initiated | `NO_LONGER_NEEDED` | The consultee's problem was resolved |
-| Consultant-initiated | `CONSULTANT_UNAVAILABLE` | The consultant cannot make the scheduled time |
-| Consultant-initiated | `CONSULTANT_EMERGENCY` | The consultant has an emergency |
-| System-initiated | `PAYMENT_FAILED` | An automated cancellation due to payment failure |
-| System-initiated | `EXPIRED` | An automated cancellation due to expiration |
-| Other | `OTHER` | None of the above; use `notes` for details |
+| Category             | Value                    | Typical Use Case                                 |
+| -------------------- | ------------------------ | ------------------------------------------------ |
+| User-initiated       | `SCHEDULE_CONFLICT`      | The consultee has a conflicting commitment       |
+| User-initiated       | `FOUND_ALTERNATIVE`      | The consultee found another consultant           |
+| User-initiated       | `FINANCIAL_REASONS`      | The consultee can no longer afford the session   |
+| User-initiated       | `PERSONAL_EMERGENCY`     | Unforeseen personal circumstances                |
+| User-initiated       | `NO_LONGER_NEEDED`       | The consultee's problem was resolved             |
+| Consultant-initiated | `CONSULTANT_UNAVAILABLE` | The consultant cannot make the scheduled time    |
+| Consultant-initiated | `CONSULTANT_EMERGENCY`   | The consultant has an emergency                  |
+| System-initiated     | `PAYMENT_FAILED`         | An automated cancellation due to payment failure |
+| System-initiated     | `EXPIRED`                | An automated cancellation due to expiration      |
+| Other                | `OTHER`                  | None of the above; use `notes` for details       |
 
 ### Body Parsing Logic
 
@@ -172,24 +172,24 @@ The key insight: **only a valid JSON body that fails Zod validation returns an e
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `success` | `boolean` | Always `true` on 200 |
-| `cancellationReason` | `string \| undefined` | The reason if one was provided |
-| `cancelledAt` | `string` (ISO 8601) | Timestamp of when the cancellation was processed |
-| `webinarId` | `string \| null` | The webinar ID if this was a webinar cancellation |
-| `classId` | `string \| null` | The class ID if this was a class cancellation |
+| Field                | Type                  | Description                                       |
+| -------------------- | --------------------- | ------------------------------------------------- |
+| `success`            | `boolean`             | Always `true` on 200                              |
+| `cancellationReason` | `string \| undefined` | The reason if one was provided                    |
+| `cancelledAt`        | `string` (ISO 8601)   | Timestamp of when the cancellation was processed  |
+| `webinarId`          | `string \| null`      | The webinar ID if this was a webinar cancellation |
+| `classId`            | `string \| null`      | The class ID if this was a class cancellation     |
 
 The `webinarId` and `classId` fields are populated only for webinar and class cancellations. They are used internally by the waitlist cascade logic, but they are also included in the client response so the frontend can trigger any UI updates related to the specific event.
 
 ### Error Responses
 
-| Status | Cause | Response Body | When It Happens |
-|--------|-------|---------------|-----------------|
-| 401 | No session / expired session | `{ "error": "Unauthorized" }` | `getSession()` returns null or no user |
-| 400 | Zod validation fails on a valid JSON body | `{ "error": "Validation failed", "details": [<ZodIssue[]>] }` | Body is valid JSON but fails schema validation |
-| 404 | Appointment not found in database | `{ "error": "Appointment not found" }` | ID does not match any appointment, or already deleted |
-| 500 | Transaction failure or unexpected error | `{ "error": "Failed to cancel appointment" }` | Database error, connection timeout, or other |
+| Status | Cause                                     | Response Body                                                 | When It Happens                                       |
+| ------ | ----------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------- |
+| 401    | No session / expired session              | `{ "error": "Unauthorized" }`                                 | `getSession()` returns null or no user                |
+| 400    | Zod validation fails on a valid JSON body | `{ "error": "Validation failed", "details": [<ZodIssue[]>] }` | Body is valid JSON but fails schema validation        |
+| 404    | Appointment not found in database         | `{ "error": "Appointment not found" }`                        | ID does not match any appointment, or already deleted |
+| 500    | Transaction failure or unexpected error   | `{ "error": "Failed to cancel appointment" }`                 | Database error, connection timeout, or other          |
 
 ---
 
@@ -425,15 +425,15 @@ This query joins across 7 tables. It returns the full appointment tree.
 
 Before the appointment is deleted, we extract everything needed for notifications:
 
-| Variable | Extracted Value | Source Path |
-|----------|----------------|-------------|
-| `consultantUserId` | `"user_bob"` | `appointment.consultation.consultationPlan.consultantProfile.user.id` |
-| `consulteeUserId` | `"user_alice"` | `appointment.consultation.requestedBy.user.id` |
-| `consultantName` | `"Bob Smith"` | `appointment.consultation.consultationPlan.consultantProfile.user.name` |
-| `consulteeName` | `"Alice Johnson"` | `appointment.consultation.requestedBy.user.name` |
-| `planTitle` | `"Career Strategy Session"` | `appointment.consultation.consultationPlan.title` |
-| `appointmentType` | `"CONSULTATION"` | `appointment.appointmentType` |
-| `dateTime` | `"2025-06-17T10:00:00.000Z"` | `appointment.slotsOfAppointment[0].startsAt` |
+| Variable           | Extracted Value              | Source Path                                                             |
+| ------------------ | ---------------------------- | ----------------------------------------------------------------------- |
+| `consultantUserId` | `"user_bob"`                 | `appointment.consultation.consultationPlan.consultantProfile.user.id`   |
+| `consulteeUserId`  | `"user_alice"`               | `appointment.consultation.requestedBy.user.id`                          |
+| `consultantName`   | `"Bob Smith"`                | `appointment.consultation.consultationPlan.consultantProfile.user.name` |
+| `consulteeName`    | `"Alice Johnson"`            | `appointment.consultation.requestedBy.user.name`                        |
+| `planTitle`        | `"Career Strategy Session"`  | `appointment.consultation.consultationPlan.title`                       |
+| `appointmentType`  | `"CONSULTATION"`             | `appointment.appointmentType`                                           |
+| `dateTime`         | `"2025-06-17T10:00:00.000Z"` | `appointment.slotsOfAppointment[0].startsAt`                            |
 
 **Why this matters**: After Step 5, the appointment record and its slots no longer exist. If we tried to read these values after the transaction, we would get `null` for everything.
 
@@ -442,10 +442,10 @@ Before the appointment is deleted, we extract everything needed for notification
 ```typescript
 const cancellationData = {
   requestStatus: "CANCELLED",
-  cancellationReason: "SCHEDULE_CONFLICT",  // from validatedData
-  cancellationNotes: "Have a work meeting that day",  // from validatedData
-  cancelledAt: new Date(),  // 2025-06-15T10:30:00.000Z
-  cancelledBy: "user_alice",  // from session
+  cancellationReason: "SCHEDULE_CONFLICT", // from validatedData
+  cancellationNotes: "Have a work meeting that day", // from validatedData
+  cancelledAt: new Date(), // 2025-06-15T10:30:00.000Z
+  cancelledBy: "user_alice", // from session
 };
 ```
 
@@ -487,7 +487,7 @@ After the transaction commits, the notification fires using the data extracted i
 
 ```typescript
 void notifyAppointmentCancelled(
-  ["user_bob", "user_alice"],  // Both parties receive notification
+  ["user_bob", "user_alice"], // Both parties receive notification
   {
     appointmentType: "CONSULTATION",
     consultantName: "Bob Smith",
@@ -496,8 +496,8 @@ void notifyAppointmentCancelled(
     dateTime: "2025-06-17T10:00:00.000Z",
     dashboardUrl: "/dashboard",
     reason: "SCHEDULE_CONFLICT",
-    cancelledBy: "consultee",  // Because user_alice !== user_bob (consultant)
-  }
+    cancelledBy: "consultee", // Because user_alice !== user_bob (consultant)
+  },
 );
 ```
 
@@ -558,10 +558,12 @@ erDiagram
 ```
 
 Notice what is gone:
+
 - The `Appointment` record -- **deleted**
 - The `SlotOfAppointment` record -- **deleted**
 
 Notice what remains:
+
 - The `Consultation` record -- **preserved** with `CANCELLED` status and full audit trail
 - The `ConsultationPlan`, profiles, and users -- **untouched**
 - Any `Payment` records -- **completely untouched** (refund is a separate process)
@@ -612,17 +614,17 @@ flowchart TD
 
 ### Comparison Table: All Four Event Types
 
-| Aspect | Consultation | Subscription | Webinar | Class |
-|--------|-------------|--------------|---------|-------|
-| **Model updated** | `Consultation` | `Subscription` | `Webinar` | `Class` |
-| **Status field** | `requestStatus` | `requestStatus` | `status` | `status` |
-| **Audit fields stored** | Yes (5 fields) | Yes (5 fields) | No | No |
-| **Cancellation reason on model** | Yes | Yes | No | No |
-| **Cancelled-by tracking** | Yes | Yes | No | No |
-| **Waitlist cascade** | No | No | Yes | Yes |
-| **Notification sent** | Yes | Yes | Yes | Yes |
-| **Slots deleted** | Yes | Yes | Yes | Yes |
-| **Appointment deleted** | Yes | Yes | Yes | Yes |
+| Aspect                           | Consultation    | Subscription    | Webinar   | Class    |
+| -------------------------------- | --------------- | --------------- | --------- | -------- |
+| **Model updated**                | `Consultation`  | `Subscription`  | `Webinar` | `Class`  |
+| **Status field**                 | `requestStatus` | `requestStatus` | `status`  | `status` |
+| **Audit fields stored**          | Yes (5 fields)  | Yes (5 fields)  | No        | No       |
+| **Cancellation reason on model** | Yes             | Yes             | No        | No       |
+| **Cancelled-by tracking**        | Yes             | Yes             | No        | No       |
+| **Waitlist cascade**             | No              | No              | Yes       | Yes      |
+| **Notification sent**            | Yes             | Yes             | Yes       | Yes      |
+| **Slots deleted**                | Yes             | Yes             | Yes       | Yes      |
+| **Appointment deleted**          | Yes             | Yes             | Yes       | Yes      |
 
 ### Consultation Cancellation (Detailed)
 
@@ -635,10 +637,10 @@ await tx.consultation.update({
   where: { id: appointment.consultation.id },
   data: {
     requestStatus: "CANCELLED",
-    cancellationReason: validatedData.reason || null,   // e.g. "SCHEDULE_CONFLICT"
-    cancellationNotes: validatedData.notes || null,      // e.g. "Have a work meeting"
-    cancelledAt: new Date(),                             // Precise timestamp
-    cancelledBy: session.user.id,                        // Who initiated
+    cancellationReason: validatedData.reason || null, // e.g. "SCHEDULE_CONFLICT"
+    cancellationNotes: validatedData.notes || null, // e.g. "Have a work meeting"
+    cancelledAt: new Date(), // Precise timestamp
+    cancelledBy: session.user.id, // Who initiated
   },
 });
 ```
@@ -760,17 +762,17 @@ flowchart TD
 
 ### Record-by-Record Breakdown
 
-| Record | Before | After | Why |
-|--------|--------|-------|-----|
-| `Appointment` | Exists with type and foreign keys | **Deleted** | The appointment no longer represents a scheduled event |
-| `SlotOfAppointment` (all) | Exist with start/end times | **Deleted** | Time slots are meaningless without the appointment |
-| `Consultation` (if applicable) | `requestStatus = "APPROVED"` | `requestStatus = "CANCELLED"` + audit fields | Preserved for refund decisions and analytics |
-| `Subscription` (if applicable) | `requestStatus = "APPROVED"` | `requestStatus = "CANCELLED"` + audit fields | Same reasoning as consultation |
-| `Webinar` (if applicable) | `status = "PUBLISHED"` | `status = "CANCELLED"` | Preserved but with minimal state change |
-| `Class` (if applicable) | `status = "PUBLISHED"` | `status = "CANCELLED"` | Same reasoning as webinar |
-| `Payment` / `PaymentOrder` | Various statuses | **Untouched** | Refund is a deliberate admin action, not automatic |
-| `Earning` / `PayoutItem` | May exist if payment was captured | **Untouched** | Earnings reversal is handled by the refund flow |
-| `Waitlist` entries | `WAITING` for others | Top entry moves to `NOTIFIED` | Only for webinar/class; the freed spot is offered to the next person |
+| Record                         | Before                            | After                                        | Why                                                                  |
+| ------------------------------ | --------------------------------- | -------------------------------------------- | -------------------------------------------------------------------- |
+| `Appointment`                  | Exists with type and foreign keys | **Deleted**                                  | The appointment no longer represents a scheduled event               |
+| `SlotOfAppointment` (all)      | Exist with start/end times        | **Deleted**                                  | Time slots are meaningless without the appointment                   |
+| `Consultation` (if applicable) | `requestStatus = "APPROVED"`      | `requestStatus = "CANCELLED"` + audit fields | Preserved for refund decisions and analytics                         |
+| `Subscription` (if applicable) | `requestStatus = "APPROVED"`      | `requestStatus = "CANCELLED"` + audit fields | Same reasoning as consultation                                       |
+| `Webinar` (if applicable)      | `status = "PUBLISHED"`            | `status = "CANCELLED"`                       | Preserved but with minimal state change                              |
+| `Class` (if applicable)        | `status = "PUBLISHED"`            | `status = "CANCELLED"`                       | Same reasoning as webinar                                            |
+| `Payment` / `PaymentOrder`     | Various statuses                  | **Untouched**                                | Refund is a deliberate admin action, not automatic                   |
+| `Earning` / `PayoutItem`       | May exist if payment was captured | **Untouched**                                | Earnings reversal is handled by the refund flow                      |
+| `Waitlist` entries             | `WAITING` for others              | Top entry moves to `NOTIFIED`                | Only for webinar/class; the freed spot is offered to the next person |
 
 ### Why the Event Record is Preserved
 
@@ -793,17 +795,19 @@ The appointment record, on the other hand, is deleted because it represents a "s
 
 ```typescript
 const result = await prisma.$transaction(
-  async (tx) => { /* ... */ },
+  async (tx) => {
+    /* ... */
+  },
   {
-    maxWait: 10000,  // 10 seconds: max time waiting for a DB connection from the pool
-    timeout: 30000,  // 30 seconds: max duration of the transaction itself
-  }
+    maxWait: 10000, // 10 seconds: max time waiting for a DB connection from the pool
+    timeout: 30000, // 30 seconds: max duration of the transaction itself
+  },
 );
 ```
 
-| Parameter | Value | Default | Why It Is Changed |
-|-----------|-------|---------|-------------------|
-| `maxWait` | 10,000 ms | 2,000 ms | Under high load, the connection pool can be saturated. 10 seconds gives more time to acquire a connection before failing. |
+| Parameter | Value     | Default  | Why It Is Changed                                                                                                                       |
+| --------- | --------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `maxWait` | 10,000 ms | 2,000 ms | Under high load, the connection pool can be saturated. 10 seconds gives more time to acquire a connection before failing.               |
 | `timeout` | 30,000 ms | 5,000 ms | Although the transaction only runs fast indexed writes, the increased timeout provides safety margin under extreme database contention. |
 
 ### Operation Order Within the Transaction
@@ -834,6 +838,7 @@ sequenceDiagram
 ### Atomicity Guarantee
 
 If any of the three operations fails:
+
 - The event record reverts to its previous status
 - The slot records are restored
 - The appointment record is restored
@@ -882,16 +887,16 @@ For webinars and classes where consultant/consultee relationships are not direct
 
 **Notification payload**:
 
-| Field | Value | Source |
-|-------|-------|--------|
-| `appointmentType` | `"CONSULTATION"`, `"SUBSCRIPTION"`, `"WEBINAR"`, or `"CLASS"` | `appointment.appointmentType` |
-| `consultantName` | e.g., `"Bob Smith"` or `"Consultant"` (fallback) | Extracted in Phase 1, with fallback |
-| `consulteeName` | e.g., `"Alice Johnson"` or `"Consultee"` (fallback) | Extracted in Phase 1, with fallback |
-| `planTitle` | e.g., `"Career Strategy Session"` or `"N/A"` (fallback) | From consultation/subscription plan |
-| `dateTime` | ISO 8601 string or `undefined` | `slotsOfAppointment[0].startsAt` |
-| `dashboardUrl` | `"/dashboard"` | Hardcoded |
-| `reason` | e.g., `"SCHEDULE_CONFLICT"` or `undefined` | From validated body |
-| `cancelledBy` | `"consultant"` or `"consultee"` | Derived by comparing `session.user.id` to `consultantUserId` |
+| Field             | Value                                                         | Source                                                       |
+| ----------------- | ------------------------------------------------------------- | ------------------------------------------------------------ |
+| `appointmentType` | `"CONSULTATION"`, `"SUBSCRIPTION"`, `"WEBINAR"`, or `"CLASS"` | `appointment.appointmentType`                                |
+| `consultantName`  | e.g., `"Bob Smith"` or `"Consultant"` (fallback)              | Extracted in Phase 1, with fallback                          |
+| `consulteeName`   | e.g., `"Alice Johnson"` or `"Consultee"` (fallback)           | Extracted in Phase 1, with fallback                          |
+| `planTitle`       | e.g., `"Career Strategy Session"` or `"N/A"` (fallback)       | From consultation/subscription plan                          |
+| `dateTime`        | ISO 8601 string or `undefined`                                | `slotsOfAppointment[0].startsAt`                             |
+| `dashboardUrl`    | `"/dashboard"`                                                | Hardcoded                                                    |
+| `reason`          | e.g., `"SCHEDULE_CONFLICT"` or `undefined`                    | From validated body                                          |
+| `cancelledBy`     | `"consultant"` or `"consultee"`                               | Derived by comparing `session.user.id` to `consultantUserId` |
 
 **Why fire-and-forget**: The notification is a courtesy, not a critical operation. If Novu is down for 5 minutes, the cancellation should still succeed. The user can always check their dashboard. Making the notification blocking would mean a Novu outage causes cancellation failures, which would be unacceptable.
 
@@ -953,6 +958,7 @@ If the waitlist system fails (database error, email service down, etc.), the err
 **Refunds are NOT automatic.** This is a critical design decision that new developers must understand.
 
 When an appointment is cancelled:
+
 - Payment records (`Payment`, `PaymentOrder`) are **not modified**.
 - Earning records (`Earning`, `PayoutItem`) are **not modified**.
 - No refund is initiated.
@@ -1012,6 +1018,7 @@ flowchart TD
 **Common causes**: Expired session cookie, missing auth header, server-side session store is down.
 
 **Response**:
+
 ```json
 { "error": "Unauthorized" }
 ```
@@ -1025,6 +1032,7 @@ flowchart TD
 **Common causes**: Invalid enum value for `reason` (e.g., `"BORED"`), wrong field types.
 
 **Response**:
+
 ```json
 {
   "error": "Validation failed",
@@ -1047,6 +1055,7 @@ flowchart TD
 **Common causes**: The appointment ID is wrong, the appointment was already cancelled (and thus already deleted), or there is a typo in the URL.
 
 **Response**:
+
 ```json
 { "error": "Appointment not found" }
 ```
@@ -1060,6 +1069,7 @@ flowchart TD
 **Common causes**: Database connection timeout, deadlock with another concurrent operation, Prisma client error.
 
 **Response**:
+
 ```json
 { "error": "Failed to cancel appointment" }
 ```
@@ -1071,9 +1081,11 @@ flowchart TD
 **Notification failure**: If `notifyAppointmentCancelled` throws, the error is silently swallowed because of the `void` prefix. The function runs as an unhandled promise, but since it uses Novu's client (which has its own error handling), unhandled rejections are rare. The cancellation response has already been sent.
 
 **Waitlist failure**: If `handleSlotOpening` throws, the error is caught and logged:
+
 ```
 Failed to notify waitlist after cancellation: [error details]
 ```
+
 The cancellation response still returns 200. The waitlist spot remains unclaimed until an admin intervenes or the next cancellation triggers another cascade.
 
 ---
@@ -1084,19 +1096,19 @@ Developers frequently ask: "What is the difference between cancelling and resche
 
 ### Side-by-Side Comparison
 
-| Aspect | Cancellation | Reschedule |
-|--------|-------------|------------|
-| **Intent** | End the booking entirely | Move the booking to a different time |
-| **Appointment record** | Deleted | Preserved (slots are swapped) |
-| **Event record** | Status set to `CANCELLED` | Status unchanged (remains `APPROVED`) |
-| **Slot records** | Deleted | Old slots deleted, new slots created |
-| **Payment** | Untouched (refund is separate) | Untouched (no additional charge) |
-| **Refund triggered** | No (manual admin action) | No |
-| **Notifications** | "Your appointment was cancelled" | "Your appointment was rescheduled" |
-| **Waitlist cascade** | Yes (webinar/class) | No (slot count unchanged) |
-| **Audit fields written** | Yes (consultation/subscription) | Different fields (rescheduled timestamp) |
-| **Can happen after event start** | Not checked (no guard) | Typically blocked by validation |
-| **Reversible** | No (must rebook from scratch) | Yes (can reschedule again) |
+| Aspect                           | Cancellation                     | Reschedule                               |
+| -------------------------------- | -------------------------------- | ---------------------------------------- |
+| **Intent**                       | End the booking entirely         | Move the booking to a different time     |
+| **Appointment record**           | Deleted                          | Preserved (slots are swapped)            |
+| **Event record**                 | Status set to `CANCELLED`        | Status unchanged (remains `APPROVED`)    |
+| **Slot records**                 | Deleted                          | Old slots deleted, new slots created     |
+| **Payment**                      | Untouched (refund is separate)   | Untouched (no additional charge)         |
+| **Refund triggered**             | No (manual admin action)         | No                                       |
+| **Notifications**                | "Your appointment was cancelled" | "Your appointment was rescheduled"       |
+| **Waitlist cascade**             | Yes (webinar/class)              | No (slot count unchanged)                |
+| **Audit fields written**         | Yes (consultation/subscription)  | Different fields (rescheduled timestamp) |
+| **Can happen after event start** | Not checked (no guard)           | Typically blocked by validation          |
+| **Reversible**                   | No (must rebook from scratch)    | Yes (can reschedule again)               |
 
 ### Decision Guide: When to Cancel vs Reschedule
 
@@ -1242,6 +1254,7 @@ These structured logs can be queried in your logging infrastructure to track can
 ### Idempotency
 
 The cancellation endpoint is **not idempotent** in the strict HTTP sense. If you call it twice with the same appointment ID:
+
 - First call: 200 OK (appointment cancelled and deleted)
 - Second call: 404 Not Found (appointment no longer exists)
 
@@ -1250,6 +1263,7 @@ This is acceptable because cancellation is a destructive operation. The 404 on t
 ### Concurrency
 
 If two users simultaneously try to cancel the same appointment:
+
 - Both will pass the `findUnique` check (Phase 1)
 - Both will enter the transaction (Phase 2)
 - One transaction will succeed; the other will fail with a "Record not found" error because the first transaction already deleted the appointment

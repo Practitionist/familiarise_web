@@ -5,21 +5,21 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ArrowLeftIcon, ArrowRightIcon } from "@/assets/icons";
 import {
-  ConsultationWithPlan,
-  SubscriptionWithPlan,
-  WebinarWithPlan,
-  ClassWithPlan,
-  TrialWithPlan,
+  TConsultationWithPlan,
+  TSubscriptionWithPlan,
+  TWebinarWithPlan,
+  TClassWithPlan,
+  TTrialWithPlan,
 } from "@/hooks/useEvents";
 import { getStatusColor } from "../../utils/getMetadata";
 import { getActualSlots } from "../../utils/scheduleHelpers";
 
 interface CalendarProps {
-  consultations: ConsultationWithPlan[];
-  subscriptions: SubscriptionWithPlan[];
-  webinars: WebinarWithPlan[];
-  classes: ClassWithPlan[];
-  trials: TrialWithPlan[];
+  consultations: TConsultationWithPlan[];
+  subscriptions: TSubscriptionWithPlan[];
+  webinars: TWebinarWithPlan[];
+  classes: TClassWithPlan[];
+  trials: TTrialWithPlan[];
 }
 
 type Event = {

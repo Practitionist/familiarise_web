@@ -13,6 +13,7 @@ import {
   type DisputeDeadlineAlertResult,
 } from "../../scripts/disputes/alert-dispute-deadlines";
 import fs from "fs";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 /**
  * Output results to GitHub Actions
@@ -46,6 +47,7 @@ function outputToGitHubActions(result: DisputeDeadlineAlertResult): void {
  * Main entry point
  */
 async function main(): Promise<void> {
+  await abortIfMaintenance("alert-dispute-deadlines");
   console.log("🔔 Starting dispute deadline alert check...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 

@@ -783,6 +783,147 @@ You can find this key in: Dashboard > Settings > API > service_role key
 `.trim();
 };
 
+// Plan image upload types
+export type TPlanImageType = "webinar-plans" | "class-plans";
+
+export interface IPlanImageUploadOptions {
+  planType: TPlanImageType;
+  planId: string;
+  file: File;
+}
+
+const PLAN_IMAGE_MAX_SIZE = 5 * 1024 * 1024; // 5MB
+const ALLOWED_PLAN_IMAGE_TYPES = [
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+];
+
+/**
+ * Upload plan cover image to Supabase storage
+ * Structure: plan-images/{planType}/{planId}/cover.{ext}
+ */
+const uploadPlanImage = async (
+  options: IPlanImageUploadOptions,
+): Promise<CoverImageUploadResult> => {
+  try {
+    const { planType, planId, file } = options;
+
+    if (!file) {
+      return { success: false, error: "No file provided" };
+    }
+
+    if (file.size > PLAN_IMAGE_MAX_SIZE) {
+      return { success: false, error: "File size exceeds 5MB limit" };
+    }
+
+    if (!ALLOWED_PLAN_IMAGE_TYPES.includes(file.type)) {
+      return {
+        success: false,
+        error: "File type not supported. Please use JPEG, PNG, or WebP.",
+      };
+    }
+
+    const bucketReady = await ensureBucketExists("plan-images");
+    if (!bucketReady) {
+      return {
+        success: false,
+        error:
+          "Plan images storage bucket not found. Please create a 'plan-images' bucket in your Supabase dashboard.",
+      };
+    }
+
+    const fileExt = file.name.split(".").pop();
+    const folderPath = `${planType}/${planId}`;
+    const storagePath = `${folderPath}/cover.${fileExt}`;
+
+    // Delete any existing cover images for this plan first
+    try {
+      const { data: existingFiles } = await supabase.storage
+        .from("plan-images")
+        .list(folderPath);
+
+      if (existingFiles && existingFiles.length > 0) {
+        const filesToDelete = existingFiles.map(
+          (f) => `${folderPath}/${f.name}`,
+        );
+        await supabase.storage.from("plan-images").remove(filesToDelete);
+      }
+    } catch {
+      // Ignore errors when cleaning up old files
+    }
+
+    const { error: uploadError } = await supabase.storage
+      .from("plan-images")
+      .upload(storagePath, file, {
+        cacheControl: "3600",
+        upsert: true,
+      });
+
+    if (uploadError) {
+      console.error("Supabase plan image upload error:", uploadError);
+      return { success: false, error: uploadError.message };
+    }
+
+    const { data: urlData } = supabase.storage
+      .from("plan-images")
+      .getPublicUrl(storagePath);
+
+    return {
+      success: true,
+      fileUrl: urlData.publicUrl,
+      storagePath,
+    };
+  } catch (error) {
+    console.error("Error uploading plan image:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Upload failed",
+    };
+  }
+};
+
+/**
+ * Delete plan cover image from Supabase storage
+ */
+const deletePlanImage = async (
+  planType: TPlanImageType,
+  planId: string,
+): Promise<boolean> => {
+  try {
+    const folderPath = `${planType}/${planId}`;
+
+    const { data: files, error: listError } = await supabase.storage
+      .from("plan-images")
+      .list(folderPath);
+
+    if (listError) {
+      console.error("Error listing plan images:", listError);
+      return false;
+    }
+
+    if (!files || files.length === 0) {
+      return true; // No files to delete
+    }
+
+    const filesToDelete = files.map((f) => `${folderPath}/${f.name}`);
+    const { error: deleteError } = await supabase.storage
+      .from("plan-images")
+      .remove(filesToDelete);
+
+    if (deleteError) {
+      console.error("Error deleting plan images:", deleteError);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Error deleting plan image:", error);
+    return false;
+  }
+};
+
 // Cover image upload types
 export interface CoverImageUploadOptions {
   userId: string;
@@ -1121,6 +1262,154 @@ const deleteProfileDisplayImage = async (userId: string): Promise<boolean> => {
   }
 };
 
+// Allowed MIME types and max size for profile avatar images
+const ALLOWED_PROFILE_IMAGE_TYPES = [
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+];
+
+const PROFILE_IMAGE_MAX_SIZE = 2 * 1024 * 1024; // 2MB
+
+/**
+ * Upload profile avatar image to Supabase storage (general avatar for Navbar/session)
+ * Structure: profile-images/avatars/{userId}/{filename}
+ */
+const uploadProfileImage = async (options: {
+  userId: string;
+  file: File;
+}): Promise<{
+  success: boolean;
+  fileUrl?: string;
+  storagePath?: string;
+  error?: string;
+}> => {
+  try {
+    const { userId, file } = options;
+
+    if (!file) {
+      return { success: false, error: "No file provided" };
+    }
+
+    if (file.size > PROFILE_IMAGE_MAX_SIZE) {
+      return { success: false, error: "File size exceeds 2MB limit" };
+    }
+
+    if (!ALLOWED_PROFILE_IMAGE_TYPES.includes(file.type)) {
+      return {
+        success: false,
+        error: "File type not supported. Please use JPEG, PNG, or WebP.",
+      };
+    }
+
+    const bucketReady = await ensureBucketExists("profile-images");
+    if (!bucketReady) {
+      return {
+        success: false,
+        error:
+          "Profile images storage bucket not found. Please create a 'profile-images' bucket in your Supabase dashboard.",
+      };
+    }
+
+    const MIME_TO_EXT: Record<string, string> = {
+      "image/jpeg": "jpg",
+      "image/jpg": "jpg",
+      "image/png": "png",
+      "image/webp": "webp",
+    };
+
+    const timestamp = Date.now();
+    const fileExt = MIME_TO_EXT[file.type] || "jpg";
+    const fileName = `avatar_${timestamp}.${fileExt}`;
+    const folderPath = `avatars/${userId}`;
+    const storagePath = `${folderPath}/${fileName}`;
+
+    await ensureFolderExists("profile-images", folderPath);
+
+    // Delete any existing avatar images for this user first
+    try {
+      const { data: existingFiles } = await supabase.storage
+        .from("profile-images")
+        .list(folderPath);
+
+      if (existingFiles && existingFiles.length > 0) {
+        const filesToDelete = existingFiles.map(
+          (f) => `${folderPath}/${f.name}`,
+        );
+        await supabase.storage.from("profile-images").remove(filesToDelete);
+      }
+    } catch {
+      // Ignore errors when cleaning up old files
+    }
+
+    const { error: uploadError } = await supabase.storage
+      .from("profile-images")
+      .upload(storagePath, file, {
+        cacheControl: "3600",
+        upsert: true,
+      });
+
+    if (uploadError) {
+      console.error("Supabase upload error:", uploadError);
+      return { success: false, error: uploadError.message };
+    }
+
+    const { data: urlData } = supabase.storage
+      .from("profile-images")
+      .getPublicUrl(storagePath);
+
+    return {
+      success: true,
+      fileUrl: urlData.publicUrl,
+      storagePath,
+    };
+  } catch (error) {
+    console.error("Error uploading profile image:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Upload failed",
+    };
+  }
+};
+
+/**
+ * Delete profile avatar image from Supabase storage
+ */
+const deleteProfileImage = async (userId: string): Promise<boolean> => {
+  try {
+    const folderPath = `avatars/${userId}`;
+
+    const { data: files, error: listError } = await supabase.storage
+      .from("profile-images")
+      .list(folderPath);
+
+    if (listError) {
+      console.error("Error listing profile images:", listError);
+      return false;
+    }
+
+    if (!files || files.length === 0) {
+      return true;
+    }
+
+    const filesToDelete = files.map((f) => `${folderPath}/${f.name}`);
+    const { error: deleteError } = await supabase.storage
+      .from("profile-images")
+      .remove(filesToDelete);
+
+    if (deleteError) {
+      console.error("Error deleting profile images:", deleteError);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Error deleting profile image:", error);
+    return false;
+  }
+};
+
 /**
  * Generic upload to Supabase storage
  * Returns { url, error } - url is the public URL if successful
@@ -1209,6 +1498,11 @@ export {
   // Support ticket attachments
   uploadSupportTicketAttachment,
   deleteSupportTicketAttachment,
+  // Plan images
+  uploadPlanImage,
+  deletePlanImage,
+  ALLOWED_PLAN_IMAGE_TYPES,
+  PLAN_IMAGE_MAX_SIZE,
   // Cover image
   uploadCoverImage,
   deleteCoverImage,
@@ -1220,6 +1514,11 @@ export {
   deleteProfileDisplayImage,
   ALLOWED_PROFILE_DISPLAY_IMAGE_TYPES,
   PROFILE_DISPLAY_IMAGE_MAX_SIZE,
+  // Profile avatar image (general avatar for Navbar/session)
+  uploadProfileImage,
+  deleteProfileImage,
+  ALLOWED_PROFILE_IMAGE_TYPES,
+  PROFILE_IMAGE_MAX_SIZE,
   // Generic upload/delete
   uploadToSupabase,
   deleteFromSupabase,

@@ -1,15 +1,16 @@
 import AnnouncementBar from "@/components/AnnouncementBar";
+import MaintenanceBanner from "@/components/banners/MaintenanceBanner";
 import CookieConsentBanner from "@/components/CookieConsent";
 import Footer from "@/components/Footer";
 import HeaderSpacer from "@/components/HeaderSpacer";
 import Navbar from "@/components/Navbar";
 import { Toaster } from "@/components/ui/toaster";
 import { AnnouncementBarProvider } from "@/providers/AnnouncementBarProvider";
+import { MaintenanceProvider } from "@/providers/MaintenanceProvider";
 import ReactQueryProvider from "@/providers/ReactQueryProvider";
 import type { Metadata, Viewport } from "next";
 import { Sora } from "next/font/google";
 
-import "@stream-io/video-react-sdk/dist/css/styles.css";
 import "./globals.css";
 
 const sora = Sora({
@@ -50,15 +51,18 @@ export default async function RootLayout({
         suppressHydrationWarning
       >
         <ReactQueryProvider>
-          <AnnouncementBarProvider>
-            <Toaster />
-            <AnnouncementBar />
-            <Navbar />
-            <HeaderSpacer />
-            <div className="flex-1 w-full">{children}</div>
-            <Footer />
-          </AnnouncementBarProvider>
-          <CookieConsentBanner />
+          <MaintenanceProvider>
+            <AnnouncementBarProvider>
+              <Toaster />
+              <MaintenanceBanner />
+              <AnnouncementBar />
+              <Navbar />
+              <HeaderSpacer />
+              <div className="flex-1 w-full">{children}</div>
+              <Footer />
+            </AnnouncementBarProvider>
+            <CookieConsentBanner />
+          </MaintenanceProvider>
         </ReactQueryProvider>
       </body>
     </html>

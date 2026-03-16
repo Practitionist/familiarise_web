@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
+import { useMaintenanceGuard } from "@/hooks/useMaintenanceGuard";
 import { useToast } from "@/hooks/use-toast";
 import { fetchReviews } from "@/lib/user";
 import {
@@ -38,17 +39,16 @@ type SubscriptionResponse = {
 };
 import { loadStripe } from "@stripe/stripe-js";
 import { CreditCard as CreditCardIcon } from "lucide-react";
-import { use, useCallback, useEffect, useMemo, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import StripeCheckout from "../../../components/StripeCheckout";
 import {
   createHandleApiError,
-  paymentGateways,
   createStripeCheckoutHandlers,
   createRazorpayCheckoutHandlers,
 } from "../../utils";
 import { calculatePricing, formatPercentage } from "../../math";
-import { useCurrency } from "@/lib/hooks/useCurrency";
+import { useCurrency } from "@/hooks/useCurrency";
 
 type PageProps = {
   params: Promise<{ planId: string }>;
@@ -69,6 +69,7 @@ export default function SubscriptionCheckoutPage({
   const [error, setError] = useState<string | null>(null);
   const [reviews, setReviews] = useState<ConsultantReview[]>([]);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
+  const isProcessingRef = useRef(false);
   const [processingGateway, setProcessingGateway] = useState<string | null>(
     null,
   );
@@ -82,6 +83,10 @@ export default function SubscriptionCheckoutPage({
   const [isLoadingCredits, setIsLoadingCredits] = useState(true);
 
   const { toast } = useToast();
+  const {
+    isBlocked: isMaintenanceBlocked,
+    blockReason: maintenanceBlockReason,
+  } = useMaintenanceGuard();
 
   // Apply discount code
   const handleApplyDiscount = async (code?: string) => {
@@ -135,7 +140,9 @@ export default function SubscriptionCheckoutPage({
         const response = await fetch("/api/referrals/credits/available");
         if (response.ok) {
           const data = await response.json();
-          setAvailableCredits(Math.floor((data.data.totalAvailable || 0) / 100));
+          setAvailableCredits(
+            Math.floor((data.data.totalAvailable || 0) / 100),
+          );
         }
       } catch (error) {
         console.error("Error fetching referral credits:", error);
@@ -167,10 +174,22 @@ export default function SubscriptionCheckoutPage({
 
   const handleCheckout = useCallback(
     async (gateway: PaymentGateway, isMockPayment: boolean = false) => {
-      // Prevent double-clicks and multiple simultaneous requests
-      if (isCheckoutProcessing) {
+      // Block checkout during maintenance mode
+      if (isMaintenanceBlocked) {
+        toast({
+          title: "Checkout unavailable",
+          description:
+            maintenanceBlockReason ?? "Service temporarily unavailable",
+          variant: "destructive",
+        });
         return;
       }
+
+      // Prevent double-clicks: ref provides synchronous guard (React state is async)
+      if (isProcessingRef.current || isCheckoutProcessing) {
+        return;
+      }
+      isProcessingRef.current = true;
 
       try {
         // Set loading state
@@ -258,26 +277,33 @@ export default function SubscriptionCheckoutPage({
 
             // Small delay to let user see the toast before redirect
             setTimeout(async () => {
-              // Handle gateway-specific responses
-              switch (gateway) {
-                case "STRIPE":
-                  const stripe = await loadStripe(
-                    process.env.NEXT_PUBLIC_STRIPE_KEY!,
-                  );
-                  await stripe?.confirmPayment({
-                    clientSecret: data.clientSecret!,
-                    confirmParams: {
-                      return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
-                    },
-                  });
-                  break;
+              try {
+                // Handle gateway-specific responses
+                switch (gateway) {
+                  case "STRIPE":
+                    const stripe = await loadStripe(
+                      process.env.NEXT_PUBLIC_STRIPE_KEY!,
+                    );
+                    await stripe?.confirmPayment({
+                      clientSecret: data.clientSecret!,
+                      confirmParams: {
+                        return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
+                      },
+                    });
+                    break;
 
-                case "LEMON_SQUEEZY":
-                case "XFLOW":
-                  if (data.checkoutUrl) {
-                    window.location.href = data.checkoutUrl;
-                  }
-                  break;
+                  // TODO: Add Lemon Squeezy and XFlow cases when webhook handlers are implemented
+                }
+              } catch (paymentError) {
+                console.error("Payment confirmation error:", paymentError);
+                toast({
+                  title: "Payment Error",
+                  description:
+                    paymentError instanceof Error
+                      ? paymentError.message
+                      : "Payment confirmation failed. Please try again.",
+                  variant: "destructive",
+                });
               }
             }, 1000);
           }
@@ -294,12 +320,15 @@ export default function SubscriptionCheckoutPage({
           });
         }
       } finally {
+        isProcessingRef.current = false;
         setIsCheckoutProcessing(false);
         setProcessingGateway(null);
       }
     },
     [
       isCheckoutProcessing,
+      isMaintenanceBlocked,
+      maintenanceBlockReason,
       resolvedSearchParams,
       planData?.data?.id,
       toast,
@@ -367,7 +396,12 @@ export default function SubscriptionCheckoutPage({
       discountAmount,
       creditsApplied: useReferralCredits ? availableCredits : 0,
     });
-  }, [planData?.data?.price, appliedDiscount, useReferralCredits, availableCredits]);
+  }, [
+    planData?.data?.price,
+    appliedDiscount,
+    useReferralCredits,
+    availableCredits,
+  ]);
 
   if (isLoading) {
     return (
@@ -379,17 +413,34 @@ export default function SubscriptionCheckoutPage({
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-screen bg-zinc-50">
+      <div className="col-span-full flex items-center justify-center min-h-screen bg-zinc-50">
         <div
-          className="bg-zinc-900 border border-zinc-800 text-white p-6 max-w-lg mx-auto text-center rounded-xl shadow-xl"
+          className="bg-zinc-900 border border-zinc-800 text-white p-8 max-w-md w-full mx-4 text-center rounded-xl shadow-xl"
           role="alert"
         >
-          <p className="font-bold text-lg mb-2">Oops! Something went wrong</p>
-          <p className="text-zinc-400">{error}</p>
-          <p className="mt-3 text-zinc-500 text-sm">
-            Please check your selection and try again. If the problem persists,
-            contact support.
-          </p>
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-zinc-800">
+            <svg
+              className="h-6 w-6 text-zinc-400"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z"
+              />
+            </svg>
+          </div>
+          <p className="font-semibold text-lg mb-2">Unable to load checkout</p>
+          <p className="text-zinc-400 text-sm">{error}</p>
+          <button
+            onClick={() => window.history.back()}
+            className="mt-5 inline-flex items-center rounded-lg bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-100 transition-colors"
+          >
+            Go back
+          </button>
         </div>
       </div>
     );
@@ -583,7 +634,9 @@ export default function SubscriptionCheckoutPage({
         <div className="grid gap-4">
           <div className="font-semibold">Referral Credits</div>
           {isLoadingCredits ? (
-            <div className="text-sm text-muted-foreground">Loading credits...</div>
+            <div className="text-sm text-muted-foreground">
+              Loading credits...
+            </div>
           ) : availableCredits > 0 ? (
             <div className="flex items-center justify-between bg-blue-50 p-3 rounded-lg border border-blue-200">
               <div>
@@ -707,18 +760,7 @@ export default function SubscriptionCheckoutPage({
               gateway: "RAZORPAY" as const,
               isActive: true,
             },
-            {
-              name: "Lemon Squeezy",
-              description: "Global payments in USD (Coming Soon)",
-              gateway: "LEMON_SQUEEZY" as const,
-              isActive: false,
-            },
-            {
-              name: "Xflow",
-              description: "Secure payments in USD (Coming Soon)",
-              gateway: "XFLOW" as const,
-              isActive: false,
-            },
+            // TODO: Add Lemon Squeezy and XFlow when webhook appointment creation is implemented
           ].map((gateway) => (
             <Card key={gateway.gateway} className="border-zinc-200">
               <CardHeader>
@@ -751,6 +793,7 @@ export default function SubscriptionCheckoutPage({
                           })}
                           onPaymentSuccess={stripeHandlers.onPaymentSuccess}
                           onPaymentError={stripeHandlers.onPaymentError}
+                          disabled={isMaintenanceBlocked}
                         />
                       ) : gateway.gateway === "RAZORPAY" ? (
                         <RazorpayCheckout
@@ -763,13 +806,14 @@ export default function SubscriptionCheckoutPage({
                           })}
                           onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
                           onPaymentError={razorpayHandlers.onPaymentError}
+                          disabled={isMaintenanceBlocked}
                         />
                       ) : null}
                       {/* Mock Payment Button */}
                       <Button
                         variant="secondary"
                         onClick={() => handleCheckout(gateway.gateway, true)}
-                        disabled={isCheckoutProcessing}
+                        disabled={isCheckoutProcessing || isMaintenanceBlocked}
                       >
                         {isCheckoutProcessing &&
                         processingGateway === `${gateway.gateway}-mock` ? (

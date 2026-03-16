@@ -33,6 +33,7 @@ export interface StuckPayoutsResult {
   reconciledCount: number;
   retriedCount: number;
   failedCount: number;
+  skippedCount: number;
   errors: string[];
   timestamp: string;
 }
@@ -171,6 +172,7 @@ export async function handleStuckPayouts(): Promise<StuckPayoutsResult> {
   let reconciledCount = 0;
   let retriedCount = 0;
   let failedCount = 0;
+  let skippedCount = 0;
 
   const stuckThreshold = new Date(
     Date.now() - STUCK_THRESHOLD_HOURS * 60 * 60 * 1000,
@@ -190,6 +192,11 @@ export async function handleStuckPayouts(): Promise<StuckPayoutsResult> {
       },
     },
   });
+
+  const razorpayConfigured = !!(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET);
+  if (!razorpayConfigured) {
+    console.warn("⚠️ Razorpay credentials not configured — Razorpay records will be skipped");
+  }
 
   console.log(
     `Found ${stuckPayouts.length} payouts stuck in PROCESSING for >${STUCK_THRESHOLD_HOURS}h`,
@@ -249,6 +256,11 @@ export async function handleStuckPayouts(): Promise<StuckPayoutsResult> {
     if (payout.provider === PaymentGateway.STRIPE) {
       gatewayStatus = await getStripePayoutStatus(payout.providerPayoutId);
     } else if (payout.provider === PaymentGateway.RAZORPAY) {
+      if (!razorpayConfigured) {
+        console.log(`   Skipping - Razorpay credentials not configured`);
+        skippedCount++;
+        continue;
+      }
       gatewayStatus = await getRazorpayPayoutStatus(payout.providerPayoutId);
     }
 
@@ -313,6 +325,7 @@ export async function handleStuckPayouts(): Promise<StuckPayoutsResult> {
   console.log(`   Reconciled: ${reconciledCount}`);
   console.log(`   Reset for retry: ${retriedCount}`);
   console.log(`   Permanently failed: ${failedCount}`);
+  console.log(`   Skipped: ${skippedCount}`);
 
   return {
     success: errors.length === 0,
@@ -320,6 +333,7 @@ export async function handleStuckPayouts(): Promise<StuckPayoutsResult> {
     reconciledCount,
     retriedCount,
     failedCount,
+    skippedCount,
     errors,
     timestamp: new Date().toISOString(),
   };

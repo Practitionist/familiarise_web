@@ -11,6 +11,7 @@ All endpoints require authentication (via BetterAuth session).
 List all collaborators for a webinar plan.
 
 **Response** `200`:
+
 ```json
 {
   "data": [
@@ -43,6 +44,7 @@ List all collaborators for a webinar plan.
 Invite a collaborator to a webinar plan.
 
 **Body**:
+
 ```json
 {
   "consultantProfileId": "clx...",
@@ -52,6 +54,7 @@ Invite a collaborator to a webinar plan.
 ```
 
 **Validations**:
+
 - Requester must be the plan owner
 - Target must be a valid consultant profile
 - Cannot invite yourself
@@ -59,6 +62,7 @@ Invite a collaborator to a webinar plan.
 - Total collaborator shares must not exceed 90%
 
 **Response** `201`:
+
 ```json
 {
   "data": {
@@ -72,6 +76,7 @@ Invite a collaborator to a webinar plan.
 ```
 
 **Errors**:
+
 - `403` — Not the plan owner
 - `400` — Cannot invite yourself
 - `400` — Revenue share exceeds 90% total
@@ -84,6 +89,7 @@ Invite a collaborator to a webinar plan.
 Update a collaborator's role or revenue share.
 
 **Body**:
+
 ```json
 {
   "role": "MODERATOR",
@@ -92,10 +98,12 @@ Update a collaborator's role or revenue share.
 ```
 
 **Validations**:
+
 - Requester must be the plan owner
 - New total shares must not exceed 90%
 
 **Response** `200`:
+
 ```json
 {
   "data": { "id": "clx...", "role": "MODERATOR", "revenueSharePercentage": 15 }
@@ -109,9 +117,11 @@ Update a collaborator's role or revenue share.
 Remove a collaborator (sets status to REMOVED).
 
 **Validations**:
+
 - Requester must be the plan owner
 
 **Response** `200`:
+
 ```json
 {
   "data": { "id": "clx...", "status": "REMOVED" }
@@ -141,6 +151,7 @@ Same request/response shapes. Uses `ClassCollaboratorRole` enum values:
 Accept or decline a collaboration invitation.
 
 **Body**:
+
 ```json
 {
   "response": "ACCEPTED",
@@ -149,19 +160,26 @@ Accept or decline a collaboration invitation.
 ```
 
 **Validations**:
+
 - Requester must be the invited consultant
 - Collaboration must be in PENDING status
 - `planType` must be `"webinar"` or `"class"`
 
 **Side effects on ACCEPTED**:
+
 - Updates status to ACCEPTED, sets respondedAt
 - Creates Stream.io chat channel (`collab-{planType}-{planId}`)
 - Sends notification to the host
 
 **Response** `200`:
+
 ```json
 {
-  "data": { "id": "clx...", "status": "ACCEPTED", "respondedAt": "2026-02-10T..." }
+  "data": {
+    "id": "clx...",
+    "status": "ACCEPTED",
+    "respondedAt": "2026-02-10T..."
+  }
 }
 ```
 
@@ -174,6 +192,7 @@ Accept or decline a collaboration invitation.
 Get all collaborations for the authenticated consultant (both webinar and class).
 
 **Response** `200`:
+
 ```json
 {
   "data": {
@@ -224,6 +243,7 @@ Get all collaborations for the authenticated consultant (both webinar and class)
 Preview how earnings would be split for a webinar plan.
 
 **Response** `200`:
+
 ```json
 {
   "data": {
@@ -273,9 +293,11 @@ Same format for class plans.
 Get a collaborator's availability for a specific date. Used by the host's scheduling calendar to show availability overlay.
 
 **Query params**:
+
 - `date` — ISO date string (e.g. `2026-03-15`)
 
 **Response** `200`:
+
 ```json
 {
   "data": {
@@ -284,9 +306,10 @@ Get a collaborator's availability for a specific date. Used by the host's schedu
     "date": "2026-03-15",
     "weeklySlots": [
       {
-        "dayOfWeekForStartsAt": 6,
-        "availabilityStartsAt": "2026-02-10T09:00:00Z",
-        "availabilityEndsAt": "2026-02-10T17:00:00Z"
+        "startDay": "MONDAY",
+        "startTimeUtc": 540,
+        "endDay": "MONDAY",
+        "endTimeUtc": 1020
       }
     ],
     "customSlots": [],
@@ -301,6 +324,7 @@ Get a collaborator's availability for a specific date. Used by the host's schedu
 ```
 
 **Interpretation for calendar overlay**:
+
 - **Green**: Co-host has availability AND no booking → free
 - **Yellow**: Co-host has no availability defined for that time → may be flexible
 - **Red**: Co-host has a booking during that time → not available

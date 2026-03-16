@@ -67,14 +67,14 @@ export async function GET(
                 webinar: {
                   include: {
                     webinarPlan: {
-                      select: { consultantProfileId: true },
+                      select: { id: true, consultantProfileId: true },
                     },
                   },
                 },
                 class: {
                   include: {
                     classPlan: {
-                      select: { consultantProfileId: true },
+                      select: { id: true, consultantProfileId: true },
                     },
                   },
                 },
@@ -131,6 +131,46 @@ export async function GET(
         role: "host",
         message: "Access granted as meeting host",
       });
+    }
+
+    // Check if user is an accepted collaborator on the webinar/class (host-equivalent)
+    if (userProfile?.consultantProfileId) {
+      const webinarPlanId = appointment.webinar?.webinarPlan?.id;
+      const classPlanId = appointment.class?.classPlan?.id;
+
+      if (webinarPlanId) {
+        const collab = await prisma.webinarCollaborator.findFirst({
+          where: {
+            webinarPlanId,
+            consultantProfileId: userProfile.consultantProfileId,
+            status: "ACCEPTED",
+          },
+        });
+        if (collab) {
+          return NextResponse.json({
+            hasAccess: true,
+            role: "host",
+            message: "Access granted as accepted collaborator",
+          });
+        }
+      }
+
+      if (classPlanId) {
+        const collab = await prisma.classCollaborator.findFirst({
+          where: {
+            classPlanId,
+            consultantProfileId: userProfile.consultantProfileId,
+            status: "ACCEPTED",
+          },
+        });
+        if (collab) {
+          return NextResponse.json({
+            hasAccess: true,
+            role: "host",
+            message: "Access granted as accepted collaborator",
+          });
+        }
+      }
     }
 
     // For classes/webinars, the meeting is created on the consultant's allocation

@@ -18,23 +18,23 @@ Razorpay is our primary payment gateway for Indian customers, handling:
 
 Razorpay serves two distinct roles in our system:
 
-| Product | Purpose |
-|---------|---------|
-| **Razorpay** (Payments) | Accept payments from consultees |
+| Product                 | Purpose                          |
+| ----------------------- | -------------------------------- |
+| **Razorpay** (Payments) | Accept payments from consultees  |
 | **RazorpayX** (Payouts) | Disburse earnings to consultants |
 
 ---
 
 ## Prerequisites
 
-| Requirement | Details |
-|-------------|---------|
+| Requirement           | Details                                           |
+| --------------------- | ------------------------------------------------- |
 | Business Registration | Sole proprietorship, Partnership, Pvt Ltd, or LLP |
-| PAN Card | Business PAN or Individual PAN |
-| GST Registration | Optional but recommended (for input tax credit) |
-| Bank Account | Current account in business name |
-| Website/App | Live URL for verification |
-| Email/Phone | For account verification |
+| PAN Card              | Business PAN or Individual PAN                    |
+| GST Registration      | Optional but recommended (for input tax credit)   |
+| Bank Account          | Current account in business name                  |
+| Website/App           | Live URL for verification                         |
+| Email/Phone           | For account verification                          |
 
 ---
 
@@ -76,27 +76,27 @@ Dashboard > Settings > API Keys > Generate Key
 
 ### Payment Keys
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `RAZORPAY_KEY_ID` | Server-side API key ID | `rzp_test_xxxxxxxxxxxxx` |
-| `RAZORPAY_SECRET` | Server-side API key secret | `xxxxxxxxxxxxxxxxx` |
+| Variable                      | Description                 | Example                  |
+| ----------------------------- | --------------------------- | ------------------------ |
+| `RAZORPAY_KEY_ID`             | Server-side API key ID      | `rzp_test_xxxxxxxxxxxxx` |
+| `RAZORPAY_SECRET`             | Server-side API key secret  | `xxxxxxxxxxxxxxxxx`      |
 | `NEXT_PUBLIC_RAZORPAY_KEY_ID` | Client-side publishable key | `rzp_test_xxxxxxxxxxxxx` |
 
 ### RazorpayX Payout Keys
 
-| Variable | Description | Fallback |
-|----------|-------------|----------|
-| `RAZORPAYX_KEY_ID` | RazorpayX API key ID | Falls back to `RAZORPAY_KEY_ID` |
-| `RAZORPAYX_KEY_SECRET` | RazorpayX API key secret | Falls back to `RAZORPAY_SECRET` |
-| `RAZORPAYX_ACCOUNT_NUMBER` | RazorpayX account number | Required, no fallback |
-| `RAZORPAYX_WEBHOOK_SECRET` | RazorpayX webhook secret | Optional |
+| Variable                   | Description              | Fallback                        |
+| -------------------------- | ------------------------ | ------------------------------- |
+| `RAZORPAYX_KEY_ID`         | RazorpayX API key ID     | Falls back to `RAZORPAY_KEY_ID` |
+| `RAZORPAYX_KEY_SECRET`     | RazorpayX API key secret | Falls back to `RAZORPAY_SECRET` |
+| `RAZORPAYX_ACCOUNT_NUMBER` | RazorpayX account number | Required, no fallback           |
+| `RAZORPAYX_WEBHOOK_SECRET` | RazorpayX webhook secret | Optional                        |
 
 ### Test vs Live Keys
 
-| Environment | Key Format |
-|-------------|------------|
-| Test Mode | `rzp_test_xxxxxxxxxxxxx` |
-| Live Mode | `rzp_live_xxxxxxxxxxxxx` |
+| Environment | Key Format               |
+| ----------- | ------------------------ |
+| Test Mode   | `rzp_test_xxxxxxxxxxxxx` |
+| Live Mode   | `rzp_live_xxxxxxxxxxxxx` |
 
 Never commit live keys to version control.
 
@@ -112,11 +112,11 @@ Dashboard > Settings > Webhooks > Add New Webhook
 
 **Events to select**:
 
-| Category | Events |
-|----------|--------|
-| Payment | `payment.captured`, `order.paid`, `payment.failed` |
-| Refund | `refund.created`, `refund.processed`, `refund.failed` |
-| Dispute | `payment.dispute.created`, `payment.dispute.won`, `payment.dispute.lost`, `payment.dispute.closed` |
+| Category           | Events                                                                                                          |
+| ------------------ | --------------------------------------------------------------------------------------------------------------- |
+| Payment            | `payment.captured`, `order.paid`, `payment.failed`                                                              |
+| Refund             | `refund.created`, `refund.processed`, `refund.failed`                                                           |
+| Dispute            | `payment.dispute.created`, `payment.dispute.won`, `payment.dispute.lost`, `payment.dispute.closed`              |
 | Payout (RazorpayX) | `payout.processed`, `payout.reversed`, `payout.rejected`, `payout.queued`, `payout.pending`, `payout.cancelled` |
 
 Copy the webhook secret after creation and store it in the appropriate environment variable.
@@ -134,19 +134,19 @@ Toggle via top-right corner of the Razorpay dashboard.
 
 ### Test Card Numbers
 
-| Card Type | Number | Notes |
-|-----------|--------|-------|
+| Card Type            | Number                | Notes                      |
+| -------------------- | --------------------- | -------------------------- |
 | Mastercard (Success) | `5267 3181 8797 5449` | Any CVV, any future expiry |
-| Visa (Success) | `4111 1111 1111 1111` | Any CVV, any future expiry |
-| RuPay (Success) | `6076 6506 0000 0083` | Any CVV, any future expiry |
-| Card (Failure) | `4000 0000 0000 0002` | Any CVV, any future expiry |
+| Visa (Success)       | `4111 1111 1111 1111` | Any CVV, any future expiry |
+| RuPay (Success)      | `6076 6506 0000 0083` | Any CVV, any future expiry |
+| Card (Failure)       | `4000 0000 0000 0002` | Any CVV, any future expiry |
 
 ### Test UPI IDs
 
-| Scenario | UPI ID |
-|----------|--------|
-| Success | `success@razorpay` |
-| Failure | `failure@razorpay` |
+| Scenario | UPI ID             |
+| -------- | ------------------ |
+| Success  | `success@razorpay` |
+| Failure  | `failure@razorpay` |
 
 ### Test Net Banking
 
@@ -199,12 +199,12 @@ Set the ngrok URL as your webhook endpoint in the Razorpay dashboard.
 
 ## Source Files
 
-| File | Purpose |
-|------|---------|
-| `lib/payments/core/razorpay.ts` | Client initialization, order creation, refunds, cancellation |
-| `lib/payments/payouts/razorpay-payouts.ts` | RazorpayX Payouts service (contacts, fund accounts, payouts) |
-| `app/api/webhooks/razorpay/route.ts` | Webhook handler (14 event types) |
-| `app/checkout/components/RazorpayCheckout.tsx` | Client-side checkout component |
+| File                                           | Purpose                                                      |
+| ---------------------------------------------- | ------------------------------------------------------------ |
+| `lib/payments/core/razorpay.ts`                | Client initialization, order creation, refunds, cancellation |
+| `lib/payments/payouts/razorpay-payouts.ts`     | RazorpayX Payouts service (contacts, fund accounts, payouts) |
+| `app/api/webhooks/razorpay/route.ts`           | Webhook handler (14 event types)                             |
+| `app/checkout/components/RazorpayCheckout.tsx` | Client-side checkout component                               |
 
 ---
 

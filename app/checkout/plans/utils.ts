@@ -1,5 +1,5 @@
 import { useToast } from "@/hooks/use-toast";
-import { getErrorToast } from "@/lib/payments/error-toast-map";
+import { getErrorToast } from "@/lib/errors/mapping/payment-error-toast-map";
 import { CheckoutInput, checkoutResponseSchema } from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
 import { loadStripe } from "@stripe/stripe-js";
@@ -129,7 +129,7 @@ export async function handleUnifiedCheckout(
   if (!response.ok) {
     const errorData = await response.json();
     handleApiError(errorData);
-    throw new Error(errorData.error || "Checkout failed");
+    return; // Toast already shown — don't throw to avoid double toast + console overlay
   }
 
   const rawData = await response.json();
@@ -154,29 +154,35 @@ export async function handleUnifiedCheckout(
 
       // Small delay to let user see the toast before redirect
       setTimeout(async () => {
-        // Handle gateway-specific responses
-        switch (gateway) {
-          case "STRIPE":
-            const stripeInstance = await loadStripe(
-              process.env.NEXT_PUBLIC_STRIPE_KEY!,
-            );
-            if (!stripeInstance) {
-              throw new Error("Failed to load Stripe");
-            }
-            await stripeInstance.confirmPayment({
-              clientSecret: data.clientSecret!,
-              confirmParams: {
-                return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
-              },
-            });
-            break;
+        try {
+          // Handle gateway-specific responses
+          switch (gateway) {
+            case "STRIPE":
+              const stripeInstance = await loadStripe(
+                process.env.NEXT_PUBLIC_STRIPE_KEY!,
+              );
+              if (!stripeInstance) {
+                throw new Error("Failed to load Stripe");
+              }
+              await stripeInstance.confirmPayment({
+                clientSecret: data.clientSecret!,
+                confirmParams: {
+                  return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
+                },
+              });
+              break;
 
-          case "LEMON_SQUEEZY":
-          case "XFLOW":
-            if (data.checkoutUrl) {
-              window.location.href = data.checkoutUrl;
-            }
-            break;
+            // TODO(#312/#334): Add Lemon Squeezy and XFlow cases when webhook handlers are implemented
+          }
+        } catch (err) {
+          console.error("Payment confirmation error:", err);
+          handleApiError({
+            error:
+              err instanceof Error
+                ? err.message
+                : "Payment confirmation failed",
+            errorType: "PAYMENT_ERROR",
+          });
         }
       }, 1000);
     }
@@ -197,16 +203,7 @@ export const paymentGateways = [
     description: "Indian payments in INR",
     gateway: "RAZORPAY" as const,
   },
-  {
-    name: "Lemon Squeezy",
-    description: "Global payments in USD",
-    gateway: "LEMON_SQUEEZY" as const,
-  },
-  {
-    name: "Xflow",
-    description: "Secure payments in USD",
-    gateway: "XFLOW" as const,
-  },
+  // TODO: Add Lemon Squeezy and XFlow when webhook appointment creation is implemented
 ];
 
 // Default success and error handlers for StripeCheckout component

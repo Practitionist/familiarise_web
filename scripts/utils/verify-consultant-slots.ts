@@ -12,6 +12,7 @@
  */
 
 import { PrismaClient } from "@prisma/client";
+import { minutesToTimeString } from "@/utils/slotAllocation/slotTimeUtils";
 
 const prisma = new PrismaClient();
 
@@ -78,36 +79,35 @@ async function verifyConsultantSlots() {
     if (consultant.scheduleType === "WEEKLY") {
       const weeklySlots = await prisma.slotOfAvailabilityWeekly.findMany({
         where: { consultantProfileId: CONSULTANT_ID },
-        orderBy: [
-          { dayOfWeekForStartsAt: "asc" },
-          { availabilityStartsAt: "asc" },
-        ],
+        orderBy: [{ startDay: "asc" }, { startTimeUtc: "asc" }],
       });
 
       console.log(
         `=== WEEKLY AVAILABILITY SLOTS (Total: ${weeklySlots.length}) ===`,
       );
       weeklySlots.forEach((slot, idx) => {
-        const startTime = new Date(slot.availabilityStartsAt);
-        const endTime = new Date(slot.availabilityEndsAt);
         console.log(`\nSlot ${idx + 1}:`);
-        console.log(`  Day: ${slot.dayOfWeekForStartsAt}`);
+        console.log(`  Day: ${slot.startDay}`);
         console.log(
-          `  Time: ${startTime.toISOString().slice(11, 16)} - ${endTime.toISOString().slice(11, 16)} UTC`,
+          `  Time: ${minutesToTimeString(slot.startTimeUtc)} - ${minutesToTimeString(slot.endTimeUtc)} UTC`,
         );
-        console.log(`  Full Start: ${startTime.toISOString()}`);
-        console.log(`  Full End: ${endTime.toISOString()}`);
+        console.log(
+          `  Start: ${slot.startDay} @ ${minutesToTimeString(slot.startTimeUtc)}`,
+        );
+        console.log(
+          `  End: ${slot.endDay} @ ${minutesToTimeString(slot.endTimeUtc)}`,
+        );
       });
     } else {
       const customSlots = await prisma.slotOfAvailabilityCustom.findMany({
         where: {
           consultantProfileId: CONSULTANT_ID,
-          availabilityStartsAt: {
+          startsAt: {
             gte: START_DATE,
             lte: END_DATE,
           },
         },
-        orderBy: { availabilityStartsAt: "asc" },
+        orderBy: { startsAt: "asc" },
       });
 
       console.log(
@@ -115,8 +115,8 @@ async function verifyConsultantSlots() {
       );
       console.log(`Total slots in range: ${customSlots.length}\n`);
       customSlots.forEach((slot, idx) => {
-        const startTime = new Date(slot.availabilityStartsAt);
-        const endTime = new Date(slot.availabilityEndsAt);
+        const startTime = new Date(slot.startsAt);
+        const endTime = new Date(slot.endsAt);
         console.log(`Slot ${idx + 1}:`);
         console.log(`  ${startTime.toISOString()} - ${endTime.toISOString()}`);
       });

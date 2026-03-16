@@ -1,3 +1,4 @@
+import "@stream-io/video-react-sdk/dist/css/styles.css";
 import StreamProvider from "@/providers/StreamProvider";
 import { requireOnboarded } from "@/lib/auth-guard";
 

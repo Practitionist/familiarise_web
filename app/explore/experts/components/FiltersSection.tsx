@@ -8,7 +8,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
-import { Domain, SubDomain, Tag } from "@prisma/client";
 import { useState, useCallback, useRef, useEffect } from "react";
 import {
   X,
@@ -20,15 +19,15 @@ import {
   CalendarCheck,
   Globe,
 } from "lucide-react";
-import { useCurrency } from "@/lib/hooks/useCurrency";
+import { useCurrency } from "@/hooks/useCurrency";
 
 const MAX_PRICE_INR = 10000;
 
 interface FiltersSectionProps {
   metadata: {
-    domains: Domain[];
-    subdomains: SubDomain[];
-    tags: Tag[];
+    domains: { id: string; name: string }[];
+    subdomains: { id: string; name: string; domainId: string | null }[];
+    tags: { id: string; name: string; domainId: string | null }[];
     availableLanguages?: string[];
     availabilityStats?: { hasSlots: number };
   } | null;

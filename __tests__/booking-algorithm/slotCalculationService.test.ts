@@ -187,15 +187,10 @@ describe("SlotCalculationService.validateDuration", () => {
     ).toThrow("must be at least 0.5 hours");
   });
 
-  it("should warn but not throw for duration > 24 hours", () => {
-    const consoleSpy = jest.spyOn(console, "warn").mockImplementation();
+  it("should throw for duration > 24 hours", () => {
     expect(() =>
       SlotCalculationService.validateDuration(25, "myField"),
-    ).not.toThrow();
-    expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining("unusually large"),
-    );
-    consoleSpy.mockRestore();
+    ).toThrow("cannot exceed 24 hours");
   });
 
   it("should throw for non-number type", () => {
@@ -307,9 +302,9 @@ describe("SlotCalculationService.calculateRequiredSlots", () => {
     });
 
     it("should default to 2 slots when duration missing", () => {
-      expect(
-        SlotCalculationService.calculateRequiredSlots("webinar", {}),
-      ).toBe(2);
+      expect(SlotCalculationService.calculateRequiredSlots("webinar", {})).toBe(
+        2,
+      );
     });
   });
 
@@ -491,6 +486,37 @@ describe("SlotCalculationService.groupSlotsByWeek", () => {
 
     const grouped = SlotCalculationService.groupSlotsByWeek(slots);
     expect(grouped.size).toBe(2);
+  });
+
+  it("should use UTC-based week boundaries (not local timezone)", () => {
+    // Saturday Jan 4 23:30 UTC = Sunday Jan 5 in UTC+1 or later timezones
+    // Sunday Jan 5 00:30 UTC = same week as Saturday in a Sunday-start system
+    // Both should be in the same UTC week (week starting Sunday Jan 5 would be wrong)
+    const saturdayLateUTC = {
+      startTime: new Date("2025-01-04T23:30:00Z"), // Saturday UTC
+      endTime: new Date("2025-01-05T00:00:00Z"),
+      isAvailable: true,
+      isBooked: false,
+    };
+    const sundayEarlyUTC = {
+      startTime: new Date("2025-01-05T00:30:00Z"), // Sunday UTC
+      endTime: new Date("2025-01-05T01:00:00Z"),
+      isAvailable: true,
+      isBooked: false,
+    };
+
+    const grouped = SlotCalculationService.groupSlotsByWeek([
+      saturdayLateUTC,
+      sundayEarlyUTC,
+    ]);
+    // Saturday belongs to week starting Dec 29 (Sun), Sunday starts new week Jan 5
+    expect(grouped.size).toBe(2);
+
+    // Verify week keys use UTC dates
+    const keys = Array.from(grouped.keys());
+    expect(keys.every((k) => k.includes("2024") || k.includes("2025"))).toBe(
+      true,
+    );
   });
 });
 

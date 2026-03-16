@@ -49,6 +49,7 @@ beforeEach(() => {
   jest.setSystemTime(new Date("2025-01-01T00:00:00Z"));
   service = new SlotValidationService(mockPrisma);
   mockPrisma.appointment.findFirst.mockResolvedValue(null);
+  mockPrisma.appointment.findMany.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -57,7 +58,10 @@ afterEach(() => {
 
 // ─── Helper ─────────────────────────────────────────────────────────────────
 
-function futureSlots(count: number, startISO: string = "2025-06-01T10:00:00Z"): Date[] {
+function futureSlots(
+  count: number,
+  startISO: string = "2025-06-01T10:00:00Z",
+): Date[] {
   const slots: Date[] = [];
   let current = new Date(startISO);
   for (let i = 0; i < count; i++) {
@@ -104,17 +108,23 @@ describe("checkSlotAvailability", () => {
   });
 
   it("should detect conflicts from existing appointments", async () => {
-    mockPrisma.appointment.findFirst.mockResolvedValue({
-      id: "existing-apt",
-      consultation: {
-        requestedBy: { user: { name: "Existing User" } },
+    const slots = futureSlots(1);
+    mockPrisma.appointment.findMany.mockResolvedValue([
+      {
+        id: "existing-apt",
+        slotsOfAppointment: [
+          {
+            startsAt: slots[0],
+            endsAt: new Date(slots[0].getTime() + 30 * 60 * 1000),
+          },
+        ],
+        consultation: {
+          requestedBy: { user: { name: "Existing User" } },
+        },
       },
-    });
+    ]);
 
-    const result = await service.checkSlotAvailability(
-      futureSlots(1),
-      "user-1",
-    );
+    const result = await service.checkSlotAvailability(slots, "user-1");
     expect(result.isValid).toBe(false);
     expect(result.errors[0]).toContain("already booked");
   });
@@ -122,27 +132,87 @@ describe("checkSlotAvailability", () => {
   it("should use configurable slot duration", async () => {
     await service.checkSlotAvailability(futureSlots(1), "user-1", 60);
     // Verify the query was called — checking it doesn't throw with different duration
-    expect(mockPrisma.appointment.findFirst).toHaveBeenCalled();
+    expect(mockPrisma.appointment.findMany).toHaveBeenCalled();
   });
 
-  it("should skip expired payment conflicts", async () => {
-    mockPrisma.appointment.findFirst.mockResolvedValue({
-      id: "expired-apt",
-      consultation: {
-        requestStatus: "APPROVED_PENDING_PAYMENT",
-      },
-      payment: [
-        {
-          expiresAt: new Date("2024-01-01"), // expired
+  it("should skip expired payment conflicts (consultation)", async () => {
+    const slots = futureSlots(1);
+    mockPrisma.appointment.findMany.mockResolvedValue([
+      {
+        id: "expired-apt",
+        slotsOfAppointment: [
+          {
+            startsAt: slots[0],
+            endsAt: new Date(slots[0].getTime() + 30 * 60 * 1000),
+          },
+        ],
+        consultation: {
+          requestStatus: "APPROVED_PENDING_PAYMENT",
         },
-      ],
-    });
+        payment: [
+          {
+            expiresAt: new Date("2024-01-01"), // expired
+          },
+        ],
+      },
+    ]);
 
-    const result = await service.checkSlotAvailability(
-      futureSlots(1),
-      "user-1",
-    );
+    const result = await service.checkSlotAvailability(slots, "user-1");
     expect(result.isValid).toBe(true);
+  });
+
+  it("should skip expired payment conflicts (subscription)", async () => {
+    const slots = futureSlots(1);
+    mockPrisma.appointment.findMany.mockResolvedValue([
+      {
+        id: "expired-sub-apt",
+        slotsOfAppointment: [
+          {
+            startsAt: slots[0],
+            endsAt: new Date(slots[0].getTime() + 30 * 60 * 1000),
+          },
+        ],
+        subscription: {
+          requestStatus: "APPROVED_PENDING_PAYMENT",
+        },
+        payment: [
+          {
+            expiresAt: new Date("2024-01-01"), // expired
+          },
+        ],
+      },
+    ]);
+
+    const result = await service.checkSlotAvailability(slots, "user-1");
+    expect(result.isValid).toBe(true);
+  });
+
+  it("should NOT skip non-expired subscription payment conflicts", async () => {
+    const slots = futureSlots(1);
+    mockPrisma.appointment.findMany.mockResolvedValue([
+      {
+        id: "active-sub-apt",
+        slotsOfAppointment: [
+          {
+            startsAt: slots[0],
+            endsAt: new Date(slots[0].getTime() + 30 * 60 * 1000),
+          },
+        ],
+        subscription: {
+          requestStatus: "APPROVED_PENDING_PAYMENT",
+          requestedBy: { user: { name: "Active Sub User" } },
+        },
+        payment: [
+          {
+            expiresAt: new Date("2026-12-31"), // not expired
+          },
+        ],
+      },
+    ]);
+
+    const result = await service.checkSlotAvailability(slots, "user-1");
+    expect(result.isValid).toBe(false);
+    expect(result.errors[0]).toContain("already booked");
   });
 });
 
@@ -503,6 +573,59 @@ describe("validate: class event", () => {
     expect(result.isValid).toBe(false);
     expect(result.errors.some((e) => e.includes("max is 2"))).toBe(true);
   });
+
+  it("should accept cross-midnight sessions that span two UTC days", async () => {
+    // A 1-hour session starting at 23:30 UTC spans Saturday→Sunday:
+    // Slot 1: Saturday 23:30, Slot 2: Sunday 00:00
+    // The old per-day grouping would incorrectly flag Sunday as non-consecutive
+    // if another session also had slots on Sunday.
+    const crossMidnightConsultant = makeConsultantData({
+      scheduleType: ScheduleType.WEEKLY,
+      slotsOfAvailabilityWeekly: [
+        makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 23, 24), // Mon 23:00-24:00 UTC
+        makeWeeklyAvailabilitySlot(DayOfWeek.TUESDAY, 0, 1), // Tue 00:00-01:00 UTC
+        makeWeeklyAvailabilitySlot(DayOfWeek.TUESDAY, 10, 17), // Tue 10:00-17:00 UTC
+      ],
+    }) as any;
+
+    // Session 1: Mon 23:30 + Tue 00:00 (cross-midnight)
+    // Session 2: Tue 10:00 + Tue 10:30 (same day)
+    // Tuesday has slots at 00:00 and 10:00 — NOT consecutive within the day,
+    // but each session is internally consecutive → should PASS
+    const slots = [
+      new Date("2025-06-02T23:30:00Z"), // Mon 23:30
+      new Date("2025-06-03T00:00:00Z"), // Tue 00:00
+      new Date("2025-06-03T10:00:00Z"), // Tue 10:00
+      new Date("2025-06-03T10:30:00Z"), // Tue 10:30
+    ];
+
+    const result = await service.validate(
+      "class",
+      "event-1",
+      slots,
+      crossMidnightConsultant,
+      { callsPerWeek: 2, sessionDurationInHours: 1 },
+    );
+    expect(result.isValid).toBe(true);
+  });
+
+  it("should reject non-consecutive slots within a single session", async () => {
+    // Two slots with a gap (09:00 and 10:00) — not consecutive (missing 09:30)
+    const slots = [
+      new Date("2025-06-02T09:00:00Z"),
+      new Date("2025-06-02T10:00:00Z"),
+    ];
+
+    const result = await service.validate(
+      "class",
+      "event-1",
+      slots,
+      weeklyConsultant,
+      { callsPerWeek: 2, sessionDurationInHours: 1 },
+    );
+    expect(result.isValid).toBe(false);
+    expect(result.errors.some((e) => e.includes("consecutive"))).toBe(true);
+  });
 });
 
 // ─── validate: invalid event type ───────────────────────────────────────────
@@ -537,5 +660,74 @@ describe("Slot duration fix", () => {
     // If slot duration was wrong, the conflict check query would use wrong time range
     // The fact that this passes with valid slots proves 30-min is used
     expect(result.isValid).toBe(true);
+  });
+});
+
+// ─── VAL-3: Subscription slot count modulo check ────────────────────────────
+
+describe("validate: subscription slot count modulo", () => {
+  it("should reject subscription with incomplete session (3 slots for 1-hour sessions = 1.5 sessions)", async () => {
+    // 1-hour sessions = 2 slots per session; 3 slots is not a multiple of 2
+    const result = await service.validate(
+      "subscription",
+      "sub-1",
+      futureSlots(3, "2025-06-02T10:00:00Z"),
+      weeklyConsultant,
+      { sessionDurationInHours: 1 },
+    );
+    expect(result.isValid).toBe(false);
+    expect(result.errors[0]).toContain("multiple of 2");
+  });
+
+  it("should accept subscription with complete sessions (4 slots for 1-hour sessions)", async () => {
+    // 4 slots = 2 complete 1-hour sessions — passes modulo check
+    mockPrisma.subscription.findUnique.mockResolvedValue({
+      id: "sub-1",
+      schedulingPeriodStartsAt: new Date("2025-06-01T00:00:00Z"),
+      schedulingPeriodEndsAt: new Date("2025-06-30T23:59:59Z"),
+      subscriptionPlan: {
+        callsPerWeek: 5,
+        durationInHours: 1,
+      },
+    });
+    mockPrisma.appointment.findMany.mockResolvedValue([]);
+
+    const result = await service.validate(
+      "subscription",
+      "sub-1",
+      futureSlots(4, "2025-06-02T10:00:00Z"),
+      weeklyConsultant,
+      { sessionDurationInHours: 1 },
+    );
+    // Modulo check passes; downstream may fail on other rules but not modulo
+    if (!result.isValid) {
+      expect(result.errors.every((e) => !e.includes("multiple of"))).toBe(true);
+    }
+  });
+
+  it("should skip modulo check for 30-min sessions (slotsPerSession=1)", async () => {
+    // 30-min sessions = 1 slot per session; any count is valid for modulo
+    mockPrisma.subscription.findUnique.mockResolvedValue({
+      id: "sub-1",
+      schedulingPeriodStartsAt: new Date("2025-06-01T00:00:00Z"),
+      schedulingPeriodEndsAt: new Date("2025-06-30T23:59:59Z"),
+      subscriptionPlan: {
+        callsPerWeek: 5,
+        durationInHours: 0.5,
+      },
+    });
+    mockPrisma.appointment.findMany.mockResolvedValue([]);
+
+    const result = await service.validate(
+      "subscription",
+      "sub-1",
+      futureSlots(3, "2025-06-02T10:00:00Z"),
+      weeklyConsultant,
+      { sessionDurationInHours: 0.5 },
+    );
+    // Should not fail with modulo error
+    if (!result.isValid) {
+      expect(result.errors.every((e) => !e.includes("multiple of"))).toBe(true);
+    }
   });
 });

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { formatCurrencyAmount } from "@/lib/utils";
+import { formatCurrencyFromMajorUnit } from "@/utils/formatting";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -125,7 +125,11 @@ export default function PaymentsAssistancePage() {
   }, [searchQuery]);
 
   // Fetch payments with React Query
-  const { data: paymentsData, isLoading: loadingPayments, refetch: refetchPayments } = useQuery({
+  const {
+    data: paymentsData,
+    isLoading: loadingPayments,
+    refetch: refetchPayments,
+  } = useQuery({
     queryKey: ["staff-payments", page, debouncedSearch, statusFilter],
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -141,7 +145,11 @@ export default function PaymentsAssistancePage() {
   const totalPages = paymentsData?.totalPages ?? 1;
 
   // Fetch refunds with React Query
-  const { data: refundsData, isLoading: loadingRefunds, refetch: refetchRefunds } = useQuery({
+  const {
+    data: refundsData,
+    isLoading: loadingRefunds,
+    refetch: refetchRefunds,
+  } = useQuery({
     queryKey: ["staff-refunds-pending"],
     queryFn: async () => {
       const response = await fetch("/api/admin/refunds?status=PENDING");
@@ -209,7 +217,7 @@ export default function PaymentsAssistancePage() {
             </div>
             <div>
               <p className="text-2xl font-bold">
-                {formatCurrencyAmount(stats.totalAmount, "INR")}
+                {formatCurrencyFromMajorUnit(stats.totalAmount, "INR")}
               </p>
               <p className="text-sm text-zinc-500">Processed (page)</p>
             </div>
@@ -330,7 +338,10 @@ export default function PaymentsAssistancePage() {
                           </div>
                         </TableCell>
                         <TableCell className="font-medium">
-                          {formatCurrencyAmount(payment.amount, payment.currency)}
+                          {formatCurrencyFromMajorUnit(
+                            payment.amount,
+                            payment.currency,
+                          )}
                         </TableCell>
                         <TableCell>
                           <Badge
@@ -466,7 +477,10 @@ export default function PaymentsAssistancePage() {
                             </span>
                             <span>
                               Amount:{" "}
-                              {formatCurrencyAmount(refund.amount, refund.currency)}
+                              {formatCurrencyFromMajorUnit(
+                                refund.amount,
+                                refund.currency,
+                              )}
                             </span>
                           </div>
                         </div>
@@ -525,7 +539,7 @@ export default function PaymentsAssistancePage() {
                   <div>
                     <p className="text-sm text-zinc-500">Amount</p>
                     <p className="text-2xl font-bold">
-                      {formatCurrencyAmount(
+                      {formatCurrencyFromMajorUnit(
                         selectedPayment.amount,
                         selectedPayment.currency,
                       )}

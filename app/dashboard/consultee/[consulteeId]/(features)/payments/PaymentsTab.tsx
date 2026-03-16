@@ -3,7 +3,10 @@
 import { useMemo } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
-import { formatCurrencyAmount } from "@/lib/utils";
+import {
+  formatCurrencyAmount,
+  formatCurrencyFromMajorUnit,
+} from "@/utils/formatting";
 import { cn } from "@/utils/tailwind";
 import { CreditCard, Gift, Download, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -31,6 +34,7 @@ interface PaymentItem {
     value: number;
   } | null;
   receiptUrl: string | null;
+  expiresAt: string | null;
   createdAt: string;
 }
 
@@ -93,10 +97,87 @@ function formatDate(date: string): string {
   });
 }
 
+const GATEWAY_LABELS: Record<string, string> = {
+  STRIPE: "Stripe",
+  RAZORPAY: "Razorpay",
+  LEMON_SQUEEZY: "Lemon Squeezy",
+  XFLOW: "Xflow",
+};
+
+function formatGateway(gateway: string): string {
+  return GATEWAY_LABELS[gateway] || gateway;
+}
+
+function formatDateTime(date: string): string {
+  return new Date(date).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
+function formatRelativeTime(date: Date): string {
+  const now = new Date();
+  const diffMs = date.getTime() - now.getTime();
+  const absDiffMs = Math.abs(diffMs);
+  const isPast = diffMs < 0;
+
+  const minutes = Math.floor(absDiffMs / (1000 * 60));
+  const hours = Math.floor(absDiffMs / (1000 * 60 * 60));
+  const days = Math.floor(absDiffMs / (1000 * 60 * 60 * 24));
+
+  let relative: string;
+  if (minutes < 1) relative = "just now";
+  else if (minutes < 60) relative = `${minutes}m`;
+  else if (hours < 24) relative = `${hours}h ${minutes % 60}m`;
+  else relative = `${days}d ago`;
+
+  if (minutes < 1) return relative;
+  return isPast ? `${relative} ago` : `in ${relative}`;
+}
+
+/**
+ * Derive UI display status: if PENDING but expiresAt is past, show EXPIRED
+ * so the user doesn't see a misleading amber "PENDING" badge while the
+ * cleanup cron hasn't run yet.
+ */
+function getDisplayStatus(payment: PaymentItem): string {
+  if (payment.status !== "PENDING") return payment.status;
+
+  const expiresAt = payment.expiresAt
+    ? new Date(payment.expiresAt)
+    : new Date(new Date(payment.createdAt).getTime() + 30 * 60 * 1000);
+
+  return expiresAt <= new Date() ? "EXPIRED" : "PENDING";
+}
+
+function getExpiryInfo(payment: PaymentItem): {
+  datetime: string;
+  relative: string;
+  isExpired: boolean;
+} | null {
+  // Show expiry info for PENDING (countdown) and EXPIRED (how long ago)
+  if (payment.status !== "PENDING" && payment.status !== "EXPIRED") return null;
+
+  const expiresAt = payment.expiresAt
+    ? new Date(payment.expiresAt)
+    : new Date(new Date(payment.createdAt).getTime() + 30 * 60 * 1000);
+
+  return {
+    datetime: formatDateTime(expiresAt.toISOString()),
+    relative: formatRelativeTime(expiresAt),
+    isExpired: expiresAt <= new Date(),
+  };
+}
+
 const STATUS_STYLES: Record<string, string> = {
   SUCCEEDED: "bg-emerald-50 text-emerald-700",
   COMPLETED: "bg-emerald-50 text-emerald-700",
   PENDING: "bg-amber-50 text-amber-700",
+  EXPIRED: "bg-zinc-100 text-zinc-500",
   FAILED: "bg-red-50 text-red-700",
   REFUNDED: "bg-blue-50 text-blue-700",
   CANCELLED: "bg-zinc-100 text-zinc-600",
@@ -147,9 +228,7 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
     >
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-zinc-900">Payments</h1>
-        <p className="text-zinc-500 mt-1">
-          Your payment history and credits
-        </p>
+        <p className="text-zinc-500 mt-1">Your payment history and credits</p>
       </div>
 
       {/* Summary Cards */}
@@ -157,7 +236,7 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
         <div className="bg-white rounded-xl border border-zinc-200 p-4">
           <p className="text-sm text-zinc-500">Total Spent</p>
           <p className="text-2xl font-bold text-zinc-900">
-            {formatCurrencyAmount(totalSpent, "INR")}
+            {formatCurrencyFromMajorUnit(totalSpent, "INR")}
           </p>
           <p className="text-xs text-zinc-400 mt-1">
             {data.payments.filter((p) => p.status === "SUCCEEDED").length}{" "}
@@ -220,7 +299,13 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                         Amount
                       </th>
                       <th className="text-left px-4 py-3 font-medium text-zinc-600">
+                        Method
+                      </th>
+                      <th className="text-left px-4 py-3 font-medium text-zinc-600">
                         Status
+                      </th>
+                      <th className="text-left px-4 py-3 font-medium text-zinc-600">
+                        Expires
                       </th>
                       <th className="text-center px-4 py-3 font-medium text-zinc-600">
                         Invoice
@@ -230,6 +315,7 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                   <tbody className="divide-y divide-zinc-50">
                     {data.payments.map((payment) => {
                       const invoice = invoiceByPaymentId.get(payment.id);
+                      const displayStatus = getDisplayStatus(payment);
                       return (
                         <tr key={payment.id} className="hover:bg-zinc-50">
                           <td className="px-4 py-3 text-zinc-600 whitespace-nowrap">
@@ -248,7 +334,7 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                           </td>
                           <td className="px-4 py-3 text-right whitespace-nowrap">
                             <span className="font-medium text-zinc-900">
-                              {formatCurrencyAmount(
+                              {formatCurrencyFromMajorUnit(
                                 payment.amount,
                                 payment.currency,
                               )}
@@ -256,7 +342,7 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                             {payment.taxAmount && payment.taxAmount > 0 && (
                               <span className="block text-xs text-zinc-400">
                                 incl.{" "}
-                                {formatCurrencyAmount(
+                                {formatCurrencyFromMajorUnit(
                                   payment.taxAmount,
                                   payment.currency,
                                 )}{" "}
@@ -269,8 +355,36 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                               </span>
                             )}
                           </td>
+                          <td className="px-4 py-3 text-zinc-600 whitespace-nowrap text-xs">
+                            {formatGateway(payment.paymentGateway)}
+                          </td>
                           <td className="px-4 py-3">
-                            <StatusBadge status={payment.status} />
+                            <StatusBadge status={displayStatus} />
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            {(() => {
+                              const expiry = getExpiryInfo(payment);
+                              if (!expiry) {
+                                return <span className="text-zinc-300">—</span>;
+                              }
+                              return (
+                                <div>
+                                  <span className="text-xs text-zinc-500">
+                                    {expiry.datetime}
+                                  </span>
+                                  <span
+                                    className={cn(
+                                      "block text-xs",
+                                      expiry.isExpired
+                                        ? "text-zinc-400"
+                                        : "text-amber-600",
+                                    )}
+                                  >
+                                    {expiry.relative}
+                                  </span>
+                                </div>
+                              );
+                            })()}
                           </td>
                           <td className="px-4 py-3 text-center">
                             {invoice ? (
@@ -285,7 +399,7 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                                         // TODO: Replace with actual PDF download when @react-pdf/renderer is integrated
                                         // Will call: GET /api/invoices/{invoice.id}/pdf
                                         window.alert(
-                                          `PDF download coming soon.\n\nInvoice: ${invoice.invoiceNumber}\nAmount: ${formatCurrencyAmount(invoice.amount, "INR")}`,
+                                          `PDF download coming soon.\n\nInvoice: ${invoice.invoiceNumber}\nAmount: ${formatCurrencyFromMajorUnit(invoice.amount, "INR")}`,
                                         );
                                       }}
                                     >
@@ -297,7 +411,8 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                                   </TooltipContent>
                                 </Tooltip>
                               </TooltipProvider>
-                            ) : payment.status === "FAILED" ? (
+                            ) : displayStatus === "FAILED" ||
+                              displayStatus === "EXPIRED" ? (
                               <span className="text-xs text-zinc-300">—</span>
                             ) : (
                               <TooltipProvider>

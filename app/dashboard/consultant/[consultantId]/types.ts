@@ -91,9 +91,6 @@ export interface WithBadgeStyle {
 // Props for each tab component
 export interface HomeTabProps {
   appointments: TAppointment[];
-  activities: IActivity[];
-  approvals: IApproval[];
-  badgeStyles: BadgeStyleMap;
   onUpdate?: () => void;
 }
 
@@ -127,11 +124,52 @@ export interface ScheduledTrial {
   } | null;
 }
 
+export interface UnscheduledClass {
+  id: string;
+  status: string;
+  schedulingPeriodStartsAt: string | null;
+  schedulingPeriodEndsAt: string | null;
+  classPlan: {
+    id: string;
+    title: string;
+    meetingsPerWeek: number;
+    sessionDurationInHours: number;
+    totalSessions: number;
+    consultantProfile?: {
+      user?: {
+        name: string;
+        image: string | null;
+      };
+    };
+  };
+  appointments: unknown[];
+}
+
+export interface UnscheduledWebinar {
+  id: string;
+  status: string;
+  webinarPlan: {
+    id: string;
+    title: string;
+    durationInHours: number;
+    consultantProfile?: {
+      user?: {
+        name: string;
+        image: string | null;
+      };
+    };
+  };
+  appointment: null | undefined;
+}
+
 export interface AppointmentsTabProps {
   appointments: TAppointment[];
   badgeStyles: BadgeStyleMap;
   scheduledTrials?: ScheduledTrial[];
+  consultantId?: string;
   onUpdate?: () => void;
+  unscheduledClasses?: UnscheduledClass[];
+  unscheduledWebinars?: UnscheduledWebinar[];
 }
 
 export interface RequestsTabProps {

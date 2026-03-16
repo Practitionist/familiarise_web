@@ -12,9 +12,19 @@ import {
 import { syncSubscriber } from "@/lib/novu/subscriber";
 
 export const auth = betterAuth({
+  secret: process.env.BETTER_AUTH_SECRET,
+  baseURL: process.env.BETTER_AUTH_URL,
+  trustedOrigins: process.env.BETTER_AUTH_TRUSTED_ORIGINS
+    ? process.env.BETTER_AUTH_TRUSTED_ORIGINS.split(",")
+    : [],
+
   database: prismaAdapter(prisma, {
     provider: "postgresql",
   }),
+
+  rateLimit: {
+    enabled: false,
+  },
 
   emailAndPassword: {
     enabled: true,
@@ -59,6 +69,10 @@ export const auth = betterAuth({
   account: {
     accountLinking: {
       enabled: true,
+      // "credential" is intentionally not listed. trustedProviders only applies
+      // to OAuth providers during the implicit auto-link flow in BetterAuth's
+      // callback handler. Credential accounts are created explicitly during
+      // sign-up, not via OAuth auto-link.
       trustedProviders: ["google", "github", "facebook"],
     },
   },

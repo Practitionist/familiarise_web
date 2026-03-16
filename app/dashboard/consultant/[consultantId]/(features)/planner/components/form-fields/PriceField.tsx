@@ -1,6 +1,11 @@
 "use client";
 
-import { Control, useController } from "react-hook-form";
+import {
+  Control,
+  FieldPath,
+  FieldValues,
+  useController,
+} from "react-hook-form";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -15,13 +20,12 @@ import {
   FormMessage,
   FormDescription,
 } from "@/components/ui/form";
-import { cn } from "@/lib/utils";
+import { cn } from "@/utils/tailwind";
 
 const DEFAULT_CURRENCIES = ["INR", "USD", "EUR", "GBP"];
 
-interface PriceFieldProps {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  control: Control<any>;
+interface PriceFieldProps<T extends FieldValues = FieldValues> {
+  control: Control<T>;
   priceName: string;
   currencyName: string;
   label?: string;
@@ -30,7 +34,7 @@ interface PriceFieldProps {
   className?: string;
 }
 
-export function PriceField({
+export function PriceField<T extends FieldValues = FieldValues>({
   control,
   priceName,
   currencyName,
@@ -38,23 +42,23 @@ export function PriceField({
   description,
   currencies = DEFAULT_CURRENCIES,
   className,
-}: Readonly<PriceFieldProps>) {
+}: Readonly<PriceFieldProps<T>>) {
   const {
     field: priceField,
     fieldState: { error: priceError },
   } = useController({
-    name: priceName,
+    name: priceName as FieldPath<T>,
     control,
-    defaultValue: 0,
+    defaultValue: 0 as T[string],
   });
 
   const {
     field: currencyField,
     fieldState: { error: currencyError },
   } = useController({
-    name: currencyName,
+    name: currencyName as FieldPath<T>,
     control,
-    defaultValue: "INR",
+    defaultValue: "INR" as T[string],
   });
 
   const error = priceError || currencyError;

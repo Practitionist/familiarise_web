@@ -1,22 +1,24 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { CreditCard, Clock, ExternalLink, AlertCircle } from "lucide-react";
+import {
+  CreditCard,
+  AlertTriangle,
+  AlertCircle,
+  Clock,
+  ExternalLink,
+  Loader2,
+} from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
-import { formatCurrencyAmount } from "@/lib/utils";
+import { formatCurrencyFromMajorUnit } from "@/utils/formatting";
+import { cn } from "@/utils/tailwind";
 
 interface PendingPayment {
   id: string;
-  type: "consultation" | "subscription";
+  type: "consultation" | "subscription" | "webinar" | "class";
   title: string;
   consultantName: string;
   amount: number;
@@ -24,7 +26,8 @@ interface PendingPayment {
   paymentUrl: string;
   approvedAt: string;
   expiresAt: string;
-  isExpiringSoon: boolean; // < 24 hours
+  isExpiringSoon: boolean;
+  source?: "approval_pending" | "gateway_pending";
 }
 
 interface PendingPaymentsWidgetProps {
@@ -32,12 +35,15 @@ interface PendingPaymentsWidgetProps {
 }
 
 /**
- * Widget to display pending payments that require action from the consultee
- * Shows on the consultee home dashboard when there are approved requests awaiting payment
+ * Sidebar widget showing pending payments.
+ * Shows two types:
+ * 1. Approval-pending: consultant approved, awaiting checkout (shows "Pay Now")
+ * 2. Gateway-pending: payment initiated, awaiting gateway confirmation (shows "Processing")
  */
 export function PendingPaymentsWidget({
   consulteeId,
 }: PendingPaymentsWidgetProps) {
+  const router = useRouter();
   const [pendingPayments, setPendingPayments] = useState<PendingPayment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -75,9 +81,8 @@ export function PendingPaymentsWidget({
     return () => clearInterval(interval);
   }, [consulteeId]);
 
-  // Don't show the widget if there are no pending payments
   if (loading) {
-    return null; // Or a skeleton loader if you prefer
+    return null;
   }
 
   if (error) {
@@ -89,51 +94,89 @@ export function PendingPaymentsWidget({
     );
   }
 
+  // Empty state
   if (pendingPayments.length === 0) {
-    return null;
+    return (
+      <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden h-full flex flex-col">
+        <div className="px-5 py-4 border-b border-zinc-100 shrink-0">
+          <h3 className="flex items-center gap-2 font-semibold text-zinc-900 text-sm">
+            <CreditCard className="h-4 w-4 text-zinc-400" />
+            Pending Payments
+          </h3>
+        </div>
+        <div className="px-5 py-8 text-center flex-1 flex flex-col items-center justify-center">
+          <div className="mx-auto h-10 w-10 rounded-full bg-emerald-50 flex items-center justify-center mb-2">
+            <CreditCard className="h-5 w-5 text-emerald-500" />
+          </div>
+          <p className="text-sm text-zinc-500">No pending payments</p>
+          <p className="text-xs text-zinc-400 mt-0.5">
+            You&apos;re all caught up!
+          </p>
+        </div>
+      </div>
+    );
   }
 
+  // Has payments
+  const hasExpiring = pendingPayments.some((p) => p.isExpiringSoon);
+
   return (
-    <Card className="border-amber-300 bg-amber-50">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-amber-900">
-          <CreditCard className="h-5 w-5" />
-          Payment Required
-        </CardTitle>
-        <CardDescription className="text-amber-700">
-          You have {pendingPayments.length}{" "}
-          {pendingPayments.length === 1 ? "request" : "requests"} awaiting
-          payment to proceed with scheduling
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {pendingPayments.map((payment) => (
-          <div
-            key={payment.id}
-            className="bg-white rounded-lg p-4 border border-amber-200 shadow-sm"
-          >
-            <div className="flex items-start justify-between">
-              <div className="flex-1">
-                <h4 className="font-semibold text-gray-900">{payment.title}</h4>
-                <p className="text-sm text-gray-600 mt-1">
-                  with{" "}
-                  <span className="font-medium">{payment.consultantName}</span>
-                </p>
-                <div className="flex items-center gap-4 mt-2 text-sm">
-                  <span className="font-semibold text-gray-900">
-                    {formatCurrencyAmount(payment.amount, payment.currency)}
-                  </span>
-                  <span className="text-gray-500">•</span>
-                  <span className="capitalize text-gray-600">
-                    {payment.type}
-                  </span>
+    <div
+      className={cn(
+        "rounded-2xl border shadow-sm overflow-hidden h-full flex flex-col",
+        hasExpiring
+          ? "bg-amber-50 border-amber-300"
+          : "bg-white border-amber-200",
+      )}
+    >
+      <div
+        className={cn(
+          "px-5 py-4 border-b flex items-center gap-2 shrink-0",
+          hasExpiring ? "border-amber-200" : "border-amber-100",
+        )}
+      >
+        <AlertTriangle className="h-4 w-4 text-amber-600" />
+        <h3 className="font-semibold text-amber-900 text-sm">
+          {pendingPayments.length} Pending{" "}
+          {pendingPayments.length === 1 ? "Payment" : "Payments"}
+        </h3>
+      </div>
+      <div className="divide-y divide-amber-100 flex-1">
+        {pendingPayments.map((payment) => {
+          const isGatewayPending = payment.source === "gateway_pending";
+
+          return (
+            <div key={payment.id} className="px-5 py-3.5">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-zinc-900 truncate">
+                    {payment.title}
+                  </p>
+                  <p className="text-xs text-zinc-500 mt-0.5 truncate">
+                    with {payment.consultantName}
+                  </p>
                 </div>
-                <div className="flex items-center gap-1 mt-2 text-xs text-gray-500">
+                <span className="text-sm font-semibold text-zinc-900 tabular-nums shrink-0">
+                  {formatCurrencyFromMajorUnit(
+                    payment.amount,
+                    payment.currency,
+                  )}
+                </span>
+              </div>
+              <div className="flex items-center justify-between mt-2.5">
+                <div className="flex items-center gap-1 text-xs text-zinc-500">
                   <Clock className="h-3 w-3" />
                   {payment.isExpiringSoon ? (
                     <span className="text-red-600 font-medium">
                       Expires{" "}
                       {formatDistanceToNow(new Date(payment.expiresAt), {
+                        addSuffix: true,
+                      })}
+                    </span>
+                  ) : isGatewayPending ? (
+                    <span>
+                      Initiated{" "}
+                      {formatDistanceToNow(new Date(payment.approvedAt), {
                         addSuffix: true,
                       })}
                     </span>
@@ -146,40 +189,51 @@ export function PendingPaymentsWidget({
                     </span>
                   )}
                 </div>
+                {isGatewayPending ? (
+                  <span className="inline-flex items-center gap-1 h-7 px-3 text-xs font-semibold text-amber-700 bg-amber-100 rounded-md">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Processing
+                  </span>
+                ) : (
+                  <Button
+                    size="sm"
+                    className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
+                    onClick={() => {
+                      if (
+                        payment.paymentUrl &&
+                        /^https?:\/\//.test(payment.paymentUrl)
+                      ) {
+                        window.open(
+                          payment.paymentUrl,
+                          "_blank",
+                          "noopener,noreferrer",
+                        );
+                      }
+                    }}
+                  >
+                    Pay Now
+                    <ExternalLink className="ml-1 h-3 w-3" />
+                  </Button>
+                )}
               </div>
-              <Button
-                size="sm"
-                className="bg-amber-600 hover:bg-amber-700 text-white"
-                onClick={() => {
-                  if (
-                    payment.paymentUrl &&
-                    /^https?:\/\//.test(payment.paymentUrl)
-                  ) {
-                    window.open(
-                      payment.paymentUrl,
-                      "_blank",
-                      "noopener,noreferrer",
-                    );
-                  }
-                }}
-              >
-                Pay Now
-                <ExternalLink className="ml-2 h-3 w-3" />
-              </Button>
             </div>
-
-            {payment.isExpiringSoon && (
-              <Alert variant="destructive" className="mt-3">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription className="text-xs">
-                  This payment link expires soon! Complete payment within 24
-                  hours or your request will be reverted to pending status.
-                </AlertDescription>
-              </Alert>
-            )}
-          </div>
-        ))}
-      </CardContent>
-    </Card>
+          );
+        })}
+      </div>
+      {pendingPayments.length > 1 && (
+        <div className="px-5 py-3 border-t border-amber-100">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full text-amber-800 hover:text-amber-900 hover:bg-amber-100 text-xs font-semibold"
+            onClick={() =>
+              router.push(`/dashboard/consultee/${consulteeId}/payments`)
+            }
+          >
+            View All Payments
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }

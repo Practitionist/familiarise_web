@@ -13,10 +13,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  ConsultationWithPlan,
-  SubscriptionWithPlan,
-  WebinarWithPlan,
-  ClassWithPlan,
+  TConsultationWithPlan,
+  TSubscriptionWithPlan,
+  TWebinarWithPlan,
+  TClassWithPlan,
 } from "@/hooks/useEvents";
 import {
   getEventTitle,
@@ -26,10 +26,10 @@ import {
 } from "../../utils/getMetadata";
 
 type EventWithType =
-  | (ConsultationWithPlan & { type: "Consultation" })
-  | (SubscriptionWithPlan & { type: "Subscription" })
-  | (WebinarWithPlan & { type: "Webinar" })
-  | (ClassWithPlan & { type: "Class" });
+  | (TConsultationWithPlan & { type: "Consultation" })
+  | (TSubscriptionWithPlan & { type: "Subscription" })
+  | (TWebinarWithPlan & { type: "Webinar" })
+  | (TClassWithPlan & { type: "Class" });
 
 // Updated to receive data as props instead of fetching internally
 interface BookingHistoryTabProps {

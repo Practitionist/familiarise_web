@@ -13,6 +13,7 @@ import {
   type ExpiredDiscountsResult,
 } from "../../scripts/cleanup/deactivate-expired-discounts";
 import fs from "fs";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 /**
  * Output results to GitHub Actions
@@ -49,6 +50,7 @@ function outputToGitHubActions(result: ExpiredDiscountsResult): void {
  * Main entry point
  */
 async function main(): Promise<void> {
+  await abortIfMaintenance("deactivate-expired-discounts");
   console.log("🏷️ Starting expired discount code deactivation job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 

@@ -3,6 +3,11 @@ import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
 import { RecordingService } from "@/lib/stream/recording-service";
+import {
+  requireApiAuth,
+  isPrivileged,
+  forbiddenResponse,
+} from "@/lib/auth-helpers";
 
 const planMaterialSelect = {
   id: true,
@@ -129,8 +134,19 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ consulteeId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { consulteeId } = await params;
+
+    if (
+      !isPrivileged(session.user.role) &&
+      session.user.consulteeProfileId !== consulteeId
+    ) {
+      return forbiddenResponse("You can only access your own resources");
+    }
 
     if (!consulteeId) {
       return NextResponse.json(
@@ -154,11 +170,13 @@ export async function GET(
     const userId = consulteeProfile.userId;
 
     // Get paid plan IDs via shared RecordingService method
-    const { webinarPlanIds: paidWebinarPlanIds, classPlanIds: paidClassPlanIds } =
-      await RecordingService.getPaidPlanIds(userId);
+    const {
+      webinarPlanIds: paidWebinarPlanIds,
+      classPlanIds: paidClassPlanIds,
+    } = await RecordingService.getPaidPlanIds(userId);
 
-    const [consultations, subscriptions, webinars, classes] =
-      await Promise.all([
+    const [consultations, subscriptions, webinars, classes] = await Promise.all(
+      [
         prisma.consultation.findMany({
           where: { requestedById: consulteeId },
           include: consultationInclude,
@@ -260,7 +278,8 @@ export async function GET(
           include: classInclude,
           orderBy: { createdAt: "desc" },
         }),
-      ]);
+      ],
+    );
 
     const transform = {
       consultations: consultations.map((c: ConsultationWithResources) => ({
@@ -269,12 +288,9 @@ export async function GET(
         consultantName: c.consultationPlan.consultantProfile.user.name,
         consultantImage: c.consultationPlan.consultantProfile.user.image,
         status: c.requestStatus,
-        date:
-          c.appointment?.slotsOfAppointment?.[0]?.startsAt || c.requestedAt,
+        date: c.appointment?.slotsOfAppointment?.[0]?.startsAt || c.requestedAt,
         materials: c.consultationPlan.materials,
-        recordings: extractRecordings(
-          c.appointment ? [c.appointment] : [],
-        ),
+        recordings: extractRecordings(c.appointment ? [c.appointment] : []),
       })),
       subscriptions: subscriptions.map((s: SubscriptionWithResources) => ({
         id: s.id,
@@ -292,12 +308,9 @@ export async function GET(
         consultantName: w.webinarPlan.consultantProfile?.user.name ?? null,
         consultantImage: w.webinarPlan.consultantProfile?.user.image ?? null,
         status: w.status,
-        date:
-          w.appointment?.slotsOfAppointment?.[0]?.startsAt || w.createdAt,
+        date: w.appointment?.slotsOfAppointment?.[0]?.startsAt || w.createdAt,
         materials: w.webinarPlan.materials,
-        recordings: extractRecordings(
-          w.appointment ? [w.appointment] : [],
-        ),
+        recordings: extractRecordings(w.appointment ? [w.appointment] : []),
       })),
       classes: classes.map((cl: ClassWithResources) => ({
         id: cl.id,

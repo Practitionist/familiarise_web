@@ -13,6 +13,7 @@ import {
   type TentativeSlotCleanupResult,
 } from "../../scripts/appointments/cleanup-tentative-slots";
 import fs from "fs";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 /**
  * Output results to GitHub Actions
@@ -48,6 +49,7 @@ function outputToGitHubActions(result: TentativeSlotCleanupResult): void {
  * Main entry point
  */
 async function main(): Promise<void> {
+  await abortIfMaintenance("cleanup-tentative-slots");
   console.log("🧹 Starting tentative slot cleanup job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 

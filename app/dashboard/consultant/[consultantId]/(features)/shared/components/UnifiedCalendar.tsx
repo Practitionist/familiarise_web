@@ -9,6 +9,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { DAYS, INTERVALS } from "@/utils/timeSlotsMeta";
+import { TWENTY_FOUR_HOURS_IN_MS } from "@/utils/slotAllocation/slotTimeUtils";
+import { isRecurringEventType } from "@/utils/slotAllocation/types";
 import {
   format,
   addDays,
@@ -77,17 +79,17 @@ function isDateInSchedulingPeriod(
   );
   const startOnly = allowedStart
     ? new Date(
-      allowedStart.getFullYear(),
-      allowedStart.getMonth(),
-      allowedStart.getDate(),
-    )
+        allowedStart.getFullYear(),
+        allowedStart.getMonth(),
+        allowedStart.getDate(),
+      )
     : null;
   const endOnly = allowedEnd
     ? new Date(
-      allowedEnd.getFullYear(),
-      allowedEnd.getMonth(),
-      allowedEnd.getDate(),
-    )
+        allowedEnd.getFullYear(),
+        allowedEnd.getMonth(),
+        allowedEnd.getDate(),
+      )
     : null;
 
   if (startOnly && dateOnly < startOnly) return false;
@@ -145,6 +147,9 @@ function countCompletedCallsForWeek(
     if (!appt.subscription || appt.subscription.id !== subscriptionId)
       return false;
     const slots = appt.slotsOfAppointment || [];
+    // Skip tentative appointments — during rescheduling, tentative slots are the
+    // OLD slots being replaced and should not count toward the weekly limit.
+    if (slots.some((s: any) => s.isTentative)) return false;
     // A completed call is an appointment that has exactly the per-call slot count
     if (slots.length !== slotsPerCall) return false;
     // FIX: Use correct field names from API (startsAt, not slotStartTimeInUTC)
@@ -194,6 +199,8 @@ function computeSubscriptionFooter(
     allowedEnd?: Date;
     callsPerWeek?: number;
     sessionDurationInHours?: number;
+    totalSessions?: number;
+    pastCompletedSessions?: number;
   }>,
 ): string | null {
   const {
@@ -202,20 +209,33 @@ function computeSubscriptionFooter(
     allowedEnd,
     callsPerWeek,
     sessionDurationInHours,
+    totalSessions,
+    pastCompletedSessions = 0,
   } = params;
-  if (!allowedStart || !allowedEnd || !callsPerWeek) return null;
 
-  const weeks = countSundayWeeksInclusive(allowedStart, allowedEnd);
-  const maxTotalCalls = weeks * callsPerWeek;
+  // Use totalSessions from plan (authoritative) to avoid calendar-week edge cases
+  let maxTotalCalls: number;
+  if (totalSessions && totalSessions > 0) {
+    maxTotalCalls = totalSessions;
+  } else {
+    if (!allowedStart || !allowedEnd || !callsPerWeek) return null;
+    const weeks = countSundayWeeksInclusive(allowedStart, allowedEnd);
+    maxTotalCalls = weeks * callsPerWeek;
+  }
   const slotsPerCall = getSlotsPerCall(sessionDurationInHours);
   const scheduled = Math.floor(selectedSlots.length / slotsPerCall);
-  const remaining = maxTotalCalls - scheduled;
+  const totalScheduled = scheduled + pastCompletedSessions;
+  const remaining = maxTotalCalls - totalScheduled;
 
   const duration = sessionDurationInHours || 1;
   const durationText = duration === 1 ? "1 hour" : `${duration} hours`;
 
   // Clear, user-friendly text based on progress
-  if (scheduled === 0) {
+  if (pastCompletedSessions > 0 && scheduled === 0) {
+    return `${pastCompletedSessions} past session${pastCompletedSessions !== 1 ? "s" : ""} completed | Schedule ${remaining} more (${durationText} each)`;
+  } else if (pastCompletedSessions > 0 && remaining > 0) {
+    return `✅ ${totalScheduled} of ${maxTotalCalls} (${pastCompletedSessions} past + ${scheduled} new) | ⏳ ${remaining} remaining`;
+  } else if (scheduled === 0) {
     return `📅 Choose times for ${maxTotalCalls} sessions (${durationText} each)`;
   } else if (remaining > 0) {
     return `✅ ${scheduled} of ${maxTotalCalls} sessions scheduled • ${remaining} more to go`;
@@ -265,31 +285,40 @@ function computeClassFooter(params: {
   selectedSlots: TimeSlot[];
   sessionDurationInHours?: number;
   totalSessions?: number;
+  pastCompletedSessions?: number;
 }): string {
-  const { selectedSlots, sessionDurationInHours, totalSessions } = params;
+  const {
+    selectedSlots,
+    sessionDurationInHours,
+    totalSessions,
+    pastCompletedSessions = 0,
+  } = params;
   const slotsPerSession = Math.ceil((sessionDurationInHours || 1) / 0.5);
   const scheduled = countCompletedSelectedClasses(
     selectedSlots,
     slotsPerSession,
   );
+  const totalScheduled = scheduled + pastCompletedSessions;
 
   const duration = sessionDurationInHours || 1;
   const durationText = duration === 1 ? "1 hour" : `${duration} hours`;
 
   if (typeof totalSessions === "number" && totalSessions > 0) {
-    const remaining = totalSessions - scheduled;
+    const remaining = totalSessions - totalScheduled;
 
-    if (scheduled === 0) {
-      return `📅 Schedule ${totalSessions} sessions (${durationText} each)`;
+    if (pastCompletedSessions > 0 && scheduled === 0) {
+      return `${pastCompletedSessions} past session${pastCompletedSessions !== 1 ? "s" : ""} completed | Schedule ${remaining} more (${durationText} each)`;
     } else if (remaining > 0) {
-      return `✅ ${scheduled} scheduled | ⏳ ${remaining} remaining (${durationText} each)`;
+      return pastCompletedSessions > 0
+        ? `✅ ${totalScheduled} of ${totalSessions} (${pastCompletedSessions} past + ${scheduled} new) | ⏳ ${remaining} remaining`
+        : `✅ ${scheduled} scheduled | ⏳ ${remaining} remaining (${durationText} each)`;
     } else {
       return `✅ All ${totalSessions} sessions scheduled`;
     }
   }
 
   // Fallback when total not known
-  return `Sessions scheduled: ${scheduled}`;
+  return `Sessions scheduled: ${totalScheduled}`;
 }
 
 export interface UnifiedCalendarProps {
@@ -311,6 +340,7 @@ export interface UnifiedCalendarProps {
   // Optional hard boundaries to restrict interactive selection
   allowedStart?: Date;
   allowedEnd?: Date;
+  totalSessions?: number; // Authoritative session count from plan (overrides weeks × callsPerWeek)
 }
 
 export function UnifiedCalendar({
@@ -331,6 +361,7 @@ export function UnifiedCalendar({
   className = "",
   allowedStart,
   allowedEnd,
+  totalSessions,
 }: UnifiedCalendarProps) {
   const { toast } = useToast();
   // State
@@ -386,6 +417,12 @@ export function UnifiedCalendar({
     [refetchEventSlots, refetchAppointments, onAllocationComplete],
   );
 
+  // Count past confirmed event slots for in-progress recurring events
+  const pastEventSlotCount = useMemo(() => {
+    const now = new Date();
+    return eventSlots.filter((s) => s.endTime <= now).length;
+  }, [eventSlots]);
+
   // Slot allocation hook
   const {
     selectedSlots,
@@ -412,14 +449,29 @@ export function UnifiedCalendar({
     sessionDurationInHours,
     startDate: allowedStart,
     endDate: allowedEnd,
-    // Provide dynamic maxTotalCalls so validation/toasts show the real limit
-    maxTotalCalls:
-      eventType === "subscription" && allowedStart && allowedEnd && callsPerWeek
-        ? countSundayWeeksInclusive(allowedStart, allowedEnd) *
-        (callsPerWeek || 1)
-        : undefined,
+    // Provide dynamic maxTotalCalls so validation/toasts show the real limit.
+    // Prefer totalSessions from plan (authoritative) over calendar-week calculation.
+    maxTotalCalls: isRecurringEventType(eventType)
+      ? totalSessions && totalSessions > 0
+        ? totalSessions
+        : allowedStart && allowedEnd && callsPerWeek
+          ? countSundayWeeksInclusive(allowedStart, allowedEnd) *
+            (callsPerWeek || 1)
+          : undefined
+      : undefined,
+    pastConfirmedSlotCount: isRecurringEventType(eventType)
+      ? pastEventSlotCount
+      : undefined,
     onSuccess: handleAllocationSuccess,
   });
+
+  // PERFORMANCE: Pre-compute a Set of event slot timestamps (rounded to seconds)
+  // for O(1) lookups. Replaces O(n) .some() scan that ran 336× per render.
+  const eventSlotsSet = useMemo(
+    () =>
+      new Set(eventSlots.map((s) => Math.round(s.startTime.getTime() / 1000))),
+    [eventSlots],
+  );
 
   // Initialize pre-selected slots
   // Compare by content to prevent infinite loops from parent re-renders creating new array references
@@ -450,7 +502,7 @@ export function UnifiedCalendar({
       } else {
         setConfigWarning(null);
       }
-    } else if (eventType === "subscription" || eventType === "class") {
+    } else if (isRecurringEventType(eventType)) {
       if (!sessionDurationInHours || sessionDurationInHours <= 0) {
         setConfigWarning(
           `${eventType === "subscription" ? "Session" : "Class"} duration not configured. Using 1-hour default.`,
@@ -482,9 +534,7 @@ export function UnifiedCalendar({
       const clickedDayString = clickedDate.toDateString();
 
       // Check if a candidate slot at a given offset is eligible for auto-expansion
-      const getEligibleSlot = (
-        offsetSteps: number,
-      ): TimeSlot | null => {
+      const getEligibleSlot = (offsetSteps: number): TimeSlot | null => {
         const offsetMs = offsetSteps * 30 * 60 * 1000;
         const targetTime = new Date(clickedLocalStart.getTime() + offsetMs);
 
@@ -499,18 +549,16 @@ export function UnifiedCalendar({
         const status = getSlotStatusForInterval(interval, clickedDate);
 
         // Must be available, not booked, not in past
-        if (
-          !status.isAvailable ||
-          status.isBookedForDisplay ||
-          status.isInPast
-        )
+        if (!status.isAvailable || status.isBookedForDisplay || status.isInPast)
           return null;
 
         // Must not be already selected
         const candidateStartMs = new Date(
           status.intervalStartUTCString,
         ).getTime();
-        if (selectedSlots.some((s) => s.startTime.getTime() === candidateStartMs))
+        if (
+          selectedSlots.some((s) => s.startTime.getTime() === candidateStartMs)
+        )
           return null;
 
         // Must be within allowed range
@@ -583,16 +631,10 @@ export function UnifiedCalendar({
         isBooked: status.isBooked,
       };
 
-      // Check if this slot belongs to the current event (for rescheduling)
-      const isCurrentEventSlot = eventSlots.some((eventSlot) => {
-        const slotTime = slot.startTime.getTime();
-        const eventTime = eventSlot.startTime.getTime();
-        const timeDiff = Math.abs(slotTime - eventTime);
-        const timeMatch = timeDiff < 1000;
-        const stringMatch =
-          slot.startTime.toISOString() === eventSlot.startTime.toISOString();
-        return timeMatch || stringMatch;
-      });
+      // Check if this slot belongs to the current event — O(1) via Set lookup
+      const isCurrentEventSlot = eventSlotsSet.has(
+        Math.round(slot.startTime.getTime() / 1000),
+      );
 
       // First-line guard: allow click but block selection with feedback if outside allowed range
       if (allowedStart || allowedEnd) {
@@ -656,7 +698,42 @@ export function UnifiedCalendar({
         }
       }
 
-      // Block selection of unavailable, booked, or past slots
+      // Past "This Event" slots: allow deselection, block re-selection
+      if (isCurrentEventSlot && status.isInPast) {
+        const isCurrentlySelected = selectedSlots.some(
+          (s) => s.startTime.getTime() === slot.startTime.getTime(),
+        );
+        if (isCurrentlySelected) {
+          toggleSlot(slot);
+          return;
+        }
+        toast({
+          variant: "destructive",
+          title: "Past session",
+          description:
+            "This session has already passed. Navigate to a future week to schedule a replacement.",
+        });
+        return;
+      }
+
+      // Imminent "This Event" slots (<24h away): block deselection
+      if (isCurrentEventSlot && !status.isInPast) {
+        const now = new Date();
+        const imminentCutoff = new Date(
+          now.getTime() + TWENTY_FOUR_HOURS_IN_MS,
+        );
+        if (slot.startTime < imminentCutoff) {
+          toast({
+            variant: "destructive",
+            title: "Session too soon",
+            description:
+              "This session starts within 24 hours and cannot be rescheduled.",
+          });
+          return;
+        }
+      }
+
+      // Block selection of unavailable, booked, or past non-event slots
       if (status.isInPast) {
         toast({
           variant: "destructive",
@@ -724,7 +801,7 @@ export function UnifiedCalendar({
       allowedEnd,
       selectedSlots,
       existingAppointments,
-      eventSlots,
+      eventSlotsSet,
       toast,
     ],
   );
@@ -743,38 +820,10 @@ export function UnifiedCalendar({
 
       const isCurrentlySelected = isSlotSelected(slot);
 
-      // Check if this slot belongs to the current event (already booked for THIS event)
-      // Use robust timestamp matching with tolerance for floating point precision
-      const isCurrentEventSlot = eventSlots.some((eventSlot) => {
-        const slotTime = slot.startTime.getTime();
-        const eventTime = eventSlot.startTime.getTime();
-        const timeDiff = Math.abs(slotTime - eventTime);
-
-        // Match with 1-second tolerance for precision issues
-        const timeMatch = timeDiff < 1000;
-
-        // Fallback: compare ISO strings for exact match
-        const stringMatch =
-          slot.startTime.toISOString() === eventSlot.startTime.toISOString();
-
-        return timeMatch || stringMatch;
-      });
-
-      // Enhanced debug logging
-      if (eventSlots.length > 0 && !isCurrentEventSlot && slot.isBooked) {
-        console.log("[UnifiedCalendar] Slot not matching eventSlots:", {
-          slotTime: slot.startTime.toISOString(),
-          slotTimeMs: slot.startTime.getTime(),
-          eventSlotsCount: eventSlots.length,
-          eventSlotTimes: eventSlots.map((s) => ({
-            time: s.startTime.toISOString(),
-            ms: s.startTime.getTime(),
-            diff: Math.abs(slot.startTime.getTime() - s.startTime.getTime()),
-          })),
-          eventType,
-          eventId,
-        });
-      }
+      // Check if this slot belongs to the current event — O(1) via Set lookup
+      const isCurrentEventSlot = eventSlotsSet.has(
+        Math.round(slot.startTime.getTime() / 1000),
+      );
 
       // Check if slot is outside allowed period for subscriptions/classes
       const intervalStart = new Date(status.intervalStartUTCString);
@@ -793,7 +842,7 @@ export function UnifiedCalendar({
       }
 
       let cellClassName =
-        "h-8 w-full relative transition-colors duration-150 ease-in-out border border-transparent rounded-sm text-[10px] leading-tight px-1 py-0.5 disabled:pointer-events-none disabled:opacity-50";
+        "h-8 w-full relative transition-colors duration-75 ease-in-out border border-transparent rounded-sm text-[10px] leading-tight px-1 py-0.5 disabled:pointer-events-none disabled:opacity-50";
       let buttonText = "";
       const showTooltip =
         ((status.isBookedForDisplay || status.isPartiallyBooked) &&
@@ -809,7 +858,8 @@ export function UnifiedCalendar({
         // Black for this event's already booked slots
         cellClassName +=
           " bg-black text-white cursor-pointer hover:bg-gray-900 border-gray-800";
-        buttonText = "This Event";
+        cellClassName += status.isInPast ? " opacity-60" : "";
+        buttonText = status.isInPast ? "Past Session" : "This Event";
       } else if (status.isBookedForDisplay) {
         // Grey for other appointments
         cellClassName +=
@@ -886,7 +936,9 @@ export function UnifiedCalendar({
                               : "Class"}
                       </p>
                       <p className="text-muted-foreground text-[10px] mt-1">
-                        Click to reschedule
+                        {status.isInPast
+                          ? "Past session (completed)"
+                          : "Click to reschedule"}
                       </p>
                     </div>
                   ) : (
@@ -931,7 +983,7 @@ export function UnifiedCalendar({
       allowedStart,
       allowedEnd,
       eventType,
-      eventSlots,
+      eventSlotsSet,
     ],
   );
 
@@ -980,12 +1032,14 @@ export function UnifiedCalendar({
             return (
               <div
                 key={date.toISOString()}
-                className={`min-h-[100px] border p-1 flex flex-col ${isCurrentDay ? "ring-2 ring-primary" : ""
-                  } ${isPastDay ? "bg-gray-100 text-gray-400" : "bg-white"}`}
+                className={`min-h-[100px] border p-1 flex flex-col ${
+                  isCurrentDay ? "ring-2 ring-primary" : ""
+                } ${isPastDay ? "bg-gray-100 text-gray-400" : "bg-white"}`}
               >
                 <div
-                  className={`font-bold mb-1 text-xs ${isCurrentDay ? "text-primary" : ""
-                    } ${isPastDay ? "" : "text-gray-700"}`}
+                  className={`font-bold mb-1 text-xs ${
+                    isCurrentDay ? "text-primary" : ""
+                  } ${isPastDay ? "" : "text-gray-700"}`}
                 >
                   {i + 1}
                 </div>
@@ -1160,12 +1214,14 @@ export function UnifiedCalendar({
               return (
                 <div
                   key={DAYS[index]}
-                  className={`text-center p-1 md:p-2 ${isInPeriod ? "bg-blue-50 border-x-2 border-blue-200" : ""
-                    }`}
+                  className={`text-center p-1 md:p-2 ${
+                    isInPeriod ? "bg-blue-50 border-x-2 border-blue-200" : ""
+                  }`}
                 >
                   <div
-                    className={`font-bold text-xs md:text-base ${isToday ? "text-primary" : ""
-                      }`}
+                    className={`font-bold text-xs md:text-base ${
+                      isToday ? "text-primary" : ""
+                    }`}
                   >
                     {DAYS[index].slice(0, 3)}
                   </div>
@@ -1219,12 +1275,18 @@ export function UnifiedCalendar({
             {(() => {
               try {
                 if (eventType === "subscription") {
+                  const slotsPerCall = getSlotsPerCall(sessionDurationInHours);
                   const computed = computeSubscriptionFooter({
                     selectedSlots,
                     allowedStart,
                     allowedEnd,
                     callsPerWeek,
                     sessionDurationInHours,
+                    totalSessions,
+                    pastCompletedSessions:
+                      pastEventSlotCount > 0
+                        ? Math.floor(pastEventSlotCount / slotsPerCall)
+                        : 0,
                   });
                   if (computed) return computed;
                   // Fallback to existing text if boundaries not provided
@@ -1234,10 +1296,17 @@ export function UnifiedCalendar({
                     slotLimits.maxSlots,
                   );
                 } else if (eventType === "class") {
+                  const slotsPerSession = Math.ceil(
+                    (sessionDurationInHours || 1) / 0.5,
+                  );
                   return computeClassFooter({
                     selectedSlots,
                     sessionDurationInHours,
                     totalSessions: slotLimits.totalSessions,
+                    pastCompletedSessions:
+                      pastEventSlotCount > 0
+                        ? Math.floor(pastEventSlotCount / slotsPerSession)
+                        : 0,
                   });
                 }
 

@@ -1,16 +1,13 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { useToast } from "@/components/ui/use-toast";
-import {
-  TimeSlot,
-  calculateRequiredSlots,
-  countSundayWeeksInclusive,
-} from "../utils/calendarUtils";
-import { startOfWeek } from "date-fns";
+import { TimeSlot, calculateRequiredSlots } from "../utils/calendarUtils";
 import {
   AllocationAlgorithms,
   AllocationOptions,
   AllocationResult,
 } from "../utils/allocationAlgorithms";
+import { AllocationService } from "../utils/allocationService";
+import { isRecurringEventType } from "@/utils/slotAllocation/types";
 
 /**
  * ENHANCED EVENT SLOT ALLOCATION HOOK
@@ -168,6 +165,9 @@ export interface UseEventSlotAllocationOptions {
   /** Latest allowed slot date */
   endDate?: Date;
 
+  /** Number of confirmed past event slots (for in-progress recurring events) */
+  pastConfirmedSlotCount?: number;
+
   /** Preferred time slots (if any) */
   preferredTimeSlots?: TimeSlot[];
 
@@ -277,6 +277,9 @@ export interface UseEventSlotAllocationReturn {
 
   /** Check if a slot is currently selected */
   isSlotSelected: (slot: TimeSlot) => boolean;
+
+  /** Pre-computed Set of selected slot timestamps for O(1) lookups */
+  selectedSlotsSet: Set<number>;
 
   /** Add multiple slots with validation */
   addSlots: (slots: TimeSlot[]) => void;
@@ -416,11 +419,18 @@ function getSlotLimits(
       const sessionSlots = Math.ceil(
         (options.sessionDurationInHours || 1) / 0.5,
       );
+      // Use maxTotalCalls (from classPlan.totalSessions) as authoritative when provided,
+      // otherwise fall back to period-based calculation (same pattern as subscription).
+      const effectiveTotalSessions =
+        options.maxTotalCalls && options.maxTotalCalls > 0
+          ? options.maxTotalCalls
+          : Math.ceil(requiredSlots / sessionSlots);
+      const effectiveMaxSlots = effectiveTotalSessions * sessionSlots;
       return {
-        minSlots: requiredSlots,
-        maxSlots: requiredSlots,
+        minSlots: effectiveMaxSlots,
+        maxSlots: effectiveMaxSlots,
         slotsPerSession: sessionSlots,
-        totalSessions: Math.ceil(requiredSlots / sessionSlots),
+        totalSessions: effectiveTotalSessions,
       };
     }
 
@@ -430,9 +440,14 @@ function getSlotLimits(
       );
       // FIXED: Calculate actual call count for maxSlots (not slot count)
       const totalCalls = Math.ceil(requiredSlots / subscriptionSessionSlots);
+      const rawMaxCalls = options.maxTotalCalls || totalCalls;
+      // Subtract past completed sessions so the interactive guard caps at remaining sessions
+      const pastSessions = Math.floor(
+        (options.pastConfirmedSlotCount || 0) / subscriptionSessionSlots,
+      );
       return {
         minSlots: requiredSlots,
-        maxSlots: options.maxTotalCalls || totalCalls, // ✅ Use call count, not slot count
+        maxSlots: rawMaxCalls - pastSessions, // ✅ Cap at remaining sessions for in-progress events
         slotsPerSession: subscriptionSessionSlots,
         totalSessions: totalCalls, // ✅ Also use call count for sessions
       };
@@ -634,7 +649,7 @@ function validateEventSlots(
         result.isValid = false;
         result.errors.push(
           subscriptionValidation.weeklyCallsError ||
-          "Weekly call limit exceeded",
+            "Weekly call limit exceeded",
         );
       }
 
@@ -1121,7 +1136,7 @@ function validateSubscriptionSlots(
   slotsByDay.forEach((daySlots, day) => {
     if (daySlots.length > slotsPerCall) {
       dailyCallsValid = false;
-      dailyCallsError = `Too many slots selected for ${day}. Maximum ${slotsPerCall} slots per call allowed.`;
+      dailyCallsError = `Only 1 session per day allowed. ${day} already has a complete session selected — choose a different day.`;
       return;
     }
 
@@ -1234,26 +1249,50 @@ export function useEventSlotAllocation(
 
   // Required slots calculation
   const requiredSlots = useMemo(() => {
-    // Use the appropriate duration field based on event type
-    const duration =
-      eventType === "consultation" || eventType === "webinar"
-        ? options.durationInHours
-        : options.sessionDurationInHours;
+    let rawRequired: number;
 
-    return calculateRequiredSlots(
-      eventType,
-      options.durationInMonths,
-      options.callsPerWeek,
-      duration,
-      options.startDate,
-      options.endDate,
-    );
+    // For subscriptions and classes, maxTotalCalls is set to the plan's totalSessions (authoritative).
+    // Derive requiredSlots from it to stay consistent with backend validation.
+    if (isRecurringEventType(eventType) && options.maxTotalCalls) {
+      const slotsPerSession = Math.ceil(
+        (options.sessionDurationInHours || 1) / 0.5,
+      );
+      rawRequired = options.maxTotalCalls * slotsPerSession;
+    } else {
+      // Use the appropriate duration field based on event type
+      const duration =
+        eventType === "consultation" || eventType === "webinar"
+          ? options.durationInHours
+          : options.sessionDurationInHours;
+
+      rawRequired = calculateRequiredSlots(
+        eventType,
+        options.durationInMonths,
+        options.callsPerWeek,
+        duration,
+        options.startDate,
+        options.endDate,
+      );
+    }
+
+    // For in-progress classes/subscriptions, subtract past confirmed slots so
+    // the consultant only needs to select FUTURE slots.
+    const pastCount = options.pastConfirmedSlotCount || 0;
+    if (isRecurringEventType(eventType) && pastCount > 0) {
+      return Math.max(0, rawRequired - pastCount);
+    }
+
+    return rawRequired;
   }, [
     eventType,
+    options.maxTotalCalls,
     options.durationInMonths,
     options.callsPerWeek,
     options.durationInHours,
     options.sessionDurationInHours,
+    options.startDate,
+    options.endDate,
+    options.pastConfirmedSlotCount,
   ]);
 
   // Current validation result
@@ -1340,9 +1379,7 @@ export function useEventSlotAllocation(
           const dayKey = slot.startTime.toDateString();
           const daySlots = currentSlots
             .filter((s) => s.startTime.toDateString() === dayKey)
-            .sort(
-              (a, b) => a.startTime.getTime() - b.startTime.getTime(),
-            );
+            .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
 
           const group = findConsecutiveGroupContaining(slot, daySlots);
           const removeTimestamps = new Set(
@@ -1393,10 +1430,8 @@ export function useEventSlotAllocation(
               setTimeout(() => {
                 setPendingToast({
                   variant: "destructive",
-                  title: "Weekly Call Limit Reached",
-                  description: `Maximum ${callsPerWeek} calls per week allowed. Week of ${new Date(
-                    targetWeekKey,
-                  ).toLocaleDateString()} already has ${completeCallsThisWeek} complete call(s).`,
+                  title: "Weekly limit reached",
+                  description: `You can only schedule ${callsPerWeek} session${callsPerWeek !== 1 ? "s" : ""} per week. This week is full — choose a different week.`,
                 });
               }, 0);
               return currentSlots;
@@ -1411,10 +1446,8 @@ export function useEventSlotAllocation(
               setTimeout(() => {
                 setPendingToast({
                   variant: "destructive",
-                  title: "Weekly Call Limit Reached",
-                  description: `Completing this call would exceed the ${callsPerWeek}/week limit for week of ${new Date(
-                    targetWeekKey,
-                  ).toLocaleDateString()}.`,
+                  title: "Weekly limit reached",
+                  description: `Adding this slot would exceed the ${callsPerWeek} sessions/week limit. Choose a different week.`,
                 });
               }, 0);
               return currentSlots;
@@ -1444,8 +1477,8 @@ export function useEventSlotAllocation(
                 setTimeout(() => {
                   setPendingToast({
                     variant: "destructive",
-                    title: "Total Call Limit Reached",
-                    description: `Maximum ${maxTotalCalls} total calls allowed for this subscription. This would create ${totalCompleteCalls} complete calls.`,
+                    title: "Session limit reached",
+                    description: `You've already selected all ${maxTotalCalls} sessions. Remove a session to choose a different time.`,
                   });
                 }, 0);
                 return currentSlots;
@@ -1471,9 +1504,9 @@ export function useEventSlotAllocation(
               setTimeout(() => {
                 setPendingToast({
                   variant: "destructive",
-                  title: "Finish Ongoing Class",
+                  title: "Complete this session first",
                   description:
-                    "Finish the ongoing class first by selecting the next consecutive slot on the same day",
+                    "Select the next consecutive time slot to finish the session you've started.",
                 });
               }, 0);
               return currentSlots;
@@ -1496,9 +1529,9 @@ export function useEventSlotAllocation(
                   setTimeout(() => {
                     setPendingToast({
                       variant: "destructive",
-                      title: "Non-consecutive Selection",
+                      title: "Slots must be consecutive",
                       description:
-                        "A class requires consecutive slots. Please select the adjacent slot to complete it.",
+                        "Each session requires back-to-back time slots. Please select the immediately following slot.",
                     });
                   }, 0);
                   return currentSlots;
@@ -1516,19 +1549,23 @@ export function useEventSlotAllocation(
               setTimeout(() => {
                 setPendingToast({
                   variant: "destructive",
-                  title: "Daily Limit Reached",
-                  description: `Only ${maxSessionsPerDay} classes allowed per day`,
+                  title: "Daily limit reached",
+                  description: `You can only schedule ${maxSessionsPerDay} session${maxSessionsPerDay !== 1 ? "s" : ""} per day. Choose a different day.`,
                 });
               }, 0);
               return currentSlots;
             }
-          } else if (newSelection.length > slotLimits.maxSlots) {
-            // Validate against slot limits for other event types
+          } else if (
+            newSelection.length >
+            slotLimits.maxSlots - (options.pastConfirmedSlotCount || 0)
+          ) {
+            // Validate against slot limits for other event types (adjusted for past slots)
             setTimeout(() => {
               setPendingToast({
                 variant: "destructive",
-                title: "Selection Limit",
-                description: `Maximum ${slotLimits.maxSlots} slots allowed for ${eventType}`,
+                title: "All sessions selected",
+                description:
+                  "You've selected all the required time slots. Click 'Allocate' to confirm.",
               });
             }, 0);
             return currentSlots;
@@ -1588,7 +1625,10 @@ export function useEventSlotAllocation(
                 isCompleteCall(daySlots, slotsPerCall)
               ) {
                 const weekString = getWeekString(daySlots[0].startTime);
-                existingWeeklyConfirmedCallCounts.set(weekString, (existingWeeklyConfirmedCallCounts.get(weekString) || 0) + 1);
+                existingWeeklyConfirmedCallCounts.set(
+                  weekString,
+                  (existingWeeklyConfirmedCallCounts.get(weekString) || 0) + 1,
+                );
               }
             });
 
@@ -1599,7 +1639,10 @@ export function useEventSlotAllocation(
                 isCompleteCall(daySlots, slotsPerCall)
               ) {
                 const weekString = getWeekString(daySlots[0].startTime);
-                weeklyConfirmedCallCounts.set(weekString, (weeklyConfirmedCallCounts.get(weekString) || 0) + 1);
+                weeklyConfirmedCallCounts.set(
+                  weekString,
+                  (weeklyConfirmedCallCounts.get(weekString) || 0) + 1,
+                );
               }
             });
 
@@ -1613,7 +1656,9 @@ export function useEventSlotAllocation(
             ];
 
             // Block if adding this slot COMPLETES a call and the week is already at its callsPerWeek limit
-            const existingCallsThisWeek = existingWeeklyConfirmedCallCounts.get(weeklyConfirmedSlotWeek) || 0;
+            const existingCallsThisWeek =
+              existingWeeklyConfirmedCallCounts.get(weeklyConfirmedSlotWeek) ||
+              0;
             if (
               dayWithNewSlot.length === slotsPerCall &&
               isCompleteCall(dayWithNewSlot, slotsPerCall) &&
@@ -1622,79 +1667,16 @@ export function useEventSlotAllocation(
               setTimeout(() => {
                 setPendingToast({
                   variant: "destructive",
-                  title: "Weekly Limit Reached",
-                  description: `This week already has ${existingCallsThisWeek} confirmed call(s). Only ${callsPerWeek} call(s) per week allowed.`,
+                  title: "Weekly limit reached",
+                  description: `This week already has ${existingCallsThisWeek} confirmed session${existingCallsThisWeek !== 1 ? "s" : ""}. Limit is ${callsPerWeek} per week — choose a different week.`,
                 });
               }, 0);
               return currentSlots;
             }
 
-            // Add past calls tracking - calls in the past are automatically completed
-            const currentDate = new Date();
-            currentDate.setHours(0, 0, 0, 0); // Start of today
-
-            // Calculate how many calls should be completed based on current date
-            // Use the same logic as the footer calculation for consistency
-            const allowedStart = options.startDate;
-            const allowedEnd = options.endDate;
-
-            let pastCallsCompleted: number;
-
-            if (allowedStart && allowedEnd) {
-              // Use the same logic as computeSubscriptionFooter
-              const prevSaturday = new Date(startOfWeek(currentDate));
-              prevSaturday.setDate(prevSaturday.getDate() - 1);
-              const pastEnd =
-                prevSaturday < allowedEnd ? prevSaturday : allowedEnd;
-              const pastWeeks =
-                pastEnd >= allowedStart
-                  ? countSundayWeeksInclusive(allowedStart, pastEnd)
-                  : 0;
-              pastCallsCompleted = pastWeeks * callsPerWeek;
-            } else {
-              // Fallback to simple calculation if dates not provided
-              const subscriptionStartDate = new Date(); // TODO: Get actual subscription start date from options
-              subscriptionStartDate.setHours(0, 0, 0, 0);
-
-              // Calculate weeks passed since subscription started
-              const weeksPassed = Math.floor(
-                (currentDate.getTime() - subscriptionStartDate.getTime()) /
-                (7 * 24 * 60 * 60 * 1000),
-              );
-              pastCallsCompleted = Math.min(
-                weeksPassed * callsPerWeek,
-                maxTotalCalls,
-              );
-            }
-
-            // FIXED: Simple validation: count confirmed calls + past completed calls
-            // But don't count the call we're about to complete if it's completing an existing incomplete call
-            // FIXED: Validating total calls using simplified usage logic
-            // Calculate usage from newSelection directly to avoid double counting
-            const newSelectionByDay = groupSlotsByDay(newSelection);
-            let currentUsage = 0;
-
-            newSelectionByDay.forEach((daySlots) => {
-              // Subscriptions max 1 call per day logic:
-              // Any slots on a day (complete or partial) count as 1 usage
-              if (daySlots.length > 0) {
-                currentUsage++;
-              }
-            });
-
-            // For Total calls limit, we count "usage" (days with at least 1 slot)
-            const totalCallsIncludingPast = currentUsage + pastCallsCompleted;
-
-            if (totalCallsIncludingPast > maxTotalCalls) {
-              setTimeout(() => {
-                setPendingToast({
-                  variant: "destructive",
-                  title: "Call Limit Reached",
-                  description: `Maximum ${maxTotalCalls} calls allowed for this subscription (${pastCallsCompleted} past calls + ${currentUsage} scheduled = ${totalCallsIncludingPast} total)`,
-                });
-              }, 0);
-              return currentSlots;
-            }
+            // Total call limit is already enforced by the first subscription
+            // check above (lines ~1461-1491) using countCompleteCallsInMap.
+            // No need for a duplicate pastCallsCompleted-based check here.
 
             const effectiveCallsSlotDay = slot.startTime.toDateString();
 
@@ -1710,8 +1692,9 @@ export function useEventSlotAllocation(
               setTimeout(() => {
                 setPendingToast({
                   variant: "destructive",
-                  title: "Daily Call Limit",
-                  description: "Only 1 call per day allowed for subscriptions",
+                  title: "One session per day",
+                  description:
+                    "You can only schedule one session per day. Please choose a different day.",
                 });
               }, 0);
               return currentSlots;
@@ -1739,9 +1722,9 @@ export function useEventSlotAllocation(
                 setTimeout(() => {
                   setPendingToast({
                     variant: "destructive",
-                    title: "Non-consecutive Selection",
+                    title: "Slots must be consecutive",
                     description:
-                      "Subscription call slots must be consecutive within the same day",
+                      "Each session requires back-to-back time slots on the same day. Select the immediately following slot.",
                   });
                 }, 0);
                 return currentSlots;
@@ -1756,14 +1739,11 @@ export function useEventSlotAllocation(
 
             if (currentCallProgress === 0 && newSelection.length > 0) {
               // Just completed a call
-              // Calculate progress including past calls using the same logic as above
-              const totalProgress = pastCallsCompleted + completedCalls;
-
               setTimeout(() => {
                 setPendingToast({
                   variant: "default",
-                  title: "Call Completed",
-                  description: `Call completed! Progress: ${totalProgress}/${maxTotalCalls} calls (${pastCallsCompleted} past + ${completedCalls} scheduled)`,
+                  title: "Session added",
+                  description: `${completedCalls} of ${maxTotalCalls} session${maxTotalCalls !== 1 ? "s" : ""} selected — ${maxTotalCalls - completedCalls} more to go.`,
                 });
               }, 0);
             } else {
@@ -1774,8 +1754,8 @@ export function useEventSlotAllocation(
               setTimeout(() => {
                 setPendingToast({
                   variant: "default",
-                  title: "Building Call",
-                  description: `Call ${currentCallNumber}: ${currentCallProgress}/${slotsPerCall} slots selected (need ${remainingInCall} more)`,
+                  title: "Keep going",
+                  description: `Select ${remainingInCall} more consecutive slot${remainingInCall !== 1 ? "s" : ""} to complete session ${currentCallNumber}.`,
                 });
               }, 0);
             }
@@ -1809,15 +1789,22 @@ export function useEventSlotAllocation(
   }, []);
 
   /**
-   * Check if a slot is currently selected
+   * PERFORMANCE: Pre-compute a Set of selected slot timestamps for O(1) lookups.
+   * Replaces O(n) .some() scan that ran 336× per render.
+   */
+  const selectedSlotsSet = useMemo(
+    () => new Set(selectedSlots.map((s) => s.startTime.getTime())),
+    [selectedSlots],
+  );
+
+  /**
+   * Check if a slot is currently selected — O(1) via Set lookup
    */
   const isSlotSelected = useCallback(
     (slot: TimeSlot) => {
-      return selectedSlots.some(
-        (s) => s.startTime.getTime() === slot.startTime.getTime(),
-      );
+      return selectedSlotsSet.has(slot.startTime.getTime());
     },
-    [selectedSlots],
+    [selectedSlotsSet],
   );
 
   /**
@@ -1896,6 +1883,8 @@ export function useEventSlotAllocation(
         sessionDurationInHours: sessionDuration,
         startDate: options.startDate,
         endDate: options.endDate,
+        totalSessions: options.maxTotalCalls, // maxTotalCalls is already totalSessions-aware
+        pastConfirmedSlotCount: options.pastConfirmedSlotCount,
       };
 
       const result = await AllocationAlgorithms.manualAllocate(
@@ -1905,8 +1894,8 @@ export function useEventSlotAllocation(
 
       if (result.success) {
         toast({
-          title: "Success",
-          description: "Slots allocated successfully",
+          title: "Timings saved",
+          description: "Sessions have been scheduled successfully.",
         });
         onSuccess?.(result);
       } else {
@@ -1914,7 +1903,7 @@ export function useEventSlotAllocation(
         setAllocationError(errorMessage);
         toast({
           variant: "destructive",
-          title: "Allocation Failed",
+          title: "Couldn't save timings",
           description: errorMessage,
         });
         onError?.(errorMessage);
@@ -1925,7 +1914,7 @@ export function useEventSlotAllocation(
       setAllocationError(errorMessage);
       toast({
         variant: "destructive",
-        title: "Allocation Error",
+        title: "Couldn't save timings",
         description: errorMessage,
       });
       onError?.(errorMessage);
@@ -1967,25 +1956,56 @@ export function useEventSlotAllocation(
           sessionDurationInHours: sessionDuration,
           startDate: options.startDate,
           endDate: options.endDate,
+          totalSessions: options.maxTotalCalls, // maxTotalCalls is already totalSessions-aware
+          pastConfirmedSlotCount: options.pastConfirmedSlotCount,
         };
 
+        // For recurring events (subscription/class), the calendar UI only
+        // provides slots for the currently viewed week, but the algorithm
+        // needs slots spanning the entire scheduling period. Fetch them.
+        let slotsForAllocation = availableSlots;
+        if (
+          isRecurringEventType(eventType) &&
+          options.startDate &&
+          options.endDate &&
+          options.consultantId
+        ) {
+          const fullPeriodData = await AllocationService.fetchAvailabilitySlots(
+            options.consultantId,
+            options.startDate,
+            options.endDate,
+          );
+          const allRawSlots = [
+            ...(fullPeriodData.weekly || []),
+            ...(fullPeriodData.custom || []),
+          ];
+          slotsForAllocation = allRawSlots.map((slot: any) => ({
+            startTime: new Date(slot.slotStartTimeInUTC),
+            endTime: new Date(slot.slotEndTimeInUTC),
+            isAvailable:
+              slot.bookingStatus === "available" ||
+              slot.bookingStatus === "partially-booked",
+            isBooked: slot.bookingStatus === "fully-booked",
+          }));
+        }
+
         const result = await AllocationAlgorithms.autoAllocate(
-          availableSlots,
+          slotsForAllocation,
           allocationOptions,
         );
 
         if (result.success) {
           setSelectedSlots(result.selectedSlots);
           toast({
-            title: "Success",
-            description: "Slots auto-allocated successfully",
+            title: "Sessions auto-scheduled",
+            description: "All sessions have been automatically scheduled.",
           });
           onSuccess?.(result);
         } else {
           const errorMessage = result.error || "Auto allocation failed";
           setAllocationError(errorMessage);
           toast({
-            title: "Auto Allocation Failed",
+            title: "Auto-schedule failed",
             description: errorMessage,
             variant: "destructive",
           });
@@ -1996,7 +2016,7 @@ export function useEventSlotAllocation(
           error instanceof Error ? error.message : "Auto allocation failed";
         setAllocationError(errorMessage);
         toast({
-          title: "Error",
+          title: "Something went wrong",
           description: errorMessage,
           variant: "destructive",
         });
@@ -2039,8 +2059,8 @@ export function useEventSlotAllocation(
         if (result.success) {
           setSelectedSlots(result.selectedSlots);
           toast({
-            title: "Success",
-            description: "Requested slots allocated successfully",
+            title: "Timings saved",
+            description: "Requested slots have been scheduled successfully.",
           });
           onSuccess?.(result);
         } else {
@@ -2183,6 +2203,7 @@ export function useEventSlotAllocation(
     toggleSlot,
     clearSlots,
     isSlotSelected,
+    selectedSlotsSet,
     addSlots,
     removeSlots,
 

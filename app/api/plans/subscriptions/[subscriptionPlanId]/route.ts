@@ -144,7 +144,10 @@ export async function PUT(
       metricStartDate.setHours(0, 0, 0, 0);
       const metricEndDate = new Date(metricStartDate);
       metricEndDate.setMonth(metricEndDate.getMonth() + durationInMonths);
-      const estimatedWeeks = SlotCalculationService.countWeeks(metricStartDate, metricEndDate);
+      const estimatedWeeks = SlotCalculationService.countWeeks(
+        metricStartDate,
+        metricEndDate,
+      );
       totalSessions = callsPerWeek * estimatedWeeks;
       totalHours = totalSessions * sessionDurationInHours;
     }

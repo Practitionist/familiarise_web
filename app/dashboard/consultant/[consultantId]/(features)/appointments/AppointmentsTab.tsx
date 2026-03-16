@@ -25,8 +25,15 @@ import {
 import {
   AppointmentsTabProps,
   ScheduledTrial,
+  UnscheduledClass,
+  UnscheduledWebinar,
   getBadgeStyle,
 } from "../../types";
+import {
+  buildSyntheticClassAppointment,
+  buildSyntheticWebinarAppointment,
+} from "./utils/syntheticAppointments";
+import { UnscheduledEventCard } from "./components/UnscheduledEventCard";
 import { TAppointment } from "@/types/appointment";
 import {
   calculateSessionProgress,
@@ -60,7 +67,9 @@ export function AppointmentsTab({
   badgeStyles,
   scheduledTrials = [],
   consultantId,
-}: Readonly<AppointmentsTabProps & { consultantId?: string }>) {
+  unscheduledClasses = [],
+  unscheduledWebinars = [],
+}: Readonly<AppointmentsTabProps>) {
   const router = useRouter();
   const client = useStreamVideoClient();
   const { toast } = useToast();
@@ -68,6 +77,10 @@ export function AppointmentsTab({
   const searchParams = useSearchParams();
   const [selectedAppointment, setSelectedAppointment] =
     useState<TAppointment | null>(null);
+  const [selectedGroupProgress, setSelectedGroupProgress] = useState<{
+    completedSessions: number;
+    totalSessions: number;
+  } | null>(null);
   const [groupPagination, setGroupPagination] = useState<
     Map<string, { currentPage: number; showAll: boolean }>
   >(new Map());
@@ -442,15 +455,62 @@ export function AppointmentsTab({
                       </div>
                     )}
 
-                  {/* Empty state for type with no appointments */}
+                  {/* Unscheduled events — rendered once per section, before any scheduled groups */}
+                  {isNewTypeSection &&
+                    groupType === "CLASS" &&
+                    unscheduledClasses.length > 0 && (
+                      <div className="mb-4 space-y-3">
+                        {unscheduledClasses.map((classEvent) => (
+                          <UnscheduledEventCard
+                            key={classEvent.id}
+                            title={classEvent.classPlan.title}
+                            subtitle={`${classEvent.classPlan.meetingsPerWeek} meeting${classEvent.classPlan.meetingsPerWeek !== 1 ? "s" : ""}/week · ${classEvent.classPlan.totalSessions} sessions · ${classEvent.classPlan.sessionDurationInHours}h each`}
+                            onSetSchedule={() => {
+                              setSelectedAppointment(
+                                buildSyntheticClassAppointment(classEvent),
+                              );
+                              setSelectedGroupProgress(null);
+                            }}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  {isNewTypeSection &&
+                    groupType === "WEBINAR" &&
+                    unscheduledWebinars.length > 0 && (
+                      <div className="mb-4 space-y-3">
+                        {unscheduledWebinars.map((webinarEvent) => (
+                          <UnscheduledEventCard
+                            key={webinarEvent.id}
+                            title={webinarEvent.webinarPlan.title}
+                            subtitle={`Single session · ${webinarEvent.webinarPlan.durationInHours}h`}
+                            onSetSchedule={() => {
+                              setSelectedAppointment(
+                                buildSyntheticWebinarAppointment(webinarEvent),
+                              );
+                              setSelectedGroupProgress(null);
+                            }}
+                          />
+                        ))}
+                      </div>
+                    )}
+
+                  {/* Empty state — only shown when section has no scheduled appointments
+                      AND no unscheduled items were already rendered above */}
                   {groupAppointments.length === 0 ? (
-                    <div className="border rounded-lg p-8 bg-gray-50 text-center">
-                      <p className="text-gray-500 text-sm">
-                        No{" "}
-                        {getAppointmentTypeDisplayName(groupType).toLowerCase()}{" "}
-                        scheduled
-                      </p>
-                    </div>
+                    (groupType === "CLASS" && unscheduledClasses.length > 0) ||
+                    (groupType === "WEBINAR" &&
+                      unscheduledWebinars.length > 0) ? null : (
+                      <div className="border rounded-lg p-8 bg-gray-50 text-center">
+                        <p className="text-gray-500 text-sm">
+                          No{" "}
+                          {getAppointmentTypeDisplayName(
+                            groupType,
+                          ).toLowerCase()}{" "}
+                          scheduled
+                        </p>
+                      </div>
+                    )
                   ) : (
                     /* Existing appointment group card */
                     <div
@@ -508,19 +568,31 @@ export function AppointmentsTab({
 
                               {/* Management buttons inline with user name */}
                               <div className="flex items-center gap-2 ml-4">
-                                {canManageGroupTimings(groupAppointments) && (
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-8 text-xs px-3"
-                                    onClick={() =>
-                                      setSelectedAppointment(firstAppointment)
-                                    }
-                                  >
-                                    <Clock className="w-3 h-3 mr-1" />
-                                    Timings
-                                  </Button>
-                                )}
+                                {groupStatus !== "Completed" &&
+                                  groupStatus !== "Cancelled" &&
+                                  canManageGroupTimings(groupAppointments) && (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-8 text-xs px-3"
+                                      onClick={() => {
+                                        setSelectedAppointment(
+                                          firstAppointment,
+                                        );
+                                        setSelectedGroupProgress(
+                                          completedSessions > 0
+                                            ? {
+                                                completedSessions,
+                                                totalSessions,
+                                              }
+                                            : null,
+                                        );
+                                      }}
+                                    >
+                                      <Clock className="w-3 h-3 mr-1" />
+                                      Timings
+                                    </Button>
+                                  )}
                                 {supportsParticipantManagement(
                                   firstAppointment,
                                 ) && (
@@ -707,6 +779,8 @@ export function AppointmentsTab({
                                         {/* Management buttons right after user info */}
                                         <div className="flex items-center gap-2 ml-4">
                                           {!isRecurring &&
+                                            status !== "Completed" &&
+                                            status !== "Cancelled" &&
                                             canManageAppointmentTimings(
                                               appointment,
                                             ) && (
@@ -714,11 +788,14 @@ export function AppointmentsTab({
                                                 variant="outline"
                                                 size="sm"
                                                 className="h-8 text-xs px-3"
-                                                onClick={() =>
+                                                onClick={() => {
                                                   setSelectedAppointment(
                                                     appointment,
-                                                  )
-                                                }
+                                                  );
+                                                  setSelectedGroupProgress(
+                                                    null,
+                                                  );
+                                                }}
                                               >
                                                 <Clock className="w-3 h-3 mr-1" />
                                                 Timings
@@ -887,8 +964,13 @@ export function AppointmentsTab({
       {selectedAppointment && (
         <EventTimingsCalendar
           isOpen={!!selectedAppointment}
-          onClose={() => setSelectedAppointment(null)}
+          onClose={() => {
+            setSelectedAppointment(null);
+            setSelectedGroupProgress(null);
+          }}
           appointment={selectedAppointment}
+          completedSessions={selectedGroupProgress?.completedSessions}
+          groupTotalSessions={selectedGroupProgress?.totalSessions}
         />
       )}
     </div>

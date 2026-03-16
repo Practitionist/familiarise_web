@@ -574,8 +574,10 @@ describe("Event Channel Actions", () => {
       // Mock consultant classes
       mockPrisma.class.findMany.mockResolvedValue([{ id: "class-1" }]);
 
-      // Mock consultations
-      mockPrisma.consultation.findMany.mockResolvedValue([{ id: "cons-1" }]);
+      // Mock consultations — include requestedBy so getDmPairsForUser can build the pair
+      mockPrisma.consultation.findMany.mockResolvedValue([
+        { id: "cons-1", requestedBy: { user: { id: "consultee-1" } } },
+      ]);
 
       // Mock subscriptions
       mockPrisma.subscription.findMany.mockResolvedValue([]);
@@ -590,7 +592,7 @@ describe("Event Channel Actions", () => {
       const result = await syncUserEventChannels("consultant-user");
 
       expect(result.success).toBe(true);
-      expect(result.channelsSynced).toBe(4); // 2 webinars + 1 class + 1 consultation
+      expect(result.channelsSynced).toBe(4); // 2 webinars + 1 class + 1 DM pair
       expect(result.durationMs).toBeDefined();
       expect(mockCache.initialSyncCompletedUsers.has("consultant-user")).toBe(
         true,
@@ -605,20 +607,30 @@ describe("Event Channel Actions", () => {
 
       mockPrisma.webinar.findMany.mockResolvedValue([]);
       mockPrisma.class.findMany.mockResolvedValue([]);
+      // Two consultations with different consultants → two distinct DM pairs
       mockPrisma.consultation.findMany.mockResolvedValue([
-        { id: "cons-1" },
-        { id: "cons-2" },
+        {
+          id: "cons-1",
+          consultationPlan: {
+            consultantProfile: { user: { id: "consultant-a" } },
+          },
+        },
+        {
+          id: "cons-2",
+          consultationPlan: {
+            consultantProfile: { user: { id: "consultant-b" } },
+          },
+        },
       ]);
       mockPrisma.subscription.findMany.mockResolvedValue([]);
 
-      // First call succeeds, second fails
       mockCache.getMembershipCached.mockReturnValue(false);
+      // Pair 1 addMembers succeeds; pair 2 addMembers rejects (falls through to create)
       mockChannel.addMembers
         .mockResolvedValueOnce({})
-        .mockRejectedValueOnce(new Error("Failed"));
-
-      // Second call needs event data for channel creation
-      mockPrisma.consultation.findUnique.mockResolvedValue(null);
+        .mockRejectedValueOnce(new Error("addMembers failed"));
+      // Pair 2's fallthrough create also fails → pair 2 counted as failed
+      mockChannel.create.mockRejectedValueOnce(new Error("Create failed"));
 
       const { syncUserEventChannels } =
         await import("../../actions/stream/chat/event-channel.action");

@@ -15,6 +15,7 @@ Get the authenticated user's referral code.
 **Auth**: Required
 
 **Response** `200`:
+
 ```json
 {
   "data": {
@@ -34,6 +35,7 @@ Get the authenticated user's referral code.
 ```
 
 **Response** `404`:
+
 ```json
 { "error": "No referral code found" }
 ```
@@ -49,6 +51,7 @@ Create a referral code for the authenticated user (or return existing one).
 **Body**: Empty (no body required)
 
 **Response** `200`:
+
 ```json
 {
   "data": {
@@ -74,16 +77,19 @@ Set a vanity code for the authenticated user.
 **Auth**: Required
 
 **Body**:
+
 ```json
 { "customCode": "kaustav" }
 ```
 
 **Validation**:
+
 - 3-20 characters
 - Alphanumeric only (`/^[a-z0-9]+$/`)
 - Must not already exist as a `code` or `customCode` in the database
 
 **Response** `200`:
+
 ```json
 {
   "data": {
@@ -95,18 +101,20 @@ Set a vanity code for the authenticated user.
 ```
 
 **Error** `400`:
+
 ```json
 { "error": "Custom code must be 3-20 alphanumeric characters" }
 ```
 
 **Error** `409`:
+
 ```json
 { "error": "This code is already taken" }
 ```
 
 ---
 
-### GET /api/referrals/code/check/[code]  (Public)
+### GET /api/referrals/code/check/[code] (Public)
 
 Validate a referral code without authentication. Used on the signup page.
 
@@ -115,6 +123,7 @@ Validate a referral code without authentication. Used on the signup page.
 **Params**: `code` — The referral code to validate
 
 **Response** `200`:
+
 ```json
 {
   "data": {
@@ -126,6 +135,7 @@ Validate a referral code without authentication. Used on the signup page.
 ```
 
 Invalid code:
+
 ```json
 {
   "data": {
@@ -145,6 +155,7 @@ List the authenticated user's referrals (people they referred).
 **Auth**: Required
 
 **Response** `200`:
+
 ```json
 {
   "data": [
@@ -175,27 +186,33 @@ Apply a referral code to the authenticated (newly signed-up) user.
 **Auth**: Required
 
 **Body**:
+
 ```json
 { "code": "kaustavga3x7" }
 ```
 
 **Validations**:
+
 1. Code exists and is active
 2. User is not referring themselves
 3. User hasn't already been referred (referredUserId is unique)
 
 **Response** `200`:
+
 ```json
 { "data": { "success": true } }
 ```
 
 **Error** `400`:
+
 ```json
 { "error": "Invalid referral code" }
 ```
+
 ```json
 { "error": "You cannot refer yourself" }
 ```
+
 ```json
 { "error": "You have already been referred" }
 ```
@@ -209,6 +226,7 @@ Get the authenticated user's full credit history and total available balance.
 **Auth**: Required
 
 **Response** `200`:
+
 ```json
 {
   "data": {
@@ -248,6 +266,7 @@ Lightweight endpoint — returns only the available balance. Used by checkout pa
 **Auth**: Required
 
 **Response** `200`:
+
 ```json
 {
   "data": {
@@ -268,7 +287,7 @@ Lightweight endpoint — returns only the available balance. Used by checkout pa
 After a successful payment, the webhook handler calls:
 
 ```typescript
-processQualifyingAction(userId, "first_paid_booking")
+processQualifyingAction(userId, "first_paid_booking");
 ```
 
 This checks if the paying user was referred and, if so, triggers the reward flow.
@@ -278,6 +297,7 @@ This checks if the paying user was referred and, if so, triggers the reward flow
 **File**: `app/r/[code]/page.tsx`
 
 Server-side rendered page that:
+
 1. Validates the code via `validateReferralCode(code)`
 2. Redirects to `/auth/signup?ref={code}` if valid
 3. Redirects to `/auth/signup` if invalid
@@ -287,6 +307,7 @@ Server-side rendered page that:
 **File**: `app/auth/signup/page.tsx`
 
 Reads `?ref=CODE` from URL params:
+
 - Calls `GET /api/referrals/code/check/{code}` to display referral banner
 - After successful signup, calls `POST /api/referrals/apply` with the code
 - Also shows an optional manual code input field

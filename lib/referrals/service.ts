@@ -117,10 +117,7 @@ export async function validateReferralCode(
 ): Promise<ReferralCode | null> {
   return db.referralCode.findFirst({
     where: {
-      OR: [
-        { code: code.toUpperCase() },
-        { customCode: code.toUpperCase() },
-      ],
+      OR: [{ code: code.toUpperCase() }, { customCode: code.toUpperCase() }],
       isActive: true,
     },
   });
@@ -138,64 +135,70 @@ export async function applyReferralCode(
   newUserId: string,
   code: string,
 ): Promise<Referral | null> {
-  return withSerializableRetry(() => prisma.$transaction(async (tx) => {
-    // Validate inside transaction to prevent TOCTOU race conditions
-    const referralCode = await validateReferralCode(code, tx);
-    if (!referralCode) return null;
+  return withSerializableRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        // Validate inside transaction to prevent TOCTOU race conditions
+        const referralCode = await validateReferralCode(code, tx);
+        if (!referralCode) return null;
 
-    // Can't refer yourself
-    if (referralCode.userId === newUserId) return null;
+        // Can't refer yourself
+        if (referralCode.userId === newUserId) return null;
 
-    // Check if max referrals cap reached
-    if (referralCode.totalReferrals >= referralCode.maxReferrals) return null;
+        // Check if max referrals cap reached
+        if (referralCode.totalReferrals >= referralCode.maxReferrals)
+          return null;
 
-    // Check if already referred
-    const existingReferral = await tx.referral.findUnique({
-      where: { referredUserId: newUserId },
-    });
-    if (existingReferral) return null;
+        // Check if already referred
+        const existingReferral = await tx.referral.findUnique({
+          where: { referredUserId: newUserId },
+        });
+        if (existingReferral) return null;
 
-    const ref = await tx.referral.create({
-      data: {
-        referralCodeId: referralCode.id,
-        referredUserId: newUserId,
-        status: "SIGNED_UP",
-        referrerRewardAmount:
-          referralCode.referrerReward ?? DEFAULT_REFERRER_REWARD,
-        refereeRewardAmount:
-          referralCode.refereeReward ?? DEFAULT_REFEREE_REWARD,
+        const ref = await tx.referral.create({
+          data: {
+            referralCodeId: referralCode.id,
+            referredUserId: newUserId,
+            status: "SIGNED_UP",
+            referrerRewardAmount:
+              referralCode.referrerReward ?? DEFAULT_REFERRER_REWARD,
+            refereeRewardAmount:
+              referralCode.refereeReward ?? DEFAULT_REFEREE_REWARD,
+          },
+        });
+
+        await tx.referralCode.update({
+          where: { id: referralCode.id },
+          data: { totalReferrals: { increment: 1 } },
+        });
+
+        // Give referee immediate welcome bonus
+        const refereeReward = ref.refereeRewardAmount;
+        if (refereeReward && refereeReward > 0) {
+          const expiresAt = new Date();
+          expiresAt.setMonth(expiresAt.getMonth() + CREDIT_EXPIRY_MONTHS);
+
+          await tx.referralCredit.create({
+            data: {
+              userId: newUserId,
+              amount: refereeReward,
+              currency: "INR",
+              source: "REFEREE_BONUS",
+              referralId: ref.id,
+              remainingAmount: refereeReward,
+              expiresAt,
+            },
+          });
+        }
+
+        return ref;
       },
-    });
-
-    await tx.referralCode.update({
-      where: { id: referralCode.id },
-      data: { totalReferrals: { increment: 1 } },
-    });
-
-    // Give referee immediate welcome bonus
-    const refereeReward = ref.refereeRewardAmount;
-    if (refereeReward && refereeReward > 0) {
-      const expiresAt = new Date();
-      expiresAt.setMonth(expiresAt.getMonth() + CREDIT_EXPIRY_MONTHS);
-
-      await tx.referralCredit.create({
-        data: {
-          userId: newUserId,
-          amount: refereeReward,
-          currency: "INR",
-          source: "REFEREE_BONUS",
-          referralId: ref.id,
-          remainingAmount: refereeReward,
-          expiresAt,
-        },
-      });
-    }
-
-    return ref;
-  }, {
-    isolationLevel: "Serializable",
-    timeout: 10000,
-  }));
+      {
+        isolationLevel: "Serializable",
+        timeout: 10000,
+      },
+    ),
+  );
 }
 
 /**
@@ -208,74 +211,79 @@ export async function processQualifyingAction(
   userId: string,
   action: string,
 ): Promise<void> {
-  await withSerializableRetry(() => prisma.$transaction(async (tx) => {
-    // Read referral INSIDE transaction to prevent TOCTOU race
-    const referral = await tx.referral.findUnique({
-      where: { referredUserId: userId },
-      include: { referralCode: true },
-    });
+  await withSerializableRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        // Read referral INSIDE transaction to prevent TOCTOU race
+        const referral = await tx.referral.findUnique({
+          where: { referredUserId: userId },
+          include: { referralCode: true },
+        });
 
-    if (!referral || referral.status !== "SIGNED_UP") return;
+        if (!referral || referral.status !== "SIGNED_UP") return;
 
-    // Check if within qualification window
-    const daysSinceSignup = Math.floor(
-      (Date.now() - referral.signedUpAt.getTime()) / (1000 * 60 * 60 * 24),
-    );
+        // Check if within qualification window
+        const daysSinceSignup = Math.floor(
+          (Date.now() - referral.signedUpAt.getTime()) / (1000 * 60 * 60 * 24),
+        );
 
-    if (daysSinceSignup > QUALIFICATION_WINDOW_DAYS) {
-      await tx.referral.update({
-        where: { id: referral.id },
-        data: { status: "EXPIRED" },
-      });
-      return;
-    }
+        if (daysSinceSignup > QUALIFICATION_WINDOW_DAYS) {
+          await tx.referral.update({
+            where: { id: referral.id },
+            data: { status: "EXPIRED" },
+          });
+          return;
+        }
 
-    // Conditional update: only succeeds if status is still SIGNED_UP.
-    // This prevents concurrent calls from both creating rewards.
-    const updated = await tx.referral.updateMany({
-      where: { id: referral.id, status: "SIGNED_UP" },
-      data: {
-        status: "REWARDED",
-        qualifiedAt: new Date(),
-        qualifyingAction: action,
-        referrerRewardPaidAt: new Date(),
+        // Conditional update: only succeeds if status is still SIGNED_UP.
+        // This prevents concurrent calls from both creating rewards.
+        const updated = await tx.referral.updateMany({
+          where: { id: referral.id, status: "SIGNED_UP" },
+          data: {
+            status: "REWARDED",
+            qualifiedAt: new Date(),
+            qualifyingAction: action,
+            referrerRewardPaidAt: new Date(),
+          },
+        });
+
+        // If no rows updated, another concurrent call already processed this
+        if (updated.count === 0) return;
+
+        // Give referrer their bonus
+        const referrerReward = referral.referrerRewardAmount;
+        if (referrerReward && referrerReward > 0) {
+          const expiresAt = new Date();
+          expiresAt.setMonth(expiresAt.getMonth() + CREDIT_EXPIRY_MONTHS);
+
+          await tx.referralCredit.create({
+            data: {
+              userId: referral.referralCode.userId,
+              amount: referrerReward,
+              currency: "INR",
+              source: "REFERRAL_BONUS",
+              referralId: referral.id,
+              remainingAmount: referrerReward,
+              expiresAt,
+            },
+          });
+
+          // Update referral code stats
+          await tx.referralCode.update({
+            where: { id: referral.referralCodeId },
+            data: {
+              successfulReferrals: { increment: 1 },
+              totalEarned: { increment: referrerReward },
+            },
+          });
+        }
       },
-    });
-
-    // If no rows updated, another concurrent call already processed this
-    if (updated.count === 0) return;
-
-    // Give referrer their bonus
-    const referrerReward = referral.referrerRewardAmount;
-    if (referrerReward && referrerReward > 0) {
-      const expiresAt = new Date();
-      expiresAt.setMonth(expiresAt.getMonth() + CREDIT_EXPIRY_MONTHS);
-
-      await tx.referralCredit.create({
-        data: {
-          userId: referral.referralCode.userId,
-          amount: referrerReward,
-          currency: "INR",
-          source: "REFERRAL_BONUS",
-          referralId: referral.id,
-          remainingAmount: referrerReward,
-          expiresAt,
-        },
-      });
-
-      // Update referral code stats
-      await tx.referralCode.update({
-        where: { id: referral.referralCodeId },
-        data: {
-          successfulReferrals: { increment: 1 },
-          totalEarned: { increment: referrerReward },
-        },
-      });
-    }
-  }, {
-    isolationLevel: "Serializable",
-    timeout: 10000,
-  }));
+      {
+        isolationLevel: "Serializable",
+        timeout: 10000,
+      },
+    ),
+  );
 }
 
 /**
@@ -359,8 +367,11 @@ export async function applyCreditsToPayment(
  * Uses the ReferralCreditUsage ledger for accurate per-payment reversal.
  * Called during refund processing to restore credits to the user.
  *
- * For partial refunds: restores a proportional fraction of each usage record
- * (refundAmount / originalPaymentAmount) and reduces the usage amount accordingly.
+ * For partial refunds: uses cumulative proportional restoration to avoid
+ * rounding drift across multiple partial refunds. Queries the total SUCCEEDED
+ * refunds for the payment (including the current one) to compute the cumulative
+ * ratio, then restores (cumulativeTarget - alreadyRestored) per usage record.
+ * On the final refund (cumulative = original), this guarantees exact restoration.
  * For full refunds: restores all usage and deletes the usage records.
  */
 export async function reverseCreditsForPayment(
@@ -383,18 +394,40 @@ export async function reverseCreditsForPayment(
     originalPaymentAmount > 0 &&
     refundAmount < originalPaymentAmount;
 
-  const refundRatio = isPartialRefund
-    ? refundAmount / originalPaymentAmount
-    : 1;
+  // For partial refunds, query the cumulative SUCCEEDED refund total for this
+  // payment (the current refund is already recorded before this function runs).
+  // Using cumulative totals instead of per-refund ratios eliminates rounding drift.
+  let cumulativeRefunded: number | null = null;
+  if (isPartialRefund) {
+    const aggregate = await tx.refund.aggregate({
+      where: { paymentId, status: "SUCCEEDED" },
+      _sum: { amount: true },
+    });
+    cumulativeRefunded = aggregate._sum.amount ?? refundAmount;
+  }
 
   let totalRestored = 0;
 
   for (const usage of usageRecords) {
     if (usage.amount <= 0) continue;
 
-    const restoreAmount = isPartialRefund
-      ? Math.min(Math.round(usage.originalAmount * refundRatio), usage.amount)
-      : usage.amount;
+    let restoreAmount: number;
+
+    if (isPartialRefund && cumulativeRefunded !== null) {
+      // Cumulative proportional approach: compute how much should have been
+      // restored in total by now, then subtract what was already restored.
+      const cumulativeTarget = Math.round(
+        (usage.originalAmount * cumulativeRefunded) / originalPaymentAmount!,
+      );
+      const alreadyRestored = usage.restoredAmount;
+      restoreAmount = Math.min(
+        cumulativeTarget - alreadyRestored,
+        usage.amount,
+      );
+    } else {
+      // Full refund — restore everything remaining
+      restoreAmount = usage.amount;
+    }
 
     if (restoreAmount <= 0) continue;
 
@@ -414,10 +447,13 @@ export async function reverseCreditsForPayment(
         where: { id: usage.id },
       });
     } else {
-      // Partial restore — reduce the usage record amount
+      // Partial restore — reduce usage amount and track cumulative restored
       await tx.referralCreditUsage.update({
         where: { id: usage.id },
-        data: { amount: { decrement: restoreAmount } },
+        data: {
+          amount: { decrement: restoreAmount },
+          restoredAmount: { increment: restoreAmount },
+        },
       });
     }
 
@@ -478,7 +514,9 @@ export async function getReferralCode(
 /**
  * Gets a user's referral list (people they referred).
  */
-export async function getUserReferrals(userId: string): Promise<
+export async function getUserReferrals(
+  userId: string,
+): Promise<
   (Referral & { referredUser: { name: string; image: string | null } })[]
 > {
   const referralCode = await prisma.referralCode.findUnique({

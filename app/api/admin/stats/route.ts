@@ -25,6 +25,7 @@ export async function GET() {
     const [
       totalPayments,
       pendingPayments,
+      expiredPayments,
       totalRefunds,
       activeDisputes,
       totalDisputes,
@@ -37,6 +38,11 @@ export async function GET() {
       // Pending payments
       prisma.payment.count({
         where: { paymentStatus: PaymentStatus.PENDING },
+      }),
+
+      // Expired payments (abandonment tracking)
+      prisma.payment.count({
+        where: { paymentStatus: PaymentStatus.EXPIRED },
       }),
 
       // Total refunds
@@ -124,6 +130,7 @@ export async function GET() {
       totalPaymentsValue: paymentsAggregation._sum.amount || 0,
       pendingPayments,
       pendingPaymentsValue: pendingPaymentsAggregation._sum.amount || 0,
+      expiredPayments,
       totalRefunds,
       totalRefundsValue: refundsAggregation._sum.amount || 0,
       activeDisputes,

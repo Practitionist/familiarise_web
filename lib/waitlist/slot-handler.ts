@@ -11,6 +11,7 @@ import {
   calculatePosition,
 } from "./queue-manager";
 import { sendWaitlistSpotAvailableEmail } from "./notifications";
+import { countWebinarParticipants } from "@/lib/payments/utils/participants";
 
 // Notification window in hours (48 hours to respond)
 const NOTIFICATION_WINDOW_HOURS = 48;
@@ -335,10 +336,14 @@ export async function checkEventAvailability(params: {
     const webinar = await prisma.webinar.findUnique({
       where: { id: webinarId },
       include: {
-        webinarPlan: true,
+        webinarPlan: {
+          include: { consultantProfile: true },
+        },
         appointment: {
           include: {
-            slotsOfAppointment: true,
+            slotsOfAppointment: {
+              include: { user: true },
+            },
           },
         },
         waitlist: {
@@ -353,8 +358,12 @@ export async function checkEventAvailability(params: {
       throw new Error("Webinar not found");
     }
 
-    const currentParticipants =
-      webinar.appointment?.slotsOfAppointment?.length || 0;
+    const webinarConsultantUserId =
+      webinar.webinarPlan.consultantProfile?.userId;
+    const currentParticipants = countWebinarParticipants(
+      webinar.appointment,
+      webinarConsultantUserId ? [webinarConsultantUserId] : [],
+    );
     const maxParticipants = webinar.webinarPlan.maxParticipants;
 
     return {
@@ -369,7 +378,9 @@ export async function checkEventAvailability(params: {
     const classInstance = await prisma.class.findUnique({
       where: { id: classId },
       include: {
-        classPlan: true,
+        classPlan: {
+          include: { consultantProfile: true },
+        },
         appointments: {
           include: {
             slotsOfAppointment: {
@@ -391,11 +402,15 @@ export async function checkEventAvailability(params: {
       throw new Error("Class not found");
     }
 
-    // Count unique participants across all appointments
+    // Count unique participants across all appointments, excluding the consultant
+    const classConsultantUserId =
+      classInstance.classPlan.consultantProfile?.userId;
     const uniqueParticipantIds = new Set<string>();
     for (const appointment of classInstance.appointments) {
       for (const slot of appointment.slotsOfAppointment) {
         for (const user of slot.user) {
+          if (classConsultantUserId && user.id === classConsultantUserId)
+            continue;
           uniqueParticipantIds.add(user.id);
         }
       }

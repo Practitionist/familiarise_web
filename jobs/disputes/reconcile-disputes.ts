@@ -13,6 +13,7 @@ import {
   type DisputeReconciliationResult,
 } from "../../scripts/disputes/reconcile-disputes";
 import fs from "fs";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 /**
  * Output results to GitHub Actions
@@ -50,6 +51,7 @@ function outputToGitHubActions(result: DisputeReconciliationResult): void {
  * Main entry point
  */
 async function main(): Promise<void> {
+  await abortIfMaintenance("reconcile-disputes");
   console.log("🔄 Starting dispute reconciliation job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 

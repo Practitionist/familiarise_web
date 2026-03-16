@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { consultantListInclude } from "@/lib/data/explore-experts";
+import { apiError } from "@/lib/errors";
 
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
-    const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "10");
+    const page = Math.max(1, parseInt(searchParams.get("page") || "1") || 1);
+    const limit = Math.min(
+      Math.max(1, parseInt(searchParams.get("limit") || "10") || 10),
+      100,
+    );
     const domain = searchParams.get("domain");
     const subdomain = searchParams.get("subdomain");
     const tags = searchParams.get("tags")?.split(",");
@@ -111,7 +116,7 @@ export async function GET(request: NextRequest) {
           {
             slotsOfAvailabilityCustom: {
               some: {
-                availabilityStartsAt: {
+                startsAt: {
                   gte: now,
                   lte: oneWeekFromNow,
                 },
@@ -184,56 +189,29 @@ export async function GET(request: NextRequest) {
       orderBy,
       skip,
       take: limit,
-      include: {
-        user: {
-          select: {
-            // Only public profile fields - no email
-            id: true,
-            name: true,
-            image: true,
-            profileDisplayImage: true,
-          },
-        },
-        domain: { select: { id: true, name: true } },
-        subDomains: { select: { id: true, name: true } },
-        tags: { select: { id: true, name: true } },
-        reviews: {
-          select: { rating: true },
-          take: 10,
-        },
-        subscriptionPlans: {
-          select: {
-            id: true,
-            title: true,
-            price: true,
-            priceCurrency: true,
-            durationInMonths: true,
-            callsPerWeek: true,
-            emailSupport: true,
-            totalSessions: true,
-          },
-          take: 5,
-        },
-      },
+      include: consultantListInclude,
     });
 
     // Get total count for pagination
     const total = await prisma.consultantProfile.count({ where });
 
-    return NextResponse.json({
-      data: consultants,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      },
-    });
-  } catch (error) {
-    console.error("Error fetching consultants:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 },
+      {
+        data: consultants,
+        meta: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
+      },
+      {
+        headers: {
+          "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
+        },
+      },
     );
+  } catch (error) {
+    return apiError({ tag: "[Consultants.GET]", error });
   }
 }

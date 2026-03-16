@@ -13,6 +13,7 @@ import {
   type AuthTokenCleanupResult,
 } from "../../scripts/cleanup/cleanup-auth-tokens";
 import fs from "fs";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 /**
  * Output results to GitHub Actions
@@ -44,6 +45,7 @@ function outputToGitHubActions(result: AuthTokenCleanupResult): void {
  * Main entry point
  */
 async function main(): Promise<void> {
+  await abortIfMaintenance("cleanup-auth-tokens");
   console.log("🧹 Starting auth token cleanup job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 

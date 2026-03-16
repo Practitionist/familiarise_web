@@ -5,6 +5,7 @@ import {
   validateSlotDistribution,
 } from "./calendarUtils";
 import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
+import { isRecurringEventType } from "@/utils/slotAllocation/types";
 import { AllocationService } from "./allocationService";
 
 /**
@@ -39,7 +40,9 @@ export interface AllocationOptions {
   durationInHours?: number; // FIXED: Add durationInHours for consultations and webinars
   startDate?: Date; // Required for subscriptions and classes
   endDate?: Date; // Required for subscriptions and classes
+  totalSessions?: number; // Authoritative session count from plan (overrides weeks × callsPerWeek)
   requestedSlots?: TimeSlot[];
+  pastConfirmedSlotCount?: number; // For in-progress recurring events
 }
 
 export interface AllocationResult {
@@ -82,14 +85,22 @@ export class AllocationAlgorithms {
     try {
       // VALIDATION: Check required slots count
       // Pass durationInHours for consultations/webinars, sessionDurationInHours for subscriptions/classes
-      const requiredSlots = calculateRequiredSlots(
+      const rawRequired = calculateRequiredSlots(
         options.eventType,
         options.durationInMonths,
         options.callsPerWeek,
         options.durationInHours || options.sessionDurationInHours,
         options.startDate,
         options.endDate,
+        options.totalSessions,
       );
+
+      // For in-progress recurring events, subtract past confirmed slots
+      const pastCount = options.pastConfirmedSlotCount || 0;
+      const requiredSlots =
+        isRecurringEventType(options.eventType) && pastCount > 0
+          ? Math.max(0, rawRequired - pastCount)
+          : rawRequired;
 
       if (selectedSlots.length !== requiredSlots) {
         return {
@@ -146,7 +157,9 @@ export class AllocationAlgorithms {
         // Calculate slotsPerWeek based on actual session duration
         // slotsPerSession = sessionDurationInHours / 0.5 (since each slot is 30 min)
         // slotsPerWeek = callsPerWeek * slotsPerSession
-        const slotsPerSession = Math.ceil((options.sessionDurationInHours || 1) / 0.5);
+        const slotsPerSession = Math.ceil(
+          (options.sessionDurationInHours || 1) / 0.5,
+        );
         const slotsPerWeek = options.callsPerWeek * slotsPerSession;
 
         const distributionValidation = validateSlotDistribution(
@@ -212,14 +225,22 @@ export class AllocationAlgorithms {
     try {
       // Calculate required slots based on event type
       // Pass durationInHours for consultations/webinars, sessionDurationInHours for subscriptions/classes
-      const requiredSlots = calculateRequiredSlots(
+      const rawRequired = calculateRequiredSlots(
         options.eventType,
         options.durationInMonths,
         options.callsPerWeek,
         options.durationInHours || options.sessionDurationInHours,
         options.startDate,
         options.endDate,
+        options.totalSessions,
       );
+
+      // For in-progress recurring events, subtract past confirmed slots
+      const pastCount = options.pastConfirmedSlotCount || 0;
+      const requiredSlots =
+        isRecurringEventType(options.eventType) && pastCount > 0
+          ? Math.max(0, rawRequired - pastCount)
+          : rawRequired;
 
       let selectedSlots: TimeSlot[] = [];
       let strategy = "";
@@ -350,6 +371,7 @@ export class AllocationAlgorithms {
         options.durationInHours || options.sessionDurationInHours,
         options.startDate,
         options.endDate,
+        options.totalSessions,
       );
 
       if (options.requestedSlots.length !== requiredSlots) {
@@ -475,7 +497,10 @@ export class AllocationAlgorithms {
         consecutive1HourSlots.push(currentSlot);
       }
 
-      if (!isConsecutive || consecutive1HourSlots.length < oneHourBlocksNeeded) {
+      if (
+        !isConsecutive ||
+        consecutive1HourSlots.length < oneHourBlocksNeeded
+      ) {
         continue;
       }
 
@@ -587,7 +612,9 @@ export class AllocationAlgorithms {
     // Group slots by week
     const slotsByWeek = new Map<string, TimeSlot[]>();
     futureSlots.forEach((slot) => {
-      const weekStart = SlotCalculationService.startOfWeekSunday(slot.startTime);
+      const weekStart = SlotCalculationService.startOfWeekSunday(
+        slot.startTime,
+      );
       const weekKey = weekStart.toISOString();
 
       if (!slotsByWeek.has(weekKey)) {
@@ -607,7 +634,10 @@ export class AllocationAlgorithms {
     let currentWeek = 0;
 
     for (const weekKey of sortedWeeks) {
-      if (selectedCalls.length >= totalCallsNeeded || currentWeek >= totalWeeks) {
+      if (
+        selectedCalls.length >= totalCallsNeeded ||
+        currentWeek >= totalWeeks
+      ) {
         break;
       }
 
@@ -657,15 +687,15 @@ export class AllocationAlgorithms {
       (a, b) => a.startTime.getTime() - b.startTime.getTime(),
     );
 
-    for (let i = 0; i <= sortedSlots.length - hoursPerCall; i++) {
+    for (let i = 0; i <= sortedSlots.length - slotsPerCall; i++) {
       if (calls.length >= callsNeeded) break;
       if (usedSlotIndices.has(i)) continue;
 
-      // Try to find `hoursPerCall` consecutive 1-hour blocks starting at i
+      // Try to find `slotsPerCall` consecutive 30-min slots starting at i
       const blockIndices: number[] = [];
       let isConsecutive = true;
 
-      for (let j = 0; j < hoursPerCall; j++) {
+      for (let j = 0; j < slotsPerCall; j++) {
         const idx = i + j;
         if (idx >= sortedSlots.length || usedSlotIndices.has(idx)) {
           isConsecutive = false;
@@ -682,13 +712,16 @@ export class AllocationAlgorithms {
         blockIndices.push(idx);
       }
 
-      if (!isConsecutive || blockIndices.length < hoursPerCall) continue;
+      if (!isConsecutive || blockIndices.length < slotsPerCall) continue;
 
       // Check spacing against already selected calls
       const blockStart = sortedSlots[blockIndices[0]].startTime;
       const hasConflict = calls.some((existingCall) => {
         const existingStart = existingCall[0].startTime;
-        return Math.abs(blockStart.getTime() - existingStart.getTime()) < minMsBetween;
+        return (
+          Math.abs(blockStart.getTime() - existingStart.getTime()) <
+          minMsBetween
+        );
       });
       if (hasConflict) continue;
 
@@ -793,5 +826,4 @@ export class AllocationAlgorithms {
         return 1;
     }
   }
-
 }

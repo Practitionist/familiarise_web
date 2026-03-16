@@ -2,7 +2,7 @@
 
 import { AlertCircle, CheckCircle2 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
-import { cn } from "@/lib/utils";
+import { cn } from "@/utils/tailwind";
 
 interface ProfileCompletionIndicatorProps {
   percentage: number;

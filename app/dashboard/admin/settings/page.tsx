@@ -47,7 +47,7 @@ async function fetchAdminData(userId: string): Promise<AdminData> {
   if (!response.ok) {
     throw new Error("Failed to fetch admin data");
   }
-  const result = await response.json() as { data: AdminData };
+  const result = (await response.json()) as { data: AdminData };
   return result.data;
 }
 

@@ -90,22 +90,42 @@ export async function handleLostDisputes(): Promise<LostDisputeHandlerResult> {
     }
 
     for (const earnings of earningsList) {
-    // Check if earnings were already paid out
-    if (earnings.status === EarningStatus.PAID) {
-      // This is a critical situation - earnings were paid but dispute was lost
-      console.error(
-        `⚠️ CRITICAL: Dispute ${dispute.disputeId} lost but earnings ${earnings.id} already PAID!`,
-      );
-      console.error(
-        `   Consultant: ${earnings.consultantProfile.user.name || "Unknown"} (${earnings.consultantProfile.user.email})`,
-      );
-      console.error(
-        `   Amount: ₹${(earnings.consultantShare / 100).toFixed(2)}`,
-      );
-      console.error(`   Manual recovery required!`);
+      // Check if earnings were already paid out
+      if (earnings.status === EarningStatus.PAID) {
+        // This is a critical situation - earnings were paid but dispute was lost
+        console.error(
+          `⚠️ CRITICAL: Dispute ${dispute.disputeId} lost but earnings ${earnings.id} already PAID!`,
+        );
+        console.error(
+          `   Consultant: ${earnings.consultantProfile.user.name || "Unknown"} (${earnings.consultantProfile.user.email})`,
+        );
+        console.error(
+          `   Amount: ₹${(earnings.consultantShare / 100).toFixed(2)}`,
+        );
+        console.error(`   Manual recovery required!`);
 
-      // Still mark as REFUNDED to prevent double-payout, but flag for manual review
+        // Still mark as REFUNDED to prevent double-payout, but flag for manual review
+        try {
+          await prisma.consultantEarnings.update({
+            where: { id: earnings.id },
+            data: {
+              status: EarningStatus.REFUNDED,
+            },
+          });
+
+          alreadyPaidCount++;
+          updatedCount++;
+        } catch (error) {
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+          errors.push(`Earnings ${earnings.id} (PAID): ${errorMessage}`);
+          errorCount++;
+        }
+        continue;
+      }
+
       try {
+        // Update earnings status to REFUNDED
         await prisma.consultantEarnings.update({
           where: { id: earnings.id },
           data: {
@@ -113,45 +133,28 @@ export async function handleLostDisputes(): Promise<LostDisputeHandlerResult> {
           },
         });
 
-        alreadyPaidCount++;
+        // Decrease consultant's pending revenue
+        await prisma.consultantProfile.update({
+          where: { id: earnings.consultantProfileId },
+          data: {
+            pendingRevenue: { decrement: earnings.consultantShare },
+          },
+        });
+
+        console.log(
+          `✅ Updated earnings ${earnings.id} to REFUNDED (dispute: ${dispute.disputeId}, amount: ₹${(earnings.consultantShare / 100).toFixed(2)})`,
+        );
         updatedCount++;
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : String(error);
-        errors.push(`Earnings ${earnings.id} (PAID): ${errorMessage}`);
+        errors.push(`Earnings ${earnings.id}: ${errorMessage}`);
+        console.error(
+          `❌ Error updating earnings ${earnings.id}:`,
+          errorMessage,
+        );
         errorCount++;
       }
-      continue;
-    }
-
-    try {
-      // Update earnings status to REFUNDED
-      await prisma.consultantEarnings.update({
-        where: { id: earnings.id },
-        data: {
-          status: EarningStatus.REFUNDED,
-        },
-      });
-
-      // Decrease consultant's pending revenue
-      await prisma.consultantProfile.update({
-        where: { id: earnings.consultantProfileId },
-        data: {
-          pendingRevenue: { decrement: earnings.consultantShare },
-        },
-      });
-
-      console.log(
-        `✅ Updated earnings ${earnings.id} to REFUNDED (dispute: ${dispute.disputeId}, amount: ₹${(earnings.consultantShare / 100).toFixed(2)})`,
-      );
-      updatedCount++;
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      errors.push(`Earnings ${earnings.id}: ${errorMessage}`);
-      console.error(`❌ Error updating earnings ${earnings.id}:`, errorMessage);
-      errorCount++;
-    }
     } // end for earnings
   }
 

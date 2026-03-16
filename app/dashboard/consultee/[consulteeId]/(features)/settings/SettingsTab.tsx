@@ -16,7 +16,7 @@ import { useToast } from "@/hooks/use-toast";
 import { NotificationPreferencesPanel } from "@/components/notifications";
 import React, { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { createConsulteeQueries } from "@/hooks/useConsulteePrefetchDashboard";
+import { createConsulteeQueries } from "@/lib/dashboard-queries";
 import {
   ConsultationMode,
   ConsulteeProfile,

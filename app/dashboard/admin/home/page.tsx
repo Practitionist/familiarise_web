@@ -21,7 +21,7 @@ import {
   Zap,
 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
-import { formatCurrencyAmount } from "@/lib/utils";
+import { formatCurrencyFromMajorUnit } from "@/utils/formatting";
 import type {
   AdminDashboardStats,
   RecentPayment,
@@ -149,7 +149,10 @@ export default function AdminHomePage() {
                           </div>
                           <div>
                             <p className="font-medium text-zinc-900">
-                              {formatCurrencyAmount(payment.amount, payment.currency)}
+                              {formatCurrencyFromMajorUnit(
+                                payment.amount,
+                                payment.currency,
+                              )}
                             </p>
                             <p className="text-sm text-zinc-500">
                               {payment.paymentGateway} •{" "}
@@ -206,7 +209,10 @@ export default function AdminHomePage() {
                           </div>
                           <div>
                             <p className="font-medium text-zinc-900">
-                              {formatCurrencyAmount(refund.amount, refund.currency)}
+                              {formatCurrencyFromMajorUnit(
+                                refund.amount,
+                                refund.currency,
+                              )}
                             </p>
                             <p className="text-sm text-zinc-500">
                               {refund.paymentGateway}

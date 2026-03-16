@@ -19,55 +19,11 @@ import {
   Play,
 } from "lucide-react";
 import { ClientClassRegistration } from "./ClientClassRegistration";
-import { useCurrency } from "@/lib/hooks/useCurrency";
-import type {
-  Prisma,
-  Class as PrismaClass,
-  Appointment as PrismaAppointment,
-  SlotOfAppointment as PrismaSlotOfAppointment,
-  Topic,
-} from "@prisma/client";
+import { useCurrency } from "@/hooks/useCurrency";
+import type { Topic } from "@prisma/client";
 import { generateProgramImageUrl } from "@/app/explore/programs/utils";
 import { FeatureItem } from "@/app/explore/programs/plans/components/FeatureItem";
-
-type ClassSessionWithSchedule = PrismaClass & {
-  appointments: (PrismaAppointment & {
-    slotsOfAppointment: PrismaSlotOfAppointment[];
-  })[];
-  waitlist?: Array<{ userId: string; position: number | null; status: string }>;
-};
-
-type CollaboratorInfo = {
-  id: string;
-  role: string;
-  consultantProfile: {
-    id: string;
-    user: { id: string; name: string | null; image: string | null };
-  };
-};
-
-export type ClassPlanDetailsData = Omit<
-  Prisma.ClassPlanGetPayload<{
-    include: {
-      consultantProfile: {
-        include: {
-          user: { select: { id: true; name: true; image: true } };
-          domain: true;
-          subDomains: true;
-          tags: true;
-        };
-      };
-      topics: true;
-      classContents: true;
-    };
-  }>,
-  "classes"
-> & {
-  classes: ClassSessionWithSchedule[];
-  type: "class";
-  imageUrl: string;
-  collaborators?: CollaboratorInfo[];
-};
+import type { TClassPlanDetailsData } from "../types";
 
 const getBadgeVariant = (
   currentStatus: string,
@@ -78,7 +34,7 @@ const getBadgeVariant = (
 };
 
 interface ClassDetailsProps {
-  readonly plan: ClassPlanDetailsData;
+  readonly plan: TClassPlanDetailsData;
 }
 
 export function ClassDetails({ plan }: ClassDetailsProps) {
@@ -89,7 +45,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
       {/* Hero Banner */}
       <div className="relative h-[350px] md:h-[400px] w-full overflow-hidden">
         <Image
-          src={generateProgramImageUrl(plan.id, 1200, 400)}
+          src={generateProgramImageUrl(plan.id, 1200, 400, plan.imageUrl)}
           alt="Class cover"
           fill
           className="object-cover"
@@ -290,7 +246,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                       >
                         {plan.classes.length > 1 && (
                           <h3 className="font-medium text-zinc-900 mb-3">
-                            Session {classIndex + 1}
+                            Batch {classIndex + 1}
                           </h3>
                         )}
                         {classInstance.appointments?.length > 0 ? (
@@ -468,6 +424,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                 plan={plan}
                 maxParticipants={plan.maxParticipants ?? undefined}
                 waitlist={plan.classes?.[0]?.waitlist ?? []}
+                consultantUserId={plan.consultantProfile?.user?.id}
               />
             </div>
           </motion.div>

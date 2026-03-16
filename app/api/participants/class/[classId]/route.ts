@@ -1,16 +1,34 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
+import {
+  requireApiAuth,
+  isPrivileged,
+  forbiddenResponse,
+} from "@/lib/auth-helpers";
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ classId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { classId } = await params;
+    // Non-privileged users can only view participants for classes they own as consultant
     const classEvent = await prisma.class.findUnique({
       where: {
         id: classId,
+        ...(isPrivileged(session.user.role)
+          ? {}
+          : {
+              classPlan: {
+                consultantProfileId:
+                  session.user.consultantProfileId ?? "__none__",
+              },
+            }),
       },
       include: {
         classPlan: true,
@@ -75,6 +93,14 @@ export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ classId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
+  if (!isPrivileged(session.user.role) && !session.user.consultantProfileId) {
+    return forbiddenResponse("Only consultants can remove participants");
+  }
+
   try {
     const { classId } = await params;
 
@@ -86,8 +112,19 @@ export async function DELETE(
     }
 
     // Remove user from all slots in all appointments for this class
+    // Non-privileged users can only modify classes they own as consultant
     const classEvent = await prisma.class.findUnique({
-      where: { id: classId },
+      where: {
+        id: classId,
+        ...(isPrivileged(session.user.role)
+          ? {}
+          : {
+              classPlan: {
+                consultantProfileId:
+                  session.user.consultantProfileId ?? "__none__",
+              },
+            }),
+      },
       include: {
         appointments: {
           include: {

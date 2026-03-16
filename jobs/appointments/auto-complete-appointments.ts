@@ -13,6 +13,7 @@ import {
   type AutoCompleteResult,
 } from "../../scripts/appointments/auto-complete-appointments";
 import fs from "fs";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 /**
  * Output results to GitHub Actions
@@ -55,6 +56,7 @@ function outputToGitHubActions(result: AutoCompleteResult): void {
  * Main entry point
  */
 async function main(): Promise<void> {
+  await abortIfMaintenance("auto-complete-appointments");
   console.log("⏰ Starting auto-complete appointments job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 

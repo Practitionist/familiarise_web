@@ -13,6 +13,7 @@ import {
   type SlotReconciliationResult,
 } from "../../scripts/appointments/reconcile-slot-availability";
 import fs from "fs";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 /**
  * Output results to GitHub Actions
@@ -54,6 +55,7 @@ function outputToGitHubActions(result: SlotReconciliationResult): void {
  * Main entry point
  */
 async function main(): Promise<void> {
+  await abortIfMaintenance("reconcile-slot-availability");
   console.log("🔄 Starting slot availability reconciliation job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 
@@ -73,6 +75,16 @@ async function main(): Promise<void> {
         console.log(`   - ${db.consultantName}: ${db.slotTime}`);
         console.log(`     Appointments: ${db.appointments.join(", ")}`);
       });
+      // Structured JSON for monitoring integration (PagerDuty, Datadog, etc.)
+      console.log(
+        JSON.stringify({
+          event: "double_bookings_detected",
+          count: result.doubleBookingsDetected,
+          bookings: result.doubleBookings,
+          timestamp: new Date().toISOString(),
+          severity: "critical",
+        }),
+      );
     }
 
     if (result.errors.length > 0) {

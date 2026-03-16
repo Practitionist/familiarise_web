@@ -4,8 +4,7 @@ import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { HomeSkeleton } from "@/components/dashboard/DashboardSkeletons";
-import { createConsultantQueries } from "@/hooks/useCosultantPrefetchDashboard";
-import { BADGE_STYLES } from "../../types";
+import { createConsultantQueries } from "@/lib/dashboard-queries";
 import { HomeTab } from "./HomeTab";
 import type { TConsultantDashboardResponse } from "@/types/consultant-events";
 
@@ -82,9 +81,6 @@ export default function HomePage({
       )}
       <HomeTab
         appointments={dashboardData.appointments}
-        activities={dashboardData.activities}
-        approvals={dashboardData.approvals}
-        badgeStyles={BADGE_STYLES}
         consultantId={consultantId}
       />
     </DashboardErrorBoundary>

@@ -10,7 +10,10 @@ import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { use, useState } from "react";
-import { formatCurrencyAmount } from "@/lib/utils";
+import {
+  formatCurrencyAmount,
+  formatCurrencyFromMajorUnit,
+} from "@/utils/formatting";
 import type {
   PaymentDetail,
   PaymentDetailRefund,
@@ -170,7 +173,7 @@ export default function PaymentDetailsPage({ params }: PageProps) {
             <div>
               <Label className="text-gray-500">Amount</Label>
               <p className="text-2xl font-bold">
-                {formatCurrencyAmount(payment.amount, payment.currency)}
+                {formatCurrencyFromMajorUnit(payment.amount, payment.currency)}
               </p>
             </div>
             <div>
@@ -270,15 +273,21 @@ export default function PaymentDetailsPage({ params }: PageProps) {
                   already-processed refunds to prevent over-refunding */}
               {(() => {
                 const successfulRefunds = (payment.refunds || [])
-                  .filter((r: PaymentDetailRefund) => r.status === "SUCCEEDED" || r.status === "PENDING")
-                  .reduce((sum: number, r: PaymentDetailRefund) => sum + r.amount, 0);
+                  .filter(
+                    (r: PaymentDetailRefund) =>
+                      r.status === "SUCCEEDED" || r.status === "PENDING",
+                  )
+                  .reduce(
+                    (sum: number, r: PaymentDetailRefund) => sum + r.amount,
+                    0,
+                  );
                 const remainingRefundable = payment.amount - successfulRefunds;
                 return (
                   <>
                     <Input
                       id="refundAmount"
                       type="number"
-                      placeholder={`Max: ${formatCurrencyAmount(remainingRefundable, payment.currency)}`}
+                      placeholder={`Max: ${formatCurrencyFromMajorUnit(remainingRefundable, payment.currency)}`}
                       value={refundAmount}
                       onChange={(e) => setRefundAmount(e.target.value)}
                       max={remainingRefundable}
@@ -286,7 +295,16 @@ export default function PaymentDetailsPage({ params }: PageProps) {
                     />
                     {successfulRefunds > 0 && (
                       <p className="text-xs text-muted-foreground mt-1">
-                        Already refunded: {formatCurrencyAmount(successfulRefunds, payment.currency)} • Remaining: {formatCurrencyAmount(remainingRefundable, payment.currency)}
+                        Already refunded:{" "}
+                        {formatCurrencyFromMajorUnit(
+                          successfulRefunds,
+                          payment.currency,
+                        )}{" "}
+                        • Remaining:{" "}
+                        {formatCurrencyFromMajorUnit(
+                          remainingRefundable,
+                          payment.currency,
+                        )}
                       </p>
                     )}
                   </>
@@ -338,7 +356,10 @@ export default function PaymentDetailsPage({ params }: PageProps) {
                 >
                   <div>
                     <p className="font-medium">
-                      {formatCurrencyAmount(refund.amount, refund.currency)}
+                      {formatCurrencyFromMajorUnit(
+                        refund.amount,
+                        refund.currency,
+                      )}
                     </p>
                     <p className="text-sm text-gray-500">{refund.reason}</p>
                     <p className="text-xs text-gray-400 mt-1">

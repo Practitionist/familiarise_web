@@ -8,6 +8,11 @@ import {
   paginatedResponse,
   rankAndPaginate,
 } from "../shared/plan-filters";
+import {
+  requireApiAuth,
+  isPrivileged,
+  forbiddenResponse,
+} from "@/lib/auth-helpers";
 
 export async function GET(request: NextRequest) {
   try {
@@ -115,6 +120,10 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const body = await request.json();
     const {
@@ -128,18 +137,22 @@ export async function POST(request: NextRequest) {
       prerequisites,
       materialProvided,
       learningOutcomes,
-      consultantProfileId,
       topicIds,
     } = body;
 
+    // Ownership: non-privileged users can only create plans for themselves
+    const consultantProfileId = isPrivileged(session.user.role)
+      ? body.consultantProfileId
+      : session.user.consultantProfileId;
+
+    if (!consultantProfileId) {
+      return forbiddenResponse(
+        "You must have a consultant profile to create a webinar plan",
+      );
+    }
+
     // Input validation
-    if (
-      !title ||
-      !durationInHours ||
-      !price ||
-      !maxParticipants ||
-      !consultantProfileId
-    ) {
+    if (!title || !durationInHours || !price || !maxParticipants) {
       return NextResponse.json(
         { error: "Missing required fields" },
         { status: 400 },

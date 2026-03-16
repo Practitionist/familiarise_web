@@ -13,6 +13,7 @@ import {
   type StuckPayoutsResult,
 } from "../../scripts/payouts/handle-stuck-payouts";
 import fs from "fs";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 /**
  * Output results to GitHub Actions
@@ -27,10 +28,17 @@ function outputToGitHubActions(result: StuckPayoutsResult): void {
       `reconciled_count=${result.reconciledCount}`,
       `retried_count=${result.retriedCount}`,
       `failed_count=${result.failedCount}`,
+      `skipped_count=${result.skippedCount}`,
       `success=${result.success}`,
     ].join("\n");
 
     fs.appendFileSync(outputFile, outputs + "\n");
+  }
+
+  if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+    console.log(
+      `::warning::Razorpay credentials not configured — Razorpay records were skipped`,
+    );
   }
 
   if (result.failedCount > 0) {
@@ -50,6 +58,7 @@ function outputToGitHubActions(result: StuckPayoutsResult): void {
  * Main entry point
  */
 async function main(): Promise<void> {
+  await abortIfMaintenance("handle-stuck-payouts");
   console.log("🔄 Starting stuck payouts handler job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 
@@ -61,6 +70,7 @@ async function main(): Promise<void> {
     console.log(`   Reconciled: ${result.reconciledCount}`);
     console.log(`   Retried: ${result.retriedCount}`);
     console.log(`   Failed: ${result.failedCount}`);
+    console.log(`   Skipped: ${result.skippedCount}`);
     console.log(`   Success: ${result.success}`);
 
     if (result.errors.length > 0) {

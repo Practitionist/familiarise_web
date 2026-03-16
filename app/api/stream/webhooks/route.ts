@@ -35,6 +35,7 @@ import {
 import {
   logWebhookEvent,
   markWebhookEventProcessed,
+  isDbHealthy,
 } from "../../webhooks/utils";
 
 // Stream webhook event types we handle
@@ -175,6 +176,17 @@ export async function POST(req: NextRequest) {
   if (!isValid) {
     console.warn("Invalid Stream webhook signature");
     return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
+  }
+
+  // DB health check — return 503 if DB is unreachable so Stream retries
+  if (!(await isDbHealthy())) {
+    console.warn(
+      "[stream webhook] DB unhealthy — returning 503 for Stream retry",
+    );
+    return NextResponse.json(
+      { error: "Service temporarily unavailable" },
+      { status: 503 },
+    );
   }
 
   try {

@@ -3,9 +3,11 @@ import { handleCheckout } from "@/lib/payments/operations/checkout";
 import {
   classifyError,
   logClassifiedError,
-} from "@/lib/payments/error-classification";
+} from "@/lib/errors/classification/payment-error-classification";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
+import { checkoutLimiter, applyRateLimit } from "@/lib/rate-limit";
+import { ZodError } from "zod";
 
 export async function POST(req: NextRequest) {
   try {
@@ -14,6 +16,10 @@ export async function POST(req: NextRequest) {
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    // Rate limit: 5 checkouts per minute per user
+    const rl = await applyRateLimit(checkoutLimiter, session.user.id);
+    if (rl) return rl;
 
     // Validate request body
     const body = await req.json();
@@ -29,6 +35,25 @@ export async function POST(req: NextRequest) {
     );
     return NextResponse.json(result);
   } catch (error) {
+    // ZodError from checkoutSchema.parse() — extract first human-readable message
+    if (error instanceof ZodError) {
+      const firstMessage = error.issues[0]?.message ?? "Invalid request";
+      const lowerMsg = firstMessage.toLowerCase();
+      const isAvailability =
+        lowerMsg.includes("slot") ||
+        lowerMsg.includes("passed") ||
+        lowerMsg.includes("too soon") ||
+        lowerMsg.includes("availability");
+      return NextResponse.json(
+        {
+          error: firstMessage,
+          errorType: isAvailability ? "AVAILABILITY_ERROR" : "UNKNOWN_ERROR",
+          timestamp: new Date().toISOString(),
+        },
+        { status: 400 },
+      );
+    }
+
     const classified = classifyError(error, "Checkout failed");
     logClassifiedError("Checkout", classified, error);
 

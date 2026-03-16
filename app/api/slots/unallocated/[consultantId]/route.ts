@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { TSlotTiming } from "@/types/slots";
 import { DayOfWeek } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
 
 export async function GET(
   req: NextRequest,
@@ -34,41 +35,15 @@ export async function GET(
       );
     }
 
-    // Get all appointments that overlap with the requested time period
+    // Get all occupied appointments that overlap with the requested time period.
+    // Use canonical overlap predicate to catch all overlap shapes including enclosing.
     const appointments = await prisma.appointment.findMany({
       where: {
-        OR: [
-          {
-            consultation: {
-              consultationPlan: {
-                consultantProfileId: consultantId,
-              },
-            },
-          },
-          {
-            subscription: {
-              subscriptionPlan: {
-                consultantProfileId: consultantId,
-              },
-            },
-          },
-        ],
+        OR: buildOccupiedAppointmentFilter(consultantId),
         slotsOfAppointment: {
           some: {
-            OR: [
-              {
-                startsAt: {
-                  gte: new Date(startDateInUtc),
-                  lte: new Date(endDateInUtc),
-                },
-              },
-              {
-                endsAt: {
-                  gte: new Date(startDateInUtc),
-                  lte: new Date(endDateInUtc),
-                },
-              },
-            ],
+            startsAt: { lt: new Date(endDateInUtc) },
+            endsAt: { gt: new Date(startDateInUtc) },
           },
         },
       },
@@ -77,16 +52,15 @@ export async function GET(
       },
     });
 
-    // Create a map of allocated time slots
-    const allocatedSlots = new Map();
+    // FIX Bug #09: Store allocated slots as array for range overlap checks
+    // instead of exact key matching which misses partial overlaps
+    const allocatedSlots: { startsAt: Date; endsAt: Date }[] = [];
     appointments.forEach((appointment) => {
       appointment.slotsOfAppointment.forEach((slot) => {
-        const start = slot.startsAt;
-        const end = slot.endsAt;
-        allocatedSlots.set(
-          `${start.toISOString()}-${end.toISOString()}`,
-          slot.isTentative,
-        );
+        allocatedSlots.push({
+          startsAt: slot.startsAt,
+          endsAt: slot.endsAt,
+        });
       });
     });
 
@@ -94,11 +68,11 @@ export async function GET(
     const customSlots = await prisma.slotOfAvailabilityCustom.findMany({
       where: {
         consultantProfileId: consultantId,
-        availabilityStartsAt: { gte: new Date(startDateInUtc) },
-        availabilityEndsAt: { lte: new Date(endDateInUtc) },
+        startsAt: { gte: new Date(startDateInUtc) },
+        endsAt: { lte: new Date(endDateInUtc) },
       },
       orderBy: {
-        availabilityStartsAt: "asc",
+        startsAt: "asc",
       },
     });
 
@@ -107,16 +81,16 @@ export async function GET(
       where: {
         consultantProfileId: consultantId,
       },
-      orderBy: [
-        { dayOfWeekForStartsAt: "asc" },
-        { availabilityStartsAt: "asc" },
-      ],
+      orderBy: [{ startDay: "asc" }, { startTimeUtc: "asc" }],
     });
 
-    // Filter out allocated custom slots
+    // FIX Bug #09: Use range overlap check instead of exact key matching
     const unallocatedCustomSlots = customSlots.filter((slot) => {
-      const key = `${slot.availabilityStartsAt.toISOString()}-${slot.availabilityEndsAt.toISOString()}`;
-      return !allocatedSlots.has(key);
+      const hasOverlap = allocatedSlots.some(
+        (allocated) =>
+          allocated.startsAt < slot.endsAt && allocated.endsAt > slot.startsAt,
+      );
+      return !hasOverlap;
     });
 
     // For weekly slots, generate instances for the date range and filter out allocated ones
@@ -124,30 +98,57 @@ export async function GET(
     const start = new Date(startDateInUtc);
     const end = new Date(endDateInUtc);
 
+    // FIX Bug #09: Use UTC-consistent date construction and range overlap check
+    // Weekly slots now use Int (minutes since midnight UTC) instead of DateTime
     weeklySlots.forEach((weeklySlot) => {
       const currentDate = new Date(start);
 
+      const startHours = Math.floor(weeklySlot.startTimeUtc / 60);
+      const startMins = weeklySlot.startTimeUtc % 60;
+      const endHours = Math.floor(weeklySlot.endTimeUtc / 60);
+      const endMins = weeklySlot.endTimeUtc % 60;
+
       while (currentDate <= end) {
-        // Check if this day matches the slot's day
-        if (
-          currentDate.getDay() === dayToNumber[weeklySlot.dayOfWeekForStartsAt]
-        ) {
-          // Create slot instance for this date
-          const slotStart = new Date(currentDate);
-          slotStart.setHours(weeklySlot.availabilityStartsAt.getHours());
-          slotStart.setMinutes(weeklySlot.availabilityStartsAt.getMinutes());
+        if (currentDate.getUTCDay() === dayToNumber[weeklySlot.startDay]) {
+          // Use UTC-consistent construction with Int minutes
+          const slotStart = new Date(
+            Date.UTC(
+              currentDate.getUTCFullYear(),
+              currentDate.getUTCMonth(),
+              currentDate.getUTCDate(),
+              startHours,
+              startMins,
+              0,
+              0,
+            ),
+          );
 
-          const slotEnd = new Date(currentDate);
-          slotEnd.setHours(weeklySlot.availabilityEndsAt.getHours());
-          slotEnd.setMinutes(weeklySlot.availabilityEndsAt.getMinutes());
+          const slotEnd = new Date(
+            Date.UTC(
+              currentDate.getUTCFullYear(),
+              currentDate.getUTCMonth(),
+              currentDate.getUTCDate(),
+              endHours,
+              endMins,
+              0,
+              0,
+            ),
+          );
+          // For overnight slots, endTime is on the next day
+          if (weeklySlot.endTimeUtc <= weeklySlot.startTimeUtc) {
+            slotEnd.setUTCDate(slotEnd.getUTCDate() + 1);
+          }
 
-          // Check if this instance is allocated
-          const key = `${slotStart.toISOString()}-${slotEnd.toISOString()}`;
-          if (!allocatedSlots.has(key)) {
+          // Check for any overlapping allocated slot (partial or full overlap)
+          const hasOverlap = allocatedSlots.some(
+            (allocated) =>
+              allocated.startsAt < slotEnd && allocated.endsAt > slotStart,
+          );
+          if (!hasOverlap) {
             unallocatedWeeklySlots.push({
               slotId: weeklySlot.id,
               dateInISO: currentDate.toISOString(),
-              dayOfWeek: weeklySlot.dayOfWeekForStartsAt,
+              dayOfWeek: weeklySlot.startDay,
               slotStartTimeInUTC: slotStart.toISOString(),
               slotEndTimeInUTC: slotEnd.toISOString(),
               slotOfAvailabilityId: weeklySlot.id,
@@ -160,7 +161,7 @@ export async function GET(
         }
 
         // Move to next day
-        currentDate.setDate(currentDate.getDate() + 1);
+        currentDate.setUTCDate(currentDate.getUTCDate() + 1);
       }
     });
 
@@ -168,16 +169,14 @@ export async function GET(
     const formattedCustomSlots: TSlotTiming[] = unallocatedCustomSlots.map(
       (slot) => ({
         slotId: slot.id,
-        dateInISO: slot.availabilityStartsAt.toISOString(),
-        dayOfWeek: dayMap[new Date(slot.availabilityStartsAt).getDay()],
-        slotStartTimeInUTC: slot.availabilityStartsAt.toISOString(),
-        slotEndTimeInUTC: slot.availabilityEndsAt.toISOString(),
+        dateInISO: slot.startsAt.toISOString(),
+        dayOfWeek: dayMap[new Date(slot.startsAt).getDay()],
+        slotStartTimeInUTC: slot.startsAt.toISOString(),
+        slotEndTimeInUTC: slot.endsAt.toISOString(),
         slotOfAvailabilityId: slot.id,
         slotOfAppointmentId: "",
-        localStartTime: new Date(
-          slot.availabilityStartsAt,
-        ).toLocaleTimeString(),
-        localEndTime: new Date(slot.availabilityEndsAt).toLocaleTimeString(),
+        localStartTime: new Date(slot.startsAt).toLocaleTimeString(),
+        localEndTime: new Date(slot.endsAt).toLocaleTimeString(),
         type: "CUSTOM" as const,
       }),
     );

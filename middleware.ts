@@ -1,6 +1,22 @@
 import { getSessionCookie } from "better-auth/cookies";
 import { NextRequest, NextResponse } from "next/server";
 
+import {
+  getMaintenanceState,
+  isMaintenanceExempt,
+  validateBypass,
+  isWriteBlockedInDegraded,
+} from "@/lib/maintenance-edge";
+import {
+  authLimiter,
+  searchLimiter,
+  eligibilityLimiter,
+  newsletterLimiter,
+  availabilityLimiter,
+  applyRateLimit,
+  getClientIp,
+} from "@/lib/rate-limit";
+
 // Constants for common URLs and route patterns
 const URLS = {
   SIGNIN: "/auth/signin",
@@ -18,34 +34,50 @@ const ROUTE_PATTERNS = {
     "/meetings/",
   ],
   PUBLIC_AUTH_PREFIXES: ["/auth/"],
-  PRIVATE_API_PREFIXES: ["/api/inngest/"],
-  PROTECTED_API_PREFIXES: [
+  // API routes requiring a session cookie (returns 401 JSON without one)
+  AUTHENTICATED_API_PREFIXES: [
+    "/api/inngest/",
     "/api/form/onboarding/",
     "/api/verification/",
     "/api/user/",
     "/api/events/",
     "/api/plans/",
+    "/api/participants/", // Private: participant management for classes/webinars/etc.
+    "/api/dashboard/", // Private: dashboard data routes
+    "/api/trials/", // Private: trial session routes (public sub-routes exempted below)
   ],
   // Note: /api/auth/ must remain public for BetterAuth to work
   // /api/user/consultants routes are public for explore page (verification filter enforced in API)
   // /api/user/reviews is public for displaying reviews on consultant profiles
+  // /api/plans/classes and /api/plans/webinars are public for browse/detail pages;
+  //   their sub-routes (recordings, materials) enforce auth in their own handlers
+  // /api/trials/stats is public (aggregate stats, no private data)
   PUBLIC_API_PREFIXES: [
     "/api/auth/",
     "/api/health/",
     "/api/user/consultants", // Public: explore experts list and individual profiles
     "/api/user/reviews", // Public: consultant reviews
+    "/api/plans/classes", // Public: browse and view class plans (sub-routes enforce their own auth)
+    "/api/plans/webinars", // Public: browse and view webinar plans (sub-routes enforce their own auth)
+    "/api/trials/stats", // Public: aggregate trial stats
   ],
 };
+
+// Matches paths ending with a file extension (e.g. .js, .css, .png, .woff2)
+// More precise than pathname.includes(".") which false-positives on /api/v2.0/foo
+const HAS_FILE_EXTENSION = /\.\w{2,10}$/;
 
 /**
  * Fast route matching using string prefix checks instead of glob patterns.
  * Also matches the exact path without trailing slash (e.g. "/settings" matches "/settings/").
  */
 const matchesAnyPrefix = (pathname: string, prefixes: string[]): boolean => {
-  return prefixes.some(
-    (prefix) =>
-      pathname.startsWith(prefix) || pathname === prefix.replace(/\/$/, ""),
-  );
+  for (const prefix of prefixes) {
+    if (pathname.startsWith(prefix)) return true;
+    // Check exact match without trailing slash: "/settings" matches "/settings/"
+    if (prefix.endsWith("/") && pathname === prefix.slice(0, -1)) return true;
+  }
+  return false;
 };
 
 /**
@@ -60,9 +92,118 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   if (
     pathname.startsWith("/_next/") ||
     pathname.startsWith("/favicon") ||
-    pathname.includes(".")
+    HAS_FILE_EXTENSION.test(pathname)
   ) {
     return NextResponse.next();
+  }
+
+  // Maintenance mode check (fail-open: defaults to OFF if Redis unreachable)
+  const maintenanceState = await getMaintenanceState();
+  if (maintenanceState.phase !== "OFF" && !isMaintenanceExempt(pathname)) {
+    if (!validateBypass(req, maintenanceState.bypassSecret)) {
+      if (maintenanceState.phase === "OFFLINE") {
+        const offlineHeaders: Record<string, string> = {};
+        if (maintenanceState.estimatedEnd) {
+          const retryAfterSecs = Math.ceil(
+            (new Date(maintenanceState.estimatedEnd).getTime() - Date.now()) /
+              1000,
+          );
+          if (retryAfterSecs > 0) {
+            offlineHeaders["Retry-After"] = String(retryAfterSecs);
+          }
+        }
+
+        // API callers should receive machine-readable 503 JSON, not rewritten HTML.
+        if (pathname.startsWith("/api/")) {
+          return NextResponse.json(
+            {
+              error: "Service temporarily unavailable during maintenance",
+              phase: "OFFLINE",
+              reason: maintenanceState.reason || null,
+              estimatedEnd: maintenanceState.estimatedEnd || null,
+            },
+            { status: 503, headers: offlineHeaders },
+          );
+        }
+
+        const response = NextResponse.rewrite(new URL("/maintenance", req.url));
+        Object.entries(offlineHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      }
+      // DEGRADED: block transactional writes; allow reads with banner headers
+      if (isWriteBlockedInDegraded(pathname, req.method)) {
+        const degradedHeaders: Record<string, string> = {};
+        if (maintenanceState.estimatedEnd) {
+          const retryAfterSecs = Math.ceil(
+            (new Date(maintenanceState.estimatedEnd).getTime() - Date.now()) /
+              1000,
+          );
+          if (retryAfterSecs > 0)
+            degradedHeaders["Retry-After"] = String(retryAfterSecs);
+        }
+        return NextResponse.json(
+          {
+            error: "Writes are temporarily unavailable during maintenance",
+            phase: "DEGRADED",
+            reason: maintenanceState.reason || null,
+            estimatedEnd: maintenanceState.estimatedEnd || null,
+          },
+          { status: 503, headers: degradedHeaders },
+        );
+      }
+      const response = NextResponse.next();
+      response.headers.set("x-maintenance-phase", "degraded");
+      response.headers.set(
+        "x-maintenance-reason",
+        encodeURIComponent(maintenanceState.reason || ""),
+      );
+      response.headers.set(
+        "x-maintenance-eta",
+        encodeURIComponent(maintenanceState.estimatedEnd || ""),
+      );
+      return response;
+    }
+  }
+
+  // Edge rate limiting for high-traffic public endpoints (IP-based).
+  // Runs before any serverless function is invoked — prevents cost amplification
+  // under DDoS even when every request would otherwise return 429.
+
+  // Auth brute-force protection — POST only; skip for localhost (dev testing)
+  const clientIp = getClientIp(req);
+  const isLocalhost =
+    clientIp === "::1" || clientIp === "127.0.0.1" || clientIp === "unknown_ip";
+  if (
+    !isLocalhost &&
+    req.method === "POST" &&
+    (pathname.startsWith("/api/auth/sign-in") ||
+      pathname.startsWith("/api/auth/sign-up") ||
+      pathname.startsWith("/api/auth/forget-password"))
+  ) {
+    const rl = await applyRateLimit(authLimiter, clientIp);
+    if (rl) return rl;
+  }
+
+  if (pathname.startsWith("/api/user/consultants")) {
+    const rl = await applyRateLimit(searchLimiter, clientIp);
+    if (rl) return rl;
+  }
+  if (pathname.startsWith("/api/trials/check-eligibility")) {
+    const rl = await applyRateLimit(eligibilityLimiter, clientIp);
+    if (rl) return rl;
+  }
+  if (
+    pathname.startsWith("/api/newsletter/subscribe") &&
+    req.method === "POST"
+  ) {
+    const rl = await applyRateLimit(newsletterLimiter, clientIp);
+    if (rl) return rl;
+  }
+  if (pathname.startsWith("/api/slots/availability/")) {
+    const rl = await applyRateLimit(availabilityLimiter, clientIp);
+    if (rl) return rl;
   }
 
   // Handle public API routes first (most common, no auth needed)
@@ -74,27 +215,22 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   const sessionCookie = getSessionCookie(req);
   const isAuthenticated = !!sessionCookie;
 
-  // Handle private API routes
-  if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PRIVATE_API_PREFIXES)) {
+  // Handle authenticated API routes (require session cookie)
+  if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.AUTHENTICATED_API_PREFIXES)) {
     return isAuthenticated
       ? NextResponse.next()
       : NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Handle protected API routes
-  if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PROTECTED_API_PREFIXES)) {
-    return isAuthenticated
-      ? NextResponse.next()
-      : NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  // Handle public auth routes
+  // Handle public auth routes — always allow through.
+  // The signin page validates the session client-side via useSession() and
+  // redirects authenticated users itself. Doing it here based on cookie
+  // presence causes infinite loops when the cookie is stale (DB session gone).
   if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PUBLIC_AUTH_PREFIXES)) {
-    // Redirect authenticated users to dashboard immediately
-    // This prevents the flash of auth page before client-side redirect kicks in
-    if (isAuthenticated) {
-      return NextResponse.redirect(new URL("/dashboard", req.url));
-    }
+    // Do NOT redirect cookie-present users to /dashboard here.
+    // Cookie presence ≠ session validity — stale cookies cause an infinite
+    // redirect loop: requireOnboarded() → /auth/signin → /dashboard → /auth/signin.
+    // The signin/signup pages already redirect authenticated users via useEffect.
     return NextResponse.next();
   }
 
@@ -103,7 +239,7 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     if (!isAuthenticated) {
       // Preserve callbackUrl for all protected routes
       const signInUrl = new URL(URLS.SIGNIN, req.url);
-      signInUrl.searchParams.set("callbackUrl", pathname);
+      signInUrl.searchParams.set("callbackUrl", pathname + req.nextUrl.search);
       return NextResponse.redirect(signInUrl);
     }
     return NextResponse.next();
@@ -116,8 +252,8 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
 // Optimized matcher to reduce middleware execution
 export const config = {
   matcher: [
-    // Skip all static files and Next.js internals
-    "/((?!_next/static|_next/image|favicon.ico|.*\\..*).+)",
+    // Match root and all paths except static files and Next.js internals
+    "/((?!_next/static|_next/image|favicon.ico|.*\\..*).*)",
     // Include API routes
     "/api/(.*)",
   ],

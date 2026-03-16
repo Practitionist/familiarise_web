@@ -23,10 +23,7 @@ export async function createReferralCodes() {
   let creditsCreated = 0;
 
   // Create referral codes for ~60% of users
-  const usersWithCodes = users.slice(
-    0,
-    Math.ceil(users.length * 0.6),
-  );
+  const usersWithCodes = users.slice(0, Math.ceil(users.length * 0.6));
 
   for (const user of usersWithCodes) {
     try {
@@ -60,7 +57,11 @@ export async function createReferralCodes() {
     (u) => !usersWithCodes.some((wc) => wc.id === u.id),
   );
 
-  for (let i = 0; i < Math.min(referralCodes.length, usersWithoutCodes.length); i++) {
+  for (
+    let i = 0;
+    i < Math.min(referralCodes.length, usersWithoutCodes.length);
+    i++
+  ) {
     try {
       const status = faker.helpers.arrayElement([
         "SIGNED_UP",

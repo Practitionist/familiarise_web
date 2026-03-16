@@ -18,6 +18,7 @@ import {
 } from "@/schemas/slotAllocation/validationSchemas";
 import { ZodError } from "zod";
 import type { SlotConflictResult } from "@/utils/slotAllocation/types";
+import { requireApiAuth, authorizeEventAccess } from "@/lib/auth-helpers";
 
 interface ValidationResult extends SlotConflictResult {
   weeklyDistributionErrors: {
@@ -47,7 +48,17 @@ export async function POST(
   { params }: { params: Promise<{ classId: string }> },
 ) {
   try {
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+
     const { classId } = await params;
+
+    const authzError = await authorizeEventAccess(
+      authResult.session,
+      "class",
+      classId,
+    );
+    if (authzError) return authzError;
 
     // LAYER 1: Zod Schema Validation (type-safe, automatic type inference)
     try {
@@ -118,7 +129,7 @@ export async function POST(
         });
       }
 
-      // Parse errors to extract conflicts, availability issues, and weekly distribution
+      // Categorize errors by prefix instead of brittle regex
       const result: ValidationResult = {
         conflicts: [],
         outsideAvailability: [],
@@ -127,11 +138,9 @@ export async function POST(
       };
 
       for (const error of validationResult.errors) {
-        if (
-          error.includes("already booked") ||
-          error.includes("conflicts with")
-        ) {
-          const slotMatch = error.match(
+        if (error.startsWith("[CONFLICT]")) {
+          const message = error.replace("[CONFLICT] ", "");
+          const slotMatch = message.match(
             /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
           );
           if (slotMatch) {
@@ -139,9 +148,9 @@ export async function POST(
             result.conflicts.push({
               slot,
               existingAppointment: {
-                type: error.includes("Subscription")
+                type: message.includes("subscription")
                   ? "Subscription"
-                  : error.includes("Class")
+                  : message.includes("class")
                     ? "Class"
                     : "Consultation",
                 with: "Another user",
@@ -149,28 +158,30 @@ export async function POST(
               },
             });
           }
-        } else if (
-          error.includes("does not match") ||
-          error.includes("not in consultant's")
-        ) {
-          const slotMatch = error.match(
+        } else if (error.startsWith("[OUTSIDE_AVAILABILITY]")) {
+          const message = error.replace("[OUTSIDE_AVAILABILITY] ", "");
+          const slotMatch = message.match(
             /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
           );
           if (slotMatch) {
             result.outsideAvailability.push({ slot: slotMatch[1] });
           }
-        } else if (error.includes("exceeds weekly limit")) {
-          // Extract week info from error message
-          const weekMatch = error.match(/week of (\d{4}-\d{2}-\d{2})/);
-          const countMatch = error.match(/(\d+) sessions/);
-          if (weekMatch && countMatch) {
+        } else if (error.startsWith("[WEEKLY_LIMIT]")) {
+          const message = error.replace("[WEEKLY_LIMIT] ", "");
+          // Extract week and session count from structured message
+          const sessionsMatch = message.match(
+            /has (\d+) sessions but max is (\d+)/,
+          );
+          const weekMatch = message.match(/Week of (.+?) has/);
+          if (sessionsMatch && weekMatch) {
             result.weeklyDistributionErrors.push({
-              week: new Date(weekMatch[1]).toLocaleDateString(),
-              slotsCount: parseInt(countMatch[1]),
-              maxAllowed: classPlan.meetingsPerWeek || 2,
+              week: weekMatch[1],
+              slotsCount: parseInt(sessionsMatch[1]),
+              maxAllowed: parseInt(sessionsMatch[2]),
             });
           }
         }
+        // [VALIDATION] errors don't need slot-level parsing
       }
 
       // Valid slots are those not in conflicts or outside availability

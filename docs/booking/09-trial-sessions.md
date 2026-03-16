@@ -5,12 +5,14 @@
 A trial session is a free, one-time session that lets a consultee try a consultant's subscription plan before committing to a paid subscription. Trials are tied to a `SubscriptionPlan` that has `freeTrialEnabled: true`, and each consultee-consultant pair is limited to exactly one trial (enforced by a unique constraint).
 
 Key characteristics:
+
 - No payment required
 - Duration configured per plan via `freeTrialDurationMinutes` (default 30 min)
 - Consultant must approve and schedule the session
 - Successful trials can convert into a full subscription
 
 **Source files:**
+
 - Model: `prisma/schema.prisma` (TrialSession, TrialSessionStatus)
 - API: `app/api/trials/route.ts`, `app/api/trials/[trialId]/route.ts`, `app/api/trials/check-eligibility/route.ts`
 - Locking: `utils/appointmentlock.ts` (lockTrialSlot, unlockTrialSlot)
@@ -23,46 +25,46 @@ Key characteristics:
 
 ### TrialSession
 
-| Field                       | Type                | Default       | Description                                         |
-| --------------------------- | ------------------- | ------------- | --------------------------------------------------- |
-| `id`                        | `String` (cuid)     | auto          | Primary key                                         |
-| `status`                    | `TrialSessionStatus`| `PENDING`     | Current lifecycle status                            |
-| `notes`                     | `String?` (Text)    | null          | Consultee's questions or goals for the trial        |
-| `consulteeProfileId`        | `String`            | required      | FK to ConsulteeProfile                              |
-| `consultantProfileId`       | `String`            | required      | FK to ConsultantProfile                             |
-| `subscriptionPlanId`        | `String`            | required      | FK to SubscriptionPlan (must have trial enabled)    |
-| `appointmentId`             | `String?` (unique)  | null          | FK to Appointment (set when SCHEDULED)              |
-| `convertedToSubscriptionId` | `String?` (unique)  | null          | FK to Subscription (set when CONVERTED)             |
-| `requestedAt`               | `DateTime`          | `now()`       | When the trial was requested                        |
-| `completedAt`               | `DateTime?`         | null          | When the session was completed                      |
-| `createdAt`                 | `DateTime`          | `now()`       | Record creation timestamp                           |
-| `updatedAt`                 | `DateTime`          | auto          | Last update timestamp                               |
+| Field                       | Type                 | Default   | Description                                      |
+| --------------------------- | -------------------- | --------- | ------------------------------------------------ |
+| `id`                        | `String` (cuid)      | auto      | Primary key                                      |
+| `status`                    | `TrialSessionStatus` | `PENDING` | Current lifecycle status                         |
+| `notes`                     | `String?` (Text)     | null      | Consultee's questions or goals for the trial     |
+| `consulteeProfileId`        | `String`             | required  | FK to ConsulteeProfile                           |
+| `consultantProfileId`       | `String`             | required  | FK to ConsultantProfile                          |
+| `subscriptionPlanId`        | `String`             | required  | FK to SubscriptionPlan (must have trial enabled) |
+| `appointmentId`             | `String?` (unique)   | null      | FK to Appointment (set when SCHEDULED)           |
+| `convertedToSubscriptionId` | `String?` (unique)   | null      | FK to Subscription (set when CONVERTED)          |
+| `requestedAt`               | `DateTime`           | `now()`   | When the trial was requested                     |
+| `completedAt`               | `DateTime?`          | null      | When the session was completed                   |
+| `createdAt`                 | `DateTime`           | `now()`   | Record creation timestamp                        |
+| `updatedAt`                 | `DateTime`           | auto      | Last update timestamp                            |
 
 ### Constraints
 
-| Constraint                                              | Type   | Purpose                                         |
-| ------------------------------------------------------- | ------ | ----------------------------------------------- |
-| `@@unique([consulteeProfileId, consultantProfileId])`   | Unique | One trial per consultee-consultant pair          |
-| `appointmentId @unique`                                 | Unique | One-to-one relationship with Appointment         |
-| `convertedToSubscriptionId @unique`                     | Unique | One-to-one relationship with Subscription        |
+| Constraint                                            | Type   | Purpose                                   |
+| ----------------------------------------------------- | ------ | ----------------------------------------- |
+| `@@unique([consulteeProfileId, consultantProfileId])` | Unique | One trial per consultee-consultant pair   |
+| `appointmentId @unique`                               | Unique | One-to-one relationship with Appointment  |
+| `convertedToSubscriptionId @unique`                   | Unique | One-to-one relationship with Subscription |
 
 ### Indexes
 
-| Index                     | Purpose                              |
-| ------------------------- | ------------------------------------ |
-| `consultantProfileId`     | Filter trials by consultant          |
-| `subscriptionPlanId`      | Filter trials by plan                |
+| Index                 | Purpose                     |
+| --------------------- | --------------------------- |
+| `consultantProfileId` | Filter trials by consultant |
+| `subscriptionPlanId`  | Filter trials by plan       |
 
 ### TrialSessionStatus Enum
 
-| Value       | Description                            |
-| ----------- | -------------------------------------- |
-| `PENDING`   | Requested, awaiting consultant action  |
-| `SCHEDULED` | Time slot confirmed                    |
-| `COMPLETED` | Trial session finished                 |
-| `CONVERTED` | Consultee subscribed after trial       |
-| `CANCELLED` | Cancelled by consultee                 |
-| `REJECTED`  | Declined by consultant                 |
+| Value       | Description                           |
+| ----------- | ------------------------------------- |
+| `PENDING`   | Requested, awaiting consultant action |
+| `SCHEDULED` | Time slot confirmed                   |
+| `COMPLETED` | Trial session finished                |
+| `CONVERTED` | Consultee subscribed after trial      |
+| `CANCELLED` | Cancelled by consultee                |
+| `REJECTED`  | Declined by consultant                |
 
 ---
 
@@ -84,14 +86,14 @@ stateDiagram-v2
 
 Valid transitions (enforced in `app/api/trials/[trialId]/route.ts`):
 
-| From        | Allowed targets                    |
-| ----------- | ---------------------------------- |
+| From        | Allowed targets                      |
+| ----------- | ------------------------------------ |
 | `PENDING`   | `SCHEDULED`, `CANCELLED`, `REJECTED` |
-| `SCHEDULED` | `COMPLETED`, `CANCELLED`           |
-| `COMPLETED` | `CONVERTED`                        |
-| `CONVERTED` | (terminal)                         |
-| `CANCELLED` | (terminal)                         |
-| `REJECTED`  | (terminal)                         |
+| `SCHEDULED` | `COMPLETED`, `CANCELLED`             |
+| `COMPLETED` | `CONVERTED`                          |
+| `CONVERTED` | (terminal)                           |
+| `CANCELLED` | (terminal)                           |
+| `REJECTED`  | (terminal)                           |
 
 ---
 
@@ -144,18 +146,18 @@ sequenceDiagram
 
 ## How Trial Differs from Consultation
 
-| Aspect               | Trial                                    | Consultation                              |
-| --------------------- | ---------------------------------------- | ----------------------------------------- |
-| **Payment**           | Free                                     | Required (via checkout)                   |
-| **Duration**          | Fixed per plan (`freeTrialDurationMinutes`, default 30 min) | Variable (`durationInHours`, 0.5-4h) |
+| Aspect                | Trial                                                             | Consultation                                                  |
+| --------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------- |
+| **Payment**           | Free                                                              | Required (via checkout)                                       |
+| **Duration**          | Fixed per plan (`freeTrialDurationMinutes`, default 30 min)       | Variable (`durationInHours`, 0.5-4h)                          |
 | **Lock type**         | `lockTrialSlot()` -- key: `trial-slot-booking:{profileId}:{time}` | `lockSlotBooking()` -- key: `slot-booking:{profileId}:{time}` |
-| **Uniqueness**        | One per consultee-consultant pair         | Multiple allowed                          |
-| **Conversion**        | Leads to Subscription (`convertedToSubscriptionId`) | Standalone                    |
-| **Status field**      | `status` (TrialSessionStatus enum)       | `requestStatus` (RequestStatus enum)      |
-| **Appointment type**  | `TRIAL`                                  | `CONSULTATION`                            |
-| **Booking flow**      | Request -> consultant schedules          | Direct checkout or request-based          |
-| **Scheduling period** | None                                     | None                                      |
-| **Slot count**        | Single slot (1)                          | `Math.ceil(durationInHours / 0.5)` slots  |
+| **Uniqueness**        | One per consultee-consultant pair                                 | Multiple allowed                                              |
+| **Conversion**        | Leads to Subscription (`convertedToSubscriptionId`)               | Standalone                                                    |
+| **Status field**      | `status` (TrialSessionStatus enum)                                | `requestStatus` (RequestStatus enum)                          |
+| **Appointment type**  | `TRIAL`                                                           | `CONSULTATION`                                                |
+| **Booking flow**      | Request -> consultant schedules                                   | Direct checkout or request-based                              |
+| **Scheduling period** | None                                                              | None                                                          |
+| **Slot count**        | Single slot (1)                                                   | `Math.ceil(durationInHours / 0.5)` slots                      |
 
 ---
 
@@ -165,15 +167,15 @@ Trial scheduling uses the same distributed locking infrastructure as consultatio
 
 **Redis key pattern:** `trial-slot-booking:{consultantProfileId}:{slotStartTimeInUTC}`
 
-| Parameter             | Value                    |
-| --------------------- | ------------------------ |
-| Default TTL           | 60,000 ms (60 seconds)  |
-| Retry count           | 10                       |
-| Base retry delay      | 200 ms                   |
-| Retry jitter          | 200 ms (random)          |
-| Exponential backoff   | Yes                      |
-| Drift factor          | 0.01                     |
-| Release mechanism     | Atomic Lua script (check value then DEL) |
+| Parameter           | Value                                    |
+| ------------------- | ---------------------------------------- |
+| Default TTL         | 60,000 ms (60 seconds)                   |
+| Retry count         | 10                                       |
+| Base retry delay    | 200 ms                                   |
+| Retry jitter        | 200 ms (random)                          |
+| Exponential backoff | Yes                                      |
+| Drift factor        | 0.01                                     |
+| Release mechanism   | Atomic Lua script (check value then DEL) |
 
 The lock is acquired before slot validation and released in a `finally` block regardless of success or failure. On lock contention, the API returns HTTP 423 (Locked).
 
@@ -207,6 +209,7 @@ Subscription.convertedFromTrial --> TrialSession
 ```
 
 This is a one-to-one relationship (both FKs carry `@unique`). The link enables:
+
 - Tracking trial-to-subscription conversion rates
 - Displaying conversion status on the consultant dashboard
 - Activity log entries with `activityType = TRIAL_CONVERTED`
@@ -217,23 +220,23 @@ This is a one-to-one relationship (both FKs carry `@unique`). The link enables:
 
 Trial events trigger Novu workflows defined in `lib/novu/workflows.ts`. All trial workflows use the `TrialSessionPayload` type.
 
-| Workflow ID                   | Trigger                     | Recipients        |
-| ----------------------------- | --------------------------- | ----------------- |
-| `trial-session-requested`     | Consultee requests trial    | Consultant        |
-| `trial-session-scheduled`     | Consultant schedules trial  | Consultee         |
-| `trial-session-completed`     | Trial session ends          | Both parties      |
-| `trial-session-cancelled`     | Trial cancelled or rejected | Both parties      |
+| Workflow ID               | Trigger                     | Recipients   |
+| ------------------------- | --------------------------- | ------------ |
+| `trial-session-requested` | Consultee requests trial    | Consultant   |
+| `trial-session-scheduled` | Consultant schedules trial  | Consultee    |
+| `trial-session-completed` | Trial session ends          | Both parties |
+| `trial-session-cancelled` | Trial cancelled or rejected | Both parties |
 
 **Payload type** (`TrialSessionPayload`):
 
-| Field             | Type     | Description                        |
-| ----------------- | -------- | ---------------------------------- |
-| `consultantName`  | `string` | Consultant display name            |
-| `consulteeName`   | `string` | Consultee display name             |
-| `planTitle`       | `string` | Subscription plan title            |
-| `dateTime`        | `string?`| Scheduled time (ISO format)        |
-| `status`          | `string` | Current trial status               |
-| `dashboardUrl`    | `string` | Link to relevant dashboard page    |
+| Field            | Type      | Description                     |
+| ---------------- | --------- | ------------------------------- |
+| `consultantName` | `string`  | Consultant display name         |
+| `consulteeName`  | `string`  | Consultee display name          |
+| `planTitle`      | `string`  | Subscription plan title         |
+| `dateTime`       | `string?` | Scheduled time (ISO format)     |
+| `status`         | `string`  | Current trial status            |
+| `dashboardUrl`   | `string`  | Link to relevant dashboard page |
 
 Users can disable trial notifications via `NotificationPreference.trialNotifications`.
 
@@ -241,12 +244,12 @@ Users can disable trial notifications via `NotificationPreference.trialNotificat
 
 ## API Reference
 
-| Method   | Endpoint                            | Purpose                                |
-| -------- | ----------------------------------- | -------------------------------------- |
-| `GET`    | `/api/trials`                       | List trials (paginated, filterable)    |
-| `POST`   | `/api/trials`                       | Request a new trial session            |
-| `GET`    | `/api/trials/[trialId]`             | Get a specific trial session           |
-| `PATCH`  | `/api/trials/[trialId]`             | Update status (schedule, complete, etc.) |
-| `DELETE` | `/api/trials/[trialId]`             | Cancel a PENDING or SCHEDULED trial    |
-| `GET`    | `/api/trials/check-eligibility`     | Check if consultee can request a trial |
-| `GET`    | `/api/trials/stats`                 | Trial session statistics               |
+| Method   | Endpoint                        | Purpose                                  |
+| -------- | ------------------------------- | ---------------------------------------- |
+| `GET`    | `/api/trials`                   | List trials (paginated, filterable)      |
+| `POST`   | `/api/trials`                   | Request a new trial session              |
+| `GET`    | `/api/trials/[trialId]`         | Get a specific trial session             |
+| `PATCH`  | `/api/trials/[trialId]`         | Update status (schedule, complete, etc.) |
+| `DELETE` | `/api/trials/[trialId]`         | Cancel a PENDING or SCHEDULED trial      |
+| `GET`    | `/api/trials/check-eligibility` | Check if consultee can request a trial   |
+| `GET`    | `/api/trials/stats`             | Trial session statistics                 |

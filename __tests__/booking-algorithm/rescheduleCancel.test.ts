@@ -80,10 +80,7 @@ function makeRescheduleRequest(
 }
 
 /** Create a Request for the cancel endpoint */
-function makeCancelRequest(
-  appointmentId: string,
-  body?: Record<string, any>,
-) {
+function makeCancelRequest(appointmentId: string, body?: Record<string, any>) {
   const url = `http://localhost/api/appointments/${appointmentId}/cancel`;
   return new Request(url, {
     method: "POST",
@@ -208,6 +205,7 @@ function makeMockTx() {
       findUnique: jest.fn(),
       findMany: jest.fn().mockResolvedValue([]),
       delete: jest.fn(),
+      deleteMany: jest.fn(),
     },
     consultation: { update: jest.fn() },
     subscription: { update: jest.fn() },
@@ -265,9 +263,7 @@ describe("RescheduleErrors", () => {
 
     it("should show slot message for slot type", () => {
       const err = new AppointmentNotFoundError("slot", "slot-456");
-      expect(err.message).toBe(
-        "Specified slot not found in this appointment",
-      );
+      expect(err.message).toBe("Specified slot not found in this appointment");
     });
 
     it("should expose resourceType and resourceId", () => {
@@ -558,8 +554,11 @@ describe("Reschedule Route Handler - POST", () => {
       expect(body.rescheduleType).toBe("individual_session");
       expect(body.slotsAffected).toBe(1);
 
+      // The route marks ALL slots belonging to the affected appointment(s), not just the
+      // specified slot ID. This ensures multi-slot sessions (e.g. 1.5h = 3 × 30-min slots)
+      // are rescheduled atomically — a partial-tentative session would be inconsistent.
       expect(mockTx.slotOfAppointment.updateMany).toHaveBeenCalledWith({
-        where: { id: { in: ["slot-1"] } },
+        where: { appointmentId: { in: ["apt-1"] } },
         data: { isTentative: true },
       });
     });
@@ -895,7 +894,7 @@ describe("Cancel Route Handler - POST", () => {
   // ─── WEBINAR Cancellation ───────────────────────────────────────────────
 
   describe("WEBINAR", () => {
-    it("should update webinar to CANCELLED and trigger waitlist", async () => {
+    it("should update webinar to CANCELLED without notifying waitlist", async () => {
       const appointment = makeWebinarAppointment();
       (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
         appointment,
@@ -911,20 +910,15 @@ describe("Cancel Route Handler - POST", () => {
         data: { status: "CANCELLED" },
       });
 
-      // Waitlist notified
-      expect(handleSlotOpening).toHaveBeenCalledWith({
-        webinarId: "web-1",
-        classId: undefined,
-        slotsAvailable: 1,
-        reason: "cancellation",
-      });
+      // Whole-event cancel should NOT notify waitlist (event is dead)
+      expect(handleSlotOpening).not.toHaveBeenCalled();
     });
   });
 
   // ─── CLASS Cancellation ─────────────────────────────────────────────────
 
   describe("CLASS", () => {
-    it("should update class to CANCELLED and trigger waitlist", async () => {
+    it("should update class to CANCELLED without notifying waitlist", async () => {
       const appointment = makeClassAppointment();
       (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
         appointment,
@@ -940,12 +934,8 @@ describe("Cancel Route Handler - POST", () => {
         data: { status: "CANCELLED" },
       });
 
-      expect(handleSlotOpening).toHaveBeenCalledWith({
-        classId: "cls-1",
-        webinarId: undefined,
-        slotsAvailable: 1,
-        reason: "cancellation",
-      });
+      // Whole-event cancel should NOT notify waitlist (event is dead)
+      expect(handleSlotOpening).not.toHaveBeenCalled();
     });
   });
 
@@ -956,10 +946,9 @@ describe("Cancel Route Handler - POST", () => {
       makeConsultationAppointment(),
     );
 
-    const req = new Request(
-      "http://localhost/api/appointments/apt-1/cancel",
-      { method: "POST" },
-    ) as any;
+    const req = new Request("http://localhost/api/appointments/apt-1/cancel", {
+      method: "POST",
+    }) as any;
     const res = await cancelHandler(req, makeParams("apt-1"));
 
     expect(res.status).toBe(200);
@@ -1005,20 +994,17 @@ describe("Cancel Route Handler - POST", () => {
     expect(handleSlotOpening).not.toHaveBeenCalled();
   });
 
-  it("should handle waitlist notification failure gracefully", async () => {
+  it("should never call waitlist on any cancellation (whole-event cancel)", async () => {
     (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
       makeWebinarAppointment(),
-    );
-
-    (handleSlotOpening as jest.Mock).mockRejectedValue(
-      new Error("Waitlist service down"),
     );
 
     const req = makeCancelRequest("apt-1");
     const res = await cancelHandler(req, makeParams("apt-1"));
 
-    // Should still succeed — waitlist notification is best-effort
     expect(res.status).toBe(200);
+    // Cancel route always cancels the entire event, so no waitlist notification
+    expect(handleSlotOpening).not.toHaveBeenCalled();
   });
 
   // ─── Response ──────────────────────────────────────────────────────────
@@ -1221,13 +1207,18 @@ describe("cleanupTentativeSlots", () => {
       expect.objectContaining({
         where: expect.objectContaining({
           isTentative: true,
-          appointment: {
+          appointment: expect.objectContaining({
             payment: {
               none: {
                 paymentStatus: "SUCCEEDED",
               },
             },
-          },
+            AND: expect.arrayContaining([
+              expect.objectContaining({
+                OR: expect.arrayContaining([{ consultation: null }]),
+              }),
+            ]),
+          }),
         }),
       }),
     );
@@ -1238,8 +1229,6 @@ describe("cleanupTentativeSlots", () => {
 
     await cleanupTentativeSlots();
 
-    expect(
-      (prisma.slotOfAppointment as any).deleteMany,
-    ).not.toHaveBeenCalled();
+    expect((prisma.slotOfAppointment as any).deleteMany).not.toHaveBeenCalled();
   });
 });

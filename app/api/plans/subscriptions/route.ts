@@ -114,10 +114,14 @@ export async function POST(request: NextRequest) {
     const metricStartDate = new Date();
     metricStartDate.setHours(0, 0, 0, 0);
     const metricEndDate = new Date(metricStartDate);
-    metricEndDate.setMonth(metricEndDate.getMonth() + validatedData.durationInMonths);
-    const estimatedWeeks = SlotCalculationService.countWeeks(metricStartDate, metricEndDate);
-    const totalSessions =
-      (validatedData.callsPerWeek || 1) * estimatedWeeks;
+    metricEndDate.setMonth(
+      metricEndDate.getMonth() + validatedData.durationInMonths,
+    );
+    const estimatedWeeks = SlotCalculationService.countWeeks(
+      metricStartDate,
+      metricEndDate,
+    );
+    const totalSessions = (validatedData.callsPerWeek || 1) * estimatedWeeks;
     const totalHours = totalSessions * sessionDurationInHours;
 
     // Handle free trial fields

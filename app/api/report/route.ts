@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { ModerationReportType } from "@prisma/client";
+import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 
 import { getSession } from "@/lib/auth-server";
 /**
@@ -18,6 +19,10 @@ export async function POST(req: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    // Rate limit: 5 reports per hour per user
+    const rl = await applyRateLimit(spamLimiter, `report:${session.user.id}`);
+    if (rl) return rl;
 
     const body = await req.json();
     const {

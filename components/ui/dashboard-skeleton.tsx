@@ -151,14 +151,16 @@ export function PendingApprovalsSkeleton() {
 
 export function DashboardHomeSkeleton() {
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
-      <div className="lg:col-span-2 space-y-4 lg:space-y-6">
-        <TodayAppointmentsSkeleton />
-        <UpcomingAppointmentsSkeleton />
-      </div>
-      <div className="space-y-4 lg:space-y-6">
-        <ClientActivityCardSkeleton />
-        <PendingApprovalsSkeleton />
+    <div className="space-y-4 lg:space-y-6">
+      <TodayAppointmentsSkeleton />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
+        <div className="lg:col-span-2">
+          <UpcomingAppointmentsSkeleton />
+        </div>
+        <div className="space-y-4 lg:space-y-6">
+          <ClientActivityCardSkeleton />
+          <PendingApprovalsSkeleton />
+        </div>
       </div>
     </div>
   );

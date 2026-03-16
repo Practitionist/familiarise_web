@@ -6,6 +6,7 @@
 import prisma from "@/lib/prisma";
 import { RecordingStatus } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
+import { notifyRecordingFailed } from "@/lib/novu/service";
 
 // Types for Stream webhook payloads
 export interface StreamRecordingStartedEvent {
@@ -323,6 +324,13 @@ export async function handleRecordingFailed(
   try {
     const meetingSession = await prisma.meetingSession.findUnique({
       where: { streamCallId },
+      include: {
+        slotOfAppointment: {
+          include: {
+            user: { select: { id: true } },
+          },
+        },
+      },
     });
 
     if (!meetingSession) {
@@ -351,16 +359,35 @@ export async function handleRecordingFailed(
         durationInMinutes: 0,
         recordedAt: new Date(),
         streamCallId,
-        status: "FAILED" as RecordingStatus,
+        status: RecordingStatus.FAILED,
         meetingSessionId: meetingSession.id,
       },
     });
 
-    // TODO: Send notification to consultant about failed recording
+    // Notify all users linked to the slot (consultant + consultee)
+    const userIds = meetingSession.slotOfAppointment.user.map((u) => u.id);
+    const notificationResults = await Promise.allSettled(
+      userIds.map((userId) =>
+        notifyRecordingFailed(userId, {
+          streamCallId,
+          errorMessage: eventError?.message,
+          dashboardUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/dashboard`,
+        }),
+      ),
+    );
+
+    const failures = notificationResults.filter((r) => r.status === "rejected");
+    if (failures.length > 0) {
+      streamLogger.warn(
+        `${failures.length}/${userIds.length} recording-failed notifications failed`,
+        { streamCallId },
+      );
+    }
 
     streamLogger.info("Meeting session updated - recording failed", {
       sessionId: meetingSession.id,
       streamCallId,
+      notifiedUsers: userIds.length,
     });
   } catch (error) {
     streamLogger.error("Failed to handle recording failed event", error, {

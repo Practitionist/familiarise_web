@@ -104,7 +104,10 @@ export function calculatePricing(
   const netAmount = calculateNetAmount(subtotal, discountAmount);
   const taxAmount = calculateTax(netAmount, taxRate);
   const totalBeforeCredits = calculateTotal(netAmount, taxAmount);
-  const creditsApplied = Math.min(config.creditsApplied ?? 0, totalBeforeCredits);
+  const creditsApplied = Math.min(
+    config.creditsApplied ?? 0,
+    totalBeforeCredits,
+  );
   const total = Math.round((totalBeforeCredits - creditsApplied) * 100) / 100;
 
   return {
@@ -128,8 +131,14 @@ export function formatCurrency(
 ): string {
   // Use a currency-appropriate locale for correct grouping (e.g., ₹1,00,000 vs $100,000)
   const LOCALE_MAP: Record<string, string> = {
-    INR: "en-IN", USD: "en-US", EUR: "de-DE", GBP: "en-GB",
-    AUD: "en-AU", CAD: "en-CA", SGD: "en-SG", JPY: "ja-JP",
+    INR: "en-IN",
+    USD: "en-US",
+    EUR: "de-DE",
+    GBP: "en-GB",
+    AUD: "en-AU",
+    CAD: "en-CA",
+    SGD: "en-SG",
+    JPY: "ja-JP",
   };
   const locale = LOCALE_MAP[currency.toUpperCase()] || "en-IN";
   return new Intl.NumberFormat(locale, {

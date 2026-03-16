@@ -14,18 +14,19 @@ When a collaborator accepts an invitation, a private Stream.io messaging channel
 
 The platform uses different channel ID patterns to distinguish channel purposes:
 
-| Purpose | Channel ID Pattern | Channel Type | Members |
-|---------|--------------------|-------------|---------|
-| 1:1 Consultation | `consultation-{consultationId}` | `messaging` | Consultant + consultee |
-| 1:1 Subscription | `subscription-{subscriptionId}` | `messaging` | Consultant + consultee |
-| Webinar Event | `webinar-{webinarId}` | `team` | Host + all participants |
-| Class Event | `class-{classId}` | `team` | Host + all participants |
-| **Collaborator (Webinar)** | `collab-webinar-{webinarPlanId}` | `messaging` | Host + accepted collaborators |
-| **Collaborator (Class)** | `collab-class-{classPlanId}` | `messaging` | Host + accepted collaborators |
+| Purpose                    | Channel ID Pattern               | Channel Type | Members                       |
+| -------------------------- | -------------------------------- | ------------ | ----------------------------- |
+| 1:1 Consultation           | `consultation-{consultationId}`  | `messaging`  | Consultant + consultee        |
+| 1:1 Subscription           | `subscription-{subscriptionId}`  | `messaging`  | Consultant + consultee        |
+| Webinar Event              | `webinar-{webinarId}`            | `team`       | Host + all participants       |
+| Class Event                | `class-{classId}`                | `team`       | Host + all participants       |
+| **Collaborator (Webinar)** | `collab-webinar-{webinarPlanId}` | `messaging`  | Host + accepted collaborators |
+| **Collaborator (Class)**   | `collab-class-{classPlanId}`     | `messaging`  | Host + accepted collaborators |
 
 ### Why `messaging` type?
 
 Collaborator channels use `messaging` (private, invitation-only) rather than `team` (open) because:
+
 - Only the host and accepted collaborators should have access
 - Participants should not see collaborator coordination
 - Private channels prevent accidental information leakage
@@ -44,9 +45,8 @@ A collaborator channel is created (or updated) when a collaborator **accepts** a
 // When response is ACCEPTED:
 if (response === "ACCEPTED") {
   try {
-    const { createCollaboratorChannel } = await import(
-      "@/actions/stream/chat/channel.action"
-    );
+    const { createCollaboratorChannel } =
+      await import("@/actions/stream/chat/channel.action");
     await createCollaboratorChannel(planType, planId);
   } catch (err) {
     console.error("Failed to create collaborator channel:", err);
@@ -145,14 +145,15 @@ This ensures that when new members are added to collaborator channels, the corre
 
 Stream.io video calls support role-based permissions:
 
-| Collaborator Role | Intended Stream Role | Status |
-|-------------------|---------------------|--------|
-| CO_HOST / CO_INSTRUCTOR | `host` | Deferred |
-| MODERATOR / TEACHING_ASSISTANT | `moderator` | Deferred |
-| GUEST_SPEAKER / GUEST_LECTURER | `speaker` | Deferred |
-| TECHNICAL_SUPPORT / CONTENT_CREATOR | `attendee` | Deferred |
+| Collaborator Role                   | Intended Stream Role | Status   |
+| ----------------------------------- | -------------------- | -------- |
+| CO_HOST / CO_INSTRUCTOR             | `host`               | Deferred |
+| MODERATOR / TEACHING_ASSISTANT      | `moderator`          | Deferred |
+| GUEST_SPEAKER / GUEST_LECTURER      | `speaker`            | Deferred |
+| TECHNICAL_SUPPORT / CONTENT_CREATOR | `attendee`           | Deferred |
 
 **Why deferred**: Video calls are currently created client-side using `call.getOrCreate()` in `lib/meeting.ts`. Assigning collaborator-specific roles requires either:
+
 1. Server-side call creation (architectural change), or
 2. Client-side role assignment after call creation (race conditions)
 
@@ -180,6 +181,7 @@ Each channel carries metadata in `additionalData`:
 ```
 
 This enables the UI to:
+
 - Link to the plan management page
 - Show plan-specific context
 - Filter/group channels by type

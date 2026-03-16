@@ -16,6 +16,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
+import { isRecurringEventType } from "@/utils/slotAllocation/types";
 import { WebinarStatus, ClassStatus } from "@prisma/client";
 import {
   Event,
@@ -262,8 +263,7 @@ export function EventCard({
   const startDate = getEventStartDate(event);
 
   const isLiveSession = eventType === "webinar" || eventType === "class";
-  const durationSuffix =
-    eventType === "subscription" || eventType === "class" ? "/mo" : "";
+  const durationSuffix = isRecurringEventType(eventType) ? "/mo" : "";
 
   // Check if subscription plan has free trial enabled
   const hasFreeTrialEnabled =
@@ -329,11 +329,13 @@ export function EventCard({
             {title}
           </h3>
           {collaboratorRole && (
-            <span className={`inline-block mt-1 text-xs font-medium px-2 py-0.5 rounded-full ${
-              isCollaborated
-                ? "bg-purple-50 text-purple-700"
-                : "bg-zinc-100 text-zinc-600"
-            }`}>
+            <span
+              className={`inline-block mt-1 text-xs font-medium px-2 py-0.5 rounded-full ${
+                isCollaborated
+                  ? "bg-purple-50 text-purple-700"
+                  : "bg-zinc-100 text-zinc-600"
+              }`}
+            >
               {formatCollaboratorRole(collaboratorRole)}
             </span>
           )}

@@ -45,11 +45,7 @@ export interface UseCasePageData {
 
 // ─── Layout Component ────────────────────────────────────────────────────────
 
-export default function UseCasePageLayout({
-  data,
-}: {
-  data: UseCasePageData;
-}) {
+export default function UseCasePageLayout({ data }: { data: UseCasePageData }) {
   const ctaLabel = data.ctaLabel ?? "Get Started";
   const ctaHref = data.ctaHref ?? "/auth/signup";
 

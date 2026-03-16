@@ -1,6 +1,6 @@
 "use client";
 
-import { cn } from "@/lib/utils";
+import { cn } from "@/utils/tailwind";
 import { CheckCircle, Clock, XCircle, AlertCircle, Shield } from "lucide-react";
 import {
   Tooltip,

@@ -13,6 +13,7 @@ import {
   type PaymentReconciliationResult,
 } from "../../scripts/payments/reconcile-payment-status";
 import fs from "fs";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 /**
  * Output results to GitHub Actions
@@ -27,11 +28,18 @@ function outputToGitHubActions(result: PaymentReconciliationResult): void {
       `reconciled_count=${result.reconciledCount}`,
       `succeeded_count=${result.succeededCount}`,
       `failed_count=${result.failedCount}`,
+      `expired_count=${result.expiredCount}`,
       `skipped_count=${result.skippedCount}`,
       `success=${result.success}`,
     ].join("\n");
 
     fs.appendFileSync(outputFile, outputs + "\n");
+  }
+
+  if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+    console.log(
+      `::warning::Razorpay credentials not configured — Razorpay records were skipped`,
+    );
   }
 
   if (result.succeededCount > 0) {
@@ -51,6 +59,7 @@ function outputToGitHubActions(result: PaymentReconciliationResult): void {
  * Main entry point
  */
 async function main(): Promise<void> {
+  await abortIfMaintenance("reconcile-payment-status");
   console.log("🔄 Starting payment status reconciliation job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 
@@ -62,6 +71,7 @@ async function main(): Promise<void> {
     console.log(`   Reconciled: ${result.reconciledCount}`);
     console.log(`   Succeeded (needs review): ${result.succeededCount}`);
     console.log(`   Failed: ${result.failedCount}`);
+    console.log(`   Expired: ${result.expiredCount}`);
     console.log(`   Skipped: ${result.skippedCount}`);
     console.log(`   Success: ${result.success}`);
 

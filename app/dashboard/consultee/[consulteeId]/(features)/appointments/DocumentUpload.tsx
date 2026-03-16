@@ -47,6 +47,10 @@ interface DocumentUploadProps {
   appointmentId: string;
   appointmentTitle: string;
   appointmentType: string;
+  /** When true, dialog opens immediately (controlled externally) */
+  defaultOpen?: boolean;
+  /** External open state change handler */
+  onOpenChange?: (open: boolean) => void;
 }
 
 type DocumentUploadRole = "CONSULTEE" | "CONSULTANT";
@@ -100,8 +104,15 @@ export function DocumentUpload({
   appointmentId,
   appointmentTitle,
   appointmentType,
+  defaultOpen = false,
+  onOpenChange,
 }: DocumentUploadProps) {
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(defaultOpen);
+
+  const handleOpenChange = (open: boolean) => {
+    setIsOpen(open);
+    onOpenChange?.(open);
+  };
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [description, setDescription] = useState("");
   const [isUploading, setIsUploading] = useState(false);
@@ -421,7 +432,7 @@ export function DocumentUpload({
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setIsOpen(false)}
+                  onClick={() => handleOpenChange(false)}
                 >
                   Close
                 </Button>
@@ -434,17 +445,19 @@ export function DocumentUpload({
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={setIsOpen}>
-      <DialogTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          className="bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200"
-        >
-          <Upload className="h-4 w-4 mr-2" />
-          Upload Documents
-        </Button>
-      </DialogTrigger>
+    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
+      {!defaultOpen && (
+        <DialogTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200"
+          >
+            <Upload className="h-4 w-4 mr-2" />
+            Upload Documents
+          </Button>
+        </DialogTrigger>
+      )}
       <DialogContent className="max-w-[90vw] sm:max-w-[500px] lg:max-w-[600px] max-h-[85vh] overflow-y-auto p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle>Upload Documents</DialogTitle>
@@ -799,7 +812,7 @@ export function DocumentUpload({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => setIsOpen(false)}>
+          <Button variant="outline" onClick={() => handleOpenChange(false)}>
             Close
           </Button>
         </DialogFooter>

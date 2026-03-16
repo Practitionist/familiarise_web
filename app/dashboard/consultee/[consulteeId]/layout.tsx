@@ -1,5 +1,6 @@
 "use client";
 
+import "@stream-io/video-react-sdk/dist/css/styles.css";
 import { fetchConsulteeDetails, fetchUserDetails } from "@/lib/user";
 import NovuProvider from "@/providers/NovuProvider";
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
@@ -135,6 +136,13 @@ function AuthRequired() {
   );
 }
 
+function getGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour >= 5 && hour < 12) return "Good morning";
+  if (hour >= 12 && hour < 17) return "Good afternoon";
+  return "Good evening";
+}
+
 // Top navigation for consultee - flat items
 function ConsulteeNav({
   consulteeId,
@@ -153,7 +161,7 @@ function ConsulteeNav({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
-    <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-zinc-200/50">
+    <header className="sticky top-maintenance z-50 bg-white/80 backdrop-blur-xl border-b border-zinc-200/50">
       <div className="w-full px-4 sm:px-6 lg:px-8">
         <div className="flex h-16 items-center">
           {/* Logo */}
@@ -199,6 +207,11 @@ function ConsulteeNav({
               <Skeleton className="h-8 w-8 rounded-full" />
             ) : (
               <div className="flex items-center gap-2">
+                {userName && (
+                  <span className="hidden lg:block text-sm text-zinc-500 whitespace-nowrap">
+                    {getGreeting()}, {userName.split(" ")[0]}
+                  </span>
+                )}
                 <NotificationInbox />
                 <UserDropdown
                   userName={userName}
@@ -267,7 +280,7 @@ function DashboardSkeleton() {
   return (
     <div className="min-h-screen bg-zinc-50">
       {/* Header skeleton */}
-      <header className="sticky top-0 z-50 bg-white border-b border-zinc-200">
+      <header className="sticky top-maintenance z-50 bg-white border-b border-zinc-200">
         <div className="w-full px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center">
             <Skeleton className="h-8 w-32 shrink-0" />
@@ -323,7 +336,7 @@ export default function ConsulteeLayout({
   } = useQuery({
     queryKey: ["user-details", userId],
     queryFn: () => fetchUserDetails(userId!),
-    enabled: !!userId,
+    enabled: !!userId && !isSessionLoading,
     staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
     retry: 2,

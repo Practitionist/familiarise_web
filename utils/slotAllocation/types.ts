@@ -18,6 +18,20 @@ export type AllocationMode = "auto" | "manual" | "requested";
 export type EventType = "consultation" | "subscription" | "webinar" | "class";
 
 /**
+ * Event types that are recurring (have multiple sessions over time).
+ * Used to guard past-session subtraction, reallocation logic, etc.
+ */
+export const RECURRING_EVENT_TYPES: ReadonlyArray<EventType> = [
+  "class",
+  "subscription",
+] as const;
+
+/** Type-safe check for whether an event type is recurring */
+export function isRecurringEventType(eventType: string): boolean {
+  return (RECURRING_EVENT_TYPES as ReadonlyArray<string>).includes(eventType);
+}
+
+/**
  * Request structure for slot allocation
  */
 export interface AllocationRequest {
@@ -72,12 +86,25 @@ export interface SlotConflictResult {
 }
 
 /**
+ * Structured error codes for allocation failures.
+ * Routes use this instead of string-prefix checks to determine HTTP status.
+ */
+export type AllocationErrorCode =
+  | "VALIDATION_ERROR" // bad input from caller — 400
+  | "NOT_FOUND" // event/consultant missing — 400
+  | "INVALID_MODE" // unknown allocation mode — 400
+  | "LOCK_CONTENTION" // Redis lock busy — 409
+  | "UNKNOWN_ERROR"; // infra / unexpected — 500
+
+/**
  * Result of allocation operation
  */
 export interface AllocationResult {
   success: boolean;
   appointments?: any[]; // Appointment records created
   error?: string;
+  errorCode?: AllocationErrorCode;
+  httpStatus?: number;
   warnings?: string[];
 }
 
@@ -110,14 +137,16 @@ export interface ConsultantAllocationData {
   scheduleType: "WEEKLY" | "CUSTOM";
   slotsOfAvailabilityWeekly: Array<{
     id: string;
-    dayOfWeekForStartsAt: string;
-    availabilityStartsAt: Date;
-    availabilityEndsAt: Date;
+    startDay: string;
+    startTimeUtc: number;
+    endDay: string;
+    endTimeUtc: number;
+    utcOffsetMinutes: number;
   }>;
   slotsOfAvailabilityCustom: Array<{
     id: string;
-    availabilityStartsAt: Date;
-    availabilityEndsAt: Date;
+    startsAt: Date;
+    endsAt: Date;
   }>;
   timezone?: string;
 }
@@ -130,6 +159,7 @@ export interface EventConfig {
   durationInHours?: number; // For consultations/webinars (total duration)
   sessionDurationInHours?: number; // For subscriptions/classes (per session)
   callsPerWeek?: number; // For subscriptions/classes
+  totalSessions?: number; // Authoritative session count from subscription plan
   schedulingPeriodStartsAt?: Date; // For subscriptions/classes
   schedulingPeriodEndsAt?: Date; // For subscriptions/classes
 }

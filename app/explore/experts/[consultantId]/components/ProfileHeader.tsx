@@ -5,16 +5,18 @@ import { Star, MapPin, Briefcase, Clock, CheckCircle2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { User } from "@prisma/client";
-import { TConsultantProfile } from "@/types/consultant";
+import type { TConsultantDetailData } from "@/types/consultant";
 
 interface ProfileHeaderProps {
   userDetails: User;
-  consultantDetails: TConsultantProfile;
+  consultantDetails: TConsultantDetailData;
+  reviewCount: number;
 }
 
 export function ProfileHeader({
   userDetails,
   consultantDetails,
+  reviewCount,
 }: ProfileHeaderProps) {
   return (
     <div className="bg-white rounded-2xl border border-zinc-200 p-6 md:p-8">
@@ -89,9 +91,7 @@ export function ProfileHeader({
               {consultantDetails.rating.toFixed(1)}
             </span>
             <span className="text-zinc-400">•</span>
-            <span className="text-zinc-500">
-              {consultantDetails.reviews?.length || 0} reviews
-            </span>
+            <span className="text-zinc-500">{reviewCount} reviews</span>
           </div>
 
           {/* Meta */}

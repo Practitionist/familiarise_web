@@ -39,8 +39,8 @@ const calculateSlotDuration = (
 
 /**
  * Validates that a time range meets basic requirements:
- * non-empty, distinct start/end, no overnight (except midnight-ending),
- * and duration within 30 min – 12 hour bounds.
+ * non-empty, distinct start/end, and duration within 30 min – 12 hour bounds.
+ * Overnight slots (end < start) are allowed; duration is calculated across midnight.
  */
 export const isValidTimeRange = (
   startTime: string,
@@ -57,11 +57,6 @@ export const isValidTimeRange = (
 
   // Check if same start and end time are invalid
   if (startMinutes === endMinutes) {
-    return false;
-  }
-
-  // Disallow overnight slots – end time must be after start time on the same day, except when it ends exactly at midnight (00:00)
-  if (endMinutes <= startMinutes && endMinutes !== 0) {
     return false;
   }
 
@@ -216,16 +211,6 @@ export const validateTimeSlot = (
       ...slot,
       isValid: false,
       errorMessage: "Start and end time cannot be the same",
-    };
-  }
-
-  // Disallow overnight slots – end time must be after start time on the same day, except when it ends exactly at midnight (00:00)
-  if (endMinutes <= startMinutes && endMinutes !== 0) {
-    return {
-      ...slot,
-      isValid: false,
-      errorMessage:
-        "Overnight slots are not allowed. Please create a slot on the next day.",
     };
   }
 

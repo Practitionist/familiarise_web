@@ -5,6 +5,7 @@
 **Purpose**: Implement multi-creator collaboration for webinars and classes with revenue sharing
 
 > **Implementation Notes** (Feb 2026, branch `feat/referral-collaborator-system`):
+>
 > - Podcast collaborators not implemented (PodcastPlan model doesn't exist yet)
 > - Scheduling is host-only; collaborators cannot create events
 > - Host sets revenue split, collaborator accepts/declines the package

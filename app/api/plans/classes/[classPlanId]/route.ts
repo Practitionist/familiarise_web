@@ -1,6 +1,9 @@
 import prisma from "@/lib/prisma";
 import { Prisma, PlanEmailSupport } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { fetchClassPlanDetail } from "@/lib/data/plan-details";
+import { apiError } from "@/lib/errors";
+import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 
 export async function GET(
   request: NextRequest,
@@ -8,84 +11,26 @@ export async function GET(
 ) {
   try {
     const { classPlanId } = await params;
-    const classPlan = await prisma.classPlan.findUniqueOrThrow({
-      where: { id: classPlanId },
-      include: {
-        consultantProfile: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
-              },
-            },
-            domain: true,
-            subDomains: true,
-            tags: true,
-          },
-        },
-        classes: {
-          include: {
-            appointments: {
-              include: {
-                slotsOfAppointment: {
-                  include: {
-                    user: {
-                      select: { id: true },
-                    },
-                  },
-                },
-              },
-            },
-            waitlist: {
-              select: {
-                userId: true,
-                position: true,
-                status: true,
-              },
-            },
-          },
-        },
-        topics: true,
-        classContents: true,
-        collaborators: {
-          where: { status: "ACCEPTED" },
-          include: {
-            consultantProfile: {
-              include: {
-                user: {
-                  select: { id: true, name: true, image: true },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
+    const classPlan = await fetchClassPlanDetail(classPlanId);
 
-    const enhancedClassPlan = {
-      ...classPlan,
-      type: "class" as const,
-      imageUrl: "/images/placeholder-class.png", // Using placeholder as no specific image field exists on ClassPlan model
-    };
-    return NextResponse.json({ data: enhancedClassPlan }, { status: 200 });
-  } catch (error) {
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2025"
-    ) {
+    if (!classPlan) {
       return NextResponse.json(
         { error: "Class plan not found" },
         { status: 404 },
       );
     }
-    console.error("Error fetching class plan:", error);
+
     return NextResponse.json(
-      { error: "An error occurred while fetching the class plan" },
-      { status: 500 },
+      { data: classPlan },
+      {
+        status: 200,
+        headers: {
+          "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
+        },
+      },
     );
+  } catch (error) {
+    return apiError({ tag: "[ClassPlan.GET]", error });
   }
 }
 
@@ -93,6 +38,10 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ classPlanId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { classPlanId } = await params;
     const body = await request.json();
@@ -137,7 +86,15 @@ export async function PUT(
     }
 
     const classPlan = await prisma.classPlan.update({
-      where: { id: classPlanId },
+      where: {
+        id: classPlanId,
+        ...(isPrivileged(session.user.role)
+          ? {}
+          : {
+              consultantProfileId:
+                session.user.consultantProfileId ?? "__none__",
+            }),
+      },
       data: {
         title: body.title,
         description: body.description,
@@ -151,11 +108,10 @@ export async function PUT(
         prerequisites: body.prerequisites,
         materialProvided: body.materialProvided,
         learningOutcomes: body.learningOutcomes,
-        consultantProfile: body.consultantProfileId
-          ? {
-              connect: { id: body.consultantProfileId },
-            }
-          : undefined,
+        consultantProfile:
+          isPrivileged(session.user.role) && body.consultantProfileId
+            ? { connect: { id: body.consultantProfileId } }
+            : undefined,
         topics: body.topicIds
           ? {
               set: body.topicIds.map((id: string) => ({ id })),
@@ -208,11 +164,7 @@ export async function PUT(
         { status: 404 },
       );
     }
-    console.error("Error updating class plan:", error);
-    return NextResponse.json(
-      { error: "An error occurred while updating the class plan" },
-      { status: 500 },
-    );
+    return apiError({ tag: "[ClassPlan.PUT]", error });
   }
 }
 
@@ -220,8 +172,32 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ classPlanId: string }> },
 ) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   try {
     const { classPlanId } = await params;
+
+    // Verify existence + ownership in one query (non-owners get 404, not 403)
+    const existingPlan = await prisma.classPlan.findUnique({
+      where: {
+        id: classPlanId,
+        ...(isPrivileged(session.user.role)
+          ? {}
+          : {
+              consultantProfileId:
+                session.user.consultantProfileId ?? "__none__",
+            }),
+      },
+      select: { id: true },
+    });
+    if (!existingPlan) {
+      return NextResponse.json(
+        { error: "Class plan not found" },
+        { status: 404 },
+      );
+    }
 
     // Check if there are any associated classes
     const associatedClasses = await prisma.class.findMany({
@@ -245,7 +221,10 @@ export async function DELETE(
 
     if (activeCollaborators > 0) {
       return NextResponse.json(
-        { error: "Cannot delete class plan with active collaborators. Remove or notify collaborators first." },
+        {
+          error:
+            "Cannot delete class plan with active collaborators. Remove or notify collaborators first.",
+        },
         { status: 400 },
       );
     }
@@ -284,10 +263,6 @@ export async function DELETE(
         { status: 404 },
       );
     }
-    console.error("Error deleting class plan:", error);
-    return NextResponse.json(
-      { error: "An error occurred while deleting the class plan" },
-      { status: 500 },
-    );
+    return apiError({ tag: "[ClassPlan.DELETE]", error });
   }
 }

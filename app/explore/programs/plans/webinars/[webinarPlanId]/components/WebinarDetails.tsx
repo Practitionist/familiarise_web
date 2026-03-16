@@ -17,55 +17,13 @@ import {
 } from "lucide-react";
 import { ClientWebinarRegistration } from "./ClientWebinarRegistration";
 import { generateProgramImageUrl } from "../../../../utils";
-import { useCurrency } from "@/lib/hooks/useCurrency";
-import type { Prisma, Topic } from "@prisma/client";
+import { useCurrency } from "@/hooks/useCurrency";
+import type { Topic } from "@prisma/client";
 import { FeatureItem } from "@/app/explore/programs/plans/components/FeatureItem";
-
-type CollaboratorInfo = {
-  id: string;
-  role: string;
-  consultantProfile: {
-    id: string;
-    user: { id: string; name: string | null; image: string | null };
-  };
-};
-
-export type WebinarPlanData = Prisma.WebinarPlanGetPayload<{
-  include: {
-    consultantProfile: {
-      include: {
-        user: true;
-      };
-    };
-    topics: true;
-    webinars: {
-      include: {
-        appointment: {
-          include: {
-            slotsOfAppointment: {
-              include: {
-                user: true;
-              };
-            };
-            payment: true;
-          };
-        };
-        waitlist: true;
-      };
-    };
-  };
-}> & {
-  collaborators?: CollaboratorInfo[];
-};
-
-type SessionStatus =
-  | "Upcoming"
-  | "Happening Now"
-  | "Completed"
-  | "To be announced";
+import type { TWebinarPlanData, TSessionStatus } from "../types";
 
 interface WebinarDetailsProps {
-  readonly plan: WebinarPlanData;
+  readonly plan: TWebinarPlanData;
   readonly nextSession: Date | string | undefined;
   readonly webinarId?: string;
 }
@@ -76,7 +34,7 @@ export function WebinarDetails({
   webinarId,
 }: WebinarDetailsProps) {
   const { formatPrice } = useCurrency();
-  let sessionStatus: SessionStatus = "To be announced";
+  let sessionStatus: TSessionStatus = "To be announced";
   let formattedNextSessionDisplay = "To be announced";
 
   if (
@@ -131,7 +89,7 @@ export function WebinarDetails({
     );
   }
 
-  const getStatusBadgeClass = (status: SessionStatus) => {
+  const getStatusBadgeClass = (status: TSessionStatus) => {
     switch (status) {
       case "Happening Now":
         return "bg-emerald-500 text-white";
@@ -149,7 +107,7 @@ export function WebinarDetails({
       {/* Hero Banner */}
       <div className="relative h-[350px] md:h-[400px] w-full overflow-hidden">
         <Image
-          src={generateProgramImageUrl(plan.id, 1200, 400)}
+          src={generateProgramImageUrl(plan.id, 1200, 400, plan.imageUrl)}
           alt="Webinar cover"
           fill
           className="object-cover"
@@ -396,6 +354,7 @@ export function WebinarDetails({
                 appointment={plan.webinars?.[0]?.appointment}
                 maxParticipants={plan.maxParticipants ?? 100}
                 waitlist={plan.webinars?.[0]?.waitlist ?? []}
+                consultantUserId={plan.consultantProfile?.user?.id}
               />
             </div>
           </motion.div>

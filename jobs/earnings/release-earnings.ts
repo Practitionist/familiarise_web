@@ -14,6 +14,7 @@ import {
 } from "../../scripts/earnings/release-earnings";
 
 import fs from "fs";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 
 /**
  * Output results to GitHub Actions using environment files
@@ -44,6 +45,7 @@ function outputToGitHubActions(result: ReleaseResult): void {
  * Entry point for GitHub Actions
  */
 async function main(): Promise<void> {
+  await abortIfMaintenance("release-earnings");
   const startTime = Date.now();
   console.log(
     `🚀 Starting release earnings job at ${new Date().toISOString()}`,

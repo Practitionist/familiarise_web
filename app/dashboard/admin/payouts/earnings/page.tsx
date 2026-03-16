@@ -44,7 +44,11 @@ async function fetchEarningsStats(): Promise<EarningsStatsResponse> {
   return response.json() as Promise<EarningsStatsResponse>;
 }
 
-async function fetchEarnings(status?: string, page = 1, limit = 20): Promise<EarningsListResponse> {
+async function fetchEarnings(
+  status?: string,
+  page = 1,
+  limit = 20,
+): Promise<EarningsListResponse> {
   const params = new URLSearchParams({
     limit: limit.toString(),
     offset: ((page - 1) * limit).toString(),

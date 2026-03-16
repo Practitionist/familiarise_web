@@ -8,7 +8,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useToast } from "@/hooks/use-toast";
 import { useParams } from "next/navigation";
 import { SafeUnifiedCalendar } from "../../shared/components/SafeUnifiedCalendar";
 import { TAppointment } from "@/types/appointment";
@@ -22,6 +21,7 @@ interface EventDetails {
   durationInMonths: number;
   durationInHours: number;
   sessionDurationInHours?: number;
+  totalSessions?: number;
   title: string;
   planType?: ClassPlanType;
 }
@@ -30,15 +30,18 @@ interface EventTimingsCalendarProps {
   isOpen: boolean;
   onClose: () => void;
   appointment: TAppointment;
+  completedSessions?: number;
+  groupTotalSessions?: number;
 }
 
 export function EventTimingsCalendar({
   isOpen,
   onClose,
   appointment,
+  completedSessions,
+  groupTotalSessions,
 }: EventTimingsCalendarProps) {
   const params = useParams();
-  const { toast } = useToast();
 
   const consultantId = params.consultantId?.toString() || "";
   const getEventDetails = (appointment: TAppointment): EventDetails => {
@@ -68,6 +71,9 @@ export function EventTimingsCalendar({
           sessionDurationInHours:
             appointment.subscription?.subscriptionPlan
               ?.sessionDurationInHours || 1,
+          totalSessions:
+            appointment.subscription?.subscriptionPlan?.totalSessions ??
+            undefined,
           title:
             appointment.subscription?.subscriptionPlan?.title || "Subscription",
         };
@@ -89,7 +95,10 @@ export function EventTimingsCalendar({
           eventId: appointment.class?.id || "",
           meetingsPerWeek: defaults.classesPerWeek,
           durationInMonths: defaults.durationInMonths,
-          durationInHours: defaults.sessionDurationInHours,
+          durationInHours:
+            classPlan?.sessionDurationInHours ??
+            defaults.sessionDurationInHours,
+          totalSessions: classPlan?.totalSessions ?? undefined,
           title: classPlan?.title || "Class",
           planType: defaults.type,
         };
@@ -113,19 +122,33 @@ export function EventTimingsCalendar({
   // Removed debug logging - production code validates dates server-side
 
   const handleAllocationComplete = () => {
-    toast({
-      title: "Success",
-      description: "Timings allocated successfully",
-    });
     onClose();
+  };
+
+  const appendProgressText = (
+    baseText: string,
+    completed?: number,
+    total?: number,
+  ): string => {
+    if (completed && completed > 0 && total) {
+      const remaining = total - completed;
+      return `${baseText} ${completed} of ${total} sessions completed — select times for the remaining ${remaining}.`;
+    }
+    return baseText;
   };
 
   const getDescriptionText = () => {
     switch (appointment.appointmentType) {
       case "CONSULTATION":
         return "Select consecutive time slots for your consultation. All slots must be on the same day.";
-      case "SUBSCRIPTION":
-        return `Schedule ${eventDetails.callsPerWeek} call${eventDetails.callsPerWeek !== 1 ? "s" : ""} per week for ${eventDetails.durationInMonths} month${eventDetails.durationInMonths !== 1 ? "s" : ""}. Each call is ${eventDetails.sessionDurationInHours || 1} hour${(eventDetails.sessionDurationInHours || 1) > 1 ? "s" : ""}.`;
+      case "SUBSCRIPTION": {
+        const baseText = `Schedule ${eventDetails.callsPerWeek} call${eventDetails.callsPerWeek !== 1 ? "s" : ""} per week for ${eventDetails.durationInMonths} month${eventDetails.durationInMonths !== 1 ? "s" : ""}. Each call is ${eventDetails.sessionDurationInHours || 1} hour${(eventDetails.sessionDurationInHours || 1) > 1 ? "s" : ""}.`;
+        return appendProgressText(
+          baseText,
+          completedSessions,
+          groupTotalSessions,
+        );
+      }
       case "WEBINAR":
         return "Select consecutive time slots for your webinar session.";
       case "CLASS": {
@@ -133,7 +156,12 @@ export function EventTimingsCalendar({
         const durationText =
           sessionDuration === 1 ? "1 hour" : `${sessionDuration} hours`;
         const meetingsPerWeek = eventDetails.meetingsPerWeek || 1;
-        return `Schedule ${meetingsPerWeek} meeting${meetingsPerWeek !== 1 ? "s" : ""} per week. Each session is ${durationText}.`;
+        const classBaseText = `Schedule ${meetingsPerWeek} meeting${meetingsPerWeek !== 1 ? "s" : ""} per week. Each session is ${durationText}.`;
+        return appendProgressText(
+          classBaseText,
+          completedSessions,
+          groupTotalSessions,
+        );
       }
       default:
         return "Select time slots for your event.";
@@ -169,9 +197,11 @@ export function EventTimingsCalendar({
         {/* Guidance prompt for class rules */}
         {appointment.appointmentType === "CLASS" && (
           <div className="mb-2 rounded-md border bg-muted/30 px-3 py-2 text-xs">
-            Tip: Each class is 2 consecutive 30‑min slots. Complete an
-            in‑progress class before starting another. Max 2 classes per day;
-            weekly limit applies.
+            Tip: Each class is{" "}
+            {Math.ceil((eventDetails.durationInHours || 1) / 0.5)} consecutive
+            30‑min slots. Complete an in‑progress class before starting another.
+            Max {eventDetails.meetingsPerWeek || 2} classes per day; weekly
+            limit applies.
           </div>
         )}
 
@@ -198,6 +228,7 @@ export function EventTimingsCalendar({
               ? eventDetails.durationInHours
               : undefined
           }
+          totalSessions={eventDetails.totalSessions}
           mode="allocate"
           onAllocationComplete={handleAllocationComplete}
           onClose={onClose}

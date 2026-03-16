@@ -174,6 +174,14 @@ export function getMembershipCached(
 }
 
 /**
+ * Clear sync completion marker for a specific user.
+ * Forces a full re-sync on the next call to syncUserEventChannels.
+ */
+export function clearSyncCacheForUser(userId: string): void {
+  initialSyncCompletedUsers.delete(userId);
+}
+
+/**
  * Clear all Stream-related caches
  */
 export function clearAllStreamCaches(): void {
