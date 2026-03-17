@@ -97,6 +97,15 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
     }
   }, [initialData, reset, session?.user?.email]);
 
+  // Sync email from session when it loads after form mount
+  useEffect(() => {
+    if (session?.user?.email) {
+      reset((prev) => ({ ...prev, email: session.user.email }), {
+        keepDirtyValues: true,
+      });
+    }
+  }, [session?.user?.email, reset]);
+
   const selectedRole = watch("role");
   const bioLength = watch("bio")?.length || 0;
 
