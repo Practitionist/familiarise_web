@@ -194,6 +194,7 @@ const domains = [
       "DevOps",
       "Artificial Intelligence",
       "Blockchain",
+      "Software Development",
     ],
     tags: [
       "JavaScript",
@@ -211,6 +212,10 @@ const domains = [
       "Cyber Defense",
       "Cloud Architecture",
       "Smart Contracts",
+      "System Design",
+      "DSA & Algorithms",
+      "Interview Prep",
+      "Career Switching",
     ],
   },
 

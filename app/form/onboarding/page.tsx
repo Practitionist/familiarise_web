@@ -14,17 +14,15 @@ import { useRouter } from "next/navigation";
 import React, { useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import ConsultantAgreementForm from "./components/ConsultantAgreementForm";
 import ConsultantPreferredScheduleForm from "./components/ConsultantPreferredScheduleForm";
-import ConsultantProfileForm from "./components/ConsultantProfileForm";
+import ConsultantProfessionalStep from "./components/ConsultantProfessionalStep";
+import ConsultantAgreementAndVerificationStep from "./components/ConsultantAgreementAndVerificationStep";
 import ConsultantReviewForm from "./components/ConsultantReviewForm";
-import ConsultantVerificationForm from "./components/ConsultantVerificationForm";
 import ConsulteeAgreementForm from "./components/ConsulteeAgreementForm";
 import ConsulteePreferencesForm from "./components/ConsulteePreferencesForm";
 import ConsulteeProfileForm from "./components/ConsulteeProfileForm";
 import ConsulteeReviewForm from "./components/ConsulteeReviewForm";
 import PersonalInfoAndRoleForm from "./components/PersonalInfoAndRoleForm";
-import ProfessionalBackgroundForm from "./components/ProfessionalBackgroundForm";
 import StaffAgreementForm from "./components/StaffAgreementForm";
 import StaffProfileForm from "./components/StaffProfileForm";
 import StaffResponsibilitiesForm from "./components/StaffResponsibilitiesForm";
@@ -35,10 +33,8 @@ const STEP_LABELS = {
   CONSULTANT: [
     "Personal Info",
     "Professional Profile",
-    "Experience",
     "Availability",
-    "Agreement",
-    "Verification",
+    "Agreement & Verification",
     "Review",
   ],
   CONSULTEE: ["Personal Info", "Profile", "Preferences", "Agreement", "Review"],
@@ -135,9 +131,15 @@ const MultiStepForm: React.FC = () => {
       }
 
       // Transform the data for server submission
-      const requestBody = transformOnboardingFormToServerData(
-        validationResult.data,
-      );
+      const validated = validationResult.data as OnboardingFormData;
+      const requestBody = {
+        ...transformOnboardingFormToServerData(validated),
+        // Include professional background fields (not part of OnboardingData schema)
+        workExperiences: validated.workExperiences,
+        educationHistory: validated.educationHistory,
+        certificationsList: validated.certificationsList,
+        achievements: validated.achievements,
+      };
 
       toast({
         title: "Saving Your Profile",
@@ -212,7 +214,7 @@ const MultiStepForm: React.FC = () => {
         switch (formData.role) {
           case "CONSULTANT":
             return (
-              <ConsultantProfileForm
+              <ConsultantProfessionalStep
                 onNext={handleNext}
                 onBack={handleBack}
                 initialData={formData}
@@ -223,7 +225,7 @@ const MultiStepForm: React.FC = () => {
                   address: formData.address,
                   onlineStatus: formData.onlineStatus,
                   timezone: formData.timezone,
-                  onboardingCompleted: formData.onboardingCompleted,
+                  onboardingCompleted: formData.onboardingCompleted ?? false,
                   role: formData.role,
                   emailVerified: formData.emailVerified,
                   image: formData.image,
@@ -253,7 +255,7 @@ const MultiStepForm: React.FC = () => {
         switch (formData.role) {
           case "CONSULTANT":
             return (
-              <ProfessionalBackgroundForm
+              <ConsultantPreferredScheduleForm
                 onNext={handleNext}
                 onBack={handleBack}
                 initialData={formData}
@@ -282,10 +284,10 @@ const MultiStepForm: React.FC = () => {
         switch (formData.role) {
           case "CONSULTANT":
             return (
-              <ConsultantPreferredScheduleForm
-                onNext={handleNext}
+              <ConsultantAgreementAndVerificationStep
+                onSubmit={handleSubmit}
                 onBack={handleBack}
-                initialData={formData}
+                formData={formData}
               />
             );
           case "CONSULTEE":
@@ -311,10 +313,10 @@ const MultiStepForm: React.FC = () => {
         switch (formData.role) {
           case "CONSULTANT":
             return (
-              <ConsultantAgreementForm
-                onNext={handleNext}
+              <ConsultantReviewForm
+                onSubmit={handleSubmit}
                 onBack={handleBack}
-                initialData={formData}
+                formData={formData}
               />
             );
           case "CONSULTEE":
@@ -328,32 +330,6 @@ const MultiStepForm: React.FC = () => {
           case "STAFF":
             return (
               <StaffReviewForm
-                onSubmit={handleSubmit}
-                onBack={handleBack}
-                formData={formData}
-              />
-            );
-          default:
-            return null;
-        }
-      case 5:
-        switch (formData.role) {
-          case "CONSULTANT":
-            return (
-              <ConsultantVerificationForm
-                onNext={handleNext}
-                onBack={handleBack}
-                initialData={formData}
-              />
-            );
-          default:
-            return null;
-        }
-      case 6:
-        switch (formData.role) {
-          case "CONSULTANT":
-            return (
-              <ConsultantReviewForm
                 onSubmit={handleSubmit}
                 onBack={handleBack}
                 formData={formData}

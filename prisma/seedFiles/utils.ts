@@ -309,38 +309,47 @@ export function generateWorkSchedule(): string {
 /**
  * Generate realistic company names
  */
+const COMPANY_DOMAIN_MAP: Record<string, string> = {
+  Google: "google.com",
+  Microsoft: "microsoft.com",
+  Amazon: "amazon.com",
+  Meta: "meta.com",
+  Apple: "apple.com",
+  Netflix: "netflix.com",
+  Salesforce: "salesforce.com",
+  Oracle: "oracle.com",
+  IBM: "ibm.com",
+  Accenture: "accenture.com",
+  Deloitte: "deloitte.com",
+  McKinsey: "mckinsey.com",
+  "Goldman Sachs": "goldmansachs.com",
+  "JP Morgan": "jpmorgan.com",
+  Stripe: "stripe.com",
+  Uber: "uber.com",
+  Airbnb: "airbnb.com",
+  Spotify: "spotify.com",
+  Adobe: "adobe.com",
+  Cisco: "cisco.com",
+  VMware: "vmware.com",
+  Snowflake: "snowflake.com",
+  Databricks: "databricks.com",
+  Palantir: "palantir.com",
+  Coinbase: "coinbase.com",
+};
+
 export function generateCompanyName(): string {
   const companies = [
-    "Google",
-    "Microsoft",
-    "Amazon",
-    "Meta",
-    "Apple",
-    "Netflix",
-    "Salesforce",
-    "Oracle",
-    "IBM",
-    "Accenture",
-    "Deloitte",
-    "McKinsey",
-    "Goldman Sachs",
-    "JP Morgan",
-    "Stripe",
-    "Uber",
-    "Airbnb",
-    "Spotify",
-    "Adobe",
-    "Cisco",
-    "VMware",
-    "Snowflake",
-    "Databricks",
-    "Palantir",
-    "Coinbase",
+    ...Object.keys(COMPANY_DOMAIN_MAP),
     faker.company.name(),
     faker.company.name(),
     faker.company.name(),
   ];
   return faker.helpers.arrayElement(companies);
+}
+
+/** Get the domain for a known company name, or null for unknown companies */
+export function getCompanyDomain(companyName: string): string | null {
+  return COMPANY_DOMAIN_MAP[companyName] || null;
 }
 
 /**

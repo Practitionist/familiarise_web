@@ -16,6 +16,7 @@ import { format } from "date-fns";
 export interface WorkExperience {
   id: string;
   company: string;
+  companyDomain?: string;
   title: string;
   location?: string;
   startDate: Date;

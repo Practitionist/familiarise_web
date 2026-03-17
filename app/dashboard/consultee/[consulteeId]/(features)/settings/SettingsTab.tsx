@@ -39,7 +39,6 @@ type ProfileFormData = Omit<
     | "currentCompany"
     | "industry"
     | "skillsToDevelop"
-    | "linkedinUrl"
     | "budgetPreference"
   >,
   "preferredCommunicationMethod" | "careerStage" | "budgetPreference"
@@ -75,7 +74,6 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
       currentCompany: null,
       industry: null,
       skillsToDevelop: [],
-      linkedinUrl: null,
       budgetPreference: null,
     },
   );
@@ -110,7 +108,6 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
         currentCompany: consulteeData.currentCompany ?? null,
         industry: consulteeData.industry ?? null,
         skillsToDevelop: consulteeData.skillsToDevelop ?? [],
-        linkedinUrl: consulteeData.linkedinUrl ?? null,
         budgetPreference: consulteeData.budgetPreference ?? null,
       });
     }
@@ -353,17 +350,6 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
                 </SelectContent>
               </Select>
             </div>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="linkedinUrl">LinkedIn Profile URL</Label>
-            <Input
-              id="linkedinUrl"
-              name="linkedinUrl"
-              type="url"
-              value={profileSettings.linkedinUrl ?? ""}
-              onChange={handleProfileChange}
-              placeholder="https://linkedin.com/in/yourprofile"
-            />
           </div>
           <div className="space-y-2">
             <Label htmlFor="skillsToDevelop">Skills to Develop</Label>

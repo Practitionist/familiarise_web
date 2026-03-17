@@ -107,7 +107,6 @@ export async function POST(
         currentCompany: body.currentCompany,
         industry: body.industry,
         skillsToDevelop: body.skillsToDevelop ?? [],
-        linkedinUrl: body.linkedinUrl,
         budgetPreference: body.budgetPreference,
         user: { connect: { id: id } },
       },
@@ -180,7 +179,6 @@ export async function PATCH(
         currentCompany: body.currentCompany,
         industry: body.industry,
         skillsToDevelop: body.skillsToDevelop ?? [],
-        linkedinUrl: body.linkedinUrl,
         budgetPreference: body.budgetPreference,
       },
       include: {

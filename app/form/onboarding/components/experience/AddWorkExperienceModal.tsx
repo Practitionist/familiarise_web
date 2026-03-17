@@ -31,6 +31,7 @@ export function AddWorkExperienceModal({
 }: AddWorkExperienceModalProps) {
   const [formData, setFormData] = useState({
     company: "",
+    companyDomain: "",
     title: "",
     location: "",
     startDate: "",
@@ -45,6 +46,7 @@ export function AddWorkExperienceModal({
     if (experience) {
       setFormData({
         company: experience.company,
+        companyDomain: experience.companyDomain || "",
         title: experience.title,
         location: experience.location || "",
         startDate: experience.startDate
@@ -59,6 +61,7 @@ export function AddWorkExperienceModal({
     } else {
       setFormData({
         company: "",
+        companyDomain: "",
         title: "",
         location: "",
         startDate: "",
@@ -75,6 +78,7 @@ export function AddWorkExperienceModal({
     const data = {
       ...(experience?.id ? { id: experience.id } : {}),
       company: formData.company,
+      companyDomain: formData.companyDomain || undefined,
       title: formData.title,
       location: formData.location || undefined,
       startDate: new Date(formData.startDate),
@@ -130,6 +134,23 @@ export function AddWorkExperienceModal({
                 placeholder="e.g., Google"
                 required
               />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="companyDomain">
+                Company Website Domain
+              </Label>
+              <Input
+                id="companyDomain"
+                value={formData.companyDomain}
+                onChange={(e) =>
+                  setFormData({ ...formData, companyDomain: e.target.value })
+                }
+                placeholder="e.g., google.com"
+              />
+              <p className="text-xs text-muted-foreground">
+                Used to display the company logo on your profile
+              </p>
             </div>
 
             <div className="space-y-2">

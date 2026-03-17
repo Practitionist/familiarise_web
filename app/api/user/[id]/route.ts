@@ -83,7 +83,6 @@ export async function GET(
             currentCompany: true,
             industry: true,
             skillsToDevelop: true,
-            linkedinUrl: true,
             budgetPreference: true,
           },
         },

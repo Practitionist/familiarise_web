@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 
 interface Props {
-  onSubmit: (data: OnboardingFormData) => void;
+  onSubmit: (data: OnboardingFormData) => void | Promise<void>;
   onBack: () => void;
   formData: OnboardingFormData;
 }

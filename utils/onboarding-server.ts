@@ -11,60 +11,52 @@ import { notifyNewConsultantApplication } from "@/lib/novu";
 import type {
   OnboardingData,
   ConsultantProfileCreateData,
-  ConsulteeProfileCreateData,
-  StaffProfileCreateData,
-  AdminProfileCreateData,
 } from "./onboarding";
+import {
+  buildUserUpdateData,
+  buildConsultantScalarData,
+  buildConsulteeScalarData,
+  buildStaffScalarData,
+  buildAdminScalarData,
+  validateProfessionalBackground,
+} from "./onboarding-shared";
 
-// #region Database Operation Helpers
+// ============================================================================
+// HELPERS
+// ============================================================================
 
-async function getExistingUserForValidation(id: string) {
-  const existingUser = await prisma.user.findUnique({
-    where: { id },
-  });
-  if (!existingUser) {
-    throw new Error("User not found");
-  }
+async function assertUserExists(id: string) {
+  const user = await prisma.user.findUnique({ where: { id } });
+  if (!user) throw new Error("User not found");
 }
 
-async function updateConsultantProfileAndRelations(
+// ============================================================================
+// PROFILE UPSERT FUNCTIONS
+// ============================================================================
+
+async function upsertConsultantProfile(
   userId: string,
   profileData: ConsultantProfileCreateData,
   tx: Prisma.TransactionClient,
 ) {
-  const scheduleTypeEnum = profileData.scheduleType;
+  const scalarData = buildConsultantScalarData(profileData);
   const domainId = profileData.domain.connect.id;
 
   const consultantProfile = await tx.consultantProfile.upsert({
-    where: { userId: userId },
+    where: { userId },
     create: {
-      userId: userId,
-      description: profileData.description ?? "",
-      experience: profileData.experience ?? null,
-      scheduleType: scheduleTypeEnum,
+      userId,
       rating: 0,
-      domainId: domainId,
+      domainId,
       subDomains: profileData.subDomains?.connect
         ? { connect: profileData.subDomains.connect }
         : undefined,
       tags: profileData.tags?.connect
         ? { connect: profileData.tags.connect }
         : undefined,
-      // New fields
-      headline: profileData.headline ?? null,
-      websiteUrl: profileData.websiteUrl || null,
-      twitterUrl: profileData.twitterUrl || null,
-      githubUrl: profileData.githubUrl || null,
-      videoIntroUrl: profileData.videoIntroUrl || null,
-      languages: profileData.languages ?? [],
-      toolsAndTechnologies: profileData.toolsAndTechnologies ?? [],
-      mentoringStyle: profileData.mentoringStyle ?? null,
-      sessionTypes: profileData.sessionTypes ?? [],
+      ...scalarData,
     },
     update: {
-      description: profileData.description ?? "",
-      experience: profileData.experience ?? null,
-      scheduleType: scheduleTypeEnum,
       domain: { connect: { id: domainId } },
       subDomains: profileData.subDomains?.connect
         ? { set: profileData.subDomains.connect }
@@ -72,30 +64,37 @@ async function updateConsultantProfileAndRelations(
       tags: profileData.tags?.connect
         ? { set: profileData.tags.connect }
         : { set: [] },
-      // New fields
-      headline: profileData.headline ?? null,
-      websiteUrl: profileData.websiteUrl || null,
-      twitterUrl: profileData.twitterUrl || null,
-      githubUrl: profileData.githubUrl || null,
-      videoIntroUrl: profileData.videoIntroUrl || null,
-      languages: profileData.languages ?? [],
-      toolsAndTechnologies: profileData.toolsAndTechnologies ?? [],
-      mentoringStyle: profileData.mentoringStyle ?? null,
-      sessionTypes: profileData.sessionTypes ?? [],
+      ...scalarData,
     },
   });
 
-  if (scheduleTypeEnum === ScheduleType.WEEKLY) {
+  await syncAvailabilitySlots(
+    consultantProfile.id,
+    scalarData.scheduleType,
+    profileData,
+    tx,
+  );
+
+  return { consultantProfileId: consultantProfile.id };
+}
+
+async function syncAvailabilitySlots(
+  consultantProfileId: string,
+  scheduleType: ScheduleType,
+  profileData: ConsultantProfileCreateData,
+  tx: Prisma.TransactionClient,
+) {
+  if (scheduleType === ScheduleType.WEEKLY) {
     await tx.slotOfAvailabilityCustom.deleteMany({
-      where: { consultantProfileId: consultantProfile.id },
+      where: { consultantProfileId },
     });
     await tx.slotOfAvailabilityWeekly.deleteMany({
-      where: { consultantProfileId: consultantProfile.id },
+      where: { consultantProfileId },
     });
+
     const weeklySlotsToCreate = profileData.slotsOfAvailabilityWeekly?.create;
     if (weeklySlotsToCreate && weeklySlotsToCreate.length > 0) {
       const validWeeklySlots = weeklySlotsToCreate.filter((slot) => {
-        // Int-based minutes (0-1439): convert to HH:MM for validation
         const startHH = Math.floor(slot.startTimeUtc / 60)
           .toString()
           .padStart(2, "0");
@@ -106,7 +105,7 @@ async function updateConsultantProfileAndRelations(
         const endMM = (slot.endTimeUtc % 60).toString().padStart(2, "0");
         return isValidTimeRange(`${startHH}:${startMM}`, `${endHH}:${endMM}`);
       });
-      // Validate time ordering and check for pairwise overlaps
+
       for (const slot of validWeeklySlots) {
         const timeError = validateWeeklySlotTimeOrder(
           slot.startDay as DayOfWeek,
@@ -114,10 +113,9 @@ async function updateConsultantProfileAndRelations(
           slot.startTimeUtc,
           slot.endTimeUtc,
         );
-        if (timeError) {
-          throw new Error(timeError);
-        }
+        if (timeError) throw new Error(timeError);
       }
+
       for (let i = 0; i < validWeeklySlots.length; i++) {
         for (let j = i + 1; j < validWeeklySlots.length; j++) {
           if (
@@ -150,18 +148,19 @@ async function updateConsultantProfileAndRelations(
             startTimeUtc: slot.startTimeUtc,
             endDay: slot.endDay,
             endTimeUtc: slot.endTimeUtc,
-            consultantProfileId: consultantProfile.id,
+            consultantProfileId,
           })),
         });
       }
     }
-  } else if (scheduleTypeEnum === ScheduleType.CUSTOM) {
+  } else if (scheduleType === ScheduleType.CUSTOM) {
     await tx.slotOfAvailabilityWeekly.deleteMany({
-      where: { consultantProfileId: consultantProfile.id },
+      where: { consultantProfileId },
     });
     await tx.slotOfAvailabilityCustom.deleteMany({
-      where: { consultantProfileId: consultantProfile.id },
+      where: { consultantProfileId },
     });
+
     const customSlotsToCreate = profileData.slotsOfAvailabilityCustom?.create;
     if (customSlotsToCreate && customSlotsToCreate.length > 0) {
       const validCustomSlots = customSlotsToCreate.filter((slot) =>
@@ -170,7 +169,7 @@ async function updateConsultantProfileAndRelations(
           new Date(slot.endsAt).toTimeString().slice(0, 5),
         ),
       );
-      // Validate ordering and pairwise overlaps
+
       for (const slot of validCustomSlots) {
         if (
           new Date(slot.startsAt).getTime() >= new Date(slot.endsAt).getTime()
@@ -178,6 +177,7 @@ async function updateConsultantProfileAndRelations(
           throw new Error("Custom slot start time must be before end time");
         }
       }
+
       for (let i = 0; i < validCustomSlots.length; i++) {
         for (let j = i + 1; j < validCustomSlots.length; j++) {
           const a = validCustomSlots[i];
@@ -198,123 +198,57 @@ async function updateConsultantProfileAndRelations(
           data: validCustomSlots.map((slot) => ({
             startsAt: slot.startsAt,
             endsAt: slot.endsAt,
-            consultantProfileId: consultantProfile.id,
+            consultantProfileId,
           })),
         });
       }
     }
   }
-  return { consultantProfileId: consultantProfile.id };
 }
 
-async function updateConsulteeProfileAndRelations(
+async function upsertConsulteeProfile(
   userId: string,
-  profileData: ConsulteeProfileCreateData,
+  profileData: Parameters<typeof buildConsulteeScalarData>[0],
   tx: Prisma.TransactionClient,
 ) {
-  const interests = Array.isArray(profileData.interests)
-    ? profileData.interests.join(", ")
-    : (profileData.interests ?? "");
-  const goals = Array.isArray(profileData.goals)
-    ? profileData.goals.join(", ")
-    : (profileData.goals ?? "");
-
-  const consulteeProfile = await tx.consulteeProfile.upsert({
-    where: { userId: userId },
-    create: {
-      userId: userId,
-      occupation: profileData.occupation ?? "",
-      aboutMe: profileData.aboutMe ?? "",
-      preferredCommunicationMethod: profileData.preferredCommunicationMethod,
-      preferredLanguage: profileData.preferredLanguage ?? "",
-      goals: goals,
-      // New fields
-      careerStage: profileData.careerStage ?? null,
-      currentCompany: profileData.currentCompany ?? null,
-      industry: profileData.industry ?? null,
-      skillsToDevelop: profileData.skillsToDevelop ?? [],
-      linkedinUrl: profileData.linkedinUrl || null,
-      budgetPreference: profileData.budgetPreference ?? null,
-    },
-    update: {
-      occupation: profileData.occupation ?? "",
-      aboutMe: profileData.aboutMe ?? "",
-      preferredCommunicationMethod: profileData.preferredCommunicationMethod,
-      preferredLanguage: profileData.preferredLanguage ?? "",
-      goals: goals,
-      // New fields
-      careerStage: profileData.careerStage ?? null,
-      currentCompany: profileData.currentCompany ?? null,
-      industry: profileData.industry ?? null,
-      skillsToDevelop: profileData.skillsToDevelop ?? [],
-      linkedinUrl: profileData.linkedinUrl || null,
-      budgetPreference: profileData.budgetPreference ?? null,
-    },
+  const scalarData = buildConsulteeScalarData(profileData);
+  const profile = await tx.consulteeProfile.upsert({
+    where: { userId },
+    create: { userId, ...scalarData },
+    update: scalarData,
   });
-  return { consulteeProfileId: consulteeProfile.id };
+  return { consulteeProfileId: profile.id };
 }
 
-async function updateStaffProfileAndRelations(
+async function upsertStaffProfile(
   userId: string,
-  profileData: StaffProfileCreateData,
+  profileData: Parameters<typeof buildStaffScalarData>[0],
   tx: Prisma.TransactionClient,
 ) {
-  const staffProfile = await tx.staffProfile.upsert({
-    where: { userId: userId },
-    create: {
-      userId: userId,
-      department: profileData.department ?? "",
-      position: profileData.position ?? "",
-      permissions: profileData.permissions ?? {},
-      responsibilities: profileData.responsibilities ?? {},
-      // New fields
-      employeeId: profileData.employeeId ?? null,
-      hireDate: profileData.hireDate ?? null,
-      reportsTo: profileData.reportsTo ?? null,
-      skills: profileData.skills ?? [],
-      workSchedule: profileData.workSchedule ?? null,
-    },
-    update: {
-      department: profileData.department ?? "",
-      position: profileData.position ?? "",
-      permissions: profileData.permissions ?? {},
-      responsibilities: profileData.responsibilities ?? {},
-      // New fields
-      employeeId: profileData.employeeId ?? null,
-      hireDate: profileData.hireDate ?? null,
-      reportsTo: profileData.reportsTo ?? null,
-      skills: profileData.skills ?? [],
-      workSchedule: profileData.workSchedule ?? null,
-    },
+  const scalarData = buildStaffScalarData(profileData);
+  const profile = await tx.staffProfile.upsert({
+    where: { userId },
+    create: { userId, ...scalarData },
+    update: scalarData,
   });
-  return { staffProfileId: staffProfile.id };
+  return { staffProfileId: profile.id };
 }
 
-async function updateAdminProfileAndRelations(
+async function upsertAdminProfile(
   userId: string,
-  profileData: AdminProfileCreateData,
+  profileData: Parameters<typeof buildAdminScalarData>[0],
   tx: Prisma.TransactionClient,
 ) {
-  const adminProfile = await tx.adminProfile.upsert({
-    where: { userId: userId },
-    create: {
-      userId: userId,
-      adminLevel: profileData.adminLevel,
-      accessScope: profileData.accessScope ?? null,
-      assignedRegions: profileData.assignedRegions ?? [],
-      notes: profileData.notes ?? null,
-    },
-    update: {
-      adminLevel: profileData.adminLevel,
-      accessScope: profileData.accessScope ?? null,
-      assignedRegions: profileData.assignedRegions ?? [],
-      notes: profileData.notes ?? null,
-    },
+  const scalarData = buildAdminScalarData(profileData);
+  const profile = await tx.adminProfile.upsert({
+    where: { userId },
+    create: { userId, ...scalarData },
+    update: scalarData,
   });
-  return { adminProfileId: adminProfile.id };
+  return { adminProfileId: profile.id };
 }
 
-async function updateUserProfileAndGetFkData(
+async function upsertProfileByRole(
   userId: string,
   validatedBody: OnboardingData,
   tx: Prisma.TransactionClient,
@@ -326,27 +260,26 @@ async function updateUserProfileAndGetFkData(
 }> {
   switch (validatedBody.role) {
     case UserRole.CONSULTANT:
-      return updateConsultantProfileAndRelations(
+      return upsertConsultantProfile(
         userId,
         validatedBody.consultantProfile.create,
         tx,
       );
     case UserRole.CONSULTEE:
-      return updateConsulteeProfileAndRelations(
+      return upsertConsulteeProfile(
         userId,
         validatedBody.consulteeProfile.create,
         tx,
       );
     case UserRole.STAFF:
-      return updateStaffProfileAndRelations(
+      return upsertStaffProfile(
         userId,
         validatedBody.staffProfile.create,
         tx,
       );
     case UserRole.ADMIN:
-      // Admin profiles are optional during onboarding (can be set by super admin later)
       if ((validatedBody as any).adminProfile?.create) {
-        return updateAdminProfileAndRelations(
+        return upsertAdminProfile(
           userId,
           (validatedBody as any).adminProfile.create,
           tx,
@@ -354,57 +287,208 @@ async function updateUserProfileAndGetFkData(
       }
       return {};
     default:
-      throw new Error(
-        `Invalid role encountered after validation: ${(validatedBody as any).role}`,
-      );
+      throw new Error(`Invalid role: ${(validatedBody as any).role}`);
   }
 }
 
-// Central onboarding processing function - SERVER ONLY
+// ============================================================================
+// PROFESSIONAL BACKGROUND PERSISTENCE (validated via Zod)
+// ============================================================================
+
+async function persistProfessionalBackground(
+  userId: string,
+  consultantProfileId: string | undefined,
+  body: any,
+  tx: Prisma.TransactionClient,
+) {
+  const {
+    workExperiences,
+    educationHistory,
+    certificationsList,
+    achievements,
+  } = validateProfessionalBackground(body);
+
+  if (workExperiences && workExperiences.length > 0) {
+    await tx.workExperience.deleteMany({ where: { userId } });
+    await tx.workExperience.createMany({
+      data: workExperiences.map((we) => ({
+        userId,
+        company: we.company,
+        companyDomain: we.companyDomain || null,
+        title: we.title,
+        location: we.location || null,
+        startDate: new Date(we.startDate),
+        endDate: we.endDate ? new Date(we.endDate) : null,
+        isCurrent: we.isCurrent ?? false,
+        description: we.description || null,
+      })),
+    });
+  }
+
+  if (educationHistory && educationHistory.length > 0) {
+    await tx.education.deleteMany({ where: { userId } });
+    await tx.education.createMany({
+      data: educationHistory.map((edu) => ({
+        userId,
+        institution: edu.institution,
+        degree: edu.degree,
+        fieldOfStudy: edu.fieldOfStudy || null,
+        startYear: edu.startYear || null,
+        endYear: edu.endYear || null,
+        grade: edu.grade || null,
+        activities: edu.activities || null,
+        description: edu.description || null,
+      })),
+    });
+  }
+
+  if (certificationsList && certificationsList.length > 0) {
+    await tx.certification.deleteMany({ where: { userId } });
+    await tx.certification.createMany({
+      data: certificationsList.map((cert) => ({
+        userId,
+        name: cert.name,
+        issuingOrganization: cert.issuingOrganization,
+        issueDate: new Date(cert.issueDate),
+        expiryDate: cert.expiryDate ? new Date(cert.expiryDate) : null,
+        credentialId: cert.credentialId || null,
+        credentialUrl: cert.credentialUrl || null,
+      })),
+    });
+  }
+
+  if (consultantProfileId && achievements && achievements.length > 0) {
+    await tx.achievement.deleteMany({
+      where: { consultantProfileId },
+    });
+    await tx.achievement.createMany({
+      data: achievements.map((ach) => ({
+        consultantProfileId,
+        title: ach.title,
+        description: ach.description || null,
+        url: ach.url || null,
+        imageUrl: ach.imageUrl || null,
+        achievementType: ach.achievementType || "OTHER",
+      })),
+    });
+  }
+}
+
+// ============================================================================
+// VERIFICATION HANDLING
+// ============================================================================
+
+async function submitVerificationRequest(
+  userId: string,
+  consultantProfileId: string,
+  body: any,
+  userName: string,
+  userEmail: string,
+) {
+  const verificationLinkedinUrl = body.verificationLinkedinUrl;
+  const verificationNotes = body.verificationNotes;
+  const verificationDocuments = body.verificationDocuments;
+
+  if (verificationLinkedinUrl) {
+    await prisma.user.update({
+      where: { id: userId },
+      data: { linkedinUrl: verificationLinkedinUrl },
+    });
+  }
+
+  const verification = await prisma.consultantProfileVerification.create({
+    data: {
+      consultantProfileId,
+      notes: verificationNotes || null,
+      status: "PENDING",
+    },
+  });
+
+  if (verificationDocuments && verificationDocuments.length > 0) {
+    const existingDocuments = verificationDocuments.filter(
+      (doc: any) => doc.id && !doc.isOnboardingUpload,
+    );
+    if (existingDocuments.length > 0) {
+      await prisma.profileVerificationDocument.updateMany({
+        where: { id: { in: existingDocuments.map((d: any) => d.id) } },
+        data: { verificationId: verification.id },
+      });
+    }
+
+    const onboardingDocuments = verificationDocuments.filter(
+      (doc: any) => doc.isOnboardingUpload || (!doc.id && doc.fileUrl),
+    );
+    if (onboardingDocuments.length > 0) {
+      await prisma.profileVerificationDocument.createMany({
+        data: onboardingDocuments.map((doc: any) => ({
+          verificationId: verification.id,
+          fileName: doc.fileName,
+          originalName: doc.originalName,
+          fileSize: doc.fileSize,
+          mimeType: doc.mimeType,
+          fileUrl: doc.fileUrl,
+          storagePath: doc.storagePath,
+          description: doc.description || null,
+        })),
+      });
+    }
+  }
+
+  await prisma.consultantProfile.update({
+    where: { id: consultantProfileId },
+    data: { verificationStatus: "UNDER_REVIEW", isVerified: false },
+  });
+
+  // Fire-and-forget: notify admins
+  void (async () => {
+    try {
+      const admins = await prisma.user.findMany({
+        where: { role: UserRole.ADMIN },
+        select: { id: true },
+      });
+      if (admins.length > 0) {
+        await notifyNewConsultantApplication(
+          admins.map((a) => a.id),
+          {
+            applicantName: userName || "Unknown",
+            applicantEmail: userEmail || "Unknown",
+            dashboardUrl: "/dashboard/admin/users",
+          },
+        );
+      }
+    } catch (notifyError) {
+      console.error(
+        "[Novu] Failed to notify admins of new consultant application:",
+        notifyError,
+      );
+    }
+  })();
+}
+
+// ============================================================================
+// MAIN ENTRY POINT
+// ============================================================================
+
 export async function processOnboardingData(
   userId: string,
   body: any,
 ): Promise<{ success: boolean; user?: any; error?: string }> {
-  // Import validateOnboardingData dynamically to avoid circular dependencies
   const { validateOnboardingData } = await import("./onboarding");
 
   try {
-    console.log("Central Utils: processOnboardingData - Received", {
-      userId,
-      bodyPreview:
-        typeof body === "object" && body !== null
-          ? { ...body, consultantProfile: "..." }
-          : body,
-    });
-
     const validationResult = validateOnboardingData(body);
-
     if (!validationResult.success) {
       console.error("Validation Error:", validationResult.error);
       return { success: false, error: validationResult.error };
     }
 
     const validatedBody = validationResult.data as OnboardingData;
-
-    await getExistingUserForValidation(userId);
+    await assertUserExists(userId);
 
     const updatedUser = await prisma.$transaction(
       async (tx) => {
         const baseUserData: Prisma.UserUpdateInput = {
-          name: validatedBody.name,
-          email: validatedBody.email,
-          phone: validatedBody.phone || null,
-          address: validatedBody.address,
-          role: validatedBody.role,
-          onboardingCompleted: true,
-          timezone: validatedBody.timezone,
-          // New user fields
-          dateOfBirth: validatedBody.dateOfBirth ?? null,
-          gender: validatedBody.gender ?? null,
-          city: validatedBody.city ?? null,
-          country: validatedBody.country ?? null,
-          linkedinUrl: validatedBody.linkedinUrl || null,
-          bio: validatedBody.bio ?? null,
+          ...buildUserUpdateData(validatedBody),
           // Reset profile IDs (will be set by profileFkData)
           consultantProfileId: null,
           consulteeProfileId: null,
@@ -412,20 +496,22 @@ export async function processOnboardingData(
           adminProfileId: null,
         };
 
-        const profileFkData = await updateUserProfileAndGetFkData(
+        const profileFkData = await upsertProfileByRole(
           userId,
           validatedBody,
           tx,
         );
 
-        const finalUserData: Prisma.UserUpdateInput = {
-          ...baseUserData,
-          ...profileFkData,
-        };
+        await persistProfessionalBackground(
+          userId,
+          profileFkData.consultantProfileId,
+          body,
+          tx,
+        );
 
         return tx.user.update({
           where: { id: userId },
-          data: finalUserData,
+          data: { ...baseUserData, ...profileFkData },
           include: {
             consultantProfile: {
               include: {
@@ -437,7 +523,6 @@ export async function processOnboardingData(
               },
             },
             consulteeProfile: true,
-            // Professional background is now at User level
             workExperiences: true,
             education: true,
             certifications: true,
@@ -446,114 +531,23 @@ export async function processOnboardingData(
           },
         });
       },
-      {
-        maxWait: 10000, // Max time to wait to acquire transaction lock (10s)
-        timeout: 30000, // Max transaction execution time (30s)
-      },
+      { maxWait: 10000, timeout: 30000 },
     );
 
-    // If this is a consultant, submit verification request
+    // Post-transaction: consultant verification
     if (
       validatedBody.role === UserRole.CONSULTANT &&
       updatedUser.consultantProfileId
     ) {
       try {
-        // Extract verification data from original body (not validated schema)
-        const verificationLinkedinUrl = body.verificationLinkedinUrl;
-        const verificationNotes = body.verificationNotes;
-        const verificationDocuments = body.verificationDocuments;
-
-        // Update user's LinkedIn URL if provided in verification
-        if (verificationLinkedinUrl) {
-          await prisma.user.update({
-            where: { id: userId },
-            data: { linkedinUrl: verificationLinkedinUrl },
-          });
-        }
-
-        // Create verification request
-        const verification = await prisma.consultantProfileVerification.create({
-          data: {
-            consultantProfileId: updatedUser.consultantProfileId,
-            notes: verificationNotes || null,
-            status: "PENDING",
-          },
-        });
-
-        // Connect or create uploaded documents for the verification
-        if (verificationDocuments && verificationDocuments.length > 0) {
-          // Handle documents that have IDs (created before profile existed - legacy)
-          const existingDocuments = verificationDocuments.filter(
-            (doc: any) => doc.id && !doc.isOnboardingUpload,
-          );
-          if (existingDocuments.length > 0) {
-            const documentIds = existingDocuments.map((doc: any) => doc.id);
-            await prisma.profileVerificationDocument.updateMany({
-              where: { id: { in: documentIds } },
-              data: { verificationId: verification.id },
-            });
-          }
-
-          // Handle documents uploaded during onboarding (no ID yet, have file info)
-          const onboardingDocuments = verificationDocuments.filter(
-            (doc: any) => doc.isOnboardingUpload || (!doc.id && doc.fileUrl),
-          );
-          if (onboardingDocuments.length > 0) {
-            await prisma.profileVerificationDocument.createMany({
-              data: onboardingDocuments.map((doc: any) => ({
-                verificationId: verification.id,
-                fileName: doc.fileName,
-                originalName: doc.originalName,
-                fileSize: doc.fileSize,
-                mimeType: doc.mimeType,
-                fileUrl: doc.fileUrl,
-                storagePath: doc.storagePath,
-                description: doc.description || null,
-              })),
-            });
-          }
-        }
-
-        // Update consultant profile verification status
-        await prisma.consultantProfile.update({
-          where: { id: updatedUser.consultantProfileId },
-          data: {
-            verificationStatus: "UNDER_REVIEW",
-            isVerified: false,
-          },
-        });
-
-        console.log(
-          "Verification request created for consultant:",
+        await submitVerificationRequest(
+          userId,
           updatedUser.consultantProfileId,
+          body,
+          updatedUser.name || "",
+          updatedUser.email || "",
         );
-
-        // Fire-and-forget: notify admins of new consultant application
-        void (async () => {
-          try {
-            const admins = await prisma.user.findMany({
-              where: { role: UserRole.ADMIN },
-              select: { id: true },
-            });
-            if (admins.length > 0) {
-              await notifyNewConsultantApplication(
-                admins.map((a) => a.id),
-                {
-                  applicantName: updatedUser.name || "Unknown",
-                  applicantEmail: updatedUser.email || "Unknown",
-                  dashboardUrl: "/dashboard/admin/users",
-                },
-              );
-            }
-          } catch (notifyError) {
-            console.error(
-              "[Novu] Failed to notify admins of new consultant application:",
-              notifyError,
-            );
-          }
-        })();
       } catch (verificationError) {
-        // Log but don't fail the entire onboarding if verification submission fails
         console.error(
           "Failed to create verification request:",
           verificationError,
@@ -568,17 +562,12 @@ export async function processOnboardingData(
       error instanceof Error
         ? error.message
         : "An unknown error occurred while updating onboarding information.";
-
     if (error instanceof Error) {
       console.error("Error details:", {
         message: error.message,
         stack: error.stack,
       });
-    } else {
-      console.error("Unknown error object:", error);
     }
     return { success: false, error: errorMessage };
   }
 }
-
-// #endregion
