@@ -75,7 +75,6 @@ export async function GET(
             id: true,
             occupation: true,
             aboutMe: true,
-            preferredCommunicationMethod: true,
             preferredLanguage: true,
             goals: true,
             // New fields

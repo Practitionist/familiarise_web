@@ -12,7 +12,6 @@ type OnboardingFormData = PersonalInfoAndRole &
   Partial<ConsulteePreferences> & {
     termsAccepted?: boolean;
     privacyAccepted?: boolean;
-    preferredCommunicationMethod: "VIDEO" | "AUDIO" | "IN_PERSON";
     interests?: string[];
     goals?: string;
   };
@@ -40,8 +39,6 @@ const ConsulteeAgreementForm: React.FC<Props> = ({
       ...formData,
       termsAccepted,
       privacyAccepted,
-      preferredCommunicationMethod:
-        formData.preferredCommunicationMethod || "VIDEO",
     });
   };
 

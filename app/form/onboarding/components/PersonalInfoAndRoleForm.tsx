@@ -24,9 +24,9 @@ interface Props {
   initialData: Partial<FormData>;
 }
 
-const ROLE_DESCRIPTIONS: Record<
+const ROLE_INFO: Record<
   string,
-  { title: string; description: string }
+  { title: string; description: string; disabled?: boolean }
 > = {
   CONSULTANT: {
     title: "Consultant",
@@ -38,7 +38,8 @@ const ROLE_DESCRIPTIONS: Record<
   },
   STAFF: {
     title: "Staff",
-    description: "Manage platform operations",
+    description: "Invite only — contact your administrator",
+    disabled: true,
   },
 };
 
@@ -278,15 +279,18 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
           control={control}
           render={({ field }) => (
             <div className="grid gap-3 sm:grid-cols-3">
-              {Object.entries(ROLE_DESCRIPTIONS).map(([role, info]) => (
+              {Object.entries(ROLE_INFO).map(([role, info]) => (
                 <button
                   key={role}
                   type="button"
-                  onClick={() => field.onChange(role as UserRole)}
+                  disabled={info.disabled}
+                  onClick={() => !info.disabled && field.onChange(role as UserRole)}
                   className={`p-4 rounded-lg border-2 text-left transition-all ${
-                    field.value === role
-                      ? "border-primary bg-primary/5 ring-2 ring-primary/20"
-                      : "border-border hover:border-primary/50 hover:bg-muted/50"
+                    info.disabled
+                      ? "opacity-50 cursor-not-allowed bg-muted border-border"
+                      : field.value === role
+                        ? "border-primary bg-primary/5 ring-2 ring-primary/20"
+                        : "border-border hover:border-primary/50 hover:bg-muted/50"
                   }`}
                 >
                   <div className="font-medium">{info.title}</div>
@@ -321,13 +325,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
                 experts in your field.
               </>
             )}
-            {selectedRole === "STAFF" && (
-              <>
-                As a <strong>Staff</strong> member, you'll help manage platform
-                operations, support users, and ensure smooth experiences for
-                everyone.
-              </>
-            )}
+            {/* STAFF and ADMIN roles are invite-only via admin dashboard */}
           </p>
         </div>
       )}

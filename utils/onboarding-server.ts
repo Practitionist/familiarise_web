@@ -483,6 +483,19 @@ export async function processOnboardingData(
     }
 
     const validatedBody = validationResult.data as OnboardingData;
+
+    // STAFF and ADMIN roles are invite-only — reject from public onboarding
+    if (
+      validatedBody.role === UserRole.STAFF ||
+      validatedBody.role === UserRole.ADMIN
+    ) {
+      return {
+        success: false,
+        error:
+          "Staff and Admin accounts are invite-only. Please contact an administrator.",
+      };
+    }
+
     await assertUserExists(userId);
 
     const updatedUser = await prisma.$transaction(

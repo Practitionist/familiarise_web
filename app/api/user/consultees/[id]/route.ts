@@ -100,7 +100,6 @@ export async function POST(
       data: {
         occupation: body.occupation,
         aboutMe: body.aboutMe,
-        preferredCommunicationMethod: body.preferredCommunicationMethod,
         preferredLanguage: body.preferredLanguage,
         goals: body.goals,
         careerStage: body.careerStage,
@@ -172,7 +171,6 @@ export async function PATCH(
       data: {
         occupation: body.occupation,
         aboutMe: body.aboutMe,
-        preferredCommunicationMethod: body.preferredCommunicationMethod,
         preferredLanguage: body.preferredLanguage,
         goals: body.goals,
         careerStage: body.careerStage,

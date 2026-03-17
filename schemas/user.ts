@@ -39,8 +39,6 @@ export const UserRoleEnum = z.enum([
 
 export const ScheduleTypeEnum = z.enum(["WEEKLY", "CUSTOM"]);
 
-export const ConsultationModeEnum = z.enum(["VIDEO", "AUDIO", "IN_PERSON"]);
-
 export const DayOfWeekEnum = z.enum([
   "MONDAY",
   "TUESDAY",
@@ -247,7 +245,6 @@ export type ConsultantProfile = z.infer<typeof ConsultantProfileSchema>;
 export const ConsulteeProfileSchema = z.object({
   occupation: z.string().optional(),
   aboutMe: z.string().optional(),
-  preferredCommunicationMethod: ConsultationModeEnum.default("VIDEO"),
   preferredLanguage: z.string().optional(),
   goals: z.string().optional(),
 
@@ -270,7 +267,6 @@ export const ConsulteeProfileSchema = z.object({
 export type ConsulteeProfile = z.infer<typeof ConsulteeProfileSchema>;
 
 export const ConsulteePreferencesSchema = z.object({
-  preferredCommunicationMethod: ConsultationModeEnum.default("VIDEO"),
   preferredLanguage: z.string().optional(),
   budgetPreference: BudgetPreferenceEnum.optional().nullable(),
   // Deprecated

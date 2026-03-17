@@ -17,7 +17,7 @@ import {
   OnboardingFormData,
 } from "@/utils/onboarding";
 import { z } from "zod";
-import { CareerStage, BudgetPreference } from "@prisma/client";
+import { CareerStage } from "@prisma/client";
 
 type FormData = z.infer<typeof ConsulteeProfileFormSchema>;
 
@@ -33,13 +33,6 @@ const CAREER_STAGE_OPTIONS = [
   { value: "MID_CAREER", label: "Mid Career (3-10 years)" },
   { value: "SENIOR", label: "Senior (10+ years)" },
   { value: "EXECUTIVE", label: "Executive / C-Level" },
-];
-
-const BUDGET_OPTIONS = [
-  { value: "BUDGET", label: "Budget-friendly options" },
-  { value: "MODERATE", label: "Mid-range pricing" },
-  { value: "PREMIUM", label: "Premium services" },
-  { value: "FLEXIBLE", label: "Flexible / No preference" },
 ];
 
 const ConsulteeProfileForm: React.FC<Props> = ({
@@ -59,14 +52,12 @@ const ConsulteeProfileForm: React.FC<Props> = ({
     defaultValues: {
       occupation: "",
       aboutMe: "",
-      preferredCommunicationMethod: "VIDEO",
       preferredLanguage: "English",
       goals: "",
       careerStage: null,
       currentCompany: "",
       industry: "",
       skillsToDevelop: [],
-      budgetPreference: null,
       ...initialData,
     },
   });
@@ -77,21 +68,19 @@ const ConsulteeProfileForm: React.FC<Props> = ({
       reset({
         occupation: "",
         aboutMe: "",
-        preferredCommunicationMethod: "VIDEO",
         preferredLanguage: "English",
         goals: "",
         careerStage: null,
         currentCompany: "",
         industry: "",
         skillsToDevelop: [],
-        budgetPreference: null,
         ...initialData,
       });
     }
   }, [initialData, reset]);
 
   const onSubmit = (data: FormData) => {
-    onNext(data);
+    onNext({ ...initialData, ...data });
   };
 
   return (
@@ -196,42 +185,13 @@ const ConsulteeProfileForm: React.FC<Props> = ({
           Goals & Preferences
         </h3>
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-2">
-            <Label htmlFor="preferredLanguage">Preferred Language</Label>
-            <Input
-              id="preferredLanguage"
-              {...register("preferredLanguage")}
-              placeholder="e.g., English, Spanish"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="budgetPreference">Budget Preference</Label>
-            <Controller
-              name="budgetPreference"
-              control={control}
-              render={({ field }) => (
-                <Select
-                  value={field.value || undefined}
-                  onValueChange={(value) =>
-                    field.onChange(value as BudgetPreference)
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select budget range" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {BUDGET_OPTIONS.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            />
-          </div>
+        <div className="space-y-2">
+          <Label htmlFor="preferredLanguage">Preferred Language</Label>
+          <Input
+            id="preferredLanguage"
+            {...register("preferredLanguage")}
+            placeholder="e.g., English, Spanish"
+          />
         </div>
       </div>
 

@@ -6,8 +6,8 @@ import {
   OnboardingFormDataSchema,
   transformOnboardingFormToServerData,
 } from "@/utils/onboarding";
-import { Progress } from "@/components/ui/progress";
-import { LogOut } from "lucide-react";
+import { Check, LogOut } from "lucide-react";
+import { cn } from "@/utils/tailwind";
 import { useToast } from "@/hooks/use-toast";
 import { signOut, useSession } from "@/lib/auth-client";
 import { useRouter } from "next/navigation";
@@ -51,9 +51,9 @@ const STEP_LABELS = {
 const MultiStepForm: React.FC = () => {
   const { data: session } = useSession();
   const [step, setStep] = useState(0);
-  const [formData, setFormData] = useState<OnboardingFormData>({
-    preferredCommunicationMethod: "VIDEO",
-  } as OnboardingFormData);
+  const [formData, setFormData] = useState<OnboardingFormData>(
+    {} as OnboardingFormData,
+  );
   const router = useRouter();
   const { toast } = useToast();
 
@@ -65,7 +65,6 @@ const MultiStepForm: React.FC = () => {
       onlineStatus: false,
       onboardingCompleted: false,
       role: "CONSULTEE",
-      preferredCommunicationMethod: "VIDEO",
     } as OnboardingFormData,
   });
 
@@ -74,10 +73,6 @@ const MultiStepForm: React.FC = () => {
       const updatedData = {
         ...prevData,
         ...stepData,
-        preferredCommunicationMethod:
-          stepData.preferredCommunicationMethod ??
-          prevData.preferredCommunicationMethod ??
-          "VIDEO",
       };
 
       if (stepData.scheduleType) {
@@ -349,8 +344,6 @@ const MultiStepForm: React.FC = () => {
     STEP_LABELS[currentRole as keyof typeof STEP_LABELS] ||
     STEP_LABELS.CONSULTEE;
   const totalSteps = stepLabels.length;
-  // Progress aligns with dot positions (0%, 25%, 50%, 75%, 100% for 5 steps)
-  const progressValue = totalSteps > 1 ? (step / (totalSteps - 1)) * 100 : 0;
 
   // Use wider layout for steps that need more horizontal space
   const wideLayoutSteps = ["Availability"];
@@ -408,39 +401,53 @@ const MultiStepForm: React.FC = () => {
         <main
           className={`container mx-auto px-4 py-8 ${useWideLayout ? "max-w-[80%]" : "max-w-3xl"}`}
         >
-          {/* Progress Section */}
-          <div className="mb-8">
-            <div className="flex justify-between mb-2">
-              {stepLabels.map((label, index) => (
-                <div
-                  key={label}
-                  className={`text-xs font-medium transition-colors text-center min-w-0 ${
-                    index <= step ? "text-primary" : "text-muted-foreground"
-                  }`}
-                >
-                  {index === step ? label : "\u00A0"}
-                </div>
-              ))}
-            </div>
-            <Progress value={progressValue} className="h-2" />
-            <div className="flex justify-between mt-2">
-              {stepLabels.map((label, index) => (
-                <div
-                  key={`dot-${label}`}
-                  className="flex justify-center min-w-0"
-                >
+          {/* Progress Stepper */}
+          <div className="flex items-start justify-between mb-8">
+            {stepLabels.map((label, index) => (
+              <React.Fragment key={label}>
+                {/* Step circle + label */}
+                <div className="flex flex-col items-center">
                   <div
-                    className={`w-3 h-3 rounded-full transition-colors ${
+                    className={cn(
+                      "w-9 h-9 rounded-full flex items-center justify-center text-sm font-medium border-2 transition-all",
+                      index < step &&
+                        "bg-primary border-primary text-primary-foreground",
+                      index === step &&
+                        "bg-primary border-primary text-primary-foreground ring-4 ring-primary/20",
+                      index > step &&
+                        "border-muted-foreground/30 text-muted-foreground",
+                    )}
+                  >
+                    {index < step ? (
+                      <Check className="w-4 h-4" />
+                    ) : (
+                      index + 1
+                    )}
+                  </div>
+                  <span
+                    className={cn(
+                      "text-xs mt-1.5 text-center max-w-[80px] truncate",
+                      index <= step
+                        ? "text-primary font-medium"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    {label}
+                  </span>
+                </div>
+                {/* Connector line */}
+                {index < stepLabels.length - 1 && (
+                  <div
+                    className={cn(
+                      "flex-1 h-0.5 mx-2 mt-[18px] transition-colors",
                       index < step
                         ? "bg-primary"
-                        : index === step
-                          ? "bg-primary ring-4 ring-primary/20"
-                          : "bg-muted"
-                    }`}
+                        : "bg-muted-foreground/20",
+                    )}
                   />
-                </div>
-              ))}
-            </div>
+                )}
+              </React.Fragment>
+            ))}
           </div>
 
           {/* Form Card */}

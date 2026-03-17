@@ -9,7 +9,6 @@ import {
 type OnboardingFormData = PersonalInfoAndRole &
   Partial<ConsulteeProfile> &
   Partial<ConsulteePreferences> & {
-    preferredCommunicationMethod: "VIDEO" | "AUDIO" | "IN_PERSON";
     interests?: string[];
     goals?: string;
   };
@@ -19,12 +18,6 @@ interface Props {
   onBack: () => void;
   formData: OnboardingFormData;
 }
-
-const COMMUNICATION_LABELS: Record<string, string> = {
-  VIDEO: "Video Call",
-  AUDIO: "Audio Call",
-  IN_PERSON: "In Person",
-};
 
 const ConsulteeReviewForm: React.FC<Props> = ({
   onSubmit,
@@ -78,13 +71,7 @@ const ConsulteeReviewForm: React.FC<Props> = ({
       {renderSection(
         "Preferences",
         <div className="bg-muted/50 rounded-lg p-4">
-          {renderField(
-            "Communication",
-            COMMUNICATION_LABELS[formData.preferredCommunicationMethod] ||
-              formData.preferredCommunicationMethod,
-          )}
           {renderField("Language", formData.preferredLanguage)}
-          {renderField("Budget", formData.budgetPreference?.replace("_", " "))}
         </div>,
       )}
 

@@ -1,6 +1,5 @@
 import { z } from "zod";
 import {
-  ConsultationMode,
   ScheduleType,
   UserRole,
   Gender,
@@ -258,7 +257,6 @@ export const ConsulteeProfileFormSchema = ConsulteeProfileSchema.omit({
 }).extend({
   occupation: z.string().min(1, "Occupation is required"),
   aboutMe: z.string().min(1, "About me is required"),
-  preferredCommunicationMethod: z.nativeEnum(ConsultationMode),
   skillsToDevelop: z.array(z.string()).optional(),
 });
 
@@ -316,17 +314,10 @@ const consultantFormFields = sharedFormFields.extend({
   achievements: z.array(AchievementCreateInputSchema).optional(),
   educationHistory: z.array(EducationSchema).optional(),
   certificationsList: z.array(CertificationSchema).optional(),
-  // Communication method default
-  preferredCommunicationMethod: z
-    .nativeEnum(ConsultationMode)
-    .default(ConsultationMode.VIDEO),
 });
 
 const consulteeFormFields = sharedFormFields.extend({
   ...ConsulteeProfileSchema.omit({ educationHistory: true }).shape,
-  preferredCommunicationMethod: z
-    .nativeEnum(ConsultationMode)
-    .default(ConsultationMode.VIDEO),
 });
 
 const staffFormFields = sharedFormFields.extend({
@@ -493,8 +484,6 @@ export function transformOnboardingFormToServerData(
           create: {
             occupation: formData.occupation,
             aboutMe: formData.aboutMe,
-            preferredCommunicationMethod:
-              formData.preferredCommunicationMethod || ConsultationMode.VIDEO,
             preferredLanguage: formData.preferredLanguage,
             goals: formData.goals,
             careerStage: formData.careerStage,
@@ -618,7 +607,6 @@ export function transformFrontendToServerData(
           create: {
             occupation: p.occupation,
             aboutMe: p.aboutMe,
-            preferredCommunicationMethod: p.preferredCommunicationMethod,
             preferredLanguage: p.preferredLanguage,
             goals: p.goals,
             careerStage: p.careerStage,

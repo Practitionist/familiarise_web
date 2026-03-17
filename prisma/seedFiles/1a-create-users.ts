@@ -7,7 +7,6 @@ import {
   CareerStage,
   ConsultantProfile,
   ConsultantVerificationStatus,
-  ConsultationMode,
   ConsulteeProfile,
   Gender,
   Prisma,
@@ -464,11 +463,6 @@ function createConsulteeProfileData() {
 
   return {
     occupation: sanitizeString(faker.person.jobTitle()),
-    preferredCommunicationMethod: faker.helpers.arrayElement([
-      ConsultationMode.VIDEO,
-      ConsultationMode.AUDIO,
-      ConsultationMode.IN_PERSON,
-    ]),
     preferredLanguage: faker.helpers.arrayElement([
       "English",
       "Spanish",

@@ -554,7 +554,6 @@ model ConsulteeProfile {
   id                           String            @id @default(uuid())
   occupation                   String?
   aboutMe                      String?           @db.Text
-  preferredCommunicationMethod ConsultationMode? @default(VIDEO)
   preferredLanguage            String?
   goals                        String?           @db.Text
 
@@ -580,12 +579,6 @@ model ConsulteeProfile {
 
   @@index([userId])
   @@index([careerStage])
-}
-
-enum ConsultationMode {
-  VIDEO
-  AUDIO
-  IN_PERSON
 }
 
 model StaffProfile {

@@ -28,11 +28,7 @@ const ConsultantReviewForm: React.FC<Props> = ({
   const handleSubmit = () => {
     if (isSubmitting) return;
     setIsSubmitting(true);
-    onSubmit({
-      ...formData,
-      preferredCommunicationMethod:
-        formData.preferredCommunicationMethod || "VIDEO",
-    });
+    onSubmit(formData);
   };
 
   const isValidWeeklySlot = (slot: {

@@ -67,7 +67,6 @@ export function buildConsulteeScalarData(data: ConsulteeProfileCreateData) {
   return {
     occupation: data.occupation ?? "",
     aboutMe: data.aboutMe ?? "",
-    preferredCommunicationMethod: data.preferredCommunicationMethod,
     preferredLanguage: data.preferredLanguage ?? "",
     goals,
     careerStage: data.careerStage ?? null,
