@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { Building2 } from "lucide-react";
 
+const LOGO_DEV_TOKEN = process.env.NEXT_PUBLIC_LOGO_DEV_TOKEN;
+
 // Well-known company name → domain for auto-detection
 const KNOWN_COMPANIES: Record<string, string> = {
   google: "google.com",
@@ -124,14 +126,14 @@ export function CompanyLogo({
   // Use explicit domain, or auto-detect from company name
   const resolvedDomain = companyDomain || lookupCompanyDomain(companyName);
 
-  if (resolvedDomain && !imgError) {
+  if (resolvedDomain && !imgError && LOGO_DEV_TOKEN) {
     return (
       <div
         className={`flex-shrink-0 rounded-lg overflow-hidden bg-white border ${className}`}
         style={{ width: size, height: size }}
       >
         <img
-          src={`https://img.logo.dev/${resolvedDomain}?token=pk_a]3IhKKPSG6ibd40IJtZlA&size=${size * 2}&format=png`}
+          src={`https://img.logo.dev/${resolvedDomain}?token=${LOGO_DEV_TOKEN}&size=${size * 2}&format=png`}
           alt={`${companyName} logo`}
           width={size}
           height={size}
