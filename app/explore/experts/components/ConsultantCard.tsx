@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import type { IConsultantCardData } from "@/types/consultant";
+import { CompanyLogo } from "@/components/ui/company-logo";
 import {
   Star,
   MapPin,
@@ -15,6 +16,7 @@ import {
   Briefcase,
   ArrowRight,
   CheckCircle2,
+  BadgeCheck,
 } from "lucide-react";
 import { useCurrency } from "@/hooks/useCurrency";
 
@@ -128,18 +130,19 @@ export const ConsultantCard = memo(function ConsultantCard({
                 src={consultant.user.image || "/placeholder-user.jpg"}
                 fill
               />
-              {/* Online indicator */}
-              <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-emerald-500 rounded-full border-2 border-white" />
+              {/* TODO: Add real presence indicator when online tracking is implemented */}
             </div>
             <div className="flex-1 min-w-0">
-              <h3 className="text-xl font-bold text-zinc-900 group-hover:text-zinc-700 transition-colors">
-                {consultant.user.name}
-              </h3>
-              {consultant.user.email && (
-                <span className="text-sm text-zinc-500">
-                  @{consultant.user.email.split("@")[0]}
-                </span>
-              )}
+              <div className="flex items-center gap-1.5">
+                <h3 className="text-xl font-bold text-zinc-900 group-hover:text-zinc-700 transition-colors">
+                  {consultant.user.name}
+                </h3>
+                {consultant.isVerified && (
+                  <span title="Verified by Familiarise">
+                    <BadgeCheck className="w-5 h-5 text-blue-500" />
+                  </span>
+                )}
+              </div>
               <div className="flex items-center gap-2 mt-2">
                 <div className="flex items-center gap-1">
                   <Star className="w-4 h-4 text-amber-400 fill-amber-400" />
@@ -174,7 +177,9 @@ export const ConsultantCard = memo(function ConsultantCard({
                 icon={Clock}
                 label="Experience"
                 value={
-                  consultant.experience ? `${consultant.experience}` : null
+                  consultant.experience
+                    ? `${consultant.experience} years`
+                    : null
                 }
               />
               <ConsultantInfo
@@ -184,6 +189,27 @@ export const ConsultantCard = memo(function ConsultantCard({
               />
             </div>
           </div>
+
+          {/* Company Logos */}
+          {consultant.user.workExperiences &&
+            consultant.user.workExperiences.length > 0 && (
+              <div className="flex items-center gap-2 mb-4">
+                {consultant.user.workExperiences.slice(0, 3).map((exp, i) => (
+                  <CompanyLogo
+                    key={`${consultant.id}-company-${i}`}
+                    companyName={exp.company}
+                    companyDomain={exp.companyDomain ?? undefined}
+                    size={28}
+                    className="border-zinc-200"
+                  />
+                ))}
+                <span className="text-xs text-zinc-400 ml-1">
+                  {consultant.user.workExperiences[0].company}
+                  {consultant.user.workExperiences.length > 1 &&
+                    ` +${consultant.user.workExperiences.length - 1}`}
+                </span>
+              </div>
+            )}
 
           {/* Tags */}
           <div className="flex flex-wrap gap-2">
@@ -262,12 +288,22 @@ export const ConsultantCard = memo(function ConsultantCard({
               <Button
                 variant="outline"
                 className="h-10 border-zinc-300 hover:bg-zinc-50 text-zinc-700 rounded-xl text-sm font-medium"
+                onClick={() =>
+                  router.push(
+                    `/explore/experts/${consultant.id}?action=trial`,
+                  )
+                }
               >
                 Free Trial
               </Button>
               <Button
                 variant="outline"
                 className="h-10 border-zinc-300 hover:bg-zinc-50 text-zinc-700 rounded-xl text-sm font-medium"
+                onClick={() =>
+                  router.push(
+                    `/explore/experts/${consultant.id}?action=book`,
+                  )
+                }
               >
                 Book Session
               </Button>

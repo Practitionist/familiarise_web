@@ -287,7 +287,7 @@ export default function ExpertsInteractiveContent({
         {/* Browse All Experts */}
         <div ref={browseSectionRef} id="all-experts">
           <SectionHeader
-            title="Browse All Experts"
+            title="Browse Familiarise Experts"
             icon={<Search className="w-5 h-5 text-white" />}
           />
 

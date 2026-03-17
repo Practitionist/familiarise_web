@@ -3,6 +3,7 @@
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { motion } from "framer-motion";
 import { Quote, Star } from "lucide-react";
+import Image from "next/image";
 
 const TESTIMONIALS = [
   {
@@ -63,11 +64,11 @@ export function SatisfiedTestimonial() {
             </span>
           </div>
           <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold text-white mb-4">
-            What Our <span className="silver-text">Customers</span> Say
+            What <span className="silver-text">Professionals</span> Say
           </h2>
           <p className="text-lg text-zinc-400 max-w-2xl mx-auto">
             Hear from professionals who&apos;ve transformed their careers with
-            our expert mentors
+            expert mentors on Familiarise
           </p>
         </motion.div>
 
@@ -122,6 +123,19 @@ export function SatisfiedTestimonial() {
                       {testimonial.role} at {testimonial.company}
                     </p>
                   </div>
+                </div>
+
+                {/* Reviewed on Familiarise */}
+                <div className="flex items-center gap-1.5 mt-3 pt-3 border-t border-zinc-800">
+                  <Image
+                    src="/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif"
+                    alt="Familiarise"
+                    width={14}
+                    height={14}
+                  />
+                  <span className="text-[10px] text-zinc-500">
+                    Reviewed on Familiarise
+                  </span>
                 </div>
               </div>
             </motion.div>

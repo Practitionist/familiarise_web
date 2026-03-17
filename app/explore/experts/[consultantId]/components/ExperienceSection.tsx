@@ -8,6 +8,7 @@ import {
   MapPin,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { CompanyLogo } from "@/components/ui/company-logo";
 import { WorkExperience, Education, Certification } from "@prisma/client";
 
 interface ExperienceSectionProps {
@@ -48,9 +49,11 @@ function formatYearRange(
 function WorkExperienceCard({ experience }: { experience: WorkExperience }) {
   return (
     <div className="flex gap-4 pb-4 last:pb-0 border-b last:border-b-0 border-zinc-100">
-      <div className="flex-shrink-0 w-12 h-12 rounded-lg bg-zinc-100 flex items-center justify-center">
-        <Briefcase className="w-5 h-5 text-zinc-500" />
-      </div>
+      <CompanyLogo
+        companyName={experience.company}
+        companyDomain={experience.companyDomain ?? undefined}
+        size={48}
+      />
       <div className="flex-1 min-w-0">
         <h4 className="font-semibold text-zinc-900">{experience.title}</h4>
         <p className="text-zinc-600">{experience.company}</p>

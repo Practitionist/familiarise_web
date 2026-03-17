@@ -3,7 +3,8 @@
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
-import { User, Star, ArrowRight, Flame, Clock } from "lucide-react";
+import { User, Star, ArrowRight, Flame, Clock, BadgeCheck } from "lucide-react";
+import { CompanyLogo } from "@/components/ui/company-logo";
 import type { IConsultantCardData } from "@/types/consultant";
 
 interface ExpertMiniCardProps {
@@ -51,9 +52,16 @@ export default function ExpertMiniCard({ expert, badge }: ExpertMiniCardProps) {
             </AvatarFallback>
           </Avatar>
           <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-zinc-900 line-clamp-1 group-hover:text-zinc-700 transition-colors">
-              {expert.user.name}
-            </h3>
+            <div className="flex items-center gap-1">
+              <h3 className="text-sm font-semibold text-zinc-900 line-clamp-1 group-hover:text-zinc-700 transition-colors">
+                {expert.user.name}
+              </h3>
+              {expert.isVerified && (
+                <span title="Verified by Familiarise">
+                  <BadgeCheck className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
+                </span>
+              )}
+            </div>
             <div className="flex items-center gap-1">
               <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
               <span className="text-xs font-medium text-zinc-600">
@@ -62,6 +70,22 @@ export default function ExpertMiniCard({ expert, badge }: ExpertMiniCardProps) {
             </div>
           </div>
         </div>
+
+        {/* Company Logos */}
+        {expert.user.workExperiences &&
+          expert.user.workExperiences.length > 0 && (
+            <div className="flex items-center gap-1.5 mb-2">
+              {expert.user.workExperiences.slice(0, 2).map((exp, i) => (
+                <CompanyLogo
+                  key={`${expert.id}-company-${i}`}
+                  companyName={exp.company}
+                  companyDomain={exp.companyDomain ?? undefined}
+                  size={20}
+                  className="border-zinc-200"
+                />
+              ))}
+            </div>
+          )}
 
         {/* Domain badge */}
         <Badge className="text-[10px] px-2 py-0.5 bg-zinc-100 text-zinc-600 hover:bg-zinc-100 border-0 w-fit mb-2">

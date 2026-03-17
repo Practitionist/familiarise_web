@@ -1,7 +1,6 @@
 import { Suspense } from "react";
 import { Sparkles, Users, Star, TrendingUp } from "lucide-react";
 import { FeaturedExperts } from "./components/FeaturedExperts";
-import { SatisfiedTestimonial } from "./components/SatisfiedTestimonial";
 import ExpertsInteractiveContent from "./ExpertsInteractiveContent";
 import {
   getExpertsMetadata,
@@ -41,7 +40,6 @@ function HeroSection() {
             Connect with industry experts who understand your journey.
           </p>
 
-          {/* Stats */}
           <div className="flex flex-wrap justify-center gap-8 md:gap-16">
             {STATS.map((stat) => (
               <div key={stat.label} className="text-center">
@@ -89,8 +87,6 @@ export default async function ExploreExperts() {
           newestExperts={newestExperts}
         />
       </Suspense>
-
-      <SatisfiedTestimonial />
     </main>
   );
 }

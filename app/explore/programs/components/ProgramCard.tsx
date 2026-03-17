@@ -2,9 +2,11 @@
 
 import { RegistrationBadge } from "@/components/ui/registration-badge";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, Flame, Sparkles } from "lucide-react";
+import { ArrowRight, Flame, Sparkles, Star } from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
+import { useCurrency } from "@/hooks/useCurrency";
+import { CompanyLogo } from "@/components/ui/company-logo";
 import { isClassProgram, Program } from "../utils";
 
 export type ProgramCardVariant = "grid" | "list" | "carousel";
@@ -21,7 +23,7 @@ const badgeConfig: Record<
   { label: string; icon: React.ReactNode; className: string }
 > = {
   featured: {
-    label: "Featured",
+    label: "Familiarise Pick",
     icon: <Sparkles className="w-3 h-3" />,
     className: "bg-amber-500 text-white",
   },
@@ -61,6 +63,35 @@ function ExtraBadge({ badge }: { badge: ProgramBadge }) {
   );
 }
 
+/** Extract consultant rating from plan data if available (API includes consultantProfile). */
+function getProgramRating(program: Program): number | null {
+  const cp = (program as Record<string, unknown>).consultantProfile as
+    | { rating?: number }
+    | undefined;
+  return cp?.rating ?? null;
+}
+
+/** Extract consultant headline from plan data if available. */
+function getProgramInstructor(
+  program: Program,
+): { headline: string } | null {
+  const cp = (program as Record<string, unknown>).consultantProfile as
+    | { headline?: string | null }
+    | undefined;
+  if (cp?.headline) return { headline: cp.headline };
+  return null;
+}
+
+/** Extract instructor work experiences (for company logo stickers). */
+function getInstructorWorkExperiences(
+  program: Program,
+): Array<{ company: string; companyDomain: string | null; isCurrent: boolean }> {
+  const cp = (program as Record<string, unknown>).consultantProfile as
+    | { user?: { workExperiences?: Array<{ company: string; companyDomain: string | null; isCurrent: boolean }> } }
+    | undefined;
+  return cp?.user?.workExperiences ?? [];
+}
+
 function GridCard({
   program,
   badge,
@@ -69,6 +100,10 @@ function GridCard({
   badge?: ProgramBadge;
 }) {
   const router = useRouter();
+  const { formatPrice } = useCurrency();
+  const rating = getProgramRating(program);
+  const instructor = getProgramInstructor(program);
+  const workExperiences = getInstructorWorkExperiences(program);
 
   const handleClick = () => {
     if (isClassProgram(program)) {
@@ -124,14 +159,54 @@ function GridCard({
           {program.description}
         </p>
 
+        {/* Instructor info + company logos */}
+        {(instructor || workExperiences.length > 0) && (
+          <div className="flex items-center gap-2 mb-3">
+            {workExperiences.slice(0, 2).map((exp, i) => (
+              <CompanyLogo
+                key={`grid-company-${program.id}-${i}`}
+                companyName={exp.company}
+                companyDomain={exp.companyDomain ?? undefined}
+                size={20}
+                className="border-zinc-200"
+              />
+            ))}
+            {instructor && (
+              <span className="text-xs text-zinc-400 line-clamp-1">
+                {instructor.headline}
+              </span>
+            )}
+          </div>
+        )}
+
         <div className="flex items-center justify-between pt-4 border-t border-zinc-100">
-          <div className="text-xl font-bold text-zinc-900">
-            ${program.price}
+          <div className="flex items-center gap-2">
+            <div className="text-xl font-bold text-zinc-900">
+              {formatPrice(program.price / 100)}
+            </div>
+            {rating !== null && rating > 0 && (
+              <div className="flex items-center gap-0.5 ml-1">
+                <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                <span className="text-xs font-medium text-zinc-600">
+                  {rating.toFixed(1)}
+                </span>
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-1 text-sm font-medium text-zinc-500 group-hover:text-zinc-900 transition-colors">
             <span>View Details</span>
             <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
           </div>
+        </div>
+
+        <div className="flex items-center gap-1 mt-2">
+          <Image
+            src="/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif"
+            alt="Familiarise"
+            width={12}
+            height={12}
+          />
+          <span className="text-[10px] text-zinc-400">on Familiarise</span>
         </div>
       </div>
     </div>
@@ -146,6 +221,10 @@ function ListCard({
   badge?: ProgramBadge;
 }) {
   const router = useRouter();
+  const { formatPrice } = useCurrency();
+  const rating = getProgramRating(program);
+  const instructor = getProgramInstructor(program);
+  const workExperiences = getInstructorWorkExperiences(program);
 
   const handleClick = () => {
     if (isClassProgram(program)) {
@@ -199,23 +278,63 @@ function ListCard({
           <p className="text-sm text-zinc-500 line-clamp-2">
             {program.description}
           </p>
+          {/* Instructor info + company logos */}
+          {(instructor || workExperiences.length > 0) && (
+            <div className="flex items-center gap-2 mt-2">
+              {workExperiences.slice(0, 3).map((exp, i) => (
+                <CompanyLogo
+                  key={`list-company-${program.id}-${i}`}
+                  companyName={exp.company}
+                  companyDomain={exp.companyDomain ?? undefined}
+                  size={22}
+                  className="border-zinc-200"
+                />
+              ))}
+              {instructor && (
+                <span className="text-xs text-zinc-400 line-clamp-1">
+                  {instructor.headline}
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
-        <div className="flex items-center justify-between mt-4">
-          <div className="text-xl font-bold text-zinc-900">
-            ${program.price}
+        <div>
+          <div className="flex items-center justify-between mt-4">
+            <div className="flex items-center gap-2">
+              <div className="text-xl font-bold text-zinc-900">
+                {formatPrice(program.price / 100)}
+              </div>
+              {rating !== null && rating > 0 && (
+                <div className="flex items-center gap-0.5 ml-1">
+                  <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                  <span className="text-xs font-medium text-zinc-600">
+                    {rating.toFixed(1)}
+                  </span>
+                </div>
+              )}
+            </div>
+            <Button
+              variant="outline"
+              className="rounded-xl border-zinc-300 hover:bg-zinc-50"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleClick();
+              }}
+            >
+              View Details
+              <ArrowRight className="w-4 h-4 ml-2" />
+            </Button>
           </div>
-          <Button
-            variant="outline"
-            className="rounded-xl border-zinc-300 hover:bg-zinc-50"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleClick();
-            }}
-          >
-            View Details
-            <ArrowRight className="w-4 h-4 ml-2" />
-          </Button>
+          <div className="flex items-center gap-1 mt-2">
+            <Image
+              src="/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif"
+              alt="Familiarise"
+              width={12}
+              height={12}
+            />
+            <span className="text-[10px] text-zinc-400">on Familiarise</span>
+          </div>
         </div>
       </div>
     </div>
@@ -230,6 +349,7 @@ function CarouselCard({
   badge?: ProgramBadge;
 }) {
   const router = useRouter();
+  const { formatPrice } = useCurrency();
 
   const handleClick = () => {
     if (isClassProgram(program)) {
@@ -280,7 +400,7 @@ function CarouselCard({
         </p>
         <div className="flex items-center justify-between">
           <div className="text-lg font-bold text-zinc-900">
-            ${program.price}
+            {formatPrice(program.price / 100)}
           </div>
           <div className="flex items-center gap-1 text-sm font-medium text-zinc-500 group-hover:text-zinc-900 transition-colors">
             <span>View</span>

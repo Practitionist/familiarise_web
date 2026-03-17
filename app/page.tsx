@@ -12,6 +12,7 @@ import { TrustBadgesSection } from "@/components/home/TrustBadgesSection";
 import { HowItWorksSection } from "@/components/home/HowItWorksSection";
 import { BecomeExpertSection } from "@/components/home/BecomeExpertSection";
 import { FAQSection } from "@/components/home/FAQSection";
+import { SatisfiedTestimonial } from "@/app/explore/experts/components/SatisfiedTestimonial";
 import { getHomeExperts, getHomeReviews, getHomeImages } from "@/lib/data/home";
 
 export default async function Home() {
@@ -61,6 +62,9 @@ export default async function Home() {
 
       {/* Become an Expert CTA - Light mesh gradient */}
       <BecomeExpertSection />
+
+      {/* Explore Testimonials - Dark */}
+      <SatisfiedTestimonial />
 
       {/* FAQ - Clean white */}
       <FAQSection />

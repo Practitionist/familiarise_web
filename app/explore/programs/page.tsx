@@ -15,6 +15,7 @@ import { useSession } from "@/lib/auth-client";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useRef, useState, Suspense } from "react";
 import { useDebouncedCallback } from "use-debounce";
+import { useCurrency } from "@/hooks/useCurrency";
 import { usePrograms, useCuratedPrograms, useTopicsWithCount } from "./hooks";
 import {
   filterAndSortPrograms,
@@ -43,6 +44,7 @@ function ProgramsContent() {
   const searchParams = useSearchParams();
   const { data: session } = useSession();
   const userId = session?.user?.id;
+  const { formatPrice } = useCurrency();
 
   // Tab state from URL
   const tabParam = searchParams.get("tab");
@@ -87,7 +89,7 @@ function ProgramsContent() {
     [],
   );
 
-  // Data hooks — stagger curated sections so they don't all fire on mount
+  // Data hooks
   const { programs, isLoading, hasMore, loadMore } = usePrograms(programType, {
     userId,
     filters,
@@ -105,7 +107,7 @@ function ProgramsContent() {
   const { topics: topicsWithCount, isLoading: topicsLoading } =
     useTopicsWithCount(programType);
 
-  // Build active filter chips (reuse topicsWithCount, no duplicate hook)
+  // Build active filter chips
   const activeFilterChips = useMemo(() => {
     const chips: ActiveFilter[] = [];
     if (filters.topicIds && filters.topicIds.length > 0) {
@@ -134,8 +136,8 @@ function ProgramsContent() {
         min === 0 && max === 0
           ? "Free"
           : max === undefined
-            ? `$${min}+`
-            : `$${min} - $${max}`;
+            ? `${formatPrice(min)}+`
+            : `${formatPrice(min)} - ${formatPrice(max)}`;
       chips.push({ key: "price", label: "Price", value: label });
     }
     if (filters.sort) {
@@ -160,7 +162,7 @@ function ProgramsContent() {
       chips.push({ key: "search", label: "Search", value: searchTerm });
     }
     return chips;
-  }, [filters, topicsWithCount, selectedLevel, searchTerm]);
+  }, [filters, topicsWithCount, selectedLevel, searchTerm, formatPrice]);
 
   const handleRemoveFilter = useCallback((key: string) => {
     if (key.startsWith("topic-")) {
@@ -201,7 +203,6 @@ function ProgramsContent() {
       if (current.includes(topicId)) return prev;
       return { ...prev, topicIds: [...current, topicId] };
     });
-    // Scroll to filter section
     document
       .getElementById("all-programs")
       ?.scrollIntoView({ behavior: "smooth" });
@@ -301,7 +302,7 @@ function ProgramsContent() {
           {/* Featured Carousel */}
           <div className="mb-14">
             <SectionHeader
-              title="Featured Programs"
+              title="Familiarise Featured"
               icon={<Sparkles className="w-5 h-5 text-white" />}
             />
             <FeaturedCarousel

@@ -47,12 +47,18 @@ export interface IConsultantCardData {
   experience: number | null;
   description: string | null;
   createdAt: Date;
+  isVerified?: boolean;
   user: {
     id: string;
     name: string;
     image: string | null;
     profileDisplayImage?: string | null;
     email?: string;
+    workExperiences?: Array<{
+      company: string;
+      companyDomain: string | null;
+      isCurrent: boolean;
+    }>;
   };
   domain: { id: string; name: string } | null;
   subDomains: { id: string; name: string }[];

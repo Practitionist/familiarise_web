@@ -47,7 +47,28 @@ export async function GET(request: NextRequest) {
     }
 
     const includeOptions = {
-      consultantProfile: true,
+      consultantProfile: {
+        include: {
+          user: {
+            select: {
+              name: true,
+              image: true,
+              workExperiences: {
+                select: {
+                  company: true,
+                  companyDomain: true,
+                  isCurrent: true,
+                },
+                orderBy: [
+                  { isCurrent: "desc" as const },
+                  { startDate: "desc" as const },
+                ],
+                take: 3,
+              },
+            },
+          },
+        },
+      },
       topics: true,
       classContents: true,
       ...((includeClasses || includeRegistration) && {
@@ -232,7 +253,28 @@ export async function POST(request: NextRequest) {
         },
       },
       include: {
-        consultantProfile: true,
+        consultantProfile: {
+          include: {
+            user: {
+              select: {
+                name: true,
+                image: true,
+                workExperiences: {
+                  select: {
+                    company: true,
+                    companyDomain: true,
+                    isCurrent: true,
+                  },
+                  orderBy: [
+                    { isCurrent: "desc" as const },
+                    { startDate: "desc" as const },
+                  ],
+                  take: 3,
+                },
+              },
+            },
+          },
+        },
         topics: true,
         classContents: true,
       },

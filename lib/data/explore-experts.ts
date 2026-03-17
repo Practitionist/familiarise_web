@@ -17,6 +17,10 @@ export const consultantListInclude = {
       name: true,
       image: true,
       profileDisplayImage: true,
+      workExperiences: {
+        select: { company: true, companyDomain: true, isCurrent: true },
+        take: 3,
+      },
     },
   },
   domain: { select: { id: true, name: true } },
@@ -136,6 +140,35 @@ export async function fetchExpertsMetadata() {
 
 /** Cached wrapper for Server Components. */
 export const getExpertsMetadata = cache(fetchExpertsMetadata);
+
+// ---------------------------------------------------------------------------
+// Curated experts (Featured / Trending / Newest rows)
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Recent reviews (for testimonial sections)
+// ---------------------------------------------------------------------------
+
+/** Fetch recent high-quality reviews for social proof sections. */
+export const getRecentReviews = cache(async (limit: number = 6) => {
+  return prisma.consultantReview.findMany({
+    where: { rating: { gte: 4 } },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+    include: {
+      consultantProfile: {
+        include: {
+          user: { select: { name: true } },
+        },
+      },
+      consulteeProfile: {
+        include: {
+          user: { select: { name: true, image: true } },
+        },
+      },
+    },
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Curated experts (Featured / Trending / Newest rows)
