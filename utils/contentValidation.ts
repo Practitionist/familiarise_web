@@ -178,6 +178,48 @@ export function validateSensibleContent(text: string): boolean {
   return meaningful && noProfanity;
 }
 
+// ---------------------------------------------------------------------------
+// Tag / Skill name validation
+// ---------------------------------------------------------------------------
+
+/** Characters allowed in a skill/tag name: letters, digits, spaces, and common
+ *  tech symbols (., +, #, -, &, /, @). Rejects everything else. */
+const TAG_NAME_PATTERN = /^[a-zA-Z0-9\s.\-+#&/@()]+$/;
+
+const TAG_MIN_LENGTH = 2;
+const TAG_MAX_LENGTH = 60;
+
+/**
+ * Validate a tag/skill name for format, gibberish, and profanity.
+ * Shared between frontend and API so rules stay in sync.
+ */
+export function validateTagName(name: string): {
+  valid: boolean;
+  error?: string;
+} {
+  const trimmed = name.trim();
+
+  if (trimmed.length < TAG_MIN_LENGTH) {
+    return { valid: false, error: "Skill name is too short" };
+  }
+  if (trimmed.length > TAG_MAX_LENGTH) {
+    return { valid: false, error: "Skill name is too long (max 60 characters)" };
+  }
+  if (!TAG_NAME_PATTERN.test(trimmed)) {
+    return {
+      valid: false,
+      error: "Skill name can only contain letters, numbers, and common symbols (. + # - & /)",
+    };
+  }
+  if (!isMeaningfulText(trimmed)) {
+    return { valid: false, error: "That doesn't look like a valid skill name" };
+  }
+  if (!isProfanityFree(trimmed)) {
+    return { valid: false, error: "Inappropriate content is not allowed" };
+  }
+  return { valid: true };
+}
+
 /**
  * Clean a string by replacing profanity with asterisks
  * @param text The text to clean
