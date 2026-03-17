@@ -21,7 +21,7 @@ export interface WorkExperience {
   title: string;
   location?: string;
   startDate: Date;
-  endDate?: Date;
+  endDate?: Date | null;
   isCurrent: boolean;
   description?: string;
 }
@@ -43,7 +43,7 @@ export function WorkExperienceSection({
     experience: WorkExperience | Omit<WorkExperience, "id">,
   ) => {
     if ("id" in experience && experience.id) {
-      // Editing existing experience
+      // Editing: narrow union after runtime "id" in check — TS can't prove this
       onUpdate(
         experiences.map((e) =>
           e.id === experience.id ? (experience as WorkExperience) : e,
@@ -77,7 +77,7 @@ export function WorkExperienceSection({
 
   const formatDateRange = (
     startDate: Date,
-    endDate?: Date,
+    endDate?: Date | null,
     isCurrent?: boolean,
   ) => {
     const startDateObj = new Date(startDate);

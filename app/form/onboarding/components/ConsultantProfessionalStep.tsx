@@ -54,28 +54,28 @@ export default function ConsultantProfessionalStep({
       (initialData?.workExperiences || []).map((exp, i) => ({
         ...exp,
         id: exp.id || `work_init_${i}`,
-      })) as WorkExperience[],
+      })),
   );
   const [education, setEducation] = useState<Education[]>(
     () =>
       (initialData?.educationHistory || []).map((edu, i) => ({
         ...edu,
         id: edu.id || `edu_init_${i}`,
-      })) as Education[],
+      })),
   );
   const [certifications, setCertifications] = useState<Certification[]>(
     () =>
       (initialData?.certificationsList || []).map((cert, i) => ({
         ...cert,
         id: cert.id || `cert_init_${i}`,
-      })) as Certification[],
+      })),
   );
   const [achievements, setAchievements] = useState<Achievement[]>(
     () =>
       (initialData?.achievements || []).map((ach, i) => ({
         ...ach,
-        id: (ach as any).id || `ach_init_${i}`,
-      })) as Achievement[],
+        id: ach.id || `ach_init_${i}`,
+      })),
   );
 
   // If expertise data was already filled (coming back), pre-populate
@@ -92,25 +92,25 @@ export default function ConsultantProfessionalStep({
         (initialData.workExperiences || []).map((exp, i) => ({
           ...exp,
           id: exp.id || `work_init_${i}`,
-        })) as WorkExperience[],
+        })),
       );
       setEducation(
         (initialData.educationHistory || []).map((edu, i) => ({
           ...edu,
           id: edu.id || `edu_init_${i}`,
-        })) as Education[],
+        })),
       );
       setCertifications(
         (initialData.certificationsList || []).map((cert, i) => ({
           ...cert,
           id: cert.id || `cert_init_${i}`,
-        })) as Certification[],
+        })),
       );
       setAchievements(
         (initialData.achievements || []).map((ach, i) => ({
           ...ach,
-          id: (ach as any).id || `ach_init_${i}`,
-        })) as Achievement[],
+          id: ach.id || `ach_init_${i}`,
+        })),
       );
     }
   }, [initialData]);

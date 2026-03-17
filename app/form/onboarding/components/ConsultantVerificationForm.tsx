@@ -69,6 +69,7 @@ export default function ConsultantVerificationForm({
           throw new Error(result.error || "Upload failed");
         }
 
+        // API response boundary — would need a response schema to avoid this
         return result.data as UploadedDocument;
       } finally {
         setIsUploading(false);

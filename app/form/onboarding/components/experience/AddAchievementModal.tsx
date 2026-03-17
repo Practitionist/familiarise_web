@@ -20,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { AchievementCreateInputSchema } from "@/utils/onboarding";
 import type { Achievement } from "./AchievementsSection";
 
 interface AddAchievementModalProps {
@@ -86,7 +87,8 @@ export function AddAchievementModal({
       achievementType: formData.achievementType,
     };
 
-    onSave(data as Achievement);
+    const validated = AchievementCreateInputSchema.parse(data);
+    onSave(validated);
   };
 
   return (

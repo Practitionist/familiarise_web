@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { CompanyLogo, lookupCompanyDomain } from "@/components/ui/company-logo";
+import { WorkExperienceSchema } from "@/schemas/user";
 import { WorkExperience } from "./WorkExperienceSection";
 
 interface AddWorkExperienceModalProps {
@@ -108,7 +109,8 @@ export function AddWorkExperienceModal({
       description: formData.description || undefined,
     };
 
-    onSave(data as WorkExperience);
+    const validated = WorkExperienceSchema.parse(data);
+    onSave(validated);
   };
 
   return (

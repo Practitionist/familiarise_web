@@ -7,7 +7,7 @@ import {
   PersonalInfoAndRole,
 } from "@/schemas/user";
 
-type OnboardingFormData = PersonalInfoAndRole &
+type ConsulteeFormData = Partial<PersonalInfoAndRole> &
   Partial<ConsulteeProfile> &
   Partial<ConsulteePreferences> & {
     termsAccepted?: boolean;
@@ -17,9 +17,9 @@ type OnboardingFormData = PersonalInfoAndRole &
   };
 
 interface Props {
-  onSubmit: (data: OnboardingFormData) => void;
+  onSubmit: (data: ConsulteeFormData) => void;
   onBack: () => void;
-  formData: OnboardingFormData;
+  formData: ConsulteeFormData;
 }
 
 const ConsulteeAgreementForm: React.FC<Props> = ({
@@ -60,6 +60,7 @@ const ConsulteeAgreementForm: React.FC<Props> = ({
           <Checkbox
             id="terms"
             checked={termsAccepted}
+            // Radix CheckedState = boolean | "indeterminate"; no indeterminate here
             onCheckedChange={(checked) => setTermsAccepted(checked as boolean)}
             className="h-5 w-5"
           />
@@ -78,6 +79,7 @@ const ConsulteeAgreementForm: React.FC<Props> = ({
           <Checkbox
             id="privacy"
             checked={privacyAccepted}
+            // Radix CheckedState narrowing — no indeterminate
             onCheckedChange={(checked) =>
               setPrivacyAccepted(checked as boolean)
             }

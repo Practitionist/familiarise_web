@@ -68,7 +68,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
       email: session?.user?.email || "",
       onlineStatus: false,
       onboardingCompleted: false,
-      role: "CONSULTEE" as UserRole,
+      role: UserRole.CONSULTEE,
       gender: null,
       city: "",
       country: "",
@@ -86,7 +86,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
         email: session?.user?.email || "",
         onlineStatus: false,
         onboardingCompleted: false,
-        role: "CONSULTEE" as UserRole,
+        role: UserRole.CONSULTEE,
         gender: null,
         city: "",
         country: "",
@@ -167,6 +167,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
               render={({ field }) => (
                 <Select
                   value={field.value || undefined}
+                  // Radix Select returns string; values are Gender enum members
                   onValueChange={(value) => field.onChange(value as Gender)}
                 >
                   <SelectTrigger>
@@ -284,6 +285,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
                   key={role}
                   type="button"
                   disabled={info.disabled}
+                  // Object.entries types keys as string; role is a UserRole member
                   onClick={() => !info.disabled && field.onChange(role as UserRole)}
                   className={`p-4 rounded-lg border-2 text-left transition-all ${
                     info.disabled

@@ -127,6 +127,7 @@ const ConsulteeProfileForm: React.FC<Props> = ({
               render={({ field }) => (
                 <Select
                   value={field.value || undefined}
+                  // Radix Select returns string; values are CareerStage enum members
                   onValueChange={(value) =>
                     field.onChange(value as CareerStage)
                   }

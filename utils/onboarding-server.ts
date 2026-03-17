@@ -22,6 +22,30 @@ import {
 } from "./onboarding-shared";
 
 // ============================================================================
+// TYPES
+// ============================================================================
+
+/** Shape of a verification document as received from the onboarding form */
+interface VerificationDocumentInput {
+  id?: string;
+  isOnboardingUpload?: boolean;
+  fileName?: string;
+  originalName?: string;
+  fileSize?: number;
+  mimeType?: string;
+  fileUrl?: string;
+  storagePath?: string;
+  description?: string;
+}
+
+/** Verification-related fields extracted from the onboarding body */
+interface VerificationBody {
+  verificationLinkedinUrl?: string;
+  verificationNotes?: string;
+  verificationDocuments?: VerificationDocumentInput[];
+}
+
+// ============================================================================
 // HELPERS
 // ============================================================================
 
@@ -108,8 +132,8 @@ async function syncAvailabilitySlots(
 
       for (const slot of validWeeklySlots) {
         const timeError = validateWeeklySlotTimeOrder(
-          slot.startDay as DayOfWeek,
-          slot.endDay as DayOfWeek,
+          slot.startDay,
+          slot.endDay,
           slot.startTimeUtc,
           slot.endTimeUtc,
         );
@@ -119,20 +143,7 @@ async function syncAvailabilitySlots(
       for (let i = 0; i < validWeeklySlots.length; i++) {
         for (let j = i + 1; j < validWeeklySlots.length; j++) {
           if (
-            slotsOverlap(
-              validWeeklySlots[i] as {
-                startDay: DayOfWeek;
-                endDay: DayOfWeek;
-                startTimeUtc: number;
-                endTimeUtc: number;
-              },
-              validWeeklySlots[j] as {
-                startDay: DayOfWeek;
-                endDay: DayOfWeek;
-                startTimeUtc: number;
-                endTimeUtc: number;
-              },
-            )
+            slotsOverlap(validWeeklySlots[i], validWeeklySlots[j])
           ) {
             throw new Error(
               "Weekly availability slots contain overlapping time ranges",
@@ -278,16 +289,20 @@ async function upsertProfileByRole(
         tx,
       );
     case UserRole.ADMIN:
-      if ((validatedBody as any).adminProfile?.create) {
+      if (validatedBody.adminProfile?.create) {
         return upsertAdminProfile(
           userId,
-          (validatedBody as any).adminProfile.create,
+          validatedBody.adminProfile.create,
           tx,
         );
       }
       return {};
-    default:
-      throw new Error(`Invalid role: ${(validatedBody as any).role}`);
+    default: {
+      const _exhaustiveCheck: never = validatedBody;
+      throw new Error(
+        `Invalid role: ${String((_exhaustiveCheck as { role: string }).role)}`,
+      );
+    }
   }
 }
 
@@ -298,7 +313,7 @@ async function upsertProfileByRole(
 async function persistProfessionalBackground(
   userId: string,
   consultantProfileId: string | undefined,
-  body: any,
+  body: Record<string, unknown>,
   tx: Prisma.TransactionClient,
 ) {
   const {
@@ -381,13 +396,12 @@ async function persistProfessionalBackground(
 async function submitVerificationRequest(
   userId: string,
   consultantProfileId: string,
-  body: any,
+  body: VerificationBody,
   userName: string,
   userEmail: string,
 ) {
-  const verificationLinkedinUrl = body.verificationLinkedinUrl;
-  const verificationNotes = body.verificationNotes;
-  const verificationDocuments = body.verificationDocuments;
+  const { verificationLinkedinUrl, verificationNotes, verificationDocuments } =
+    body;
 
   if (verificationLinkedinUrl) {
     await prisma.user.update({
@@ -406,28 +420,30 @@ async function submitVerificationRequest(
 
   if (verificationDocuments && verificationDocuments.length > 0) {
     const existingDocuments = verificationDocuments.filter(
-      (doc: any) => doc.id && !doc.isOnboardingUpload,
+      (doc) => doc.id && !doc.isOnboardingUpload,
     );
     if (existingDocuments.length > 0) {
       await prisma.profileVerificationDocument.updateMany({
-        where: { id: { in: existingDocuments.map((d: any) => d.id) } },
+        where: {
+          id: { in: existingDocuments.map((d) => d.id).filter(Boolean) as string[] },
+        },
         data: { verificationId: verification.id },
       });
     }
 
     const onboardingDocuments = verificationDocuments.filter(
-      (doc: any) => doc.isOnboardingUpload || (!doc.id && doc.fileUrl),
+      (doc) => doc.isOnboardingUpload || (!doc.id && doc.fileUrl),
     );
     if (onboardingDocuments.length > 0) {
       await prisma.profileVerificationDocument.createMany({
-        data: onboardingDocuments.map((doc: any) => ({
+        data: onboardingDocuments.map((doc) => ({
           verificationId: verification.id,
-          fileName: doc.fileName,
-          originalName: doc.originalName,
-          fileSize: doc.fileSize,
-          mimeType: doc.mimeType,
-          fileUrl: doc.fileUrl,
-          storagePath: doc.storagePath,
+          fileName: doc.fileName ?? "",
+          originalName: doc.originalName ?? "",
+          fileSize: doc.fileSize ?? 0,
+          mimeType: doc.mimeType ?? "",
+          fileUrl: doc.fileUrl ?? "",
+          storagePath: doc.storagePath ?? "",
           description: doc.description || null,
         })),
       });
@@ -471,8 +487,12 @@ async function submitVerificationRequest(
 
 export async function processOnboardingData(
   userId: string,
-  body: any,
-): Promise<{ success: boolean; user?: any; error?: string }> {
+  body: unknown,
+  // Return type: `user` is a Prisma User with deeply-included relations
+  // (consultantProfile, consulteeProfile, slots, domain, etc.). Typing it
+  // precisely would require a shared Prisma payload type across server/action/client
+  // layers — not worth the coupling. Callers only read a few string IDs from it.
+): Promise<{ success: boolean; user?: Record<string, unknown>; error?: string }> {
   const { validateOnboardingData } = await import("./onboarding");
 
   try {
@@ -482,7 +502,7 @@ export async function processOnboardingData(
       return { success: false, error: validationResult.error };
     }
 
-    const validatedBody = validationResult.data as OnboardingData;
+    const validatedBody = validationResult.data;
 
     // STAFF and ADMIN roles are invite-only — reject from public onboarding
     if (
@@ -518,7 +538,7 @@ export async function processOnboardingData(
         await persistProfessionalBackground(
           userId,
           profileFkData.consultantProfileId,
-          body,
+          body as Record<string, unknown>,
           tx,
         );
 
@@ -556,7 +576,7 @@ export async function processOnboardingData(
         await submitVerificationRequest(
           userId,
           updatedUser.consultantProfileId,
-          body,
+          body as VerificationBody,
           updatedUser.name || "",
           updatedUser.email || "",
         );

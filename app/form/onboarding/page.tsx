@@ -51,9 +51,7 @@ const STEP_LABELS = {
 const MultiStepForm: React.FC = () => {
   const { data: session } = useSession();
   const [step, setStep] = useState(0);
-  const [formData, setFormData] = useState<OnboardingFormData>(
-    {} as OnboardingFormData,
-  );
+  const [formData, setFormData] = useState<Partial<OnboardingFormData>>({});
   const router = useRouter();
   const { toast } = useToast();
 
@@ -65,7 +63,7 @@ const MultiStepForm: React.FC = () => {
       onlineStatus: false,
       onboardingCompleted: false,
       role: "CONSULTEE",
-    } as OnboardingFormData,
+    } satisfies Partial<OnboardingFormData>,
   });
 
   const handleNext = (stepData: Partial<OnboardingFormData>) => {
@@ -94,7 +92,7 @@ const MultiStepForm: React.FC = () => {
     setStep((prevStep) => prevStep - 1);
   };
 
-  const handleSubmit = async (data: OnboardingFormData) => {
+  const handleSubmit = async (data: Partial<OnboardingFormData>) => {
     const finalData = { ...formData, ...data };
 
     try {
@@ -126,6 +124,9 @@ const MultiStepForm: React.FC = () => {
       }
 
       // Transform the data for server submission
+      // Cast needed: OnboardingFormDataSchema is a discriminated union (role-specific output),
+      // while OnboardingFormData is an intersection (all fields). The union output satisfies
+      // the intersection at runtime (one branch is fully populated) but TS can't prove it.
       const validated = validationResult.data as OnboardingFormData;
       const requestBody = {
         ...transformOnboardingFormToServerData(validated),
@@ -214,14 +215,14 @@ const MultiStepForm: React.FC = () => {
                 onBack={handleBack}
                 initialData={formData}
                 personalInfo={{
-                  name: formData.name,
-                  email: formData.email,
+                  name: formData.name ?? "",
+                  email: formData.email ?? "",
                   phone: formData.phone,
                   address: formData.address,
-                  onlineStatus: formData.onlineStatus,
+                  onlineStatus: formData.onlineStatus ?? false,
                   timezone: formData.timezone,
                   onboardingCompleted: formData.onboardingCompleted ?? false,
-                  role: formData.role,
+                  role: formData.role ?? "CONSULTANT",
                   emailVerified: formData.emailVerified,
                   image: formData.image,
                 }}
@@ -341,8 +342,9 @@ const MultiStepForm: React.FC = () => {
   // Get step labels based on role
   const currentRole = formData.role || "CONSULTEE";
   const stepLabels =
-    STEP_LABELS[currentRole as keyof typeof STEP_LABELS] ||
-    STEP_LABELS.CONSULTEE;
+    currentRole in STEP_LABELS
+      ? STEP_LABELS[currentRole as keyof typeof STEP_LABELS]
+      : STEP_LABELS.CONSULTEE;
   const totalSteps = stepLabels.length;
 
   // Use wider layout for steps that need more horizontal space

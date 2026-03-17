@@ -60,6 +60,8 @@ export function buildConsultantScalarData(data: ConsultantProfileCreateData) {
 
 /** Build the scalar data for a consultee profile upsert */
 export function buildConsulteeScalarData(data: ConsulteeProfileCreateData) {
+  // Defensive: goals is typed as string after Zod validation, but older clients
+  // may send string[] — the Array.isArray guard handles that safely at runtime.
   const goals = Array.isArray(data.goals)
     ? (data.goals as string[]).join(", ")
     : (data.goals ?? "");
@@ -108,7 +110,7 @@ export function buildAdminScalarData(data: AdminProfileCreateData) {
 
 /** Validates and parses professional background arrays from raw body using Zod schemas.
  *  Returns validated data or null if input is missing/invalid. */
-export function validateProfessionalBackground(body: any) {
+export function validateProfessionalBackground(body: Record<string, unknown>) {
   const workExperiences = Array.isArray(body.workExperiences)
     ? z.array(WorkExperienceSchema).safeParse(body.workExperiences)
     : null;

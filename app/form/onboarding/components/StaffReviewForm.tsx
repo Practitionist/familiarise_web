@@ -5,9 +5,9 @@ import { responsibilitiesAndPermissions } from "@/schemas/responsibbilities-perm
 import React from "react";
 
 interface Props {
-  onSubmit: (data: any) => void; // Match parent component's type
+  onSubmit: (data: Partial<PersonalInfoAndRole & StaffProfile>) => void;
   onBack: () => void;
-  formData: PersonalInfoAndRole &
+  formData: Partial<PersonalInfoAndRole> &
     Partial<StaffProfile> & {
       termsAccepted?: boolean;
       privacyAccepted?: boolean;

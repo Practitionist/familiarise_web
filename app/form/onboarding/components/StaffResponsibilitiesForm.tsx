@@ -12,8 +12,15 @@ import { StaffProfile, PersonalInfoAndRole } from "@/schemas/user";
 import React, { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 
+interface StaffResponsibilitiesStepData {
+  responsibilities: Record<string, boolean>;
+  permissions: Record<string, boolean>;
+  department: string;
+  position: string;
+}
+
 interface Props {
-  onNext: (data: any) => void;
+  onNext: (data: StaffResponsibilitiesStepData) => void;
   onBack: () => void;
   initialData: Partial<StaffProfile & PersonalInfoAndRole>;
 }
@@ -158,6 +165,8 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
                           key={index}
                           className="flex items-center space-x-3 p-2 rounded-lg hover:bg-muted transition-colors"
                         >
+                          {/* Radix CheckedState = boolean | "indeterminate";
+                              these checkboxes never use indeterminate */}
                           <Checkbox
                             id={`responsibility-${category}-${index}`}
                             checked={!!responsibilities[item]}
@@ -208,6 +217,7 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
                           key={index}
                           className="flex items-center space-x-3 p-2 rounded-lg hover:bg-muted transition-colors"
                         >
+                          {/* Radix CheckedState narrowing — no indeterminate */}
                           <Checkbox
                             id={`permission-${category}-${index}`}
                             checked={!!permissions[item]}

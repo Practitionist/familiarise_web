@@ -36,6 +36,7 @@ export const SlotCustomCreateInputSchema = CustomSlotSchema;
 // ============================================================================
 
 export const AchievementCreateInputSchema = z.object({
+  id: z.string().optional(),
   title: z.string().min(1, "Achievement title is required"),
   description: z.string().optional(),
   url: z.string().url().or(z.literal("")).optional(),
@@ -290,6 +291,7 @@ const sharedFormFields = PersonalInfoAndRoleFormSchema.extend({
 });
 
 const consultantFormFields = sharedFormFields.extend({
+  role: z.literal(UserRole.CONSULTANT),
   // Consultant profile fields (from single source)
   ...consultantScalarFields.shape,
   description: z.string().optional(),
@@ -317,10 +319,12 @@ const consultantFormFields = sharedFormFields.extend({
 });
 
 const consulteeFormFields = sharedFormFields.extend({
+  role: z.literal(UserRole.CONSULTEE),
   ...ConsulteeProfileSchema.omit({ educationHistory: true }).shape,
 });
 
 const staffFormFields = sharedFormFields.extend({
+  role: z.literal(UserRole.STAFF),
   ...StaffProfileSchema.shape,
   permissions: z.record(z.boolean()).optional(),
   responsibilities: z.record(z.boolean()).optional(),
@@ -328,15 +332,16 @@ const staffFormFields = sharedFormFields.extend({
 });
 
 const adminFormFields = sharedFormFields.extend({
+  role: z.literal(UserRole.ADMIN),
   adminLevel: z.nativeEnum(AdminLevel).optional(),
   accessScope: z.any().optional().nullable(),
   assignedRegions: z.array(z.string()).optional(),
   adminNotes: z.string().optional(),
 });
 
-// Combined mega-schema: union of all role-specific schemas
-// Each role gets its own fields; shared fields are on the base
-export const OnboardingFormDataSchema = z.union([
+// Combined mega-schema: discriminated union on role to prevent
+// z.union from matching the wrong schema and stripping role-specific fields
+export const OnboardingFormDataSchema = z.discriminatedUnion("role", [
   consultantFormFields,
   consulteeFormFields,
   staffFormFields,
@@ -380,10 +385,17 @@ export type FrontendOnboardingData = FrontendOnboardingBase & {
 
 // OnboardingFormData — flat type with all possible fields (for page-level form state).
 // Individual steps use role-specific schemas for stricter validation.
-export type OnboardingFormData = z.infer<typeof consultantFormFields> &
-  Partial<z.infer<typeof consulteeFormFields>> &
-  Partial<z.infer<typeof staffFormFields>> &
-  Partial<z.infer<typeof adminFormFields>>;
+// Omit `role` from each branch before intersecting, then add it back as UserRole,
+// because the literal role types ("CONSULTANT" & "CONSULTEE" & ...) would collapse to `never`.
+export type OnboardingFormData = Omit<
+  z.infer<typeof consultantFormFields>,
+  "role"
+> &
+  Partial<Omit<z.infer<typeof consulteeFormFields>, "role">> &
+  Partial<Omit<z.infer<typeof staffFormFields>, "role">> &
+  Partial<Omit<z.infer<typeof adminFormFields>, "role">> & {
+    role: UserRole;
+  };
 
 // ============================================================================
 // TRANSFORM: Form Data → Server Payload
@@ -662,11 +674,11 @@ export function transformFrontendToServerData(
 // VALIDATION UTILITIES
 // ============================================================================
 
-export function validateOnboardingData(data: any): {
-  success: boolean;
-  data?: OnboardingData;
-  error?: string;
-} {
+export function validateOnboardingData(
+  data: unknown,
+):
+  | { success: true; data: OnboardingData }
+  | { success: false; error: string } {
   const validationResult = OnboardingDataSchema.safeParse(data);
 
   if (!validationResult.success) {
@@ -679,44 +691,49 @@ export function validateOnboardingData(data: any): {
   return { success: true, data: validationResult.data };
 }
 
-export function validateFrontendOnboardingData(data: any): {
-  success: boolean;
-  data?: FrontendOnboardingData;
-  error?: string;
-} {
+export function validateFrontendOnboardingData(
+  data: unknown,
+):
+  | { success: true; data: FrontendOnboardingData }
+  | { success: false; error: string } {
   try {
-    if (!data.name || !data.email || !data.role) {
+    const record = data as Record<string, unknown>;
+    if (!record.name || !record.email || !record.role) {
       return {
         success: false,
         error: "Missing required fields: name, email, or role",
       };
     }
 
-    switch (data.role) {
-      case UserRole.CONSULTANT:
-        if (!data.consultantProfile) {
+    switch (record.role) {
+      case UserRole.CONSULTANT: {
+        const cp = record.consultantProfile as
+          | { domain?: { id?: string } }
+          | undefined;
+        if (!cp) {
           return { success: false, error: "Consultant profile is required" };
         }
-        if (!data.consultantProfile.domain?.id) {
+        if (!cp.domain?.id) {
           return {
             success: false,
             error: "Domain is required for consultant profile",
           };
         }
         break;
+      }
       case UserRole.CONSULTEE:
-        if (!data.consulteeProfile) {
+        if (!record.consulteeProfile) {
           return { success: false, error: "Consultee profile is required" };
         }
         break;
       case UserRole.STAFF:
-        if (!data.staffProfile) {
+        if (!record.staffProfile) {
           return { success: false, error: "Staff profile is required" };
         }
         break;
     }
 
-    return { success: true, data: data as FrontendOnboardingData };
+    return { success: true, data: record as FrontendOnboardingData };
   } catch (error) {
     return {
       success: false,

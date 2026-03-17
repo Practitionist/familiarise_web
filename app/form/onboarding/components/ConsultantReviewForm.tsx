@@ -13,9 +13,9 @@ import {
 } from "lucide-react";
 
 interface Props {
-  onSubmit: (data: OnboardingFormData) => void | Promise<void>;
+  onSubmit: (data: Partial<OnboardingFormData>) => void | Promise<void>;
   onBack: () => void;
-  formData: OnboardingFormData;
+  formData: Partial<OnboardingFormData>;
 }
 
 const ConsultantReviewForm: React.FC<Props> = ({

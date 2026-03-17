@@ -15,7 +15,7 @@ import TermsAndPrivacyAgreement from "./TermsAndPrivacyAgreement";
 import type { OnboardingFormData } from "@/utils/onboarding";
 
 interface ConsultantAgreementAndVerificationStepProps {
-  onSubmit: (data: OnboardingFormData) => void | Promise<void>;
+  onSubmit: (data: Partial<OnboardingFormData>) => void | Promise<void>;
   onBack: () => void;
   formData: Partial<OnboardingFormData>;
 }
@@ -39,6 +39,7 @@ export default function ConsultantAgreementAndVerificationStep({
   );
   const [notes, setNotes] = useState(formData.verificationNotes || "");
   const [documents, setDocuments] = useState<UploadedDocument[]>(
+    // Schema uses z.array(z.any()) for verification documents; cast to concrete type
     (formData.verificationDocuments as UploadedDocument[]) || [],
   );
   const [isUploading, setIsUploading] = useState(false);
@@ -71,6 +72,7 @@ export default function ConsultantAgreementAndVerificationStep({
           throw new Error(result.error || "Upload failed");
         }
 
+        // API response boundary — would need a response schema to avoid this
         return result.data as UploadedDocument;
       } finally {
         setIsUploading(false);
@@ -128,7 +130,7 @@ export default function ConsultantAgreementAndVerificationStep({
       verificationLinkedinUrl: linkedinUrl,
       verificationNotes: notes,
       verificationDocuments: documents,
-    } as OnboardingFormData;
+    };
 
     onSubmit(finalData);
   };

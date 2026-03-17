@@ -40,6 +40,7 @@ export default function AchievementsSection({
     achievement: Achievement | Omit<Achievement, "id">,
   ) => {
     if ("id" in achievement && achievement.id) {
+      // Editing: narrow union after runtime "id" in check — TS can't prove this
       onUpdate(
         achievements.map((a) =>
           a.id === achievement.id ? (achievement as Achievement) : a,
@@ -47,6 +48,7 @@ export default function AchievementsSection({
       );
       setEditingAchievement(null);
     } else {
+      // Adding: spread + explicit id creates a full Achievement at runtime
       onUpdate([
         ...achievements,
         {

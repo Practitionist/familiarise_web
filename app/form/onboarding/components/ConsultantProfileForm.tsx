@@ -19,6 +19,7 @@ import {
   ConsultantProfileFormSchema,
   OnboardingFormData,
 } from "@/utils/onboarding";
+import type { Resolver } from "react-hook-form";
 import { z } from "zod";
 
 interface Props {
@@ -50,7 +51,10 @@ const ConsultantProfileForm: React.FC<Props> = ({
     reset,
     formState: { errors },
   } = useForm<FormData>({
-    resolver: zodResolver(ConsultantProfileFormSchema) as any,
+    // zodResolver infers slightly different optionality for .default() fields
+    // (e.g., languages: string[] vs string[] | undefined). This targeted assertion
+    // bridges the gap without opting out of type checking entirely.
+    resolver: zodResolver(ConsultantProfileFormSchema) as Resolver<FormData>,
     mode: "onChange",
     defaultValues: {
       description: "",

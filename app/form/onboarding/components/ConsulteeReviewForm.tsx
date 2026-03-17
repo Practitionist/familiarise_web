@@ -6,7 +6,7 @@ import {
   PersonalInfoAndRole,
 } from "@/schemas/user";
 
-type OnboardingFormData = PersonalInfoAndRole &
+type ConsulteeFormData = Partial<PersonalInfoAndRole> &
   Partial<ConsulteeProfile> &
   Partial<ConsulteePreferences> & {
     interests?: string[];
@@ -14,9 +14,9 @@ type OnboardingFormData = PersonalInfoAndRole &
   };
 
 interface Props {
-  onSubmit: (data: OnboardingFormData) => void;
+  onSubmit: (data: ConsulteeFormData) => void;
   onBack: () => void;
-  formData: OnboardingFormData;
+  formData: ConsulteeFormData;
 }
 
 const ConsulteeReviewForm: React.FC<Props> = ({
