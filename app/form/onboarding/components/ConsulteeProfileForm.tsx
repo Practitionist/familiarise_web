@@ -17,7 +17,7 @@ import {
   OnboardingFormData,
 } from "@/utils/onboarding";
 import { z } from "zod";
-import { CareerStage, BudgetPreference } from "@prisma/client";
+import { CareerStage } from "@prisma/client";
 
 type FormData = z.infer<typeof ConsulteeProfileFormSchema>;
 
@@ -27,19 +27,30 @@ interface Props {
   initialData: Partial<OnboardingFormData>;
 }
 
+const LANGUAGE_OPTIONS = [
+  "English",
+  "Hindi",
+  "Spanish",
+  "French",
+  "German",
+  "Mandarin",
+  "Japanese",
+  "Portuguese",
+  "Arabic",
+  "Korean",
+  "Tamil",
+  "Telugu",
+  "Bengali",
+  "Marathi",
+  "Gujarati",
+];
+
 const CAREER_STAGE_OPTIONS = [
   { value: "STUDENT", label: "Student" },
   { value: "EARLY_CAREER", label: "Early Career (0-3 years)" },
   { value: "MID_CAREER", label: "Mid Career (3-10 years)" },
   { value: "SENIOR", label: "Senior (10+ years)" },
   { value: "EXECUTIVE", label: "Executive / C-Level" },
-];
-
-const BUDGET_OPTIONS = [
-  { value: "BUDGET", label: "Budget-friendly options" },
-  { value: "MODERATE", label: "Mid-range pricing" },
-  { value: "PREMIUM", label: "Premium services" },
-  { value: "FLEXIBLE", label: "Flexible / No preference" },
 ];
 
 const ConsulteeProfileForm: React.FC<Props> = ({
@@ -59,14 +70,12 @@ const ConsulteeProfileForm: React.FC<Props> = ({
     defaultValues: {
       occupation: "",
       aboutMe: "",
-      preferredCommunicationMethod: "VIDEO",
       preferredLanguage: "English",
       goals: "",
       careerStage: null,
       currentCompany: "",
       industry: "",
       skillsToDevelop: [],
-      budgetPreference: null,
       ...initialData,
     },
   });
@@ -77,21 +86,19 @@ const ConsulteeProfileForm: React.FC<Props> = ({
       reset({
         occupation: "",
         aboutMe: "",
-        preferredCommunicationMethod: "VIDEO",
         preferredLanguage: "English",
         goals: "",
         careerStage: null,
         currentCompany: "",
         industry: "",
         skillsToDevelop: [],
-        budgetPreference: null,
         ...initialData,
       });
     }
   }, [initialData, reset]);
 
   const onSubmit = (data: FormData) => {
-    onNext(data);
+    onNext({ ...initialData, ...data });
   };
 
   return (
@@ -138,6 +145,7 @@ const ConsulteeProfileForm: React.FC<Props> = ({
               render={({ field }) => (
                 <Select
                   value={field.value || undefined}
+                  // Radix Select returns string; values are CareerStage enum members
                   onValueChange={(value) =>
                     field.onChange(value as CareerStage)
                   }
@@ -190,48 +198,48 @@ const ConsulteeProfileForm: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* Goals & Preferences */}
+      {/* Preferences */}
       <div className="space-y-4">
         <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-          Goals & Preferences
+          Preferences
         </h3>
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-2">
-            <Label htmlFor="preferredLanguage">Preferred Language</Label>
-            <Input
-              id="preferredLanguage"
-              {...register("preferredLanguage")}
-              placeholder="e.g., English, Spanish"
-            />
-          </div>
+        <div className="space-y-2">
+          <Label htmlFor="preferredLanguage">Preferred Language</Label>
+          <Controller
+            name="preferredLanguage"
+            control={control}
+            render={({ field }) => (
+              <Select
+                value={field.value || "English"}
+                onValueChange={field.onChange}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select language" />
+                </SelectTrigger>
+                <SelectContent>
+                  {LANGUAGE_OPTIONS.map((lang) => (
+                    <SelectItem key={lang} value={lang}>
+                      {lang}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          />
+        </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="budgetPreference">Budget Preference</Label>
-            <Controller
-              name="budgetPreference"
-              control={control}
-              render={({ field }) => (
-                <Select
-                  value={field.value || undefined}
-                  onValueChange={(value) =>
-                    field.onChange(value as BudgetPreference)
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select budget range" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {BUDGET_OPTIONS.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            />
-          </div>
+        <div className="space-y-2">
+          <Label htmlFor="goals">What do you hope to achieve?</Label>
+          <Textarea
+            id="goals"
+            {...register("goals")}
+            placeholder="e.g., Improve leadership skills, Learn new technologies, Career transition"
+            rows={3}
+          />
+          {errors.goals && (
+            <p className="text-sm text-destructive">{errors.goals.message}</p>
+          )}
         </div>
       </div>
 

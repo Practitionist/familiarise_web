@@ -20,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { EducationSchema } from "@/schemas/user";
 import { Education } from "./EducationSection";
 
 interface AddEducationModalProps {
@@ -92,7 +93,8 @@ export function AddEducationModal({
       description: formData.description || undefined,
     };
 
-    onSave(data as Education);
+    const validated = EducationSchema.parse(data);
+    onSave(validated);
   };
 
   return (

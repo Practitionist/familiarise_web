@@ -54,7 +54,6 @@ interface UserDetail {
   consulteeProfile?: {
     id: string;
     interests: string[];
-    preferredCommunicationMethod: string | null;
   } | null;
   staffProfile?: {
     id: string;
@@ -370,19 +369,6 @@ export function UserDetailModal({
             {user.role === "CONSULTEE" && user.consulteeProfile && (
               <div className="space-y-4">
                 <h4 className="font-medium">Consultee Profile</h4>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Card>
-                    <CardContent className="p-3">
-                      <p className="text-xs text-zinc-500">
-                        Preferred Communication
-                      </p>
-                      <p className="font-medium mt-1">
-                        {user.consulteeProfile.preferredCommunicationMethod ||
-                          "Not set"}
-                      </p>
-                    </CardContent>
-                  </Card>
-                </div>
                 {user.consulteeProfile.interests &&
                   user.consulteeProfile.interests.length > 0 && (
                     <div>

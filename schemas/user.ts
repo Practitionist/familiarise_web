@@ -39,8 +39,6 @@ export const UserRoleEnum = z.enum([
 
 export const ScheduleTypeEnum = z.enum(["WEEKLY", "CUSTOM"]);
 
-export const ConsultationModeEnum = z.enum(["VIDEO", "AUDIO", "IN_PERSON"]);
-
 export const DayOfWeekEnum = z.enum([
   "MONDAY",
   "TUESDAY",
@@ -55,7 +53,7 @@ export const DayOfWeekEnum = z.enum([
 
 // #region URL Validation Helpers
 
-const linkedinUrlSchema = z
+export const linkedinUrlSchema = z
   .string()
   .url("Please enter a valid URL")
   .refine(
@@ -65,7 +63,7 @@ const linkedinUrlSchema = z
   .optional()
   .or(z.literal(""));
 
-const twitterUrlSchema = z
+export const twitterUrlSchema = z
   .string()
   .url("Please enter a valid URL")
   .refine(
@@ -75,7 +73,7 @@ const twitterUrlSchema = z
   .optional()
   .or(z.literal(""));
 
-const githubUrlSchema = z
+export const githubUrlSchema = z
   .string()
   .url("Please enter a valid URL")
   .refine(
@@ -85,7 +83,7 @@ const githubUrlSchema = z
   .optional()
   .or(z.literal(""));
 
-const websiteUrlSchema = z
+export const websiteUrlSchema = z
   .string()
   .url("Please enter a valid website URL")
   .optional()
@@ -140,6 +138,7 @@ export const CustomSlotSchema = z.object({
 export const WorkExperienceSchema = z.object({
   id: z.string().optional(),
   company: z.string().min(1, "Company name is required"),
+  companyDomain: z.string().optional(),
   title: z.string().min(1, "Job title is required"),
   location: z.string().optional(),
   startDate: z.coerce.date({ required_error: "Start date is required" }),
@@ -246,7 +245,6 @@ export type ConsultantProfile = z.infer<typeof ConsultantProfileSchema>;
 export const ConsulteeProfileSchema = z.object({
   occupation: z.string().optional(),
   aboutMe: z.string().optional(),
-  preferredCommunicationMethod: ConsultationModeEnum.default("VIDEO"),
   preferredLanguage: z.string().optional(),
   goals: z.string().optional(),
 
@@ -255,7 +253,6 @@ export const ConsulteeProfileSchema = z.object({
   currentCompany: z.string().optional(),
   industry: z.string().optional(),
   skillsToDevelop: z.array(z.string()).default([]),
-  linkedinUrl: linkedinUrlSchema,
   budgetPreference: BudgetPreferenceEnum.optional().nullable(),
 
   // Education history (new nested model)
@@ -270,7 +267,6 @@ export const ConsulteeProfileSchema = z.object({
 export type ConsulteeProfile = z.infer<typeof ConsulteeProfileSchema>;
 
 export const ConsulteePreferencesSchema = z.object({
-  preferredCommunicationMethod: ConsultationModeEnum.default("VIDEO"),
   preferredLanguage: z.string().optional(),
   budgetPreference: BudgetPreferenceEnum.optional().nullable(),
   // Deprecated

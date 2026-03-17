@@ -11,15 +11,17 @@ import {
   Calendar,
 } from "lucide-react";
 import { AddWorkExperienceModal } from "./AddWorkExperienceModal";
+import { CompanyLogo } from "@/components/ui/company-logo";
 import { format } from "date-fns";
 
 export interface WorkExperience {
   id: string;
   company: string;
+  companyDomain?: string;
   title: string;
   location?: string;
   startDate: Date;
-  endDate?: Date;
+  endDate?: Date | null;
   isCurrent: boolean;
   description?: string;
 }
@@ -41,7 +43,7 @@ export function WorkExperienceSection({
     experience: WorkExperience | Omit<WorkExperience, "id">,
   ) => {
     if ("id" in experience && experience.id) {
-      // Editing existing experience
+      // Editing: narrow union after runtime "id" in check — TS can't prove this
       onUpdate(
         experiences.map((e) =>
           e.id === experience.id ? (experience as WorkExperience) : e,
@@ -75,7 +77,7 @@ export function WorkExperienceSection({
 
   const formatDateRange = (
     startDate: Date,
-    endDate?: Date,
+    endDate?: Date | null,
     isCurrent?: boolean,
   ) => {
     const startDateObj = new Date(startDate);
@@ -111,9 +113,11 @@ export function WorkExperienceSection({
               key={exp.id}
               className="group flex items-start gap-4 p-4 rounded-lg border bg-card hover:shadow-sm transition-shadow"
             >
-              <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                <Building2 className="w-5 h-5 text-primary" />
-              </div>
+              <CompanyLogo
+                companyDomain={exp.companyDomain}
+                companyName={exp.company}
+                size={40}
+              />
               <div className="flex-1 min-w-0">
                 <h4 className="font-medium text-foreground">{exp.title}</h4>
                 <p className="text-sm text-muted-foreground">{exp.company}</p>

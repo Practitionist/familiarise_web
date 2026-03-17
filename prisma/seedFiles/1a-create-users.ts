@@ -7,7 +7,6 @@ import {
   CareerStage,
   ConsultantProfile,
   ConsultantVerificationStatus,
-  ConsultationMode,
   ConsulteeProfile,
   Gender,
   Prisma,
@@ -194,6 +193,7 @@ const domains = [
       "DevOps",
       "Artificial Intelligence",
       "Blockchain",
+      "Software Development",
     ],
     tags: [
       "JavaScript",
@@ -211,6 +211,10 @@ const domains = [
       "Cyber Defense",
       "Cloud Architecture",
       "Smart Contracts",
+      "System Design",
+      "DSA & Algorithms",
+      "Interview Prep",
+      "Career Switching",
     ],
   },
 
@@ -459,11 +463,6 @@ function createConsulteeProfileData() {
 
   return {
     occupation: sanitizeString(faker.person.jobTitle()),
-    preferredCommunicationMethod: faker.helpers.arrayElement([
-      ConsultationMode.VIDEO,
-      ConsultationMode.AUDIO,
-      ConsultationMode.IN_PERSON,
-    ]),
     preferredLanguage: faker.helpers.arrayElement([
       "English",
       "Spanish",
@@ -481,9 +480,7 @@ function createConsulteeProfileData() {
       : null,
     industry: generateIndustry(),
     skillsToDevelop: generateSkillsToDevelop(),
-    linkedinUrl: faker.datatype.boolean({ probability: 0.6 })
-      ? `https://linkedin.com/in/${faker.internet.username()}`
-      : null,
+    // linkedinUrl was moved to User model — set via userData.linkedinUrl above
     budgetPreference,
   };
 }
