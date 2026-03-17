@@ -10,18 +10,21 @@ import {
   Shield,
   ExternalLink,
   Loader2,
+  Pencil,
 } from "lucide-react";
 
 interface Props {
   onSubmit: (data: Partial<OnboardingFormData>) => void | Promise<void>;
   onBack: () => void;
   formData: Partial<OnboardingFormData>;
+  onGoToStep?: (step: number) => void;
 }
 
 const ConsultantReviewForm: React.FC<Props> = ({
   onSubmit,
   onBack,
   formData,
+  onGoToStep,
 }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -52,9 +55,22 @@ const ConsultantReviewForm: React.FC<Props> = ({
 
     return (
       <div className="space-y-3">
-        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-          Schedule
-        </h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+            Schedule
+          </h3>
+          {onGoToStep && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => onGoToStep(2)}
+              title="Edit Schedule"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+            </Button>
+          )}
+        </div>
         <div className="bg-muted/50 rounded-lg p-4 space-y-3">
           <div className="flex justify-between py-2 border-b">
             <span className="text-sm text-muted-foreground">Schedule Type</span>
@@ -131,11 +147,28 @@ const ConsultantReviewForm: React.FC<Props> = ({
     );
   };
 
-  const renderSection = (title: string, content: React.ReactNode) => (
+  const renderSection = (
+    title: string,
+    content: React.ReactNode,
+    editStep?: number,
+  ) => (
     <div className="space-y-3">
-      <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-        {title}
-      </h3>
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+          {title}
+        </h3>
+        {onGoToStep && editStep !== undefined && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={() => onGoToStep(editStep)}
+            title={`Edit ${title}`}
+          >
+            <Pencil className="w-3.5 h-3.5" />
+          </Button>
+        )}
+      </div>
       {content}
     </div>
   );
@@ -179,6 +212,7 @@ const ConsultantReviewForm: React.FC<Props> = ({
           {renderField("City", formData.city)}
           {renderField("Country", formData.country)}
         </div>,
+        0,
       )}
 
       {renderSection(
@@ -191,6 +225,7 @@ const ConsultantReviewForm: React.FC<Props> = ({
             formData.experience ? `${formData.experience} years` : undefined,
           )}
         </div>,
+        1,
       )}
 
       {renderSection(
@@ -206,6 +241,7 @@ const ConsultantReviewForm: React.FC<Props> = ({
             {renderList(formData.tags, "No tags selected")}
           </div>
         </div>,
+        1,
       )}
 
       {renderSchedule()}
@@ -315,9 +351,22 @@ const ConsultantReviewForm: React.FC<Props> = ({
         (formData.verificationDocuments &&
           formData.verificationDocuments.length > 0)) && (
         <div className="space-y-3">
-          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-            Verification
-          </h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+              Verification
+            </h3>
+            {onGoToStep && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={() => onGoToStep(3)}
+                title="Edit Verification"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+              </Button>
+            )}
+          </div>
           <div className="bg-muted/50 rounded-lg p-4 space-y-3">
             <div className="flex items-center gap-2 text-sm font-medium">
               <Shield className="h-4 w-4" />

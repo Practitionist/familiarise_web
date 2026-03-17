@@ -27,6 +27,24 @@ interface Props {
   initialData: Partial<OnboardingFormData>;
 }
 
+const LANGUAGE_OPTIONS = [
+  "English",
+  "Hindi",
+  "Spanish",
+  "French",
+  "German",
+  "Mandarin",
+  "Japanese",
+  "Portuguese",
+  "Arabic",
+  "Korean",
+  "Tamil",
+  "Telugu",
+  "Bengali",
+  "Marathi",
+  "Gujarati",
+];
+
 const CAREER_STAGE_OPTIONS = [
   { value: "STUDENT", label: "Student" },
   { value: "EARLY_CAREER", label: "Early Career (0-3 years)" },
@@ -176,6 +194,51 @@ const ConsulteeProfileForm: React.FC<Props> = ({
           />
           {errors.aboutMe && (
             <p className="text-sm text-destructive">{errors.aboutMe.message}</p>
+          )}
+        </div>
+      </div>
+
+      {/* Preferences */}
+      <div className="space-y-4">
+        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+          Preferences
+        </h3>
+
+        <div className="space-y-2">
+          <Label htmlFor="preferredLanguage">Preferred Language</Label>
+          <Controller
+            name="preferredLanguage"
+            control={control}
+            render={({ field }) => (
+              <Select
+                value={field.value || "English"}
+                onValueChange={field.onChange}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select language" />
+                </SelectTrigger>
+                <SelectContent>
+                  {LANGUAGE_OPTIONS.map((lang) => (
+                    <SelectItem key={lang} value={lang}>
+                      {lang}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="goals">What do you hope to achieve?</Label>
+          <Textarea
+            id="goals"
+            {...register("goals")}
+            placeholder="e.g., Improve leadership skills, Learn new technologies, Career transition"
+            rows={3}
+          />
+          {errors.goals && (
+            <p className="text-sm text-destructive">{errors.goals.message}</p>
           )}
         </div>
       </div>

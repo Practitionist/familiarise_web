@@ -204,6 +204,9 @@ export default function ConsultantAgreementAndVerificationStep({
             maxFiles={5}
             disabled={isUploading}
           />
+          <p className="text-xs text-muted-foreground">
+            Accepted formats: PDF, PNG, JPG, JPEG (max 10MB per file)
+          </p>
         </div>
 
         {/* Additional Notes */}

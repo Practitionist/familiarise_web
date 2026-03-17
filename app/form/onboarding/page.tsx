@@ -19,7 +19,6 @@ import ConsultantProfessionalStep from "./components/ConsultantProfessionalStep"
 import ConsultantAgreementAndVerificationStep from "./components/ConsultantAgreementAndVerificationStep";
 import ConsultantReviewForm from "./components/ConsultantReviewForm";
 import ConsulteeAgreementForm from "./components/ConsulteeAgreementForm";
-import ConsulteePreferencesForm from "./components/ConsulteePreferencesForm";
 import ConsulteeProfileForm from "./components/ConsulteeProfileForm";
 import ConsulteeReviewForm from "./components/ConsulteeReviewForm";
 import PersonalInfoAndRoleForm from "./components/PersonalInfoAndRoleForm";
@@ -37,7 +36,7 @@ const STEP_LABELS = {
     "Agreement & Verification",
     "Review",
   ],
-  CONSULTEE: ["Personal Info", "Profile", "Preferences", "Agreement", "Review"],
+  CONSULTEE: ["Personal Info", "Profile", "Agreement", "Review"],
   STAFF: [
     "Personal Info",
     "Role Details",
@@ -90,6 +89,10 @@ const MultiStepForm: React.FC = () => {
 
   const handleBack = () => {
     setStep((prevStep) => prevStep - 1);
+  };
+
+  const handleGoToStep = (targetStep: number) => {
+    setStep(targetStep);
   };
 
   const handleSubmit = async (data: Partial<OnboardingFormData>) => {
@@ -171,6 +174,18 @@ const MultiStepForm: React.FC = () => {
           title: "Profile Saved — Verification Issue",
           description: result.verificationWarning as string,
           variant: "destructive",
+        });
+      } else if (finalData.role === "CONSULTANT") {
+        toast({
+          title: "Profile Submitted!",
+          description:
+            "Your verification is under review (1-2 business days). You can start setting up your consultation plans while you wait.",
+        });
+      } else if (finalData.role === "CONSULTEE") {
+        toast({
+          title: "Welcome to Familiarise!",
+          description:
+            "Your profile is ready. Browse our expert directory to book your first session.",
         });
       } else {
         toast({
@@ -267,10 +282,10 @@ const MultiStepForm: React.FC = () => {
             );
           case "CONSULTEE":
             return (
-              <ConsulteePreferencesForm
+              <ConsulteeAgreementForm
                 onNext={handleNext}
                 onBack={handleBack}
-                initialData={formData}
+                formData={formData}
               />
             );
           case "STAFF":
@@ -296,10 +311,11 @@ const MultiStepForm: React.FC = () => {
             );
           case "CONSULTEE":
             return (
-              <ConsulteeAgreementForm
-                onNext={handleNext}
+              <ConsulteeReviewForm
+                onSubmit={handleSubmit}
                 onBack={handleBack}
                 formData={formData}
+                onGoToStep={handleGoToStep}
               />
             );
           case "STAFF":
@@ -321,14 +337,7 @@ const MultiStepForm: React.FC = () => {
                 onSubmit={handleSubmit}
                 onBack={handleBack}
                 formData={formData}
-              />
-            );
-          case "CONSULTEE":
-            return (
-              <ConsulteeReviewForm
-                onSubmit={handleSubmit}
-                onBack={handleBack}
-                formData={formData}
+                onGoToStep={handleGoToStep}
               />
             );
           case "STAFF":
@@ -337,6 +346,7 @@ const MultiStepForm: React.FC = () => {
                 onSubmit={handleSubmit}
                 onBack={handleBack}
                 formData={formData}
+                onGoToStep={handleGoToStep}
               />
             );
           default:

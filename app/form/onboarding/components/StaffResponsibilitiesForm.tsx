@@ -144,7 +144,11 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
       </div>
 
       <form onSubmit={onSubmit} className="space-y-6">
-        <Accordion type="single" collapsible className="w-full">
+        <Accordion
+          type="multiple"
+          defaultValue={["responsibilities", "permissions"]}
+          className="w-full"
+        >
           <AccordionItem value="responsibilities" className="border rounded-lg">
             <AccordionTrigger className="px-4 font-medium hover:no-underline">
               Responsibilities

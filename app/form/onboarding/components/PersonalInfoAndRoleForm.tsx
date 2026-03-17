@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { ChevronDown } from "lucide-react";
 import { PersonalInfoAndRoleFormSchema } from "@/utils/onboarding";
 import { useSession } from "@/lib/auth-client";
 import { z } from "zod";
@@ -38,7 +44,7 @@ const ROLE_INFO: Record<
   },
   STAFF: {
     title: "Staff",
-    description: "Invite only — contact your administrator",
+    description: "Invite only",
     disabled: true,
   },
 };
@@ -52,6 +58,7 @@ const GENDER_OPTIONS = [
 
 const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
   const { data: session } = useSession();
+  const [optionalOpen, setOptionalOpen] = useState(false);
 
   const {
     register,
@@ -119,12 +126,8 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-      {/* Basic Information Section */}
+      {/* Essential Fields */}
       <div className="space-y-4">
-        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-          Basic Information
-        </h3>
-
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
             <Label htmlFor="name">
@@ -154,129 +157,131 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
             </p>
           </div>
         </div>
+      </div>
 
-        <div className="grid gap-4 sm:grid-cols-2">
+      {/* Optional Fields Collapsible */}
+      <Collapsible open={optionalOpen} onOpenChange={setOptionalOpen}>
+        <CollapsibleTrigger className="flex items-center justify-between w-full py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
+          <span>Additional Details (optional)</span>
+          <ChevronDown
+            className={`w-4 h-4 transition-transform ${optionalOpen ? "rotate-180" : ""}`}
+          />
+        </CollapsibleTrigger>
+        <p className="text-xs text-muted-foreground mb-2">
+          You can always add these later from your profile settings
+        </p>
+        <CollapsibleContent className="space-y-6">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="phone">Phone Number</Label>
+              <Input
+                id="phone"
+                {...register("phone")}
+                placeholder="+1 (555) 000-0000"
+              />
+              {errors.phone && (
+                <p className="text-sm text-destructive">
+                  {errors.phone.message}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="gender">Gender</Label>
+              <Controller
+                name="gender"
+                control={control}
+                render={({ field }) => (
+                  <Select
+                    value={field.value || undefined}
+                    onValueChange={(value) => field.onChange(value as Gender)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select gender" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {GENDER_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="city">City</Label>
+              <Input
+                id="city"
+                {...register("city")}
+                placeholder="e.g., San Francisco"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="country">Country</Label>
+              <Input
+                id="country"
+                {...register("country")}
+                placeholder="e.g., United States"
+              />
+            </div>
+          </div>
+
           <div className="space-y-2">
-            <Label htmlFor="phone">Phone Number</Label>
+            <Label htmlFor="address">Full Address (Optional)</Label>
             <Input
-              id="phone"
-              {...register("phone")}
-              placeholder="+1 (555) 000-0000"
+              id="address"
+              {...register("address")}
+              placeholder="Street address, apt, city, state, zip"
             />
-            {errors.phone && (
-              <p className="text-sm text-destructive">{errors.phone.message}</p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="bio">
+              Short Bio{" "}
+              <span className="text-muted-foreground">(Optional)</span>
+            </Label>
+            <Textarea
+              id="bio"
+              {...register("bio")}
+              placeholder="Tell us a bit about yourself in one or two sentences..."
+              className="resize-none"
+              rows={2}
+            />
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>A brief tagline that appears on your profile</span>
+              <span className={bioLength > 160 ? "text-destructive" : ""}>
+                {bioLength}/160
+              </span>
+            </div>
+            {errors.bio && (
+              <p className="text-sm text-destructive">{errors.bio.message}</p>
             )}
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="gender">Gender</Label>
-            <Controller
-              name="gender"
-              control={control}
-              render={({ field }) => (
-                <Select
-                  value={field.value || undefined}
-                  // Radix Select returns string; values are Gender enum members
-                  onValueChange={(value) => field.onChange(value as Gender)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select gender" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {GENDER_OPTIONS.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Location Section */}
-      <div className="space-y-4">
-        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-          Location
-        </h3>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-2">
-            <Label htmlFor="city">City</Label>
+            <Label htmlFor="linkedinUrl">
+              LinkedIn Profile{" "}
+              <span className="text-muted-foreground">(Optional)</span>
+            </Label>
             <Input
-              id="city"
-              {...register("city")}
-              placeholder="e.g., San Francisco"
+              id="linkedinUrl"
+              {...register("linkedinUrl")}
+              placeholder="https://linkedin.com/in/yourprofile"
             />
+            {errors.linkedinUrl && (
+              <p className="text-sm text-destructive">
+                {errors.linkedinUrl.message}
+              </p>
+            )}
           </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="country">Country</Label>
-            <Input
-              id="country"
-              {...register("country")}
-              placeholder="e.g., United States"
-            />
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="address">Full Address (Optional)</Label>
-          <Input
-            id="address"
-            {...register("address")}
-            placeholder="Street address, apt, city, state, zip"
-          />
-        </div>
-      </div>
-
-      {/* Profile Section */}
-      <div className="space-y-4">
-        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-          Your Profile
-        </h3>
-
-        <div className="space-y-2">
-          <Label htmlFor="bio">
-            Short Bio <span className="text-muted-foreground">(Optional)</span>
-          </Label>
-          <Textarea
-            id="bio"
-            {...register("bio")}
-            placeholder="Tell us a bit about yourself in one or two sentences..."
-            className="resize-none"
-            rows={2}
-          />
-          <div className="flex justify-between text-xs text-muted-foreground">
-            <span>A brief tagline that appears on your profile</span>
-            <span className={bioLength > 160 ? "text-destructive" : ""}>
-              {bioLength}/160
-            </span>
-          </div>
-          {errors.bio && (
-            <p className="text-sm text-destructive">{errors.bio.message}</p>
-          )}
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="linkedinUrl">
-            LinkedIn Profile{" "}
-            <span className="text-muted-foreground">(Optional)</span>
-          </Label>
-          <Input
-            id="linkedinUrl"
-            {...register("linkedinUrl")}
-            placeholder="https://linkedin.com/in/yourprofile"
-          />
-          {errors.linkedinUrl && (
-            <p className="text-sm text-destructive">
-              {errors.linkedinUrl.message}
-            </p>
-          )}
-        </div>
-      </div>
+        </CollapsibleContent>
+      </Collapsible>
 
       {/* Role Selection */}
       <div className="space-y-4">
@@ -306,7 +311,21 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
                 >
                   <div className="font-medium">{info.title}</div>
                   <div className="text-sm text-muted-foreground mt-1">
-                    {info.description}
+                    {role === "STAFF" ? (
+                      <>
+                        Invite only &mdash;{" "}
+                        <a
+                          href="/support"
+                          className="text-primary hover:underline"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          contact support
+                        </a>{" "}
+                        for access
+                      </>
+                    ) : (
+                      info.description
+                    )}
                   </div>
                 </button>
               ))}

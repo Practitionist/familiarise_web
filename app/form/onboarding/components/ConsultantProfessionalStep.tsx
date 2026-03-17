@@ -27,7 +27,9 @@ import {
   Trophy,
   ChevronLeft,
   ChevronRight,
+  Info,
 } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import type { OnboardingFormData } from "@/utils/onboarding";
 import type { PersonalInfoAndRole } from "@/schemas/user";
 
@@ -151,12 +153,15 @@ export default function ConsultantProfessionalStep({
 
         <TabsContent value="experience" className="mt-4">
           <div className="space-y-6">
-            <div className="text-center mb-4">
-              <p className="text-sm text-muted-foreground">
-                Add your professional background to help consultees learn more
-                about your experience. You can skip and add details later.
-              </p>
-            </div>
+            <Alert className="border-blue-200 bg-blue-50 mb-4">
+              <Info className="h-4 w-4 text-blue-600" />
+              <AlertDescription className="text-blue-700">
+                Adding your professional background builds trust with potential
+                clients. Profiles with work experience and certifications
+                receive significantly more bookings. You can always add these
+                from your dashboard settings later.
+              </AlertDescription>
+            </Alert>
 
             {/* Work Experience */}
             <Card>
