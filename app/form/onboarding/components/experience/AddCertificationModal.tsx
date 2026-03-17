@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { CertificationSchema } from "@/schemas/user";
 import { Certification } from "./CertificationsSection";
 
 interface AddCertificationModalProps {
@@ -79,7 +80,8 @@ export function AddCertificationModal({
       credentialUrl: formData.credentialUrl || undefined,
     };
 
-    onSave(data as Certification);
+    const validated = CertificationSchema.parse(data);
+    onSave(validated);
   };
 
   return (

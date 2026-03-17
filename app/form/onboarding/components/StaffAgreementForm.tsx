@@ -5,7 +5,7 @@ import { StaffProfile, PersonalInfoAndRole } from "@/schemas/user";
 import TermsAndPrivacyAgreement from "./TermsAndPrivacyAgreement";
 
 interface Props {
-  onNext: (data: any) => void;
+  onNext: (data: { termsAccepted: boolean; privacyAccepted: boolean }) => void;
   onBack: () => void;
   initialData: Partial<
     StaffProfile &

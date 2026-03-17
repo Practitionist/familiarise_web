@@ -1,45 +1,62 @@
-import React from "react";
+import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Loader2, Pencil } from "lucide-react";
 import {
   ConsulteeProfile,
   ConsulteePreferences,
   PersonalInfoAndRole,
 } from "@/schemas/user";
 
-type OnboardingFormData = PersonalInfoAndRole &
+type ConsulteeFormData = Partial<PersonalInfoAndRole> &
   Partial<ConsulteeProfile> &
   Partial<ConsulteePreferences> & {
-    preferredCommunicationMethod: "VIDEO" | "AUDIO" | "IN_PERSON";
     interests?: string[];
     goals?: string;
   };
 
 interface Props {
-  onSubmit: (data: OnboardingFormData) => void;
+  onSubmit: (data: ConsulteeFormData) => void;
   onBack: () => void;
-  formData: OnboardingFormData;
+  formData: ConsulteeFormData;
+  onGoToStep?: (step: number) => void;
 }
-
-const COMMUNICATION_LABELS: Record<string, string> = {
-  VIDEO: "Video Call",
-  AUDIO: "Audio Call",
-  IN_PERSON: "In Person",
-};
 
 const ConsulteeReviewForm: React.FC<Props> = ({
   onSubmit,
   onBack,
   formData,
+  onGoToStep,
 }) => {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   const handleSubmit = () => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
     onSubmit(formData);
   };
 
-  const renderSection = (title: string, content: React.ReactNode) => (
+  const renderSection = (
+    title: string,
+    content: React.ReactNode,
+    editStep?: number,
+  ) => (
     <div className="space-y-3">
-      <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-        {title}
-      </h3>
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+          {title}
+        </h3>
+        {onGoToStep && editStep !== undefined && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={() => onGoToStep(editStep)}
+            title={`Edit ${title}`}
+          >
+            <Pencil className="w-3.5 h-3.5" />
+          </Button>
+        )}
+      </div>
       {content}
     </div>
   );
@@ -62,6 +79,7 @@ const ConsulteeReviewForm: React.FC<Props> = ({
           {renderField("City", formData.city)}
           {renderField("Country", formData.country)}
         </div>,
+        0,
       )}
 
       {renderSection(
@@ -73,19 +91,15 @@ const ConsulteeReviewForm: React.FC<Props> = ({
           {renderField("Career Stage", formData.careerStage?.replace("_", " "))}
           {renderField("About Me", formData.aboutMe)}
         </div>,
+        1,
       )}
 
       {renderSection(
         "Preferences",
         <div className="bg-muted/50 rounded-lg p-4">
-          {renderField(
-            "Communication",
-            COMMUNICATION_LABELS[formData.preferredCommunicationMethod] ||
-              formData.preferredCommunicationMethod,
-          )}
           {renderField("Language", formData.preferredLanguage)}
-          {renderField("Budget", formData.budgetPreference?.replace("_", " "))}
         </div>,
+        1,
       )}
 
       {(formData.interests?.length || formData.goals) &&
@@ -123,11 +137,24 @@ const ConsulteeReviewForm: React.FC<Props> = ({
           onClick={onBack}
           variant="outline"
           className="flex-1"
+          disabled={isSubmitting}
         >
           Back
         </Button>
-        <Button type="button" onClick={handleSubmit} className="flex-1">
-          Complete Registration
+        <Button
+          type="button"
+          onClick={handleSubmit}
+          className="flex-1"
+          disabled={isSubmitting}
+        >
+          {isSubmitting ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Submitting...
+            </>
+          ) : (
+            "Complete Registration"
+          )}
         </Button>
       </div>
     </div>

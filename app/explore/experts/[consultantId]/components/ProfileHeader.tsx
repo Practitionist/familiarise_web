@@ -1,7 +1,17 @@
 "use client";
 
 import Image from "next/image";
-import { Star, MapPin, Briefcase, Clock, CheckCircle2 } from "lucide-react";
+import {
+  Star,
+  MapPin,
+  Briefcase,
+  Clock,
+  CheckCircle2,
+  Globe,
+  Github,
+  Linkedin,
+  Twitter,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { User } from "@prisma/client";
@@ -132,6 +142,59 @@ export function ProfileHeader({
               </Badge>
             ))}
           </div>
+
+          {/* Social Links */}
+          {(userDetails.linkedinUrl ||
+            consultantDetails.twitterUrl ||
+            consultantDetails.githubUrl ||
+            consultantDetails.websiteUrl) && (
+            <div className="flex flex-wrap gap-3 mt-4">
+              {userDetails.linkedinUrl && (
+                <a
+                  href={userDetails.linkedinUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 text-sm text-zinc-500 hover:text-zinc-900 transition-colors"
+                >
+                  <Linkedin className="w-4 h-4" />
+                  <span>LinkedIn</span>
+                </a>
+              )}
+              {consultantDetails.twitterUrl && (
+                <a
+                  href={consultantDetails.twitterUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 text-sm text-zinc-500 hover:text-zinc-900 transition-colors"
+                >
+                  <Twitter className="w-4 h-4" />
+                  <span>Twitter</span>
+                </a>
+              )}
+              {consultantDetails.githubUrl && (
+                <a
+                  href={consultantDetails.githubUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 text-sm text-zinc-500 hover:text-zinc-900 transition-colors"
+                >
+                  <Github className="w-4 h-4" />
+                  <span>GitHub</span>
+                </a>
+              )}
+              {consultantDetails.websiteUrl && (
+                <a
+                  href={consultantDetails.websiteUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 text-sm text-zinc-500 hover:text-zinc-900 transition-colors"
+                >
+                  <Globe className="w-4 h-4" />
+                  <span>Website</span>
+                </a>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

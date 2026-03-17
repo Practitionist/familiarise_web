@@ -467,6 +467,9 @@ model ConsultantProfile {
   // Note: Professional background (workExperiences, certifications, education)
   // has been consolidated to User level for DRY principle
 
+  // Achievements / portfolio items
+  achievements Achievement[]
+
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String @unique
 
@@ -551,7 +554,6 @@ model ConsulteeProfile {
   id                           String            @id @default(uuid())
   occupation                   String?
   aboutMe                      String?           @db.Text
-  preferredCommunicationMethod ConsultationMode? @default(VIDEO)
   preferredLanguage            String?
   goals                        String?           @db.Text
 
@@ -560,7 +562,6 @@ model ConsulteeProfile {
   currentCompany   String?
   industry         String?
   skillsToDevelop  String[]          @default([])
-  linkedinUrl      String?
   budgetPreference BudgetPreference?
 
   // Note: Education has been consolidated to User level for DRY principle
@@ -578,12 +579,6 @@ model ConsulteeProfile {
 
   @@index([userId])
   @@index([careerStage])
-}
-
-enum ConsultationMode {
-  VIDEO
-  AUDIO
-  IN_PERSON
 }
 
 model StaffProfile {
@@ -631,14 +626,15 @@ model AdminProfile {
 //////////////////////////////////////////////////// PROFESSIONAL BACKGROUND MODELS ////////////////////////////////////////////////////
 
 model WorkExperience {
-  id          String    @id @default(uuid())
-  company     String
-  title       String
-  location    String?
-  startDate   DateTime
-  endDate     DateTime?
-  isCurrent   Boolean   @default(false)
-  description String?   @db.Text
+  id            String    @id @default(uuid())
+  company       String
+  companyDomain String? // e.g., "google.com" — used by Logo.dev to fetch company logo sticker
+  title         String
+  location      String?
+  startDate     DateTime
+  endDate       DateTime?
+  isCurrent     Boolean   @default(false)
+  description   String?   @db.Text
 
   // Consolidated to User level (was ConsultantProfile)
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
@@ -689,6 +685,34 @@ model Education {
   updatedAt DateTime @updatedAt
 
   @@index([userId])
+}
+
+//////////////////////////////////////////////////// ACHIEVEMENTS / PORTFOLIO ////////////////////////////////////////////////////
+
+enum AchievementType {
+  AWARD
+  PUBLICATION
+  PROJECT
+  TALK
+  OPEN_SOURCE
+  OTHER
+}
+
+model Achievement {
+  id              String          @id @default(uuid())
+  title           String
+  description     String?         @db.Text
+  url             String?
+  imageUrl        String?
+  achievementType AchievementType @default(OTHER)
+
+  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultantProfileId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([consultantProfileId])
 }
 
 //////////////////////////////////////////////////// AVAILABILITY SLOTS ////////////////////////////////////////////////////

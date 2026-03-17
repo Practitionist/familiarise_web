@@ -12,8 +12,15 @@ import { StaffProfile, PersonalInfoAndRole } from "@/schemas/user";
 import React, { useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 
+interface StaffProfileStepData {
+  department: string;
+  position: string;
+  responsibilities: Record<string, boolean>;
+  permissions: Record<string, boolean>;
+}
+
 interface Props {
-  onNext: (data: any) => void;
+  onNext: (data: StaffProfileStepData) => void;
   onBack: () => void;
   initialData: Partial<StaffProfile & PersonalInfoAndRole>;
 }
@@ -68,11 +75,10 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
     }
   }, [watchDepartment]);
 
-  const onSubmit = (data: any) => {
-    // Initialize empty responsibilities and permissions objects
+  const onSubmit = (data: StaffProfile & PersonalInfoAndRole) => {
     onNext({
-      department: data.department,
-      position: data.position,
+      department: data.department ?? "",
+      position: data.position ?? "",
       responsibilities: {},
       permissions: {},
     });
@@ -108,6 +114,8 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
               </Select>
             )}
           />
+          {/* react-hook-form FieldError.message is string | undefined; the
+              guard above ensures it exists, cast narrows the union */}
           {errors.department && (
             <p className="text-sm text-destructive">
               {errors.department.message as string}
@@ -152,6 +160,7 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
               </Select>
             )}
           />
+          {/* Same pattern: FieldError.message narrowing */}
           {errors.position && (
             <p className="text-sm text-destructive">
               {errors.position.message as string}

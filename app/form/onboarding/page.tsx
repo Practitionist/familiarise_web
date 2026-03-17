@@ -6,25 +6,22 @@ import {
   OnboardingFormDataSchema,
   transformOnboardingFormToServerData,
 } from "@/utils/onboarding";
-import { Progress } from "@/components/ui/progress";
-import { LogOut } from "lucide-react";
+import { Check, LogOut } from "lucide-react";
+import { cn } from "@/utils/tailwind";
 import { useToast } from "@/hooks/use-toast";
 import { signOut, useSession } from "@/lib/auth-client";
 import { useRouter } from "next/navigation";
 import React, { useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import ConsultantAgreementForm from "./components/ConsultantAgreementForm";
 import ConsultantPreferredScheduleForm from "./components/ConsultantPreferredScheduleForm";
-import ConsultantProfileForm from "./components/ConsultantProfileForm";
+import ConsultantProfessionalStep from "./components/ConsultantProfessionalStep";
+import ConsultantAgreementAndVerificationStep from "./components/ConsultantAgreementAndVerificationStep";
 import ConsultantReviewForm from "./components/ConsultantReviewForm";
-import ConsultantVerificationForm from "./components/ConsultantVerificationForm";
 import ConsulteeAgreementForm from "./components/ConsulteeAgreementForm";
-import ConsulteePreferencesForm from "./components/ConsulteePreferencesForm";
 import ConsulteeProfileForm from "./components/ConsulteeProfileForm";
 import ConsulteeReviewForm from "./components/ConsulteeReviewForm";
 import PersonalInfoAndRoleForm from "./components/PersonalInfoAndRoleForm";
-import ProfessionalBackgroundForm from "./components/ProfessionalBackgroundForm";
 import StaffAgreementForm from "./components/StaffAgreementForm";
 import StaffProfileForm from "./components/StaffProfileForm";
 import StaffResponsibilitiesForm from "./components/StaffResponsibilitiesForm";
@@ -35,13 +32,11 @@ const STEP_LABELS = {
   CONSULTANT: [
     "Personal Info",
     "Professional Profile",
-    "Experience",
     "Availability",
-    "Agreement",
-    "Verification",
+    "Agreement & Verification",
     "Review",
   ],
-  CONSULTEE: ["Personal Info", "Profile", "Preferences", "Agreement", "Review"],
+  CONSULTEE: ["Personal Info", "Profile", "Agreement", "Review"],
   STAFF: [
     "Personal Info",
     "Role Details",
@@ -55,9 +50,7 @@ const STEP_LABELS = {
 const MultiStepForm: React.FC = () => {
   const { data: session } = useSession();
   const [step, setStep] = useState(0);
-  const [formData, setFormData] = useState<OnboardingFormData>({
-    preferredCommunicationMethod: "VIDEO",
-  } as OnboardingFormData);
+  const [formData, setFormData] = useState<Partial<OnboardingFormData>>({});
   const router = useRouter();
   const { toast } = useToast();
 
@@ -69,8 +62,7 @@ const MultiStepForm: React.FC = () => {
       onlineStatus: false,
       onboardingCompleted: false,
       role: "CONSULTEE",
-      preferredCommunicationMethod: "VIDEO",
-    } as OnboardingFormData,
+    } satisfies Partial<OnboardingFormData>,
   });
 
   const handleNext = (stepData: Partial<OnboardingFormData>) => {
@@ -78,10 +70,6 @@ const MultiStepForm: React.FC = () => {
       const updatedData = {
         ...prevData,
         ...stepData,
-        preferredCommunicationMethod:
-          stepData.preferredCommunicationMethod ??
-          prevData.preferredCommunicationMethod ??
-          "VIDEO",
       };
 
       if (stepData.scheduleType) {
@@ -103,7 +91,11 @@ const MultiStepForm: React.FC = () => {
     setStep((prevStep) => prevStep - 1);
   };
 
-  const handleSubmit = async (data: OnboardingFormData) => {
+  const handleGoToStep = (targetStep: number) => {
+    setStep(targetStep);
+  };
+
+  const handleSubmit = async (data: Partial<OnboardingFormData>) => {
     const finalData = { ...formData, ...data };
 
     try {
@@ -135,9 +127,18 @@ const MultiStepForm: React.FC = () => {
       }
 
       // Transform the data for server submission
-      const requestBody = transformOnboardingFormToServerData(
-        validationResult.data,
-      );
+      // Cast needed: OnboardingFormDataSchema is a discriminated union (role-specific output),
+      // while OnboardingFormData is an intersection (all fields). The union output satisfies
+      // the intersection at runtime (one branch is fully populated) but TS can't prove it.
+      const validated = validationResult.data as OnboardingFormData;
+      const requestBody = {
+        ...transformOnboardingFormToServerData(validated),
+        // Include professional background fields (not part of OnboardingData schema)
+        workExperiences: validated.workExperiences,
+        educationHistory: validated.educationHistory,
+        certificationsList: validated.certificationsList,
+        achievements: validated.achievements,
+      };
 
       toast({
         title: "Saving Your Profile",
@@ -168,10 +169,30 @@ const MultiStepForm: React.FC = () => {
         return;
       }
 
-      toast({
-        title: "Welcome to Familiarise!",
-        description: "Your profile has been created successfully.",
-      });
+      if (result.verificationWarning) {
+        toast({
+          title: "Profile Saved — Verification Issue",
+          description: result.verificationWarning as string,
+          variant: "destructive",
+        });
+      } else if (finalData.role === "CONSULTANT") {
+        toast({
+          title: "Profile Submitted!",
+          description:
+            "Your verification is under review (1-2 business days). You can start setting up your consultation plans while you wait.",
+        });
+      } else if (finalData.role === "CONSULTEE") {
+        toast({
+          title: "Welcome to Familiarise!",
+          description:
+            "Your profile is ready. Browse our expert directory to book your first session.",
+        });
+      } else {
+        toast({
+          title: "Welcome to Familiarise!",
+          description: "Your profile has been created successfully.",
+        });
+      }
 
       // Redirect based on role (server has already updated the user record,
       // session cookie will refresh automatically)
@@ -212,19 +233,19 @@ const MultiStepForm: React.FC = () => {
         switch (formData.role) {
           case "CONSULTANT":
             return (
-              <ConsultantProfileForm
+              <ConsultantProfessionalStep
                 onNext={handleNext}
                 onBack={handleBack}
                 initialData={formData}
                 personalInfo={{
-                  name: formData.name,
-                  email: formData.email,
+                  name: formData.name ?? "",
+                  email: formData.email ?? "",
                   phone: formData.phone,
                   address: formData.address,
-                  onlineStatus: formData.onlineStatus,
+                  onlineStatus: formData.onlineStatus ?? false,
                   timezone: formData.timezone,
-                  onboardingCompleted: formData.onboardingCompleted,
-                  role: formData.role,
+                  onboardingCompleted: formData.onboardingCompleted ?? false,
+                  role: formData.role ?? "CONSULTANT",
                   emailVerified: formData.emailVerified,
                   image: formData.image,
                 }}
@@ -253,7 +274,7 @@ const MultiStepForm: React.FC = () => {
         switch (formData.role) {
           case "CONSULTANT":
             return (
-              <ProfessionalBackgroundForm
+              <ConsultantPreferredScheduleForm
                 onNext={handleNext}
                 onBack={handleBack}
                 initialData={formData}
@@ -261,10 +282,10 @@ const MultiStepForm: React.FC = () => {
             );
           case "CONSULTEE":
             return (
-              <ConsulteePreferencesForm
+              <ConsulteeAgreementForm
                 onNext={handleNext}
                 onBack={handleBack}
-                initialData={formData}
+                formData={formData}
               />
             );
           case "STAFF":
@@ -282,18 +303,19 @@ const MultiStepForm: React.FC = () => {
         switch (formData.role) {
           case "CONSULTANT":
             return (
-              <ConsultantPreferredScheduleForm
+              <ConsultantAgreementAndVerificationStep
                 onNext={handleNext}
                 onBack={handleBack}
-                initialData={formData}
+                formData={formData}
               />
             );
           case "CONSULTEE":
             return (
-              <ConsulteeAgreementForm
+              <ConsulteeReviewForm
                 onSubmit={handleSubmit}
                 onBack={handleBack}
                 formData={formData}
+                onGoToStep={handleGoToStep}
               />
             );
           case "STAFF":
@@ -311,18 +333,11 @@ const MultiStepForm: React.FC = () => {
         switch (formData.role) {
           case "CONSULTANT":
             return (
-              <ConsultantAgreementForm
-                onNext={handleNext}
-                onBack={handleBack}
-                initialData={formData}
-              />
-            );
-          case "CONSULTEE":
-            return (
-              <ConsulteeReviewForm
+              <ConsultantReviewForm
                 onSubmit={handleSubmit}
                 onBack={handleBack}
                 formData={formData}
+                onGoToStep={handleGoToStep}
               />
             );
           case "STAFF":
@@ -331,32 +346,7 @@ const MultiStepForm: React.FC = () => {
                 onSubmit={handleSubmit}
                 onBack={handleBack}
                 formData={formData}
-              />
-            );
-          default:
-            return null;
-        }
-      case 5:
-        switch (formData.role) {
-          case "CONSULTANT":
-            return (
-              <ConsultantVerificationForm
-                onNext={handleNext}
-                onBack={handleBack}
-                initialData={formData}
-              />
-            );
-          default:
-            return null;
-        }
-      case 6:
-        switch (formData.role) {
-          case "CONSULTANT":
-            return (
-              <ConsultantReviewForm
-                onSubmit={handleSubmit}
-                onBack={handleBack}
-                formData={formData}
+                onGoToStep={handleGoToStep}
               />
             );
           default:
@@ -370,11 +360,10 @@ const MultiStepForm: React.FC = () => {
   // Get step labels based on role
   const currentRole = formData.role || "CONSULTEE";
   const stepLabels =
-    STEP_LABELS[currentRole as keyof typeof STEP_LABELS] ||
-    STEP_LABELS.CONSULTEE;
+    currentRole in STEP_LABELS
+      ? STEP_LABELS[currentRole as keyof typeof STEP_LABELS]
+      : STEP_LABELS.CONSULTEE;
   const totalSteps = stepLabels.length;
-  // Progress aligns with dot positions (0%, 25%, 50%, 75%, 100% for 5 steps)
-  const progressValue = totalSteps > 1 ? (step / (totalSteps - 1)) * 100 : 0;
 
   // Use wider layout for steps that need more horizontal space
   const wideLayoutSteps = ["Availability"];
@@ -432,39 +421,53 @@ const MultiStepForm: React.FC = () => {
         <main
           className={`container mx-auto px-4 py-8 ${useWideLayout ? "max-w-[80%]" : "max-w-3xl"}`}
         >
-          {/* Progress Section */}
-          <div className="mb-8">
-            <div className="flex justify-between mb-2">
-              {stepLabels.map((label, index) => (
-                <div
-                  key={label}
-                  className={`text-xs font-medium transition-colors text-center min-w-0 ${
-                    index <= step ? "text-primary" : "text-muted-foreground"
-                  }`}
-                >
-                  {index === step ? label : "\u00A0"}
-                </div>
-              ))}
-            </div>
-            <Progress value={progressValue} className="h-2" />
-            <div className="flex justify-between mt-2">
-              {stepLabels.map((label, index) => (
-                <div
-                  key={`dot-${label}`}
-                  className="flex justify-center min-w-0"
-                >
+          {/* Progress Stepper */}
+          <div className="flex items-start justify-between mb-8">
+            {stepLabels.map((label, index) => (
+              <React.Fragment key={label}>
+                {/* Step circle + label */}
+                <div className="flex flex-col items-center">
                   <div
-                    className={`w-3 h-3 rounded-full transition-colors ${
+                    className={cn(
+                      "w-9 h-9 rounded-full flex items-center justify-center text-sm font-medium border-2 transition-all",
+                      index < step &&
+                        "bg-primary border-primary text-primary-foreground",
+                      index === step &&
+                        "bg-primary border-primary text-primary-foreground ring-4 ring-primary/20",
+                      index > step &&
+                        "border-muted-foreground/30 text-muted-foreground",
+                    )}
+                  >
+                    {index < step ? (
+                      <Check className="w-4 h-4" />
+                    ) : (
+                      index + 1
+                    )}
+                  </div>
+                  <span
+                    className={cn(
+                      "text-xs mt-1.5 text-center max-w-[80px] truncate",
+                      index <= step
+                        ? "text-primary font-medium"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    {label}
+                  </span>
+                </div>
+                {/* Connector line */}
+                {index < stepLabels.length - 1 && (
+                  <div
+                    className={cn(
+                      "flex-1 h-0.5 mx-2 mt-[18px] transition-colors",
                       index < step
                         ? "bg-primary"
-                        : index === step
-                          ? "bg-primary ring-4 ring-primary/20"
-                          : "bg-muted"
-                    }`}
+                        : "bg-muted-foreground/20",
+                    )}
                   />
-                </div>
-              ))}
-            </div>
+                )}
+              </React.Fragment>
+            ))}
           </div>
 
           {/* Form Card */}

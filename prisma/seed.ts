@@ -10,6 +10,7 @@ import { createWorkExperiences } from "./seedFiles/2a-create-work-experiences";
 import { createCertifications } from "./seedFiles/2b-create-certifications";
 import { createConsultantEducation } from "./seedFiles/2c-create-consultant-education";
 import { createConsulteeEducation } from "./seedFiles/2d-create-consultee-education";
+import { createAchievements } from "./seedFiles/2e-create-achievements";
 
 // Phase 3: Topics
 import { createTopics } from "./seedFiles/3a-create-topics";
@@ -94,6 +95,9 @@ async function seed() {
 
     console.log("Creating consultee education history...");
     await createConsulteeEducation(consultees);
+
+    console.log("Creating consultant achievements...");
+    await createAchievements(consultants);
 
     // Phase 3: Topics (needed for webinars and classes)
     console.log("\n[Phase 3] Creating topics...");

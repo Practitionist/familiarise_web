@@ -10,8 +10,8 @@ export interface Education {
   institution: string;
   degree: string;
   fieldOfStudy?: string;
-  startYear?: number;
-  endYear?: number;
+  startYear?: number | null;
+  endYear?: number | null;
   grade?: string;
   activities?: string;
   description?: string;
@@ -33,7 +33,7 @@ export function EducationSection({
 
   const handleSave = (edu: Education | Omit<Education, "id">) => {
     if ("id" in edu && edu.id) {
-      // Editing existing education
+      // Editing: narrow union after runtime "id" in check — TS can't prove this
       onUpdate(
         education.map((e) => (e.id === edu.id ? (edu as Education) : e)),
       );
@@ -63,7 +63,7 @@ export function EducationSection({
     setIsModalOpen(false);
   };
 
-  const formatYears = (startYear?: number, endYear?: number) => {
+  const formatYears = (startYear?: number | null, endYear?: number | null) => {
     if (startYear && endYear) return `${startYear} - ${endYear}`;
     if (startYear) return `${startYear} - Present`;
     if (endYear) return `Graduated ${endYear}`;

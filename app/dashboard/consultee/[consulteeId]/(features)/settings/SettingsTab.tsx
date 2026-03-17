@@ -18,7 +18,6 @@ import React, { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { createConsulteeQueries } from "@/lib/dashboard-queries";
 import {
-  ConsultationMode,
   ConsulteeProfile,
   CareerStage,
   BudgetPreference,
@@ -33,18 +32,15 @@ type ProfileFormData = Omit<
     ConsulteeProfile,
     | "occupation"
     | "aboutMe"
-    | "preferredCommunicationMethod"
     | "preferredLanguage"
     | "careerStage"
     | "currentCompany"
     | "industry"
     | "skillsToDevelop"
-    | "linkedinUrl"
     | "budgetPreference"
   >,
-  "preferredCommunicationMethod" | "careerStage" | "budgetPreference"
+  "careerStage" | "budgetPreference"
 > & {
-  preferredCommunicationMethod: ConsultationMode;
   careerStage: CareerStage | null;
   budgetPreference: BudgetPreference | null;
   goals: string | null;
@@ -67,15 +63,12 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
     {
       occupation: null,
       aboutMe: null,
-      preferredCommunicationMethod: ConsultationMode.VIDEO,
       preferredLanguage: null,
       goals: null,
-      // New fields
       careerStage: null,
       currentCompany: null,
       industry: null,
       skillsToDevelop: [],
-      linkedinUrl: null,
       budgetPreference: null,
     },
   );
@@ -88,10 +81,7 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
     const { name, value } = e.target;
     setProfileSettings((prev) => ({
       ...prev,
-      [name]:
-        name === "preferredCommunicationMethod"
-          ? (value as ConsultationMode)
-          : value,
+      [name]: value,
     }));
   };
 
@@ -101,16 +91,12 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
       setProfileSettings({
         occupation: consulteeData.occupation,
         aboutMe: consulteeData.aboutMe,
-        preferredCommunicationMethod:
-          consulteeData.preferredCommunicationMethod ?? ConsultationMode.VIDEO,
         preferredLanguage: consulteeData.preferredLanguage,
         goals: consulteeData.goals,
-        // New fields
         careerStage: consulteeData.careerStage ?? null,
         currentCompany: consulteeData.currentCompany ?? null,
         industry: consulteeData.industry ?? null,
         skillsToDevelop: consulteeData.skillsToDevelop ?? [],
-        linkedinUrl: consulteeData.linkedinUrl ?? null,
         budgetPreference: consulteeData.budgetPreference ?? null,
       });
     }
@@ -225,22 +211,6 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
                 placeholder="Your preferred language"
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="preferredCommunicationMethod">
-                Communication Method
-              </Label>
-              <select
-                id="preferredCommunicationMethod"
-                name="preferredCommunicationMethod"
-                value={profileSettings.preferredCommunicationMethod.toString()}
-                onChange={handleProfileChange}
-                className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
-              >
-                <option value={ConsultationMode.VIDEO}>Video</option>
-                <option value={ConsultationMode.AUDIO}>Audio</option>
-                <option value={ConsultationMode.IN_PERSON}>In Person</option>
-              </select>
-            </div>
           </div>
           <div className="space-y-2">
             <Label htmlFor="aboutMe">About Me</Label>
@@ -353,17 +323,6 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
                 </SelectContent>
               </Select>
             </div>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="linkedinUrl">LinkedIn Profile URL</Label>
-            <Input
-              id="linkedinUrl"
-              name="linkedinUrl"
-              type="url"
-              value={profileSettings.linkedinUrl ?? ""}
-              onChange={handleProfileChange}
-              placeholder="https://linkedin.com/in/yourprofile"
-            />
           </div>
           <div className="space-y-2">
             <Label htmlFor="skillsToDevelop">Skills to Develop</Label>

@@ -1,26 +1,18 @@
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import {
   ConsulteeProfile,
   ConsulteePreferences,
   PersonalInfoAndRole,
 } from "@/schemas/user";
 import React, { useEffect } from "react";
-import { useForm, Controller } from "react-hook-form";
+import { useForm } from "react-hook-form";
 
 type OnboardingFormData = PersonalInfoAndRole &
   Partial<ConsulteeProfile> &
   Partial<ConsulteePreferences> & {
-    preferredCommunicationMethod: "VIDEO" | "AUDIO" | "IN_PERSON";
     goals?: string;
   };
 
@@ -29,12 +21,6 @@ interface Props {
   onBack: () => void;
   initialData: Partial<OnboardingFormData>;
 }
-
-const COMMUNICATION_OPTIONS = [
-  { value: "VIDEO", label: "Video Call" },
-  { value: "AUDIO", label: "Audio Call" },
-  { value: "IN_PERSON", label: "In Person" },
-];
 
 const ConsulteePreferencesForm: React.FC<Props> = ({
   onNext,
@@ -45,13 +31,10 @@ const ConsulteePreferencesForm: React.FC<Props> = ({
     register,
     handleSubmit,
     formState: { errors },
-    control,
     reset,
   } = useForm<OnboardingFormData>({
     defaultValues: {
       ...initialData,
-      preferredCommunicationMethod:
-        initialData.preferredCommunicationMethod || "VIDEO",
       goals: initialData.goals,
     },
   });
@@ -61,8 +44,6 @@ const ConsulteePreferencesForm: React.FC<Props> = ({
     if (initialData && Object.keys(initialData).length > 0) {
       reset({
         ...initialData,
-        preferredCommunicationMethod:
-          initialData.preferredCommunicationMethod || "VIDEO",
         goals: initialData.goals,
       });
     }
@@ -70,9 +51,8 @@ const ConsulteePreferencesForm: React.FC<Props> = ({
 
   const onSubmit = (data: OnboardingFormData) => {
     onNext({
+      ...initialData,
       ...data,
-      preferredCommunicationMethod:
-        data.preferredCommunicationMethod || "VIDEO",
     });
   };
 
@@ -84,53 +64,18 @@ const ConsulteePreferencesForm: React.FC<Props> = ({
           Communication Preferences
         </h3>
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-2">
-            <Label htmlFor="preferredCommunicationMethod">
-              Preferred Communication Method
-            </Label>
-            <Controller
-              name="preferredCommunicationMethod"
-              control={control}
-              defaultValue="VIDEO"
-              render={({ field }) => (
-                <Select
-                  onValueChange={field.onChange}
-                  value={field.value || "VIDEO"}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select communication method" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {COMMUNICATION_OPTIONS.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            />
-            {errors.preferredCommunicationMethod && (
-              <p className="text-sm text-destructive">
-                {errors.preferredCommunicationMethod.message}
-              </p>
-            )}
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="preferredLanguage">Preferred Language</Label>
-            <Input
-              id="preferredLanguage"
-              {...register("preferredLanguage")}
-              placeholder="e.g., English, Spanish, French"
-            />
-            {errors.preferredLanguage && (
-              <p className="text-sm text-destructive">
-                {errors.preferredLanguage.message}
-              </p>
-            )}
-          </div>
+        <div className="space-y-2">
+          <Label htmlFor="preferredLanguage">Preferred Language</Label>
+          <Input
+            id="preferredLanguage"
+            {...register("preferredLanguage")}
+            placeholder="e.g., English, Spanish, French"
+          />
+          {errors.preferredLanguage && (
+            <p className="text-sm text-destructive">
+              {errors.preferredLanguage.message}
+            </p>
+          )}
         </div>
       </div>
 
