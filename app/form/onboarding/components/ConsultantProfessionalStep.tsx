@@ -126,16 +126,7 @@ export default function ConsultantProfessionalStep({
       workExperiences,
       educationHistory: education,
       certificationsList: certifications,
-      achievements: achievements.map(({ id: _id, ...rest }) => ({
-        ...rest,
-        achievementType: rest.achievementType as
-          | "AWARD"
-          | "PUBLICATION"
-          | "PROJECT"
-          | "TALK"
-          | "OPEN_SOURCE"
-          | "OTHER",
-      })),
+      achievements: achievements.map(({ id: _id, ...rest }) => rest),
     });
   };
 

@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { Building2 } from "lucide-react";
 
+// Logo.dev free-tier tokens are domain-restricted (bound to your app's origin)
+// and intended to be public in client-side code. Not a secret.
 const LOGO_DEV_TOKEN = process.env.NEXT_PUBLIC_LOGO_DEV_TOKEN;
 
 // Well-known company name → domain for auto-detection

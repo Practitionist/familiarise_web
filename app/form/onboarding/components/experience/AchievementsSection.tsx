@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Plus, Pencil, Trash2, ExternalLink } from "lucide-react";
 import { AddAchievementModal } from "./AddAchievementModal";
+import { AchievementType } from "@prisma/client";
 
 export interface Achievement {
   id: string;
@@ -11,7 +12,7 @@ export interface Achievement {
   description?: string;
   url?: string;
   imageUrl?: string;
-  achievementType: string;
+  achievementType: AchievementType;
 }
 
 interface AchievementsSectionProps {

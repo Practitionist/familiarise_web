@@ -166,10 +166,18 @@ const MultiStepForm: React.FC = () => {
         return;
       }
 
-      toast({
-        title: "Welcome to Familiarise!",
-        description: "Your profile has been created successfully.",
-      });
+      if (result.verificationWarning) {
+        toast({
+          title: "Profile Saved — Verification Issue",
+          description: result.verificationWarning as string,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Welcome to Familiarise!",
+          description: "Your profile has been created successfully.",
+        });
+      }
 
       // Redirect based on role (server has already updated the user record,
       // session cookie will refresh automatically)
@@ -281,7 +289,7 @@ const MultiStepForm: React.FC = () => {
           case "CONSULTANT":
             return (
               <ConsultantAgreementAndVerificationStep
-                onSubmit={handleSubmit}
+                onNext={handleNext}
                 onBack={handleBack}
                 formData={formData}
               />
@@ -289,7 +297,7 @@ const MultiStepForm: React.FC = () => {
           case "CONSULTEE":
             return (
               <ConsulteeAgreementForm
-                onSubmit={handleSubmit}
+                onNext={handleNext}
                 onBack={handleBack}
                 formData={formData}
               />

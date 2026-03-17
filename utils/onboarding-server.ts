@@ -6,6 +6,7 @@ import { isValidTimeRange } from "@/utils/timeSlotValidation";
 import {
   validateWeeklySlotTimeOrder,
   slotsOverlap,
+  getTimezoneOffsetMinutes,
 } from "@/utils/slotAllocation/slotTimeUtils";
 import { notifyNewConsultantApplication } from "@/lib/novu";
 import type {
@@ -62,6 +63,7 @@ async function upsertConsultantProfile(
   userId: string,
   profileData: ConsultantProfileCreateData,
   tx: Prisma.TransactionClient,
+  timezone?: string,
 ) {
   const scalarData = buildConsultantScalarData(profileData);
   const domainId = profileData.domain.connect.id;
@@ -97,6 +99,7 @@ async function upsertConsultantProfile(
     scalarData.scheduleType,
     profileData,
     tx,
+    timezone,
   );
 
   return { consultantProfileId: consultantProfile.id };
@@ -107,7 +110,11 @@ async function syncAvailabilitySlots(
   scheduleType: ScheduleType,
   profileData: ConsultantProfileCreateData,
   tx: Prisma.TransactionClient,
+  timezone?: string,
 ) {
+  const utcOffsetMinutes = timezone
+    ? getTimezoneOffsetMinutes(timezone)
+    : 0;
   if (scheduleType === ScheduleType.WEEKLY) {
     await tx.slotOfAvailabilityCustom.deleteMany({
       where: { consultantProfileId },
@@ -160,6 +167,7 @@ async function syncAvailabilitySlots(
             endDay: slot.endDay,
             endTimeUtc: slot.endTimeUtc,
             consultantProfileId,
+            utcOffsetMinutes,
           })),
         });
       }
@@ -275,6 +283,7 @@ async function upsertProfileByRole(
         userId,
         validatedBody.consultantProfile.create,
         tx,
+        validatedBody.timezone,
       );
     case UserRole.CONSULTEE:
       return upsertConsulteeProfile(
@@ -323,69 +332,79 @@ async function persistProfessionalBackground(
     achievements,
   } = validateProfessionalBackground(body);
 
-  if (workExperiences && workExperiences.length > 0) {
+  // For each section: null means "field absent from payload" (skip),
+  // empty array means "user cleared all entries" (delete old rows).
+  if (workExperiences !== null) {
     await tx.workExperience.deleteMany({ where: { userId } });
-    await tx.workExperience.createMany({
-      data: workExperiences.map((we) => ({
-        userId,
-        company: we.company,
-        companyDomain: we.companyDomain || null,
-        title: we.title,
-        location: we.location || null,
-        startDate: new Date(we.startDate),
-        endDate: we.endDate ? new Date(we.endDate) : null,
-        isCurrent: we.isCurrent ?? false,
-        description: we.description || null,
-      })),
-    });
+    if (workExperiences.length > 0) {
+      await tx.workExperience.createMany({
+        data: workExperiences.map((we) => ({
+          userId,
+          company: we.company,
+          companyDomain: we.companyDomain || null,
+          title: we.title,
+          location: we.location || null,
+          startDate: new Date(we.startDate),
+          endDate: we.endDate ? new Date(we.endDate) : null,
+          isCurrent: we.isCurrent ?? false,
+          description: we.description || null,
+        })),
+      });
+    }
   }
 
-  if (educationHistory && educationHistory.length > 0) {
+  if (educationHistory !== null) {
     await tx.education.deleteMany({ where: { userId } });
-    await tx.education.createMany({
-      data: educationHistory.map((edu) => ({
-        userId,
-        institution: edu.institution,
-        degree: edu.degree,
-        fieldOfStudy: edu.fieldOfStudy || null,
-        startYear: edu.startYear || null,
-        endYear: edu.endYear || null,
-        grade: edu.grade || null,
-        activities: edu.activities || null,
-        description: edu.description || null,
-      })),
-    });
+    if (educationHistory.length > 0) {
+      await tx.education.createMany({
+        data: educationHistory.map((edu) => ({
+          userId,
+          institution: edu.institution,
+          degree: edu.degree,
+          fieldOfStudy: edu.fieldOfStudy || null,
+          startYear: edu.startYear || null,
+          endYear: edu.endYear || null,
+          grade: edu.grade || null,
+          activities: edu.activities || null,
+          description: edu.description || null,
+        })),
+      });
+    }
   }
 
-  if (certificationsList && certificationsList.length > 0) {
+  if (certificationsList !== null) {
     await tx.certification.deleteMany({ where: { userId } });
-    await tx.certification.createMany({
-      data: certificationsList.map((cert) => ({
-        userId,
-        name: cert.name,
-        issuingOrganization: cert.issuingOrganization,
-        issueDate: new Date(cert.issueDate),
-        expiryDate: cert.expiryDate ? new Date(cert.expiryDate) : null,
-        credentialId: cert.credentialId || null,
-        credentialUrl: cert.credentialUrl || null,
-      })),
-    });
+    if (certificationsList.length > 0) {
+      await tx.certification.createMany({
+        data: certificationsList.map((cert) => ({
+          userId,
+          name: cert.name,
+          issuingOrganization: cert.issuingOrganization,
+          issueDate: new Date(cert.issueDate),
+          expiryDate: cert.expiryDate ? new Date(cert.expiryDate) : null,
+          credentialId: cert.credentialId || null,
+          credentialUrl: cert.credentialUrl || null,
+        })),
+      });
+    }
   }
 
-  if (consultantProfileId && achievements && achievements.length > 0) {
+  if (consultantProfileId && achievements !== null) {
     await tx.achievement.deleteMany({
       where: { consultantProfileId },
     });
-    await tx.achievement.createMany({
-      data: achievements.map((ach) => ({
-        consultantProfileId,
-        title: ach.title,
-        description: ach.description || null,
-        url: ach.url || null,
-        imageUrl: ach.imageUrl || null,
-        achievementType: ach.achievementType || "OTHER",
-      })),
-    });
+    if (achievements.length > 0) {
+      await tx.achievement.createMany({
+        data: achievements.map((ach) => ({
+          consultantProfileId,
+          title: ach.title,
+          description: ach.description || null,
+          url: ach.url || null,
+          imageUrl: ach.imageUrl || null,
+          achievementType: ach.achievementType || "OTHER",
+        })),
+      });
+    }
   }
 }
 
@@ -492,7 +511,7 @@ export async function processOnboardingData(
   // (consultantProfile, consulteeProfile, slots, domain, etc.). Typing it
   // precisely would require a shared Prisma payload type across server/action/client
   // layers — not worth the coupling. Callers only read a few string IDs from it.
-): Promise<{ success: boolean; user?: Record<string, unknown>; error?: string }> {
+): Promise<{ success: boolean; user?: Record<string, unknown>; error?: string; verificationWarning?: string }> {
   const { validateOnboardingData } = await import("./onboarding");
 
   try {
@@ -568,6 +587,7 @@ export async function processOnboardingData(
     );
 
     // Post-transaction: consultant verification
+    let verificationWarning: string | undefined;
     if (
       validatedBody.role === UserRole.CONSULTANT &&
       updatedUser.consultantProfileId
@@ -585,10 +605,12 @@ export async function processOnboardingData(
           "Failed to create verification request:",
           verificationError,
         );
+        verificationWarning =
+          "Your profile was saved but verification submission failed. Please contact support.";
       }
     }
 
-    return { success: true, user: updatedUser };
+    return { success: true, user: updatedUser, verificationWarning };
   } catch (error: unknown) {
     console.error("Error in processOnboardingData:", error);
     const errorMessage =

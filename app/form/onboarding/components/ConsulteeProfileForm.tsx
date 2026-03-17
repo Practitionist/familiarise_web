@@ -180,22 +180,6 @@ const ConsulteeProfileForm: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* Goals & Preferences */}
-      <div className="space-y-4">
-        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-          Goals & Preferences
-        </h3>
-
-        <div className="space-y-2">
-          <Label htmlFor="preferredLanguage">Preferred Language</Label>
-          <Input
-            id="preferredLanguage"
-            {...register("preferredLanguage")}
-            placeholder="e.g., English, Spanish"
-          />
-        </div>
-      </div>
-
       {/* Navigation */}
       <div className="flex gap-4 pt-4">
         <Button

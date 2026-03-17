@@ -480,9 +480,7 @@ function createConsulteeProfileData() {
       : null,
     industry: generateIndustry(),
     skillsToDevelop: generateSkillsToDevelop(),
-    linkedinUrl: faker.datatype.boolean({ probability: 0.6 })
-      ? `https://linkedin.com/in/${faker.internet.username()}`
-      : null,
+    // linkedinUrl was moved to User model — set via userData.linkedinUrl above
     budgetPreference,
   };
 }

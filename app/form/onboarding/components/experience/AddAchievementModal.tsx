@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { AchievementCreateInputSchema } from "@/utils/onboarding";
+import { AchievementType } from "@prisma/client";
 import type { Achievement } from "./AchievementsSection";
 
 interface AddAchievementModalProps {
@@ -49,8 +50,7 @@ export function AddAchievementModal({
     title: "",
     description: "",
     url: "",
-    imageUrl: "",
-    achievementType: "OTHER",
+    achievementType: AchievementType.OTHER as AchievementType,
   });
 
   const isEditing = !!achievement;
@@ -61,16 +61,14 @@ export function AddAchievementModal({
         title: achievement.title,
         description: achievement.description || "",
         url: achievement.url || "",
-        imageUrl: achievement.imageUrl || "",
-        achievementType: achievement.achievementType || "OTHER",
+        achievementType: achievement.achievementType || AchievementType.OTHER,
       });
     } else {
       setFormData({
         title: "",
         description: "",
         url: "",
-        imageUrl: "",
-        achievementType: "OTHER",
+        achievementType: AchievementType.OTHER,
       });
     }
   }, [achievement, isOpen]);
@@ -83,7 +81,6 @@ export function AddAchievementModal({
       title: formData.title,
       description: formData.description || undefined,
       url: formData.url || undefined,
-      imageUrl: formData.imageUrl || undefined,
       achievementType: formData.achievementType,
     };
 
@@ -125,7 +122,7 @@ export function AddAchievementModal({
               <Select
                 value={formData.achievementType}
                 onValueChange={(value) =>
-                  setFormData({ ...formData, achievementType: value })
+                  setFormData({ ...formData, achievementType: value as AchievementType })
                 }
               >
                 <SelectTrigger>

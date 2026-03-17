@@ -17,13 +17,13 @@ type ConsulteeFormData = Partial<PersonalInfoAndRole> &
   };
 
 interface Props {
-  onSubmit: (data: ConsulteeFormData) => void;
+  onNext: (data: ConsulteeFormData) => void;
   onBack: () => void;
   formData: ConsulteeFormData;
 }
 
 const ConsulteeAgreementForm: React.FC<Props> = ({
-  onSubmit,
+  onNext,
   onBack,
   formData,
 }) => {
@@ -35,7 +35,7 @@ const ConsulteeAgreementForm: React.FC<Props> = ({
   );
 
   const handleSubmit = () => {
-    onSubmit({
+    onNext({
       ...formData,
       termsAccepted,
       privacyAccepted,
@@ -117,7 +117,7 @@ const ConsulteeAgreementForm: React.FC<Props> = ({
           disabled={!termsAccepted || !privacyAccepted}
           className="flex-1"
         >
-          Complete Registration
+          Continue to Review
         </Button>
       </div>
     </div>

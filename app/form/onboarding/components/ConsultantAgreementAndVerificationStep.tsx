@@ -15,13 +15,13 @@ import TermsAndPrivacyAgreement from "./TermsAndPrivacyAgreement";
 import type { OnboardingFormData } from "@/utils/onboarding";
 
 interface ConsultantAgreementAndVerificationStepProps {
-  onSubmit: (data: Partial<OnboardingFormData>) => void | Promise<void>;
+  onNext: (data: Partial<OnboardingFormData>) => void;
   onBack: () => void;
   formData: Partial<OnboardingFormData>;
 }
 
 export default function ConsultantAgreementAndVerificationStep({
-  onSubmit,
+  onNext,
   onBack,
   formData,
 }: ConsultantAgreementAndVerificationStepProps) {
@@ -86,8 +86,8 @@ export default function ConsultantAgreementAndVerificationStep({
       await fetch(`/api/verification/documents?id=${documentId}`, {
         method: "DELETE",
       });
-    } catch {
-      // Silently fail, document will still be removed from UI
+    } catch (error) {
+      console.error("Failed to delete verification document:", error);
     }
   }, []);
 
@@ -132,7 +132,7 @@ export default function ConsultantAgreementAndVerificationStep({
       verificationDocuments: documents,
     };
 
-    onSubmit(finalData);
+    onNext(finalData);
   };
 
   const hasInProgressUploads = documents.some((d) => d.status === "uploading");
@@ -300,7 +300,7 @@ export default function ConsultantAgreementAndVerificationStep({
               Uploading...
             </>
           ) : (
-            "Submit for Review"
+            "Continue to Review"
           )}
         </Button>
       </div>

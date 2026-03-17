@@ -265,7 +265,7 @@ export const ConsulteeProfileFormSchema = ConsulteeProfileSchema.omit({
 export const StaffProfileFormSchema = StaffProfileSchema.extend({
   department: z.string().min(1, "Department is required"),
   position: z.string().min(1, "Position is required"),
-  responsibilities: z.record(z.string()).optional(),
+  responsibilities: z.record(z.boolean()).optional(),
 });
 
 export const AdminProfileFormSchema = AdminProfileSchema;
@@ -298,6 +298,9 @@ const consultantFormFields = sharedFormFields.extend({
   experience: experienceValidation.optional(),
   scheduleType: z.nativeEnum(ScheduleType).optional(),
   // Frontend-shaped relations
+  // domain is optional in step-state (progressive form fill) but required at
+  // submission time — OnboardingDataSchema (server payload) enforces this via
+  // ConsultantProfileCreateObjectSchema which requires domain.connect.id.
   domain: domainRefSchema.optional(),
   subDomains: z.array(subDomainRefSchema).optional(),
   tags: z.array(tagRefSchema).optional(),

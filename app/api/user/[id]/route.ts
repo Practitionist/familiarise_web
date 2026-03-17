@@ -30,10 +30,10 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    // const session = await getSession();
-    // if (!session || (session.user.id !== id && session.user.role !== 'ADMIN')) {
-    //   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    // }
+    const session = await getSession();
+    if (!session || (session.user.id !== id && session.user.role !== "ADMIN")) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
     const user = await prisma.user.findUnique({
       where: { id: id },
