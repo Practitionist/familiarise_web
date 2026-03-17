@@ -11,6 +11,7 @@ import {
   Calendar,
 } from "lucide-react";
 import { AddWorkExperienceModal } from "./AddWorkExperienceModal";
+import { CompanyLogo } from "@/components/ui/company-logo";
 import { format } from "date-fns";
 
 export interface WorkExperience {
@@ -112,9 +113,11 @@ export function WorkExperienceSection({
               key={exp.id}
               className="group flex items-start gap-4 p-4 rounded-lg border bg-card hover:shadow-sm transition-shadow"
             >
-              <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                <Building2 className="w-5 h-5 text-primary" />
-              </div>
+              <CompanyLogo
+                companyDomain={exp.companyDomain}
+                companyName={exp.company}
+                size={40}
+              />
               <div className="flex-1 min-w-0">
                 <h4 className="font-medium text-foreground">{exp.title}</h4>
                 <p className="text-sm text-muted-foreground">{exp.company}</p>
