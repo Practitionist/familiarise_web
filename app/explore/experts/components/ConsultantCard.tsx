@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import type { IConsultantCardData } from "@/types/consultant";
+import { CompanyLogo } from "@/components/ui/company-logo";
 import {
   Star,
   MapPin,
@@ -15,6 +16,7 @@ import {
   Briefcase,
   ArrowRight,
   CheckCircle2,
+  BadgeCheck,
 } from "lucide-react";
 import { useCurrency } from "@/hooks/useCurrency";
 
@@ -128,18 +130,19 @@ export const ConsultantCard = memo(function ConsultantCard({
                 src={consultant.user.image || "/placeholder-user.jpg"}
                 fill
               />
-              {/* Online indicator */}
-              <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-emerald-500 rounded-full border-2 border-white" />
+              {/* TODO: Add real presence indicator when online tracking is implemented */}
             </div>
             <div className="flex-1 min-w-0">
-              <h3 className="text-xl font-bold text-zinc-900 group-hover:text-zinc-700 transition-colors">
-                {consultant.user.name}
-              </h3>
-              {consultant.user.email && (
-                <span className="text-sm text-zinc-500">
-                  @{consultant.user.email.split("@")[0]}
-                </span>
-              )}
+              <div className="flex items-center gap-1.5">
+                <h3 className="text-xl font-bold text-zinc-900 group-hover:text-zinc-700 transition-colors">
+                  {consultant.user.name}
+                </h3>
+                {consultant.isVerified && (
+                  <span title="Verified by Familiarise">
+                    <BadgeCheck className="w-5 h-5 text-blue-500" />
+                  </span>
+                )}
+              </div>
               <div className="flex items-center gap-2 mt-2">
                 <div className="flex items-center gap-1">
                   <Star className="w-4 h-4 text-amber-400 fill-amber-400" />
@@ -174,7 +177,9 @@ export const ConsultantCard = memo(function ConsultantCard({
                 icon={Clock}
                 label="Experience"
                 value={
-                  consultant.experience ? `${consultant.experience}` : null
+                  consultant.experience
+                    ? `${consultant.experience} years`
+                    : null
                 }
               />
               <ConsultantInfo
@@ -185,7 +190,28 @@ export const ConsultantCard = memo(function ConsultantCard({
             </div>
           </div>
 
-          {/* Tags */}
+          {/* Company Logos */}
+          {consultant.user.workExperiences &&
+            consultant.user.workExperiences.length > 0 && (
+              <div className="flex items-center gap-2 mb-4">
+                {consultant.user.workExperiences.slice(0, 3).map((exp, i) => (
+                  <CompanyLogo
+                    key={`${consultant.id}-company-${i}`}
+                    companyName={exp.company}
+                    companyDomain={exp.companyDomain ?? undefined}
+                    size={36}
+                    className="border-zinc-200"
+                  />
+                ))}
+                <span className="text-sm text-zinc-600 ml-1">
+                  {consultant.user.workExperiences[0].company}
+                  {consultant.user.workExperiences.length > 1 &&
+                    ` +${consultant.user.workExperiences.length - 1}`}
+                </span>
+              </div>
+            )}
+
+          {/* Domain & Subdomains */}
           <div className="flex flex-wrap gap-2">
             <Badge className="bg-zinc-900 text-white hover:bg-zinc-800 px-3 py-1">
               {consultant.domain?.name}
@@ -199,15 +225,21 @@ export const ConsultantCard = memo(function ConsultantCard({
                 {sd.name}
               </Badge>
             ))}
-            {consultant.tags.slice(0, 3).map((t) => (
-              <Badge
-                key={`${consultant.id}-tag-${t.id}`}
-                className="bg-zinc-100 text-zinc-600 hover:bg-zinc-200 px-3 py-1"
-              >
-                {t.name}
-              </Badge>
-            ))}
           </div>
+
+          {/* Tags */}
+          {consultant.tags.length > 0 && (
+            <div className="flex flex-wrap gap-2 mt-2">
+              {consultant.tags.slice(0, 3).map((t) => (
+                <Badge
+                  key={`${consultant.id}-tag-${t.id}`}
+                  className="bg-zinc-100 text-zinc-600 hover:bg-zinc-200 px-3 py-1"
+                >
+                  {t.name}
+                </Badge>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Right Section: Subscription Plans & Actions */}
@@ -262,12 +294,22 @@ export const ConsultantCard = memo(function ConsultantCard({
               <Button
                 variant="outline"
                 className="h-10 border-zinc-300 hover:bg-zinc-50 text-zinc-700 rounded-xl text-sm font-medium"
+                onClick={() =>
+                  router.push(
+                    `/explore/experts/${consultant.id}?action=trial`,
+                  )
+                }
               >
                 Free Trial
               </Button>
               <Button
                 variant="outline"
                 className="h-10 border-zinc-300 hover:bg-zinc-50 text-zinc-700 rounded-xl text-sm font-medium"
+                onClick={() =>
+                  router.push(
+                    `/explore/experts/${consultant.id}?action=book`,
+                  )
+                }
               >
                 Book Session
               </Button>

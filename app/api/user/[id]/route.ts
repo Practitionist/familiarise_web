@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { UserRole, Gender } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
+import { persistProfessionalBackground } from "@/utils/onboarding-server";
 
 /**
  * Convert empty strings to undefined so Prisma skips the field update.
@@ -73,14 +74,10 @@ export async function GET(
         consulteeProfile: {
           select: {
             id: true,
-            occupation: true,
             aboutMe: true,
             preferredLanguage: true,
             goals: true,
-            // New fields
             careerStage: true,
-            currentCompany: true,
-            industry: true,
             skillsToDevelop: true,
             budgetPreference: true,
           },
@@ -90,22 +87,12 @@ export async function GET(
             id: true,
             department: true,
             position: true,
-            permissions: true,
-            responsibilities: true,
-            // New fields
-            employeeId: true,
-            hireDate: true,
-            reportsTo: true,
-            skills: true,
-            workSchedule: true,
           },
         },
         adminProfile: {
           select: {
             id: true,
             adminLevel: true,
-            accessScope: true,
-            assignedRegions: true,
             notes: true,
           },
         },
@@ -227,6 +214,34 @@ export async function PUT(
     console.error("Error updating user:", error);
     return NextResponse.json(
       { error: "An error occurred while updating the user" },
+      { status: 500 },
+    );
+  }
+}
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { id } = await params;
+
+    const session = await getSession();
+    if (!session || (session.user.id !== id && session.user.role !== "ADMIN")) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const body = await req.json();
+
+    await prisma.$transaction(async (tx) => {
+      await persistProfessionalBackground(id, undefined, body, tx);
+    });
+
+    return NextResponse.json({ success: true }, { status: 200 });
+  } catch (error) {
+    console.error("Error patching user professional background:", error);
+    return NextResponse.json(
+      { error: "An error occurred while updating professional background" },
       { status: 500 },
     );
   }

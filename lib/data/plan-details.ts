@@ -26,6 +26,11 @@ export async function fetchWebinarPlanDetail(webinarPlanId: string) {
               name: true,
               email: true,
               image: true,
+              workExperiences: {
+                select: { company: true, companyDomain: true, isCurrent: true },
+                orderBy: [{ isCurrent: "desc" as const }, { startDate: "desc" as const }],
+                take: 3,
+              },
             },
           },
           domain: true,
@@ -94,6 +99,11 @@ export async function fetchClassPlanDetail(classPlanId: string) {
               name: true,
               email: true,
               image: true,
+              workExperiences: {
+                select: { company: true, companyDomain: true, isCurrent: true },
+                orderBy: [{ isCurrent: "desc" as const }, { startDate: "desc" as const }],
+                take: 3,
+              },
             },
           },
           domain: true,

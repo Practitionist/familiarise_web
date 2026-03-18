@@ -4,7 +4,8 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { User, Star, StarHalf, ArrowRight, Award } from "lucide-react";
+import { User, Star, StarHalf, ArrowRight, Award, BadgeCheck } from "lucide-react";
+import { CompanyLogo } from "@/components/ui/company-logo";
 import type { IConsultantCardData } from "@/types/consultant";
 
 interface FeaturedExpertsProps {
@@ -49,11 +50,11 @@ export function FeaturedExperts({ experts, isLoading }: FeaturedExpertsProps) {
           <div className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-900 rounded-full mb-6">
             <Award className="w-4 h-4 text-white" />
             <span className="text-sm font-medium text-white">
-              Featured Experts
+              Familiarise Pick
             </span>
           </div>
           <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold text-zinc-900 mb-4">
-            Top <span className="silver-text">Consultants</span>
+            Top Familiarise <span className="silver-text">Experts</span>
           </h2>
           <p className="text-lg text-zinc-600 max-w-2xl mx-auto">
             Discover the best of the best. Our top consultants are ready to help
@@ -117,9 +118,16 @@ export function FeaturedExperts({ experts, isLoading }: FeaturedExpertsProps) {
                       </div>
 
                       {/* Name */}
-                      <h3 className="text-lg font-semibold text-zinc-900 text-center mb-2 line-clamp-1 group-hover:text-zinc-700 transition-colors">
-                        {expert.user.name}
-                      </h3>
+                      <div className="flex items-center justify-center gap-1 mb-2">
+                        <h3 className="text-lg font-semibold text-zinc-900 text-center line-clamp-1 group-hover:text-zinc-700 transition-colors">
+                          {expert.user.name}
+                        </h3>
+                        {expert.isVerified && (
+                          <span title="Verified by Familiarise">
+                            <BadgeCheck className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                          </span>
+                        )}
+                      </div>
 
                       {/* Rating */}
                       <div className="flex justify-center mb-3">
@@ -135,6 +143,24 @@ export function FeaturedExperts({ experts, isLoading }: FeaturedExpertsProps) {
                           {expert.experience} experience
                         </p>
                       </div>
+
+                      {/* Company Logos */}
+                      {expert.user.workExperiences &&
+                        expert.user.workExperiences.length > 0 && (
+                          <div className="flex items-center justify-center gap-1.5 mt-3">
+                            {expert.user.workExperiences
+                              .slice(0, 2)
+                              .map((exp, i) => (
+                                <CompanyLogo
+                                  key={`${expert.id}-company-${i}`}
+                                  companyName={exp.company}
+                                  companyDomain={exp.companyDomain ?? undefined}
+                                  size={22}
+                                  className="border-zinc-200"
+                                />
+                              ))}
+                          </div>
+                        )}
 
                       {/* Tags */}
                       <div className="flex flex-wrap gap-1.5 justify-center mt-4">

@@ -33,6 +33,8 @@ export function buildUserUpdateData(data: OnboardingData) {
     country: data.country ?? null,
     linkedinUrl: data.linkedinUrl || null,
     bio: data.bio ?? null,
+    ...(data.termsAcceptedAt ? { termsAcceptedAt: data.termsAcceptedAt } : {}),
+    ...(data.privacyAcceptedAt ? { privacyAcceptedAt: data.privacyAcceptedAt } : {}),
   };
 }
 
@@ -67,13 +69,10 @@ export function buildConsulteeScalarData(data: ConsulteeProfileCreateData) {
     : (data.goals ?? "");
 
   return {
-    occupation: data.occupation ?? "",
     aboutMe: data.aboutMe ?? "",
     preferredLanguage: data.preferredLanguage ?? "",
     goals,
     careerStage: data.careerStage ?? null,
-    currentCompany: data.currentCompany ?? null,
-    industry: data.industry ?? null,
     skillsToDevelop: data.skillsToDevelop ?? [],
     budgetPreference: data.budgetPreference ?? null,
   };
@@ -84,13 +83,6 @@ export function buildStaffScalarData(data: StaffProfileCreateData) {
   return {
     department: data.department ?? "",
     position: data.position ?? "",
-    permissions: data.permissions ?? {},
-    responsibilities: data.responsibilities ?? {},
-    employeeId: data.employeeId ?? null,
-    hireDate: data.hireDate ?? null,
-    reportsTo: data.reportsTo ?? null,
-    skills: data.skills ?? [],
-    workSchedule: data.workSchedule ?? null,
   };
 }
 
@@ -98,8 +90,6 @@ export function buildStaffScalarData(data: StaffProfileCreateData) {
 export function buildAdminScalarData(data: AdminProfileCreateData) {
   return {
     adminLevel: data.adminLevel,
-    accessScope: data.accessScope ?? null,
-    assignedRegions: data.assignedRegions ?? [],
     notes: data.notes ?? null,
   };
 }

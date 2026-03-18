@@ -3,15 +3,23 @@ import { Button } from "@/components/ui/button";
 import { Loader2, Pencil } from "lucide-react";
 import {
   ConsulteeProfile,
-  ConsulteePreferences,
   PersonalInfoAndRole,
 } from "@/schemas/user";
 
 type ConsulteeFormData = Partial<PersonalInfoAndRole> &
-  Partial<ConsulteeProfile> &
-  Partial<ConsulteePreferences> & {
-    interests?: string[];
+  Partial<ConsulteeProfile> & {
     goals?: string;
+    consulteeInlineEducation?: {
+      institution?: string;
+      institutionDomain?: string;
+      fieldOfStudy?: string;
+      endYear?: number;
+    };
+    consulteeInlineWorkExperience?: {
+      title?: string;
+      company?: string;
+      companyDomain?: string;
+    };
   };
 
 interface Props {
@@ -20,6 +28,15 @@ interface Props {
   formData: ConsulteeFormData;
   onGoToStep?: (step: number) => void;
 }
+
+const CAREER_STAGE_LABELS: Record<string, string> = {
+  SCHOOL_STUDENT: "School Student",
+  STUDENT: "Student",
+  EARLY_CAREER: "Early Career (0-3 years)",
+  MID_CAREER: "Mid Career (3-10 years)",
+  SENIOR: "Senior (10+ years)",
+  EXECUTIVE: "Executive / C-Level",
+};
 
 const ConsulteeReviewForm: React.FC<Props> = ({
   onSubmit,
@@ -68,6 +85,13 @@ const ConsulteeReviewForm: React.FC<Props> = ({
     </div>
   );
 
+  const isStudent = formData.careerStage === "STUDENT";
+  const isProfessional =
+    formData.careerStage === "EARLY_CAREER" ||
+    formData.careerStage === "MID_CAREER" ||
+    formData.careerStage === "SENIOR" ||
+    formData.careerStage === "EXECUTIVE";
+
   return (
     <div className="space-y-6">
       {renderSection(
@@ -85,49 +109,54 @@ const ConsulteeReviewForm: React.FC<Props> = ({
       {renderSection(
         "Profile Details",
         <div className="bg-muted/50 rounded-lg p-4">
-          {renderField("Occupation", formData.occupation)}
-          {renderField("Company", formData.currentCompany)}
-          {renderField("Industry", formData.industry)}
-          {renderField("Career Stage", formData.careerStage?.replace("_", " "))}
+          {renderField(
+            "Career Stage",
+            formData.careerStage
+              ? CAREER_STAGE_LABELS[formData.careerStage] ||
+                  formData.careerStage
+              : undefined,
+          )}
+          {isStudent && (
+            <>
+              {renderField(
+                "Institution",
+                formData.consulteeInlineEducation?.institution,
+              )}
+              {renderField(
+                "Field of Study",
+                formData.consulteeInlineEducation?.fieldOfStudy,
+              )}
+              {renderField(
+                "Expected Graduation",
+                formData.consulteeInlineEducation?.endYear?.toString(),
+              )}
+            </>
+          )}
+          {isProfessional && (
+            <>
+              {renderField(
+                "Current Role",
+                formData.consulteeInlineWorkExperience?.title,
+              )}
+              {renderField(
+                "Company",
+                formData.consulteeInlineWorkExperience?.company,
+              )}
+            </>
+          )}
           {renderField("About Me", formData.aboutMe)}
         </div>,
         1,
       )}
 
-      {renderSection(
-        "Preferences",
-        <div className="bg-muted/50 rounded-lg p-4">
-          {renderField("Language", formData.preferredLanguage)}
-        </div>,
-        1,
-      )}
-
-      {(formData.interests?.length || formData.goals) &&
+      {(formData.goals || formData.preferredLanguage) &&
         renderSection(
-          "Interests & Goals",
-          <div className="bg-muted/50 rounded-lg p-4 space-y-4">
-            {formData.interests && formData.interests.length > 0 && (
-              <div>
-                <p className="text-sm text-muted-foreground mb-2">Interests</p>
-                <div className="flex flex-wrap gap-2">
-                  {formData.interests.map((interest, index) => (
-                    <span
-                      key={index}
-                      className="px-2 py-1 bg-primary/10 text-primary rounded text-sm"
-                    >
-                      {interest}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-            {formData.goals && (
-              <div>
-                <p className="text-sm text-muted-foreground mb-2">Goals</p>
-                <p className="text-sm">{formData.goals}</p>
-              </div>
-            )}
+          "Preferences",
+          <div className="bg-muted/50 rounded-lg p-4">
+            {renderField("Language", formData.preferredLanguage)}
+            {formData.goals && renderField("Goals", formData.goals)}
           </div>,
+          1,
         )}
 
       {/* Navigation */}

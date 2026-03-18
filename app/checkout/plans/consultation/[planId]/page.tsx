@@ -24,6 +24,7 @@ import {
 } from "@prisma/client";
 import { loadStripe } from "@stripe/stripe-js";
 import { CreditCard as CreditCardIcon } from "lucide-react";
+import { CompanyLogo } from "@/components/ui/company-logo";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import StripeCheckout from "../../../components/StripeCheckout";
@@ -37,6 +38,7 @@ type ConsultationPlanWithConsultant = ConsultationPlan & {
       name: string;
       email: string;
       image: string;
+      workExperiences?: Array<{ company: string; companyDomain: string | null; isCurrent: boolean }>;
     };
   };
 };
@@ -564,6 +566,19 @@ export default function ConsultationCheckoutPage({
               <div className="text-sm text-muted-foreground">
                 {consultantDetails?.headline || "Consultant"}
               </div>
+              {userDetails?.workExperiences && userDetails.workExperiences.length > 0 && (
+                <div className="flex items-center gap-1.5 mt-1">
+                  {userDetails.workExperiences.slice(0, 3).map((exp, i) => (
+                    <CompanyLogo
+                      key={`checkout-consult-company-${i}`}
+                      companyName={exp.company}
+                      companyDomain={exp.companyDomain ?? undefined}
+                      size={20}
+                      className="border-zinc-200"
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           </div>
           <div className="text-right">

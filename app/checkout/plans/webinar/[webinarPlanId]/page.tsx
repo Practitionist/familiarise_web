@@ -15,6 +15,7 @@ import {
 } from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
 import { CreditCard as CreditCardIcon } from "lucide-react";
+import { CompanyLogo } from "@/components/ui/company-logo";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import StripeCheckout from "../../../components/StripeCheckout";
@@ -47,7 +48,9 @@ import type {
 export type CheckoutWebinarPlanData = WebinarPlan & {
   consultantProfile:
     | (ConsultantProfile & {
-        user: User;
+        user: User & {
+          workExperiences?: Array<{ company: string; companyDomain: string | null; isCurrent: boolean }>;
+        };
         domain: Domain | null;
         subDomains: SubDomain[];
         tags: PrismaTag[];
@@ -437,6 +440,19 @@ export default function WebinarCheckoutPage({
                   consultantDetails?.domain?.name ||
                   "Consultant"}
               </div>
+              {userDetails?.workExperiences && userDetails.workExperiences.length > 0 && (
+                <div className="flex items-center gap-1.5 mt-1">
+                  {userDetails.workExperiences.slice(0, 3).map((exp, i) => (
+                    <CompanyLogo
+                      key={`checkout-webinar-company-${i}`}
+                      companyName={exp.company}
+                      companyDomain={exp.companyDomain ?? undefined}
+                      size={20}
+                      className="border-zinc-200"
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           </div>
           <div className="text-right">

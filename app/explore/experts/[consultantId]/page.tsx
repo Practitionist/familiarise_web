@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import {
   getConsultantDetail,
@@ -24,10 +25,12 @@ export default async function ExpertProfile({
   }
 
   return (
-    <ExpertProfileClient
-      consultantDetails={consultant}
-      userDetails={consultant.user as TUserWithProfessionalBackground}
-      reviews={reviews}
-    />
+    <Suspense>
+      <ExpertProfileClient
+        consultantDetails={consultant}
+        userDetails={consultant.user as TUserWithProfessionalBackground}
+        reviews={reviews}
+      />
+    </Suspense>
   );
 }

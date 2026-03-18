@@ -27,14 +27,9 @@ import {
   generateToolsAndTechnologies,
   generateMentoringStyle,
   generateSkillsToDevelop,
-  generateIndustry,
-  generateStaffSkills,
-  generateWorkSchedule,
   generateCountry,
   generateCity,
   generateCompanyName,
-  generateAccessScope,
-  generateAssignedRegions,
 } from "./utils";
 import { config } from "./config";
 
@@ -462,7 +457,6 @@ function createConsulteeProfileData() {
   const budgetPreference = faker.helpers.arrayElement(BUDGET_PREFERENCES);
 
   return {
-    occupation: sanitizeString(faker.person.jobTitle()),
     preferredLanguage: faker.helpers.arrayElement([
       "English",
       "Spanish",
@@ -472,20 +466,13 @@ function createConsulteeProfileData() {
     ]),
     aboutMe: sanitizeString(faker.lorem.paragraph()),
     goals: sanitizeString(faker.lorem.sentence()),
-
-    // Enhanced consultee profile fields
     careerStage,
-    currentCompany: faker.datatype.boolean({ probability: 0.7 })
-      ? generateCompanyName()
-      : null,
-    industry: generateIndustry(),
     skillsToDevelop: generateSkillsToDevelop(),
-    // linkedinUrl was moved to User model — set via userData.linkedinUrl above
     budgetPreference,
   };
 }
 
-function createStaffProfileData(staffIndex: number, managerIds: string[]) {
+function createStaffProfileData() {
   const departments = [
     "Customer Support",
     "Operations",
@@ -502,41 +489,14 @@ function createStaffProfileData(staffIndex: number, managerIds: string[]) {
     "Team Lead",
   ];
 
-  // First staff member has no manager, subsequent ones report to earlier staff
-  const reportsTo =
-    staffIndex > 0 && managerIds.length > 0
-      ? faker.helpers.arrayElement(managerIds)
-      : null;
-
   return {
     department: faker.helpers.arrayElement(departments),
     position: faker.helpers.arrayElement(positions),
-    permissions: {
-      permissions: faker.helpers.arrayElements(["read", "write", "delete"], {
-        min: 1,
-        max: 3,
-      }),
-    },
-    responsibilities: {
-      responsibilities: faker.helpers.arrayElements(
-        ["manage team", "oversee projects", "allocate resources", "budget"],
-        { min: 1, max: 4 },
-      ),
-    },
-
-    // New fields for enhanced staff profile
-    employeeId: `EMP-${faker.string.alphanumeric(6).toUpperCase()}`,
-    hireDate: faker.date.past({ years: 3 }),
-    reportsTo,
-    skills: generateStaffSkills(),
-    workSchedule: generateWorkSchedule(),
   };
 }
 
 function createAdminProfileData(adminIndex: number): {
   adminLevel: AdminLevel;
-  accessScope: object;
-  assignedRegions: string[];
   notes: string | null;
 } {
   // First admin is SUPER_ADMIN, rest are distributed
@@ -551,9 +511,6 @@ function createAdminProfileData(adminIndex: number): {
 
   return {
     adminLevel,
-    accessScope: generateAccessScope(adminLevel),
-    assignedRegions:
-      adminLevel === "SUPER_ADMIN" ? ["Global"] : generateAssignedRegions(),
     notes: faker.datatype.boolean({ probability: 0.3 })
       ? sanitizeString(faker.lorem.paragraph())
       : null,
@@ -564,7 +521,6 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
   await createDomainsSubdomainsTags();
 
   const users: UserWithProfiles[] = [];
-  const staffUserIds: string[] = []; // Track staff user IDs for reportsTo
   let consultantIndex = 0;
   let consulteeIndex = 0;
   let staffIndex = 0;
@@ -661,7 +617,7 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
         };
       } else if (userRole === "STAFF") {
         userData.staffProfile = {
-          create: createStaffProfileData(staffIndex - 1, staffUserIds),
+          create: createStaffProfileData(),
         };
       } else if (userRole === "ADMIN") {
         userData.adminProfile = {
@@ -688,9 +644,43 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
         },
       });
 
-      // Track staff IDs for reportsTo relationships
-      if (userRole === "STAFF") {
-        staffUserIds.push(user.id);
+      // For consultees, add a WorkExperience or Education record at User level
+      if (userRole === "CONSULTEE") {
+        const consulteeStage = user.consulteeProfile?.careerStage;
+        if (consulteeStage === "STUDENT") {
+          await prisma.education.create({
+            data: {
+              userId: user.id,
+              institution: faker.helpers.arrayElement([
+                "IIT Bombay",
+                "Stanford University",
+                "MIT",
+                "Delhi University",
+                "BITS Pilani",
+              ]),
+              degree: "Student",
+              fieldOfStudy: faker.helpers.arrayElement([
+                "Computer Science",
+                "Engineering",
+                "Business",
+                "Data Science",
+              ]),
+              endYear:
+                new Date().getFullYear() +
+                faker.number.int({ min: 1, max: 3 }),
+            },
+          });
+        } else {
+          await prisma.workExperience.create({
+            data: {
+              userId: user.id,
+              company: generateCompanyName(),
+              title: sanitizeString(faker.person.jobTitle()),
+              isCurrent: true,
+              startDate: faker.date.past({ years: 3 }),
+            },
+          });
+        }
       }
 
       users.push(user);

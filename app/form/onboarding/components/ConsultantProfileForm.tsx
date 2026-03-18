@@ -104,28 +104,29 @@ const ConsultantProfileForm: React.FC<Props> = ({
     }
   }, [initialData, reset]);
 
-  useEffect(() => {
-    const fetchMetadata = async () => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const response = await fetch("/api/user/consultants/meta");
-        if (!response.ok) {
-          throw new Error("Failed to fetch metadata");
-        }
-        const { data } = await response.json();
-        setDomains(data.domains);
-        setSubDomains(data.subdomains);
-        setTags(data.tags);
-      } catch (error) {
-        console.error("Error fetching metadata:", error);
-        setError("Failed to load form data. Please try again.");
-      } finally {
-        setIsLoading(false);
+  const fetchMetadata = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/user/consultants/meta");
+      if (!response.ok) {
+        throw new Error("Failed to fetch metadata");
       }
-    };
-    fetchMetadata();
+      const { data } = await response.json();
+      setDomains(data.domains);
+      setSubDomains(data.subdomains);
+      setTags(data.tags);
+    } catch (error) {
+      console.error("Error fetching metadata:", error);
+      setError("Failed to load form data. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchMetadata();
+  }, [fetchMetadata]);
 
   const onSubmit = (data: FormData) => {
     onNext(data);
@@ -200,7 +201,7 @@ const ConsultantProfileForm: React.FC<Props> = ({
     return (
       <div className="text-center space-y-4 p-8">
         <p className="text-destructive text-lg">{error}</p>
-        <Button onClick={() => window.location.reload()}>Retry</Button>
+        <Button onClick={fetchMetadata}>Retry</Button>
       </div>
     );
   }
