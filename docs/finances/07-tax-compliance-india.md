@@ -140,8 +140,8 @@ The `math.ts` checkout utilities calculate tax for **display and invoicing purpo
 
 The 56th GST Council meeting introduced a simplified two-rate framework:
 
-| Old Structure         | New Structure (GST 2.0, effective Sep 2025)                    |
-| --------------------- | -------------------------------------------------------------- |
+| Old Structure         | New Structure (GST 2.0, effective Sep 2025)                        |
+| --------------------- | ------------------------------------------------------------------ |
 | 0%, 5%, 12%, 18%, 28% | 5% (merit, no ITC), 18% (standard, with ITC), 40% (demerit/luxury) |
 
 **Impact**: Most platform services remain at 18% with Input Tax Credit (ITC) available.
@@ -193,6 +193,7 @@ As Familiarise collects payments on behalf of consultants (suppliers), you may b
 ### International Buyers (Export of Services)
 
 Export of services is zero-rated under GST (IGST Act Section 16). Conditions:
+
 - Supplier located in India
 - Recipient located outside India
 - Payment received in convertible foreign exchange

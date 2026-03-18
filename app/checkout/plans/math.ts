@@ -93,7 +93,9 @@ export function calculatePricing(
   baseAmount: number,
   config: PricingConfig = {},
 ): PricingBreakdown {
-  const taxRate = config.isInternational ? 0 : (config.taxRate ?? DEFAULT_TAX_RATE);
+  const taxRate = config.isInternational
+    ? 0
+    : (config.taxRate ?? DEFAULT_TAX_RATE);
   const discountPercent = config.discountPercent ?? 0;
 
   const subtotal = calculateSubtotal(baseAmount);

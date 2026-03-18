@@ -274,7 +274,8 @@ export async function createInvoiceFromPayment(
 
     // Tax breakdown from stored payment data (tax-exclusive: plan.price + GST)
     const totalAmount = payment.amount;
-    const isInternational = payment.isInternational ?? payment.currency !== "INR";
+    const isInternational =
+      payment.isInternational ?? payment.currency !== "INR";
     const taxRate = isInternational ? 0 : TAX_CONSTANTS.GST_RATE;
     const taxAmount = payment.taxAmount;
     const baseAmount = totalAmount - taxAmount;

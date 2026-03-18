@@ -6,16 +6,16 @@ Tax Deducted at Source (TDS) under Section 194J applies to payments for professi
 
 ## Rules
 
-| Parameter | Value |
-|-----------|-------|
-| **Section** | 194J (Fees for professional/technical services) |
-| **Threshold** | ₹50,000 per financial year |
-| **Rate (with PAN)** | 10% |
-| **Rate (without PAN)** | 20% (Section 206AA) |
-| **Financial Year** | April 1 – March 31 |
-| **Deposit deadline** | 7th of the month following deduction |
-| **Filing** | Quarterly Form 26Q |
-| **Due dates** | Q1: Jul 31, Q2: Oct 31, Q3: Jan 31, Q4: May 31 |
+| Parameter              | Value                                           |
+| ---------------------- | ----------------------------------------------- |
+| **Section**            | 194J (Fees for professional/technical services) |
+| **Threshold**          | ₹50,000 per financial year                      |
+| **Rate (with PAN)**    | 10%                                             |
+| **Rate (without PAN)** | 20% (Section 206AA)                             |
+| **Financial Year**     | April 1 – March 31                              |
+| **Deposit deadline**   | 7th of the month following deduction            |
+| **Filing**             | Quarterly Form 26Q                              |
+| **Due dates**          | Q1: Jul 31, Q2: Oct 31, Q3: Jan 31, Q4: May 31  |
 
 ## How It Works
 
@@ -52,10 +52,13 @@ The system tracks cumulative `grossAmount` from `ConsultantEarnings` for each fi
 ## Database Models
 
 ### ConsultantTaxInfo
+
 Stores PAN, GSTIN, country, and LUT info per consultant.
 
 ### TDSRecord
+
 One record per deduction event, linked to payout. Tracks:
+
 - Financial year + quarter
 - Cumulative gross payments at time of deduction
 - TDS amount and rate
@@ -83,10 +86,10 @@ One record per deduction event, linked to payout. Tracks:
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `lib/payments/tax/tds-service.ts` | Core TDS calculation + record-keeping |
-| `lib/payments/payouts/payout-service.ts` | TDS integration in payout processing |
-| `app/api/admin/tds/route.ts` | Admin TDS dashboard API |
-| `app/api/consultant/tax-info/route.ts` | Consultant tax info CRUD |
-| `prisma/schema.prisma` | `ConsultantTaxInfo` + `TDSRecord` models |
+| File                                     | Purpose                                  |
+| ---------------------------------------- | ---------------------------------------- |
+| `lib/payments/tax/tds-service.ts`        | Core TDS calculation + record-keeping    |
+| `lib/payments/payouts/payout-service.ts` | TDS integration in payout processing     |
+| `app/api/admin/tds/route.ts`             | Admin TDS dashboard API                  |
+| `app/api/consultant/tax-info/route.ts`   | Consultant tax info CRUD                 |
+| `prisma/schema.prisma`                   | `ConsultantTaxInfo` + `TDSRecord` models |

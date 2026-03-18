@@ -50,7 +50,6 @@ export async function POST(req: NextRequest) {
     const gatewayRouting = routeGateway({
       buyerCountry,
       requestedGateway: validatedData.paymentGateway,
-      amount: 0, // Amount not yet known; routing is country-based
     });
 
     // Override gateway with auto-routed selection

@@ -168,8 +168,9 @@ export async function calculateTDS(params: {
     where: { consultantProfileId },
   });
 
-  const tdsRate =
-    taxInfo?.panVerified ? TDS_RATE_WITH_PAN : TDS_RATE_WITHOUT_PAN;
+  const tdsRate = taxInfo?.panVerified
+    ? TDS_RATE_WITH_PAN
+    : TDS_RATE_WITHOUT_PAN;
 
   // Calculate taxable amount
   let taxableAmount: number;

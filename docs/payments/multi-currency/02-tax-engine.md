@@ -37,15 +37,15 @@ Tax jurisdiction is determined by **buyer country**, not currency:
 ```typescript
 determineTax({
   baseAmountPaise: 50000,
-  buyerCountry: "US",        // → 0% (export)
+  buyerCountry: "US", // → 0% (export)
   serviceType: "CONSULTING",
-})
+});
 
 determineTax({
   baseAmountPaise: 50000,
-  buyerCountry: "IN",        // → 18% GST
+  buyerCountry: "IN", // → 18% GST
   serviceType: "CONSULTING",
-})
+});
 ```
 
 ### Previous Bug (Fixed)
@@ -57,15 +57,16 @@ The old code used `currency !== "INR"` to detect international transactions. Sin
 **Status**: UNRESOLVED — needs CA opinion before launch.
 
 If Familiarise is classified as an "e-commerce operator" under Section 24 CGST Act:
+
 - GST registration is **mandatory from Day 1** (no ₹20L threshold)
 - Must collect TCS (Tax Collected at Source) of 0.5% on supplies
 - Monthly GSTR-8 filing required
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `lib/payments/tax/tax-engine.ts` | `determineTax()` — core tax logic |
-| `lib/payments/tax/buyer-country.ts` | `detectBuyerCountry()` — buyer location |
-| `lib/payments/payouts/constants.ts` | `TAX_CONSTANTS` — rates and SAC codes |
-| `lib/payments/payouts/invoice-service.ts` | Invoice generation with zero-rating |
+| File                                      | Purpose                                 |
+| ----------------------------------------- | --------------------------------------- |
+| `lib/payments/tax/tax-engine.ts`          | `determineTax()` — core tax logic       |
+| `lib/payments/tax/buyer-country.ts`       | `detectBuyerCountry()` — buyer location |
+| `lib/payments/payouts/constants.ts`       | `TAX_CONSTANTS` — rates and SAC codes   |
+| `lib/payments/payouts/invoice-service.ts` | Invoice generation with zero-rating     |

@@ -36,7 +36,6 @@ export interface GatewayRoutingResult {
 export function routeGateway(params: {
   buyerCountry: string;
   requestedGateway?: PaymentGateway;
-  amount: number;
 }): GatewayRoutingResult {
   const { buyerCountry, requestedGateway } = params;
 

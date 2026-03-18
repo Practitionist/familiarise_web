@@ -6,11 +6,11 @@ All prices are stored in **INR paise**. International buyers see approximate pri
 
 ### Gateway Selection
 
-| Buyer Country | Gateway | Method | Fee | Settlement |
-|--------------|---------|--------|-----|-----------|
-| India | Razorpay | Domestic (UPI, cards, netbanking) | 2% + GST (~2.36%) | INR, T+2 |
-| International | Razorpay | IBT (International Bank Transfer) | 1% + GST, zero forex | INR, T+1 |
-| Fallback | Stripe | Checkout Sessions | ~6.3% (4.3% + 2% forex) | INR, T+5-7 |
+| Buyer Country | Gateway  | Method                            | Fee                     | Settlement |
+| ------------- | -------- | --------------------------------- | ----------------------- | ---------- |
+| India         | Razorpay | Domestic (UPI, cards, netbanking) | 2% + GST (~2.36%)       | INR, T+2   |
+| International | Razorpay | IBT (International Bank Transfer) | 1% + GST, zero forex    | INR, T+1   |
+| Fallback      | Stripe   | Checkout Sessions                 | ~6.3% (4.3% + 2% forex) | INR, T+5-7 |
 
 ### Why Razorpay for Everything
 
@@ -45,6 +45,7 @@ Familiarise's effective international cost: **~11%** (10% commission + 1% Razorp
 ## Buyer Country Detection
 
 Server-side cascade at checkout:
+
 1. `User.country` (profile field — highest confidence)
 2. `cf-ipcountry` header (Cloudflare geo-IP)
 3. `Accept-Language` → country mapping
@@ -60,14 +61,14 @@ Server-side cascade at checkout:
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `lib/payments/tax/buyer-country.ts` | Buyer country detection cascade |
-| `lib/payments/tax/tax-engine.ts` | Tax determination (GST vs zero-rated) |
-| `lib/payments/gateway-router.ts` | Auto-routing to Razorpay/Stripe |
-| `lib/payments/validation/currency-guards.ts` | Currency consistency validation |
-| `lib/currency.ts` | Exchange rates + locale→currency mapping |
-| `hooks/useCurrency.ts` | Client-side currency display hook |
+| File                                         | Purpose                                  |
+| -------------------------------------------- | ---------------------------------------- |
+| `lib/payments/tax/buyer-country.ts`          | Buyer country detection cascade          |
+| `lib/payments/tax/tax-engine.ts`             | Tax determination (GST vs zero-rated)    |
+| `lib/payments/gateway-router.ts`             | Auto-routing to Razorpay/Stripe          |
+| `lib/payments/validation/currency-guards.ts` | Currency consistency validation          |
+| `lib/currency.ts`                            | Exchange rates + locale→currency mapping |
+| `hooks/useCurrency.ts`                       | Client-side currency display hook        |
 
 ## Future Phases
 

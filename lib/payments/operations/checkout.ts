@@ -380,7 +380,10 @@ export async function calculateAmountAndValidate(
         // Validate FIXED_AMOUNT discount currency matches plan currency (INR for MVP)
         if (
           !validateDiscountCurrency(
-            { discountType: discount.discountType, currency: discount.currency },
+            {
+              discountType: discount.discountType,
+              currency: discount.currency,
+            },
             priceCurrency,
           )
         ) {
