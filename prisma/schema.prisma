@@ -552,19 +552,15 @@ model ConsultantReview {
 
 model ConsulteeProfile {
   id                           String            @id @default(uuid())
-  occupation                   String?
   aboutMe                      String?           @db.Text
   preferredLanguage            String?
   goals                        String?           @db.Text
 
-  // New fields for enhanced consultee profile
   careerStage      CareerStage?
-  currentCompany   String?
-  industry         String?
   skillsToDevelop  String[]          @default([])
   budgetPreference BudgetPreference?
 
-  // Note: Education has been consolidated to User level for DRY principle
+  // Education and work experience are at User level (WorkExperience, Education models)
 
   consultationRequests Consultation[]
   subscriptionRequests Subscription[]
@@ -667,15 +663,16 @@ model Certification {
 }
 
 model Education {
-  id           String  @id @default(uuid())
-  institution  String
-  degree       String
-  fieldOfStudy String?
-  startYear    Int?
-  endYear      Int?
-  grade        String?
-  activities   String?
-  description  String? @db.Text
+  id                String  @id @default(uuid())
+  institution       String
+  institutionDomain String?
+  degree            String
+  fieldOfStudy      String?
+  startYear         Int?
+  endYear           Int?
+  grade             String?
+  activities        String?
+  description       String? @db.Text
 
   // Consolidated to User level (was ConsultantProfile/ConsulteeProfile)
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
@@ -2045,6 +2042,7 @@ enum Gender {
 }
 
 enum CareerStage {
+  SCHOOL_STUDENT // No UI yet
   STUDENT
   EARLY_CAREER // 0-3 years experience
   MID_CAREER // 3-10 years experience

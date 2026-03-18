@@ -82,14 +82,33 @@ function getProgramInstructor(
   return null;
 }
 
-/** Extract instructor work experiences (for company logo stickers). */
+/** Extract instructor work experiences (for company logo stickers), including collaborator experiences (deduplicated). */
 function getInstructorWorkExperiences(
   program: Program,
 ): Array<{ company: string; companyDomain: string | null; isCurrent: boolean }> {
   const cp = (program as Record<string, unknown>).consultantProfile as
     | { user?: { workExperiences?: Array<{ company: string; companyDomain: string | null; isCurrent: boolean }> } }
     | undefined;
-  return cp?.user?.workExperiences ?? [];
+  const primaryExps = cp?.user?.workExperiences ?? [];
+
+  // Merge collaborator work experiences
+  const collaborators = (program as Record<string, unknown>).collaborators as
+    | Array<{ consultantProfile?: { user?: { workExperiences?: Array<{ company: string; companyDomain: string | null; isCurrent: boolean }> } } }>
+    | undefined;
+  if (!collaborators?.length) return primaryExps;
+
+  const seen = new Set(primaryExps.map((e) => e.company.toLowerCase()));
+  const merged = [...primaryExps];
+  for (const collab of collaborators) {
+    for (const exp of collab.consultantProfile?.user?.workExperiences ?? []) {
+      const key = exp.company.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push(exp);
+      }
+    }
+  }
+  return merged;
 }
 
 function GridCard({
@@ -350,6 +369,7 @@ function CarouselCard({
 }) {
   const router = useRouter();
   const { formatPrice } = useCurrency();
+  const workExperiences = getInstructorWorkExperiences(program);
 
   const handleClick = () => {
     if (isClassProgram(program)) {
@@ -399,8 +419,23 @@ function CarouselCard({
           {program.description}
         </p>
         <div className="flex items-center justify-between">
-          <div className="text-lg font-bold text-zinc-900">
-            {formatPrice(program.price / 100)}
+          <div className="flex items-center gap-2">
+            <div className="text-lg font-bold text-zinc-900">
+              {formatPrice(program.price / 100)}
+            </div>
+            {workExperiences.length > 0 && (
+              <div className="flex items-center gap-1">
+                {workExperiences.slice(0, 2).map((exp, i) => (
+                  <CompanyLogo
+                    key={`carousel-company-${program.id}-${i}`}
+                    companyName={exp.company}
+                    companyDomain={exp.companyDomain ?? undefined}
+                    size={18}
+                    className="border-zinc-200"
+                  />
+                ))}
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-1 text-sm font-medium text-zinc-500 group-hover:text-zinc-900 transition-colors">
             <span>View</span>

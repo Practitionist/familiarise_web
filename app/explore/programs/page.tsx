@@ -13,7 +13,7 @@ import {
 import { motion } from "framer-motion";
 import { useSession } from "@/lib/auth-client";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useMemo, useRef, useState, Suspense } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "react";
 import { useDebouncedCallback } from "use-debounce";
 import { useCurrency } from "@/hooks/useCurrency";
 import { usePrograms, useCuratedPrograms, useTopicsWithCount } from "./hooks";
@@ -33,7 +33,7 @@ import CategoryGrid from "./components/CategoryGrid";
 import AdvancedFilters from "./components/AdvancedFilters";
 import FilterChips, { ActiveFilter } from "./components/FilterChips";
 
-const STATS = [
+const FALLBACK_STATS = [
   { icon: GraduationCap, value: "500+", label: "Classes Available" },
   { icon: Video, value: "200+", label: "Live Webinars" },
   { icon: Users, value: "25K+", label: "Students Enrolled" },
@@ -59,6 +59,23 @@ function ProgramsContent() {
   const [viewMode, setViewMode] = useState<"list" | "grid">("grid");
   const [filters, setFilters] = useState<ProgramFilters>({});
   const observer = useRef<IntersectionObserver>();
+
+  // Real stats from API with fallback
+  const [stats, setStats] = useState(FALLBACK_STATS);
+  useEffect(() => {
+    fetch("/api/programs/stats")
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        if (data?.data) {
+          setStats([
+            { icon: GraduationCap, value: `${data.data.classCount || 0}`, label: "Classes Available" },
+            { icon: Video, value: `${data.data.webinarCount || 0}`, label: "Live Webinars" },
+            { icon: Users, value: "25K+", label: "Students Enrolled" },
+          ]);
+        }
+      })
+      .catch(() => { /* keep fallback */ });
+  }, []);
 
   const debouncedSetSearch = useDebouncedCallback((value: string) => {
     setSearchTerm(value);
@@ -266,7 +283,7 @@ function ProgramsContent() {
             </p>
 
             <div className="flex flex-wrap justify-center gap-8 md:gap-16">
-              {STATS.map((stat, index) => (
+              {stats.map((stat, index) => (
                 <motion.div
                   key={stat.label}
                   className="text-center"

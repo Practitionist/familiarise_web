@@ -12,6 +12,7 @@ export const GenderEnum = z.enum([
 ]);
 
 export const CareerStageEnum = z.enum([
+  "SCHOOL_STUDENT",
   "STUDENT",
   "EARLY_CAREER",
   "MID_CAREER",
@@ -164,6 +165,7 @@ export type Certification = z.infer<typeof CertificationSchema>;
 export const EducationSchema = z.object({
   id: z.string().optional(),
   institution: z.string().min(1, "Institution name is required"),
+  institutionDomain: z.string().optional(),
   degree: z.string().min(1, "Degree is required"),
   fieldOfStudy: z.string().optional(),
   startYear: z.number().min(1900).max(2100).optional().nullable(),
@@ -243,25 +245,13 @@ export type ConsultantProfile = z.infer<typeof ConsultantProfileSchema>;
 // #region Consultee Profile Schema
 
 export const ConsulteeProfileSchema = z.object({
-  occupation: z.string().optional(),
   aboutMe: z.string().optional(),
   preferredLanguage: z.string().optional(),
   goals: z.string().optional(),
 
-  // New fields
   careerStage: CareerStageEnum.optional().nullable(),
-  currentCompany: z.string().optional(),
-  industry: z.string().optional(),
   skillsToDevelop: z.array(z.string()).default([]),
   budgetPreference: BudgetPreferenceEnum.optional().nullable(),
-
-  // Education history (new nested model)
-  educationHistory: z.array(EducationSchema).optional(),
-
-  // Deprecated fields (kept for backward compatibility)
-  education: z.string().optional(),
-  specialRequirements: z.string().optional(),
-  interests: z.array(z.string()).optional(),
 });
 
 export type ConsulteeProfile = z.infer<typeof ConsulteeProfileSchema>;

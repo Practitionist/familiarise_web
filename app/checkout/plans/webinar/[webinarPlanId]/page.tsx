@@ -15,6 +15,7 @@ import {
 } from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
 import { CreditCard as CreditCardIcon } from "lucide-react";
+import { CompanyLogo } from "@/components/ui/company-logo";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import StripeCheckout from "../../../components/StripeCheckout";
@@ -437,6 +438,19 @@ export default function WebinarCheckoutPage({
                   consultantDetails?.domain?.name ||
                   "Consultant"}
               </div>
+              {(userDetails as any)?.workExperiences?.length > 0 && (
+                <div className="flex items-center gap-1.5 mt-1">
+                  {(userDetails as any).workExperiences.slice(0, 3).map((exp: any, i: number) => (
+                    <CompanyLogo
+                      key={`checkout-webinar-company-${i}`}
+                      companyName={exp.company}
+                      companyDomain={exp.companyDomain ?? undefined}
+                      size={20}
+                      className="border-zinc-200"
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           </div>
           <div className="text-right">

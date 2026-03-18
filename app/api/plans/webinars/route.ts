@@ -52,6 +52,33 @@ export async function GET(request: NextRequest) {
         },
       },
       topics: true,
+      collaborators: {
+        where: { status: "ACCEPTED" },
+        include: {
+          consultantProfile: {
+            include: {
+              user: {
+                select: {
+                  name: true,
+                  image: true,
+                  workExperiences: {
+                    select: {
+                      company: true,
+                      companyDomain: true,
+                      isCurrent: true,
+                    },
+                    orderBy: [
+                      { isCurrent: "desc" as const },
+                      { startDate: "desc" as const },
+                    ],
+                    take: 3,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
     };
 
     if (includeRegistration) {

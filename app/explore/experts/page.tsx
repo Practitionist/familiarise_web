@@ -7,13 +7,27 @@ import {
   getCuratedExperts,
 } from "@/lib/data/explore-experts";
 
-const STATS = [
-  { icon: Users, value: "10K+", label: "Active Experts" },
-  { icon: Star, value: "4.9", label: "Average Rating" },
-  { icon: TrendingUp, value: "50K+", label: "Sessions Completed" },
-];
+function HeroSection({
+  totalConsultants,
+  averageRating,
+}: {
+  totalConsultants: number;
+  averageRating: number;
+}) {
+  const STATS = [
+    {
+      icon: Users,
+      value: totalConsultants > 0 ? `${totalConsultants}` : "10K+",
+      label: "Active Experts",
+    },
+    {
+      icon: Star,
+      value: averageRating > 0 ? averageRating.toFixed(1) : "4.9",
+      label: "Average Rating",
+    },
+    { icon: TrendingUp, value: "50K+", label: "Sessions Completed" },
+  ];
 
-function HeroSection() {
   return (
     <section className="relative pt-32 pb-20 bg-zinc-950 overflow-hidden">
       <div className="absolute inset-0">
@@ -70,7 +84,10 @@ export default async function ExploreExperts() {
 
   return (
     <main className="min-h-screen bg-white">
-      <HeroSection />
+      <HeroSection
+        totalConsultants={metadata.consultantMetadata.totalConsultants}
+        averageRating={metadata.consultantMetadata.averageRating}
+      />
 
       <FeaturedExperts experts={featuredExperts} isLoading={false} />
 

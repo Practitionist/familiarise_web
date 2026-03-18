@@ -73,14 +73,10 @@ export async function GET(
         consulteeProfile: {
           select: {
             id: true,
-            occupation: true,
             aboutMe: true,
             preferredLanguage: true,
             goals: true,
-            // New fields
             careerStage: true,
-            currentCompany: true,
-            industry: true,
             skillsToDevelop: true,
             budgetPreference: true,
           },

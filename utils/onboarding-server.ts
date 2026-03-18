@@ -360,6 +360,7 @@ async function persistProfessionalBackground(
         data: educationHistory.map((edu) => ({
           userId,
           institution: edu.institution,
+          institutionDomain: edu.institutionDomain || null,
           degree: edu.degree,
           fieldOfStudy: edu.fieldOfStudy || null,
           startYear: edu.startYear || null,

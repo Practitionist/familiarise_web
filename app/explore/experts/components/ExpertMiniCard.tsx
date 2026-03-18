@@ -80,7 +80,7 @@ export default function ExpertMiniCard({ expert, badge }: ExpertMiniCardProps) {
                   key={`${expert.id}-company-${i}`}
                   companyName={exp.company}
                   companyDomain={exp.companyDomain ?? undefined}
-                  size={20}
+                  size={24}
                   className="border-zinc-200"
                 />
               ))}

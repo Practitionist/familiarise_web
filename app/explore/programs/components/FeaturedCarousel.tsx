@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { ArrowRight, Sparkles } from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
+import { CompanyLogo } from "@/components/ui/company-logo";
 import { isClassProgram, Program } from "../utils";
 
 interface FeaturedCarouselProps {
@@ -65,6 +66,12 @@ export default function FeaturedCarousel({
   if (programs.length === 0) return null;
 
   const program = programs[currentIndex];
+
+  // Extract instructor work experiences for company logos
+  const cp = (program as Record<string, unknown>).consultantProfile as
+    | { user?: { workExperiences?: Array<{ company: string; companyDomain: string | null }> } }
+    | undefined;
+  const workExperiences = cp?.user?.workExperiences ?? [];
 
   const handleClick = () => {
     if (isClassProgram(program)) {
@@ -129,6 +136,19 @@ export default function FeaturedCarousel({
               <span className="text-2xl font-bold text-zinc-900">
                 ${program.price}
               </span>
+              {workExperiences.length > 0 && (
+                <div className="flex items-center gap-1.5">
+                  {workExperiences.slice(0, 3).map((exp, i) => (
+                    <CompanyLogo
+                      key={`featured-company-${program.id}-${i}`}
+                      companyName={exp.company}
+                      companyDomain={exp.companyDomain ?? undefined}
+                      size={24}
+                      className="border-zinc-200"
+                    />
+                  ))}
+                </div>
+              )}
               <span className="inline-flex items-center gap-1.5 text-sm font-medium text-zinc-500 group-hover:text-zinc-900 transition-colors">
                 View Details
                 <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />

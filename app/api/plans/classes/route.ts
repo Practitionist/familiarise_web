@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
-import { PlanEmailSupport, Prisma } from "@prisma/client";
+import { CollaboratorStatus, PlanEmailSupport, Prisma } from "@prisma/client";
 import {
   parsePlanFilters,
   buildPlanWhereClause,
@@ -71,6 +71,33 @@ export async function GET(request: NextRequest) {
       },
       topics: true,
       classContents: true,
+      collaborators: {
+        where: { status: CollaboratorStatus.ACCEPTED },
+        include: {
+          consultantProfile: {
+            include: {
+              user: {
+                select: {
+                  name: true,
+                  image: true,
+                  workExperiences: {
+                    select: {
+                      company: true,
+                      companyDomain: true,
+                      isCurrent: true,
+                    },
+                    orderBy: [
+                      { isCurrent: "desc" as const },
+                      { startDate: "desc" as const },
+                    ],
+                    take: 3,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
       ...((includeClasses || includeRegistration) && {
         classes: classesInclude,
       }),

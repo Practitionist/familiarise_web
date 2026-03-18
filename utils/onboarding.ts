@@ -20,6 +20,7 @@ import {
   WorkExperienceSchema,
   EducationSchema,
   CertificationSchema,
+  CareerStageEnum,
 } from "@/schemas/user";
 
 // ============================================================================
@@ -111,9 +112,7 @@ export const ConsultantProfileCreateObjectSchema = z.object({
   create: BaseConsultantProfileCreateInputSchema,
 });
 
-export const BaseConsulteeProfileCreateInputSchema = ConsulteeProfileSchema.omit(
-  { educationHistory: true },
-);
+export const BaseConsulteeProfileCreateInputSchema = ConsulteeProfileSchema;
 
 export const ConsulteeProfileCreateObjectSchema = z.object({
   create: BaseConsulteeProfileCreateInputSchema,
@@ -196,9 +195,7 @@ export const FrontendConsultantProfileSchema = consultantScalarFields.extend({
   customSlots: z.array(CustomSlotSchema).optional(),
 });
 
-export const FrontendConsulteeProfileSchema = ConsulteeProfileSchema.omit({
-  educationHistory: true,
-});
+export const FrontendConsulteeProfileSchema = ConsulteeProfileSchema;
 
 export const FrontendStaffProfileSchema = StaffProfileSchema;
 
@@ -253,12 +250,27 @@ export const ConsultantProfileFormSchema = consultantScalarFields
   });
 
 // Consultee form: derived from base with stricter validation
-export const ConsulteeProfileFormSchema = ConsulteeProfileSchema.omit({
-  educationHistory: true,
-}).extend({
-  occupation: z.string().min(1, "Occupation is required"),
-  aboutMe: z.string().min(1, "About me is required"),
+export const ConsulteeProfileFormSchema = ConsulteeProfileSchema.extend({
+  careerStage: CareerStageEnum,
+  aboutMe: z.string().optional(),
   skillsToDevelop: z.array(z.string()).optional(),
+  // Inline education for STUDENT path
+  consulteeInlineEducation: z
+    .object({
+      institution: z.string().optional(),
+      institutionDomain: z.string().optional(),
+      fieldOfStudy: z.string().optional(),
+      endYear: z.number().min(1900).max(2100).optional(),
+    })
+    .optional(),
+  // Inline work experience for PROFESSIONAL path
+  consulteeInlineWorkExperience: z
+    .object({
+      title: z.string().optional(),
+      company: z.string().optional(),
+      companyDomain: z.string().optional(),
+    })
+    .optional(),
 });
 
 // Staff form: derived from base with stricter validation
@@ -323,7 +335,24 @@ const consultantFormFields = sharedFormFields.extend({
 
 const consulteeFormFields = sharedFormFields.extend({
   role: z.literal(UserRole.CONSULTEE),
-  ...ConsulteeProfileSchema.omit({ educationHistory: true }).shape,
+  ...ConsulteeProfileSchema.shape,
+  // Inline education for STUDENT path
+  consulteeInlineEducation: z
+    .object({
+      institution: z.string().optional(),
+      institutionDomain: z.string().optional(),
+      fieldOfStudy: z.string().optional(),
+      endYear: z.number().min(1900).max(2100).optional(),
+    })
+    .optional(),
+  // Inline work experience for PROFESSIONAL path
+  consulteeInlineWorkExperience: z
+    .object({
+      title: z.string().optional(),
+      company: z.string().optional(),
+      companyDomain: z.string().optional(),
+    })
+    .optional(),
 });
 
 const staffFormFields = sharedFormFields.extend({
@@ -490,26 +519,64 @@ export function transformOnboardingFormToServerData(
         staffProfile: undefined,
       };
 
-    case UserRole.CONSULTEE:
-      return {
+    case UserRole.CONSULTEE: {
+      // Build inline education/work experience arrays for persistProfessionalBackground
+      const inlineEdu = formData.consulteeInlineEducation;
+      const inlineWork = formData.consulteeInlineWorkExperience;
+
+      const payload: OnboardingData & Record<string, unknown> = {
         ...base,
         role: UserRole.CONSULTEE,
         consultantProfile: undefined,
         consulteeProfile: {
           create: {
-            occupation: formData.occupation,
             aboutMe: formData.aboutMe,
             preferredLanguage: formData.preferredLanguage,
             goals: formData.goals,
             careerStage: formData.careerStage,
-            currentCompany: formData.currentCompany,
-            industry: formData.industry,
             skillsToDevelop: formData.skillsToDevelop ?? [],
             budgetPreference: formData.budgetPreference,
           },
         },
         staffProfile: undefined,
       };
+
+      // STUDENT path: inline education → educationHistory array
+      if (
+        formData.careerStage === CareerStage.STUDENT &&
+        inlineEdu?.institution
+      ) {
+        payload.educationHistory = [
+          {
+            institution: inlineEdu.institution,
+            institutionDomain: inlineEdu.institutionDomain,
+            degree: "Student",
+            fieldOfStudy: inlineEdu.fieldOfStudy,
+            endYear: inlineEdu.endYear,
+          },
+        ];
+      }
+
+      // PROFESSIONAL path: inline work experience → workExperiences array
+      if (
+        formData.careerStage &&
+        formData.careerStage !== CareerStage.STUDENT &&
+        formData.careerStage !== CareerStage.SCHOOL_STUDENT &&
+        inlineWork?.company
+      ) {
+        payload.workExperiences = [
+          {
+            company: inlineWork.company,
+            companyDomain: inlineWork.companyDomain,
+            title: inlineWork.title || "Professional",
+            isCurrent: true,
+            startDate: new Date(),
+          },
+        ];
+      }
+
+      return payload;
+    }
 
     case UserRole.STAFF:
       return {
@@ -620,13 +687,10 @@ export function transformFrontendToServerData(
         consultantProfile: undefined,
         consulteeProfile: {
           create: {
-            occupation: p.occupation,
             aboutMe: p.aboutMe,
             preferredLanguage: p.preferredLanguage,
             goals: p.goals,
             careerStage: p.careerStage,
-            currentCompany: p.currentCompany,
-            industry: p.industry,
             skillsToDevelop: p.skillsToDevelop ?? [],
             budgetPreference: p.budgetPreference,
           },

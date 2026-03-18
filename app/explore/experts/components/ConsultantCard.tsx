@@ -199,11 +199,11 @@ export const ConsultantCard = memo(function ConsultantCard({
                     key={`${consultant.id}-company-${i}`}
                     companyName={exp.company}
                     companyDomain={exp.companyDomain ?? undefined}
-                    size={28}
+                    size={36}
                     className="border-zinc-200"
                   />
                 ))}
-                <span className="text-xs text-zinc-400 ml-1">
+                <span className="text-sm text-zinc-600 ml-1">
                   {consultant.user.workExperiences[0].company}
                   {consultant.user.workExperiences.length > 1 &&
                     ` +${consultant.user.workExperiences.length - 1}`}
@@ -211,7 +211,7 @@ export const ConsultantCard = memo(function ConsultantCard({
               </div>
             )}
 
-          {/* Tags */}
+          {/* Domain & Subdomains */}
           <div className="flex flex-wrap gap-2">
             <Badge className="bg-zinc-900 text-white hover:bg-zinc-800 px-3 py-1">
               {consultant.domain?.name}
@@ -225,15 +225,21 @@ export const ConsultantCard = memo(function ConsultantCard({
                 {sd.name}
               </Badge>
             ))}
-            {consultant.tags.slice(0, 3).map((t) => (
-              <Badge
-                key={`${consultant.id}-tag-${t.id}`}
-                className="bg-zinc-100 text-zinc-600 hover:bg-zinc-200 px-3 py-1"
-              >
-                {t.name}
-              </Badge>
-            ))}
           </div>
+
+          {/* Tags */}
+          {consultant.tags.length > 0 && (
+            <div className="flex flex-wrap gap-2 mt-2">
+              {consultant.tags.slice(0, 3).map((t) => (
+                <Badge
+                  key={`${consultant.id}-tag-${t.id}`}
+                  className="bg-zinc-100 text-zinc-600 hover:bg-zinc-200 px-3 py-1"
+                >
+                  {t.name}
+                </Badge>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Right Section: Subscription Plans & Actions */}
