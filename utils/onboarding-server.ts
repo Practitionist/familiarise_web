@@ -319,7 +319,7 @@ async function upsertProfileByRole(
 // PROFESSIONAL BACKGROUND PERSISTENCE (validated via Zod)
 // ============================================================================
 
-async function persistProfessionalBackground(
+export async function persistProfessionalBackground(
   userId: string,
   consultantProfileId: string | undefined,
   body: Record<string, unknown>,

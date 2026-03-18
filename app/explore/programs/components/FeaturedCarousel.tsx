@@ -6,6 +6,7 @@ import { ArrowRight, Sparkles } from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { CompanyLogo } from "@/components/ui/company-logo";
+import { useCurrency } from "@/hooks/useCurrency";
 import { isClassProgram, Program } from "../utils";
 
 interface FeaturedCarouselProps {
@@ -35,6 +36,7 @@ export default function FeaturedCarousel({
   isLoading,
 }: FeaturedCarouselProps) {
   const router = useRouter();
+  const { formatPrice } = useCurrency();
   const [currentIndex, setCurrentIndex] = useState(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -68,10 +70,7 @@ export default function FeaturedCarousel({
   const program = programs[currentIndex];
 
   // Extract instructor work experiences for company logos
-  const cp = (program as Record<string, unknown>).consultantProfile as
-    | { user?: { workExperiences?: Array<{ company: string; companyDomain: string | null }> } }
-    | undefined;
-  const workExperiences = cp?.user?.workExperiences ?? [];
+  const workExperiences = program.consultantProfile?.user?.workExperiences ?? [];
 
   const handleClick = () => {
     if (isClassProgram(program)) {
@@ -134,7 +133,7 @@ export default function FeaturedCarousel({
             </p>
             <div className="flex items-center gap-4">
               <span className="text-2xl font-bold text-zinc-900">
-                ${program.price}
+                {formatPrice(program.price)}
               </span>
               {workExperiences.length > 0 && (
                 <div className="flex items-center gap-1.5">

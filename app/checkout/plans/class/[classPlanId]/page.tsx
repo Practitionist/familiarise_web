@@ -45,7 +45,9 @@ import type {
 export type CheckoutClassPlanData = ClassPlan & {
   consultantProfile:
     | (ConsultantProfile & {
-        user: User;
+        user: User & {
+          workExperiences?: Array<{ company: string; companyDomain: string | null; isCurrent: boolean }>;
+        };
         domain: Domain | null;
         subDomains: SubDomain[];
         tags: PrismaTag[];
@@ -441,9 +443,9 @@ export default function ClassCheckoutPage({
                   consultantDetails?.domain?.name ||
                   "Consultant"}
               </div>
-              {(userDetails as any)?.workExperiences?.length > 0 && (
+              {userDetails?.workExperiences && userDetails.workExperiences.length > 0 && (
                 <div className="flex items-center gap-1.5 mt-1">
-                  {(userDetails as any).workExperiences.slice(0, 3).map((exp: any, i: number) => (
+                  {userDetails.workExperiences.slice(0, 3).map((exp, i) => (
                     <CompanyLogo
                       key={`checkout-class-company-${i}`}
                       companyName={exp.company}

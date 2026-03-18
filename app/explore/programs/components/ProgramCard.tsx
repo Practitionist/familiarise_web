@@ -65,20 +65,15 @@ function ExtraBadge({ badge }: { badge: ProgramBadge }) {
 
 /** Extract consultant rating from plan data if available (API includes consultantProfile). */
 function getProgramRating(program: Program): number | null {
-  const cp = (program as Record<string, unknown>).consultantProfile as
-    | { rating?: number }
-    | undefined;
-  return cp?.rating ?? null;
+  return program.consultantProfile?.rating ?? null;
 }
 
 /** Extract consultant headline from plan data if available. */
 function getProgramInstructor(
   program: Program,
 ): { headline: string } | null {
-  const cp = (program as Record<string, unknown>).consultantProfile as
-    | { headline?: string | null }
-    | undefined;
-  if (cp?.headline) return { headline: cp.headline };
+  const headline = program.consultantProfile?.headline;
+  if (headline) return { headline };
   return null;
 }
 
@@ -86,15 +81,10 @@ function getProgramInstructor(
 function getInstructorWorkExperiences(
   program: Program,
 ): Array<{ company: string; companyDomain: string | null; isCurrent: boolean }> {
-  const cp = (program as Record<string, unknown>).consultantProfile as
-    | { user?: { workExperiences?: Array<{ company: string; companyDomain: string | null; isCurrent: boolean }> } }
-    | undefined;
-  const primaryExps = cp?.user?.workExperiences ?? [];
+  const primaryExps = program.consultantProfile?.user?.workExperiences ?? [];
 
   // Merge collaborator work experiences
-  const collaborators = (program as Record<string, unknown>).collaborators as
-    | Array<{ consultantProfile?: { user?: { workExperiences?: Array<{ company: string; companyDomain: string | null; isCurrent: boolean }> } } }>
-    | undefined;
+  const collaborators = program.collaborators;
   if (!collaborators?.length) return primaryExps;
 
   const seen = new Set(primaryExps.map((e) => e.company.toLowerCase()));
@@ -201,7 +191,7 @@ function GridCard({
         <div className="flex items-center justify-between pt-4 border-t border-zinc-100">
           <div className="flex items-center gap-2">
             <div className="text-xl font-bold text-zinc-900">
-              {formatPrice(program.price / 100)}
+              {formatPrice(program.price)}
             </div>
             {rating !== null && rating > 0 && (
               <div className="flex items-center gap-0.5 ml-1">
@@ -322,7 +312,7 @@ function ListCard({
           <div className="flex items-center justify-between mt-4">
             <div className="flex items-center gap-2">
               <div className="text-xl font-bold text-zinc-900">
-                {formatPrice(program.price / 100)}
+                {formatPrice(program.price)}
               </div>
               {rating !== null && rating > 0 && (
                 <div className="flex items-center gap-0.5 ml-1">
@@ -421,7 +411,7 @@ function CarouselCard({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="text-lg font-bold text-zinc-900">
-              {formatPrice(program.price / 100)}
+              {formatPrice(program.price)}
             </div>
             {workExperiences.length > 0 && (
               <div className="flex items-center gap-1">

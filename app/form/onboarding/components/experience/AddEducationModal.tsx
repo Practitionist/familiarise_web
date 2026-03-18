@@ -140,7 +140,7 @@ export function AddEducationModal({
                     setFormData({
                       ...formData,
                       institution: name,
-                      institutionDomain: domain || formData.institutionDomain,
+                      institutionDomain: domain ?? "",
                     });
                   }}
                   placeholder="e.g., Stanford University"

@@ -22,11 +22,27 @@ interface WebinarWithAppointment {
   } | null;
 }
 
+export interface ProgramConsultantProfile {
+  rating?: number;
+  headline?: string | null;
+  user?: {
+    name?: string;
+    image?: string | null;
+    workExperiences?: Array<{ company: string; companyDomain: string | null; isCurrent: boolean }>;
+  };
+}
+
+export interface ProgramCollaborator {
+  consultantProfile?: ProgramConsultantProfile;
+}
+
 export type ClassPlanProgram = PrismaClassPlan & {
   classes: any[];
   type: "class";
   imageUrl: string;
   isRegistered?: boolean;
+  consultantProfile?: ProgramConsultantProfile;
+  collaborators?: ProgramCollaborator[];
 };
 
 export type WebinarPlanProgram = PrismaWebinarPlan & {
@@ -34,6 +50,8 @@ export type WebinarPlanProgram = PrismaWebinarPlan & {
   type: "webinar";
   imageUrl: string;
   isRegistered?: boolean;
+  consultantProfile?: ProgramConsultantProfile;
+  collaborators?: ProgramCollaborator[];
 };
 
 export type Program = ClassPlanProgram | WebinarPlanProgram;
