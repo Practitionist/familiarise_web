@@ -18,7 +18,7 @@ export interface Certification {
   name: string;
   issuingOrganization: string;
   issueDate: Date;
-  expiryDate?: Date;
+  expiryDate?: Date | null;
   credentialId?: string;
   credentialUrl?: string;
 }
@@ -40,7 +40,7 @@ export function CertificationsSection({
     certification: Certification | Omit<Certification, "id">,
   ) => {
     if ("id" in certification && certification.id) {
-      // Editing existing certification
+      // Editing: narrow union after runtime "id" in check — TS can't prove this
       onUpdate(
         certifications.map((c) =>
           c.id === certification.id ? (certification as Certification) : c,
@@ -76,7 +76,7 @@ export function CertificationsSection({
     return format(new Date(date), "MMM yyyy");
   };
 
-  const isExpired = (expiryDate?: Date) => {
+  const isExpired = (expiryDate?: Date | null) => {
     if (!expiryDate) return false;
     return new Date(expiryDate) < new Date();
   };

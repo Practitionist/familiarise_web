@@ -7,7 +7,6 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    console.log("API Route: Received request to update onboarding information");
     const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -15,7 +14,6 @@ export async function PATCH(
 
     const { id } = await params;
     const body = await req.json();
-    console.log("Request Body:", JSON.stringify(body, null, 2));
 
     const isPrivileged =
       session.user.role === "ADMIN" || session.user.role === "STAFF";

@@ -44,6 +44,7 @@ interface ExpertPricingProps {
   selectedSlot: TSlotTiming | null;
   setSelectedSlot: (slot: TSlotTiming | null) => void;
   timezone: string;
+  autoOpenTrial?: boolean;
 }
 
 export function ExpertPricing({
@@ -60,10 +61,11 @@ export function ExpertPricing({
   selectedSlot,
   setSelectedSlot,
   timezone,
+  autoOpenTrial,
 }: Readonly<ExpertPricingProps>) {
   const [activeServiceTab, setActiveServiceTab] = useState<
     "consultations" | "subscriptions"
-  >("consultations");
+  >(autoOpenTrial ? "subscriptions" : "consultations");
 
   const formatPricingOptions = (
     plans: (ConsultationPlan | SubscriptionPlan)[],
@@ -242,6 +244,7 @@ export function ExpertPricing({
                 consultantDetails={consultantDetails}
                 handleSubscriptionBooking={handleSubscriptionBooking}
                 timezone={timezone}
+                autoOpenTrial={autoOpenTrial}
               />
             </TabsContent>
           </Tabs>

@@ -7,7 +7,8 @@ import { TSlotTiming } from "@/types/slots";
 import { TUserWithProfessionalBackground } from "@/types/user";
 import { TConsultantReview } from "@/types/review";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
 import { AboutSection } from "./components/AboutSection";
@@ -31,9 +32,12 @@ export function ExpertProfileClient({
   userDetails,
   reviews,
 }: ExpertProfileClientProps) {
+  const searchParams = useSearchParams();
   const { timezone: browserTimezone, isLoading: isTimezoneLoading } =
     useTimezone();
   const { toast } = useToast();
+  const pricingRef = useRef<HTMLDivElement>(null);
+  const [autoOpenTrial, setAutoOpenTrial] = useState(false);
 
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
@@ -41,6 +45,21 @@ export function ExpertProfileClient({
   const [selectedSlot, setSelectedSlot] = useState<TSlotTiming | null>(null);
 
   const timezone = browserTimezone || userDetails?.timezone;
+
+  // Handle ?action=trial or ?action=book from explore page buttons
+  useEffect(() => {
+    const action = searchParams.get("action");
+    if (!action) return;
+
+    // Small delay to let the page render before scrolling
+    const timer = setTimeout(() => {
+      pricingRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (action === "trial") {
+        setAutoOpenTrial(true);
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [searchParams]);
 
   useEffect(() => {
     async function fetchSlots() {
@@ -277,6 +296,7 @@ export function ExpertProfileClient({
 
           {/* Sidebar - Pricing */}
           <motion.div
+            ref={pricingRef}
             className="w-full xl:w-[450px] 2xl:w-[500px] flex-shrink-0"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -296,6 +316,7 @@ export function ExpertProfileClient({
               selectedSlot={selectedSlot}
               setSelectedSlot={setSelectedSlot}
               timezone={timezone || "UTC"}
+              autoOpenTrial={autoOpenTrial}
             />
           </motion.div>
         </div>

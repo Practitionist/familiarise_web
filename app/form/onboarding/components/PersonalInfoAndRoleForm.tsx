@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { ChevronDown } from "lucide-react";
 import { PersonalInfoAndRoleFormSchema } from "@/utils/onboarding";
 import { useSession } from "@/lib/auth-client";
 import { z } from "zod";
@@ -24,7 +30,7 @@ interface Props {
   initialData: Partial<FormData>;
 }
 
-const ROLE_DESCRIPTIONS: Record<
+const ROLE_INFO: Record<
   string,
   { title: string; description: string }
 > = {
@@ -35,10 +41,6 @@ const ROLE_DESCRIPTIONS: Record<
   CONSULTEE: {
     title: "Consultee",
     description: "Learn from experienced professionals",
-  },
-  STAFF: {
-    title: "Staff",
-    description: "Manage platform operations",
   },
 };
 
@@ -51,6 +53,7 @@ const GENDER_OPTIONS = [
 
 const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
   const { data: session } = useSession();
+  const [optionalOpen, setOptionalOpen] = useState(false);
 
   const {
     register,
@@ -67,7 +70,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
       email: session?.user?.email || "",
       onlineStatus: false,
       onboardingCompleted: false,
-      role: "CONSULTEE" as UserRole,
+      role: UserRole.CONSULTEE,
       gender: null,
       city: "",
       country: "",
@@ -85,7 +88,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
         email: session?.user?.email || "",
         onlineStatus: false,
         onboardingCompleted: false,
-        role: "CONSULTEE" as UserRole,
+        role: UserRole.CONSULTEE,
         gender: null,
         city: "",
         country: "",
@@ -95,6 +98,15 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
       });
     }
   }, [initialData, reset, session?.user?.email]);
+
+  // Sync email from session when it loads after form mount
+  useEffect(() => {
+    if (session?.user?.email) {
+      reset((prev) => ({ ...prev, email: session.user.email }), {
+        keepDirtyValues: true,
+      });
+    }
+  }, [session?.user?.email, reset]);
 
   const selectedRole = watch("role");
   const bioLength = watch("bio")?.length || 0;
@@ -109,12 +121,8 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-      {/* Basic Information Section */}
+      {/* Essential Fields */}
       <div className="space-y-4">
-        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-          Basic Information
-        </h3>
-
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
             <Label htmlFor="name">
@@ -144,128 +152,131 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
             </p>
           </div>
         </div>
+      </div>
 
-        <div className="grid gap-4 sm:grid-cols-2">
+      {/* Optional Fields Collapsible */}
+      <Collapsible open={optionalOpen} onOpenChange={setOptionalOpen}>
+        <CollapsibleTrigger className="flex items-center justify-between w-full py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
+          <span>Additional Details (optional)</span>
+          <ChevronDown
+            className={`w-4 h-4 transition-transform ${optionalOpen ? "rotate-180" : ""}`}
+          />
+        </CollapsibleTrigger>
+        <p className="text-xs text-muted-foreground mb-2">
+          You can always add these later from your profile settings
+        </p>
+        <CollapsibleContent className="space-y-6">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="phone">Phone Number</Label>
+              <Input
+                id="phone"
+                {...register("phone")}
+                placeholder="+1 (555) 000-0000"
+              />
+              {errors.phone && (
+                <p className="text-sm text-destructive">
+                  {errors.phone.message}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="gender">Gender</Label>
+              <Controller
+                name="gender"
+                control={control}
+                render={({ field }) => (
+                  <Select
+                    value={field.value || undefined}
+                    onValueChange={(value) => field.onChange(value as Gender)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select gender" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {GENDER_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="city">City</Label>
+              <Input
+                id="city"
+                {...register("city")}
+                placeholder="e.g., San Francisco"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="country">Country</Label>
+              <Input
+                id="country"
+                {...register("country")}
+                placeholder="e.g., United States"
+              />
+            </div>
+          </div>
+
           <div className="space-y-2">
-            <Label htmlFor="phone">Phone Number</Label>
+            <Label htmlFor="address">Full Address (Optional)</Label>
             <Input
-              id="phone"
-              {...register("phone")}
-              placeholder="+1 (555) 000-0000"
+              id="address"
+              {...register("address")}
+              placeholder="Street address, apt, city, state, zip"
             />
-            {errors.phone && (
-              <p className="text-sm text-destructive">{errors.phone.message}</p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="bio">
+              Short Bio{" "}
+              <span className="text-muted-foreground">(Optional)</span>
+            </Label>
+            <Textarea
+              id="bio"
+              {...register("bio")}
+              placeholder="Tell us a bit about yourself in one or two sentences..."
+              className="resize-none"
+              rows={2}
+            />
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>A brief tagline that appears on your profile</span>
+              <span className={bioLength > 160 ? "text-destructive" : ""}>
+                {bioLength}/160
+              </span>
+            </div>
+            {errors.bio && (
+              <p className="text-sm text-destructive">{errors.bio.message}</p>
             )}
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="gender">Gender</Label>
-            <Controller
-              name="gender"
-              control={control}
-              render={({ field }) => (
-                <Select
-                  value={field.value || undefined}
-                  onValueChange={(value) => field.onChange(value as Gender)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select gender" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {GENDER_OPTIONS.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Location Section */}
-      <div className="space-y-4">
-        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-          Location
-        </h3>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-2">
-            <Label htmlFor="city">City</Label>
+            <Label htmlFor="linkedinUrl">
+              LinkedIn Profile{" "}
+              <span className="text-muted-foreground">(Optional)</span>
+            </Label>
             <Input
-              id="city"
-              {...register("city")}
-              placeholder="e.g., San Francisco"
+              id="linkedinUrl"
+              {...register("linkedinUrl")}
+              placeholder="https://linkedin.com/in/yourprofile"
             />
+            {errors.linkedinUrl && (
+              <p className="text-sm text-destructive">
+                {errors.linkedinUrl.message}
+              </p>
+            )}
           </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="country">Country</Label>
-            <Input
-              id="country"
-              {...register("country")}
-              placeholder="e.g., United States"
-            />
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="address">Full Address (Optional)</Label>
-          <Input
-            id="address"
-            {...register("address")}
-            placeholder="Street address, apt, city, state, zip"
-          />
-        </div>
-      </div>
-
-      {/* Profile Section */}
-      <div className="space-y-4">
-        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-          Your Profile
-        </h3>
-
-        <div className="space-y-2">
-          <Label htmlFor="bio">
-            Short Bio <span className="text-muted-foreground">(Optional)</span>
-          </Label>
-          <Textarea
-            id="bio"
-            {...register("bio")}
-            placeholder="Tell us a bit about yourself in one or two sentences..."
-            className="resize-none"
-            rows={2}
-          />
-          <div className="flex justify-between text-xs text-muted-foreground">
-            <span>A brief tagline that appears on your profile</span>
-            <span className={bioLength > 160 ? "text-destructive" : ""}>
-              {bioLength}/160
-            </span>
-          </div>
-          {errors.bio && (
-            <p className="text-sm text-destructive">{errors.bio.message}</p>
-          )}
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="linkedinUrl">
-            LinkedIn Profile{" "}
-            <span className="text-muted-foreground">(Optional)</span>
-          </Label>
-          <Input
-            id="linkedinUrl"
-            {...register("linkedinUrl")}
-            placeholder="https://linkedin.com/in/yourprofile"
-          />
-          {errors.linkedinUrl && (
-            <p className="text-sm text-destructive">
-              {errors.linkedinUrl.message}
-            </p>
-          )}
-        </div>
-      </div>
+        </CollapsibleContent>
+      </Collapsible>
 
       {/* Role Selection */}
       <div className="space-y-4">
@@ -277,8 +288,8 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
           name="role"
           control={control}
           render={({ field }) => (
-            <div className="grid gap-3 sm:grid-cols-3">
-              {Object.entries(ROLE_DESCRIPTIONS).map(([role, info]) => (
+            <div className={`grid gap-3 ${Object.keys(ROLE_INFO).length === 2 ? "sm:grid-cols-2" : "sm:grid-cols-3"}`}>
+              {Object.entries(ROLE_INFO).map(([role, info]) => (
                 <button
                   key={role}
                   type="button"
@@ -321,13 +332,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
                 experts in your field.
               </>
             )}
-            {selectedRole === "STAFF" && (
-              <>
-                As a <strong>Staff</strong> member, you'll help manage platform
-                operations, support users, and ensure smooth experiences for
-                everyone.
-              </>
-            )}
+            {/* STAFF and ADMIN roles are invite-only via admin dashboard */}
           </p>
         </div>
       )}

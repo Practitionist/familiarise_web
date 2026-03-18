@@ -270,77 +270,49 @@ export function generateIndustry(): string {
 }
 
 /**
- * Generate staff skills
- */
-export function generateStaffSkills(): string[] {
-  const skills = [
-    "Customer Support",
-    "Technical Support",
-    "Content Moderation",
-    "Quality Assurance",
-    "Training & Onboarding",
-    "Data Entry",
-    "Reporting & Analytics",
-    "Process Improvement",
-    "Compliance Monitoring",
-    "Escalation Handling",
-  ];
-  const count = faker.number.int({ min: 2, max: 4 });
-  return faker.helpers.arrayElements(skills, count);
-}
-
-/**
- * Generate work schedule for staff
- */
-export function generateWorkSchedule(): string {
-  const schedules = [
-    "9 AM - 5 PM (Mon-Fri)",
-    "10 AM - 6 PM (Mon-Fri)",
-    "8 AM - 4 PM (Mon-Fri)",
-    "Shift A: 6 AM - 2 PM",
-    "Shift B: 2 PM - 10 PM",
-    "Flexible Hours",
-    "Part-time (20 hrs/week)",
-    "Remote - Flexible",
-  ];
-  return faker.helpers.arrayElement(schedules);
-}
-
-/**
  * Generate realistic company names
  */
+const COMPANY_DOMAIN_MAP: Record<string, string> = {
+  Google: "google.com",
+  Microsoft: "microsoft.com",
+  Amazon: "amazon.com",
+  Meta: "meta.com",
+  Apple: "apple.com",
+  Netflix: "netflix.com",
+  Salesforce: "salesforce.com",
+  Oracle: "oracle.com",
+  IBM: "ibm.com",
+  Accenture: "accenture.com",
+  Deloitte: "deloitte.com",
+  McKinsey: "mckinsey.com",
+  "Goldman Sachs": "goldmansachs.com",
+  "JP Morgan": "jpmorgan.com",
+  Stripe: "stripe.com",
+  Uber: "uber.com",
+  Airbnb: "airbnb.com",
+  Spotify: "spotify.com",
+  Adobe: "adobe.com",
+  Cisco: "cisco.com",
+  VMware: "vmware.com",
+  Snowflake: "snowflake.com",
+  Databricks: "databricks.com",
+  Palantir: "palantir.com",
+  Coinbase: "coinbase.com",
+};
+
 export function generateCompanyName(): string {
   const companies = [
-    "Google",
-    "Microsoft",
-    "Amazon",
-    "Meta",
-    "Apple",
-    "Netflix",
-    "Salesforce",
-    "Oracle",
-    "IBM",
-    "Accenture",
-    "Deloitte",
-    "McKinsey",
-    "Goldman Sachs",
-    "JP Morgan",
-    "Stripe",
-    "Uber",
-    "Airbnb",
-    "Spotify",
-    "Adobe",
-    "Cisco",
-    "VMware",
-    "Snowflake",
-    "Databricks",
-    "Palantir",
-    "Coinbase",
+    ...Object.keys(COMPANY_DOMAIN_MAP),
     faker.company.name(),
     faker.company.name(),
     faker.company.name(),
   ];
   return faker.helpers.arrayElement(companies);
+}
+
+/** Get the domain for a known company name, or null for unknown companies */
+export function getCompanyDomain(companyName: string): string | null {
+  return COMPANY_DOMAIN_MAP[companyName] || null;
 }
 
 /**
@@ -702,63 +674,6 @@ export function generateCity(country: string): string {
 
   const cities = citiesByCountry[country] || ["Unknown City"];
   return faker.helpers.arrayElement(cities);
-}
-
-/**
- * Generate admin access scope JSON
- */
-export function generateAccessScope(adminLevel: string): object {
-  const baseScope = {
-    users: { read: true, write: false, delete: false },
-    content: { read: true, write: false, delete: false },
-    analytics: { read: true, write: false, delete: false },
-    settings: { read: false, write: false, delete: false },
-    billing: { read: false, write: false, delete: false },
-  };
-
-  switch (adminLevel) {
-    case "SUPER_ADMIN":
-      return {
-        users: { read: true, write: true, delete: true },
-        content: { read: true, write: true, delete: true },
-        analytics: { read: true, write: true, delete: true },
-        settings: { read: true, write: true, delete: true },
-        billing: { read: true, write: true, delete: true },
-        system: { read: true, write: true, delete: true },
-      };
-    case "ADMIN":
-      return {
-        users: { read: true, write: true, delete: false },
-        content: { read: true, write: true, delete: true },
-        analytics: { read: true, write: true, delete: false },
-        settings: { read: true, write: true, delete: false },
-        billing: { read: true, write: false, delete: false },
-      };
-    case "MODERATOR":
-      return baseScope;
-    default:
-      return baseScope;
-  }
-}
-
-/**
- * Generate assigned regions for admins
- */
-export function generateAssignedRegions(): string[] {
-  const regions = [
-    "North America",
-    "Europe",
-    "Asia Pacific",
-    "Latin America",
-    "Middle East",
-    "Africa",
-    "South Asia",
-    "Southeast Asia",
-    "Australia & NZ",
-    "Global",
-  ];
-  const count = faker.number.int({ min: 1, max: 3 });
-  return faker.helpers.arrayElements(regions, count);
 }
 
 // ============================================================

@@ -4,14 +4,16 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Plus, Pencil, Trash2, GraduationCap, Calendar } from "lucide-react";
 import { AddEducationModal } from "./AddEducationModal";
+import { InstitutionLogo } from "@/components/ui/institution-logo";
 
 export interface Education {
   id: string;
   institution: string;
+  institutionDomain?: string;
   degree: string;
   fieldOfStudy?: string;
-  startYear?: number;
-  endYear?: number;
+  startYear?: number | null;
+  endYear?: number | null;
   grade?: string;
   activities?: string;
   description?: string;
@@ -33,7 +35,7 @@ export function EducationSection({
 
   const handleSave = (edu: Education | Omit<Education, "id">) => {
     if ("id" in edu && edu.id) {
-      // Editing existing education
+      // Editing: narrow union after runtime "id" in check — TS can't prove this
       onUpdate(
         education.map((e) => (e.id === edu.id ? (edu as Education) : e)),
       );
@@ -63,7 +65,7 @@ export function EducationSection({
     setIsModalOpen(false);
   };
 
-  const formatYears = (startYear?: number, endYear?: number) => {
+  const formatYears = (startYear?: number | null, endYear?: number | null) => {
     if (startYear && endYear) return `${startYear} - ${endYear}`;
     if (startYear) return `${startYear} - Present`;
     if (endYear) return `Graduated ${endYear}`;
@@ -85,9 +87,11 @@ export function EducationSection({
               key={edu.id}
               className="group flex items-start gap-4 p-4 rounded-lg border bg-card hover:shadow-sm transition-shadow"
             >
-              <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                <GraduationCap className="w-5 h-5 text-primary" />
-              </div>
+              <InstitutionLogo
+                institutionName={edu.institution}
+                institutionDomain={edu.institutionDomain || undefined}
+                size={40}
+              />
               <div className="flex-1 min-w-0">
                 <h4 className="font-medium text-foreground">
                   {edu.institution}

@@ -14,47 +14,60 @@ import {
 } from "components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { NotificationPreferencesPanel } from "@/components/notifications";
-import React, { useEffect } from "react";
+import React, { useEffect, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { createConsulteeQueries } from "@/lib/dashboard-queries";
-import {
-  ConsultationMode,
-  ConsulteeProfile,
-  CareerStage,
-  BudgetPreference,
-} from "@prisma/client";
+import { CareerStage, BudgetPreference } from "@prisma/client";
+import { EducationSection } from "@/app/form/onboarding/components/experience/EducationSection";
+import type { Education as EducationForm } from "@/app/form/onboarding/components/experience/EducationSection";
+import { WorkExperienceSection } from "@/app/form/onboarding/components/experience/WorkExperienceSection";
+import type { WorkExperience as WorkExperienceForm } from "@/app/form/onboarding/components/experience/WorkExperienceSection";
 
 interface SettingsTabProps {
   consulteeId: string;
 }
 
-type ProfileFormData = Omit<
-  Pick<
-    ConsulteeProfile,
-    | "occupation"
-    | "aboutMe"
-    | "preferredCommunicationMethod"
-    | "preferredLanguage"
-    | "careerStage"
-    | "currentCompany"
-    | "industry"
-    | "skillsToDevelop"
-    | "linkedinUrl"
-    | "budgetPreference"
-  >,
-  "preferredCommunicationMethod" | "careerStage" | "budgetPreference"
-> & {
-  preferredCommunicationMethod: ConsultationMode;
+interface ProfileFormData {
+  aboutMe: string | null;
+  preferredLanguage: string | null;
   careerStage: CareerStage | null;
+  skillsToDevelop: string[];
   budgetPreference: BudgetPreference | null;
   goals: string | null;
-};
+}
+
+/** Shape of the user relation returned by the consultee GET endpoint */
+interface ConsulteeUserRelation {
+  id: string;
+  education?: Array<{
+    id: string;
+    institution: string;
+    institutionDomain?: string | null;
+    degree: string;
+    fieldOfStudy?: string | null;
+    startYear?: number | null;
+    endYear?: number | null;
+    grade?: string | null;
+    activities?: string | null;
+    description?: string | null;
+  }>;
+  workExperiences?: Array<{
+    id: string;
+    company: string;
+    companyDomain?: string | null;
+    title: string;
+    location?: string | null;
+    startDate: string | Date;
+    endDate?: string | Date | null;
+    isCurrent: boolean;
+    description?: string | null;
+  }>;
+}
 
 export default function SettingsTab({ consulteeId }: SettingsTabProps) {
   const { toast } = useToast();
   const [isSaving, setIsSaving] = React.useState(false);
 
-  // Use the centralized query configuration
   const settingsQuery = createConsulteeQueries(consulteeId).settings;
   const {
     data: consulteeData,
@@ -65,20 +78,19 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
 
   const [profileSettings, setProfileSettings] = React.useState<ProfileFormData>(
     {
-      occupation: null,
       aboutMe: null,
-      preferredCommunicationMethod: ConsultationMode.VIDEO,
       preferredLanguage: null,
       goals: null,
-      // New fields
       careerStage: null,
-      currentCompany: null,
-      industry: null,
       skillsToDevelop: [],
-      linkedinUrl: null,
       budgetPreference: null,
     },
   );
+
+  const [educationList, setEducationList] = React.useState<EducationForm[]>([]);
+  const [workExperienceList, setWorkExperienceList] = React.useState<
+    WorkExperienceForm[]
+  >([]);
 
   const handleProfileChange = (
     e: React.ChangeEvent<
@@ -88,35 +100,61 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
     const { name, value } = e.target;
     setProfileSettings((prev) => ({
       ...prev,
-      [name]:
-        name === "preferredCommunicationMethod"
-          ? (value as ConsultationMode)
-          : value,
+      [name]: value,
     }));
   };
 
-  // Update local state when data is loaded
   useEffect(() => {
     if (consulteeData) {
       setProfileSettings({
-        occupation: consulteeData.occupation,
         aboutMe: consulteeData.aboutMe,
-        preferredCommunicationMethod:
-          consulteeData.preferredCommunicationMethod ?? ConsultationMode.VIDEO,
         preferredLanguage: consulteeData.preferredLanguage,
         goals: consulteeData.goals,
-        // New fields
         careerStage: consulteeData.careerStage ?? null,
-        currentCompany: consulteeData.currentCompany ?? null,
-        industry: consulteeData.industry ?? null,
         skillsToDevelop: consulteeData.skillsToDevelop ?? [],
-        linkedinUrl: consulteeData.linkedinUrl ?? null,
         budgetPreference: consulteeData.budgetPreference ?? null,
       });
+
+      // Load user-level education and work experiences
+      // The API includes user.education and user.workExperiences via nested include,
+      // but the react-query type doesn't reflect that — cast to our known shape.
+      const user = consulteeData.user as unknown as
+        | ConsulteeUserRelation
+        | undefined;
+      if (user?.education) {
+        setEducationList(
+          user.education.map((edu) => ({
+            id: edu.id,
+            institution: edu.institution,
+            institutionDomain: edu.institutionDomain ?? undefined,
+            degree: edu.degree,
+            fieldOfStudy: edu.fieldOfStudy ?? undefined,
+            startYear: edu.startYear ?? undefined,
+            endYear: edu.endYear ?? undefined,
+            grade: edu.grade ?? undefined,
+            activities: edu.activities ?? undefined,
+            description: edu.description ?? undefined,
+          })),
+        );
+      }
+      if (user?.workExperiences) {
+        setWorkExperienceList(
+          user.workExperiences.map((we) => ({
+            id: we.id,
+            company: we.company,
+            companyDomain: we.companyDomain ?? undefined,
+            title: we.title,
+            location: we.location ?? undefined,
+            startDate: new Date(we.startDate),
+            endDate: we.endDate ? new Date(we.endDate) : undefined,
+            isCurrent: we.isCurrent,
+            description: we.description ?? undefined,
+          })),
+        );
+      }
     }
   }, [consulteeData]);
 
-  // Handle errors
   useEffect(() => {
     if (error) {
       toast({
@@ -127,27 +165,78 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
     }
   }, [error, toast]);
 
+  const handleEducationUpdate = useCallback(
+    (updated: EducationForm[]) => {
+      setEducationList(updated);
+    },
+    [],
+  );
+
+  const handleWorkExperienceUpdate = useCallback(
+    (updated: WorkExperienceForm[]) => {
+      setWorkExperienceList(updated);
+    },
+    [],
+  );
+
   const handleSave = async () => {
     try {
       setIsSaving(true);
-      const response = await fetch(`/api/user/consultees/${consulteeId}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(profileSettings),
-      });
 
-      if (!response.ok) throw new Error("Failed to update profile");
+      // Save profile settings
+      const profileResponse = await fetch(
+        `/api/user/consultees/${consulteeId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(profileSettings),
+        },
+      );
+      if (!profileResponse.ok) throw new Error("Failed to update profile");
+
+      // Save education and work experience via the user's onboarding endpoint
+      // Get userId from consultee data
+      const userId = consulteeData?.user?.id;
+      if (userId) {
+        const bgResponse = await fetch(`/api/user/${userId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            educationHistory: educationList.map((edu) => ({
+              institution: edu.institution,
+              institutionDomain: edu.institutionDomain,
+              degree: edu.degree,
+              fieldOfStudy: edu.fieldOfStudy,
+              startYear: edu.startYear,
+              endYear: edu.endYear,
+              grade: edu.grade,
+              activities: edu.activities,
+              description: edu.description,
+            })),
+            workExperiences: workExperienceList.map((we) => ({
+              company: we.company,
+              companyDomain: we.companyDomain,
+              title: we.title,
+              location: we.location,
+              startDate: we.startDate,
+              endDate: we.endDate,
+              isCurrent: we.isCurrent,
+              description: we.description,
+            })),
+          }),
+        });
+        if (!bgResponse.ok) {
+          console.error("Failed to update education/work experience");
+        }
+      }
 
       toast({
         title: "Settings saved",
         description: "Your settings have been updated successfully.",
       });
 
-      // Refetch to update the cached data
       refetch();
-    } catch (error) {
+    } catch {
       toast({
         title: "Error",
         description: "Failed to save settings. Please try again.",
@@ -158,7 +247,6 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
     }
   };
 
-  // Show loading skeleton while initial data is loading
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -180,9 +268,6 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
               </div>
               <div className="h-32 bg-gray-200 rounded"></div>
               <div className="h-16 bg-gray-200 rounded"></div>
-              <div className="h-32 bg-gray-200 rounded"></div>
-              <div className="h-32 bg-gray-200 rounded"></div>
-              <div className="h-32 bg-gray-200 rounded"></div>
             </div>
           </CardContent>
         </Card>
@@ -206,16 +291,6 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="occupation">Occupation</Label>
-              <Input
-                id="occupation"
-                name="occupation"
-                value={profileSettings.occupation ?? ""}
-                onChange={handleProfileChange}
-                placeholder="Your current occupation"
-              />
-            </div>
-            <div className="space-y-2">
               <Label htmlFor="preferredLanguage">Preferred Language</Label>
               <Input
                 id="preferredLanguage"
@@ -223,73 +298,6 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
                 value={profileSettings.preferredLanguage ?? ""}
                 onChange={handleProfileChange}
                 placeholder="Your preferred language"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="preferredCommunicationMethod">
-                Communication Method
-              </Label>
-              <select
-                id="preferredCommunicationMethod"
-                name="preferredCommunicationMethod"
-                value={profileSettings.preferredCommunicationMethod.toString()}
-                onChange={handleProfileChange}
-                className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
-              >
-                <option value={ConsultationMode.VIDEO}>Video</option>
-                <option value={ConsultationMode.AUDIO}>Audio</option>
-                <option value={ConsultationMode.IN_PERSON}>In Person</option>
-              </select>
-            </div>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="aboutMe">About Me</Label>
-            <Textarea
-              id="aboutMe"
-              name="aboutMe"
-              value={profileSettings.aboutMe ?? ""}
-              onChange={handleProfileChange}
-              placeholder="Tell us about yourself"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="goals">Goals</Label>
-            <Textarea
-              id="goals"
-              name="goals"
-              value={profileSettings.goals ?? ""}
-              onChange={handleProfileChange}
-              placeholder="What you hope to achieve"
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Career & Professional Section */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Career & Professional</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="currentCompany">Current Company</Label>
-              <Input
-                id="currentCompany"
-                name="currentCompany"
-                value={profileSettings.currentCompany ?? ""}
-                onChange={handleProfileChange}
-                placeholder="Your current company or organization"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="industry">Industry</Label>
-              <Input
-                id="industry"
-                name="industry"
-                value={profileSettings.industry ?? ""}
-                onChange={handleProfileChange}
-                placeholder="Your industry (e.g., Technology, Healthcare)"
               />
             </div>
             <div className="space-y-2">
@@ -323,6 +331,63 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
                 </SelectContent>
               </Select>
             </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="aboutMe">About Me</Label>
+            <Textarea
+              id="aboutMe"
+              name="aboutMe"
+              value={profileSettings.aboutMe ?? ""}
+              onChange={handleProfileChange}
+              placeholder="Tell us about yourself"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="goals">Goals</Label>
+            <Textarea
+              id="goals"
+              name="goals"
+              value={profileSettings.goals ?? ""}
+              onChange={handleProfileChange}
+              placeholder="What you hope to achieve"
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Work Experience Section */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Work Experience</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <WorkExperienceSection
+            experiences={workExperienceList}
+            onUpdate={handleWorkExperienceUpdate}
+          />
+        </CardContent>
+      </Card>
+
+      {/* Education Section */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Education</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <EducationSection
+            education={educationList}
+            onUpdate={handleEducationUpdate}
+          />
+        </CardContent>
+      </Card>
+
+      {/* Career & Professional Section */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Career Preferences</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="budgetPreference">Budget Preference</Label>
               <Select
@@ -353,17 +418,6 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
                 </SelectContent>
               </Select>
             </div>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="linkedinUrl">LinkedIn Profile URL</Label>
-            <Input
-              id="linkedinUrl"
-              name="linkedinUrl"
-              type="url"
-              value={profileSettings.linkedinUrl ?? ""}
-              onChange={handleProfileChange}
-              placeholder="https://linkedin.com/in/yourprofile"
-            />
           </div>
           <div className="space-y-2">
             <Label htmlFor="skillsToDevelop">Skills to Develop</Label>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,6 +14,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { CompanyLogo, lookupCompanyDomain } from "@/components/ui/company-logo";
+import { WorkExperienceSchema } from "@/schemas/user";
 import { WorkExperience } from "./WorkExperienceSection";
 
 interface AddWorkExperienceModalProps {
@@ -31,6 +33,7 @@ export function AddWorkExperienceModal({
 }: AddWorkExperienceModalProps) {
   const [formData, setFormData] = useState({
     company: "",
+    companyDomain: "",
     title: "",
     location: "",
     startDate: "",
@@ -38,13 +41,24 @@ export function AddWorkExperienceModal({
     isCurrent: false,
     description: "",
   });
+  const [manualDomainMode, setManualDomainMode] = useState(false);
 
   const isEditing = !!experience;
+
+  // Auto-detected domain from company name
+  const autoDetectedDomain = useMemo(
+    () => lookupCompanyDomain(formData.company),
+    [formData.company],
+  );
+
+  // Effective domain: manual override > auto-detected
+  const effectiveDomain = formData.companyDomain || autoDetectedDomain || "";
 
   useEffect(() => {
     if (experience) {
       setFormData({
         company: experience.company,
+        companyDomain: experience.companyDomain || "",
         title: experience.title,
         location: experience.location || "",
         startDate: experience.startDate
@@ -56,9 +70,15 @@ export function AddWorkExperienceModal({
         isCurrent: experience.isCurrent,
         description: experience.description || "",
       });
+      // Show manual domain input if editing and has a custom domain
+      setManualDomainMode(
+        !!experience.companyDomain &&
+          lookupCompanyDomain(experience.company) !== experience.companyDomain,
+      );
     } else {
       setFormData({
         company: "",
+        companyDomain: "",
         title: "",
         location: "",
         startDate: "",
@@ -66,6 +86,7 @@ export function AddWorkExperienceModal({
         isCurrent: false,
         description: "",
       });
+      setManualDomainMode(false);
     }
   }, [experience, isOpen]);
 
@@ -75,6 +96,7 @@ export function AddWorkExperienceModal({
     const data = {
       ...(experience?.id ? { id: experience.id } : {}),
       company: formData.company,
+      companyDomain: effectiveDomain || undefined,
       title: formData.title,
       location: formData.location || undefined,
       startDate: new Date(formData.startDate),
@@ -87,7 +109,8 @@ export function AddWorkExperienceModal({
       description: formData.description || undefined,
     };
 
-    onSave(data as WorkExperience);
+    const validated = WorkExperienceSchema.parse(data);
+    onSave(validated);
   };
 
   return (
@@ -121,16 +144,64 @@ export function AddWorkExperienceModal({
 
             <div className="space-y-2">
               <Label htmlFor="company">Company *</Label>
-              <Input
-                id="company"
-                value={formData.company}
-                onChange={(e) =>
-                  setFormData({ ...formData, company: e.target.value })
-                }
-                placeholder="e.g., Google"
-                required
-              />
+              <div className="flex items-center gap-2">
+                {effectiveDomain && (
+                  <CompanyLogo
+                    companyDomain={effectiveDomain}
+                    companyName={formData.company}
+                    size={36}
+                  />
+                )}
+                <Input
+                  id="company"
+                  value={formData.company}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      company: e.target.value,
+                      // Clear manual domain when company name changes (let auto-detect work)
+                      companyDomain: manualDomainMode
+                        ? formData.companyDomain
+                        : "",
+                    })
+                  }
+                  placeholder="e.g., Google"
+                  required
+                  className="flex-1"
+                />
+              </div>
+              {autoDetectedDomain && !manualDomainMode && (
+                <p className="text-xs text-emerald-600">
+                  Logo detected automatically
+                </p>
+              )}
+              {!autoDetectedDomain && !manualDomainMode && formData.company.length > 0 && (
+                <button
+                  type="button"
+                  className="text-xs text-primary hover:underline"
+                  onClick={() => setManualDomainMode(true)}
+                >
+                  Add company website to show logo
+                </button>
+              )}
             </div>
+
+            {manualDomainMode && (
+              <div className="space-y-2">
+                <Label htmlFor="companyDomain">Company Website Domain</Label>
+                <Input
+                  id="companyDomain"
+                  value={formData.companyDomain}
+                  onChange={(e) =>
+                    setFormData({ ...formData, companyDomain: e.target.value })
+                  }
+                  placeholder="e.g., google.com"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Enter the company&apos;s website domain to display their logo
+                </p>
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label htmlFor="location">Location</Label>

@@ -1,45 +1,79 @@
-import React from "react";
+import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Loader2, Pencil } from "lucide-react";
 import {
   ConsulteeProfile,
-  ConsulteePreferences,
   PersonalInfoAndRole,
 } from "@/schemas/user";
 
-type OnboardingFormData = PersonalInfoAndRole &
-  Partial<ConsulteeProfile> &
-  Partial<ConsulteePreferences> & {
-    preferredCommunicationMethod: "VIDEO" | "AUDIO" | "IN_PERSON";
-    interests?: string[];
+type ConsulteeFormData = Partial<PersonalInfoAndRole> &
+  Partial<ConsulteeProfile> & {
     goals?: string;
+    consulteeInlineEducation?: {
+      institution?: string;
+      institutionDomain?: string;
+      fieldOfStudy?: string;
+      endYear?: number;
+    };
+    consulteeInlineWorkExperience?: {
+      title?: string;
+      company?: string;
+      companyDomain?: string;
+    };
   };
 
 interface Props {
-  onSubmit: (data: OnboardingFormData) => void;
+  onSubmit: (data: ConsulteeFormData) => void;
   onBack: () => void;
-  formData: OnboardingFormData;
+  formData: ConsulteeFormData;
+  onGoToStep?: (step: number) => void;
 }
 
-const COMMUNICATION_LABELS: Record<string, string> = {
-  VIDEO: "Video Call",
-  AUDIO: "Audio Call",
-  IN_PERSON: "In Person",
+const CAREER_STAGE_LABELS: Record<string, string> = {
+  SCHOOL_STUDENT: "School Student",
+  STUDENT: "Student",
+  EARLY_CAREER: "Early Career (0-3 years)",
+  MID_CAREER: "Mid Career (3-10 years)",
+  SENIOR: "Senior (10+ years)",
+  EXECUTIVE: "Executive / C-Level",
 };
 
 const ConsulteeReviewForm: React.FC<Props> = ({
   onSubmit,
   onBack,
   formData,
+  onGoToStep,
 }) => {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   const handleSubmit = () => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
     onSubmit(formData);
   };
 
-  const renderSection = (title: string, content: React.ReactNode) => (
+  const renderSection = (
+    title: string,
+    content: React.ReactNode,
+    editStep?: number,
+  ) => (
     <div className="space-y-3">
-      <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-        {title}
-      </h3>
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+          {title}
+        </h3>
+        {onGoToStep && editStep !== undefined && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={() => onGoToStep(editStep)}
+            title={`Edit ${title}`}
+          >
+            <Pencil className="w-3.5 h-3.5" />
+          </Button>
+        )}
+      </div>
       {content}
     </div>
   );
@@ -50,6 +84,13 @@ const ConsulteeReviewForm: React.FC<Props> = ({
       <span className="col-span-2 text-sm">{value || "Not provided"}</span>
     </div>
   );
+
+  const isStudent = formData.careerStage === "STUDENT";
+  const isProfessional =
+    formData.careerStage === "EARLY_CAREER" ||
+    formData.careerStage === "MID_CAREER" ||
+    formData.careerStage === "SENIOR" ||
+    formData.careerStage === "EXECUTIVE";
 
   return (
     <div className="space-y-6">
@@ -62,58 +103,60 @@ const ConsulteeReviewForm: React.FC<Props> = ({
           {renderField("City", formData.city)}
           {renderField("Country", formData.country)}
         </div>,
+        0,
       )}
 
       {renderSection(
         "Profile Details",
         <div className="bg-muted/50 rounded-lg p-4">
-          {renderField("Occupation", formData.occupation)}
-          {renderField("Company", formData.currentCompany)}
-          {renderField("Industry", formData.industry)}
-          {renderField("Career Stage", formData.careerStage?.replace("_", " "))}
+          {renderField(
+            "Career Stage",
+            formData.careerStage
+              ? CAREER_STAGE_LABELS[formData.careerStage] ||
+                  formData.careerStage
+              : undefined,
+          )}
+          {isStudent && (
+            <>
+              {renderField(
+                "Institution",
+                formData.consulteeInlineEducation?.institution,
+              )}
+              {renderField(
+                "Field of Study",
+                formData.consulteeInlineEducation?.fieldOfStudy,
+              )}
+              {renderField(
+                "Expected Graduation",
+                formData.consulteeInlineEducation?.endYear?.toString(),
+              )}
+            </>
+          )}
+          {isProfessional && (
+            <>
+              {renderField(
+                "Current Role",
+                formData.consulteeInlineWorkExperience?.title,
+              )}
+              {renderField(
+                "Company",
+                formData.consulteeInlineWorkExperience?.company,
+              )}
+            </>
+          )}
           {renderField("About Me", formData.aboutMe)}
         </div>,
+        1,
       )}
 
-      {renderSection(
-        "Preferences",
-        <div className="bg-muted/50 rounded-lg p-4">
-          {renderField(
-            "Communication",
-            COMMUNICATION_LABELS[formData.preferredCommunicationMethod] ||
-              formData.preferredCommunicationMethod,
-          )}
-          {renderField("Language", formData.preferredLanguage)}
-          {renderField("Budget", formData.budgetPreference?.replace("_", " "))}
-        </div>,
-      )}
-
-      {(formData.interests?.length || formData.goals) &&
+      {(formData.goals || formData.preferredLanguage) &&
         renderSection(
-          "Interests & Goals",
-          <div className="bg-muted/50 rounded-lg p-4 space-y-4">
-            {formData.interests && formData.interests.length > 0 && (
-              <div>
-                <p className="text-sm text-muted-foreground mb-2">Interests</p>
-                <div className="flex flex-wrap gap-2">
-                  {formData.interests.map((interest, index) => (
-                    <span
-                      key={index}
-                      className="px-2 py-1 bg-primary/10 text-primary rounded text-sm"
-                    >
-                      {interest}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-            {formData.goals && (
-              <div>
-                <p className="text-sm text-muted-foreground mb-2">Goals</p>
-                <p className="text-sm">{formData.goals}</p>
-              </div>
-            )}
+          "Preferences",
+          <div className="bg-muted/50 rounded-lg p-4">
+            {renderField("Language", formData.preferredLanguage)}
+            {formData.goals && renderField("Goals", formData.goals)}
           </div>,
+          1,
         )}
 
       {/* Navigation */}
@@ -123,11 +166,24 @@ const ConsulteeReviewForm: React.FC<Props> = ({
           onClick={onBack}
           variant="outline"
           className="flex-1"
+          disabled={isSubmitting}
         >
           Back
         </Button>
-        <Button type="button" onClick={handleSubmit} className="flex-1">
-          Complete Registration
+        <Button
+          type="button"
+          onClick={handleSubmit}
+          className="flex-1"
+          disabled={isSubmitting}
+        >
+          {isSubmitting ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Submitting...
+            </>
+          ) : (
+            "Complete Registration"
+          )}
         </Button>
       </div>
     </div>

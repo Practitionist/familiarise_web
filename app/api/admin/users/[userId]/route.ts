@@ -62,7 +62,6 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         consulteeProfile: {
           select: {
             id: true,
-            preferredCommunicationMethod: true,
             skillsToDevelop: true,
           },
         },

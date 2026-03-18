@@ -4,6 +4,7 @@ import { UserWithProfiles } from "./1a-create-users";
 import {
   sanitizeString,
   generateCompanyName,
+  getCompanyDomain,
   generateJobTitle,
   generateCity,
   generateCountry,
@@ -51,10 +52,12 @@ export async function createWorkExperiences(
           ? new Date(endYear, faker.number.int({ min: 0, max: 11 }), 28)
           : null;
 
+        const companyName = generateCompanyName();
         await prisma.workExperience.create({
           data: {
             userId: consultant.id,
-            company: generateCompanyName(),
+            company: companyName,
+            companyDomain: getCompanyDomain(companyName),
             title: generateJobTitle(domainName),
             location: `${generateCity(generateCountry())}, ${generateCountry()}`,
             startDate,

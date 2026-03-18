@@ -29,8 +29,56 @@ export async function GET(request: NextRequest) {
 
     // Build include object based on whether registration data is requested
     const include: Record<string, unknown> = {
-      consultantProfile: true,
+      consultantProfile: {
+        include: {
+          user: {
+            select: {
+              name: true,
+              image: true,
+              workExperiences: {
+                select: {
+                  company: true,
+                  companyDomain: true,
+                  isCurrent: true,
+                },
+                orderBy: [
+                  { isCurrent: "desc" as const },
+                  { startDate: "desc" as const },
+                ],
+                take: 3,
+              },
+            },
+          },
+        },
+      },
       topics: true,
+      collaborators: {
+        where: { status: "ACCEPTED" },
+        include: {
+          consultantProfile: {
+            include: {
+              user: {
+                select: {
+                  name: true,
+                  image: true,
+                  workExperiences: {
+                    select: {
+                      company: true,
+                      companyDomain: true,
+                      isCurrent: true,
+                    },
+                    orderBy: [
+                      { isCurrent: "desc" as const },
+                      { startDate: "desc" as const },
+                    ],
+                    take: 3,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
     };
 
     if (includeRegistration) {
@@ -184,7 +232,28 @@ export async function POST(request: NextRequest) {
           : undefined,
       },
       include: {
-        consultantProfile: true,
+        consultantProfile: {
+          include: {
+            user: {
+              select: {
+                name: true,
+                image: true,
+                workExperiences: {
+                  select: {
+                    company: true,
+                    companyDomain: true,
+                    isCurrent: true,
+                  },
+                  orderBy: [
+                    { isCurrent: "desc" as const },
+                    { startDate: "desc" as const },
+                  ],
+                  take: 3,
+                },
+              },
+            },
+          },
+        },
         topics: true,
       },
     });

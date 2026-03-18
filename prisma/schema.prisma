@@ -31,6 +31,10 @@ model User {
   bio                 String?   @db.VarChar(160) // Short tagline, max 160 chars
   profileDisplayImage String? // Square profile image for Explore Experts page
 
+  // Consent timestamps
+  termsAcceptedAt   DateTime?
+  privacyAcceptedAt DateTime?
+
   // Professional background (consolidated from profile level)
   workExperiences WorkExperience[]
   certifications  Certification[]
@@ -467,6 +471,9 @@ model ConsultantProfile {
   // Note: Professional background (workExperiences, certifications, education)
   // has been consolidated to User level for DRY principle
 
+  // Achievements / portfolio items
+  achievements Achievement[]
+
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String @unique
 
@@ -549,21 +556,15 @@ model ConsultantReview {
 
 model ConsulteeProfile {
   id                           String            @id @default(uuid())
-  occupation                   String?
   aboutMe                      String?           @db.Text
-  preferredCommunicationMethod ConsultationMode? @default(VIDEO)
   preferredLanguage            String?
   goals                        String?           @db.Text
 
-  // New fields for enhanced consultee profile
   careerStage      CareerStage?
-  currentCompany   String?
-  industry         String?
   skillsToDevelop  String[]          @default([])
-  linkedinUrl      String?
   budgetPreference BudgetPreference?
 
-  // Note: Education has been consolidated to User level for DRY principle
+  // Education and work experience are at User level (WorkExperience, Education models)
 
   consultationRequests Consultation[]
   subscriptionRequests Subscription[]
@@ -580,25 +581,10 @@ model ConsulteeProfile {
   @@index([careerStage])
 }
 
-enum ConsultationMode {
-  VIDEO
-  AUDIO
-  IN_PERSON
-}
-
 model StaffProfile {
-  id               String  @id @default(uuid())
-  department       String?
-  position         String?
-  permissions      Json?
-  responsibilities Json?
-
-  // New fields for enhanced staff profile
-  employeeId   String?
-  hireDate     DateTime?
-  reportsTo    String? // Manager's user ID
-  skills       String[]  @default([])
-  workSchedule String? // e.g., "9 AM - 5 PM", "Shift A", etc.
+  id         String  @id @default(uuid())
+  department String?
+  position   String?
 
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String @unique
@@ -608,15 +594,12 @@ model StaffProfile {
 
   @@index([userId])
   @@index([department])
-  @@index([reportsTo])
 }
 
 model AdminProfile {
-  id              String     @id @default(uuid())
-  adminLevel      AdminLevel
-  accessScope     Json? // Granular permissions JSON
-  assignedRegions String[]   @default([]) // Geographic or domain regions
-  notes           String?    @db.Text
+  id         String     @id @default(uuid())
+  adminLevel AdminLevel
+  notes      String?    @db.Text
 
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String @unique
@@ -631,14 +614,15 @@ model AdminProfile {
 //////////////////////////////////////////////////// PROFESSIONAL BACKGROUND MODELS ////////////////////////////////////////////////////
 
 model WorkExperience {
-  id          String    @id @default(uuid())
-  company     String
-  title       String
-  location    String?
-  startDate   DateTime
-  endDate     DateTime?
-  isCurrent   Boolean   @default(false)
-  description String?   @db.Text
+  id            String    @id @default(uuid())
+  company       String
+  companyDomain String? // e.g., "google.com" — used by Logo.dev to fetch company logo sticker
+  title         String
+  location      String?
+  startDate     DateTime
+  endDate       DateTime?
+  isCurrent     Boolean   @default(false)
+  description   String?   @db.Text
 
   // Consolidated to User level (was ConsultantProfile)
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
@@ -671,15 +655,16 @@ model Certification {
 }
 
 model Education {
-  id           String  @id @default(uuid())
-  institution  String
-  degree       String
-  fieldOfStudy String?
-  startYear    Int?
-  endYear      Int?
-  grade        String?
-  activities   String?
-  description  String? @db.Text
+  id                String  @id @default(uuid())
+  institution       String
+  institutionDomain String?
+  degree            String
+  fieldOfStudy      String?
+  startYear         Int?
+  endYear           Int?
+  grade             String?
+  activities        String?
+  description       String? @db.Text
 
   // Consolidated to User level (was ConsultantProfile/ConsulteeProfile)
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
@@ -689,6 +674,34 @@ model Education {
   updatedAt DateTime @updatedAt
 
   @@index([userId])
+}
+
+//////////////////////////////////////////////////// ACHIEVEMENTS / PORTFOLIO ////////////////////////////////////////////////////
+
+enum AchievementType {
+  AWARD
+  PUBLICATION
+  PROJECT
+  TALK
+  OPEN_SOURCE
+  OTHER
+}
+
+model Achievement {
+  id              String          @id @default(uuid())
+  title           String
+  description     String?         @db.Text
+  url             String?
+  imageUrl        String?
+  achievementType AchievementType @default(OTHER)
+
+  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultantProfileId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([consultantProfileId])
 }
 
 //////////////////////////////////////////////////// AVAILABILITY SLOTS ////////////////////////////////////////////////////
@@ -2021,6 +2034,7 @@ enum Gender {
 }
 
 enum CareerStage {
+  SCHOOL_STUDENT // No UI yet
   STUDENT
   EARLY_CAREER // 0-3 years experience
   MID_CAREER // 3-10 years experience
@@ -2080,6 +2094,7 @@ enum ProfileVerificationStatus {
   APPROVED
   REJECTED
   NEEDS_INFO
+  SUPERSEDED
 }
 
 enum SystemJobStatus {

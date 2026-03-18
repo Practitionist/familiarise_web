@@ -203,11 +203,6 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
         payload = {
           department: staffData.department,
           position: staffData.position,
-          employeeId: staffData.employeeId,
-          hireDate: staffData.hireDate,
-          reportsTo: staffData.reportsTo,
-          skills: staffData.skills,
-          workSchedule: staffData.workSchedule,
         };
         break;
       case "account":
@@ -412,89 +407,6 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                 value={staffData.position ?? ""}
                 onChange={handleProfileInputChange}
               />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="employeeId">Employee ID</Label>
-              <Input
-                id="employeeId"
-                name="employeeId"
-                placeholder="e.g., EMP-001"
-                value={staffData.employeeId ?? ""}
-                onChange={handleProfileInputChange}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="reportsTo">Reports To</Label>
-              <Input
-                id="reportsTo"
-                name="reportsTo"
-                placeholder="Manager's name or ID"
-                value={staffData.reportsTo ?? ""}
-                onChange={handleProfileInputChange}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="hireDate">Hire Date</Label>
-              <Input
-                id="hireDate"
-                name="hireDate"
-                type="date"
-                value={
-                  staffData.hireDate
-                    ? new Date(staffData.hireDate).toISOString().split("T")[0]
-                    : ""
-                }
-                onChange={handleProfileInputChange}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="workSchedule">Work Schedule</Label>
-              <Input
-                id="workSchedule"
-                name="workSchedule"
-                placeholder="e.g., Mon-Fri 9AM-5PM"
-                value={staffData.workSchedule ?? ""}
-                onChange={handleProfileInputChange}
-              />
-            </div>
-            <div className="space-y-2 md:col-span-2">
-              <Label htmlFor="skills">Skills</Label>
-              <Input
-                id="skills"
-                placeholder="e.g., Communication, Leadership (comma-separated)"
-                value={(staffData.skills ?? []).join(", ")}
-                onChange={(e) => {
-                  const skills = e.target.value
-                    .split(",")
-                    .map((s) => s.trim())
-                    .filter(Boolean);
-                  setStaffData((prev) => {
-                    if (!prev) return prev;
-                    return {
-                      ...prev,
-                      skills: skills,
-                    };
-                  });
-                }}
-              />
-            </div>
-            {/* Displaying Responsibilities/Permissions as read-only */}
-            <div className="space-y-2 md:col-span-2">
-              <Label>Responsibilities</Label>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                {/* TODO: Improve display/editing for JSON */}
-                {staffData.responsibilities
-                  ? JSON.stringify(staffData.responsibilities)
-                  : "Not specified"}
-              </p>
-            </div>
-            <div className="space-y-2 md:col-span-2">
-              <Label>Permissions</Label>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                {staffData.permissions
-                  ? JSON.stringify(staffData.permissions)
-                  : "Not specified"}
-              </p>
             </div>
           </CardContent>
           <CardFooter className="border-t px-6 py-4">

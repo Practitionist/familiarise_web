@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Plus, X, Loader2 } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -19,6 +20,8 @@ import {
   ConsultantProfileFormSchema,
   OnboardingFormData,
 } from "@/utils/onboarding";
+import { validateTagName } from "@/utils/contentValidation";
+import type { Resolver } from "react-hook-form";
 import { z } from "zod";
 
 interface Props {
@@ -41,6 +44,9 @@ const ConsultantProfileForm: React.FC<Props> = ({
   const [tags, setTags] = useState<Tag[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [customTagInput, setCustomTagInput] = useState("");
+  const [customTagError, setCustomTagError] = useState<string | null>(null);
+  const [isAddingTag, setIsAddingTag] = useState(false);
 
   const {
     register,
@@ -50,7 +56,10 @@ const ConsultantProfileForm: React.FC<Props> = ({
     reset,
     formState: { errors },
   } = useForm<FormData>({
-    resolver: zodResolver(ConsultantProfileFormSchema) as any,
+    // zodResolver infers slightly different optionality for .default() fields
+    // (e.g., languages: string[] vs string[] | undefined). This targeted assertion
+    // bridges the gap without opting out of type checking entirely.
+    resolver: zodResolver(ConsultantProfileFormSchema) as Resolver<FormData>,
     mode: "onChange",
     defaultValues: {
       description: "",
@@ -95,32 +104,87 @@ const ConsultantProfileForm: React.FC<Props> = ({
     }
   }, [initialData, reset]);
 
-  useEffect(() => {
-    const fetchMetadata = async () => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const response = await fetch("/api/user/consultants/meta");
-        if (!response.ok) {
-          throw new Error("Failed to fetch metadata");
-        }
-        const { data } = await response.json();
-        setDomains(data.domains);
-        setSubDomains(data.subdomains);
-        setTags(data.tags);
-      } catch (error) {
-        console.error("Error fetching metadata:", error);
-        setError("Failed to load form data. Please try again.");
-      } finally {
-        setIsLoading(false);
+  const fetchMetadata = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/user/consultants/meta");
+      if (!response.ok) {
+        throw new Error("Failed to fetch metadata");
       }
-    };
-    fetchMetadata();
+      const { data } = await response.json();
+      setDomains(data.domains);
+      setSubDomains(data.subdomains);
+      setTags(data.tags);
+    } catch (error) {
+      console.error("Error fetching metadata:", error);
+      setError("Failed to load form data. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchMetadata();
+  }, [fetchMetadata]);
 
   const onSubmit = (data: FormData) => {
     onNext(data);
   };
+
+  const addCustomTag = useCallback(
+    async (name: string, tagsField: { value?: Tag[]; onChange: (v: Tag[]) => void }) => {
+      const trimmed = name.trim();
+      if (!trimmed || !selectedDomain?.id) return;
+
+      // Validate on the client side first
+      const validation = validateTagName(trimmed);
+      if (!validation.valid) {
+        setCustomTagError(validation.error ?? "Invalid skill name");
+        return;
+      }
+      setCustomTagError(null);
+
+      // Check if already in the available tags or selected
+      const existing = tags.find(
+        (t) =>
+          t.name.toLowerCase() === trimmed.toLowerCase() &&
+          t.domainId === selectedDomain.id,
+      );
+      if (existing) {
+        if (!tagsField.value?.some((t) => t.id === existing.id)) {
+          tagsField.onChange([...(tagsField.value || []), existing]);
+        }
+        setCustomTagInput("");
+        return;
+      }
+
+      setIsAddingTag(true);
+      try {
+        const res = await fetch("/api/user/content/tags", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: trimmed, domainId: selectedDomain.id }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => null);
+          setCustomTagError(data?.error ?? "Failed to add skill");
+          return;
+        }
+        const { tag } = await res.json();
+        setTags((prev) => [...prev, tag]);
+        tagsField.onChange([...(tagsField.value || []), tag]);
+        setCustomTagInput("");
+        setCustomTagError(null);
+      } catch (err) {
+        console.error("Failed to create custom tag:", err);
+        setCustomTagError("Failed to add skill. Please try again.");
+      } finally {
+        setIsAddingTag(false);
+      }
+    },
+    [selectedDomain?.id, tags],
+  );
 
   if (isLoading) {
     return (
@@ -137,7 +201,7 @@ const ConsultantProfileForm: React.FC<Props> = ({
     return (
       <div className="text-center space-y-4 p-8">
         <p className="text-destructive text-lg">{error}</p>
-        <Button onClick={() => window.location.reload()}>Retry</Button>
+        <Button onClick={fetchMetadata}>Retry</Button>
       </div>
     );
   }
@@ -299,53 +363,126 @@ const ConsultantProfileForm: React.FC<Props> = ({
               )}
             </div>
 
-            <div className="space-y-2">
-              <Label>Tags / Skills</Label>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 max-h-40 overflow-y-auto p-3 rounded-lg bg-muted/50 border">
-                <Controller
-                  name="tags"
-                  control={control}
-                  render={({ field }) => (
-                    <>
-                      {filteredTags.map((tag) => (
-                        <div
+            <Controller
+              name="tags"
+              control={control}
+              render={({ field: tagsField }) => (
+                <div className="space-y-2">
+                  <Label>Tags / Skills</Label>
+
+                  {/* Selected tags as removable pills */}
+                  {tagsField.value && tagsField.value.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {tagsField.value.map((tag) => (
+                        <span
                           key={tag.id}
-                          className="flex items-center space-x-2"
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-primary/10 text-primary text-sm"
                         >
-                          <Checkbox
-                            id={`tag-${tag.id}`}
-                            checked={
-                              field.value?.some((t) => t.id === tag.id) || false
+                          {tag.name}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              tagsField.onChange(
+                                tagsField.value?.filter(
+                                  (t) => t.id !== tag.id,
+                                ) || [],
+                              )
                             }
-                            onCheckedChange={(checked) => {
-                              if (checked) {
-                                field.onChange([...(field.value || []), tag]);
-                              } else {
-                                field.onChange(
-                                  field.value?.filter((t) => t.id !== tag.id) ||
-                                    [],
-                                );
-                              }
-                            }}
-                          />
-                          <Label
-                            htmlFor={`tag-${tag.id}`}
-                            className="text-sm cursor-pointer"
+                            className="hover:text-destructive"
                           >
-                            {tag.name}
-                          </Label>
-                        </div>
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
                       ))}
-                    </>
+                    </div>
                   )}
-                />
-              </div>
-              {errors.tags && (
-                <p className="text-sm text-destructive">
-                  {errors.tags.message}
-                </p>
+
+                  {/* Checkbox grid for seeded tags */}
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2 max-h-40 overflow-y-auto p-3 rounded-lg bg-muted/50 border">
+                    {filteredTags.map((tag) => (
+                      <div
+                        key={tag.id}
+                        className="flex items-center space-x-2"
+                      >
+                        <Checkbox
+                          id={`tag-${tag.id}`}
+                          checked={
+                            tagsField.value?.some((t) => t.id === tag.id) ||
+                            false
+                          }
+                          onCheckedChange={(checked) => {
+                            if (checked) {
+                              tagsField.onChange([
+                                ...(tagsField.value || []),
+                                tag,
+                              ]);
+                            } else {
+                              tagsField.onChange(
+                                tagsField.value?.filter(
+                                  (t) => t.id !== tag.id,
+                                ) || [],
+                              );
+                            }
+                          }}
+                        />
+                        <Label
+                          htmlFor={`tag-${tag.id}`}
+                          className="text-sm cursor-pointer"
+                        >
+                          {tag.name}
+                        </Label>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Custom tag input */}
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="Add a custom skill..."
+                      value={customTagInput}
+                      onChange={(e) => {
+                        setCustomTagInput(e.target.value);
+                        if (customTagError) setCustomTagError(null);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          addCustomTag(customTagInput, tagsField);
+                        }
+                      }}
+                      disabled={isAddingTag}
+                      className={`flex-1 ${customTagError ? "border-destructive" : ""}`}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={() => addCustomTag(customTagInput, tagsField)}
+                      disabled={isAddingTag || !customTagInput.trim()}
+                    >
+                      {isAddingTag ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Plus className="w-4 h-4" />
+                      )}
+                    </Button>
+                  </div>
+                  {customTagError ? (
+                    <p className="text-xs text-destructive">{customTagError}</p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      Don&apos;t see your skill? Type it above and press Enter
+                    </p>
+                  )}
+
+                  {errors.tags && (
+                    <p className="text-sm text-destructive">
+                      {errors.tags.message}
+                    </p>
+                  )}
+                </div>
               )}
-            </div>
+            />
           </>
         )}
       </div>
