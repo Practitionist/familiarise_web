@@ -23,7 +23,7 @@ export async function createWebinarPlans(consultants: UserWithProfiles[]) {
             priceCurrency: "INR",
             certificateProvided: false,
             durationInHours: 1,
-            price: faker.number.int({ min: 1500, max: 3000 }), // $15 to $30
+            price: faker.number.int({ min: 150000, max: 300000 }), // ₹1500-₹3000 in paise
             maxParticipants: faker.number.int({ min: 20, max: 50 }),
             language: faker.helpers.arrayElement([
               "English",
@@ -51,7 +51,7 @@ export async function createWebinarPlans(consultants: UserWithProfiles[]) {
             priceCurrency: "INR",
             certificateProvided: false,
             durationInHours: 2,
-            price: faker.number.int({ min: 2500, max: 5000 }), // $25 to $50
+            price: faker.number.int({ min: 250000, max: 500000 }), // ₹2500-₹5000 in paise
             maxParticipants: faker.number.int({ min: 15, max: 40 }),
             language: faker.helpers.arrayElement([
               "English",
@@ -79,7 +79,7 @@ export async function createWebinarPlans(consultants: UserWithProfiles[]) {
             priceCurrency: "INR",
             certificateProvided: false,
             durationInHours: 3,
-            price: faker.number.int({ min: 3500, max: 7000 }), // $35 to $70
+            price: faker.number.int({ min: 350000, max: 700000 }), // ₹3500-₹7000 in paise
             maxParticipants: faker.number.int({ min: 10, max: 30 }),
             language: faker.helpers.arrayElement([
               "English",

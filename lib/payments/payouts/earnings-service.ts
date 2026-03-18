@@ -61,8 +61,8 @@ export async function createEarningsFromPayment({
   }
 
   // Calculate revenue split using original plan price (before platform-funded discounts/credits/tax)
-  // Payment.originalAmount is stored in rupees (major unit); earnings must be in paise (smallest unit)
-  const grossAmount = payment.originalAmount * 100;
+  // Payment.originalAmount is stored in paise (smallest unit) — same as earnings
+  const grossAmount = payment.originalAmount;
   const platformFee = Math.round(
     (grossAmount * PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE) / 100,
   );

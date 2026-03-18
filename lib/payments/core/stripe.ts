@@ -50,21 +50,9 @@ const getBaseUrl = () => {
   return "http://localhost:3000";
 };
 
-/**
- * Convert amount to smallest currency unit (cents, paise, etc.)
- */
-const toSmallestUnit = (amount: number, currency: string): number => {
-  const multiplier = CURRENCY_MULTIPLIERS[currency] || 100;
-  return Math.round(amount * multiplier);
-};
-
-/**
- * Convert from smallest currency unit to base unit
- */
-const fromSmallestUnit = (amount: number, currency: string): number => {
-  const multiplier = CURRENCY_MULTIPLIERS[currency] || 100;
-  return amount / multiplier;
-};
+// After paise migration, all amounts in the DB are already in smallest currency unit (paise/cents).
+// No conversion needed for INR. For non-INR currencies, the amount from checkout is already
+// in the target currency's smallest unit via the checkout calculation.
 
 // ============================================================================
 // Checkout/Payment Intent Operations
@@ -106,7 +94,7 @@ export async function createStripeCheckoutSession({
               name: `${metadata.appointmentType} Appointment`,
               description: `Appointment booking for ${metadata.appointmentType}`,
             },
-            unit_amount: toSmallestUnit(amount, currency),
+            unit_amount: amount, // already in smallest currency unit (paise/cents)
           },
           quantity: 1,
         },
@@ -204,14 +192,14 @@ export async function createStripeRefund({
 
     const refund = await stripeClient.refunds.create({
       payment_intent: paymentIntentId,
-      amount: amount ? toSmallestUnit(amount, currency) : undefined,
+      amount: amount || undefined, // already in smallest currency unit (paise/cents)
       reason: mapRefundReason(reason),
       metadata,
     });
 
     return {
       refundId: refund.id,
-      amount: fromSmallestUnit(refund.amount, refund.currency || "USD"),
+      amount: refund.amount, // already in smallest currency unit
       currency: refund.currency?.toUpperCase() || "USD",
       status: mapStripeRefundStatus(refund.status),
       metadata: refund.metadata || undefined,
@@ -239,7 +227,7 @@ export async function getStripeRefund(refundId: string): Promise<RefundResult> {
 
     return {
       refundId: refund.id,
-      amount: fromSmallestUnit(refund.amount, refund.currency || "USD"),
+      amount: refund.amount, // already in smallest currency unit
       currency: refund.currency?.toUpperCase() || "USD",
       status: mapStripeRefundStatus(refund.status),
       metadata: refund.metadata || undefined,
@@ -273,7 +261,7 @@ export async function listStripeRefunds(
 
     return refunds.data.map((refund) => ({
       refundId: refund.id,
-      amount: fromSmallestUnit(refund.amount, refund.currency || "USD"),
+      amount: refund.amount, // already in smallest currency unit
       currency: refund.currency?.toUpperCase() || "USD",
       status: mapStripeRefundStatus(refund.status),
       metadata: refund.metadata || undefined,
@@ -362,8 +350,8 @@ export async function submitStripeDisputeEvidence({
       },
     });
 
-    // After submitting evidence, we need to manually submit it
-    await stripeClient.disputes.close(disputeId);
+    // Stripe auto-submits evidence to the card network after disputes.update().
+    // Do NOT call disputes.close() — that ACCEPTS/concedes the dispute!
 
     return {
       disputeId: dispute.id,

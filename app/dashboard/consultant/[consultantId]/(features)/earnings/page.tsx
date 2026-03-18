@@ -346,7 +346,7 @@ export default function EarningsPage({
                         </td>
                         <td className="px-4 py-3 text-right text-zinc-600">
                           {formatEarningAmount(
-                            (earning.payment?.originalAmount ?? 0) * 100,
+                            earning.payment?.originalAmount ?? 0,
                             earning.payment?.currency ?? "INR",
                           )}
                         </td>

@@ -24,7 +24,9 @@ export async function POST(req: NextRequest) {
     // Validate request body
     const body = await req.json();
     const validatedData = checkoutSchema.parse(body);
-    const isMockPayment = body.isMockPayment === true;
+    // Only allow mock payments in development — prevent client-side bypass in production
+    const isMockPayment =
+      body.isMockPayment === true && process.env.NODE_ENV === "development";
 
     // Unified checkout flow: Create payment first, then appointment via webhook
     // Supports both real and mock payments via isMockPayment flag

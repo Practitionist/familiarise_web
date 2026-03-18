@@ -6,7 +6,7 @@ This document covers tax obligations for Familiarise as an Indian marketplace pl
 
 **Disclaimer**: This is a reference guide. Consult a qualified CA/tax professional for specific advice.
 
-**Recommended Entity:** Sole Proprietorship (see `temp/11-cfo-master-plan.md` for detailed comparison). Section 44AD presumptive taxation makes this the most tax-efficient structure up to ₹2Cr revenue.
+**Recommended Entity:** Sole Proprietorship (see CFO Master Plan -- maintained outside repository). Section 44AD presumptive taxation makes this the most tax-efficient structure up to ₹2Cr revenue.
 
 ---
 
@@ -132,13 +132,17 @@ The `math.ts` checkout utilities calculate tax for **display and invoicing purpo
 | Educational services     | 18%      | 999293 (except exempt categories) |
 | Payment gateway services | 18%      | 997159                            |
 
+> **Note:** The codebase (`lib/payments/payouts/constants.ts`) uses SAC 999293 for consulting
+> and 999294 for educational services in invoice generation. The SAC codes above (998313, 998314)
+> apply to platform commission invoicing. Consult a CA to confirm the correct classification.
+
 ### GST 2.0 Changes (September 2025)
 
 The 56th GST Council meeting introduced a simplified two-rate framework:
 
-| Old Structure         | New Structure (GST 2.0)       |
-| --------------------- | ----------------------------- |
-| 0%, 5%, 12%, 18%, 28% | 5% (no ITC) or 18% (with ITC) |
+| Old Structure         | New Structure (GST 2.0, effective Sep 2025)                    |
+| --------------------- | -------------------------------------------------------------- |
+| 0%, 5%, 12%, 18%, 28% | 5% (merit, no ITC), 18% (standard, with ITC), 40% (demerit/luxury) |
 
 **Impact**: Most platform services remain at 18% with Input Tax Credit (ITC) available.
 
@@ -185,6 +189,16 @@ As Familiarise collects payments on behalf of consultants (suppliers), you may b
 **Possible workaround:** If structured as a "service provider" (you provide the consultation platform service, consultants are contractors) rather than "marketplace" (consultants sell through you), TCS obligation may not apply.
 
 **ACTION REQUIRED:** Budget ₹5-10K for a CA consultation specifically on whether Familiarise is classified as an e-commerce operator under GST. This is the single most impactful tax decision before launch.
+
+### International Buyers (Export of Services)
+
+Export of services is zero-rated under GST (IGST Act Section 16). Conditions:
+- Supplier located in India
+- Recipient located outside India
+- Payment received in convertible foreign exchange
+
+**Current implementation:** GST is zero-rated when `currency !== "INR"` in checkout.
+For full compliance, buyer location verification via billing address should be added.
 
 ---
 
@@ -300,6 +314,18 @@ Invoice to Consultant:
 | Inter-state services | Registration required      |
 
 ### Income Tax for Consultants
+
+| Income Slab (New Regime - FY 2025-26) | Tax Rate |
+| ------------------------------------- | -------- |
+| Up to ₹4 lakhs                        | Nil      |
+| ₹4 - 8 lakhs                          | 5%       |
+| ₹8 - 12 lakhs                         | 10%      |
+| ₹12 - 16 lakhs                        | 15%      |
+| ₹16 - 20 lakhs                        | 20%      |
+| ₹20 - 24 lakhs                        | 25%      |
+| Above ₹24 lakhs                       | 30%      |
+
+> The Old Tax Regime below is for reference only. New Regime is the default from FY 2023-24 onwards.
 
 | Income Slab (Old Regime) | Tax Rate |
 | ------------------------ | -------- |
@@ -503,4 +529,4 @@ TDS @ 20% = ₹4,000 (higher rate)
 - [08-saas-expenditures.md](./08-saas-expenditures.md) - Cost structure (with GST/RCM)
 - [04-revenue-distribution.md](./04-revenue-distribution.md) - Revenue split
 - [06-payout-implementation-plan.md](./06-payout-implementation-plan.md) - Payout system
-- `temp/11-cfo-master-plan.md` - Comprehensive CFO financial blueprint (private, not in git)
+- CFO Master Plan -- comprehensive financial blueprint (maintained outside repository)

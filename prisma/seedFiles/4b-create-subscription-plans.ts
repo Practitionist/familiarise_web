@@ -22,7 +22,7 @@ export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
             description:
               "Perfect for beginners. Get 1 call per week for 1 month to establish foundational knowledge and skills.",
             durationInMonths: 1,
-            price: faker.number.int({ min: 9900, max: 19900 }), // $99 to $199
+            price: faker.number.int({ min: 990000, max: 1990000 }), // ₹9900-₹19900 in paise
             priceCurrency: "INR",
             callsPerWeek: 1,
             sessionDurationInHours: 1.0,
@@ -51,7 +51,7 @@ export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
             description:
               "Comprehensive learning program with 2 calls per week for 6 months. Ideal for intermediate learners seeking deeper expertise.",
             durationInMonths: 6,
-            price: faker.number.int({ min: 39900, max: 79900 }), // $399 to $799
+            price: faker.number.int({ min: 3990000, max: 7990000 }), // ₹39900-₹79900 in paise
             priceCurrency: "INR",
             callsPerWeek: 2,
             sessionDurationInHours: 1.0,
@@ -82,7 +82,7 @@ export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
             description:
               "Intensive program with 3 calls per week for 12 months. Designed for advanced learners and professionals seeking mastery.",
             durationInMonths: 12,
-            price: faker.number.int({ min: 59900, max: 99900 }), // $599 to $999
+            price: faker.number.int({ min: 5990000, max: 9990000 }), // ₹59900-₹99900 in paise
             priceCurrency: "INR",
             callsPerWeek: 3,
             sessionDurationInHours: 1.0,

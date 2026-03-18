@@ -745,7 +745,7 @@ model ConsultationPlan {
   title            String
   description      String?  @db.Text
   durationInHours  Float    @default(1)
-  price            Int
+  price            Int // in paise (smallest currency unit, e.g. 50000 = ₹500)
   priceCurrency    String   @default("INR")
   language         String   @default("English")
   level            String   @default("Beginner")
@@ -804,7 +804,7 @@ model SubscriptionPlan {
   title                  String
   description            String?          @db.Text
   durationInMonths       Int              @default(1)
-  price                  Int
+  price                  Int // in paise (smallest currency unit, e.g. 50000 = ₹500)
   priceCurrency          String           @default("INR")
   callsPerWeek           Int              @default(1)
   sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
@@ -985,7 +985,7 @@ model WebinarPlan {
   title               String
   topics              Topic[]  @relation("TopicToWebinarPlan")
   description         String?  @db.Text
-  price               Int
+  price               Int // in paise (smallest currency unit, e.g. 50000 = ₹500)
   priceCurrency       String   @default("INR")
   certificateProvided Boolean  @default(false)
   recordingEnabled    Boolean  @default(false) // Allow consultant to record sessions
@@ -1042,7 +1042,7 @@ model ClassPlan {
   description            String           @db.Text
   topics                 Topic[]          @relation("TopicToClassPlan")
   classContents          ClassContent[]
-  price                  Int
+  price                  Int // in paise (smallest currency unit, e.g. 50000 = ₹500)
   priceCurrency          String           @default("INR")
   certificateProvided    Boolean          @default(false)
   recordingEnabled       Boolean          @default(false) // Allow consultant to record sessions
@@ -1485,9 +1485,9 @@ enum Platform {
 
 model Payment {
   id             String         @id @default(uuid())
-  amount         Int // Final amount charged to gateway (after discounts + tax - credits)
-  originalAmount Int // Original plan price before discounts/credits/tax (for earnings)
-  taxAmount      Int            @default(0) // GST amount charged
+  amount         Int // in paise — final amount charged to gateway (after discounts + tax - credits)
+  originalAmount Int // in paise — original plan price before discounts/credits/tax (for earnings)
+  taxAmount      Int            @default(0) // in paise — GST amount charged
   currency       String
   description    String?
   receiptUrl     String?
@@ -1751,7 +1751,7 @@ model Invoice {
   paidAt        DateTime?
 
   // Tax breakdown
-  taxAmount Int? // GST amount in paise
+  taxAmount Int? // in paise — GST amount
   taxRate   Float? // 18% for services
   hsnCode   String? // SAC code (999293 for consulting)
 
@@ -1788,12 +1788,12 @@ model DiscountCode {
   code          String       @unique
   description   String
   discountType  DiscountType
-  discountValue Float
+  discountValue Int // For PERCENTAGE: whole number (10 = 10%). For FIXED_AMOUNT: in paise
   isActive      Boolean      @default(true)
   expiresAt     DateTime?
   maxUses       Int?
   currentUses   Int          @default(0)
-  maxDiscount   Float?
+  maxDiscount   Int? // in paise (cap for FIXED_AMOUNT discounts)
 
   Payment Payment[]
 

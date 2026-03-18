@@ -23,7 +23,7 @@ export async function createClassPlans(consultants: UserWithProfiles[]) {
             description: faker.lorem.paragraph(),
             priceCurrency: "INR",
             durationInMonths: 1,
-            price: faker.number.int({ min: 19900, max: 39900 }), // $199 to $399
+            price: faker.number.int({ min: 1990000, max: 3990000 }), // ₹19900-₹39900 in paise
             meetingsPerWeek: 1,
             sessionDurationInHours: 1.0,
             totalSessions: 4, // 1 × 1 × 4
@@ -85,7 +85,7 @@ export async function createClassPlans(consultants: UserWithProfiles[]) {
             description: faker.lorem.paragraph(),
             priceCurrency: "INR",
             durationInMonths: 3,
-            price: faker.number.int({ min: 34900, max: 69900 }), // $349 to $699
+            price: faker.number.int({ min: 3490000, max: 6990000 }), // ₹34900-₹69900 in paise
             meetingsPerWeek: 2,
             sessionDurationInHours: 1.5,
             totalSessions: 24, // 2 × 3 × 4
@@ -147,7 +147,7 @@ export async function createClassPlans(consultants: UserWithProfiles[]) {
             description: faker.lorem.paragraph(),
             priceCurrency: "INR",
             durationInMonths: 6,
-            price: faker.number.int({ min: 49900, max: 99900 }), // $499 to $999
+            price: faker.number.int({ min: 4990000, max: 9990000 }), // ₹49900-₹99900 in paise
             meetingsPerWeek: 3,
             sessionDurationInHours: 2.0,
             totalSessions: 72, // 3 × 6 × 4
