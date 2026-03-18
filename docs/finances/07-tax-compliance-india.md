@@ -344,7 +344,33 @@ Consultants can claim TDS deducted by platform:
 
 ---
 
-## Implementation in Codebase
+## Implementation Status (Updated March 2026)
+
+### Implemented
+
+- **TDS calculation + auto-deduction**: `lib/payments/tax/tds-service.ts` — calculates TDS at payout time, deducts before sending to gateway
+- **ConsultantTaxInfo model**: PAN, GSTIN, country tracking in `prisma/schema.prisma`
+- **TDSRecord model**: Per-deduction audit trail for Form 26Q filing
+- **Admin TDS API**: `GET/POST /api/admin/tds` — FY summary, per-consultant breakdown, filing status
+- **Consultant Tax Info API**: `GET/PUT /api/consultant/tax-info` — PAN/GSTIN collection
+- **Export zero-rating**: `lib/payments/tax/tax-engine.ts` — 0% for international buyers (buyer country detection)
+- **Gateway auto-routing**: `lib/payments/gateway-router.ts` — Razorpay for all (domestic + IBT)
+- **Invoice zero-rating**: Fixed bug where `currency !== "INR"` check never triggered
+- **Currency guards**: Discount + referral credit currency validation
+
+### Pending
+
+- [ ] CA opinion on e-commerce operator classification
+- [ ] LUT filing with GST authorities
+- [ ] Form 16A auto-generation for consultants
+- [ ] EU VAT OSS registration (when thresholds approached)
+- [ ] Razorpay IBT activation on dashboard (KYC process)
+
+See `docs/payments/multi-currency/` for detailed architecture docs.
+
+---
+
+## Original Implementation Notes (Reference)
 
 ### Track TDS-Applicable Payments
 

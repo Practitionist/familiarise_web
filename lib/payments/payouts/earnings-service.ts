@@ -127,6 +127,7 @@ export async function createEarningsFromPayment({
               sharePercentage: Math.round(sharePercentage * 100) / 100,
               status: EarningStatus.PENDING,
               holdUntil,
+              currency: "INR", // Explicit — all earnings in INR for MVP
             },
           });
 
@@ -173,6 +174,7 @@ export async function createEarningsFromPayment({
             consultantShare: totalConsultantPool,
             status: EarningStatus.PENDING,
             holdUntil,
+            currency: "INR", // Explicit — all earnings in INR for MVP
           },
         });
 

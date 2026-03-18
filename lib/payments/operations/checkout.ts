@@ -40,6 +40,14 @@ import {
   createEarningsFromPayment,
   type AppointmentType,
 } from "@/lib/payments/payouts";
+import {
+  determineTax,
+  appointmentTypeToServiceType,
+} from "@/lib/payments/tax/tax-engine";
+import {
+  validatePlanCurrency,
+  validateDiscountCurrency,
+} from "@/lib/payments/validation/currency-guards";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -178,10 +186,12 @@ export class PaymentIntentManager {
 export async function calculateAmountAndValidate(
   validatedData: CheckoutInput,
   userId: string,
+  buyerCountry: string = "IN",
 ) {
   return await prisma.$transaction(async (tx) => {
     let amount = 0;
     let plan;
+    let priceCurrency = "INR";
 
     // Get user profile
     const user = await tx.user.findUnique({
@@ -218,6 +228,7 @@ export async function calculateAmountAndValidate(
           plan.consultantProfile.user.id, // FIX: Pass consultant user ID to filter by consultant
         );
         amount = plan.price;
+        priceCurrency = plan.priceCurrency;
         break;
 
       case "SUBSCRIPTION":
@@ -241,6 +252,7 @@ export async function calculateAmountAndValidate(
           plan.consultantProfile.user.id, // FIX: Pass consultant user ID to filter by consultant
         );
         amount = plan.price;
+        priceCurrency = plan.priceCurrency;
         break;
 
       case "WEBINAR": {
@@ -283,6 +295,7 @@ export async function calculateAmountAndValidate(
         }
 
         amount = plan.price;
+        priceCurrency = plan.priceCurrency;
         break;
       }
 
@@ -326,6 +339,7 @@ export async function calculateAmountAndValidate(
         }
 
         amount = plan.price;
+        priceCurrency = plan.priceCurrency;
         break;
       }
 
@@ -363,6 +377,18 @@ export async function calculateAmountAndValidate(
 
         discountCodeId = discount.id;
 
+        // Validate FIXED_AMOUNT discount currency matches plan currency (INR for MVP)
+        if (
+          !validateDiscountCurrency(
+            { discountType: discount.discountType, currency: discount.currency },
+            priceCurrency,
+          )
+        ) {
+          throw new Error(
+            "Discount code currency does not match plan currency",
+          );
+        }
+
         // Calculate discounted amount with maxDiscount cap
         if (discount.discountType === "PERCENTAGE") {
           let discountAmount = amount * (discount.discountValue / 100);
@@ -383,25 +409,23 @@ export async function calculateAmountAndValidate(
       }
     }
 
-    // Extract currency from plan based on appointment type
-    let currency = "INR"; // Default fallback
+    // Use priceCurrency extracted from plan (set in the switch above)
+    const currency = priceCurrency;
 
-    switch (validatedData.appointmentType) {
-      case "CONSULTATION":
-      case "SUBSCRIPTION":
-      case "WEBINAR":
-      case "CLASS":
-        currency = (plan as { priceCurrency?: string })?.priceCurrency || "INR";
-        break;
-      default:
-        currency = validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD";
-    }
+    // Validate plan currency (MVP: all plans must be INR)
+    validatePlanCurrency(currency);
 
     // Calculate GST on the discounted price (tax-exclusive: plan.price + 18% GST)
-    // Zero-rate GST for international buyers (export of services is zero-rated under IGST Act §16)
-    const isInternational = currency !== "INR";
-    const applicableTaxRate = isInternational ? 0 : TAX_CONSTANTS.GST_RATE;
-    const taxAmount = Math.round((amount * applicableTaxRate) / 100);
+    // Zero-rate GST for international buyers (export of services is zero-rated under IGST Act §2(6))
+    // BUG FIX: Previously used `currency !== "INR"` which never triggered since all plans default to INR.
+    // Now uses buyer country detection for correct tax jurisdiction determination.
+    const isInternational = buyerCountry !== "IN";
+    const taxDetermination = determineTax({
+      baseAmountPaise: amount,
+      buyerCountry,
+      serviceType: appointmentTypeToServiceType(validatedData.appointmentType),
+    });
+    const taxAmount = taxDetermination.taxAmount;
     amount = amount + taxAmount;
 
     // Apply referral credits AFTER tax (credits act as a payment method, not a trade discount)
@@ -423,6 +447,8 @@ export async function calculateAmountAndValidate(
       discountCodeId,
       consulteeProfileId: user.consulteeProfile.id,
       creditsApplied,
+      buyerCountry,
+      isInternational,
     };
   });
 }
@@ -1452,6 +1478,7 @@ export async function handleCheckout(
   validatedData: CheckoutInput,
   userId: string,
   isMockPayment: boolean = false,
+  buyerCountry: string = "IN",
 ) {
   let lock: ApprovalLock | null = null;
   let lockType = "";
@@ -1469,7 +1496,9 @@ export async function handleCheckout(
       discountCodeId,
       consulteeProfileId,
       creditsApplied,
-    } = await calculateAmountAndValidate(validatedData, userId);
+      buyerCountry: detectedBuyerCountry,
+      isInternational,
+    } = await calculateAmountAndValidate(validatedData, userId, buyerCountry);
 
     // Get plan data for consultant ID (needed for lock acquisition)
     const planData = await getPlanDataForLock(validatedData);
@@ -1595,6 +1624,8 @@ export async function handleCheckout(
               appointmentId: createdAppointment?.id || null,
               discountCodeId,
               expiresAt: new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
+              buyerCountry: detectedBuyerCountry,
+              isInternational,
             },
           });
 

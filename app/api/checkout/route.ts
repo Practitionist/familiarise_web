@@ -8,6 +8,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import { checkoutLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { ZodError } from "zod";
+import prisma from "@/lib/prisma";
+import {
+  detectBuyerCountry,
+  extractBuyerCountryParams,
+} from "@/lib/payments/tax/buyer-country";
+import { routeGateway } from "@/lib/payments/gateway-router";
 
 export async function POST(req: NextRequest) {
   try {
@@ -28,12 +34,46 @@ export async function POST(req: NextRequest) {
     const isMockPayment =
       body.isMockPayment === true && process.env.NODE_ENV === "development";
 
+    // Detect buyer country for tax jurisdiction and gateway routing
+    // Fetch user.country from DB (not on session type) for highest-confidence detection
+    const userRecord = await prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { country: true },
+    });
+    const headerParams = extractBuyerCountryParams(req.headers);
+    const buyerCountry = detectBuyerCountry({
+      userCountry: userRecord?.country,
+      ...headerParams,
+    });
+
+    // Auto-route to optimal gateway (Razorpay domestic/IBT, Stripe fallback)
+    const gatewayRouting = routeGateway({
+      buyerCountry,
+      requestedGateway: validatedData.paymentGateway,
+      amount: 0, // Amount not yet known; routing is country-based
+    });
+
+    // Override gateway with auto-routed selection
+    validatedData.paymentGateway = gatewayRouting.gateway;
+
+    console.log(
+      JSON.stringify({
+        event: "checkout_gateway_routed",
+        buyerCountry,
+        gateway: gatewayRouting.gateway,
+        isIBT: gatewayRouting.isIBT,
+        reason: gatewayRouting.reason,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+
     // Unified checkout flow: Create payment first, then appointment via webhook
     // Supports both real and mock payments via isMockPayment flag
     const result = await handleCheckout(
       validatedData,
       session.user.id,
       isMockPayment,
+      buyerCountry,
     );
     return NextResponse.json(result);
   } catch (error) {

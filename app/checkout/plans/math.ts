@@ -12,6 +12,7 @@ const DEFAULT_TAX_RATE = parseFloat(
 
 export interface PricingConfig {
   taxRate?: number; // Override tax rate (0.18 = 18%)
+  isInternational?: boolean; // If true, zero-rate tax (export of services)
   discountPercent?: number; // Applied discount percentage (0.10 = 10%)
   discountAmount?: number; // Fixed discount amount
   creditsApplied?: number; // Referral credits applied (in major currency unit)
@@ -92,7 +93,7 @@ export function calculatePricing(
   baseAmount: number,
   config: PricingConfig = {},
 ): PricingBreakdown {
-  const taxRate = config.taxRate ?? DEFAULT_TAX_RATE;
+  const taxRate = config.isInternational ? 0 : (config.taxRate ?? DEFAULT_TAX_RATE);
   const discountPercent = config.discountPercent ?? 0;
 
   const subtotal = calculateSubtotal(baseAmount);

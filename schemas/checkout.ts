@@ -84,7 +84,7 @@ export const checkoutSchema = z
     schedulingPeriodStartsAt: z.string().datetime().optional(),
     schedulingPeriodEndsAt: z.string().datetime().optional(),
     discountCode: z.string().optional(),
-    paymentGateway: paymentGatewaySchema,
+    paymentGateway: paymentGatewaySchema.default("RAZORPAY"), // Server auto-routes; client hint only
     notes: z.string().optional(),
     fromWaitlist: z.string().optional(), // Waitlist ID if coming from waitlist flow
     useReferralCredits: z.boolean().optional(), // Apply available referral credits

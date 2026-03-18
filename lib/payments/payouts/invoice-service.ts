@@ -161,9 +161,11 @@ export async function createInvoice(
     throw new Error(`Invoice already exists for payment: ${paymentId}`);
   }
 
-  // Calculate amounts — zero-rate GST for international (non-INR) transactions
+  // Calculate amounts — zero-rate GST for international buyers
+  // BUG FIX: Previously used `currency !== "INR"` which never triggered since all plans default to INR.
+  // Now uses payment.isInternational (set from buyer country detection at checkout).
   const subtotal = items.reduce((sum, item) => sum + item.amount, 0);
-  const isInternational = payment.currency !== "INR";
+  const isInternational = payment.isInternational ?? payment.currency !== "INR";
   const taxRate = isInternational ? 0 : TAX_CONSTANTS.GST_RATE;
   const taxAmount = Math.round((subtotal * taxRate) / 100);
   const total = subtotal + taxAmount;
@@ -209,7 +211,10 @@ export async function createInvoice(
     dueDate: invoice.dueDate || undefined,
     paidAt: invoice.paidAt || undefined,
     hsnCode,
-    notes,
+    notes: isInternational
+      ? (notes ? `${notes}\n` : "") +
+        "Export of services — Zero-rated under IGST Act Section 2(6)"
+      : notes,
   };
 }
 
@@ -269,7 +274,7 @@ export async function createInvoiceFromPayment(
 
     // Tax breakdown from stored payment data (tax-exclusive: plan.price + GST)
     const totalAmount = payment.amount;
-    const isInternational = payment.currency !== "INR";
+    const isInternational = payment.isInternational ?? payment.currency !== "INR";
     const taxRate = isInternational ? 0 : TAX_CONSTANTS.GST_RATE;
     const taxAmount = payment.taxAmount;
     const baseAmount = totalAmount - taxAmount;

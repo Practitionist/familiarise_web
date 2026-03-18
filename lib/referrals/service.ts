@@ -299,6 +299,7 @@ export async function getUserCredits(
   const credits = await db.referralCredit.findMany({
     where: {
       userId,
+      currency: "INR", // Only INR credits for MVP — prevents cross-currency application
       remainingAmount: { gt: 0 },
       OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
     },

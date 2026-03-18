@@ -21,6 +21,10 @@ import {
 } from "./stripe-connect";
 import { randomUUID } from "crypto";
 import { acquireLock, releaseLock } from "@/lib/redis";
+import {
+  calculateTDS,
+  recordTDSDeduction,
+} from "@/lib/payments/tax/tds-service";
 
 // ============================================
 // Types
@@ -453,24 +457,66 @@ async function processSinglePayout(payout: {
       throw new Error("No payout account found");
     }
 
+    // Calculate TDS (Section 194J) — deduct before sending to gateway
+    const tdsResult = await calculateTDS({
+      consultantProfileId: payout.consultantProfileId,
+      payoutAmountPaise: payout.amount,
+    });
+
+    const payoutAmountAfterTDS = payout.amount - tdsResult.tdsAmount;
+
+    if (tdsResult.tdsAmount > 0) {
+      console.log(
+        JSON.stringify({
+          event: "tds_deduction",
+          payoutId: payout.id,
+          consultantProfileId: payout.consultantProfileId,
+          grossAmount: payout.amount,
+          tdsAmount: tdsResult.tdsAmount,
+          tdsRate: tdsResult.tdsRate,
+          netAmount: payoutAmountAfterTDS,
+          financialYear: tdsResult.financialYear,
+          cumulativeBeforePayout: tdsResult.cumulativeBeforePayout,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    }
+
+    // Use the payout object but with reduced amount for gateway call
+    const payoutForGateway = { ...payout, amount: payoutAmountAfterTDS };
+
     let providerPayoutId: string | undefined;
 
     if (payout.provider === PaymentGateway.RAZORPAY) {
-      providerPayoutId = await processRazorpayPayout(payout, account);
+      providerPayoutId = await processRazorpayPayout(payoutForGateway, account);
     } else if (payout.provider === PaymentGateway.STRIPE) {
-      providerPayoutId = await processStripePayout(payout, account);
+      providerPayoutId = await processStripePayout(payoutForGateway, account);
     } else {
       throw new Error(`Unsupported provider: ${payout.provider}`);
     }
 
-    // Update payout with provider ID
+    // Update payout with provider ID and TDS info
     await prisma.payout.update({
       where: { id: payout.id },
       data: {
         providerPayoutId,
+        tdsDeducted: tdsResult.tdsAmount,
+        netAmount: payoutAmountAfterTDS,
         status: PayoutStatus.PROCESSING, // Will be updated via webhook
       },
     });
+
+    // Record TDS deduction for Form 26Q filing
+    if (tdsResult.tdsAmount > 0) {
+      await recordTDSDeduction({
+        consultantProfileId: payout.consultantProfileId,
+        financialYear: tdsResult.financialYear,
+        tdsDeducted: tdsResult.tdsAmount,
+        tdsRate: tdsResult.tdsRate,
+        cumulativeGrossPayments: tdsResult.cumulativeAfterPayout,
+        payoutId: payout.id,
+      });
+    }
 
     return {
       payoutId: payout.id,
@@ -526,6 +572,14 @@ async function processRazorpayPayout(
 ): Promise<string> {
   if (!isRazorpayPayoutsConfigured()) {
     throw new Error("RazorpayX Payouts not configured");
+  }
+
+  // Guard: Razorpay only processes INR payouts
+  if (payout.currency !== "INR") {
+    throw new Error(
+      `Razorpay payouts only support INR. Got: ${payout.currency}. ` +
+        `International payouts require manual processing for MVP.`,
+    );
   }
 
   if (!account.razorpayFundAccId) {
