@@ -87,22 +87,12 @@ export async function GET(
             id: true,
             department: true,
             position: true,
-            permissions: true,
-            responsibilities: true,
-            // New fields
-            employeeId: true,
-            hireDate: true,
-            reportsTo: true,
-            skills: true,
-            workSchedule: true,
           },
         },
         adminProfile: {
           select: {
             id: true,
             adminLevel: true,
-            accessScope: true,
-            assignedRegions: true,
             notes: true,
           },
         },

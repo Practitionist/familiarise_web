@@ -30,8 +30,6 @@ export async function POST(request: NextRequest) {
       address,
       department,
       position,
-      responsibilities, // Expecting JSON or array
-      permissions, // Expecting JSON or array
     } = body;
 
     // Basic validation
@@ -69,8 +67,6 @@ export async function POST(request: NextRequest) {
           create: {
             department,
             position,
-            responsibilities: responsibilities ?? undefined, // Store as JSON
-            permissions: permissions ?? undefined, // Store as JSON
           },
         },
       },

@@ -68,6 +68,28 @@ async function upsertConsultantProfile(
   const scalarData = buildConsultantScalarData(profileData);
   const domainId = profileData.domain.connect.id;
 
+  // Validate domain/subdomain/tag consistency
+  const tagIds = profileData.tags?.connect?.map((t) => t.id) ?? [];
+  const subDomainIds = profileData.subDomains?.connect?.map((sd) => sd.id) ?? [];
+
+  if (tagIds.length > 0) {
+    const validTags = await tx.tag.count({
+      where: { id: { in: tagIds }, domainId },
+    });
+    if (validTags !== tagIds.length) {
+      throw new Error("One or more selected skills do not belong to the chosen domain");
+    }
+  }
+
+  if (subDomainIds.length > 0) {
+    const validSubDomains = await tx.subDomain.count({
+      where: { id: { in: subDomainIds }, domainId },
+    });
+    if (validSubDomains !== subDomainIds.length) {
+      throw new Error("One or more selected sub-domains do not belong to the chosen domain");
+    }
+  }
+
   const consultantProfile = await tx.consultantProfile.upsert({
     where: { userId },
     create: {
@@ -125,7 +147,9 @@ async function syncAvailabilitySlots(
 
     const weeklySlotsToCreate = profileData.slotsOfAvailabilityWeekly?.create;
     if (weeklySlotsToCreate && weeklySlotsToCreate.length > 0) {
-      const validWeeklySlots = weeklySlotsToCreate.filter((slot) => {
+      // Reject invalid slots instead of silently filtering them
+      for (let i = 0; i < weeklySlotsToCreate.length; i++) {
+        const slot = weeklySlotsToCreate[i];
         const startHH = Math.floor(slot.startTimeUtc / 60)
           .toString()
           .padStart(2, "0");
@@ -134,10 +158,12 @@ async function syncAvailabilitySlots(
           .toString()
           .padStart(2, "0");
         const endMM = (slot.endTimeUtc % 60).toString().padStart(2, "0");
-        return isValidTimeRange(`${startHH}:${startMM}`, `${endHH}:${endMM}`);
-      });
+        if (!isValidTimeRange(`${startHH}:${startMM}`, `${endHH}:${endMM}`)) {
+          throw new Error(`Weekly slot ${i + 1} has an invalid time range`);
+        }
+      }
 
-      for (const slot of validWeeklySlots) {
+      for (const slot of weeklySlotsToCreate) {
         const timeError = validateWeeklySlotTimeOrder(
           slot.startDay,
           slot.endDay,
@@ -147,10 +173,10 @@ async function syncAvailabilitySlots(
         if (timeError) throw new Error(timeError);
       }
 
-      for (let i = 0; i < validWeeklySlots.length; i++) {
-        for (let j = i + 1; j < validWeeklySlots.length; j++) {
+      for (let i = 0; i < weeklySlotsToCreate.length; i++) {
+        for (let j = i + 1; j < weeklySlotsToCreate.length; j++) {
           if (
-            slotsOverlap(validWeeklySlots[i], validWeeklySlots[j])
+            slotsOverlap(weeklySlotsToCreate[i], weeklySlotsToCreate[j])
           ) {
             throw new Error(
               "Weekly availability slots contain overlapping time ranges",
@@ -159,18 +185,16 @@ async function syncAvailabilitySlots(
         }
       }
 
-      if (validWeeklySlots.length > 0) {
-        await tx.slotOfAvailabilityWeekly.createMany({
-          data: validWeeklySlots.map((slot) => ({
-            startDay: slot.startDay,
-            startTimeUtc: slot.startTimeUtc,
-            endDay: slot.endDay,
-            endTimeUtc: slot.endTimeUtc,
-            consultantProfileId,
-            utcOffsetMinutes,
-          })),
-        });
-      }
+      await tx.slotOfAvailabilityWeekly.createMany({
+        data: weeklySlotsToCreate.map((slot) => ({
+          startDay: slot.startDay,
+          startTimeUtc: slot.startTimeUtc,
+          endDay: slot.endDay,
+          endTimeUtc: slot.endTimeUtc,
+          consultantProfileId,
+          utcOffsetMinutes,
+        })),
+      });
     }
   } else if (scheduleType === ScheduleType.CUSTOM) {
     await tx.slotOfAvailabilityWeekly.deleteMany({
@@ -182,25 +206,24 @@ async function syncAvailabilitySlots(
 
     const customSlotsToCreate = profileData.slotsOfAvailabilityCustom?.create;
     if (customSlotsToCreate && customSlotsToCreate.length > 0) {
-      const validCustomSlots = customSlotsToCreate.filter((slot) =>
-        isValidTimeRange(
-          new Date(slot.startsAt).toTimeString().slice(0, 5),
-          new Date(slot.endsAt).toTimeString().slice(0, 5),
-        ),
-      );
-
-      for (const slot of validCustomSlots) {
-        if (
-          new Date(slot.startsAt).getTime() >= new Date(slot.endsAt).getTime()
-        ) {
-          throw new Error("Custom slot start time must be before end time");
+      // Validate using UTC timestamps directly (no server-locale dependency)
+      for (let i = 0; i < customSlotsToCreate.length; i++) {
+        const slot = customSlotsToCreate[i];
+        const startMs = new Date(slot.startsAt).getTime();
+        const endMs = new Date(slot.endsAt).getTime();
+        if (startMs >= endMs) {
+          throw new Error(`Custom slot ${i + 1}: start time must be before end time`);
+        }
+        const durationMin = (endMs - startMs) / 60_000;
+        if (durationMin < 30 || durationMin > 720) {
+          throw new Error(`Custom slot ${i + 1}: duration must be between 30 minutes and 12 hours`);
         }
       }
 
-      for (let i = 0; i < validCustomSlots.length; i++) {
-        for (let j = i + 1; j < validCustomSlots.length; j++) {
-          const a = validCustomSlots[i];
-          const b = validCustomSlots[j];
+      for (let i = 0; i < customSlotsToCreate.length; i++) {
+        for (let j = i + 1; j < customSlotsToCreate.length; j++) {
+          const a = customSlotsToCreate[i];
+          const b = customSlotsToCreate[j];
           if (
             new Date(a.startsAt).getTime() < new Date(b.endsAt).getTime() &&
             new Date(b.startsAt).getTime() < new Date(a.endsAt).getTime()
@@ -212,15 +235,13 @@ async function syncAvailabilitySlots(
         }
       }
 
-      if (validCustomSlots.length > 0) {
-        await tx.slotOfAvailabilityCustom.createMany({
-          data: validCustomSlots.map((slot) => ({
-            startsAt: slot.startsAt,
-            endsAt: slot.endsAt,
-            consultantProfileId,
-          })),
-        });
-      }
+      await tx.slotOfAvailabilityCustom.createMany({
+        data: customSlotsToCreate.map((slot) => ({
+          startsAt: slot.startsAt,
+          endsAt: slot.endsAt,
+          consultantProfileId,
+        })),
+      });
     }
   }
 }
@@ -423,12 +444,29 @@ async function submitVerificationRequest(
   const { verificationLinkedinUrl, verificationNotes, verificationDocuments } =
     body;
 
+  // Enforce verification requirements server-side
+  if (!verificationLinkedinUrl?.trim()) {
+    throw new Error("LinkedIn URL is required for consultant verification");
+  }
+  if (!verificationDocuments || verificationDocuments.length === 0) {
+    throw new Error("At least one verification document is required");
+  }
+
   if (verificationLinkedinUrl) {
     await prisma.user.update({
       where: { id: userId },
       data: { linkedinUrl: verificationLinkedinUrl },
     });
   }
+
+  // Auto-supersede any existing PENDING/NEEDS_INFO requests
+  await prisma.consultantProfileVerification.updateMany({
+    where: {
+      consultantProfileId,
+      status: { in: ["PENDING", "NEEDS_INFO"] },
+    },
+    data: { status: "SUPERSEDED" },
+  });
 
   const verification = await prisma.consultantProfileVerification.create({
     data: {

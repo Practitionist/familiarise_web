@@ -71,13 +71,6 @@ export async function POST(
       data: {
         department: body.department,
         position: body.position,
-        permissions: body.permissions,
-        responsibilities: body.responsibilities,
-        employeeId: body.employeeId,
-        hireDate: body.hireDate ? new Date(body.hireDate) : null,
-        reportsTo: body.reportsTo,
-        skills: body.skills || [],
-        workSchedule: body.workSchedule,
         user: { connect: { id: id } },
       },
       include: {
@@ -125,13 +118,6 @@ export async function PATCH(
       data: {
         department: body.department,
         position: body.position,
-        permissions: body.permissions,
-        responsibilities: body.responsibilities,
-        employeeId: body.employeeId,
-        hireDate: body.hireDate ? new Date(body.hireDate) : undefined,
-        reportsTo: body.reportsTo,
-        skills: body.skills,
-        workSchedule: body.workSchedule,
       },
       include: {
         user: true,
@@ -180,13 +166,6 @@ export async function PUT(
       data: {
         department: body.department,
         position: body.position,
-        permissions: body.permissions,
-        responsibilities: body.responsibilities,
-        employeeId: body.employeeId,
-        hireDate: body.hireDate ? new Date(body.hireDate) : undefined,
-        reportsTo: body.reportsTo,
-        skills: body.skills,
-        workSchedule: body.workSchedule,
       },
       include: {
         user: {

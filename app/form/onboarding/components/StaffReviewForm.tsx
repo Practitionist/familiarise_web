@@ -1,7 +1,6 @@
 import { Button } from "@/components/ui/button";
 
 import { StaffProfile, PersonalInfoAndRole } from "@/schemas/user";
-import { responsibilitiesAndPermissions } from "@/schemas/responsibbilities-permissions";
 import React, { useState } from "react";
 import { Loader2, Pencil } from "lucide-react";
 
@@ -23,51 +22,6 @@ const StaffReviewForm: React.FC<Props> = ({
   onGoToStep,
 }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const getResponsibilitiesList = () => {
-    if (
-      !formData.department ||
-      !formData.position ||
-      !formData.responsibilities
-    )
-      return [];
-
-    const departmentData =
-      responsibilitiesAndPermissions.departments[formData.department];
-    const positionData = departmentData?.positions[formData.position];
-    if (!positionData) return [];
-
-    const selectedResponsibilities: string[] = [];
-    Object.entries(positionData.responsibilities).forEach(
-      ([category, items]) => {
-        items.forEach((item) => {
-          if (formData.responsibilities?.[item]) {
-            selectedResponsibilities.push(`${category}: ${item}`);
-          }
-        });
-      },
-    );
-    return selectedResponsibilities;
-  };
-
-  const getPermissionsList = () => {
-    if (!formData.department || !formData.position || !formData.permissions)
-      return [];
-
-    const departmentData =
-      responsibilitiesAndPermissions.departments[formData.department];
-    const positionData = departmentData?.positions[formData.position];
-    if (!positionData) return [];
-
-    const selectedPermissions: string[] = [];
-    Object.entries(positionData.permissions).forEach(([category, items]) => {
-      items.forEach((item) => {
-        if (formData.permissions?.[item]) {
-          selectedPermissions.push(`${category}: ${item}`);
-        }
-      });
-    });
-    return selectedPermissions;
-  };
 
   const onSubmitForm = () => {
     if (isSubmitting) return;
@@ -87,9 +41,6 @@ const StaffReviewForm: React.FC<Props> = ({
         <Pencil className="w-3.5 h-3.5" />
       </Button>
     ) : null;
-
-  const responsibilitiesList = getResponsibilitiesList();
-  const permissionsList = getPermissionsList();
 
   return (
     <div className="space-y-6">
@@ -129,37 +80,6 @@ const StaffReviewForm: React.FC<Props> = ({
             <p>{formData.department}</p>
             <p className="text-muted-foreground">Position:</p>
             <p>{formData.position}</p>
-          </div>
-        </div>
-
-        <div className="space-y-4">
-          <div className="flex items-center justify-between border-b pb-2">
-            <h3 className="font-semibold text-lg">
-              Responsibilities and Permissions
-            </h3>
-            {renderEditButton(2, "Responsibilities")}
-          </div>
-
-          <div className="space-y-2">
-            <h4 className="font-medium">Responsibilities:</h4>
-            <ul className="list-disc list-inside text-sm space-y-1">
-              {responsibilitiesList.map((responsibility, index) => (
-                <li key={index} className="text-muted-foreground">
-                  {responsibility}
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="space-y-2">
-            <h4 className="font-medium">Permissions:</h4>
-            <ul className="list-disc list-inside text-sm space-y-1">
-              {permissionsList.map((permission, index) => (
-                <li key={index} className="text-muted-foreground">
-                  {permission}
-                </li>
-              ))}
-            </ul>
           </div>
         </div>
 

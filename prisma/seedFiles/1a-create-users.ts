@@ -27,13 +27,9 @@ import {
   generateToolsAndTechnologies,
   generateMentoringStyle,
   generateSkillsToDevelop,
-  generateStaffSkills,
-  generateWorkSchedule,
   generateCountry,
   generateCity,
   generateCompanyName,
-  generateAccessScope,
-  generateAssignedRegions,
 } from "./utils";
 import { config } from "./config";
 
@@ -476,7 +472,7 @@ function createConsulteeProfileData() {
   };
 }
 
-function createStaffProfileData(staffIndex: number, managerIds: string[]) {
+function createStaffProfileData() {
   const departments = [
     "Customer Support",
     "Operations",
@@ -493,41 +489,14 @@ function createStaffProfileData(staffIndex: number, managerIds: string[]) {
     "Team Lead",
   ];
 
-  // First staff member has no manager, subsequent ones report to earlier staff
-  const reportsTo =
-    staffIndex > 0 && managerIds.length > 0
-      ? faker.helpers.arrayElement(managerIds)
-      : null;
-
   return {
     department: faker.helpers.arrayElement(departments),
     position: faker.helpers.arrayElement(positions),
-    permissions: {
-      permissions: faker.helpers.arrayElements(["read", "write", "delete"], {
-        min: 1,
-        max: 3,
-      }),
-    },
-    responsibilities: {
-      responsibilities: faker.helpers.arrayElements(
-        ["manage team", "oversee projects", "allocate resources", "budget"],
-        { min: 1, max: 4 },
-      ),
-    },
-
-    // New fields for enhanced staff profile
-    employeeId: `EMP-${faker.string.alphanumeric(6).toUpperCase()}`,
-    hireDate: faker.date.past({ years: 3 }),
-    reportsTo,
-    skills: generateStaffSkills(),
-    workSchedule: generateWorkSchedule(),
   };
 }
 
 function createAdminProfileData(adminIndex: number): {
   adminLevel: AdminLevel;
-  accessScope: object;
-  assignedRegions: string[];
   notes: string | null;
 } {
   // First admin is SUPER_ADMIN, rest are distributed
@@ -542,9 +511,6 @@ function createAdminProfileData(adminIndex: number): {
 
   return {
     adminLevel,
-    accessScope: generateAccessScope(adminLevel),
-    assignedRegions:
-      adminLevel === "SUPER_ADMIN" ? ["Global"] : generateAssignedRegions(),
     notes: faker.datatype.boolean({ probability: 0.3 })
       ? sanitizeString(faker.lorem.paragraph())
       : null,
@@ -555,7 +521,6 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
   await createDomainsSubdomainsTags();
 
   const users: UserWithProfiles[] = [];
-  const staffUserIds: string[] = []; // Track staff user IDs for reportsTo
   let consultantIndex = 0;
   let consulteeIndex = 0;
   let staffIndex = 0;
@@ -652,7 +617,7 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
         };
       } else if (userRole === "STAFF") {
         userData.staffProfile = {
-          create: createStaffProfileData(staffIndex - 1, staffUserIds),
+          create: createStaffProfileData(),
         };
       } else if (userRole === "ADMIN") {
         userData.adminProfile = {
@@ -716,11 +681,6 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
             },
           });
         }
-      }
-
-      // Track staff IDs for reportsTo relationships
-      if (userRole === "STAFF") {
-        staffUserIds.push(user.id);
       }
 
       users.push(user);

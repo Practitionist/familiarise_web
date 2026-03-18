@@ -36,8 +36,6 @@ interface AdminData {
   adminProfile?: {
     id: string;
     adminLevel: AdminLevel;
-    accessScope: Record<string, unknown> | string | null;
-    assignedRegions: string[];
     notes: string | null;
   } | null;
 }
@@ -360,37 +358,7 @@ export default function AdminSettingsPage() {
                   {adminData.adminProfile.adminLevel.replace("_", " ")}
                 </p>
               </div>
-              <div className="space-y-2">
-                <Label>Access Scope</Label>
-                <p className="text-sm text-gray-600 bg-gray-100 p-2 rounded">
-                  {adminData.adminProfile.accessScope
-                    ? typeof adminData.adminProfile.accessScope === "object"
-                      ? Object.keys(
-                          adminData.adminProfile.accessScope as Record<
-                            string,
-                            unknown
-                          >,
-                        ).join(", ")
-                      : String(adminData.adminProfile.accessScope)
-                    : "Not specified"}
-                </p>
-              </div>
             </div>
-            {adminData.adminProfile.assignedRegions?.length > 0 && (
-              <div className="space-y-2">
-                <Label>Assigned Regions</Label>
-                <div className="flex flex-wrap gap-2">
-                  {adminData.adminProfile.assignedRegions.map((region) => (
-                    <span
-                      key={region}
-                      className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-sm"
-                    >
-                      {region}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
             {adminData.adminProfile.notes && (
               <div className="space-y-2">
                 <Label>Notes</Label>
