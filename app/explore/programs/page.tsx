@@ -13,8 +13,9 @@ import {
 import { motion } from "framer-motion";
 import { useSession } from "@/lib/auth-client";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useMemo, useRef, useState, Suspense } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "react";
 import { useDebouncedCallback } from "use-debounce";
+import { useCurrency } from "@/hooks/useCurrency";
 import { usePrograms, useCuratedPrograms, useTopicsWithCount } from "./hooks";
 import {
   filterAndSortPrograms,
@@ -32,7 +33,7 @@ import CategoryGrid from "./components/CategoryGrid";
 import AdvancedFilters from "./components/AdvancedFilters";
 import FilterChips, { ActiveFilter } from "./components/FilterChips";
 
-const STATS = [
+const FALLBACK_STATS = [
   { icon: GraduationCap, value: "500+", label: "Classes Available" },
   { icon: Video, value: "200+", label: "Live Webinars" },
   { icon: Users, value: "25K+", label: "Students Enrolled" },
@@ -43,6 +44,7 @@ function ProgramsContent() {
   const searchParams = useSearchParams();
   const { data: session } = useSession();
   const userId = session?.user?.id;
+  const { formatPrice } = useCurrency();
 
   // Tab state from URL
   const tabParam = searchParams.get("tab");
@@ -57,6 +59,23 @@ function ProgramsContent() {
   const [viewMode, setViewMode] = useState<"list" | "grid">("grid");
   const [filters, setFilters] = useState<ProgramFilters>({});
   const observer = useRef<IntersectionObserver>();
+
+  // Real stats from API with fallback
+  const [stats, setStats] = useState(FALLBACK_STATS);
+  useEffect(() => {
+    fetch("/api/programs/stats")
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        if (data?.data) {
+          setStats([
+            { icon: GraduationCap, value: `${data.data.classCount || 0}`, label: "Classes Available" },
+            { icon: Video, value: `${data.data.webinarCount || 0}`, label: "Live Webinars" },
+            { icon: Users, value: "25K+", label: "Students Enrolled" },
+          ]);
+        }
+      })
+      .catch(() => { /* keep fallback */ });
+  }, []);
 
   const debouncedSetSearch = useDebouncedCallback((value: string) => {
     setSearchTerm(value);
@@ -87,7 +106,7 @@ function ProgramsContent() {
     [],
   );
 
-  // Data hooks — stagger curated sections so they don't all fire on mount
+  // Data hooks
   const { programs, isLoading, hasMore, loadMore } = usePrograms(programType, {
     userId,
     filters,
@@ -105,7 +124,7 @@ function ProgramsContent() {
   const { topics: topicsWithCount, isLoading: topicsLoading } =
     useTopicsWithCount(programType);
 
-  // Build active filter chips (reuse topicsWithCount, no duplicate hook)
+  // Build active filter chips
   const activeFilterChips = useMemo(() => {
     const chips: ActiveFilter[] = [];
     if (filters.topicIds && filters.topicIds.length > 0) {
@@ -134,8 +153,8 @@ function ProgramsContent() {
         min === 0 && max === 0
           ? "Free"
           : max === undefined
-            ? `$${min}+`
-            : `$${min} - $${max}`;
+            ? `${formatPrice(min)}+`
+            : `${formatPrice(min)} - ${formatPrice(max)}`;
       chips.push({ key: "price", label: "Price", value: label });
     }
     if (filters.sort) {
@@ -160,7 +179,7 @@ function ProgramsContent() {
       chips.push({ key: "search", label: "Search", value: searchTerm });
     }
     return chips;
-  }, [filters, topicsWithCount, selectedLevel, searchTerm]);
+  }, [filters, topicsWithCount, selectedLevel, searchTerm, formatPrice]);
 
   const handleRemoveFilter = useCallback((key: string) => {
     if (key.startsWith("topic-")) {
@@ -201,7 +220,6 @@ function ProgramsContent() {
       if (current.includes(topicId)) return prev;
       return { ...prev, topicIds: [...current, topicId] };
     });
-    // Scroll to filter section
     document
       .getElementById("all-programs")
       ?.scrollIntoView({ behavior: "smooth" });
@@ -265,7 +283,7 @@ function ProgramsContent() {
             </p>
 
             <div className="flex flex-wrap justify-center gap-8 md:gap-16">
-              {STATS.map((stat, index) => (
+              {stats.map((stat, index) => (
                 <motion.div
                   key={stat.label}
                   className="text-center"
@@ -301,7 +319,7 @@ function ProgramsContent() {
           {/* Featured Carousel */}
           <div className="mb-14">
             <SectionHeader
-              title="Featured Programs"
+              title="Familiarise Featured"
               icon={<Sparkles className="w-5 h-5 text-white" />}
             />
             <FeaturedCarousel

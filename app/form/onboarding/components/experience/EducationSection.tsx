@@ -4,10 +4,12 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Plus, Pencil, Trash2, GraduationCap, Calendar } from "lucide-react";
 import { AddEducationModal } from "./AddEducationModal";
+import { InstitutionLogo } from "@/components/ui/institution-logo";
 
 export interface Education {
   id: string;
   institution: string;
+  institutionDomain?: string;
   degree: string;
   fieldOfStudy?: string;
   startYear?: number | null;
@@ -85,9 +87,11 @@ export function EducationSection({
               key={edu.id}
               className="group flex items-start gap-4 p-4 rounded-lg border bg-card hover:shadow-sm transition-shadow"
             >
-              <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                <GraduationCap className="w-5 h-5 text-primary" />
-              </div>
+              <InstitutionLogo
+                institutionName={edu.institution}
+                institutionDomain={edu.institutionDomain || undefined}
+                size={40}
+              />
               <div className="flex-1 min-w-0">
                 <h4 className="font-medium text-foreground">
                   {edu.institution}

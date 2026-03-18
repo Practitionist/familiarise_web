@@ -22,6 +22,10 @@ import {
 } from "@/components/ui/select";
 import { EducationSchema } from "@/schemas/user";
 import { Education } from "./EducationSection";
+import {
+  InstitutionLogo,
+  lookupInstitutionDomain,
+} from "@/components/ui/institution-logo";
 
 interface AddEducationModalProps {
   isOpen: boolean;
@@ -41,6 +45,7 @@ export function AddEducationModal({
 }: AddEducationModalProps) {
   const [formData, setFormData] = useState({
     institution: "",
+    institutionDomain: "",
     degree: "",
     fieldOfStudy: "",
     startYear: "",
@@ -56,6 +61,7 @@ export function AddEducationModal({
     if (education) {
       setFormData({
         institution: education.institution,
+        institutionDomain: education.institutionDomain || "",
         degree: education.degree,
         fieldOfStudy: education.fieldOfStudy || "",
         startYear: education.startYear?.toString() || "",
@@ -67,6 +73,7 @@ export function AddEducationModal({
     } else {
       setFormData({
         institution: "",
+        institutionDomain: "",
         degree: "",
         fieldOfStudy: "",
         startYear: "",
@@ -84,6 +91,7 @@ export function AddEducationModal({
     const data = {
       ...(education?.id ? { id: education.id } : {}),
       institution: formData.institution,
+      institutionDomain: formData.institutionDomain || undefined,
       degree: formData.degree,
       fieldOfStudy: formData.fieldOfStudy || undefined,
       startYear: formData.startYear ? parseInt(formData.startYear) : undefined,
@@ -115,15 +123,30 @@ export function AddEducationModal({
           <div className="grid grid-cols-1 gap-4">
             <div className="space-y-2">
               <Label htmlFor="institution">School/University *</Label>
-              <Input
-                id="institution"
-                value={formData.institution}
-                onChange={(e) =>
-                  setFormData({ ...formData, institution: e.target.value })
-                }
-                placeholder="e.g., Stanford University"
-                required
-              />
+              <div className="flex items-center gap-3">
+                {formData.institution && (
+                  <InstitutionLogo
+                    institutionName={formData.institution}
+                    institutionDomain={formData.institutionDomain || undefined}
+                    size={36}
+                  />
+                )}
+                <Input
+                  id="institution"
+                  value={formData.institution}
+                  onChange={(e) => {
+                    const name = e.target.value;
+                    const domain = lookupInstitutionDomain(name);
+                    setFormData({
+                      ...formData,
+                      institution: name,
+                      institutionDomain: domain ?? "",
+                    });
+                  }}
+                  placeholder="e.g., Stanford University"
+                  required
+                />
+              </div>
             </div>
 
             <div className="space-y-2">

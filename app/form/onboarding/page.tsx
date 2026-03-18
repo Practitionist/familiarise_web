@@ -24,7 +24,6 @@ import ConsulteeReviewForm from "./components/ConsulteeReviewForm";
 import PersonalInfoAndRoleForm from "./components/PersonalInfoAndRoleForm";
 import StaffAgreementForm from "./components/StaffAgreementForm";
 import StaffProfileForm from "./components/StaffProfileForm";
-import StaffResponsibilitiesForm from "./components/StaffResponsibilitiesForm";
 import StaffReviewForm from "./components/StaffReviewForm";
 
 // Step labels for progress indicator
@@ -40,11 +39,9 @@ const STEP_LABELS = {
   STAFF: [
     "Personal Info",
     "Role Details",
-    "Responsibilities",
     "Agreement",
     "Review",
   ],
-  ADMIN: ["Personal Info", "Admin Setup", "Review"],
 };
 
 const MultiStepForm: React.FC = () => {
@@ -205,8 +202,6 @@ const MultiStepForm: React.FC = () => {
         router.push(`/dashboard/consultee/${result.user.consulteeProfileId}`);
       } else if (finalData.role === "STAFF" && result.user.staffProfileId) {
         router.push(`/dashboard/staff/${result.user.staffProfileId}`);
-      } else if (finalData.role === "ADMIN") {
-        router.push("/dashboard/admin/home");
       } else {
         router.push("/dashboard");
       }
@@ -290,7 +285,7 @@ const MultiStepForm: React.FC = () => {
             );
           case "STAFF":
             return (
-              <StaffResponsibilitiesForm
+              <StaffAgreementForm
                 onNext={handleNext}
                 onBack={handleBack}
                 initialData={formData}
@@ -320,10 +315,11 @@ const MultiStepForm: React.FC = () => {
             );
           case "STAFF":
             return (
-              <StaffAgreementForm
-                onNext={handleNext}
+              <StaffReviewForm
+                onSubmit={handleSubmit}
                 onBack={handleBack}
-                initialData={formData}
+                formData={formData}
+                onGoToStep={handleGoToStep}
               />
             );
           default:
@@ -334,15 +330,6 @@ const MultiStepForm: React.FC = () => {
           case "CONSULTANT":
             return (
               <ConsultantReviewForm
-                onSubmit={handleSubmit}
-                onBack={handleBack}
-                formData={formData}
-                onGoToStep={handleGoToStep}
-              />
-            );
-          case "STAFF":
-            return (
-              <StaffReviewForm
                 onSubmit={handleSubmit}
                 onBack={handleBack}
                 formData={formData}

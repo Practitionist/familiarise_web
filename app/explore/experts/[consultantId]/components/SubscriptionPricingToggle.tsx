@@ -34,6 +34,7 @@ interface SubscriptionPricingToggleProps {
     schedulingPeriod: { startDate: Date; endDate: Date },
   ) => void;
   timezone: string;
+  autoOpenTrial?: boolean;
 }
 
 export default function SubscriptionPricingToggle({
@@ -41,6 +42,7 @@ export default function SubscriptionPricingToggle({
   handleSubscriptionBooking,
   timezone,
   consultantDetails,
+  autoOpenTrial,
 }: Readonly<SubscriptionPricingToggleProps>) {
   const { data: session } = useSession();
   const { toast } = useToast();
@@ -145,6 +147,23 @@ export default function SubscriptionPricingToggle({
     selectedPlanDetails?.freeTrialEnabled,
     consultantDetails?.id,
   ]);
+
+  // Auto-open trial modal when navigated with ?action=trial
+  useEffect(() => {
+    if (
+      autoOpenTrial &&
+      selectedPlanDetails?.freeTrialEnabled &&
+      trialEligibility.isEligible &&
+      !trialEligibility.isLoading
+    ) {
+      setSelectedTrialPlan({
+        id: selectedPlanDetails.id,
+        title: selectedPlanDetails.title,
+        freeTrialDurationMinutes: selectedPlanDetails.freeTrialDurationMinutes,
+      });
+      setIsTrialModalOpen(true);
+    }
+  }, [autoOpenTrial, selectedPlanDetails, trialEligibility]);
 
   const suggestedDates = useMemo(() => {
     if (!selectedOption?.durationInMonths) {

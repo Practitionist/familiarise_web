@@ -12,6 +12,7 @@ export const GenderEnum = z.enum([
 ]);
 
 export const CareerStageEnum = z.enum([
+  "SCHOOL_STUDENT",
   "STUDENT",
   "EARLY_CAREER",
   "MID_CAREER",
@@ -164,6 +165,7 @@ export type Certification = z.infer<typeof CertificationSchema>;
 export const EducationSchema = z.object({
   id: z.string().optional(),
   institution: z.string().min(1, "Institution name is required"),
+  institutionDomain: z.string().optional(),
   degree: z.string().min(1, "Degree is required"),
   fieldOfStudy: z.string().optional(),
   startYear: z.number().min(1900).max(2100).optional().nullable(),
@@ -243,25 +245,13 @@ export type ConsultantProfile = z.infer<typeof ConsultantProfileSchema>;
 // #region Consultee Profile Schema
 
 export const ConsulteeProfileSchema = z.object({
-  occupation: z.string().optional(),
   aboutMe: z.string().optional(),
   preferredLanguage: z.string().optional(),
   goals: z.string().optional(),
 
-  // New fields
   careerStage: CareerStageEnum.optional().nullable(),
-  currentCompany: z.string().optional(),
-  industry: z.string().optional(),
   skillsToDevelop: z.array(z.string()).default([]),
   budgetPreference: BudgetPreferenceEnum.optional().nullable(),
-
-  // Education history (new nested model)
-  educationHistory: z.array(EducationSchema).optional(),
-
-  // Deprecated fields (kept for backward compatibility)
-  education: z.string().optional(),
-  specialRequirements: z.string().optional(),
-  interests: z.array(z.string()).optional(),
 });
 
 export type ConsulteeProfile = z.infer<typeof ConsulteeProfileSchema>;
@@ -284,150 +274,20 @@ export type ConsulteePreferences = z.infer<typeof ConsulteePreferencesSchema>;
 export const StaffProfileSchema = z.object({
   department: z.string().optional(),
   position: z.string().optional(),
-  permissions: z.record(z.boolean()).optional(),
-  responsibilities: z.record(z.boolean()).optional(),
-
-  // New fields
-  employeeId: z.string().optional(),
-  hireDate: z.coerce.date().optional().nullable(),
-  reportsTo: z.string().optional(), // Manager's user ID
-  skills: z.array(z.string()).default([]),
-  workSchedule: z.string().optional(),
 });
 
 export type StaffProfile = z.infer<typeof StaffProfileSchema>;
 
 // #endregion
 
-// #region Admin Profile Schema (NEW)
-
-export const AdminAccessScopeSchema = z.object({
-  users: z
-    .object({
-      create: z.boolean().default(false),
-      read: z.boolean().default(true),
-      update: z.boolean().default(false),
-      delete: z.boolean().default(false),
-      roles: z.array(UserRoleEnum).default([]),
-    })
-    .optional(),
-  financial: z
-    .object({
-      viewPayments: z.boolean().default(false),
-      processRefunds: z.boolean().default(false),
-      refundLimit: z.number().optional(),
-      handleDisputes: z.boolean().default(false),
-    })
-    .optional(),
-  content: z
-    .object({
-      manageDomains: z.boolean().default(false),
-      moderateReviews: z.boolean().default(false),
-      manageTopics: z.boolean().default(false),
-    })
-    .optional(),
-  system: z
-    .object({
-      viewLogs: z.boolean().default(false),
-      exportData: z.boolean().default(false),
-      modifySettings: z.boolean().default(false),
-    })
-    .optional(),
-  support: z
-    .object({
-      viewTickets: z.boolean().default(true),
-      respondTickets: z.boolean().default(true),
-      escalateTickets: z.boolean().default(false),
-      closeTickets: z.boolean().default(false),
-    })
-    .optional(),
-});
-
-export type AdminAccessScope = z.infer<typeof AdminAccessScopeSchema>;
+// #region Admin Profile Schema
 
 export const AdminProfileSchema = z.object({
   adminLevel: AdminLevelEnum,
-  accessScope: AdminAccessScopeSchema.optional().nullable(),
-  assignedRegions: z.array(z.string()).default([]),
   notes: z.string().optional(),
 });
 
 export type AdminProfile = z.infer<typeof AdminProfileSchema>;
-
-// Default access scopes for each admin level
-export const DEFAULT_ADMIN_ACCESS_SCOPES: Record<string, AdminAccessScope> = {
-  SUPER_ADMIN: {
-    users: {
-      create: true,
-      read: true,
-      update: true,
-      delete: true,
-      roles: ["CONSULTANT", "CONSULTEE", "ADMIN", "STAFF"],
-    },
-    financial: {
-      viewPayments: true,
-      processRefunds: true,
-      handleDisputes: true,
-    },
-    content: { manageDomains: true, moderateReviews: true, manageTopics: true },
-    system: { viewLogs: true, exportData: true, modifySettings: true },
-    support: {
-      viewTickets: true,
-      respondTickets: true,
-      escalateTickets: true,
-      closeTickets: true,
-    },
-  },
-  ADMIN: {
-    users: {
-      create: true,
-      read: true,
-      update: true,
-      delete: false,
-      roles: ["CONSULTANT", "CONSULTEE", "STAFF"],
-    },
-    financial: {
-      viewPayments: true,
-      processRefunds: true,
-      refundLimit: 10000,
-      handleDisputes: true,
-    },
-    content: { manageDomains: true, moderateReviews: true, manageTopics: true },
-    system: { viewLogs: true, exportData: true, modifySettings: false },
-    support: {
-      viewTickets: true,
-      respondTickets: true,
-      escalateTickets: true,
-      closeTickets: true,
-    },
-  },
-  MODERATOR: {
-    users: {
-      create: false,
-      read: true,
-      update: false,
-      delete: false,
-      roles: [],
-    },
-    financial: {
-      viewPayments: false,
-      processRefunds: false,
-      handleDisputes: false,
-    },
-    content: {
-      manageDomains: false,
-      moderateReviews: true,
-      manageTopics: false,
-    },
-    system: { viewLogs: false, exportData: false, modifySettings: false },
-    support: {
-      viewTickets: true,
-      respondTickets: true,
-      escalateTickets: false,
-      closeTickets: false,
-    },
-  },
-};
 
 // #endregion
 

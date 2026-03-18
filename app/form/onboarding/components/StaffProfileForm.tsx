@@ -15,8 +15,6 @@ import { Controller, useForm } from "react-hook-form";
 interface StaffProfileStepData {
   department: string;
   position: string;
-  responsibilities: Record<string, boolean>;
-  permissions: Record<string, boolean>;
 }
 
 interface Props {
@@ -79,8 +77,6 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
     onNext({
       department: data.department ?? "",
       position: data.position ?? "",
-      responsibilities: {},
-      permissions: {},
     });
   };
 

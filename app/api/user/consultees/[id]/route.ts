@@ -34,7 +34,14 @@ export async function GET(
     const consultee = await prisma.consulteeProfile.findUnique({
       where: { id: id },
       include: {
-        user: true,
+        user: {
+          include: {
+            workExperiences: {
+              orderBy: [{ isCurrent: "desc" }, { startDate: "desc" }],
+            },
+            education: { orderBy: { endYear: "desc" } },
+          },
+        },
       },
     });
 
@@ -98,13 +105,10 @@ export async function POST(
 
     const createdConsultee = await prisma.consulteeProfile.create({
       data: {
-        occupation: body.occupation,
         aboutMe: body.aboutMe,
         preferredLanguage: body.preferredLanguage,
         goals: body.goals,
         careerStage: body.careerStage,
-        currentCompany: body.currentCompany,
-        industry: body.industry,
         skillsToDevelop: body.skillsToDevelop ?? [],
         budgetPreference: body.budgetPreference,
         user: { connect: { id: id } },
@@ -169,13 +173,10 @@ export async function PATCH(
     const updatedConsultee = await prisma.consulteeProfile.update({
       where: { id: id },
       data: {
-        occupation: body.occupation,
         aboutMe: body.aboutMe,
         preferredLanguage: body.preferredLanguage,
         goals: body.goals,
         careerStage: body.careerStage,
-        currentCompany: body.currentCompany,
-        industry: body.industry,
         skillsToDevelop: body.skillsToDevelop ?? [],
         budgetPreference: body.budgetPreference,
       },

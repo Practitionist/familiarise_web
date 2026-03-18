@@ -32,7 +32,7 @@ interface Props {
 
 const ROLE_INFO: Record<
   string,
-  { title: string; description: string; disabled?: boolean }
+  { title: string; description: string }
 > = {
   CONSULTANT: {
     title: "Consultant",
@@ -41,11 +41,6 @@ const ROLE_INFO: Record<
   CONSULTEE: {
     title: "Consultee",
     description: "Learn from experienced professionals",
-  },
-  STAFF: {
-    title: "Staff",
-    description: "Invite only",
-    disabled: true,
   },
 };
 
@@ -293,39 +288,21 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
           name="role"
           control={control}
           render={({ field }) => (
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className={`grid gap-3 ${Object.keys(ROLE_INFO).length === 2 ? "sm:grid-cols-2" : "sm:grid-cols-3"}`}>
               {Object.entries(ROLE_INFO).map(([role, info]) => (
                 <button
                   key={role}
                   type="button"
-                  disabled={info.disabled}
-                  // Object.entries types keys as string; role is a UserRole member
-                  onClick={() => !info.disabled && field.onChange(role as UserRole)}
+                  onClick={() => field.onChange(role as UserRole)}
                   className={`p-4 rounded-lg border-2 text-left transition-all ${
-                    info.disabled
-                      ? "opacity-50 cursor-not-allowed bg-muted border-border"
-                      : field.value === role
-                        ? "border-primary bg-primary/5 ring-2 ring-primary/20"
-                        : "border-border hover:border-primary/50 hover:bg-muted/50"
+                    field.value === role
+                      ? "border-primary bg-primary/5 ring-2 ring-primary/20"
+                      : "border-border hover:border-primary/50 hover:bg-muted/50"
                   }`}
                 >
                   <div className="font-medium">{info.title}</div>
                   <div className="text-sm text-muted-foreground mt-1">
-                    {role === "STAFF" ? (
-                      <>
-                        Invite only &mdash;{" "}
-                        <a
-                          href="/support"
-                          className="text-primary hover:underline"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          contact support
-                        </a>{" "}
-                        for access
-                      </>
-                    ) : (
-                      info.description
-                    )}
+                    {info.description}
                   </div>
                 </button>
               ))}
