@@ -22,7 +22,7 @@ const securityHeaders = [
   // Restrict access to browser features not used by this app
   {
     key: "Permissions-Policy",
-    value: "camera=(), microphone=(), geolocation=()",
+    value: "camera=(self), microphone=(self), geolocation=()",
   },
 ];
 
