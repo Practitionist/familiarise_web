@@ -35,21 +35,8 @@ export const razorpayClient = initializeRazorpayClient();
 // Helper Functions
 // ============================================================================
 
-/**
- * Convert amount to smallest currency unit (paise, cents, etc.)
- */
-const toSmallestUnit = (amount: number, currency: string): number => {
-  const multiplier = CURRENCY_MULTIPLIERS[currency] || 100;
-  return Math.round(amount * multiplier);
-};
-
-/**
- * Convert from smallest currency unit to base unit
- */
-const fromSmallestUnit = (amount: number, currency: string): number => {
-  const multiplier = CURRENCY_MULTIPLIERS[currency] || 100;
-  return amount / multiplier;
-};
+// After paise migration, all amounts in the DB are already in smallest currency unit (paise/cents).
+// No conversion needed — amounts pass through directly to Razorpay.
 
 // ============================================================================
 // Checkout/Order Operations
@@ -82,7 +69,7 @@ export async function createRazorpayOrder({
 
   try {
     const order = await razorpayClient.orders.create({
-      amount: toSmallestUnit(amount, currency),
+      amount: amount, // already in smallest currency unit (paise)
       currency,
       notes: metadata,
       receipt: `receipt_${Date.now()}`,
@@ -91,7 +78,7 @@ export async function createRazorpayOrder({
     return {
       id: order.id,
       client_secret: order.id, // Razorpay uses order ID as client secret
-      amount: fromSmallestUnit(Number(order.amount), order.currency),
+      amount: Number(order.amount), // already in smallest currency unit
       currency: order.currency,
       status: order.status,
     };
@@ -168,9 +155,7 @@ export async function createRazorpayRefund({
 
     // Create refund on the payment
     const refund = await razorpayClient.payments.refund(payment.id, {
-      amount: amount
-        ? toSmallestUnit(amount, payment.currency || "INR")
-        : undefined,
+      amount: amount || undefined, // already in smallest currency unit (paise)
       notes: {
         reason: reason || "requested_by_customer",
         ...metadata,
@@ -179,7 +164,7 @@ export async function createRazorpayRefund({
 
     return {
       refundId: refund.id,
-      amount: fromSmallestUnit(Number(refund.amount), refund.currency || "INR"),
+      amount: Number(refund.amount), // already in smallest currency unit
       currency: refund.currency?.toUpperCase() || "INR",
       status: mapRazorpayRefundStatus(refund.status),
       metadata: refund.notes
@@ -211,7 +196,7 @@ export async function getRazorpayRefund(
 
     return {
       refundId: refund.id,
-      amount: fromSmallestUnit(Number(refund.amount), refund.currency || "INR"),
+      amount: Number(refund.amount), // already in smallest currency unit
       currency: refund.currency?.toUpperCase() || "INR",
       status: mapRazorpayRefundStatus(refund.status),
       metadata: refund.notes
@@ -258,7 +243,7 @@ export async function listRazorpayRefunds(
 
     return refundsResponse.items.map((refund) => ({
       refundId: refund.id,
-      amount: fromSmallestUnit(Number(refund.amount), refund.currency || "INR"),
+      amount: Number(refund.amount), // already in smallest currency unit
       currency: refund.currency?.toUpperCase() || "INR",
       status: mapRazorpayRefundStatus(refund.status),
       metadata: refund.notes || undefined,

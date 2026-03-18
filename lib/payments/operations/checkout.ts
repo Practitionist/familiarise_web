@@ -398,17 +398,19 @@ export async function calculateAmountAndValidate(
     }
 
     // Calculate GST on the discounted price (tax-exclusive: plan.price + 18% GST)
-    const taxAmount = Math.round((amount * TAX_CONSTANTS.GST_RATE) / 100);
+    // Zero-rate GST for international buyers (export of services is zero-rated under IGST Act §16)
+    const isInternational = currency !== "INR";
+    const applicableTaxRate = isInternational ? 0 : TAX_CONSTANTS.GST_RATE;
+    const taxAmount = Math.round((amount * applicableTaxRate) / 100);
     amount = amount + taxAmount;
 
     // Apply referral credits AFTER tax (credits act as a payment method, not a trade discount)
+    // Both credits and amount are now in paise — no conversion needed
     let creditsApplied = 0;
     if (validatedData.useReferralCredits && amount > 0) {
       const { totalAvailable } = await getUserCredits(userId, tx);
       if (totalAvailable > 0) {
-        // Credits are stored in paise, amount is in rupees — convert to rupees for comparison
-        const creditsInRupees = Math.floor(totalAvailable / 100);
-        creditsApplied = Math.min(creditsInRupees, amount);
+        creditsApplied = Math.min(totalAvailable, amount);
         amount = amount - creditsApplied;
       }
     }
@@ -1619,25 +1621,20 @@ export async function handleCheckout(
           let actualCreditsApplied = 0;
           if (creditsApplied > 0) {
             const { totalAvailable } = await getUserCredits(userId, tx);
-            // creditsApplied is in rupees (from TX1), convert to paise for comparison
-            // with totalAvailable (paise) and for applyCreditsToPayment (works in paise)
-            const creditsAppliedInPaise = creditsApplied * 100;
-            const actualCreditsInPaise = Math.min(
-              totalAvailable,
-              creditsAppliedInPaise,
-            );
+            // Both creditsApplied and totalAvailable are in paise — direct comparison
+            const actualCredits = Math.min(totalAvailable, creditsApplied);
 
-            if (actualCreditsInPaise > 0) {
+            if (actualCredits > 0) {
               await applyCreditsToPayment(
                 userId,
-                actualCreditsInPaise,
+                actualCredits,
                 tx,
                 payment.id,
               );
               console.log(
-                `🎁 Applied ${actualCreditsInPaise} paise (₹${creditsApplied}) referral credits for user ${userId}` +
-                  (actualCreditsInPaise !== creditsAppliedInPaise
-                    ? ` (requested ${creditsAppliedInPaise} paise, available ${totalAvailable} paise)`
+                `🎁 Applied ${actualCredits} paise referral credits for user ${userId}` +
+                  (actualCredits !== creditsApplied
+                    ? ` (requested ${creditsApplied} paise, available ${totalAvailable} paise)`
                     : ""),
               );
             }
@@ -1646,13 +1643,13 @@ export async function handleCheckout(
             // checkout consuming them between TX1 and TX2), abort the transaction.
             // The payment intent was created with a reduced amount based on TX1's
             // credit calculation, so proceeding would undercharge the user.
-            if (actualCreditsInPaise < creditsAppliedInPaise) {
+            if (actualCredits < creditsApplied) {
               throw new Error(
-                `CREDIT_SHORTFALL: expected ${creditsAppliedInPaise} paise credits but only ${actualCreditsInPaise} available. ` +
+                `CREDIT_SHORTFALL: expected ${creditsApplied} paise credits but only ${actualCredits} available. ` +
                   `Payment ${payment.id} amount is stale. Aborting for retry.`,
               );
             }
-            actualCreditsApplied = creditsApplied; // In rupees for return value
+            actualCreditsApplied = creditsApplied; // In paise
           }
 
           return {

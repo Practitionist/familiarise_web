@@ -20,10 +20,9 @@ function CheckoutSuccessContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const paymentIntent = searchParams.get("payment_intent");
-  const paymentIntentClientSecret = searchParams.get(
-    "payment_intent_client_secret",
-  );
+  // Support both Stripe Checkout (sends session_id) and direct PI flow (sends payment_intent)
+  const paymentIntent =
+    searchParams.get("session_id") || searchParams.get("payment_intent");
 
   useEffect(() => {
     async function verifyPayment() {
@@ -36,7 +35,7 @@ function CheckoutSuccessContent() {
       try {
         // Verify payment status and get appointment details
         const response = await fetch(
-          `/api/checkout/verify?payment_intent=${paymentIntent}`,
+          `/api/checkout/verify?payment_intent=${encodeURIComponent(paymentIntent)}`,
         );
         const data = await response.json();
 
