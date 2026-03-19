@@ -1760,7 +1760,7 @@ model PayoutAccount {
 model ConsultantTaxInfo {
   id                  String  @id @default(cuid())
   consultantProfileId String  @unique
-  panNumber           String? // PAN for TDS rate determination (store encrypted)
+  panNumber           String? // TODO: Encrypt at rest via KMS — currently plaintext. PAN is high-sensitivity PII.
   panVerified         Boolean @default(false)
   gstin               String? // GSTIN for registered consultants
   gstinVerified       Boolean @default(false)

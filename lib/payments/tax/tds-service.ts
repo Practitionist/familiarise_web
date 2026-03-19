@@ -74,8 +74,9 @@ export function getFYDateRange(fy: string): { start: Date; end: Date } {
 // ============================================================================
 
 /**
- * Get cumulative gross payments to a consultant for the current FY.
- * This is the sum of all consultant earnings (grossAmount) for the FY.
+ * Get cumulative consultant share payments for the current FY.
+ * Uses consultantShare (amount credited/paid to consultant) as the basis,
+ * per Section 194J — TDS applies to the amount credited, not the full sale.
  */
 export async function getCurrentFYCumulativePayments(
   consultantProfileId: string,
@@ -90,10 +91,10 @@ export async function getCurrentFYCumulativePayments(
       createdAt: { gte: start, lte: end },
       status: { not: "REFUNDED" },
     },
-    _sum: { grossAmount: true },
+    _sum: { consultantShare: true },
   });
 
-  return result._sum.grossAmount || 0;
+  return result._sum.consultantShare || 0;
 }
 
 /**

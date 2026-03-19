@@ -48,6 +48,7 @@ import {
   validatePlanCurrency,
   validateDiscountCurrency,
 } from "@/lib/payments/validation/currency-guards";
+import { getExchangeRates } from "@/lib/currency";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -1503,6 +1504,18 @@ export async function handleCheckout(
       isInternational,
     } = await calculateAmountAndValidate(validatedData, userId, buyerCountry);
 
+    // Snapshot exchange rate for international payments (audit trail)
+    let exchangeRateAtCheckout: number | null = null;
+    if (isInternational) {
+      try {
+        const rates = await getExchangeRates();
+        // Use USD as the reference rate for international audit trail
+        exchangeRateAtCheckout = rates["USD"] ?? null;
+      } catch {
+        // Non-critical — don't block checkout if rate fetch fails
+      }
+    }
+
     // Get plan data for consultant ID (needed for lock acquisition)
     const planData = await getPlanDataForLock(validatedData);
 
@@ -1629,6 +1642,7 @@ export async function handleCheckout(
               expiresAt: new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
               buyerCountry: detectedBuyerCountry,
               isInternational,
+              exchangeRateAtCheckout,
             },
           });
 

@@ -21,7 +21,7 @@ Tax Deducted at Source (TDS) under Section 194J applies to payments for professi
 
 ### Threshold Tracking
 
-The system tracks cumulative `grossAmount` from `ConsultantEarnings` for each financial year. When cumulative payments cross ₹50,000:
+The system tracks cumulative `consultantShare` from `ConsultantEarnings` for each financial year (per Section 194J — TDS applies to the amount credited/paid to the consultant, not the full sale amount). When cumulative payments cross ₹50,000:
 
 1. **First time crossing**: TDS calculated only on the excess amount
 2. **Already above threshold**: TDS on full payout amount
@@ -83,6 +83,39 @@ One record per deduction event, linked to payout. Tracks:
 
 - `GET /api/consultant/tax-info` — View masked PAN, GSTIN, verification status
 - `PUT /api/consultant/tax-info` — Update PAN, GSTIN, country
+
+## LAUNCH BLOCKERS — Requires CA Confirmation
+
+> **These items MUST be resolved with a written CA memo before accepting real payments.**
+
+### 1. Section 194-O vs 194J Applicability
+
+The current implementation auto-deducts only under **Section 194J**. However, if Familiarise is classified as an **e-commerce operator (ECO)**, Section **194-O** may apply instead (or in addition), with different thresholds/rates. A CA memo must confirm which section applies for:
+
+- Resident individual/HUF consultant
+- Resident firm/company consultant
+- Non-resident consultant (Section 195 may apply instead)
+- Whether 194-O overrides or co-exists with 194J
+
+**Do not hard-code one withholding section for all consultant payouts until this is confirmed.**
+
+### 2. PAN Storage Security
+
+PAN is currently stored in **plaintext** in the database. This is a compliance risk. Before production:
+
+- Encrypt PAN at rest via KMS (AWS KMS, HashiCorp Vault, or similar)
+- Store only masked last-4 in cleartext for display/lookup
+- Keep verification state separate from the raw identifier
+
+### 3. Export Zero-Rating Evidence
+
+The current `buyerCountry !== "IN"` check is sufficient for MVP product logic but **not sufficient for tax-defense records**. Before claiming zero-rated export status, each international payment should capture:
+
+- Billing country / billing address from the gateway
+- Gateway-confirmed payment instrument or remittance country
+- Remittance / FIRC / eFIRC reference
+- LUT / export-supporting record state at time of invoice
+- Stored reason code for why zero-rating was applied
 
 ## Key Files
 

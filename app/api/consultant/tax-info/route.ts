@@ -87,6 +87,9 @@ export async function PUT(req: NextRequest) {
 
     const isIndianResident = (validated.country || "IN") === "IN";
 
+    // TODO: Encrypt PAN before persistence (requires KMS infrastructure).
+    // PAN is high-sensitivity identity data — should be encrypted at rest
+    // with only masked last-4 stored in cleartext for lookup/display.
     const taxInfo = await prisma.consultantTaxInfo.upsert({
       where: { consultantProfileId: consultantProfile.id },
       create: {

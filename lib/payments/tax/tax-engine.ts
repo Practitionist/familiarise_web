@@ -70,6 +70,9 @@ export function determineTax(params: {
   }
 
   // International — zero-rated export of services
+  // TODO: For production tax-defense, capture additional evidence per payment:
+  // billing address, gateway-confirmed remittance country, FIRC/eFIRC reference,
+  // LUT state at invoice time, and stored reason code for zero-rating.
   return {
     taxRate: 0,
     taxAmount: 0,

@@ -49,7 +49,11 @@ export type CheckoutWebinarPlanData = WebinarPlan & {
   consultantProfile:
     | (ConsultantProfile & {
         user: User & {
-          workExperiences?: Array<{ company: string; companyDomain: string | null; isCurrent: boolean }>;
+          workExperiences?: Array<{
+            company: string;
+            companyDomain: string | null;
+            isCurrent: boolean;
+          }>;
         };
         domain: Domain | null;
         subDomains: SubDomain[];
@@ -85,7 +89,7 @@ export default function WebinarCheckoutPage({
   const resolvedParams = use(params);
   const resolvedSearchParams = use(searchParams);
 
-  const { formatPrice } = useCurrency();
+  const { formatPrice, currency } = useCurrency();
   const [planData, setPlanData] = useState<PlanResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -351,12 +355,14 @@ export default function WebinarCheckoutPage({
       discountPercent: discountAmount > 0 ? 0 : discountPercent,
       discountAmount,
       creditsApplied: useReferralCredits ? availableCredits : 0,
+      isInternational: currency !== "INR",
     });
   }, [
     planData?.data?.price,
     appliedDiscount,
     useReferralCredits,
     availableCredits,
+    currency,
   ]);
 
   if (isLoading) {
@@ -440,19 +446,20 @@ export default function WebinarCheckoutPage({
                   consultantDetails?.domain?.name ||
                   "Consultant"}
               </div>
-              {userDetails?.workExperiences && userDetails.workExperiences.length > 0 && (
-                <div className="flex items-center gap-1.5 mt-1">
-                  {userDetails.workExperiences.slice(0, 3).map((exp, i) => (
-                    <CompanyLogo
-                      key={`checkout-webinar-company-${i}`}
-                      companyName={exp.company}
-                      companyDomain={exp.companyDomain ?? undefined}
-                      size={20}
-                      className="border-zinc-200"
-                    />
-                  ))}
-                </div>
-              )}
+              {userDetails?.workExperiences &&
+                userDetails.workExperiences.length > 0 && (
+                  <div className="flex items-center gap-1.5 mt-1">
+                    {userDetails.workExperiences.slice(0, 3).map((exp, i) => (
+                      <CompanyLogo
+                        key={`checkout-webinar-company-${i}`}
+                        companyName={exp.company}
+                        companyDomain={exp.companyDomain ?? undefined}
+                        size={20}
+                        className="border-zinc-200"
+                      />
+                    ))}
+                  </div>
+                )}
             </div>
           </div>
           <div className="text-right">

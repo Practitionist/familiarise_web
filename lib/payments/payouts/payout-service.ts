@@ -726,7 +726,7 @@ export async function handlePayoutWebhook(
       });
     }
 
-    // If failed or cancelled, unlink earnings so they can be included in next batch
+    // If failed or cancelled, unlink earnings and reverse TDS records
     if (
       payoutStatus === PayoutStatus.FAILED ||
       payoutStatus === PayoutStatus.CANCELLED
@@ -735,6 +735,20 @@ export async function handlePayoutWebhook(
         where: { payoutId: payout.id },
         data: {
           payoutId: null,
+        },
+      });
+
+      // Delete TDS records — payout never completed, so TDS was never actually withheld
+      await tx.tDSRecord.deleteMany({
+        where: { payoutId: payout.id },
+      });
+
+      // Reset TDS fields on the payout record
+      await tx.payout.update({
+        where: { id: payout.id },
+        data: {
+          tdsDeducted: 0,
+          netAmount: null,
         },
       });
     }

@@ -195,12 +195,12 @@ export async function handleUnifiedCheckout(
 export const paymentGateways = [
   {
     name: "Stripe",
-    description: "International payments in USD",
+    description: "Card payments (international)",
     gateway: "STRIPE" as const,
   },
   {
     name: "Razorpay",
-    description: "Indian payments in INR",
+    description: "UPI, cards & bank transfer",
     gateway: "RAZORPAY" as const,
   },
   // TODO: Add Lemon Squeezy and XFlow when webhook appointment creation is implemented

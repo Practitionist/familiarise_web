@@ -30,7 +30,11 @@ type SubscriptionPlanWithConsultant = SubscriptionPlan & {
       name: string;
       email: string;
       image: string;
-      workExperiences?: Array<{ company: string; companyDomain: string | null; isCurrent: boolean }>;
+      workExperiences?: Array<{
+        company: string;
+        companyDomain: string | null;
+        isCurrent: boolean;
+      }>;
     };
   };
 };
@@ -65,7 +69,7 @@ export default function SubscriptionCheckoutPage({
   const resolvedParams = use(params);
   const resolvedSearchParams = use(searchParams);
 
-  const { formatPrice } = useCurrency();
+  const { formatPrice, currency } = useCurrency();
   const [planData, setPlanData] = useState<SubscriptionResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -397,12 +401,14 @@ export default function SubscriptionCheckoutPage({
       discountPercent: discountAmount > 0 ? 0 : discountPercent,
       discountAmount,
       creditsApplied: useReferralCredits ? availableCredits : 0,
+      isInternational: currency !== "INR",
     });
   }, [
     planData?.data?.price,
     appliedDiscount,
     useReferralCredits,
     availableCredits,
+    currency,
   ]);
 
   if (isLoading) {
@@ -472,19 +478,20 @@ export default function SubscriptionCheckoutPage({
               <div className="text-sm text-muted-foreground">
                 {consultantDetails?.headline || "Consultant"}
               </div>
-              {userDetails?.workExperiences && userDetails.workExperiences.length > 0 && (
-                <div className="flex items-center gap-1.5 mt-1">
-                  {userDetails.workExperiences.slice(0, 3).map((exp, i) => (
-                    <CompanyLogo
-                      key={`checkout-sub-company-${i}`}
-                      companyName={exp.company}
-                      companyDomain={exp.companyDomain ?? undefined}
-                      size={20}
-                      className="border-zinc-200"
-                    />
-                  ))}
-                </div>
-              )}
+              {userDetails?.workExperiences &&
+                userDetails.workExperiences.length > 0 && (
+                  <div className="flex items-center gap-1.5 mt-1">
+                    {userDetails.workExperiences.slice(0, 3).map((exp, i) => (
+                      <CompanyLogo
+                        key={`checkout-sub-company-${i}`}
+                        companyName={exp.company}
+                        companyDomain={exp.companyDomain ?? undefined}
+                        size={20}
+                        className="border-zinc-200"
+                      />
+                    ))}
+                  </div>
+                )}
             </div>
           </div>
           <div className="text-right">
