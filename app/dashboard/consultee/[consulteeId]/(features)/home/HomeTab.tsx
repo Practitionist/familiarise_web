@@ -500,17 +500,27 @@ function MonthlyEventItem({
 function LearningStatsPanel({ events }: { events: ProcessedEvent[] }) {
   const stats = useMemo(() => {
     const now = new Date();
-    let completedSlots = 0;
+    const inactive = ["cancelled", "rejected", "expired"];
+    let completedSessions = 0;
     let hoursLearned = 0;
     const activePrograms = new Set<string>();
     const experts = new Set<string>();
 
     for (const event of events) {
+      if (inactive.includes(event.status.toLowerCase())) continue;
+
       experts.add(event.consultantName);
+
+      // Count grouped sessions (not raw slots) for "Sessions Completed"
+      const sessions = groupSlotsIntoSessions(event.slots);
+      completedSessions += sessions.filter(
+        (s) => s.status === "completed",
+      ).length;
+
+      // Hours still computed per-slot (correct granularity for duration)
       let hasUpcoming = false;
       for (const slot of event.slots) {
         if (slot.endsAt < now) {
-          completedSlots++;
           hoursLearned +=
             (slot.endsAt.getTime() - slot.startsAt.getTime()) / 3_600_000;
         }
@@ -520,7 +530,7 @@ function LearningStatsPanel({ events }: { events: ProcessedEvent[] }) {
     }
 
     return {
-      completedSlots,
+      completedSessions,
       hoursLearned: Math.round(hoursLearned * 10) / 10,
       activePrograms: activePrograms.size,
       experts: experts.size,
@@ -531,7 +541,7 @@ function LearningStatsPanel({ events }: { events: ProcessedEvent[] }) {
     {
       icon: CheckCircle2,
       label: "Sessions Completed",
-      value: stats.completedSlots,
+      value: stats.completedSessions,
       color: "text-emerald-600 bg-emerald-50",
     },
     {
