@@ -29,6 +29,7 @@ import {
   processAllEvents,
   getUpcomingEvents,
   getMonthlyEvents,
+  groupSlotsIntoSessions,
 } from "./event-processor";
 import { WaitlistStatusBadge } from "@/components/ui/waitlist-status-badge";
 import { getStatusStyle } from "../../utils/statusConfig";
@@ -439,37 +440,58 @@ function MonthlyEventItem({
         </div>
       </div>
 
-      {/* Expanded slots */}
-      {isExpanded && event.slots.length > 0 && (
-        <motion.div
-          initial={{ height: 0, opacity: 0 }}
-          animate={{ height: "auto", opacity: 1 }}
-          exit={{ height: 0, opacity: 0 }}
-          className="pl-16 pr-4 pb-4"
-        >
-          <div className="space-y-2 bg-zinc-50 rounded-lg p-3">
-            {event.slots.slice(0, 10).map((slot, idx) => (
-              <div
-                key={idx}
-                className="flex items-center gap-4 text-sm text-zinc-600"
-              >
-                <span className="w-24 font-medium text-zinc-700">
-                  {format(slot.startsAt, "EEE d MMM")}
-                </span>
-                <span className="text-zinc-500">
-                  {format(slot.startsAt, "h:mm a")} -{" "}
-                  {format(slot.endsAt, "h:mm a")}
-                </span>
-              </div>
-            ))}
-            {event.slots.length > 10 && (
-              <p className="text-xs text-zinc-400 pt-1">
-                +{event.slots.length - 10} more sessions
-              </p>
-            )}
-          </div>
-        </motion.div>
-      )}
+      {/* Expanded sessions (slots grouped by appointment) */}
+      {isExpanded && event.slots.length > 0 && (() => {
+        const sessions = groupSlotsIntoSessions(event.slots);
+        return (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="pl-16 pr-4 pb-4"
+          >
+            <div className="space-y-2 bg-zinc-50 rounded-lg p-3">
+              {sessions.slice(0, 10).map((session) => (
+                <div
+                  key={session.appointmentId}
+                  className="flex items-center gap-4 text-sm text-zinc-600"
+                >
+                  <span
+                    className={cn(
+                      "h-2 w-2 rounded-full flex-shrink-0",
+                      session.status === "completed"
+                        ? "bg-zinc-300"
+                        : "bg-emerald-500",
+                    )}
+                  />
+                  <span className="w-24 font-medium text-zinc-700">
+                    {format(session.startTime, "EEE d MMM")}
+                  </span>
+                  <span className="text-zinc-500">
+                    {format(session.startTime, "h:mm a")} -{" "}
+                    {format(session.endTime, "h:mm a")}
+                  </span>
+                  <span
+                    className={cn(
+                      "text-xs ml-auto capitalize",
+                      session.status === "completed"
+                        ? "text-zinc-400"
+                        : "text-emerald-600",
+                    )}
+                  >
+                    {session.status}
+                  </span>
+                </div>
+              ))}
+              {sessions.length > 10 && (
+                <p className="text-xs text-zinc-400 pt-1">
+                  +{sessions.length - 10} more sessions
+                </p>
+              )}
+            </div>
+          </motion.div>
+        );
+      })()}
     </div>
   );
 }
