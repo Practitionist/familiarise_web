@@ -105,7 +105,7 @@ function UpcomingSessionCard({
     }
     return statusUpper === "APPROVED";
   })();
-  const isTentative = event.joinableSlot?.isTentative ?? false;
+  const isTentative = event.joinableSlot?.isTentative ?? true;
   const canShowJoin = !isTentative && isApproved && !isInactive;
 
   // Time-window gate (matching JoinButton.tsx:getJoinState)
