@@ -91,6 +91,34 @@ function UpcomingSessionCard({
 }) {
   const timeAway = getTimeAway(event.startsAt);
 
+  // Match Appointments tab guards (OneOffEventCard.tsx:96-103)
+  const statusUpper = event.status?.toUpperCase();
+  const isInactive =
+    statusUpper === "CANCELLED" ||
+    statusUpper === "REJECTED" ||
+    statusUpper === "COMPLETED" ||
+    statusUpper === "EXPIRED";
+  const isApproved = (() => {
+    if (event.type === "webinar" || event.type === "class") {
+      return event.bookingStatus === "CONFIRMED";
+    }
+    return statusUpper === "APPROVED";
+  })();
+  const isTentative = event.joinableSlot?.isTentative ?? false;
+  const canShowJoin = !isTentative && isApproved && !isInactive;
+
+  // Time-window gate (matching JoinButton.tsx:getJoinState)
+  const isWithinJoinWindow = (() => {
+    if (!event.joinableSlot) return false;
+    const now = Date.now();
+    const start = new Date(event.joinableSlot.startsAt).getTime();
+    const end = event.joinableSlot.endsAt
+      ? new Date(event.joinableSlot.endsAt).getTime()
+      : start + 60 * 60 * 1000; // DEFAULT_MEETING_DURATION_MS
+    const joinWindow = start - 10 * 60 * 1000; // 10 min before
+    return now >= joinWindow && now <= end;
+  })();
+
   // Type badges - outline/border style only, no background colors
   const typeLabels: Record<string, string> = {
     consultation: "CONSULTATION",
@@ -216,24 +244,26 @@ function UpcomingSessionCard({
             </Badge>
           )}
         </div>
-        <Button
-          size="sm"
-          className="h-7 px-3 text-xs bg-white hover:bg-zinc-100 text-zinc-900 font-semibold rounded-md shrink-0"
-          onClick={(e) => {
-            e.stopPropagation();
-            onJoin?.();
-          }}
-          disabled={
-            isJoining || !event.joinableAppointment || !event.joinableSlot
-          }
-        >
-          {isJoining ? (
-            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-          ) : (
-            <Video className="h-3 w-3 mr-1" />
-          )}
-          {isJoining ? "Joining..." : "Join"}
-        </Button>
+        {canShowJoin && (
+          <Button
+            size="sm"
+            className="h-7 px-3 text-xs bg-white hover:bg-zinc-100 text-zinc-900 font-semibold rounded-md shrink-0"
+            onClick={(e) => {
+              e.stopPropagation();
+              onJoin?.();
+            }}
+            disabled={
+              isJoining || !isWithinJoinWindow || !event.joinableAppointment
+            }
+          >
+            {isJoining ? (
+              <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+            ) : (
+              <Video className="h-3 w-3 mr-1" />
+            )}
+            {isJoining ? "Joining..." : "Join"}
+          </Button>
+        )}
       </div>
     </motion.div>
   );
