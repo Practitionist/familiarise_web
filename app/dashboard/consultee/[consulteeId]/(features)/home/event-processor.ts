@@ -475,11 +475,20 @@ export function getMonthlyEvents(
   events: ProcessedEvent[],
   month: Date,
 ): ProcessedEvent[] {
-  return events.filter((e) =>
-    e.slots.some(
-      (s) =>
-        s.startsAt.getMonth() === month.getMonth() &&
-        s.startsAt.getFullYear() === month.getFullYear(),
-    ),
-  );
+  const inactive = ["cancelled", "rejected", "completed", "expired"];
+
+  return events
+    .filter((e) =>
+      e.slots.some(
+        (s) =>
+          s.startsAt.getMonth() === month.getMonth() &&
+          s.startsAt.getFullYear() === month.getFullYear(),
+      ),
+    )
+    .sort((a, b) => {
+      const aInactive = inactive.includes(a.status.toLowerCase());
+      const bInactive = inactive.includes(b.status.toLowerCase());
+      if (aInactive !== bInactive) return aInactive ? 1 : -1;
+      return a.startsAt.getTime() - b.startsAt.getTime();
+    });
 }
