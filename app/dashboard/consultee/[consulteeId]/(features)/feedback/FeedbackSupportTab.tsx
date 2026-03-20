@@ -236,7 +236,9 @@ export default function FeedbackSupportTab({
                         onClick={() =>
                           setFeedbackForm((prev) => ({ ...prev, rating }))
                         }
-                        className={`p-2 rounded-lg transition-all ${
+                        aria-label={`Rate ${rating} out of 5 stars`}
+                        aria-pressed={feedbackForm.rating === rating}
+                        className={`p-2 rounded-lg transition-all cursor-pointer ${
                           feedbackForm.rating && feedbackForm.rating >= rating
                             ? "text-amber-500"
                             : "text-zinc-300 dark:text-zinc-600 hover:text-amber-400"

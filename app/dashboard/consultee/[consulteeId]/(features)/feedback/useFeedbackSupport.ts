@@ -63,7 +63,7 @@ export function useFeedbackSupport() {
   const [ticketForm, setTicketForm] = React.useState<SupportTicketFormData>({
     title: "",
     description: "",
-    priority: SupportPriority.MEDIUM,
+    priority: SupportPriority.LOW,
   });
 
   const [responseForm, setResponseForm] =
@@ -145,8 +145,9 @@ export function useFeedbackSupport() {
       }
 
       toast({
-        title: "Success",
-        description: "Feedback submitted successfully.",
+        title: "Feedback submitted",
+        description:
+          "Thank you for your feedback! Our team will review it shortly.",
       });
 
       setFeedbackForm({ title: "", description: "" });
@@ -184,14 +185,15 @@ export function useFeedbackSupport() {
       }
 
       toast({
-        title: "Success",
-        description: "Support ticket created successfully.",
+        title: "Ticket created",
+        description:
+          "Your support ticket has been submitted. We'll get back to you as soon as possible.",
       });
 
       setTicketForm({
         title: "",
         description: "",
-        priority: SupportPriority.MEDIUM,
+        priority: SupportPriority.LOW,
         issueType: undefined,
       });
 
