@@ -60,6 +60,7 @@ export interface IConsultantCardData {
       isCurrent: boolean;
     }>;
   };
+  languages?: string[];
   domain: { id: string; name: string } | null;
   subDomains: { id: string; name: string }[];
   tags: { id: string; name: string }[];

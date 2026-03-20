@@ -74,18 +74,26 @@ export default function ExpertsInteractiveContent({
     consultants,
     isLoading: isLoadingConsultants,
     isLoadingMore,
+    isRefetching,
     hasMore,
     loadMore,
   } = useConsultants(filters);
 
-  // Sync filters to URL
+  // Sync filters to URL (debounced to avoid excessive history entries during rapid changes)
+  const urlSyncRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    const qs = filtersToSearchParams(filters);
-    const target = `/explore/experts${qs ? `?${qs}` : ""}`;
-    const current = window.location.pathname + window.location.search;
-    if (target !== current) {
-      router.replace(target, { scroll: false });
-    }
+    if (urlSyncRef.current) clearTimeout(urlSyncRef.current);
+    urlSyncRef.current = setTimeout(() => {
+      const qs = filtersToSearchParams(filters);
+      const target = `/explore/experts${qs ? `?${qs}` : ""}`;
+      const current = window.location.pathname + window.location.search;
+      if (target !== current) {
+        router.replace(target, { scroll: false });
+      }
+    }, 300);
+    return () => {
+      if (urlSyncRef.current) clearTimeout(urlSyncRef.current);
+    };
   }, [filters, router]);
 
   const updateFilters = useCallback((partial: Partial<IExpertFilters>) => {
@@ -174,15 +182,16 @@ export default function ExpertsInteractiveContent({
             : `${formatCurrencyPrice(min)} - ${formatCurrencyPrice(max)}`;
       chips.push({ key: "price", label: "Price", value: label });
     }
-    if (filters.availability) {
-      const availLabel =
-        filters.availability === "has_slots"
-          ? "Has Open Slots"
-          : "Available This Week";
+    if (filters.minRating !== undefined) {
       chips.push({
-        key: "availability",
-        label: "Availability",
-        value: availLabel,
+        key: "minRating",
+        label: "Rating",
+        value: `${filters.minRating}+ stars`,
+      });
+    }
+    if (filters.companies.length > 0) {
+      filters.companies.forEach((company) => {
+        chips.push({ key: `company-${company}`, label: "Company", value: company });
       });
     }
     if (filters.language) {
@@ -225,8 +234,11 @@ export default function ExpertsInteractiveContent({
         updateFilters({ experience: 0 });
       } else if (key === "price") {
         updateFilters({ minPrice: undefined, maxPrice: undefined });
-      } else if (key === "availability") {
-        updateFilters({ availability: undefined });
+      } else if (key === "minRating") {
+        updateFilters({ minRating: undefined });
+      } else if (key.startsWith("company-")) {
+        const companyName = key.replace("company-", "");
+        updateFilters({ companies: filters.companies.filter((c) => c !== companyName) });
       } else if (key === "language") {
         updateFilters({ language: undefined });
       } else if (key === "search") {
@@ -235,7 +247,7 @@ export default function ExpertsInteractiveContent({
         updateFilters({ sort: "nameAsc" });
       }
     },
-    [updateFilters, filters.tags],
+    [updateFilters, filters.tags, filters.companies],
   );
 
   const handleClearAll = useCallback(() => {
@@ -321,10 +333,12 @@ export default function ExpertsInteractiveContent({
               onMinPriceChange={(val) => updateFilters({ minPrice: val })}
               maxPrice={filters.maxPrice}
               onMaxPriceChange={(val) => updateFilters({ maxPrice: val })}
-              availability={filters.availability}
-              onAvailabilityChange={(val) =>
-                updateFilters({ availability: val })
+              minRating={filters.minRating}
+              onMinRatingChange={(val) =>
+                updateFilters({ minRating: val })
               }
+              selectedCompanies={filters.companies}
+              setSelectedCompanies={(val) => updateFilters({ companies: val })}
               language={filters.language}
               onLanguageChange={(val) => updateFilters({ language: val })}
             />
@@ -338,6 +352,20 @@ export default function ExpertsInteractiveContent({
             viewport={{ once: true }}
             transition={{ duration: 0.5, delay: 0.2 }}
           >
+            <div className="relative mb-6 py-10 px-6 rounded-2xl bg-gradient-to-br from-zinc-900 via-zinc-800 to-zinc-700 overflow-hidden">
+              <div className="absolute inset-0 opacity-10">
+                <div className="absolute top-0 right-0 w-72 h-72 bg-white rounded-full blur-3xl -translate-y-1/2 translate-x-1/4" />
+                <div className="absolute bottom-0 left-0 w-56 h-56 bg-white rounded-full blur-3xl translate-y-1/2 -translate-x-1/4" />
+              </div>
+              <div className="relative text-center">
+                <h2 className="text-2xl md:text-3xl font-bold text-white mb-2">
+                  Find Your Perfect Expert
+                </h2>
+                <p className="text-zinc-400 text-sm md:text-base max-w-lg mx-auto">
+                  Search by name, skill, or specialty to connect with top consultants
+                </p>
+              </div>
+            </div>
             <SearchBar
               onSearch={(term) => updateFilters({ search: term })}
               onSort={(option) => updateFilters({ sort: option })}
@@ -359,14 +387,18 @@ export default function ExpertsInteractiveContent({
 
           {/* Results */}
           <div className="mt-8 min-h-[400px] relative">
-            {isLoadingConsultants ? (
-              <div className="absolute inset-0 flex items-center justify-center bg-white/80 backdrop-blur-sm rounded-2xl">
+            {/* Loading overlay — on top of stale results to preserve scroll position */}
+            {(isLoadingConsultants || isRefetching) && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/80 backdrop-blur-sm rounded-2xl">
                 <div className="flex flex-col items-center gap-4">
                   <div className="w-12 h-12 border-4 border-zinc-200 border-t-zinc-900 rounded-full animate-spin" />
                   <p className="text-zinc-500 text-sm">Finding experts...</p>
                 </div>
               </div>
-            ) : filters.domain ? (
+            )}
+
+            {/* Consultant cards — always rendered (stale placeholder data stays visible during refetch) */}
+            {filters.domain ? (
               <>
                 {metadata?.domains.map((domain) => {
                   const domainConsultants =
@@ -414,40 +446,38 @@ export default function ExpertsInteractiveContent({
                     </motion.div>
                   );
                 })}
-
-                {consultants.length === 0 && <EmptyState />}
               </>
             ) : (
-              <>
-                <div className="space-y-6">
-                  {consultants.map(
-                    (consultant: IConsultantCardData, index: number) => (
-                      <motion.div
-                        key={consultant.id}
-                        ref={
-                          index === consultants.length - 1
-                            ? lastConsultantRef
-                            : undefined
-                        }
-                        initial={{ opacity: 0, y: 20 }}
-                        whileInView={{ opacity: 1, y: 0 }}
-                        viewport={{ once: true }}
-                        transition={{
-                          duration: 0.4,
-                          delay: Math.min(index * 0.05, 0.6),
-                        }}
-                      >
-                        <ConsultantCard
-                          consultant={consultant}
-                          metadata={metadata}
-                        />
-                      </motion.div>
-                    ),
-                  )}
-                </div>
+              <div className="space-y-6">
+                {consultants.map(
+                  (consultant: IConsultantCardData, index: number) => (
+                    <motion.div
+                      key={consultant.id}
+                      ref={
+                        index === consultants.length - 1
+                          ? lastConsultantRef
+                          : undefined
+                      }
+                      initial={{ opacity: 0, y: 20 }}
+                      whileInView={{ opacity: 1, y: 0 }}
+                      viewport={{ once: true }}
+                      transition={{
+                        duration: 0.4,
+                        delay: Math.min(index * 0.05, 0.6),
+                      }}
+                    >
+                      <ConsultantCard
+                        consultant={consultant}
+                        metadata={metadata}
+                      />
+                    </motion.div>
+                  ),
+                )}
+              </div>
+            )}
 
-                {consultants.length === 0 && <EmptyState />}
-              </>
+            {consultants.length === 0 && !isLoadingConsultants && !isRefetching && (
+              <EmptyState />
             )}
 
             {isLoadingMore && (
