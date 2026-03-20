@@ -228,7 +228,7 @@ export function FiltersSection({
                 value={selectedDomain || "all"}
                 onValueChange={handleDomainChange}
               >
-                <SelectTrigger className="w-full h-11 bg-zinc-50 border-zinc-200 rounded-lg focus:ring-zinc-900">
+                <SelectTrigger className="w-full h-11 bg-zinc-100 border-zinc-300 rounded-lg focus:ring-zinc-900">
                   <SelectValue placeholder="All Domains" />
                 </SelectTrigger>
                 <SelectContent>
@@ -250,7 +250,7 @@ export function FiltersSection({
                 value={selectedSubdomain || "all"}
                 onValueChange={handleSubdomainChange}
               >
-                <SelectTrigger className="w-full h-11 bg-zinc-50 border-zinc-200 rounded-lg focus:ring-zinc-900 disabled:opacity-50">
+                <SelectTrigger className="w-full h-11 bg-zinc-100 border-zinc-300 rounded-lg focus:ring-zinc-900 disabled:opacity-50">
                   <SelectValue
                     placeholder={
                       selectedDomain ? "All Subdomains" : "Select domain first"
@@ -288,7 +288,7 @@ export function FiltersSection({
             </label>
             <div className="relative" ref={tagDropdownRef}>
               <input
-                className="w-full h-11 px-4 bg-zinc-50 border border-zinc-200 text-zinc-900 text-sm rounded-lg focus:ring-2 focus:ring-zinc-900 focus:border-transparent transition-all disabled:opacity-50"
+                className="w-full h-11 px-4 bg-zinc-100 border border-zinc-300 text-zinc-900 text-sm rounded-lg focus:ring-2 focus:ring-zinc-900 focus:border-transparent transition-all disabled:opacity-50"
                 placeholder={
                   selectedDomain ? "Search skills..." : "Select domain first"
                 }
@@ -456,7 +456,7 @@ export function FiltersSection({
             </label>
             <div className="relative" ref={companyDropdownRef}>
               <input
-                className="w-full h-11 px-4 bg-zinc-50 border border-zinc-200 text-zinc-900 text-sm rounded-lg focus:ring-2 focus:ring-zinc-900 focus:border-transparent transition-all"
+                className="w-full h-11 px-4 bg-zinc-100 border border-zinc-300 text-zinc-900 text-sm rounded-lg focus:ring-2 focus:ring-zinc-900 focus:border-transparent transition-all"
                 placeholder="e.g. Google, Deloitte..."
                 type="text"
                 value={companySearchTerm}
@@ -512,7 +512,7 @@ export function FiltersSection({
               value={language || "all"}
               onValueChange={handleLanguageChange}
             >
-              <SelectTrigger className="w-full h-11 bg-zinc-50 border-zinc-200 rounded-lg focus:ring-zinc-900">
+              <SelectTrigger className="w-full h-11 bg-zinc-100 border-zinc-300 rounded-lg focus:ring-zinc-900">
                 <SelectValue placeholder="Any Language" />
               </SelectTrigger>
               <SelectContent>
