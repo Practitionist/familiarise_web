@@ -57,7 +57,8 @@ Server-side cascade at checkout:
 - Cached for 24 hours server-side
 - Client-side: React Query with 1-hour stale time
 - Disclaimer shown: "Final amount may vary based on current exchange rate"
-- `exchangeRateAtCheckout` stored on Payment record for audit
+- `displayCurrencyAtCheckout` stored on Payment record (currency code shown to buyer, e.g., "USD")
+- `exchangeRateAtCheckout` stored on Payment record (INR→display rate snapshot for audit)
 
 ## Key Files
 

@@ -21,7 +21,7 @@ Tax Deducted at Source (TDS) under Section 194J applies to payments for professi
 
 ### Threshold Tracking
 
-The system tracks cumulative `consultantShare` from `ConsultantEarnings` for each financial year (per Section 194J — TDS applies to the amount credited/paid to the consultant, not the full sale amount). When cumulative payments cross ₹50,000:
+The system tracks cumulative completed payout amounts for each financial year (per Section 194J — TDS applies to the amount credited/paid to the consultant). When cumulative payments cross ₹50,000:
 
 1. **First time crossing**: TDS calculated only on the excess amount
 2. **Already above threshold**: TDS on full payout amount
@@ -31,16 +31,20 @@ The system tracks cumulative `consultantShare` from `ConsultantEarnings` for eac
 ```
 [Payout batch created]
     ↓
-[For each payout: calculateTDS()]
+[For each payout: calculateTDS() using completed payout history]
     ↓
-[If above threshold:]
+[If above threshold: compute tdsAmount, store tdsRateApplied on Payout]
     ↓
 [netAmount = amount - tdsAmount]
     ↓
 [Send netAmount to Razorpay/Stripe (not gross)]
     ↓
-[Record TDSRecord for Form 26Q filing]
+[Gateway webhook fires COMPLETED]
+    ↓
+[Create TDSRecord atomically inside the same transaction]
 ```
+
+> **Note:** TDS records are only created when the payout is confirmed by the gateway webhook (COMPLETED status). If the payout fails or is cancelled, all TDS data is cleaned up. The `tdsRateApplied` field on the Payout record bridges the gap between calculation and confirmation.
 
 ### PAN Verification
 
@@ -60,7 +64,7 @@ Stores PAN, GSTIN, country, and LUT info per consultant.
 One record per deduction event, linked to payout. Tracks:
 
 - Financial year + quarter
-- Cumulative gross payments at time of deduction
+- Cumulative amount credited to consultant at time of deduction (`cumulativeAmountCredited`)
 - TDS amount and rate
 - Form 26Q filing status
 

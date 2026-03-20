@@ -198,8 +198,7 @@ Export of services is zero-rated under GST (IGST Act Section 16). Conditions:
 - Recipient located outside India
 - Payment received in convertible foreign exchange
 
-**Current implementation:** GST is zero-rated when `currency !== "INR"` in checkout.
-For full compliance, buyer location verification via billing address should be added.
+**Current implementation:** GST is zero-rated when `buyerCountry !== "IN"` in checkout (using server-side buyer country detection via DB user.country → CF-IPCountry header → Accept-Language fallback). For full compliance, additional evidence (billing address, FIRC reference, LUT state) should be captured per payment — see `docs/payments/multi-currency/03-tds-compliance.md` launch blockers.
 
 ---
 
@@ -349,7 +348,7 @@ Consultants can claim TDS deducted by platform:
 
 ### Implemented
 
-- **TDS calculation + auto-deduction**: `lib/payments/tax/tds-service.ts` — calculates TDS at payout time, deducts before sending to gateway
+- **TDS calculation + auto-deduction**: `lib/payments/tax/tds-service.ts` — calculates TDS at payout time, deducts before sending to gateway. TDS records are created only on confirmed (COMPLETED) payouts; failed payouts clean up all TDS data.
 - **ConsultantTaxInfo model**: PAN, GSTIN, country tracking in `prisma/schema.prisma`
 - **TDSRecord model**: Per-deduction audit trail for Form 26Q filing
 - **Admin TDS API**: `GET/POST /api/admin/tds` — FY summary, per-consultant breakdown, filing status
