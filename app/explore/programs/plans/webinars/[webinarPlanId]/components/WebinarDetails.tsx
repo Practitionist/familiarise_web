@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { motion } from "framer-motion";
@@ -15,6 +16,7 @@ import {
   Globe,
   GraduationCap,
 } from "lucide-react";
+import { formatInTimeZone } from "date-fns-tz";
 import { ClientWebinarRegistration } from "./ClientWebinarRegistration";
 import { generateProgramImageUrl } from "../../../../utils";
 import { useCurrency } from "@/hooks/useCurrency";
@@ -34,6 +36,10 @@ export function WebinarDetails({
   webinarId,
 }: WebinarDetailsProps) {
   const { formatPrice } = useCurrency();
+  const [timeZone, setTimeZone] = useState("UTC");
+  useEffect(() => {
+    setTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
+  }, []);
   let sessionStatus: TSessionStatus = "To be announced";
   let formattedNextSessionDisplay = "To be announced";
 
@@ -48,45 +54,20 @@ export function WebinarDetails({
       sessionStart.getTime() + durationInMilliseconds,
     );
     const now = new Date();
-    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
     if (now > sessionEnd) {
       sessionStatus = "Completed";
-      formattedNextSessionDisplay = `Ended on ${sessionEnd.toLocaleString(
-        undefined,
-        {
-          dateStyle: "long",
-          timeStyle: "short",
-          timeZone,
-        },
-      )}`;
+      formattedNextSessionDisplay = `Ended on ${formatInTimeZone(sessionEnd, timeZone, "MMMM d, yyyy 'at' h:mm a zzz")}`;
     } else if (now >= sessionStart && now <= sessionEnd) {
       sessionStatus = "Happening Now";
-      formattedNextSessionDisplay = `Ends at ${sessionEnd.toLocaleTimeString(
-        undefined,
-        {
-          timeStyle: "short",
-          timeZone,
-        },
-      )}`;
+      formattedNextSessionDisplay = `Ends at ${formatInTimeZone(sessionEnd, timeZone, "h:mm a zzz")}`;
     } else if (now < sessionStart) {
       sessionStatus = "Upcoming";
-      formattedNextSessionDisplay = sessionStart.toLocaleString(undefined, {
-        dateStyle: "long",
-        timeStyle: "short",
-        timeZone,
-      });
+      formattedNextSessionDisplay = formatInTimeZone(sessionStart, timeZone, "MMMM d, yyyy 'at' h:mm a zzz");
     }
   } else if (nextSession) {
     sessionStatus = "Upcoming";
-    formattedNextSessionDisplay = new Date(nextSession).toLocaleString(
-      undefined,
-      {
-        dateStyle: "long",
-        timeStyle: "short",
-        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      },
-    );
+    formattedNextSessionDisplay = formatInTimeZone(new Date(nextSession), timeZone, "MMMM d, yyyy 'at' h:mm a zzz");
   }
 
   const getStatusBadgeClass = (status: TSessionStatus) => {
