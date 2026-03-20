@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { useSession } from "@/lib/auth-client";
 import {
   Card,
@@ -17,6 +18,7 @@ import {
   countUniqueParticipants,
 } from "@/lib/payments/utils/participants";
 import { useCurrency } from "@/hooks/useCurrency";
+import { formatInTimeZone } from "date-fns-tz";
 import { JoinWaitlistButton } from "@/components/waitlist/JoinWaitlistButton";
 import { WaitlistBadge } from "@/components/waitlist/WaitlistBadge";
 
@@ -34,10 +36,16 @@ export function ClientClassRegistration({
   consultantUserId,
 }: ClientClassRegistrationProps) {
   const { id: classId, price, classes } = plan;
-  const startDate = classes?.[0]?.startDate; // Corrected to startDate
+  const startDate = classes?.[0]?.schedulingPeriodStartsAt;
+  const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const { data: session } = useSession();
   const { formatPrice } = useCurrency();
-  const isLoggedIn = !!session?.user;
+
+  // Defer auth-dependent rendering until after hydration to avoid mismatch
+  const [hasMounted, setHasMounted] = useState(false);
+  useEffect(() => setHasMounted(true), []);
+
+  const isLoggedIn = hasMounted && !!session?.user;
   const userId = session?.user?.id;
 
   // Check if user is already enrolled in this class
@@ -77,19 +85,12 @@ export function ClientClassRegistration({
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Register for Class</CardTitle>
+          <CardTitle>Class Registration</CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-gray-600 mb-4">
             {startDate
-              ? `Class starts on ${new Date(startDate).toLocaleString(
-                  undefined,
-                  {
-                    dateStyle: "long",
-                    timeStyle: "short",
-                    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-                  },
-                )}`
+              ? `Class starts on ${formatInTimeZone(new Date(startDate), userTimeZone, "MMMM d, yyyy 'at' h:mm a zzz")}`
               : "Start date to be announced"}
           </p>
           {isFull && (
@@ -134,14 +135,7 @@ export function ClientClassRegistration({
           </div>
           <p className="text-sm text-gray-600 mb-4">
             {startDate
-              ? `Class starts on ${new Date(startDate).toLocaleString(
-                  undefined,
-                  {
-                    dateStyle: "long",
-                    timeStyle: "short",
-                    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-                  },
-                )}`
+              ? `Class starts on ${formatInTimeZone(new Date(startDate), userTimeZone, "MMMM d, yyyy 'at' h:mm a zzz")}`
               : "Start date to be announced"}
           </p>
           <p className="text-sm text-gray-600">
@@ -161,19 +155,12 @@ export function ClientClassRegistration({
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Join Class</CardTitle>
+          <CardTitle>Class Registration</CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-sm text-gray-600 mb-4">
             {startDate
-              ? `Class starts on ${new Date(startDate).toLocaleString(
-                  undefined,
-                  {
-                    dateStyle: "long",
-                    timeStyle: "short",
-                    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-                  },
-                )}`
+              ? `Class starts on ${formatInTimeZone(new Date(startDate), userTimeZone, "MMMM d, yyyy 'at' h:mm a zzz")}`
               : "Start date to be announced"}
           </p>
           <Badge
@@ -214,16 +201,12 @@ export function ClientClassRegistration({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Join Class</CardTitle>
+        <CardTitle>Class Registration</CardTitle>
       </CardHeader>
       <CardContent>
         <p className="text-sm text-gray-600 mb-4">
           {startDate
-            ? `Class starts on ${new Date(startDate).toLocaleString(undefined, {
-                dateStyle: "long",
-                timeStyle: "short",
-                timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-              })}`
+            ? `Class starts on ${formatInTimeZone(new Date(startDate), userTimeZone, "MMMM d, yyyy 'at' h:mm a zzz")}`
             : "Start date to be announced"}
         </p>
       </CardContent>
