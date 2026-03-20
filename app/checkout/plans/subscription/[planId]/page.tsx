@@ -143,7 +143,7 @@ export default function SubscriptionCheckoutPage({
         if (response.ok) {
           const data = await response.json();
           setAvailableCredits(
-            Math.floor((data.data.totalAvailable || 0) / 100),
+            data.data.totalAvailable || 0, // already in paise
           );
         }
       } catch (error) {

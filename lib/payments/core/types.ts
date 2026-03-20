@@ -106,6 +106,10 @@ export const CURRENCY_MULTIPLIERS: CurrencyMultiplier = {
   GBP: 100, // pence
   JPY: 1, // yen has no smaller unit
   INR: 100, // paise
+  AUD: 100, // cents
+  CAD: 100, // cents
+  SGD: 100, // cents
+  AED: 100, // fils
   NGN: 100, // kobo (for XFlow)
 };
 

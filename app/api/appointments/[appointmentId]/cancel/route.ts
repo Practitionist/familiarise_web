@@ -196,32 +196,26 @@ export async function POST(
           });
         }
 
-        // Delete slots and appointments
+        // Soft-cancel: mark slots as CANCELLED instead of deleting.
+        // CRITICAL: Do NOT delete appointments — Payment records have onDelete: Cascade
+        // and deleting appointments would permanently destroy payment/refund/dispute audit trail.
         if (appointment.subscription) {
-          // Delete ALL slots for ALL appointments of this subscription
-          await tx.slotOfAppointment.deleteMany({
+          await tx.slotOfAppointment.updateMany({
             where: {
               appointment: { subscriptionId: appointment.subscription.id },
             },
-          });
-          await tx.appointment.deleteMany({
-            where: { subscriptionId: appointment.subscription.id },
+            data: { completionStatus: "CANCELLED" },
           });
         } else if (appointment.class) {
-          // Delete ALL slots for ALL appointments of this class
-          await tx.slotOfAppointment.deleteMany({
+          await tx.slotOfAppointment.updateMany({
             where: { appointment: { classId: appointment.class.id } },
-          });
-          await tx.appointment.deleteMany({
-            where: { classId: appointment.class.id },
+            data: { completionStatus: "CANCELLED" },
           });
         } else {
           // Consultation/webinar/trial — single appointment
-          await tx.slotOfAppointment.deleteMany({
+          await tx.slotOfAppointment.updateMany({
             where: { appointmentId },
-          });
-          await tx.appointment.delete({
-            where: { id: appointmentId },
+            data: { completionStatus: "CANCELLED" },
           });
         }
 

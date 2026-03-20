@@ -129,7 +129,7 @@ export function EventPlannerForSubscription({
           title: initialData.subscriptionPlan.title,
           description: initialData.subscriptionPlan.description ?? "",
           durationInMonths: initialData.subscriptionPlan.durationInMonths,
-          price: initialData.subscriptionPlan.price,
+          price: (initialData.subscriptionPlan.price ?? 0) / 100,
           priceCurrency: initialData.subscriptionPlan.priceCurrency ?? "INR",
           callsPerWeek: initialData.subscriptionPlan.callsPerWeek,
           sessionDurationInHours:
@@ -167,7 +167,7 @@ export function EventPlannerForSubscription({
         title: initialData.subscriptionPlan.title,
         description: initialData.subscriptionPlan.description ?? "",
         durationInMonths: initialData.subscriptionPlan.durationInMonths,
-        price: initialData.subscriptionPlan.price,
+        price: (initialData.subscriptionPlan.price ?? 0) / 100,
         priceCurrency: initialData.subscriptionPlan.priceCurrency ?? "INR",
         callsPerWeek: initialData.subscriptionPlan.callsPerWeek,
         sessionDurationInHours:
@@ -243,7 +243,7 @@ export function EventPlannerForSubscription({
           title: formData.title,
           description: formData.description || "",
           durationInMonths: formData.durationInMonths,
-          price: formData.price,
+          price: Math.round(formData.price * 100),
           priceCurrency: formData.priceCurrency ?? "INR",
           callsPerWeek: formData.callsPerWeek,
           emailSupport: formData.emailSupport ?? "GENERAL",
