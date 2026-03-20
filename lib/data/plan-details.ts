@@ -49,7 +49,6 @@ export async function fetchWebinarPlanDetail(webinarPlanId: string) {
                   },
                 },
               },
-              payment: true,
             },
           },
           waitlist: {
