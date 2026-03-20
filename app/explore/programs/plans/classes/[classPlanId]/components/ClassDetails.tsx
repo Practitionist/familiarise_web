@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import Image from "next/image";
@@ -43,6 +44,10 @@ interface ClassDetailsProps {
 
 export function ClassDetails({ plan }: ClassDetailsProps) {
   const { formatPrice } = useCurrency();
+  const [userTimeZone, setUserTimeZone] = useState("UTC");
+  useEffect(() => {
+    setUserTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
+  }, []);
 
   return (
     <main className="min-h-screen bg-zinc-50">
@@ -244,8 +249,6 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                 {plan.classes && plan.classes.length > 0 ? (
                   <div className="space-y-6">
                     {plan.classes.map((classInstance, classIndex) => {
-                      const userTimeZone =
-                        Intl.DateTimeFormat().resolvedOptions().timeZone;
                       const sessions = buildSessionsFromAppointments(
                         classInstance.appointments ?? [],
                       );

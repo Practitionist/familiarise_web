@@ -37,13 +37,16 @@ export function ClientClassRegistration({
 }: ClientClassRegistrationProps) {
   const { id: classId, price, classes } = plan;
   const startDate = classes?.[0]?.schedulingPeriodStartsAt;
-  const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const { data: session } = useSession();
   const { formatPrice } = useCurrency();
 
-  // Defer auth-dependent rendering until after hydration to avoid mismatch
+  // Defer auth + timezone until after hydration to avoid mismatch
   const [hasMounted, setHasMounted] = useState(false);
-  useEffect(() => setHasMounted(true), []);
+  const [userTimeZone, setUserTimeZone] = useState("UTC");
+  useEffect(() => {
+    setHasMounted(true);
+    setUserTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
+  }, []);
 
   const isLoggedIn = hasMounted && !!session?.user;
   const userId = session?.user?.id;

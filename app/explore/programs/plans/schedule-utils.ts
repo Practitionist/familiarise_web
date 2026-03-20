@@ -17,8 +17,18 @@ export interface SessionInfo {
  * time blocks (e.g. 3×30 min = 1.5 hr). This function merges them into a
  * single start→end range per appointment and assigns a global session number.
  */
+interface AppointmentSlot {
+  startsAt: string | Date;
+  endsAt: string | Date;
+}
+
+interface AppointmentWithSlots {
+  id: string;
+  slotsOfAppointment: AppointmentSlot[];
+}
+
 export function buildSessionsFromAppointments(
-  appointments: any[],
+  appointments: AppointmentWithSlots[],
 ): SessionInfo[] {
   const now = new Date();
 
@@ -32,7 +42,7 @@ export function buildSessionsFromAppointments(
 
   return sorted.map((appointment, idx) => {
     const slots = [...appointment.slotsOfAppointment].sort(
-      (a: any, b: any) =>
+      (a, b) =>
         new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
     );
     const sessionStart = new Date(slots[0].startsAt);

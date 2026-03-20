@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { motion } from "framer-motion";
@@ -35,9 +36,12 @@ export function WebinarDetails({
   webinarId,
 }: WebinarDetailsProps) {
   const { formatPrice } = useCurrency();
+  const [timeZone, setTimeZone] = useState("UTC");
+  useEffect(() => {
+    setTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
+  }, []);
   let sessionStatus: TSessionStatus = "To be announced";
   let formattedNextSessionDisplay = "To be announced";
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   if (
     nextSession &&

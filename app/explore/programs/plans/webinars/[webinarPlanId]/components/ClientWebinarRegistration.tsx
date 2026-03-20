@@ -49,9 +49,13 @@ export function ClientWebinarRegistration({
   const { data: session } = useSession();
   const { formatPrice } = useCurrency();
 
-  // Defer auth-dependent rendering until after hydration to avoid mismatch
+  // Defer auth + timezone until after hydration to avoid mismatch
   const [hasMounted, setHasMounted] = useState(false);
-  useEffect(() => setHasMounted(true), []);
+  const [userTimeZone, setUserTimeZone] = useState("UTC");
+  useEffect(() => {
+    setHasMounted(true);
+    setUserTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
+  }, []);
 
   const isLoggedIn = hasMounted && !!session?.user;
   const userId = session?.user?.id;
@@ -91,7 +95,7 @@ export function ClientWebinarRegistration({
   if (nextSessionDate) {
     const formattedDate = formatInTimeZone(
       new Date(nextSessionDate),
-      Intl.DateTimeFormat().resolvedOptions().timeZone,
+      userTimeZone,
       "MMMM d, yyyy 'at' h:mm a zzz",
     );
     if (sessionStatus === "Completed") {
