@@ -14,6 +14,7 @@ import {
   MapPin,
   Clock,
   Briefcase,
+  Globe,
   ArrowRight,
   CheckCircle2,
   BadgeCheck,
@@ -188,6 +189,14 @@ export const ConsultantCard = memo(function ConsultantCard({
                 value={consultant.domain?.name}
               />
             </div>
+            {/* Languages */}
+            {consultant.languages && consultant.languages.length > 0 && (
+              <ConsultantInfo
+                icon={Globe}
+                label="Languages"
+                value={consultant.languages.join(", ")}
+              />
+            )}
           </div>
 
           {/* Company Logos */}

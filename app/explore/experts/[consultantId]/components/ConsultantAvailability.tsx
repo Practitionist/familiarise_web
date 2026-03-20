@@ -5,7 +5,7 @@ import { TSlotTiming } from "@/types/slots";
 import { WeeklyAvailability } from "./WeeklyAvailability";
 import { CustomAvailability } from "./CustomAvailability";
 import { addDays, startOfDay, endOfDay } from "date-fns";
-import { toZonedTime, format as formatTz } from "date-fns-tz";
+import { toZonedTime, formatInTimeZone } from "date-fns-tz";
 import type { ProcessedSlot } from "../types";
 
 interface ConsultantAvailabilityProps {
@@ -124,7 +124,7 @@ export function ConsultantAvailability({
     const windowStart = addDays(today, weekOffset * 7);
     const days: DayWithSlots[] = Array.from({ length: 7 }, (_, i) => {
       const date = addDays(startOfDay(toZonedTime(windowStart, timezone)), i);
-      const dateKey = formatTz(date, "yyyy-MM-dd", { timeZone: timezone });
+      const dateKey = formatInTimeZone(date, timezone, "yyyy-MM-dd");
 
       const slots: ProcessedSlot[] = (availabilityData[dateKey] || [])
         .filter((slot) => slot.type === "CUSTOM")

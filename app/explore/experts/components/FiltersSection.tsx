@@ -16,7 +16,8 @@ import {
   Tag as TagIcon,
   Clock,
   DollarSign,
-  CalendarCheck,
+  Star,
+  Building2,
   Globe,
 } from "lucide-react";
 import { useCurrency } from "@/hooks/useCurrency";
@@ -29,7 +30,7 @@ interface FiltersSectionProps {
     subdomains: { id: string; name: string; domainId: string | null }[];
     tags: { id: string; name: string; domainId: string | null }[];
     availableLanguages?: string[];
-    availabilityStats?: { hasSlots: number };
+    availableCompanies?: string[];
   } | null;
   selectedDomain: string | null;
   setSelectedDomain: (value: string | null) => void;
@@ -43,8 +44,10 @@ interface FiltersSectionProps {
   onMinPriceChange?: (value: number | undefined) => void;
   maxPrice?: number;
   onMaxPriceChange?: (value: number | undefined) => void;
-  availability?: "has_slots" | "this_week";
-  onAvailabilityChange?: (value: "has_slots" | "this_week" | undefined) => void;
+  minRating?: number;
+  onMinRatingChange?: (value: number | undefined) => void;
+  selectedCompanies: string[];
+  setSelectedCompanies: (companies: string[]) => void;
   language?: string;
   onLanguageChange?: (value: string | undefined) => void;
 }
@@ -63,13 +66,36 @@ export function FiltersSection({
   onMinPriceChange,
   maxPrice,
   onMaxPriceChange,
-  availability,
-  onAvailabilityChange,
+  minRating,
+  onMinRatingChange,
+  selectedCompanies,
+  setSelectedCompanies,
   language,
   onLanguageChange,
 }: FiltersSectionProps) {
+  // Tag autocomplete state
   const [searchTerm, setSearchTerm] = useState("");
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const tagDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Company autocomplete state
+  const [companySearchTerm, setCompanySearchTerm] = useState("");
+  const [isCompanyDropdownOpen, setIsCompanyDropdownOpen] = useState(false);
+  const companyDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdowns on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (tagDropdownRef.current && !tagDropdownRef.current.contains(e.target as Node)) {
+        setIsDropdownOpen(false);
+      }
+      if (companyDropdownRef.current && !companyDropdownRef.current.contains(e.target as Node)) {
+        setIsCompanyDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const { formatPrice, currency } = useCurrency();
 
@@ -80,10 +106,18 @@ export function FiltersSection({
   ]);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Local experience state with debounce
+  const [localExperience, setLocalExperience] = useState(experienceYears);
+  const expDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Sync local state when external props change (e.g. filter chip removal)
   useEffect(() => {
     setLocalRange([minPrice ?? 0, maxPrice ?? MAX_PRICE_INR]);
   }, [minPrice, maxPrice]);
+
+  useEffect(() => {
+    setLocalExperience(experienceYears);
+  }, [experienceYears]);
 
   const handleSliderChange = useCallback(
     (value: number[]) => {
@@ -128,11 +162,24 @@ export function FiltersSection({
     setIsDropdownOpen(true);
   };
 
-  const handleAvailabilityChange = (value: string) => {
-    onAvailabilityChange?.(
-      value === "all" ? undefined : (value as "has_slots" | "this_week"),
-    );
+  const handleCompanySelect = (company: string) => {
+    if (!selectedCompanies.includes(company)) {
+      setSelectedCompanies([...selectedCompanies, company]);
+    }
+    setIsCompanyDropdownOpen(false);
+    setCompanySearchTerm("");
   };
+
+  const handleCompanyRemove = (company: string) => {
+    setSelectedCompanies(selectedCompanies.filter((c) => c !== company));
+  };
+
+  const handleCompanyInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setCompanySearchTerm(e.target.value);
+    setIsCompanyDropdownOpen(true);
+  };
+
+  const RATING_OPTIONS = [4.5, 4.0, 3.5, 3.0] as const;
 
   const handleLanguageChange = (value: string) => {
     onLanguageChange?.(value === "all" ? undefined : value);
@@ -144,6 +191,13 @@ export function FiltersSection({
       if (!searchTerm) return true;
       if (selectedTags.includes(tag.name)) return false;
       return tag.name.toLowerCase().includes(searchTerm.toLowerCase());
+    }) || [];
+
+  const filteredCompanies =
+    metadata?.availableCompanies?.filter((company) => {
+      if (selectedCompanies.includes(company)) return false;
+      if (!companySearchTerm) return true;
+      return company.toLowerCase().includes(companySearchTerm.toLowerCase());
     }) || [];
 
   return (
@@ -174,7 +228,7 @@ export function FiltersSection({
                 value={selectedDomain || "all"}
                 onValueChange={handleDomainChange}
               >
-                <SelectTrigger className="w-full h-11 bg-zinc-50 border-zinc-200 rounded-lg focus:ring-zinc-900">
+                <SelectTrigger className="w-full h-11 bg-zinc-100 border-zinc-300 rounded-lg focus:ring-zinc-900">
                   <SelectValue placeholder="All Domains" />
                 </SelectTrigger>
                 <SelectContent>
@@ -196,7 +250,7 @@ export function FiltersSection({
                 value={selectedSubdomain || "all"}
                 onValueChange={handleSubdomainChange}
               >
-                <SelectTrigger className="w-full h-11 bg-zinc-50 border-zinc-200 rounded-lg focus:ring-zinc-900 disabled:opacity-50">
+                <SelectTrigger className="w-full h-11 bg-zinc-100 border-zinc-300 rounded-lg focus:ring-zinc-900 disabled:opacity-50">
                   <SelectValue
                     placeholder={
                       selectedDomain ? "All Subdomains" : "Select domain first"
@@ -232,9 +286,9 @@ export function FiltersSection({
             <label className="block mb-1.5 text-xs font-medium text-zinc-500 uppercase tracking-wide">
               Search Tags
             </label>
-            <div className="relative">
+            <div className="relative" ref={tagDropdownRef}>
               <input
-                className="w-full h-11 px-4 bg-zinc-50 border border-zinc-200 text-zinc-900 text-sm rounded-lg focus:ring-2 focus:ring-zinc-900 focus:border-transparent transition-all disabled:opacity-50"
+                className="w-full h-11 px-4 bg-zinc-100 border border-zinc-300 text-zinc-900 text-sm rounded-lg focus:ring-2 focus:ring-zinc-900 focus:border-transparent transition-all disabled:opacity-50"
                 placeholder={
                   selectedDomain ? "Search skills..." : "Select domain first"
                 }
@@ -279,37 +333,75 @@ export function FiltersSection({
           </div>
         </div>
 
-        {/* Experience */}
+        {/* Experience & Rating (combined) */}
         <div className="bg-white rounded-xl p-4 border border-zinc-200">
           <div className="flex items-center gap-2 mb-4">
             <Clock className="w-4 h-4 text-zinc-500" />
             <span className="text-sm font-medium text-zinc-700">
-              Experience
+              Experience & Rating
             </span>
           </div>
-          <div>
-            <label className="block mb-1.5 text-xs font-medium text-zinc-500 uppercase tracking-wide">
-              Minimum Years
-            </label>
-            <div className="mt-2">
+          <div className="space-y-4">
+            {/* Experience slider */}
+            <div>
+              <label className="block mb-1.5 text-xs font-medium text-zinc-500 uppercase tracking-wide">
+                Minimum Years
+              </label>
               <input
                 type="range"
                 min="0"
                 max="30"
-                value={experienceYears}
-                onChange={(e) => setExperienceYears(Number(e.target.value))}
+                value={localExperience}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  setLocalExperience(val);
+                  if (expDebounceRef.current) clearTimeout(expDebounceRef.current);
+                  expDebounceRef.current = setTimeout(() => {
+                    setExperienceYears(val);
+                  }, 300);
+                }}
                 className="w-full h-2 bg-zinc-200 rounded-full appearance-none cursor-pointer accent-zinc-900"
               />
-              <div className="flex justify-between mt-2 text-xs text-zinc-500">
+              <div className="flex justify-between mt-1 text-xs text-zinc-500">
                 <span>0 yrs</span>
-                <span>15 yrs</span>
-                <span>30+ yrs</span>
-              </div>
-              <div className="text-center mt-4">
-                <span className="inline-flex items-center px-4 py-2 bg-zinc-900 text-white rounded-full text-sm font-semibold">
-                  {experienceYears === 30 ? "30+" : experienceYears} years
-                  minimum
+                <span className="font-semibold text-zinc-900">
+                  {localExperience === 30 ? "30+" : localExperience} yrs
                 </span>
+                <span>30+</span>
+              </div>
+            </div>
+            {/* Rating buttons */}
+            <div>
+              <label className="block mb-1.5 text-xs font-medium text-zinc-500 uppercase tracking-wide">
+                Minimum Rating
+              </label>
+              <div className="flex flex-wrap gap-1.5">
+                {RATING_OPTIONS.map((rating) => (
+                  <button
+                    key={rating}
+                    onClick={() =>
+                      onMinRatingChange?.(minRating === rating ? undefined : rating)
+                    }
+                    className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                      minRating === rating
+                        ? "bg-zinc-900 text-white"
+                        : "bg-zinc-50 border border-zinc-200 text-zinc-700 hover:bg-zinc-100"
+                    }`}
+                  >
+                    <Star className="w-3 h-3 fill-current" />
+                    {rating}+
+                  </button>
+                ))}
+                <button
+                  onClick={() => onMinRatingChange?.(undefined)}
+                  className={`inline-flex items-center px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    minRating === undefined
+                      ? "bg-zinc-900 text-white"
+                      : "bg-zinc-50 border border-zinc-200 text-zinc-700 hover:bg-zinc-100"
+                  }`}
+                >
+                  Any
+                </button>
               </div>
             </div>
           </div>
@@ -352,36 +444,57 @@ export function FiltersSection({
           </div>
         </div>
 
-        {/* Availability */}
+        {/* Companies */}
         <div className="bg-white rounded-xl p-4 border border-zinc-200">
           <div className="flex items-center gap-2 mb-4">
-            <CalendarCheck className="w-4 h-4 text-zinc-500" />
-            <span className="text-sm font-medium text-zinc-700">
-              Availability
-            </span>
+            <Building2 className="w-4 h-4 text-zinc-500" />
+            <span className="text-sm font-medium text-zinc-700">Company</span>
           </div>
           <div>
             <label className="block mb-1.5 text-xs font-medium text-zinc-500 uppercase tracking-wide">
-              Schedule Status
+              Search Companies
             </label>
-            <Select
-              value={availability || "all"}
-              onValueChange={handleAvailabilityChange}
-            >
-              <SelectTrigger className="w-full h-11 bg-zinc-50 border-zinc-200 rounded-lg focus:ring-zinc-900">
-                <SelectValue placeholder="Any Availability" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Any Availability</SelectItem>
-                <SelectItem value="has_slots">
-                  Has Open Slots
-                  {metadata?.availabilityStats
-                    ? ` (${metadata.availabilityStats.hasSlots})`
-                    : ""}
-                </SelectItem>
-                <SelectItem value="this_week">Available This Week</SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="relative" ref={companyDropdownRef}>
+              <input
+                className="w-full h-11 px-4 bg-zinc-100 border border-zinc-300 text-zinc-900 text-sm rounded-lg focus:ring-2 focus:ring-zinc-900 focus:border-transparent transition-all"
+                placeholder="e.g. Google, Deloitte..."
+                type="text"
+                value={companySearchTerm}
+                onChange={handleCompanyInputChange}
+                onFocus={() => setIsCompanyDropdownOpen(true)}
+              />
+              {isCompanyDropdownOpen && filteredCompanies.length > 0 && (
+                <div className="absolute z-20 w-full mt-2 bg-white border border-zinc-200 rounded-xl shadow-xl max-h-48 overflow-auto">
+                  {filteredCompanies.map((company) => (
+                    <button
+                      key={company}
+                      className="w-full px-4 py-2.5 text-left text-sm text-zinc-700 hover:bg-zinc-50 first:rounded-t-xl last:rounded-b-xl transition-colors"
+                      onClick={() => handleCompanySelect(company)}
+                    >
+                      {company}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {selectedCompanies.length > 0 && (
+              <div className="flex flex-wrap gap-2 mt-3">
+                {selectedCompanies.map((company) => (
+                  <span
+                    key={company}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-900 text-white text-xs font-medium rounded-full"
+                  >
+                    {company}
+                    <button
+                      className="hover:bg-white/20 rounded-full p-0.5 transition-colors"
+                      onClick={() => handleCompanyRemove(company)}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -399,7 +512,7 @@ export function FiltersSection({
               value={language || "all"}
               onValueChange={handleLanguageChange}
             >
-              <SelectTrigger className="w-full h-11 bg-zinc-50 border-zinc-200 rounded-lg focus:ring-zinc-900">
+              <SelectTrigger className="w-full h-11 bg-zinc-100 border-zinc-300 rounded-lg focus:ring-zinc-900">
                 <SelectValue placeholder="Any Language" />
               </SelectTrigger>
               <SelectContent>
