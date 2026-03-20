@@ -19,7 +19,7 @@ import { ExpertPricing } from "./components/ExpertPricing";
 import { ProfileHeader } from "./components/ProfileHeader";
 import { ReviewsSection } from "./components/ReviewsSection";
 import { useTimezone } from "./hooks/useTimezone";
-import { format as formatTz } from "date-fns-tz";
+import { formatInTimeZone } from "date-fns-tz";
 
 interface ExpertProfileClientProps {
   consultantDetails: TConsultantDetailData;
@@ -84,9 +84,7 @@ export function ExpertProfileClient({
           }
 
           const { data } = await response.json();
-          const selectedDateKey = formatTz(selectedDate, "yyyy-MM-dd", {
-            timeZone: timezone,
-          });
+          const selectedDateKey = formatInTimeZone(selectedDate, timezone, "yyyy-MM-dd");
           const slotsForSelectedDate = data[selectedDateKey] || [];
           setSlotTimings(slotsForSelectedDate);
         } catch (error) {

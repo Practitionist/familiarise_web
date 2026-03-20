@@ -1,6 +1,6 @@
 import { DayOfWeek } from "@prisma/client";
 import { addDays, endOfDay, isBefore, startOfDay } from "date-fns";
-import { format, toZonedTime, fromZonedTime } from "date-fns-tz";
+import { format, formatInTimeZone, toZonedTime, fromZonedTime } from "date-fns-tz";
 import { TSlotTiming } from "@/types/slots";
 
 // Booking status constants and types
@@ -453,8 +453,8 @@ export function convertToSlotTimings(
       slotEndTimeInUTC: slot.end.toISOString(),
       slotOfAvailabilityId: slot.availabilityId,
       slotOfAppointmentId: "",
-      localStartTime: format(slot.start, "p", { timeZone: timezone }),
-      localEndTime: format(slot.end, "p", { timeZone: timezone }),
+      localStartTime: formatInTimeZone(slot.start, timezone, "p"),
+      localEndTime: formatInTimeZone(slot.end, timezone, "p"),
       type: slot.type, // Explicitly set the type field
       isAllocated,
       bookingStatus,
@@ -595,8 +595,8 @@ export function breakDownSlotsByDuration(
         slotId: `${slot.slotOfAvailabilityId}-${currentStart.getTime()}`,
         slotStartTimeInUTC: currentStart.toISOString(),
         slotEndTimeInUTC: currentEnd.toISOString(),
-        localStartTime: format(currentStart, "p", { timeZone: timezone }),
-        localEndTime: format(currentEnd, "p", { timeZone: timezone }),
+        localStartTime: formatInTimeZone(currentStart, timezone, "p"),
+        localEndTime: formatInTimeZone(currentEnd, timezone, "p"),
         isAllocated: isSegmentAllocated,
         bookingStatus: segmentBookingStatus,
       });
