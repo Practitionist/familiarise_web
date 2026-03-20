@@ -457,7 +457,9 @@ export function groupSlotsIntoSessions(
         appointmentId,
         startTime: sorted[0].startsAt,
         endTime,
-        status: endTime < now ? "completed" : "upcoming",
+        status: (endTime < now ? "completed" : "upcoming") as
+          | "completed"
+          | "upcoming",
       };
     })
     .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());

@@ -267,7 +267,9 @@ export function SessionTimeline({
               expanded && "rotate-180",
             )}
           />
-          {expanded ? "Show less" : `Show all ${sessions.length} sessions`}
+          {expanded
+            ? "Show less"
+            : `Show all ${sessions.length} ${sessions.length === 1 ? "session" : "sessions"}`}
         </button>
       )}
     </div>

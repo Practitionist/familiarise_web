@@ -12,6 +12,7 @@ import {
   TTrialWithPlan,
 } from "@/hooks/useEvents";
 import { getStatusColor } from "../../utils/getMetadata";
+import { formatStatusLabel } from "../../utils/statusConfig";
 import { getActualSlots } from "../../utils/scheduleHelpers";
 
 interface CalendarProps {
@@ -296,13 +297,13 @@ export function Calendar({
                       key={event.id}
                       onClick={() => handleEventClick(event)}
                       className={`w-full text-left text-xs p-1.5 rounded truncate font-medium hover:opacity-80 focus:ring-2 focus:ring-offset-1 focus:outline-none ${getEventColor(event)}`}
-                      title={`${event.title} - ${event.consultant} - ${event.time} - ${event.status}${event.isTentative ? " (Subject to change)" : ""}`}
+                      title={`${event.title} - ${event.consultant} - ${event.time} - ${formatStatusLabel(event.status)}${event.isTentative ? " (Subject to change)" : ""}`}
                     >
                       <div className="flex justify-between items-center">
                         <div className="flex flex-col">
                           <span>{event.title}</span>
                           <span className="text-xs opacity-75">
-                            {event.status}
+                            {formatStatusLabel(event.status)}
                             {event.isTentative && (
                               <span className="ml-1 text-red-500">*</span>
                             )}
