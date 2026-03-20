@@ -104,11 +104,13 @@ export function OneOffEventCard({
   const isDev = process.env.NODE_ENV === "development";
   const canDevJoin = isDev && rawSlots.length > 0 && !!appointment;
 
+  const isConfirmed = ["APPROVED", "SCHEDULED", "IN_PROGRESS"].includes(
+    status?.toUpperCase(),
+  );
   const showDocUpload =
     (type === "Consultation" || type === "Trial") &&
     !!appointmentId &&
-    !isPendingPayment &&
-    !isInactive;
+    isConfirmed;
 
   const appointmentStatus: AppointmentStatus =
     status?.toLowerCase() === "completed" ? "COMPLETED" : "UPCOMING";

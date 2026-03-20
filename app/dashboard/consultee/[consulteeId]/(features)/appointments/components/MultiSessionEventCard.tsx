@@ -129,11 +129,11 @@ export function MultiSessionEventCard({
   const isApproved = status?.toUpperCase() === "APPROVED";
   const isDev = process.env.NODE_ENV === "development";
   const canDevJoin = isDev && rawSlots.length > 0 && !!appointment;
+  const isConfirmed = ["APPROVED", "SCHEDULED", "IN_PROGRESS"].includes(
+    status?.toUpperCase(),
+  );
   const showDocUpload =
-    type === "Subscription" &&
-    !!appointmentId &&
-    !isPendingPayment &&
-    !isInactive;
+    type === "Subscription" && !!appointmentId && isConfirmed;
 
   const appointmentStatus: AppointmentStatus =
     status?.toLowerCase() === "completed" ? "COMPLETED" : "UPCOMING";

@@ -14,7 +14,7 @@ import { MultiSessionEventCard } from "./components/MultiSessionEventCard";
 import type { SlotOfAppointment } from "@prisma/client";
 import type { TAppointment } from "@/types/appointment";
 import type { SlotWithMeetingSession } from "./types";
-import React, { useRef, useState, useEffect, useCallback } from "react";
+import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -22,6 +22,7 @@ import {
   Video,
   Users,
   BookOpen,
+  ArrowUpDown,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import type { BookingStatus } from "@/components/ui/waitlist-status-badge";
@@ -111,6 +112,15 @@ function sortByTimeDescending<T extends { firstSlotTime?: number }>(
   );
 }
 
+// Sort items by time ascending (oldest first) — used for past events
+function sortByTimeAscending<T extends { firstSlotTime?: number }>(
+  items: T[],
+): T[] {
+  return [...items].sort(
+    (a, b) => (a.firstSlotTime ?? 0) - (b.firstSlotTime ?? 0),
+  );
+}
+
 const fadeInUp = {
   hidden: { opacity: 0, y: 20 },
   visible: { opacity: 1, y: 0, transition: { duration: 0.4 } },
@@ -124,20 +134,24 @@ export function Overview({
   trials,
   mode = "upcoming",
 }: Readonly<OverviewProps>) {
+  const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
+
   const isTerminal = (status: string) =>
     TERMINAL_STATUSES.includes(status.toLowerCase());
   const shouldInclude = (status: string) =>
     mode === "upcoming" ? !isTerminal(status) : isTerminal(status);
 
-  const sortFn =
-    mode === "past" ? sortByTimeDescending : sortByStatusAndTime;
+  const sortFn = useMemo(() => {
+    if (mode !== "past") return sortByStatusAndTime;
+    return sortDir === "desc" ? sortByTimeDescending : sortByTimeAscending;
+  }, [mode, sortDir]);
 
   const emptySubtext =
     mode === "past"
       ? (title: string) =>
-          `Completed or cancelled ${title.toLowerCase()} will appear here`
+        `Completed or cancelled ${title.toLowerCase()} will appear here`
       : (title: string) =>
-          `Your ${title.toLowerCase()} will appear here once scheduled`;
+        `Your ${title.toLowerCase()} will appear here once scheduled`;
 
   // Prepare sorted consultation items
   const sortedConsultations = sortFn(
@@ -235,6 +249,21 @@ export function Overview({
       className="space-y-8"
       data-testid="overview-grid"
     >
+      {/* Sort toggle — past mode only */}
+      {mode === "past" && totalItems > 0 && (
+        <div className="flex justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setSortDir((d) => (d === "desc" ? "asc" : "desc"))}
+            className="h-8 text-xs font-medium gap-1.5"
+          >
+            <ArrowUpDown className="h-3.5 w-3.5" />
+            {sortDir === "desc" ? "Newest first" : "Oldest first"}
+          </Button>
+        </div>
+      )}
+
       {/* Consultations */}
       <motion.div variants={fadeInUp}>
         <DashboardCard
