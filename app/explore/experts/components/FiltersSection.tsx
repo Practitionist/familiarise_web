@@ -76,10 +76,26 @@ export function FiltersSection({
   // Tag autocomplete state
   const [searchTerm, setSearchTerm] = useState("");
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const tagDropdownRef = useRef<HTMLDivElement>(null);
 
   // Company autocomplete state
   const [companySearchTerm, setCompanySearchTerm] = useState("");
   const [isCompanyDropdownOpen, setIsCompanyDropdownOpen] = useState(false);
+  const companyDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdowns on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (tagDropdownRef.current && !tagDropdownRef.current.contains(e.target as Node)) {
+        setIsDropdownOpen(false);
+      }
+      if (companyDropdownRef.current && !companyDropdownRef.current.contains(e.target as Node)) {
+        setIsCompanyDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const { formatPrice, currency } = useCurrency();
 
@@ -270,7 +286,7 @@ export function FiltersSection({
             <label className="block mb-1.5 text-xs font-medium text-zinc-500 uppercase tracking-wide">
               Search Tags
             </label>
-            <div className="relative">
+            <div className="relative" ref={tagDropdownRef}>
               <input
                 className="w-full h-11 px-4 bg-zinc-50 border border-zinc-200 text-zinc-900 text-sm rounded-lg focus:ring-2 focus:ring-zinc-900 focus:border-transparent transition-all disabled:opacity-50"
                 placeholder={
@@ -438,7 +454,7 @@ export function FiltersSection({
             <label className="block mb-1.5 text-xs font-medium text-zinc-500 uppercase tracking-wide">
               Search Companies
             </label>
-            <div className="relative">
+            <div className="relative" ref={companyDropdownRef}>
               <input
                 className="w-full h-11 px-4 bg-zinc-50 border border-zinc-200 text-zinc-900 text-sm rounded-lg focus:ring-2 focus:ring-zinc-900 focus:border-transparent transition-all"
                 placeholder="e.g. Google, Deloitte..."
