@@ -185,6 +185,17 @@ async function syncAvailabilitySlots(
         }
       }
 
+      console.info("[syncAvailabilitySlots] Saving weekly slots:", {
+        consultantProfileId,
+        utcOffsetMinutes,
+        slotCount: weeklySlotsToCreate.length,
+        slots: weeklySlotsToCreate.map((s) => ({
+          day: s.startDay,
+          start: s.startTimeUtc,
+          end: s.endTimeUtc,
+        })),
+      });
+
       await tx.slotOfAvailabilityWeekly.createMany({
         data: weeklySlotsToCreate.map((slot) => ({
           startDay: slot.startDay,

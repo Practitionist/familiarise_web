@@ -195,9 +195,12 @@ export const convertTimezoneToUtc = (
       return isNaN(date.getTime()) ? "" : date.toISOString();
     }
 
-    // Create a date in the specified timezone using date-fns-tz
-    const localDateTime = `${dateStr}T${timeStr}:00`;
-    const zonedDate = new Date(localDateTime);
+    // Construct the Date explicitly to avoid browser date-string parsing
+    // ambiguity (strings without a TZ designator may be parsed as UTC in
+    // some engines, making fromZonedTime a no-op).
+    const [hours, minutes] = timeStr.split(":").map(Number);
+    const [year, month, day] = dateStr.split("-").map(Number);
+    const zonedDate = new Date(year, month - 1, day, hours, minutes, 0, 0);
 
     if (isNaN(zonedDate.getTime())) return "";
 

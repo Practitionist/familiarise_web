@@ -53,7 +53,7 @@ const getNextDayOfWeek = (dayOfWeek: string): string => {
 /**
  * Shift a day of the week by an offset (positive or negative).
  */
-const shiftDayOfWeek = (dayOfWeek: string, offset: number): string => {
+export const shiftDayOfWeek = (dayOfWeek: string, offset: number): string => {
   const days = [
     "MONDAY",
     "TUESDAY",
@@ -300,7 +300,17 @@ export function buildWeeklySlotsForSave(
 
         const startMinutes = dateToMinuteUtc(new Date(startUTC));
         const endMinutes = dateToMinuteUtc(new Date(endUTC));
-        const startDay = day.toUpperCase() as DayOfWeek;
+
+        // Compute actual UTC start day — timezone conversion may shift the day
+        // (e.g., IST Monday 1:00 AM → UTC Sunday 7:30 PM)
+        const baseDateMs = new Date(baseDate + "T00:00:00Z").getTime();
+        const startDayOffset = Math.floor(
+          (new Date(startUTC).getTime() - baseDateMs) / 86400000,
+        );
+        const startDay = shiftDayOfWeek(
+          day.toUpperCase(),
+          startDayOffset,
+        ) as DayOfWeek;
 
         if (overnight) {
           const endDay = getNextDayOfWeek(startDay) as DayOfWeek;
@@ -315,10 +325,15 @@ export function buildWeeklySlotsForSave(
           ];
         }
 
+        // Check if the slot becomes overnight in UTC (startMin >= endMin)
+        const isOvernightInUtc = startMinutes >= endMinutes;
+
         return [
           {
             startDay,
-            endDay: startDay,
+            endDay: isOvernightInUtc
+              ? (getNextDayOfWeek(startDay) as DayOfWeek)
+              : startDay,
             startTimeUtc: startMinutes,
             endTimeUtc: endMinutes,
           },

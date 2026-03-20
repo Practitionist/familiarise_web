@@ -134,17 +134,10 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
     }
   }, [initialData, timezone, timezoneLoading]);
 
-  // Format weekly slots for API
-  useEffect(() => {
-    if (!timezone) return;
-    setValue("weeklySlots", buildWeeklySlotsForSave(weeklySlots, timezone));
-  }, [weeklySlots, setValue, timezone]);
-
-  // Format custom slots for API
-  useEffect(() => {
-    if (!timezone) return;
-    setValue("customSlots", buildCustomSlotsForSave(customSlots, timezone));
-  }, [customSlots, setValue, timezone]);
+  // NOTE: Conversion from local HH:MM → UTC minutes is done synchronously
+  // in onSubmitForm (not in a useEffect) to avoid a race condition where
+  // the form could submit stale/unconverted values if the user clicks "Next"
+  // before the useEffect fires. This mirrors the working pattern in SettingsTab.
 
   const handleAddSlot = useCallback(
     (
@@ -334,9 +327,22 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
         return;
       }
 
-      onNext(data);
+      // Convert local HH:MM → UTC minutes synchronously at submit time
+      // (not in a useEffect) to prevent race condition
+      const tz = timezone || "UTC";
+      onNext({
+        ...data,
+        weeklySlots:
+          data.scheduleType === "WEEKLY"
+            ? buildWeeklySlotsForSave(weeklySlots, tz)
+            : undefined,
+        customSlots:
+          data.scheduleType === "CUSTOM"
+            ? buildCustomSlotsForSave(customSlots, tz)
+            : undefined,
+      });
     },
-    [validationFeedback, onNext, toast],
+    [validationFeedback, onNext, toast, timezone, weeklySlots, customSlots],
   );
 
   const [currentDate, setCurrentDate] = useState(new Date());
