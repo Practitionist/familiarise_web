@@ -3,7 +3,7 @@
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
-import { User, Star, ArrowRight, Flame, Clock, BadgeCheck } from "lucide-react";
+import { User, Star, ArrowRight, Flame, Clock, BadgeCheck, Globe } from "lucide-react";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import type { IConsultantCardData } from "@/types/consultant";
 
@@ -71,43 +71,58 @@ export default function ExpertMiniCard({ expert, badge }: ExpertMiniCardProps) {
           </div>
         </div>
 
-        {/* Company Logos */}
-        {expert.user.workExperiences &&
-          expert.user.workExperiences.length > 0 && (
-            <div className="flex items-center gap-1.5 mb-2">
-              {expert.user.workExperiences.slice(0, 2).map((exp, i) => (
-                <CompanyLogo
-                  key={`${expert.id}-company-${i}`}
-                  companyName={exp.company}
-                  companyDomain={exp.companyDomain ?? undefined}
-                  size={24}
-                  className="border-zinc-200"
-                />
+        {/* Bottom section — pinned to bottom for consistent card height */}
+        <div className="mt-auto">
+          {/* Company Logos */}
+          {expert.user.workExperiences &&
+            expert.user.workExperiences.length > 0 && (
+              <div className="flex items-center gap-1.5 mb-2">
+                {expert.user.workExperiences.slice(0, 2).map((exp, i) => (
+                  <CompanyLogo
+                    key={`${expert.id}-company-${i}`}
+                    companyName={exp.company}
+                    companyDomain={exp.companyDomain ?? undefined}
+                    size={24}
+                    className="border-zinc-200"
+                  />
+                ))}
+              </div>
+            )}
+
+          {/* Languages */}
+          {expert.languages && expert.languages.length > 0 && (
+            <div className="flex items-center gap-1 mb-2">
+              <Globe className="w-3 h-3 text-zinc-400 flex-shrink-0" />
+              <p className="text-[10px] text-zinc-500 line-clamp-1">
+                {expert.languages.slice(0, 2).join(", ")}
+              </p>
+            </div>
+          )}
+
+          {/* Domain badge */}
+          <Badge className="text-[10px] px-2 py-0.5 bg-zinc-100 text-zinc-600 hover:bg-zinc-100 border-0 w-fit mb-2">
+            {expert.domain?.name || "General"}
+          </Badge>
+
+          {/* Tags */}
+          {expert.tags && expert.tags.length > 0 && (
+            <div className="flex flex-wrap gap-1 mb-3">
+              {expert.tags.slice(0, 2).map((tag) => (
+                <span
+                  key={tag.id}
+                  className="text-[10px] px-2 py-0.5 bg-zinc-50 text-zinc-500 rounded-full"
+                >
+                  {tag.name}
+                </span>
               ))}
             </div>
           )}
 
-        {/* Domain badge */}
-        <Badge className="text-[10px] px-2 py-0.5 bg-zinc-100 text-zinc-600 hover:bg-zinc-100 border-0 w-fit mb-2">
-          {expert.domain?.name || "General"}
-        </Badge>
-
-        {/* Tags */}
-        <div className="flex flex-wrap gap-1 mb-3 flex-1">
-          {expert.tags?.slice(0, 2).map((tag) => (
-            <span
-              key={tag.id}
-              className="text-[10px] px-2 py-0.5 bg-zinc-50 text-zinc-500 rounded-full"
-            >
-              {tag.name}
-            </span>
-          ))}
-        </div>
-
-        {/* View Profile */}
-        <div className="flex items-center gap-1 text-xs font-medium text-zinc-500 group-hover:text-zinc-900 transition-colors">
-          <span>View Profile</span>
-          <ArrowRight className="w-3 h-3 group-hover:translate-x-1 transition-transform" />
+          {/* View Profile */}
+          <div className="flex items-center gap-1 text-xs font-medium text-zinc-500 group-hover:text-zinc-900 transition-colors">
+            <span>View Profile</span>
+            <ArrowRight className="w-3 h-3 group-hover:translate-x-1 transition-transform" />
+          </div>
         </div>
       </div>
     </Link>

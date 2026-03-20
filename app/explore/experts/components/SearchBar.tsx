@@ -41,12 +41,12 @@ export function SearchBar({
   return (
     <div className="flex flex-col sm:flex-row gap-4">
       {/* Search Input */}
-      <div className="flex-1 relative">
+      <div className="flex-1 relative shadow-lg rounded-xl focus-within:shadow-xl focus-within:ring-2 focus-within:ring-zinc-900 transition-shadow">
         <div className="absolute left-4 top-1/2 -translate-y-1/2">
-          <Search className="w-5 h-5 text-zinc-400" />
+          <Search className="w-6 h-6 text-zinc-400" />
         </div>
         <Input
-          className="w-full h-12 pl-12 pr-4 bg-white border-zinc-200 rounded-xl focus:border-zinc-400 focus:ring-zinc-400 placeholder:text-zinc-400"
+          className="w-full h-14 pl-14 pr-4 bg-white border-0 rounded-xl focus:ring-0 focus-visible:ring-0 placeholder:text-zinc-400 text-base"
           placeholder="Search experts by name, skill, or specialty..."
           type="search"
           value={localValue}
@@ -59,7 +59,7 @@ export function SearchBar({
 
       {/* Sort Dropdown */}
       <div className="flex items-center gap-2">
-        <div className="flex items-center gap-2 px-4 h-12 bg-zinc-100 rounded-xl">
+        <div className="flex items-center gap-2 px-4 h-14 bg-zinc-100 rounded-xl shadow-md">
           <SlidersHorizontal className="w-4 h-4 text-zinc-500" />
           <span className="text-sm font-medium text-zinc-600 hidden sm:inline">
             Sort by
@@ -69,7 +69,7 @@ export function SearchBar({
           value={sortBy}
           onValueChange={(value) => onSort(value as SortOption)}
         >
-          <SelectTrigger className="w-[180px] h-12 bg-white border-zinc-200 rounded-xl focus:ring-zinc-400">
+          <SelectTrigger className="w-[180px] h-14 bg-white border-0 rounded-xl shadow-md focus:ring-zinc-400">
             <SelectValue placeholder="Sort by" />
           </SelectTrigger>
           <SelectContent>

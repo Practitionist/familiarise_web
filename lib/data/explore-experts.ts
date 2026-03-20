@@ -53,7 +53,7 @@ export async function fetchExpertsMetadata() {
     tags,
     consultantMetadata,
     availableLanguages,
-    availabilityStats,
+    availableCompanies,
   ] = await Promise.all([
     // Domains + subdomains
     prisma.domain.findMany({
@@ -110,16 +110,18 @@ export async function fetchExpertsMetadata() {
         WHERE "verificationStatus" = 'VERIFIED'
         ORDER BY lang
       `.then((result) => result.map((r) => r.lang)),
-    // Availability stats
-    prisma.consultantProfile.count({
+    // Available companies (from verified consultants' work experiences)
+    prisma.workExperience.findMany({
       where: {
-        verificationStatus: "VERIFIED",
-        OR: [
-          { slotsOfAvailabilityWeekly: { some: {} } },
-          { slotsOfAvailabilityCustom: { some: {} } },
-        ],
+        company: { not: "" },
+        user: {
+          consultantProfile: { verificationStatus: "VERIFIED" },
+        },
       },
-    }),
+      select: { company: true },
+      distinct: ["company"],
+      orderBy: { company: "asc" },
+    }).then((result) => result.map((r) => r.company)),
   ]);
 
   return {
@@ -134,7 +136,7 @@ export async function fetchExpertsMetadata() {
     tags,
     consultantMetadata,
     availableLanguages,
-    availabilityStats: { hasSlots: availabilityStats },
+    availableCompanies,
   };
 }
 

@@ -79,14 +79,21 @@ export default function ExpertsInteractiveContent({
     loadMore,
   } = useConsultants(filters);
 
-  // Sync filters to URL
+  // Sync filters to URL (debounced to avoid excessive history entries during rapid changes)
+  const urlSyncRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    const qs = filtersToSearchParams(filters);
-    const target = `/explore/experts${qs ? `?${qs}` : ""}`;
-    const current = window.location.pathname + window.location.search;
-    if (target !== current) {
-      router.replace(target, { scroll: false });
-    }
+    if (urlSyncRef.current) clearTimeout(urlSyncRef.current);
+    urlSyncRef.current = setTimeout(() => {
+      const qs = filtersToSearchParams(filters);
+      const target = `/explore/experts${qs ? `?${qs}` : ""}`;
+      const current = window.location.pathname + window.location.search;
+      if (target !== current) {
+        router.replace(target, { scroll: false });
+      }
+    }, 300);
+    return () => {
+      if (urlSyncRef.current) clearTimeout(urlSyncRef.current);
+    };
   }, [filters, router]);
 
   const updateFilters = useCallback((partial: Partial<IExpertFilters>) => {
@@ -175,15 +182,16 @@ export default function ExpertsInteractiveContent({
             : `${formatCurrencyPrice(min)} - ${formatCurrencyPrice(max)}`;
       chips.push({ key: "price", label: "Price", value: label });
     }
-    if (filters.availability) {
-      const availLabel =
-        filters.availability === "has_slots"
-          ? "Has Open Slots"
-          : "Available This Week";
+    if (filters.minRating !== undefined) {
       chips.push({
-        key: "availability",
-        label: "Availability",
-        value: availLabel,
+        key: "minRating",
+        label: "Rating",
+        value: `${filters.minRating}+ stars`,
+      });
+    }
+    if (filters.companies.length > 0) {
+      filters.companies.forEach((company) => {
+        chips.push({ key: `company-${company}`, label: "Company", value: company });
       });
     }
     if (filters.language) {
@@ -226,8 +234,11 @@ export default function ExpertsInteractiveContent({
         updateFilters({ experience: 0 });
       } else if (key === "price") {
         updateFilters({ minPrice: undefined, maxPrice: undefined });
-      } else if (key === "availability") {
-        updateFilters({ availability: undefined });
+      } else if (key === "minRating") {
+        updateFilters({ minRating: undefined });
+      } else if (key.startsWith("company-")) {
+        const companyName = key.replace("company-", "");
+        updateFilters({ companies: filters.companies.filter((c) => c !== companyName) });
       } else if (key === "language") {
         updateFilters({ language: undefined });
       } else if (key === "search") {
@@ -236,7 +247,7 @@ export default function ExpertsInteractiveContent({
         updateFilters({ sort: "nameAsc" });
       }
     },
-    [updateFilters, filters.tags],
+    [updateFilters, filters.tags, filters.companies],
   );
 
   const handleClearAll = useCallback(() => {
@@ -322,10 +333,12 @@ export default function ExpertsInteractiveContent({
               onMinPriceChange={(val) => updateFilters({ minPrice: val })}
               maxPrice={filters.maxPrice}
               onMaxPriceChange={(val) => updateFilters({ maxPrice: val })}
-              availability={filters.availability}
-              onAvailabilityChange={(val) =>
-                updateFilters({ availability: val })
+              minRating={filters.minRating}
+              onMinRatingChange={(val) =>
+                updateFilters({ minRating: val })
               }
+              selectedCompanies={filters.companies}
+              setSelectedCompanies={(val) => updateFilters({ companies: val })}
               language={filters.language}
               onLanguageChange={(val) => updateFilters({ language: val })}
             />

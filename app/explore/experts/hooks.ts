@@ -71,7 +71,8 @@ export function useConsultants(filters: IExpertFilters) {
     sort: sortBy,
     minPrice,
     maxPrice,
-    availability,
+    minRating,
+    companies,
     language,
   } = filters;
 
@@ -88,7 +89,8 @@ export function useConsultants(filters: IExpertFilters) {
         sort: sortBy,
         ...(minPrice !== undefined && { minPrice: String(minPrice) }),
         ...(maxPrice !== undefined && { maxPrice: String(maxPrice) }),
-        ...(availability && { availability }),
+        ...(minRating !== undefined && { minRating: String(minRating) }),
+        ...(companies.length > 0 && { companies: companies.join(",") }),
         ...(language && { language }),
       });
 
@@ -103,7 +105,8 @@ export function useConsultants(filters: IExpertFilters) {
       sortBy,
       minPrice,
       maxPrice,
-      availability,
+      minRating,
+      companies,
       language,
     ],
   );
@@ -128,7 +131,8 @@ export function useConsultants(filters: IExpertFilters) {
       sortBy,
       minPrice,
       maxPrice,
-      availability,
+      minRating,
+      companies,
       language,
     ],
     queryFn: ({ pageParam = 0 }) => fetchConsultantsData(getKey(pageParam)),

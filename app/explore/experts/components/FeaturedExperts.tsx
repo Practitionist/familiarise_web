@@ -4,7 +4,7 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { User, Star, StarHalf, ArrowRight, Award, BadgeCheck } from "lucide-react";
+import { User, Star, StarHalf, ArrowRight, Award, BadgeCheck, Globe } from "lucide-react";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import type { IConsultantCardData } from "@/types/consultant";
 
@@ -84,6 +84,7 @@ export function FeaturedExperts({ experts, isLoading }: FeaturedExpertsProps) {
             : experts.map((expert, index) => (
                 <motion.div
                   key={expert.id}
+                  className="h-full"
                   initial={{ opacity: 0, y: 20 }}
                   whileInView={{ opacity: 1, y: 0 }}
                   viewport={{ once: true }}
@@ -94,7 +95,7 @@ export function FeaturedExperts({ experts, isLoading }: FeaturedExpertsProps) {
                 >
                   <Link
                     href={`/explore/experts/${expert.id}`}
-                    className="group block"
+                    className="group block h-full"
                   >
                     <div className="bg-white rounded-2xl p-6 shadow-sm border border-zinc-200 hover:border-zinc-300 hover:shadow-lg transition-all duration-300 h-full flex flex-col">
                       {/* Avatar */}
@@ -135,7 +136,7 @@ export function FeaturedExperts({ experts, isLoading }: FeaturedExpertsProps) {
                       </div>
 
                       {/* Headline */}
-                      <div className="text-center flex-1">
+                      <div className="text-center">
                         <p className="text-sm text-zinc-600 font-medium line-clamp-1 mb-1">
                           {expert.headline || expert.domain?.name}
                         </p>
@@ -144,40 +145,55 @@ export function FeaturedExperts({ experts, isLoading }: FeaturedExpertsProps) {
                         </p>
                       </div>
 
-                      {/* Company Logos */}
-                      {expert.user.workExperiences &&
-                        expert.user.workExperiences.length > 0 && (
-                          <div className="flex items-center justify-center gap-1.5 mt-3">
-                            {expert.user.workExperiences
-                              .slice(0, 2)
-                              .map((exp, i) => (
-                                <CompanyLogo
-                                  key={`${expert.id}-company-${i}`}
-                                  companyName={exp.company}
-                                  companyDomain={exp.companyDomain ?? undefined}
-                                  size={22}
-                                  className="border-zinc-200"
-                                />
-                              ))}
+                      {/* Bottom section — pinned to bottom for consistent card height */}
+                      <div className="mt-auto pt-3">
+                        {/* Company Logos */}
+                        {expert.user.workExperiences &&
+                          expert.user.workExperiences.length > 0 && (
+                            <div className="flex items-center justify-center gap-1.5 mb-3">
+                              {expert.user.workExperiences
+                                .slice(0, 2)
+                                .map((exp, i) => (
+                                  <CompanyLogo
+                                    key={`${expert.id}-company-${i}`}
+                                    companyName={exp.company}
+                                    companyDomain={exp.companyDomain ?? undefined}
+                                    size={22}
+                                    className="border-zinc-200"
+                                  />
+                                ))}
+                            </div>
+                          )}
+
+                        {/* Languages */}
+                        {expert.languages && expert.languages.length > 0 && (
+                          <div className="flex items-center justify-center gap-1 mb-3">
+                            <Globe className="w-3 h-3 text-zinc-400 flex-shrink-0" />
+                            <p className="text-xs text-zinc-500 line-clamp-1">
+                              {expert.languages.slice(0, 3).join(", ")}
+                            </p>
                           </div>
                         )}
 
-                      {/* Tags */}
-                      <div className="flex flex-wrap gap-1.5 justify-center mt-4">
-                        {expert.tags?.slice(0, 2).map((tag) => (
-                          <Badge
-                            key={tag.id}
-                            className="text-xs px-2 py-0.5 bg-zinc-100 text-zinc-700 hover:bg-zinc-200 border-0"
-                          >
-                            {tag.name}
-                          </Badge>
-                        ))}
-                      </div>
+                        {/* Tags */}
+                        {expert.tags && expert.tags.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 justify-center mb-3">
+                            {expert.tags.slice(0, 2).map((tag) => (
+                              <Badge
+                                key={tag.id}
+                                className="text-xs px-2 py-0.5 bg-zinc-100 text-zinc-700 hover:bg-zinc-200 border-0"
+                              >
+                                {tag.name}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
 
-                      {/* View Profile */}
-                      <div className="mt-4 flex items-center justify-center gap-1 text-sm font-medium text-zinc-500 group-hover:text-zinc-900 transition-colors">
-                        <span>View Profile</span>
-                        <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                        {/* View Profile */}
+                        <div className="flex items-center justify-center gap-1 text-sm font-medium text-zinc-500 group-hover:text-zinc-900 transition-colors">
+                          <span>View Profile</span>
+                          <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                        </div>
                       </div>
                     </div>
                   </Link>
