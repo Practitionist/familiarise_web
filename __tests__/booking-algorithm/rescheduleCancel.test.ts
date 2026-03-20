@@ -810,7 +810,7 @@ describe("Cancel Route Handler - POST", () => {
   // ─── CONSULTATION Cancellation ──────────────────────────────────────────
 
   describe("CONSULTATION", () => {
-    it("should update consultation with cancellation data and delete slots/appointment", async () => {
+    it("should update consultation with cancellation data and soft-cancel slots", async () => {
       const appointment = makeConsultationAppointment();
       (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
         appointment,
@@ -838,30 +838,24 @@ describe("Cancel Route Handler - POST", () => {
         }),
       });
 
-      // Verify slots deleted
-      expect(mockTx.slotOfAppointment.deleteMany).toHaveBeenCalledWith({
+      // Verify slots soft-cancelled (not hard-deleted — preserves payment audit trail)
+      expect(mockTx.slotOfAppointment.updateMany).toHaveBeenCalledWith({
         where: { appointmentId: "apt-1" },
+        data: { completionStatus: "CANCELLED" },
       });
 
-      // Verify appointment deleted
-      expect(mockTx.appointment.delete).toHaveBeenCalledWith({
-        where: { id: "apt-1" },
-      });
+      // Verify appointment is NOT deleted (soft-cancel preserves records)
+      expect(mockTx.appointment.delete).not.toHaveBeenCalled();
     });
 
-    it("should delete slots before appointment (foreign key order)", async () => {
-      const callOrder: string[] = [];
-      mockTx.slotOfAppointment.deleteMany.mockImplementation(async () => {
-        callOrder.push("deleteSlots");
-      });
-      mockTx.appointment.delete.mockImplementation(async () => {
-        callOrder.push("deleteAppointment");
-      });
-
+    it("should soft-cancel slots via updateMany (not deleteMany)", async () => {
       const req = makeCancelRequest("apt-1");
       await cancelHandler(req, makeParams("apt-1"));
 
-      expect(callOrder).toEqual(["deleteSlots", "deleteAppointment"]);
+      // Soft-cancel: updateMany with completionStatus, not deleteMany
+      expect(mockTx.slotOfAppointment.updateMany).toHaveBeenCalled();
+      expect(mockTx.slotOfAppointment.deleteMany).not.toHaveBeenCalled();
+      expect(mockTx.appointment.delete).not.toHaveBeenCalled();
     });
   });
 

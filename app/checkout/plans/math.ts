@@ -122,34 +122,6 @@ export function calculatePricing(
 }
 
 /**
- * Format currency amount (already in major unit) for display.
- * Uses locale-appropriate formatting based on the currency code.
- */
-export function formatCurrency(
-  amount: number,
-  currency: string = "INR",
-): string {
-  // Use a currency-appropriate locale for correct grouping (e.g., ₹1,00,000 vs $100,000)
-  const LOCALE_MAP: Record<string, string> = {
-    INR: "en-IN",
-    USD: "en-US",
-    EUR: "de-DE",
-    GBP: "en-GB",
-    AUD: "en-AU",
-    CAD: "en-CA",
-    SGD: "en-SG",
-    JPY: "ja-JP",
-  };
-  const locale = LOCALE_MAP[currency.toUpperCase()] || "en-IN";
-  return new Intl.NumberFormat(locale, {
-    style: "currency",
-    currency,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(amount);
-}
-
-/**
  * Format percentage for display
  */
 export function formatPercentage(rate: number): string {

@@ -2,6 +2,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useSyncExternalStore } from "react";
+import { CURRENCY_LOCALE_MAP } from "@/utils/formatting";
 
 const STORAGE_KEY = "preferred-currency";
 const DEFAULT_CURRENCY = "INR";
@@ -101,18 +102,21 @@ export function useCurrency() {
   );
 
   const formatPrice = useCallback(
-    (amountINR: number): string => {
-      const converted = convert(amountINR);
+    (amountInPaise: number): string => {
+      // Convert from paise (smallest unit) to major unit for display
+      const amountInMajor = amountInPaise / 100;
+      const converted = convert(amountInMajor);
+      // Use currency-appropriate locale for correct grouping (e.g. ₹1,00,000 vs $100,000)
+      const locale =
+        CURRENCY_LOCALE_MAP[currency.toUpperCase()] ||
+        (typeof navigator !== "undefined" ? navigator.language : "en-IN");
       try {
-        return new Intl.NumberFormat(
-          typeof navigator !== "undefined" ? navigator.language : "en-IN",
-          {
-            style: "currency",
-            currency,
-            minimumFractionDigits: 0,
-            maximumFractionDigits: 0,
-          },
-        ).format(converted);
+        return new Intl.NumberFormat(locale, {
+          style: "currency",
+          currency,
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 0,
+        }).format(converted);
       } catch {
         return `${symbol}${Math.round(converted).toLocaleString()}`;
       }

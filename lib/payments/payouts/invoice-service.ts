@@ -161,9 +161,10 @@ export async function createInvoice(
     throw new Error(`Invoice already exists for payment: ${paymentId}`);
   }
 
-  // Calculate amounts
+  // Calculate amounts — zero-rate GST for international (non-INR) transactions
   const subtotal = items.reduce((sum, item) => sum + item.amount, 0);
-  const taxRate = TAX_CONSTANTS.GST_RATE;
+  const isInternational = payment.currency !== "INR";
+  const taxRate = isInternational ? 0 : TAX_CONSTANTS.GST_RATE;
   const taxAmount = Math.round((subtotal * taxRate) / 100);
   const total = subtotal + taxAmount;
 
@@ -266,9 +267,10 @@ export async function createInvoiceFromPayment(
       hsnCode = TAX_CONSTANTS.HSN_CODES.EDUCATION;
     }
 
-    // Tax breakdown from stored payment data (tax-exclusive: plan.price + 18% GST)
+    // Tax breakdown from stored payment data (tax-exclusive: plan.price + GST)
     const totalAmount = payment.amount;
-    const taxRate = TAX_CONSTANTS.GST_RATE;
+    const isInternational = payment.currency !== "INR";
+    const taxRate = isInternational ? 0 : TAX_CONSTANTS.GST_RATE;
     const taxAmount = payment.taxAmount;
     const baseAmount = totalAmount - taxAmount;
 

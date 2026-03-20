@@ -5,7 +5,7 @@
  * Falls back to "en-IN" for unlisted currencies since 90%+ of our
  * users are Indian — Intl handles the currency symbol regardless of locale.
  */
-const CURRENCY_LOCALE_MAP: Record<string, string> = {
+export const CURRENCY_LOCALE_MAP: Record<string, string> = {
   INR: "en-IN",
   USD: "en-US",
   EUR: "de-DE",
@@ -103,12 +103,11 @@ export function formatCurrencyAmount(
 }
 
 /**
- * Format an amount already in major currency units for display.
- * Use this when the source value is in rupees/dollars/euros
- * (e.g., Payment.amount, Refund.amount, Invoice.amount, plan.price).
+ * @deprecated After paise migration, all DB amounts are in smallest currency unit.
+ * Use formatCurrencyAmount() instead for all DB-sourced values.
  *
- * Use formatCurrencyAmount() instead when the source is in paise/cents
- * (e.g., ReferralCredit.amount, ConsultantEarnings.consultantShare, Dispute.amount).
+ * Format an amount already in major currency units for display.
+ * Only use this for user-input values that haven't been converted to paise yet.
  *
  * @param amount   - Amount in major units (e.g., 14990 rupees = ₹14,990, 100 dollars = $100)
  * @param currency - ISO 4217 currency code (required)

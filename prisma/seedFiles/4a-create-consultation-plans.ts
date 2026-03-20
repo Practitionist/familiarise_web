@@ -20,7 +20,7 @@ export async function createConsultationPlans(consultants: UserWithProfiles[]) {
             title: "Basic Consultation",
             description: faker.lorem.paragraph(),
             durationInHours: 1,
-            price: faker.number.int({ min: 2000, max: 5000 }), // $20 to $50
+            price: faker.number.int({ min: 200000, max: 500000 }), // ₹2000-₹5000 in paise
             priceCurrency: "INR",
             language: faker.helpers.arrayElement([
               "English",
@@ -50,7 +50,7 @@ export async function createConsultationPlans(consultants: UserWithProfiles[]) {
             title: "Extended Consultation",
             description: faker.lorem.paragraph(),
             durationInHours: 2,
-            price: faker.number.int({ min: 4000, max: 10000 }), // $40 to $100
+            price: faker.number.int({ min: 400000, max: 1000000 }), // ₹4000-₹10000 in paise
             priceCurrency: "INR",
             language: faker.helpers.arrayElement([
               "English",
@@ -80,7 +80,7 @@ export async function createConsultationPlans(consultants: UserWithProfiles[]) {
             title: "Comprehensive Consultation",
             description: faker.lorem.paragraph(),
             durationInHours: 4,
-            price: faker.number.int({ min: 7500, max: 20000 }), // $75 to $200
+            price: faker.number.int({ min: 750000, max: 2000000 }), // ₹7500-₹20000 in paise
             priceCurrency: "INR",
             language: faker.helpers.arrayElement([
               "English",

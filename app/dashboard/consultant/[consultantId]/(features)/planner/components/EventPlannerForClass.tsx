@@ -117,7 +117,7 @@ export function EventPlannerForClass({
       ? {
           title: initialData.classPlan.title,
           description: initialData.classPlan.description ?? "",
-          price: initialData.classPlan.price,
+          price: (initialData.classPlan.price ?? 0) / 100,
           priceCurrency: initialData.classPlan.priceCurrency ?? "INR",
           durationInMonths: initialData.classPlan.durationInMonths,
           maxParticipants: initialData.classPlan.maxParticipants,
@@ -163,7 +163,7 @@ export function EventPlannerForClass({
       form.reset({
         title: initialData.classPlan.title,
         description: initialData.classPlan.description ?? "",
-        price: initialData.classPlan.price,
+        price: (initialData.classPlan.price ?? 0) / 100,
         priceCurrency: initialData.classPlan.priceCurrency ?? "INR",
         durationInMonths: initialData.classPlan.durationInMonths,
         maxParticipants: initialData.classPlan.maxParticipants,
@@ -279,7 +279,7 @@ export function EventPlannerForClass({
           id: initialData?.classPlan?.id ?? "",
           title: formData.title,
           description: formData.description || "",
-          price: formData.price,
+          price: Math.round(formData.price * 100),
           priceCurrency: formData.priceCurrency ?? "INR",
           durationInMonths: formData.durationInMonths,
           maxParticipants: formData.maxParticipants,

@@ -159,7 +159,7 @@ export function EventPlannerForWebinar({
     defaultValues: {
       title: initialData?.webinarPlan?.title ?? "",
       description: initialData?.webinarPlan?.description ?? "",
-      price: initialData?.webinarPlan?.price ?? 0,
+      price: (initialData?.webinarPlan?.price ?? 0) / 100,
       priceCurrency: initialData?.webinarPlan?.priceCurrency ?? "INR",
       durationInHours: initialData?.webinarPlan?.durationInHours ?? 1,
       maxParticipants: initialData?.webinarPlan?.maxParticipants ?? 100,
@@ -183,7 +183,7 @@ export function EventPlannerForWebinar({
       form.reset({
         title: initialData.webinarPlan.title,
         description: initialData.webinarPlan.description ?? "",
-        price: initialData.webinarPlan.price,
+        price: (initialData.webinarPlan.price ?? 0) / 100,
         priceCurrency: initialData.webinarPlan.priceCurrency ?? "INR",
         durationInHours: initialData.webinarPlan.durationInHours,
         maxParticipants: initialData.webinarPlan.maxParticipants,
@@ -271,7 +271,7 @@ export function EventPlannerForWebinar({
           id: initialData?.webinarPlan?.id ?? "",
           title: formData.title,
           description: formData.description ?? "",
-          price: formData.price,
+          price: Math.round(formData.price * 100),
           priceCurrency: formData.priceCurrency ?? "INR",
           certificateProvided: formData.certificateProvided ?? false,
           recordingEnabled: formData.recordingEnabled ?? false,

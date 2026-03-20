@@ -1,4 +1,4 @@
-import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
+import { useQuery, useInfiniteQuery, keepPreviousData } from "@tanstack/react-query";
 import type { IConsultantCardData } from "@/types/consultant";
 import { SortOption } from "./components/SearchBar";
 import { useCallback, useMemo } from "react";
@@ -71,7 +71,8 @@ export function useConsultants(filters: IExpertFilters) {
     sort: sortBy,
     minPrice,
     maxPrice,
-    availability,
+    minRating,
+    companies,
     language,
   } = filters;
 
@@ -88,7 +89,8 @@ export function useConsultants(filters: IExpertFilters) {
         sort: sortBy,
         ...(minPrice !== undefined && { minPrice: String(minPrice) }),
         ...(maxPrice !== undefined && { maxPrice: String(maxPrice) }),
-        ...(availability && { availability }),
+        ...(minRating !== undefined && { minRating: String(minRating) }),
+        ...(companies.length > 0 && { companies: companies.join(",") }),
         ...(language && { language }),
       });
 
@@ -103,7 +105,8 @@ export function useConsultants(filters: IExpertFilters) {
       sortBy,
       minPrice,
       maxPrice,
-      availability,
+      minRating,
+      companies,
       language,
     ],
   );
@@ -114,6 +117,7 @@ export function useConsultants(filters: IExpertFilters) {
     fetchNextPage,
     hasNextPage,
     isLoading,
+    isFetching,
     isFetchingNextPage,
     refetch,
   } = useInfiniteQuery({
@@ -127,7 +131,8 @@ export function useConsultants(filters: IExpertFilters) {
       sortBy,
       minPrice,
       maxPrice,
-      availability,
+      minRating,
+      companies,
       language,
     ],
     queryFn: ({ pageParam = 0 }) => fetchConsultantsData(getKey(pageParam)),
@@ -138,6 +143,7 @@ export function useConsultants(filters: IExpertFilters) {
       return undefined;
     },
     initialPageParam: 0,
+    placeholderData: keepPreviousData,
     staleTime: 2 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
     retry: 3,
@@ -157,6 +163,7 @@ export function useConsultants(filters: IExpertFilters) {
     error,
     isLoading,
     isLoadingMore,
+    isRefetching: isFetching && !isLoading && !isFetchingNextPage,
     hasMore,
     loadMore: () => fetchNextPage(),
     refresh: refetch,

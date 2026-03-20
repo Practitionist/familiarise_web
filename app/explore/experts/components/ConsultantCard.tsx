@@ -14,6 +14,7 @@ import {
   MapPin,
   Clock,
   Briefcase,
+  Globe,
   ArrowRight,
   CheckCircle2,
   BadgeCheck,
@@ -73,7 +74,7 @@ const SubscriptionPlanCard = ({
     <div className="bg-white rounded-xl p-5 border border-zinc-200">
       <div className="flex flex-wrap items-baseline justify-between gap-2 mb-4">
         <div className="text-2xl sm:text-3xl font-bold text-zinc-900">
-          {formatPrice(plan.price / 100)}
+          {formatPrice(plan.price)}
         </div>
         <div className="text-xs sm:text-sm text-zinc-500 font-medium bg-zinc-100 px-2 sm:px-3 py-1 rounded-full whitespace-nowrap">
           {formatDuration(plan.durationInMonths)}
@@ -188,6 +189,14 @@ export const ConsultantCard = memo(function ConsultantCard({
                 value={consultant.domain?.name}
               />
             </div>
+            {/* Languages */}
+            {consultant.languages && consultant.languages.length > 0 && (
+              <ConsultantInfo
+                icon={Globe}
+                label="Languages"
+                value={consultant.languages.join(", ")}
+              />
+            )}
           </div>
 
           {/* Company Logos */}

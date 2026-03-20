@@ -94,6 +94,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Validate provider/accountType compatibility
+    if (data.provider === "STRIPE" && data.accountType !== "BANK_ACCOUNT") {
+      // Stripe Connect requires separate onboarding flow, not BANK_ACCOUNT/UPI creation
+      return NextResponse.json(
+        {
+          error:
+            "Stripe payouts require Stripe Connect onboarding. Use the Stripe Connect flow instead.",
+        },
+        { status: 400 },
+      );
+    }
+
     // Validate based on account type
     if (data.accountType === "BANK_ACCOUNT") {
       if (!data.accountNumber || !data.ifscCode) {
