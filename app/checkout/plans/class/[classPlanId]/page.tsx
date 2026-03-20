@@ -26,6 +26,7 @@ import {
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import type { AppliedDiscount } from "@/types/checkout";
+import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 
 import type {
   Appointment,
@@ -85,6 +86,7 @@ export default function ClassCheckoutPage({
   const resolvedSearchParams = use(searchParams);
 
   const { formatPrice, currency } = useCurrency();
+  const checkoutTaxContext = useCheckoutTaxContext();
   const [planData, setPlanData] = useState<PlanResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -234,6 +236,7 @@ export default function ClassCheckoutPage({
           planId: planData.data.id,
           eventId: firstClassId,
           discountCode: appliedDiscount?.code,
+          displayCurrency: currency,
           paymentGateway: gateway,
           fromWaitlist,
           useReferralCredits,
@@ -358,14 +361,14 @@ export default function ClassCheckoutPage({
       discountPercent: discountAmount > 0 ? 0 : discountPercent,
       discountAmount,
       creditsApplied: useReferralCredits ? availableCredits : 0,
-      isInternational: currency !== "INR",
+      isInternational: checkoutTaxContext.isInternational,
     });
   }, [
     planData?.data?.price,
     appliedDiscount,
     useReferralCredits,
     availableCredits,
-    currency,
+    checkoutTaxContext.isInternational,
   ]);
 
   if (isLoading) {
@@ -718,17 +721,16 @@ export default function ClassCheckoutPage({
           {[
             {
               name: "Stripe",
-              description: "International payments in USD",
+              description: "Card payments (international)",
               gateway: "STRIPE" as const,
               isActive: true,
             },
             {
               name: "Razorpay",
-              description: "Indian payments in INR",
+              description: "UPI, cards & bank transfer",
               gateway: "RAZORPAY" as const,
               isActive: true,
             },
-            // TODO: Add Lemon Squeezy and XFlow when webhook appointment creation is implemented
           ].map((gateway) => (
             <Card key={gateway.name} className="border-zinc-200">
               <CardHeader>
@@ -757,6 +759,7 @@ export default function ClassCheckoutPage({
                             eventId: planDetails.classes[0]?.id,
                             paymentGateway: "RAZORPAY",
                             discountCode: appliedDiscount?.code,
+                            displayCurrency: currency,
                             useReferralCredits,
                           })}
                           onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
@@ -771,6 +774,7 @@ export default function ClassCheckoutPage({
                             eventId: planDetails.classes[0]?.id,
                             paymentGateway: "STRIPE",
                             discountCode: appliedDiscount?.code,
+                            displayCurrency: currency,
                             useReferralCredits,
                           })}
                           onPaymentSuccess={stripeHandlers.onPaymentSuccess}

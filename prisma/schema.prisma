@@ -1505,7 +1505,8 @@ model Payment {
   // International payment tracking
   buyerCountry           String?  // ISO 3166-1 alpha-2 code detected at checkout
   isInternational        Boolean  @default(false) // Denormalized for query efficiency
-  exchangeRateAtCheckout Float?   // Snapshot of INR→display-currency rate for audit
+  displayCurrencyAtCheckout String? @db.VarChar(3) // Currency code shown to the buyer at checkout
+  exchangeRateAtCheckout Float?   // Snapshot of INR→displayCurrencyAtCheckout for audit
 
   user           User          @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId         String
@@ -1697,6 +1698,7 @@ model Payout {
   // TDS (Tax Deducted at Source) — Section 194J
   tdsDeducted Int @default(0) // TDS amount deducted from this payout, in paise
   netAmount   Int? // Amount after TDS deduction (amount - tdsDeducted), sent to gateway
+  tdsRateApplied Float? // TDS rate reserved for this payout, used when creating the final audit record
 
   // Processing
   failureReason String?
@@ -1784,7 +1786,7 @@ model TDSRecord {
   quarter                 Int     // 1=Apr-Jun, 2=Jul-Sep, 3=Oct-Dec, 4=Jan-Mar
 
   // Amounts in paise
-  cumulativeGrossPayments Int     // Sum of all grossAmount for this FY up to this record
+  cumulativeAmountCredited Int    // FY cumulative of amounts credited/paid to consultant (sum of completed payouts)
   tdsDeducted             Int     // TDS amount deducted this record
   tdsRate                 Float   // Rate at time of deduction (10 or 20)
 

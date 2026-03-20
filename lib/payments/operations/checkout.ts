@@ -30,6 +30,7 @@ import {
   countWebinarParticipants,
 } from "@/lib/payments/utils/participants";
 import { markWaitlistAsBooked } from "@/lib/waitlist/slot-handler";
+import { getExchangeRates } from "@/lib/currency";
 import {
   applyCreditsToPayment,
   getUserCredits,
@@ -48,7 +49,6 @@ import {
   validatePlanCurrency,
   validateDiscountCurrency,
 } from "@/lib/payments/validation/currency-guards";
-import { getExchangeRates } from "@/lib/currency";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -1504,13 +1504,15 @@ export async function handleCheckout(
       isInternational,
     } = await calculateAmountAndValidate(validatedData, userId, buyerCountry);
 
-    // Snapshot exchange rate for international payments (audit trail)
+    const displayCurrencyAtCheckout =
+      validatedData.displayCurrency?.toUpperCase() || currency;
+
+    // Snapshot the displayed exchange rate for auditability.
     let exchangeRateAtCheckout: number | null = null;
-    if (isInternational) {
+    if (displayCurrencyAtCheckout !== "INR") {
       try {
         const rates = await getExchangeRates();
-        // Use USD as the reference rate for international audit trail
-        exchangeRateAtCheckout = rates["USD"] ?? null;
+        exchangeRateAtCheckout = rates[displayCurrencyAtCheckout] ?? null;
       } catch {
         // Non-critical — don't block checkout if rate fetch fails
       }
@@ -1642,6 +1644,7 @@ export async function handleCheckout(
               expiresAt: new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
               buyerCountry: detectedBuyerCountry,
               isInternational,
+              displayCurrencyAtCheckout,
               exchangeRateAtCheckout,
             },
           });

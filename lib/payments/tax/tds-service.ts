@@ -12,6 +12,7 @@
  */
 
 import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 
 // ============================================================================
 // Constants
@@ -74,9 +75,8 @@ export function getFYDateRange(fy: string): { start: Date; end: Date } {
 // ============================================================================
 
 /**
- * Get cumulative consultant share payments for the current FY.
- * Uses consultantShare (amount credited/paid to consultant) as the basis,
- * per Section 194J — TDS applies to the amount credited, not the full sale.
+ * Get cumulative payout amounts actually credited/paid for the current FY.
+ * Uses completed payouts as the basis instead of raw earnings creation time.
  */
 export async function getCurrentFYCumulativePayments(
   consultantProfileId: string,
@@ -85,16 +85,16 @@ export async function getCurrentFYCumulativePayments(
   const fy = financialYear || getIndianFinancialYear();
   const { start, end } = getFYDateRange(fy);
 
-  const result = await prisma.consultantEarnings.aggregate({
+  const result = await prisma.payout.aggregate({
     where: {
       consultantProfileId,
-      createdAt: { gte: start, lte: end },
-      status: { not: "REFUNDED" },
+      status: "COMPLETED",
+      processedAt: { gte: start, lte: end },
     },
-    _sum: { consultantShare: true },
+    _sum: { amount: true },
   });
 
-  return result._sum.consultantShare || 0;
+  return result._sum.amount || 0;
 }
 
 /**
@@ -124,9 +124,9 @@ export interface TDSCalculationResult {
   tdsRate: number;
   /** Whether cumulative payments crossed the threshold */
   isAboveThreshold: boolean;
-  /** Cumulative gross payments for FY (BEFORE this payout), in paise */
+  /** Cumulative credited/payout amounts for FY (BEFORE this payout), in paise */
   cumulativeBeforePayout: number;
-  /** Cumulative gross payments for FY (AFTER this payout), in paise */
+  /** Cumulative credited/payout amounts for FY (AFTER this payout), in paise */
   cumulativeAfterPayout: number;
   /** Current financial year */
   financialYear: string;
@@ -205,18 +205,21 @@ export async function recordTDSDeduction(params: {
   financialYear: string;
   tdsDeducted: number;
   tdsRate: number;
-  cumulativeGrossPayments: number;
+  cumulativeAmountCredited: number;
   payoutId?: string;
   earningsId?: string;
+  db?: Prisma.TransactionClient | typeof prisma;
 }) {
   const quarter = getIndianFYQuarter();
 
-  return prisma.tDSRecord.create({
+  const db = params.db || prisma;
+
+  return db.tDSRecord.create({
     data: {
       consultantProfileId: params.consultantProfileId,
       financialYear: params.financialYear,
       quarter,
-      cumulativeGrossPayments: params.cumulativeGrossPayments,
+      cumulativeAmountCredited: params.cumulativeAmountCredited,
       tdsDeducted: params.tdsDeducted,
       tdsRate: params.tdsRate,
       payoutId: params.payoutId,
@@ -270,7 +273,7 @@ export async function getConsultantTDSBreakdown(financialYear: string) {
   return prisma.tDSRecord.groupBy({
     by: ["consultantProfileId", "tdsRate"],
     where: { financialYear },
-    _sum: { tdsDeducted: true, cumulativeGrossPayments: true },
+    _sum: { tdsDeducted: true, cumulativeAmountCredited: true },
     _count: true,
     orderBy: { _sum: { tdsDeducted: "desc" } },
   });

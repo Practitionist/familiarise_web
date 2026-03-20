@@ -85,6 +85,7 @@ export const checkoutSchema = z
     schedulingPeriodEndsAt: z.string().datetime().optional(),
     discountCode: z.string().optional(),
     paymentGateway: paymentGatewaySchema.default("RAZORPAY"), // Server auto-routes; client hint only
+    displayCurrency: z.string().length(3).optional(), // Currency shown in the checkout UI
     notes: z.string().optional(),
     fromWaitlist: z.string().optional(), // Waitlist ID if coming from waitlist flow
     useReferralCredits: z.boolean().optional(), // Apply available referral credits
@@ -300,6 +301,7 @@ export const createCheckoutData = (params: {
   schedulingPeriodStartsAt?: string;
   schedulingPeriodEndsAt?: string;
   discountCode?: string;
+  displayCurrency?: string;
   notes?: string;
   fromWaitlist?: string;
   useReferralCredits?: boolean;
@@ -316,6 +318,7 @@ export const createCheckoutData = (params: {
     schedulingPeriodStartsAt: params.schedulingPeriodStartsAt,
     schedulingPeriodEndsAt: params.schedulingPeriodEndsAt,
     discountCode: params.discountCode,
+    displayCurrency: params.displayCurrency?.toUpperCase(),
     notes: params.notes,
     fromWaitlist: params.fromWaitlist,
     useReferralCredits: params.useReferralCredits,

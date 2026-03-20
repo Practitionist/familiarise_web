@@ -8,12 +8,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import { checkoutLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { ZodError } from "zod";
-import prisma from "@/lib/prisma";
-import {
-  detectBuyerCountry,
-  extractBuyerCountryParams,
-} from "@/lib/payments/tax/buyer-country";
 import { routeGateway } from "@/lib/payments/gateway-router";
+import { resolveCheckoutTaxContext } from "@/lib/payments/tax/checkout-context";
 
 export async function POST(req: NextRequest) {
   try {
@@ -34,16 +30,9 @@ export async function POST(req: NextRequest) {
     const isMockPayment =
       body.isMockPayment === true && process.env.NODE_ENV === "development";
 
-    // Detect buyer country for tax jurisdiction and gateway routing
-    // Fetch user.country from DB (not on session type) for highest-confidence detection
-    const userRecord = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { country: true },
-    });
-    const headerParams = extractBuyerCountryParams(req.headers);
-    const buyerCountry = detectBuyerCountry({
-      userCountry: userRecord?.country,
-      ...headerParams,
+    const { buyerCountry } = await resolveCheckoutTaxContext({
+      userId: session.user.id,
+      headers: req.headers,
     });
 
     // Auto-route to optimal gateway (Razorpay domestic/IBT, Stripe fallback)

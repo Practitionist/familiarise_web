@@ -23,6 +23,8 @@ import { randomUUID } from "crypto";
 import { acquireLock, releaseLock } from "@/lib/redis";
 import {
   calculateTDS,
+  getFYDateRange,
+  getIndianFinancialYear,
   recordTDSDeduction,
 } from "@/lib/payments/tax/tds-service";
 
@@ -502,21 +504,10 @@ async function processSinglePayout(payout: {
         providerPayoutId,
         tdsDeducted: tdsResult.tdsAmount,
         netAmount: payoutAmountAfterTDS,
+        tdsRateApplied: tdsResult.tdsRate || null,
         status: PayoutStatus.PROCESSING, // Will be updated via webhook
       },
     });
-
-    // Record TDS deduction for Form 26Q filing
-    if (tdsResult.tdsAmount > 0) {
-      await recordTDSDeduction({
-        consultantProfileId: payout.consultantProfileId,
-        financialYear: tdsResult.financialYear,
-        tdsDeducted: tdsResult.tdsAmount,
-        tdsRate: tdsResult.tdsRate,
-        cumulativeGrossPayments: tdsResult.cumulativeAfterPayout,
-        payoutId: payout.id,
-      });
-    }
 
     return {
       payoutId: payout.id,
@@ -534,6 +525,9 @@ async function processSinglePayout(payout: {
         status: PayoutStatus.FAILED,
         failureReason: errorMessage,
         retryCount: { increment: 1 },
+        tdsDeducted: 0,
+        netAmount: null,
+        tdsRateApplied: null,
       },
     });
 
@@ -707,6 +701,20 @@ export async function handlePayoutWebhook(
 
     // If completed, update earnings and consultant stats
     if (payoutStatus === PayoutStatus.COMPLETED) {
+      const financialYear = getIndianFinancialYear();
+      const { start, end } = getFYDateRange(financialYear);
+      const previousCompletedPayouts = await tx.payout.aggregate({
+        where: {
+          consultantProfileId: payout.consultantProfileId,
+          status: PayoutStatus.COMPLETED,
+          processedAt: { gte: start, lte: end },
+          id: { not: payout.id },
+        },
+        _sum: { amount: true },
+      });
+      const cumulativeCreditedPayments =
+        (previousCompletedPayouts._sum.amount || 0) + payout.amount;
+
       // Update earnings to PAID
       await tx.consultantEarnings.updateMany({
         where: { payoutId: payout.id },
@@ -724,6 +732,22 @@ export async function handlePayoutWebhook(
           pendingRevenue: { decrement: payout.amount },
         },
       });
+
+      if (payout.tdsDeducted > 0 && payout.tdsRateApplied) {
+        await tx.tDSRecord.deleteMany({
+          where: { payoutId: payout.id },
+        });
+
+        await recordTDSDeduction({
+          consultantProfileId: payout.consultantProfileId,
+          financialYear,
+          tdsDeducted: payout.tdsDeducted,
+          tdsRate: payout.tdsRateApplied,
+          cumulativeAmountCredited: cumulativeCreditedPayments,
+          payoutId: payout.id,
+          db: tx,
+        });
+      }
     }
 
     // If failed or cancelled, unlink earnings and reverse TDS records
@@ -749,6 +773,7 @@ export async function handlePayoutWebhook(
         data: {
           tdsDeducted: 0,
           netAmount: null,
+          tdsRateApplied: null,
         },
       });
     }

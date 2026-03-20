@@ -28,6 +28,7 @@ import {
 } from "../../utils";
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
+import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 import type { AppliedDiscount } from "@/types/checkout";
 
 import type {
@@ -90,6 +91,7 @@ export default function WebinarCheckoutPage({
   const resolvedSearchParams = use(searchParams);
 
   const { formatPrice, currency } = useCurrency();
+  const checkoutTaxContext = useCheckoutTaxContext();
   const [planData, setPlanData] = useState<PlanResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -231,6 +233,7 @@ export default function WebinarCheckoutPage({
           eventId: searchParamsValidation.data.eventId,
           discountCode: appliedDiscount?.code,
           paymentGateway: gateway,
+          displayCurrency: currency,
           fromWaitlist,
           useReferralCredits,
         });
@@ -355,14 +358,14 @@ export default function WebinarCheckoutPage({
       discountPercent: discountAmount > 0 ? 0 : discountPercent,
       discountAmount,
       creditsApplied: useReferralCredits ? availableCredits : 0,
-      isInternational: currency !== "INR",
+      isInternational: checkoutTaxContext.isInternational,
     });
   }, [
     planData?.data?.price,
     appliedDiscount,
     useReferralCredits,
     availableCredits,
-    currency,
+    checkoutTaxContext.isInternational,
   ]);
 
   if (isLoading) {
@@ -689,21 +692,19 @@ export default function WebinarCheckoutPage({
               Select your preferred payment method
             </div>
           </div>
-          {/* Payment Gateway Cards */}
           {[
             {
               name: "Stripe",
-              description: "International payments in USD",
+              description: "Card payments (international)",
               gateway: "STRIPE" as const,
               isActive: true,
             },
             {
               name: "Razorpay",
-              description: "Indian payments in INR",
+              description: "UPI, cards & bank transfer",
               gateway: "RAZORPAY" as const,
               isActive: true,
             },
-            // TODO: Add Lemon Squeezy and XFlow when webhook appointment creation is implemented
           ].map((gateway) => (
             <Card key={gateway.name} className="border-zinc-200">
               <CardHeader>
@@ -724,7 +725,6 @@ export default function WebinarCheckoutPage({
                   </div>
                   {gateway.isActive ? (
                     <div className="flex gap-2">
-                      {/* Real Payment Button */}
                       {gateway.gateway === "RAZORPAY" ? (
                         <RazorpayCheckout
                           checkoutData={createCheckoutData({
@@ -733,6 +733,7 @@ export default function WebinarCheckoutPage({
                             eventId: planDetails.webinars[0]?.id,
                             paymentGateway: "RAZORPAY",
                             discountCode: appliedDiscount?.code,
+                            displayCurrency: currency,
                             useReferralCredits,
                           })}
                           onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
@@ -747,6 +748,7 @@ export default function WebinarCheckoutPage({
                             eventId: planDetails.webinars[0]?.id,
                             paymentGateway: "STRIPE",
                             discountCode: appliedDiscount?.code,
+                            displayCurrency: currency,
                             useReferralCredits,
                           })}
                           onPaymentSuccess={stripeHandlers.onPaymentSuccess}
@@ -754,7 +756,6 @@ export default function WebinarCheckoutPage({
                           disabled={isMaintenanceBlocked}
                         />
                       ) : null}
-                      {/* Mock Payment Button */}
                       <Button
                         variant="secondary"
                         onClick={() => handleCheckout(gateway.gateway, true)}
