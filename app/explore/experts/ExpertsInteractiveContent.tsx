@@ -74,6 +74,7 @@ export default function ExpertsInteractiveContent({
     consultants,
     isLoading: isLoadingConsultants,
     isLoadingMore,
+    isRefetching,
     hasMore,
     loadMore,
   } = useConsultants(filters);
@@ -359,14 +360,18 @@ export default function ExpertsInteractiveContent({
 
           {/* Results */}
           <div className="mt-8 min-h-[400px] relative">
-            {isLoadingConsultants ? (
-              <div className="absolute inset-0 flex items-center justify-center bg-white/80 backdrop-blur-sm rounded-2xl">
+            {/* Loading overlay — on top of stale results to preserve scroll position */}
+            {(isLoadingConsultants || isRefetching) && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/80 backdrop-blur-sm rounded-2xl">
                 <div className="flex flex-col items-center gap-4">
                   <div className="w-12 h-12 border-4 border-zinc-200 border-t-zinc-900 rounded-full animate-spin" />
                   <p className="text-zinc-500 text-sm">Finding experts...</p>
                 </div>
               </div>
-            ) : filters.domain ? (
+            )}
+
+            {/* Consultant cards — always rendered (stale placeholder data stays visible during refetch) */}
+            {filters.domain ? (
               <>
                 {metadata?.domains.map((domain) => {
                   const domainConsultants =
@@ -414,40 +419,38 @@ export default function ExpertsInteractiveContent({
                     </motion.div>
                   );
                 })}
-
-                {consultants.length === 0 && <EmptyState />}
               </>
             ) : (
-              <>
-                <div className="space-y-6">
-                  {consultants.map(
-                    (consultant: IConsultantCardData, index: number) => (
-                      <motion.div
-                        key={consultant.id}
-                        ref={
-                          index === consultants.length - 1
-                            ? lastConsultantRef
-                            : undefined
-                        }
-                        initial={{ opacity: 0, y: 20 }}
-                        whileInView={{ opacity: 1, y: 0 }}
-                        viewport={{ once: true }}
-                        transition={{
-                          duration: 0.4,
-                          delay: Math.min(index * 0.05, 0.6),
-                        }}
-                      >
-                        <ConsultantCard
-                          consultant={consultant}
-                          metadata={metadata}
-                        />
-                      </motion.div>
-                    ),
-                  )}
-                </div>
+              <div className="space-y-6">
+                {consultants.map(
+                  (consultant: IConsultantCardData, index: number) => (
+                    <motion.div
+                      key={consultant.id}
+                      ref={
+                        index === consultants.length - 1
+                          ? lastConsultantRef
+                          : undefined
+                      }
+                      initial={{ opacity: 0, y: 20 }}
+                      whileInView={{ opacity: 1, y: 0 }}
+                      viewport={{ once: true }}
+                      transition={{
+                        duration: 0.4,
+                        delay: Math.min(index * 0.05, 0.6),
+                      }}
+                    >
+                      <ConsultantCard
+                        consultant={consultant}
+                        metadata={metadata}
+                      />
+                    </motion.div>
+                  ),
+                )}
+              </div>
+            )}
 
-                {consultants.length === 0 && <EmptyState />}
-              </>
+            {consultants.length === 0 && !isLoadingConsultants && !isRefetching && (
+              <EmptyState />
             )}
 
             {isLoadingMore && (
