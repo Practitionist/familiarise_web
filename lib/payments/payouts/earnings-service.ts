@@ -7,6 +7,7 @@ import prisma from "@/lib/prisma";
 import { EarningRole, EarningStatus, Payment, Prisma } from "@prisma/client";
 import { PAYOUT_CONSTANTS, AppointmentType } from "./constants";
 import { calculateRevenueSplit } from "@/lib/collaborators/service";
+import { getIndianFYQuarter } from "@/lib/payments/tax/tds-service";
 
 // ============================================
 // Types
@@ -334,7 +335,10 @@ export async function getConsultantEarnings(
 /**
  * Refund earnings (called when a payment is refunded)
  */
-export async function refundEarnings(paymentId: string): Promise<boolean> {
+export async function refundEarnings(
+  paymentId: string,
+  options?: { forceRefund?: boolean },
+): Promise<boolean> {
   const allEarnings = await prisma.consultantEarnings.findMany({
     where: { paymentId },
   });
@@ -354,15 +358,62 @@ export async function refundEarnings(paymentId: string): Promise<boolean> {
       continue;
     }
 
-    // Can only refund if not yet paid out
+    // Handle already-paid earnings (payout completed)
     if (earnings.status === EarningStatus.PAID) {
-      console.error(
-        `Cannot refund earnings ${earnings.id} - already paid out. Manual intervention required.`,
-      );
+      if (!options?.forceRefund) {
+        console.error(
+          `Cannot refund earnings ${earnings.id} - already paid out. Use forceRefund: true to proceed with TDS reversal.`,
+        );
+        continue;
+      }
+
+      // Force refund of PAID earnings: create TDS reversal record
+      if (earnings.payoutId) {
+        const tdsRecord = await prisma.tDSRecord.findFirst({
+          where: {
+            payoutId: earnings.payoutId,
+            consultantProfileId: earnings.consultantProfileId,
+            isReversal: false,
+          },
+        });
+
+        if (tdsRecord && tdsRecord.tdsDeducted > 0) {
+          await prisma.tDSRecord.create({
+            data: {
+              consultantProfileId: earnings.consultantProfileId,
+              financialYear: tdsRecord.financialYear,
+              quarter: getIndianFYQuarter(),
+              cumulativeAmountCredited: tdsRecord.cumulativeAmountCredited,
+              tdsDeducted: -tdsRecord.tdsDeducted,
+              tdsRate: tdsRecord.tdsRate,
+              payoutId: earnings.payoutId,
+              earningsId: earnings.id,
+              isReversal: true,
+            },
+          });
+
+          console.log(
+            `TDS reversal created for earnings ${earnings.id}: -${tdsRecord.tdsDeducted} paise`,
+          );
+        }
+      }
+
+      // Mark as refunded
+      await prisma.consultantEarnings.update({
+        where: { id: earnings.id },
+        data: { status: EarningStatus.REFUNDED },
+      });
+
+      // For PAID earnings, decrement totalRevenue (not pendingRevenue — already paid)
+      await prisma.consultantProfile.update({
+        where: { id: earnings.consultantProfileId },
+        data: { totalRevenue: { decrement: earnings.consultantShare } },
+      });
+
       continue;
     }
 
-    // Update earnings status to refunded
+    // Update earnings status to refunded (PENDING/HELD/READY)
     await prisma.consultantEarnings.update({
       where: { id: earnings.id },
       data: {

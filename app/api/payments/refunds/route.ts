@@ -62,6 +62,29 @@ export async function POST(req: NextRequest) {
     const { paymentId, amount, reason, forceRefund } =
       createRefundSchema.parse(body);
 
+    // Fetch exchange rate for international payment audit (before transaction)
+    let refundExchangeRate: number | null = null;
+    let refundDisplayCurrency: string | null = null;
+
+    const paymentForRateCheck = await prisma.payment.findUnique({
+      where: { id: paymentId },
+      select: { isInternational: true, displayCurrencyAtCheckout: true },
+    });
+
+    if (
+      paymentForRateCheck?.isInternational &&
+      paymentForRateCheck.displayCurrencyAtCheckout
+    ) {
+      refundDisplayCurrency = paymentForRateCheck.displayCurrencyAtCheckout;
+      try {
+        const { getExchangeRates } = await import("@/lib/currency");
+        const rates = await getExchangeRates();
+        refundExchangeRate = rates[refundDisplayCurrency] ?? null;
+      } catch {
+        console.warn("Failed to fetch exchange rate for refund audit");
+      }
+    }
+
     // ==========================================================================
     // TWO-PHASE REFUND PATTERN
     // ==========================================================================
@@ -139,7 +162,9 @@ export async function POST(req: NextRequest) {
           status: "PENDING",
           refundId: `pending_${crypto.randomUUID()}`,
           paymentGateway: payment.paymentGateway,
-          metadata: {},
+          metadata: { forceRefund: forceRefund ?? false },
+          exchangeRateAtRefund: refundExchangeRate,
+          displayCurrency: refundDisplayCurrency,
           paymentId: payment.id,
         },
       });

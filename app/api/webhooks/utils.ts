@@ -119,7 +119,19 @@ export async function handleRefundCreated(
       if (mapRefundStatus(refundStatus) !== "SUCCEEDED") return;
 
       try {
-        await refundEarnings(paymentId);
+        // Check if any refund for this payment has forceRefund in metadata
+        const refunds = await prisma.refund.findMany({
+          where: { paymentId },
+          select: { metadata: true },
+        });
+        const hasForceRefund = refunds.some(
+          (r) =>
+            r.metadata &&
+            typeof r.metadata === "object" &&
+            (r.metadata as Record<string, unknown>).forceRefund === true,
+        );
+
+        await refundEarnings(paymentId, { forceRefund: hasForceRefund });
         console.log(`💰 Earnings refunded for payment ${paymentId}`);
       } catch (earningsError) {
         // Log but don't fail - earnings can be manually updated
@@ -580,8 +592,22 @@ export async function handleRefundForEarnings(
     return;
   }
 
+  // Check if any refund for this payment has forceRefund in metadata
+  const refunds = await prisma.refund.findMany({
+    where: { paymentId: payment.id },
+    select: { metadata: true },
+  });
+  const hasForceRefund = refunds.some(
+    (r) =>
+      r.metadata &&
+      typeof r.metadata === "object" &&
+      (r.metadata as Record<string, unknown>).forceRefund === true,
+  );
+
   // Refund the earnings (will mark as REFUNDED and update consultant balance)
-  const success = await refundEarnings(payment.id);
+  const success = await refundEarnings(payment.id, {
+    forceRefund: hasForceRefund,
+  });
 
   if (success) {
     console.log(`✅ Earnings refunded for payment ${payment.id}`);

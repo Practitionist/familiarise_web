@@ -147,6 +147,26 @@ export async function calculateTDS(params: {
   const { consultantProfileId, payoutAmountPaise } = params;
   const financialYear = getIndianFinancialYear();
 
+  // Fetch tax info early for residency check + PAN verification
+  const taxInfo = await prisma.consultantTaxInfo.findUnique({
+    where: { consultantProfileId },
+  });
+
+  // Non-resident guard: Section 194J does not apply to non-residents.
+  // Non-residents would need Section 195 (international withholding) which is not yet supported.
+  if (taxInfo && !taxInfo.isIndianResident) {
+    const cumulativeBeforePayout =
+      await getCurrentFYCumulativePayments(consultantProfileId);
+    return {
+      tdsAmount: 0,
+      tdsRate: 0,
+      isAboveThreshold: false,
+      cumulativeBeforePayout,
+      cumulativeAfterPayout: cumulativeBeforePayout + payoutAmountPaise,
+      financialYear,
+    };
+  }
+
   // Get cumulative payments for this FY
   const cumulativeBeforePayout =
     await getCurrentFYCumulativePayments(consultantProfileId);
@@ -163,11 +183,6 @@ export async function calculateTDS(params: {
       financialYear,
     };
   }
-
-  // Determine TDS rate based on PAN verification
-  const taxInfo = await prisma.consultantTaxInfo.findUnique({
-    where: { consultantProfileId },
-  });
 
   const tdsRate = taxInfo?.panVerified
     ? TDS_RATE_WITH_PAN

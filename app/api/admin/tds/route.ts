@@ -41,6 +41,43 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ financialYear: fy, consultants: breakdown });
     }
 
+    // Form 26Q filing view — ADMIN only (exposes decrypted PAN)
+    if (view === "form26q") {
+      if (user?.role !== "ADMIN") {
+        return NextResponse.json(
+          { error: "Forbidden — Admin only for PAN access" },
+          { status: 403 },
+        );
+      }
+
+      const records = await prisma.tDSRecord.findMany({
+        where: { financialYear: fy, reportedInForm26Q: false },
+        include: {
+          consultantProfile: {
+            include: { taxInfo: true },
+          },
+        },
+      });
+
+      const { decryptPAN } = await import("@/lib/payments/tax/pan-crypto");
+      const form26qData = records.map((r) => ({
+        id: r.id,
+        consultantProfileId: r.consultantProfileId,
+        financialYear: r.financialYear,
+        quarter: r.quarter,
+        tdsDeducted: r.tdsDeducted,
+        tdsRate: r.tdsRate,
+        cumulativeAmountCredited: r.cumulativeAmountCredited,
+        isReversal: r.isReversal,
+        consultantPAN: r.consultantProfile.taxInfo?.panEncrypted
+          ? decryptPAN(Buffer.from(r.consultantProfile.taxInfo.panEncrypted))
+          : null,
+        createdAt: r.createdAt,
+      }));
+
+      return NextResponse.json({ financialYear: fy, records: form26qData });
+    }
+
     const summary = await getTDSSummary(fy);
     return NextResponse.json(summary);
   } catch (error) {

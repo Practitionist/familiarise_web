@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { z } from "zod";
+import { encryptPAN } from "@/lib/payments/tax/pan-crypto";
 
 const updateTaxInfoSchema = z.object({
   panNumber: z.string().length(10).optional(),
@@ -37,13 +38,10 @@ export async function GET() {
       );
     }
 
-    // Mask PAN: show only last 4 chars (e.g., "XXXXXX1234")
     const taxInfo = consultantProfile.taxInfo;
     return NextResponse.json({
       hasTaxInfo: !!taxInfo,
-      panNumber: taxInfo?.panNumber
-        ? `XXXXXX${taxInfo.panNumber.slice(-4)}`
-        : null,
+      panMasked: taxInfo?.panLast4 ? `XXXXXX${taxInfo.panLast4}` : null,
       panVerified: taxInfo?.panVerified ?? false,
       gstin: taxInfo?.gstin ?? null,
       gstinVerified: taxInfo?.gstinVerified ?? false,
@@ -87,21 +85,27 @@ export async function PUT(req: NextRequest) {
 
     const isIndianResident = (validated.country || "IN") === "IN";
 
-    // TODO: Encrypt PAN before persistence (requires KMS infrastructure).
-    // PAN is high-sensitivity identity data — should be encrypted at rest
-    // with only masked last-4 stored in cleartext for lookup/display.
+    // Encrypt PAN if provided
+    let panFields: { panEncrypted: Buffer; panLast4: string } | undefined;
+    if (validated.panNumber) {
+      const { encrypted, last4 } = encryptPAN(validated.panNumber);
+      panFields = { panEncrypted: encrypted, panLast4: last4 };
+    }
+
     const taxInfo = await prisma.consultantTaxInfo.upsert({
       where: { consultantProfileId: consultantProfile.id },
       create: {
         consultantProfileId: consultantProfile.id,
-        panNumber: validated.panNumber,
+        panEncrypted: panFields?.panEncrypted ?? null,
+        panLast4: panFields?.panLast4 ?? null,
         gstin: validated.gstin,
         country: validated.country || "IN",
         isIndianResident,
       },
       update: {
         ...(validated.panNumber !== undefined && {
-          panNumber: validated.panNumber,
+          panEncrypted: panFields?.panEncrypted ?? null,
+          panLast4: panFields?.panLast4 ?? null,
           panVerified: false, // Reset verification on change
         }),
         ...(validated.gstin !== undefined && {
@@ -117,9 +121,7 @@ export async function PUT(req: NextRequest) {
 
     return NextResponse.json({
       message: "Tax info updated",
-      panNumber: taxInfo.panNumber
-        ? `XXXXXX${taxInfo.panNumber.slice(-4)}`
-        : null,
+      panMasked: taxInfo.panLast4 ? `XXXXXX${taxInfo.panLast4}` : null,
       panVerified: taxInfo.panVerified,
       gstin: taxInfo.gstin,
       gstinVerified: taxInfo.gstinVerified,

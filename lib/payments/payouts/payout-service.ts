@@ -459,6 +459,17 @@ async function processSinglePayout(payout: {
       throw new Error("No payout account found");
     }
 
+    // Non-resident payout guard — Razorpay only pays to Indian bank accounts
+    const consultantTaxInfo = await prisma.consultantTaxInfo.findUnique({
+      where: { consultantProfileId: payout.consultantProfileId },
+    });
+    if (consultantTaxInfo && !consultantTaxInfo.isIndianResident) {
+      throw new Error(
+        "Payouts to non-resident consultants are not supported yet (Section 195 TDS not implemented). " +
+          `Consultant: ${payout.consultantProfileId}. Please process this payout manually.`,
+      );
+    }
+
     // Calculate TDS (Section 194J) — deduct before sending to gateway
     const tdsResult = await calculateTDS({
       consultantProfileId: payout.consultantProfileId,
@@ -505,6 +516,7 @@ async function processSinglePayout(payout: {
         tdsDeducted: tdsResult.tdsAmount,
         netAmount: payoutAmountAfterTDS,
         tdsRateApplied: tdsResult.tdsRate || null,
+        tdsFinancialYear: tdsResult.financialYear,
         status: PayoutStatus.PROCESSING, // Will be updated via webhook
       },
     });
@@ -528,6 +540,7 @@ async function processSinglePayout(payout: {
         tdsDeducted: 0,
         netAmount: null,
         tdsRateApplied: null,
+        tdsFinancialYear: null,
       },
     });
 
@@ -701,7 +714,7 @@ export async function handlePayoutWebhook(
 
     // If completed, update earnings and consultant stats
     if (payoutStatus === PayoutStatus.COMPLETED) {
-      const financialYear = getIndianFinancialYear();
+      const financialYear = payout.tdsFinancialYear || getIndianFinancialYear();
       const { start, end } = getFYDateRange(financialYear);
       const previousCompletedPayouts = await tx.payout.aggregate({
         where: {
@@ -774,6 +787,7 @@ export async function handlePayoutWebhook(
           tdsDeducted: 0,
           netAmount: null,
           tdsRateApplied: null,
+          tdsFinancialYear: null,
         },
       });
     }
