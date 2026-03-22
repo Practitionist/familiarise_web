@@ -208,10 +208,10 @@ export const CustomMessage = () => {
 
   // Report a message (flags in Stream + persists to DB)
   const handleReportMessage = async () => {
-    if (!channel || !message.user?.id) return;
+    if (!client || !message.user?.id) return;
     try {
-      // Flag in Stream
-      await channel.flagMessage(message.id);
+      // Flag in Stream (flagMessage is on the client, not the channel)
+      await client.flagMessage(message.id);
 
       // Persist to our DB
       await fetch("/api/report", {

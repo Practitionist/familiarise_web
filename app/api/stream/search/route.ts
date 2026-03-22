@@ -52,7 +52,7 @@ export async function GET(req: NextRequest) {
           count: users.length,
         });
       } catch (upsertError) {
-        streamLogger.warn("User upsert to Stream failed", upsertError);
+        streamLogger.error("User upsert to Stream failed", upsertError);
         // Continue even if upserting fails
       }
     }
