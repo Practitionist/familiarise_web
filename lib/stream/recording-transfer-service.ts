@@ -6,7 +6,11 @@
 import prisma from "@/lib/prisma";
 import { Recording, RecordingStatus } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
-import supabase, { ensureBucketExists, supabaseAdmin } from "@/lib/supabase";
+import supabase, {
+  ensureBucketExists,
+  supabaseAdmin,
+  generateStorageFileName,
+} from "@/lib/supabase";
 
 // Recordings bucket name
 const RECORDINGS_BUCKET = "recordings";
@@ -182,11 +186,11 @@ export class RecordingTransferService {
         });
       }
 
-      // Create file path: recordings/{year}/{month}/{recordingId}/{filename}
+      // Create file path: recordings/{year}/{month}/{recordingId}/{uuid}.{ext}
       const now = new Date();
       const year = now.getFullYear();
       const month = (now.getMonth() + 1).toString().padStart(2, "0");
-      const filename = recording.streamRecordingId || `${recordingId}.mp4`;
+      const filename = generateStorageFileName(contentType);
       const storagePath = `recordings/${year}/${month}/${recordingId}/${filename}`;
 
       // Upload to Supabase
