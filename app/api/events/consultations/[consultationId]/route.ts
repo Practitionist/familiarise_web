@@ -21,6 +21,9 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
+import { addUserToEventChannel } from "@/actions/stream/chat/event-channel.action";
+import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action";
+import { streamLogger } from "@/lib/stream-logger";
 
 /**
  * Type for consultation with all related details needed for payment processing
@@ -722,6 +725,32 @@ export async function PATCH(
             emailError instanceof Error ? emailError.message : "Unknown error",
           );
         }
+      }
+
+      // --- Stream channel creation (fire-and-forget, after transaction) ---
+      try {
+        const consultationData = result.data;
+        const consultantUserId =
+          consultationData.consultationPlan?.consultantProfile?.userId;
+        const consulteeUserId = consultationData.requestedBy?.userId;
+
+        if (consultantUserId && consulteeUserId) {
+          await addUserToEventChannel(
+            "consultation",
+            consultationId,
+            consulteeUserId,
+          );
+          await createDirectMessageChannel(consultantUserId, consulteeUserId);
+          streamLogger.info("Stream channel created on consultation approval", {
+            consultationId,
+          });
+        }
+      } catch (channelError) {
+        streamLogger.error(
+          "Auto-channel creation failed on consultation approval",
+          channelError,
+          { consultationId },
+        );
       }
 
       // Return success response (exclude emailData from response)
