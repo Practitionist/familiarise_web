@@ -17,6 +17,7 @@ import {
   Trash2Icon,
   CheckIcon,
   XIcon,
+  FlagIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -205,6 +206,40 @@ export const CustomMessage = () => {
     messageComposer.setQuotedMessage(message);
   };
 
+  // Report a message (flags in Stream + persists to DB)
+  const handleReportMessage = async () => {
+    if (!channel || !message.user?.id) return;
+    try {
+      // Flag in Stream
+      await channel.flagMessage(message.id);
+
+      // Persist to our DB
+      await fetch("/api/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "MESSAGE",
+          reason: "Reported message",
+          targetUserId: message.user.id,
+          contentText: message.text?.substring(0, 500),
+        }),
+      });
+
+      toast({
+        title: "Message reported",
+        description: "Our team will review this message",
+      });
+    } catch (error) {
+      console.error("Error reporting message:", error);
+      toast({
+        title: "Report failed",
+        description: "Could not report message. Please try again.",
+        variant: "destructive",
+      });
+    }
+    setShowMoreOptions(false);
+  };
+
   return (
     <div
       className={`flex items-end ${isMyMessage ? "justify-end" : "justify-start"} mb-4 group relative`}
@@ -270,37 +305,47 @@ export const CustomMessage = () => {
               <ReplyIcon className="w-4 h-4 text-gray-600" />
             </button>
 
-            {/* More Options (Edit, Delete) - Only for own messages */}
-            {isMyMessage && (
-              <div className="relative" ref={moreOptionsRef}>
-                <button
-                  onClick={() => setShowMoreOptions(!showMoreOptions)}
-                  className="p-1.5 hover:bg-gray-100 rounded-r-lg transition-colors"
-                  title="More options"
-                >
-                  <MoreHorizontalIcon className="w-4 h-4 text-gray-600" />
-                </button>
-                {/* More Options Dropdown */}
-                {showMoreOptions && (
-                  <div className="absolute top-full right-0 mt-1 bg-white rounded-lg shadow-lg border py-1 min-w-[120px] z-30">
+            {/* More Options (Edit, Delete for own; Report for others) */}
+            <div className="relative" ref={moreOptionsRef}>
+              <button
+                onClick={() => setShowMoreOptions(!showMoreOptions)}
+                className="p-1.5 hover:bg-gray-100 rounded-r-lg transition-colors"
+                title="More options"
+              >
+                <MoreHorizontalIcon className="w-4 h-4 text-gray-600" />
+              </button>
+              {/* More Options Dropdown */}
+              {showMoreOptions && (
+                <div className="absolute top-full right-0 mt-1 bg-white rounded-lg shadow-lg border py-1 min-w-[120px] z-30">
+                  {isMyMessage ? (
+                    <>
+                      <button
+                        onClick={handleEditClick}
+                        className="w-full px-3 py-1.5 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
+                      >
+                        <EditIcon className="w-4 h-4" />
+                        Edit
+                      </button>
+                      <button
+                        onClick={handleDeleteClick}
+                        className="w-full px-3 py-1.5 text-left text-sm hover:bg-gray-100 text-red-600 flex items-center gap-2"
+                      >
+                        <Trash2Icon className="w-4 h-4" />
+                        Delete
+                      </button>
+                    </>
+                  ) : (
                     <button
-                      onClick={handleEditClick}
-                      className="w-full px-3 py-1.5 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
-                    >
-                      <EditIcon className="w-4 h-4" />
-                      Edit
-                    </button>
-                    <button
-                      onClick={handleDeleteClick}
+                      onClick={handleReportMessage}
                       className="w-full px-3 py-1.5 text-left text-sm hover:bg-gray-100 text-red-600 flex items-center gap-2"
                     >
-                      <Trash2Icon className="w-4 h-4" />
-                      Delete
+                      <FlagIcon className="w-4 h-4" />
+                      Report Message
                     </button>
-                  </div>
-                )}
-              </div>
-            )}
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
