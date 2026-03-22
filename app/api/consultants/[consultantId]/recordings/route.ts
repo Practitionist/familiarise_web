@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { RecordingService } from "@/lib/stream/recording-service";
 import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
 import { RecordingStatus } from "@prisma/client";
+import prisma from "@/lib/prisma";
 
 import { getSession } from "@/lib/auth-server";
 type RouteParams = {
@@ -28,12 +29,14 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     const { consultantId } = await params;
 
     // Verify the user is accessing their own recordings
-    if (
-      session.user.role !== "ADMIN" &&
-      session.user.role !== "STAFF" &&
-      session.user.consultantProfileId !== consultantId
-    ) {
-      return NextResponse.json({ error: "Access denied" }, { status: 403 });
+    if (session.user.role !== "ADMIN" && session.user.role !== "STAFF") {
+      const consultantProfile = await prisma.consultantProfile.findUnique({
+        where: { userId: session.user.id },
+        select: { id: true },
+      });
+      if (consultantProfile?.id !== consultantId) {
+        return NextResponse.json({ error: "Access denied" }, { status: 403 });
+      }
     }
 
     // Parse query params for filtering

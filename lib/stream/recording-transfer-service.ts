@@ -6,10 +6,13 @@
 import prisma from "@/lib/prisma";
 import { Recording, RecordingStatus } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
-import supabase, { ensureBucketExists } from "@/lib/supabase";
+import supabase, { ensureBucketExists, supabaseAdmin } from "@/lib/supabase";
 
 // Recordings bucket name
 const RECORDINGS_BUCKET = "recordings";
+
+// Use admin client for storage operations to bypass RLS
+const storageClient = supabaseAdmin || supabase;
 
 // Maximum file size for direct transfer (500MB)
 // Files larger than this should use resumable uploads (future enhancement)
@@ -196,7 +199,7 @@ export class RecordingTransferService {
       // Blob is more memory-efficient in most JS runtimes for large files
       const fileBlob = await response.blob();
 
-      const { error: uploadError } = await supabase.storage
+      const { error: uploadError } = await storageClient.storage
         .from(RECORDINGS_BUCKET)
         .upload(storagePath, fileBlob, {
           contentType,
@@ -474,7 +477,7 @@ export class RecordingTransferService {
       }
 
       // Delete from Supabase
-      const { error: deleteError } = await supabase.storage
+      const { error: deleteError } = await storageClient.storage
         .from(RECORDINGS_BUCKET)
         .remove([recording.supabasePath]);
 
@@ -533,7 +536,7 @@ export class RecordingTransferService {
     storagePath: string,
     expiresIn: number = 3600,
   ): Promise<string | null> {
-    const { data, error } = await supabase.storage
+    const { data, error } = await storageClient.storage
       .from(RECORDINGS_BUCKET)
       .createSignedUrl(storagePath, expiresIn);
 
