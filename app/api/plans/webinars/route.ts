@@ -186,6 +186,8 @@ export async function POST(request: NextRequest) {
       materialProvided,
       learningOutcomes,
       topicIds,
+      recordingEnabled,
+      recordingStoragePolicy,
     } = body;
 
     // Ownership: non-privileged users can only create plans for themselves
@@ -226,6 +228,8 @@ export async function POST(request: NextRequest) {
         prerequisites,
         materialProvided,
         learningOutcomes,
+        recordingEnabled: recordingEnabled ?? false,
+        recordingStoragePolicy: recordingStoragePolicy ?? "STREAM_ONLY",
         consultantProfile: { connect: { id: consultantProfileId } },
         topics: topicIds
           ? { connect: topicIds.map((id: string) => ({ id })) }
