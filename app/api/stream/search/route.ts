@@ -6,8 +6,18 @@ import {
 import { NextRequest, NextResponse } from "next/server";
 
 import { getSession } from "@/lib/auth-server";
+import { streamLogger } from "@/lib/stream-logger";
+
 export async function GET(req: NextRequest) {
   try {
+    const session = await getSession();
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { success: false, error: "Authentication required" },
+        { status: 401 },
+      );
+    }
+
     const url = new URL(req.url);
     const searchTerm = url.searchParams.get("term");
     const withRelationships = url.searchParams.get("relationships") === "true";
@@ -19,26 +29,11 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    console.log(
-      `Searching for users with term: ${searchTerm}, with relationships: ${withRelationships}`,
-    );
+    streamLogger.debug("Searching users", { searchTerm, withRelationships });
 
     let users;
 
     if (withRelationships) {
-      // Get current user session for relationship checking
-      const session = await getSession();
-
-      if (!session?.user?.id) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: "Authentication required for relationship search",
-          },
-          { status: 401 },
-        );
-      }
-
       // Use enhanced search with relationship checking
       users = await searchUsersWithRelationships(searchTerm, session.user.id);
     } else {
@@ -46,20 +41,18 @@ export async function GET(req: NextRequest) {
       users = await searchUsers(searchTerm);
     }
 
-    console.log(`Found ${users.length} users`);
+    streamLogger.debug("Search results", { count: users.length });
 
     // If users are found, upsert them to Stream Chat
     if (users.length > 0) {
       try {
-        // Get user IDs
         const userIds = users.map((user) => user.id);
-
-        // Upsert users to Stream Chat
         await upsertUsersToStream(userIds);
-
-        console.log(`Upserted ${users.length} users to Stream Chat`);
+        streamLogger.debug("Users upserted to Stream", {
+          count: users.length,
+        });
       } catch (upsertError) {
-        console.error("Error upserting users to Stream Chat:", upsertError);
+        streamLogger.error("User upsert to Stream failed", upsertError);
         // Continue even if upserting fails
       }
     }
@@ -69,7 +62,7 @@ export async function GET(req: NextRequest) {
       users,
     });
   } catch (error) {
-    console.error("Error searching users:", error);
+    streamLogger.error("User search failed", error);
     return NextResponse.json(
       { success: false, error: (error as Error).message },
       { status: 500 },

@@ -1526,6 +1526,7 @@ export {
   ensureBucketExists,
   ensureFolderExists,
   getManualBucketInstructions,
+  supabaseAdmin,
   // Constants
   ALLOWED_DOCUMENT_TYPES,
 };
