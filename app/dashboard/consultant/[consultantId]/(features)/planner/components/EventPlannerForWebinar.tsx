@@ -574,10 +574,19 @@ export function EventPlannerForWebinar({
                         Choose how long recordings are stored
                       </FormDescription>
                       <FormControl>
-                        <div className="flex flex-col gap-3 mt-2">
-                          <label className="flex items-start gap-3 cursor-pointer">
+                        <div
+                          role="radiogroup"
+                          aria-label="Recording storage policy"
+                          className="flex flex-col gap-3 mt-2"
+                        >
+                          <label
+                            htmlFor="webinar-storage-stream"
+                            className="flex items-start gap-3 cursor-pointer"
+                          >
                             <input
+                              id="webinar-storage-stream"
                               type="radio"
+                              name="recordingStoragePolicy"
                               value="STREAM_ONLY"
                               checked={field.value === "STREAM_ONLY"}
                               onChange={() => field.onChange("STREAM_ONLY")}
@@ -593,9 +602,14 @@ export function EventPlannerForWebinar({
                               </div>
                             </div>
                           </label>
-                          <label className="flex items-start gap-3 cursor-pointer">
+                          <label
+                            htmlFor="webinar-storage-permanent"
+                            className="flex items-start gap-3 cursor-pointer"
+                          >
                             <input
+                              id="webinar-storage-permanent"
                               type="radio"
+                              name="recordingStoragePolicy"
                               value="SUPABASE_PERMANENT"
                               checked={field.value === "SUPABASE_PERMANENT"}
                               onChange={() =>

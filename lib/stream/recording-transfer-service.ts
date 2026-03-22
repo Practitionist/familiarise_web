@@ -27,6 +27,41 @@ const ALLOWED_VIDEO_TYPES = [
 /**
  * Recording Transfer Service for moving recordings to permanent storage
  */
+/**
+ * Build Prisma where-clause to filter recordings by their plan's storage policy.
+ * Joins through Recording → MeetingSession → SlotOfAppointment → Appointment → Event → Plan.
+ */
+function buildStoragePolicyFilter(
+  policyFilter: "SUPABASE_PERMANENT" | "ALL",
+): object {
+  if (policyFilter === "ALL") return {};
+
+  return {
+    meetingSession: {
+      slotOfAppointment: {
+        appointment: {
+          OR: [
+            {
+              webinar: {
+                webinarPlan: {
+                  recordingStoragePolicy: "SUPABASE_PERMANENT" as const,
+                },
+              },
+            },
+            {
+              class: {
+                classPlan: {
+                  recordingStoragePolicy: "SUPABASE_PERMANENT" as const,
+                },
+              },
+            },
+          ],
+        },
+      },
+    },
+  };
+}
+
 export class RecordingTransferService {
   /**
    * Queue a recording for transfer to Supabase
@@ -251,35 +286,6 @@ export class RecordingTransferService {
     };
 
     try {
-      // Build the where clause — optionally filter by plan storage policy
-      const policyCondition =
-        policyFilter === "SUPABASE_PERMANENT"
-          ? {
-              meetingSession: {
-                slotOfAppointment: {
-                  appointment: {
-                    OR: [
-                      {
-                        webinar: {
-                          webinarPlan: {
-                            recordingStoragePolicy: "SUPABASE_PERMANENT" as const,
-                          },
-                        },
-                      },
-                      {
-                        class: {
-                          classPlan: {
-                            recordingStoragePolicy: "SUPABASE_PERMANENT" as const,
-                          },
-                        },
-                      },
-                    ],
-                  },
-                },
-              },
-            }
-          : {};
-
       const expiringRecordings = await prisma.recording.findMany({
         where: {
           storageType: "STREAM_S3",
@@ -287,7 +293,7 @@ export class RecordingTransferService {
           streamUrlExpiresAt: {
             lte: expiryThreshold,
           },
-          ...policyCondition,
+          ...buildStoragePolicyFilter(policyFilter),
         },
         take: batchSize,
         orderBy: {

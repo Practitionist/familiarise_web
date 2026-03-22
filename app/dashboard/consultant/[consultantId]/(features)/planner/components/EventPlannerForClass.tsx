@@ -711,10 +711,19 @@ export function EventPlannerForClass({
                         Choose how long recordings are stored
                       </FormDescription>
                       <FormControl>
-                        <div className="flex flex-col gap-3 mt-2">
-                          <label className="flex items-start gap-3 cursor-pointer">
+                        <div
+                          role="radiogroup"
+                          aria-label="Recording storage policy"
+                          className="flex flex-col gap-3 mt-2"
+                        >
+                          <label
+                            htmlFor="class-storage-stream"
+                            className="flex items-start gap-3 cursor-pointer"
+                          >
                             <input
+                              id="class-storage-stream"
                               type="radio"
+                              name="recordingStoragePolicy"
                               value="STREAM_ONLY"
                               checked={field.value === "STREAM_ONLY"}
                               onChange={() => field.onChange("STREAM_ONLY")}
@@ -730,9 +739,14 @@ export function EventPlannerForClass({
                               </div>
                             </div>
                           </label>
-                          <label className="flex items-start gap-3 cursor-pointer">
+                          <label
+                            htmlFor="class-storage-permanent"
+                            className="flex items-start gap-3 cursor-pointer"
+                          >
                             <input
+                              id="class-storage-permanent"
                               type="radio"
+                              name="recordingStoragePolicy"
                               value="SUPABASE_PERMANENT"
                               checked={field.value === "SUPABASE_PERMANENT"}
                               onChange={() =>
