@@ -1,6 +1,6 @@
 /**
- * Stream Video Webhook Handler
- * Handles recording lifecycle and call session events from Stream
+ * Stream Webhook Handler
+ * Handles recording lifecycle, call session, and chat moderation events
  *
  * Recording Events:
  * - call.recording_started
@@ -11,6 +11,10 @@
  * Session Events:
  * - call.session_ended
  * - call.ended
+ *
+ * Chat Moderation Events:
+ * - user.flagged
+ * - message.flagged
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -33,6 +37,12 @@ import {
   StreamCallEndedEvent,
 } from "@/lib/stream/session-handlers";
 import {
+  handleUserFlagged,
+  handleMessageFlagged,
+  StreamUserFlaggedEvent,
+  StreamMessageFlaggedEvent,
+} from "@/lib/stream/chat-moderation-handlers";
+import {
   logWebhookEvent,
   markWebhookEventProcessed,
   isDbHealthy,
@@ -48,19 +58,30 @@ const HANDLED_EVENT_TYPES = [
   // Session events
   "call.session_ended",
   "call.ended",
+  // Chat moderation events
+  "user.flagged",
+  "message.flagged",
 ] as const;
 
 type HandledEventType = (typeof HANDLED_EVENT_TYPES)[number];
 
-// Base event schema
+// Base event schema for all Stream webhook events
+// call_cid is optional because chat moderation events don't include it
 const streamBaseEventSchema = z.object({
+  type: z.string(),
+  call_cid: z.string().optional(),
+  created_at: z.string(),
+});
+
+// Base schema for call/video events (call_cid required)
+const streamCallBaseEventSchema = z.object({
   type: z.string(),
   call_cid: z.string(),
   created_at: z.string(),
 });
 
 // Recording ready event schema
-const streamRecordingReadySchema = streamBaseEventSchema.extend({
+const streamRecordingReadySchema = streamCallBaseEventSchema.extend({
   type: z.literal("call.recording_ready"),
   call_recording: z.object({
     filename: z.string(),
@@ -71,7 +92,7 @@ const streamRecordingReadySchema = streamBaseEventSchema.extend({
 });
 
 // Recording failed event schema
-const streamRecordingFailedSchema = streamBaseEventSchema.extend({
+const streamRecordingFailedSchema = streamCallBaseEventSchema.extend({
   type: z.literal("call.recording_failed"),
   error: z
     .object({
@@ -82,7 +103,7 @@ const streamRecordingFailedSchema = streamBaseEventSchema.extend({
 });
 
 // Recording started schema
-const streamRecordingStartedSchema = streamBaseEventSchema.extend({
+const streamRecordingStartedSchema = streamCallBaseEventSchema.extend({
   type: z.literal("call.recording_started"),
   user: z
     .object({
@@ -93,12 +114,12 @@ const streamRecordingStartedSchema = streamBaseEventSchema.extend({
 });
 
 // Recording stopped schema
-const streamRecordingStoppedSchema = streamBaseEventSchema.extend({
+const streamRecordingStoppedSchema = streamCallBaseEventSchema.extend({
   type: z.literal("call.recording_stopped"),
 });
 
 // Session ended schema
-const streamSessionEndedSchema = streamBaseEventSchema.extend({
+const streamSessionEndedSchema = streamCallBaseEventSchema.extend({
   type: z.literal("call.session_ended"),
   call: z
     .object({
@@ -110,7 +131,7 @@ const streamSessionEndedSchema = streamBaseEventSchema.extend({
 });
 
 // Call ended schema
-const streamCallEndedSchema = streamBaseEventSchema.extend({
+const streamCallEndedSchema = streamCallBaseEventSchema.extend({
   type: z.literal("call.ended"),
   call: z
     .object({
@@ -120,6 +141,26 @@ const streamCallEndedSchema = streamBaseEventSchema.extend({
     })
     .optional(),
   ended_by_user_id: z.string().optional(),
+});
+
+// Chat moderation: user flagged schema
+const streamUserFlaggedSchema = streamBaseEventSchema.extend({
+  type: z.literal("user.flagged"),
+  user: z.object({ id: z.string() }).optional(),
+  target_user: z.object({ id: z.string() }).optional(),
+});
+
+// Chat moderation: message flagged schema
+const streamMessageFlaggedSchema = streamBaseEventSchema.extend({
+  type: z.literal("message.flagged"),
+  user: z.object({ id: z.string() }).optional(),
+  message: z
+    .object({
+      id: z.string(),
+      text: z.string().optional(),
+      user: z.object({ id: z.string() }).optional(),
+    })
+    .optional(),
 });
 
 /**
@@ -203,7 +244,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Generate unique event ID for idempotency
-    const eventId = `stream_${eventType}_${baseEvent.call_cid}_${baseEvent.created_at}`;
+    const eventId = `stream_${eventType}_${baseEvent.call_cid || "chat"}_${baseEvent.created_at}`;
 
     // Log webhook event (idempotency check)
     const { isNew } = await logWebhookEvent(
@@ -267,6 +308,24 @@ export async function POST(req: NextRequest) {
         case "call.ended": {
           const callEndedEvent = streamCallEndedSchema.parse(event);
           await handleCallEnded(callEndedEvent as StreamCallEndedEvent);
+          break;
+        }
+
+        // Chat moderation events
+        case "user.flagged": {
+          const userFlaggedEvent = streamUserFlaggedSchema.parse(event);
+          await handleUserFlagged(
+            userFlaggedEvent as StreamUserFlaggedEvent,
+          );
+          break;
+        }
+
+        case "message.flagged": {
+          const messageFlaggedEvent =
+            streamMessageFlaggedSchema.parse(event);
+          await handleMessageFlagged(
+            messageFlaggedEvent as StreamMessageFlaggedEvent,
+          );
           break;
         }
 
