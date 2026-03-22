@@ -64,10 +64,6 @@ export const ChatContainer = () => {
         channel.id?.includes("class-");
 
       setShouldUseVirtualized(isHighTrafficChannel || false);
-
-      console.log(
-        `Channel ${channel.id}: members=${memberCount}, messages=${messageCount}, type=${channel.type}, useVirtualized=${isHighTrafficChannel}`,
-      );
     }
   }, [channel]);
 

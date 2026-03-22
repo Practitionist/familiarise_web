@@ -7,6 +7,7 @@ import {
   createChannel,
 } from "@/actions/stream/chat/channel.action";
 import { getSession } from "@/lib/auth-server";
+import { streamLogger } from "@/lib/stream-logger";
 
 export async function POST(req: NextRequest) {
   try {
@@ -49,9 +50,11 @@ export async function POST(req: NextRequest) {
 
     if (eventType && eventId) {
       // Event-linked channel creation - use our improved functions with full participant lists
-      console.log(
-        `Creating ${eventType} channel for event ${eventId} by user ${createdById}`,
-      );
+      streamLogger.info("Creating event channel", {
+        eventType,
+        eventId,
+        createdById,
+      });
 
       try {
         switch (eventType) {
@@ -74,15 +77,12 @@ export async function POST(req: NextRequest) {
             );
         }
 
-        console.log(
-          `Successfully created ${eventType} channel for event ${eventId}:`,
-          result,
-        );
+        streamLogger.info("Event channel created", { eventType, eventId });
       } catch (eventError) {
-        console.error(
-          `Error creating ${eventType} channel for event ${eventId}:`,
-          eventError,
-        );
+        streamLogger.error("Event channel creation failed", eventError, {
+          eventType,
+          eventId,
+        });
         throw eventError; // Re-throw to be caught by outer catch block
       }
     } else {
@@ -98,9 +98,11 @@ export async function POST(req: NextRequest) {
       }
 
       const channelId = crypto.randomUUID();
-      console.log(
-        `Creating custom ${channelType} channel: ${channelId} with name: ${channelName}`,
-      );
+      streamLogger.info("Creating custom channel", {
+        channelId,
+        channelType,
+        channelName,
+      });
 
       result = await createChannel({
         channelType: channelType as "messaging" | "team",
@@ -120,7 +122,7 @@ export async function POST(req: NextRequest) {
         : "Custom channel created successfully",
     });
   } catch (error) {
-    console.error("Error creating channel via API:", error);
+    streamLogger.error("Channel creation API error", error);
     return NextResponse.json(
       {
         success: false,
