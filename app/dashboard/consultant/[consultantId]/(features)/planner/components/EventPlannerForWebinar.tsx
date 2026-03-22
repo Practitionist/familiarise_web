@@ -275,6 +275,7 @@ export function EventPlannerForWebinar({
           priceCurrency: formData.priceCurrency ?? "INR",
           certificateProvided: formData.certificateProvided ?? false,
           recordingEnabled: formData.recordingEnabled ?? false,
+          recordingStoragePolicy: initialData?.webinarPlan?.recordingStoragePolicy ?? "STREAM_ONLY",
           durationInHours: formData.durationInHours,
           maxParticipants: formData.maxParticipants,
           language: formData.language ?? "English",

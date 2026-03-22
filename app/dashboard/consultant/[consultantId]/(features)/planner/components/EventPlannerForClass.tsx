@@ -293,6 +293,7 @@ export function EventPlannerForClass({
           consultantProfile: null,
           certificateProvided: formData.certificateProvided ?? false,
           recordingEnabled: formData.recordingEnabled ?? false,
+          recordingStoragePolicy: initialData?.classPlan?.recordingStoragePolicy ?? "STREAM_ONLY",
           sessionDurationInHours:
             initialData?.classPlan?.sessionDurationInHours ?? 1,
           meetingsPerWeek: formData.meetingsPerWeek,
