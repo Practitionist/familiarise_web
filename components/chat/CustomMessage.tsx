@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/hooks/use-toast";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -35,6 +36,7 @@ export const CustomMessage = () => {
   const { message } = useMessageContext();
   const { client, channel } = useChatContext();
   const messageComposer = useMessageComposer();
+  const { toast } = useToast();
   const isMyMessage = message.user?.id === client.userID;
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showMoreOptions, setShowMoreOptions] = useState(false);
@@ -150,6 +152,11 @@ export const CustomMessage = () => {
       setIsEditing(false);
     } catch (error) {
       console.error("Error editing message:", error);
+      toast({
+        title: "Edit failed",
+        description: "Could not edit the message. Please try again.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -169,6 +176,11 @@ export const CustomMessage = () => {
       await client.deleteMessage(message.id);
     } catch (error) {
       console.error("Error deleting message:", error);
+      toast({
+        title: "Delete failed",
+        description: "Could not delete the message. Please try again.",
+        variant: "destructive",
+      });
     }
     setShowDeleteDialog(false);
   };
@@ -179,6 +191,11 @@ export const CustomMessage = () => {
       await channel.sendReaction(message.id, { type: reactionType });
     } catch (error) {
       console.error("Error sending reaction:", error);
+      toast({
+        title: "Reaction failed",
+        description: "Could not add reaction. Please try again.",
+        variant: "destructive",
+      });
     }
   };
 
