@@ -727,8 +727,8 @@ export async function PATCH(
         }
       }
 
-      // --- Stream channel creation (fire-and-forget, after transaction) ---
-      try {
+      // --- Stream channel creation (fire-and-forget, only on approval) ---
+      if (!result.duplicate && status === RequestStatus.APPROVED) try {
         const consultationData = result.data;
         const consultantUserId =
           consultationData.consultationPlan?.consultantProfile?.userId;

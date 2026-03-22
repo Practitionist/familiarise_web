@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth-server";
 import { getStreamChatClient } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import prisma from "@/lib/prisma";
+import { getDmChannelId } from "@/lib/stream-utils";
 
 export async function POST(req: NextRequest) {
   try {
@@ -39,9 +40,28 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Ban the user in Stream Chat (server-side only)
+    // Verify the blocker has an existing DM channel with the target
+    // (prevents arbitrary users from banning others they've never interacted with)
     const chatClient = getStreamChatClient();
-    await chatClient.banUser(targetUserId, {
+    const dmChannelId = getDmChannelId(session.user.id, targetUserId);
+    const dmChannel = chatClient.channel("messaging", dmChannelId);
+    try {
+      const state = await dmChannel.query({ members: { limit: 0 } });
+      if (!state.channel) {
+        return NextResponse.json(
+          { error: "You can only block users you have a conversation with" },
+          { status: 403 },
+        );
+      }
+    } catch {
+      return NextResponse.json(
+        { error: "You can only block users you have a conversation with" },
+        { status: 403 },
+      );
+    }
+
+    // Ban the user in this specific channel (scoped, not global)
+    await dmChannel.banUser(targetUserId, {
       banned_by_id: session.user.id,
       reason: "user_block",
     });

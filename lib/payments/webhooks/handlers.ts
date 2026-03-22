@@ -508,89 +508,95 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     );
   }
 
-  // --- Stream channel creation (fire-and-forget) ---
-  try {
-    const eventType = metadata.appointmentType?.toUpperCase();
-    const appointmentForChannel = await prisma.appointment.findUnique({
-      where: { id: appointmentId },
-      include: {
-        consultation: {
-          include: {
-            consultationPlan: {
-              include: { consultantProfile: true },
+  // --- Stream channel creation (truly fire-and-forget — does not block webhook response) ---
+  void (async () => {
+    try {
+      const eventType = metadata.appointmentType?.toUpperCase();
+      const appointmentForChannel = await prisma.appointment.findUnique({
+        where: { id: appointmentId },
+        include: {
+          consultation: {
+            include: {
+              consultationPlan: {
+                include: { consultantProfile: true },
+              },
+            },
+          },
+          subscription: {
+            include: {
+              subscriptionPlan: {
+                include: { consultantProfile: true },
+              },
+            },
+          },
+          webinar: {
+            include: {
+              webinarPlan: {
+                include: { consultantProfile: true },
+              },
+            },
+          },
+          class: {
+            include: {
+              classPlan: {
+                include: { consultantProfile: true },
+              },
             },
           },
         },
-        subscription: {
-          include: {
-            subscriptionPlan: {
-              include: { consultantProfile: true },
-            },
-          },
-        },
-        webinar: {
-          include: {
-            webinarPlan: {
-              include: { consultantProfile: true },
-            },
-          },
-        },
-        class: {
-          include: {
-            classPlan: {
-              include: { consultantProfile: true },
-            },
-          },
-        },
-      },
-    });
-
-    const consultantProfile =
-      appointmentForChannel?.consultation?.consultationPlan
-        ?.consultantProfile ||
-      appointmentForChannel?.subscription?.subscriptionPlan
-        ?.consultantProfile ||
-      appointmentForChannel?.webinar?.webinarPlan?.consultantProfile ||
-      appointmentForChannel?.class?.classPlan?.consultantProfile;
-
-    const consultantUserId = consultantProfile?.userId;
-
-    if (appointmentForChannel && consultantUserId) {
-      const consultation = appointmentForChannel.consultation;
-      const subscription = appointmentForChannel.subscription;
-      const webinar = appointmentForChannel.webinar;
-      const classEvent = appointmentForChannel.class;
-
-      if (eventType === "CONSULTATION" && consultation) {
-        await addUserToEventChannel("consultation", consultation.id, userId);
-        await createDirectMessageChannel(consultantUserId, userId);
-      } else if (eventType === "SUBSCRIPTION" && subscription) {
-        await addUserToEventChannel(
-          "subscription",
-          subscription.id,
-          userId,
-        );
-        await createDirectMessageChannel(consultantUserId, userId);
-      } else if (eventType === "WEBINAR" && webinar) {
-        await addUserToEventChannel("webinar", webinar.id, userId);
-      } else if (eventType === "CLASS" && classEvent) {
-        await addUserToEventChannel("class", classEvent.id, userId);
-      }
-
-      streamLogger.info("Stream channel created on payment success", {
-        appointmentType: eventType,
-        appointmentId,
-        userId,
       });
+
+      const consultantProfile =
+        appointmentForChannel?.consultation?.consultationPlan
+          ?.consultantProfile ||
+        appointmentForChannel?.subscription?.subscriptionPlan
+          ?.consultantProfile ||
+        appointmentForChannel?.webinar?.webinarPlan?.consultantProfile ||
+        appointmentForChannel?.class?.classPlan?.consultantProfile;
+
+      const consultantUserId = consultantProfile?.userId;
+
+      if (appointmentForChannel && consultantUserId) {
+        const consultation = appointmentForChannel.consultation;
+        const subscription = appointmentForChannel.subscription;
+        const webinar = appointmentForChannel.webinar;
+        const classEvent = appointmentForChannel.class;
+
+        if (eventType === "CONSULTATION" && consultation) {
+          await addUserToEventChannel(
+            "consultation",
+            consultation.id,
+            userId,
+          );
+          await createDirectMessageChannel(consultantUserId, userId);
+        } else if (eventType === "SUBSCRIPTION" && subscription) {
+          await addUserToEventChannel(
+            "subscription",
+            subscription.id,
+            userId,
+          );
+          await createDirectMessageChannel(consultantUserId, userId);
+        } else if (eventType === "WEBINAR" && webinar) {
+          await addUserToEventChannel("webinar", webinar.id, userId);
+        } else if (eventType === "CLASS" && classEvent) {
+          await addUserToEventChannel("class", classEvent.id, userId);
+        }
+
+        streamLogger.info("Stream channel created on payment success", {
+          appointmentType: eventType,
+          appointmentId,
+          userId,
+        });
+      }
+    } catch (channelError) {
+      // Log but never fail the payment — sync job will catch up
+      streamLogger.error(
+        "Auto-channel creation failed on payment success",
+        channelError,
+        { appointmentId, userId },
+      );
     }
-  } catch (channelError) {
-    // Log but never fail the payment — sync job will catch up
-    streamLogger.error(
-      "Auto-channel creation failed on payment success",
-      channelError,
-      { appointmentId, userId },
-    );
-  }
+  })();
 }
 
 /**

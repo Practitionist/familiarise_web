@@ -20,6 +20,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { z } from "zod";
+import { streamLogger } from "@/lib/stream-logger";
 import {
   handleRecordingStarted,
   handleRecordingStopped,
@@ -174,7 +175,7 @@ async function verifyStreamSignature(
   const signature = req.headers.get("x-signature");
 
   if (!signature) {
-    console.warn("No x-signature header found in Stream webhook request");
+    streamLogger.warn("No x-signature header found in Stream webhook request");
     return false;
   }
 
@@ -191,7 +192,7 @@ async function verifyStreamSignature(
       Buffer.from(expectedSignature),
     );
   } catch (error) {
-    console.error("Error verifying Stream webhook signature:", error);
+    streamLogger.error("Error verifying Stream webhook signature", error);
     return false;
   }
 }
@@ -201,7 +202,7 @@ export async function POST(req: NextRequest) {
 
   // Validate webhook secret is configured
   if (!secret) {
-    console.error("STREAM_WEBHOOK_SECRET not configured");
+    streamLogger.error("STREAM_WEBHOOK_SECRET not configured");
     return NextResponse.json(
       { error: "Webhook secret not configured" },
       { status: 500 },
@@ -215,15 +216,13 @@ export async function POST(req: NextRequest) {
   const isValid = await verifyStreamSignature(req, body, secret);
 
   if (!isValid) {
-    console.warn("Invalid Stream webhook signature");
+    streamLogger.warn("Invalid Stream webhook signature");
     return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
   }
 
   // DB health check — return 503 if DB is unreachable so Stream retries
   if (!(await isDbHealthy())) {
-    console.warn(
-      "[stream webhook] DB unhealthy — returning 503 for Stream retry",
-    );
+    streamLogger.warn("DB unhealthy — returning 503 for Stream retry");
     return NextResponse.json(
       { error: "Service temporarily unavailable" },
       { status: 503 },
@@ -239,7 +238,7 @@ export async function POST(req: NextRequest) {
 
     // Check if this is an event type we handle
     if (!HANDLED_EVENT_TYPES.includes(eventType as HandledEventType)) {
-      console.log(`Unhandled Stream event type: ${eventType}`);
+      streamLogger.debug(`Unhandled Stream event type: ${eventType}`);
       return NextResponse.json({ status: "ok", handled: false });
     }
 
@@ -256,13 +255,12 @@ export async function POST(req: NextRequest) {
     );
 
     if (!isNew) {
-      console.log(`Duplicate Stream webhook event ${eventId}, returning OK`);
+      streamLogger.debug(`Duplicate Stream webhook event: ${eventId}`);
       return NextResponse.json({ status: "ok", duplicate: true });
     }
 
-    console.log(`Processing Stream webhook: ${eventType}`, {
-      call_cid: baseEvent.call_cid,
-      created_at: baseEvent.created_at,
+    streamLogger.info(`Processing Stream webhook: ${eventType}`, {
+      call_cid: baseEvent.call_cid || "chat",
     });
 
     let processingError: string | undefined;
@@ -330,14 +328,14 @@ export async function POST(req: NextRequest) {
         }
 
         default:
-          console.log(`Unhandled Stream event type: ${eventType}`);
+          streamLogger.debug(`Unhandled Stream event type: ${eventType}`);
       }
     } catch (handlerError) {
       processingError =
         handlerError instanceof Error
           ? handlerError.message
           : String(handlerError);
-      console.error(`Error processing ${eventType}:`, handlerError);
+      streamLogger.error(`Error processing ${eventType}`, handlerError);
       throw handlerError;
     } finally {
       // Mark event as processed
@@ -346,12 +344,12 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ status: "ok" });
   } catch (error) {
-    console.error("Stream webhook error:", error);
+    streamLogger.error("Stream webhook error", error);
 
     // Return 200 to prevent retries for parsing errors
     // Stream will retry on 5xx errors
     if (error instanceof z.ZodError) {
-      console.error("Stream webhook validation error:", error.errors);
+      streamLogger.error("Stream webhook validation error", error);
       return NextResponse.json(
         { error: "Invalid event format", details: error.errors },
         { status: 400 },

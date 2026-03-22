@@ -211,7 +211,7 @@ export const CustomMessage = () => {
       await client.flagMessage(message.id);
 
       // Persist to our DB
-      await fetch("/api/report", {
+      const reportResponse = await fetch("/api/report", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -221,6 +221,11 @@ export const CustomMessage = () => {
           contentText: message.text?.substring(0, 500),
         }),
       });
+
+      if (!reportResponse.ok) {
+        const data = await reportResponse.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to submit report");
+      }
 
       toast({
         title: "Message reported",

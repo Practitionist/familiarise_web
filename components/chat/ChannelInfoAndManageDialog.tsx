@@ -235,7 +235,7 @@ export const ChannelInfoAndManageDialog = ({
       await client.flagUser(otherUserId, { reason: "user_report" });
 
       // Also persist to our DB so staff can see it
-      await fetch("/api/report", {
+      const reportResponse = await fetch("/api/report", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -246,6 +246,11 @@ export const ChannelInfoAndManageDialog = ({
           targetUserId: otherUserId,
         }),
       });
+
+      if (!reportResponse.ok) {
+        const data = await reportResponse.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to submit report");
+      }
 
       toast({
         title: "User reported",
