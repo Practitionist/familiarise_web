@@ -284,12 +284,10 @@ export const ChannelInfoAndManageDialog = ({
         title: "User blocked",
         description: "This user can no longer message you",
       });
-    } catch (error) {
-      console.error("Error blocking user:", error);
+    } catch {
       toast({
         title: "Error",
-        description:
-          error instanceof Error ? error.message : "Failed to block user",
+        description: "Failed to block user",
         variant: "destructive",
       });
     } finally {

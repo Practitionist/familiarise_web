@@ -151,8 +151,7 @@ export const CustomMessage = () => {
         text: editText,
       });
       setIsEditing(false);
-    } catch (error) {
-      console.error("Error editing message:", error);
+    } catch {
       toast({
         title: "Edit failed",
         description: "Could not edit the message. Please try again.",
@@ -175,8 +174,7 @@ export const CustomMessage = () => {
     if (!client) return;
     try {
       await client.deleteMessage(message.id);
-    } catch (error) {
-      console.error("Error deleting message:", error);
+    } catch {
       toast({
         title: "Delete failed",
         description: "Could not delete the message. Please try again.",
@@ -190,8 +188,7 @@ export const CustomMessage = () => {
     if (!channel) return;
     try {
       await channel.sendReaction(message.id, { type: reactionType });
-    } catch (error) {
-      console.error("Error sending reaction:", error);
+    } catch {
       toast({
         title: "Reaction failed",
         description: "Could not add reaction. Please try again.",
@@ -229,8 +226,7 @@ export const CustomMessage = () => {
         title: "Message reported",
         description: "Our team will review this message",
       });
-    } catch (error) {
-      console.error("Error reporting message:", error);
+    } catch {
       toast({
         title: "Report failed",
         description: "Could not report message. Please try again.",
