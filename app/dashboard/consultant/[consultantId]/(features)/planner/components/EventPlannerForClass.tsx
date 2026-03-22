@@ -129,6 +129,8 @@ export function EventPlannerForClass({
           topics: initialData.classPlan.topics ?? [],
           certificateProvided: initialData.classPlan.certificateProvided,
           recordingEnabled: initialData.classPlan.recordingEnabled ?? false,
+          recordingStoragePolicy:
+            initialData.classPlan.recordingStoragePolicy ?? "STREAM_ONLY",
           meetingsPerWeek: initialData.classPlan.meetingsPerWeek,
           emailSupport: initialData.classPlan.emailSupport,
           consultantProfileId: initialData.classPlan.consultantProfileId,
@@ -150,6 +152,7 @@ export function EventPlannerForClass({
           topics: [],
           certificateProvided: false,
           recordingEnabled: false,
+          recordingStoragePolicy: "STREAM_ONLY" as const,
           meetingsPerWeek: 2,
           emailSupport: "GENERAL" as const,
           classContents: [],
@@ -175,6 +178,8 @@ export function EventPlannerForClass({
         topics: initialData.classPlan.topics ?? [],
         certificateProvided: initialData.classPlan.certificateProvided,
         recordingEnabled: initialData.classPlan.recordingEnabled ?? false,
+        recordingStoragePolicy:
+          initialData.classPlan.recordingStoragePolicy ?? "STREAM_ONLY",
         meetingsPerWeek: initialData.classPlan.meetingsPerWeek,
         emailSupport: initialData.classPlan.emailSupport,
         consultantProfileId: initialData.classPlan.consultantProfileId,
@@ -689,6 +694,63 @@ export function EventPlannerForClass({
                           checked={field.value}
                           onCheckedChange={field.onChange}
                         />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="recordingStoragePolicy"
+                  render={({ field }) => (
+                    <FormItem className="rounded-lg border p-4 mt-4">
+                      <FormLabel className="text-base">
+                        Recording Storage
+                      </FormLabel>
+                      <FormDescription>
+                        Choose how long recordings are stored
+                      </FormDescription>
+                      <FormControl>
+                        <div className="flex flex-col gap-3 mt-2">
+                          <label className="flex items-start gap-3 cursor-pointer">
+                            <input
+                              type="radio"
+                              value="STREAM_ONLY"
+                              checked={field.value === "STREAM_ONLY"}
+                              onChange={() => field.onChange("STREAM_ONLY")}
+                              className="mt-1"
+                            />
+                            <div>
+                              <div className="font-medium text-sm">
+                                Standard Storage (2 weeks)
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                Recordings are available for 2 weeks after the
+                                session, then automatically removed.
+                              </div>
+                            </div>
+                          </label>
+                          <label className="flex items-start gap-3 cursor-pointer">
+                            <input
+                              type="radio"
+                              value="SUPABASE_PERMANENT"
+                              checked={field.value === "SUPABASE_PERMANENT"}
+                              onChange={() =>
+                                field.onChange("SUPABASE_PERMANENT")
+                              }
+                              className="mt-1"
+                            />
+                            <div>
+                              <div className="font-medium text-sm">
+                                Permanent Storage
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                Recordings are automatically transferred to
+                                permanent storage and never expire.
+                              </div>
+                            </div>
+                          </label>
+                        </div>
                       </FormControl>
                     </FormItem>
                   )}

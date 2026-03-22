@@ -69,6 +69,7 @@ const WebinarFormSchema = z.object({
   consultantProfileId: z.string().optional(),
   certificateProvided: z.boolean(),
   recordingEnabled: z.boolean(),
+  recordingStoragePolicy: z.enum(["STREAM_ONLY", "SUPABASE_PERMANENT"]),
   durationInHours: z.number().min(0.5, "Duration must be at least 30 minutes"),
   scheduledAt: z.string().min(1, "Start time is required"),
 });
@@ -171,6 +172,8 @@ export function EventPlannerForWebinar({
       certificateProvided:
         initialData?.webinarPlan?.certificateProvided ?? false,
       recordingEnabled: initialData?.webinarPlan?.recordingEnabled ?? false,
+      recordingStoragePolicy:
+        initialData?.webinarPlan?.recordingStoragePolicy ?? "STREAM_ONLY",
       topics: initialData?.webinarPlan?.topics ?? [],
       scheduledAt: getInitialScheduledAt(),
       consultantProfileId: consultantId,
@@ -195,6 +198,8 @@ export function EventPlannerForWebinar({
         certificateProvided:
           initialData.webinarPlan.certificateProvided ?? false,
         recordingEnabled: initialData.webinarPlan.recordingEnabled ?? false,
+        recordingStoragePolicy:
+          initialData.webinarPlan.recordingStoragePolicy ?? "STREAM_ONLY",
         topics: initialData.webinarPlan.topics ?? [],
         scheduledAt: getInitialScheduledAt(),
         consultantProfileId: consultantId,
@@ -552,6 +557,63 @@ export function EventPlannerForWebinar({
                           checked={field.value}
                           onCheckedChange={field.onChange}
                         />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="recordingStoragePolicy"
+                  render={({ field }) => (
+                    <FormItem className="rounded-lg border p-4 mt-4">
+                      <FormLabel className="text-base">
+                        Recording Storage
+                      </FormLabel>
+                      <FormDescription>
+                        Choose how long recordings are stored
+                      </FormDescription>
+                      <FormControl>
+                        <div className="flex flex-col gap-3 mt-2">
+                          <label className="flex items-start gap-3 cursor-pointer">
+                            <input
+                              type="radio"
+                              value="STREAM_ONLY"
+                              checked={field.value === "STREAM_ONLY"}
+                              onChange={() => field.onChange("STREAM_ONLY")}
+                              className="mt-1"
+                            />
+                            <div>
+                              <div className="font-medium text-sm">
+                                Standard Storage (2 weeks)
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                Recordings are available for 2 weeks after the
+                                session, then automatically removed.
+                              </div>
+                            </div>
+                          </label>
+                          <label className="flex items-start gap-3 cursor-pointer">
+                            <input
+                              type="radio"
+                              value="SUPABASE_PERMANENT"
+                              checked={field.value === "SUPABASE_PERMANENT"}
+                              onChange={() =>
+                                field.onChange("SUPABASE_PERMANENT")
+                              }
+                              className="mt-1"
+                            />
+                            <div>
+                              <div className="font-medium text-sm">
+                                Permanent Storage
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                Recordings are automatically transferred to
+                                permanent storage and never expire.
+                              </div>
+                            </div>
+                          </label>
+                        </div>
                       </FormControl>
                     </FormItem>
                   )}

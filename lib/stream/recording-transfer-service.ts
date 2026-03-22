@@ -225,9 +225,15 @@ export class RecordingTransferService {
    * @param daysBeforeExpiry Days before expiry to start transferring
    * @param batchSize Maximum number of recordings to process in one batch
    */
+  /**
+   * Process expiring recordings that should be transferred to Supabase.
+   * @param policyFilter - "SUPABASE_PERMANENT" to only auto-transfer premium plans,
+   *                       "ALL" to transfer everything (manual/legacy mode)
+   */
   static async processExpiringRecordings(
-    daysBeforeExpiry: number = 3,
+    daysBeforeExpiry: number = 5,
     batchSize: number = 10,
+    policyFilter: "SUPABASE_PERMANENT" | "ALL" = "SUPABASE_PERMANENT",
   ): Promise<{
     processed: number;
     succeeded: number;
@@ -245,7 +251,35 @@ export class RecordingTransferService {
     };
 
     try {
-      // Get recordings that are expiring soon and still on Stream S3
+      // Build the where clause — optionally filter by plan storage policy
+      const policyCondition =
+        policyFilter === "SUPABASE_PERMANENT"
+          ? {
+              meetingSession: {
+                slotOfAppointment: {
+                  appointment: {
+                    OR: [
+                      {
+                        webinar: {
+                          webinarPlan: {
+                            recordingStoragePolicy: "SUPABASE_PERMANENT" as const,
+                          },
+                        },
+                      },
+                      {
+                        class: {
+                          classPlan: {
+                            recordingStoragePolicy: "SUPABASE_PERMANENT" as const,
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+            }
+          : {};
+
       const expiringRecordings = await prisma.recording.findMany({
         where: {
           storageType: "STREAM_S3",
@@ -253,6 +287,7 @@ export class RecordingTransferService {
           streamUrlExpiresAt: {
             lte: expiryThreshold,
           },
+          ...policyCondition,
         },
         take: batchSize,
         orderBy: {
@@ -263,6 +298,7 @@ export class RecordingTransferService {
       streamLogger.info("Processing expiring recordings", {
         count: expiringRecordings.length,
         daysBeforeExpiry,
+        policyFilter,
       });
 
       for (const recording of expiringRecordings) {
@@ -287,6 +323,94 @@ export class RecordingTransferService {
       streamLogger.error("Failed to process expiring recordings", error);
       return results;
     }
+  }
+
+  /**
+   * Get STREAM_ONLY recordings that are expiring soon (for notification purposes).
+   * These won't be auto-transferred but consultants should be warned.
+   */
+  static async getExpiringStreamOnlyRecordings(
+    daysBeforeExpiry: number = 3,
+  ): Promise<
+    { recordingId: string; title: string; consultantUserId: string; expiresAt: Date }[]
+  > {
+    const expiryThreshold = new Date();
+    expiryThreshold.setDate(expiryThreshold.getDate() + daysBeforeExpiry);
+
+    const recordings = await prisma.recording.findMany({
+      where: {
+        storageType: "STREAM_S3",
+        status: "READY",
+        streamUrlExpiresAt: {
+          lte: expiryThreshold,
+          gt: new Date(), // Not yet expired
+        },
+        meetingSession: {
+          slotOfAppointment: {
+            appointment: {
+              OR: [
+                {
+                  webinar: {
+                    webinarPlan: {
+                      recordingStoragePolicy: "STREAM_ONLY",
+                    },
+                  },
+                },
+                {
+                  class: {
+                    classPlan: {
+                      recordingStoragePolicy: "STREAM_ONLY",
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+      include: {
+        meetingSession: {
+          include: {
+            slotOfAppointment: {
+              include: {
+                appointment: {
+                  include: {
+                    webinar: {
+                      include: {
+                        webinarPlan: {
+                          include: { consultantProfile: true },
+                        },
+                      },
+                    },
+                    class: {
+                      include: {
+                        classPlan: {
+                          include: { consultantProfile: true },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return recordings.map((r) => {
+      const apt = r.meetingSession.slotOfAppointment.appointment;
+      const consultantUserId =
+        apt.webinar?.webinarPlan?.consultantProfile?.userId ||
+        apt.class?.classPlan?.consultantProfile?.userId ||
+        "";
+      return {
+        recordingId: r.id,
+        title: r.title,
+        consultantUserId,
+        expiresAt: r.streamUrlExpiresAt!,
+      };
+    });
   }
 
   /**
