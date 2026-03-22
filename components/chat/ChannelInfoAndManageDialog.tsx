@@ -30,6 +30,7 @@ import { Channel } from "stream-chat";
 import { useChatContext } from "stream-chat-react";
 import { getChannelDisplayInfo } from "./utils/channelUtils";
 import { AddMembersDialog } from "./AddMembersDialog";
+import { isEventChannel } from "@/lib/stream-channel-ids";
 
 interface ChannelInfoAndManageDialogProps {
   channel: Channel;
@@ -49,8 +50,7 @@ export const ChannelInfoAndManageDialog = ({
 
   const isTeamChannel = channel.type === "team";
   const isDirectMessage = channel.type === "messaging";
-  const isEventChannel =
-    channel.id?.startsWith("webinar-") || channel.id?.startsWith("class-");
+  const isEvent = isEventChannel(channel.id);
   const memberCount = Object.keys(channel.state.members || {}).length;
 
   // Get display info using shared utility
@@ -68,7 +68,7 @@ export const ChannelInfoAndManageDialog = ({
 
   // Check if current user is the event owner consultant
   const isEventOwner =
-    isEventChannel &&
+    isEvent &&
     channel.data?.created_by_id === client?.userID &&
     client?.user?.role === "CONSULTANT";
 
@@ -366,7 +366,7 @@ export const ChannelInfoAndManageDialog = ({
                     : displayInfo.isGroupDM
                       ? "Group Direct Message"
                       : "Direct Message"}
-                  {isEventChannel && " (Event Channel)"}
+                  {isEvent && " (Event Channel)"}
                 </p>
               </div>
 
