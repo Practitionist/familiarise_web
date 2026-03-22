@@ -42,6 +42,7 @@ export async function tokenProvider(userId: string): Promise<string> {
 
 /**
  * Generate a chat token for a user
+ * Token is valid for 1 hour by default
  * @param userId The user ID to generate token for
  * @returns The chat token string
  */
@@ -55,7 +56,7 @@ export async function chatTokenProvider(userId: string): Promise<string> {
   }
 
   try {
-    const token = generateChatToken(validatedUserId);
+    const token = generateChatToken(validatedUserId, 3600); // 1 hour, matching video token
 
     streamLogger.debug("Generated chat token", { userId: validatedUserId });
 
