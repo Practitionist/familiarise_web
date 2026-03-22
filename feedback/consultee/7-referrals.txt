@@ -1,0 +1,90 @@
+Referrals Tab — PM Review
+
+🔴 Critical: Functional Issues
+
+1. Referral link uses localhost — will be broken in production
+   The referral link input contains: http://localhost:3000/r/WILLIA
+   This URL is constructed from the app's base URL env var. In production
+   this should resolve to the actual domain (e.g., familiarise.io/r/WILLIA).
+   If the BASE_URL environment variable is not correctly set in production,
+   every user will see a localhost referral link they share with friends —
+   which will never work. This needs a production environment test and a
+   guard that validates the generated URL before rendering it.
+
+2. Referral link is visually truncated in the input field
+   The input field is too narrow to display the full URL. Users who glance
+   at the field without clicking into it may not realise there is a link at
+   all — the field appears empty at a glance. The field should either be
+   wider, show a truncated URL with an ellipsis, or display only the referral
+   code with a separate "Copy full link" action.
+
+---
+🟠 High: UX / Conversion Issues
+
+3. No social sharing CTAs — copy-only mechanic limits viral reach
+   The only sharing mechanism is a copy-to-clipboard icon. There are no
+   one-tap share buttons for WhatsApp, Twitter/X, LinkedIn, or email. For
+   an EdTech / professional network audience, WhatsApp forward and LinkedIn
+   share are the highest-conversion channels. The absence of these CTAs
+   leaves significant viral potential on the table.
+
+4. "Qualified" stat has no definition or tooltip
+   The stats row shows: Total Referred: 0 | Qualified: 0 | Credit Balance: ₹0.00
+   "Qualified" is unexplained. Does it mean the referred user signed up?
+   Made a booking? Completed a session? Users have no way to understand why
+   their Total Referred and Qualified numbers might diverge, which will
+   generate support queries and erode trust in the referral system.
+
+5. No credit reward amount disclosed on this page
+   The page subtitle says "Invite friends and earn credits towards your next
+   booking" but never says how much. Users cannot calculate whether the
+   referral effort is worth it without knowing the credit amount per
+   successful referral. This information gap lowers motivation to share.
+
+---
+🟡 Medium: Missing Polish
+
+6. No referral program terms or expiry
+   Credits earned through referrals likely have an expiry date or T&C. None
+   of this is disclosed on the page. Users who earn credits and find they
+   expired without knowing will feel deceived.
+
+7. No time context on referral code generation
+   The referral code "WILLIA" (first 6 chars of first name) is visible in
+   the input. There is no indication of when this code was generated, whether
+   it can be regenerated, or whether it is permanent.
+
+8. No shareable message template
+   When users share a referral, they typically share context: "I'm using
+   Familiarise to learn from experts. Join using my link and we both get
+   credits." There is no pre-written message template to copy alongside the
+   link — a common pattern in referral UIs that increases share-through rate.
+
+9. Referral code uniqueness risk at scale
+   The code "WILLIA" is derived from the first 6 characters of the user's
+   first name. Two users named "William" would both get "WILLIA" — a
+   collision. The code generation should include a numeric suffix or use
+   a hash to guarantee uniqueness.
+
+---
+Summary Priority Matrix
+
+┌──────────┬──────────────────────────────────────────────────────────────┐
+│ Priority │                          Issue                               │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🔴 P0    │ Referral link uses localhost — broken in production          │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🔴 P0    │ Link visually truncated — appears empty at a glance          │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🟠 P1    │ No social sharing CTAs (WhatsApp, email, LinkedIn)           │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🟠 P1    │ "Qualified" stat has no definition or tooltip                │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🟠 P1    │ Credit reward amount not shown on this page                  │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🟡 P2    │ No referral program T&C / credit expiry disclosed            │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🟡 P2    │ No shareable message template alongside the link             │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🟡 P2    │ Referral code first-6-chars scheme risks collisions at scale │
+└──────────┴──────────────────────────────────────────────────────────────┘

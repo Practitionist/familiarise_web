@@ -1,0 +1,75 @@
+PAGE: Consultant Dashboard — Help Center
+URL: /dashboard/consultant/75075a4e-eaa1-4067-afe2-89d25ef164ca/help
+Audited: 2026-03-14
+
+─────────────────────────────────────────────
+VISUAL + A11Y OBSERVATIONS
+─────────────────────────────────────────────
+Page heading: "Help Center" (H1) — correct level.
+Subtitle: "Find answers to common questions about using the platform"
+Sidebar nav: Help link is ABSENT — same issue as Settings. Accessible only via the "?" icon in the top navbar.
+
+Search box: "Search for help..." — functional. Searching "timezone" returns "1 result found for 'timezone'" — correct.
+
+Category filter buttons: All Topics | Profile | Scheduling | Services | Meetings | Payments
+(No count shown on each button, e.g. "Scheduling (2)")
+
+10 FAQs total across 5 categories (2 per category):
+  Profile:   How do I set up my consultant profile? / How can I specify my domain expertise?
+  Scheduling: How do I set my availability? / How are different time zones handled?
+  Services:  What types of services can I offer? / How do I set up consultation plans?
+  Meetings:  What meeting platforms are supported? / Can I record sessions?
+  Payments:  What payment methods are supported? / Can I offer discounts?
+
+Timezone answer (expanded): "All slots are stored in UTC. The system automatically converts times to the consultee's timezone when they view your availability."
+
+Payment methods answer (expanded): "We support multiple payment gateways including Stripe, Razorpay, and card payments. Payments are securely processed and automatically tracked."
+
+Footer: "Still have questions? Contact our support team" → mailto:support@familiarise.com
+
+─────────────────────────────────────────────
+ISSUES
+─────────────────────────────────────────────
+
+[1] 🟠 P1 — Help Center is not in the sidebar nav — hidden from main navigation (cross-ref: 1-home.txt Issue [1])
+Like Settings, the Help link is absent from the sidebar navigation. It is only accessible via the "?" (question mark) icon in the top navbar — a non-obvious location for such a high-need destination. New consultants setting up their profile are the most likely to need help, and they'll scan the sidebar first.
+
+> **Proposed fix:** Add "Help" as a sidebar nav item, ideally at the very bottom of the nav below the Finance group. Use a lifebuoy or question-mark icon consistent with the platform's icon set.
+
+[2] 🟠 P1 — Only 10 FAQs covering 5 generic topics — 9 dashboard features have no FAQ coverage
+The platform has 14 dashboard pages covering features as specific as Free Trials, Collaborations, Document Review, Recordings, Referrals, and Earnings. None of these have any FAQ coverage. The 10 questions that exist are shallow onboarding-level questions ("How do I set up my profile?"). A consultant experiencing a real issue — "Why does my referral link show 0 stats?", "How do I accept a collaboration invitation?", "What does QUALIFIED mean on the Referrals page?" — will find zero relevant answers.
+
+> **Proposed fix:** Expand the FAQ library to at least 30–40 questions covering every major feature. Add categories: Earnings & Payouts, Referrals, Recordings, Documents, Collaborations, Free Trials. Include troubleshooting questions (e.g. "Why is my payout not showing?" / "Why can't I switch schedule types?").
+
+[3] 🟠 P1 — Payment methods answer omits two of four supported gateways and the commission rate
+The answer to "What payment methods are supported?" lists only Stripe and Razorpay, omitting Lemon Squeezy and Xflow (all four are active payment gateways per the codebase). The answer also doesn't mention the platform's 20% commission or when payouts happen — two questions consultants need answered before signing up.
+
+> **Proposed fix:** Update answer: "We support Stripe (international), Razorpay (India), Lemon Squeezy, and Xflow. Payments are processed in your configured currency. Familiarise charges a 20% platform fee. Payouts are released after the hold period (typically 7–14 days after service completion)."
+
+[4] 🟡 P2 — Timezone FAQ answer incomplete — doesn't explain consultant's perspective
+The timezone answer says slots are stored in UTC and consultees see their local timezone. But it doesn't say: (a) which timezone the consultant's Settings availability editor displays (their local timezone or UTC?), (b) that the consultant's timezone must be set in their profile for correct slot conversion. A consultant setting availability in the UI needs to know if "2:30 PM" means 2:30 PM in their timezone or UTC.
+
+> **Proposed fix:** Add to the answer: "When you set your availability in Settings, times are shown in your local timezone (set in your profile). Consultees see your slots converted to their own timezone. If your times appear wrong, check your timezone setting in Settings → Availability."
+
+[5] 🟡 P2 — Category filter buttons show no question count
+The filter buttons ("Profile", "Scheduling", etc.) don't show how many questions are in each category. A consultant looking for the most comprehensive category has no signal. Adding "(2)" suffixes is a standard pattern for faceted navigation.
+
+> **Proposed fix:** Show question counts in filter buttons: "Scheduling (2)", "Payments (2)". Update dynamically when search filters results.
+
+[6] 🟡 P2 — "Contact our support team" is a mailto link — email-only, no chat or ticketing
+The only support path available is an email link (mailto:support@familiarise.com). There is no live chat widget, no ticket submission form, and no expected response time. For a platform that charges a 20% commission on revenue, email-only support is below expectation.
+
+> **Proposed fix:** Add a support ticket submission form inline (Name, Email, Category, Description). Or integrate a chat widget (Intercom, Crisp, etc.). At minimum, add a note: "We typically respond within 24 hours."
+
+[7] 🟡 P2 — No "Was this helpful?" feedback mechanism per answer
+FAQ items have no upvote/downvote or "Was this helpful? Yes / No" control. Without feedback, there's no signal about which answers are insufficient or confusing — making it impossible to prioritize FAQ improvements.
+
+> **Proposed fix:** Add a "Was this helpful?" Yes/No prompt at the bottom of each expanded answer. Log responses to identify the most-reported unhelpful answers.
+
+─────────────────────────────────────────────
+SEVERITY SUMMARY
+─────────────────────────────────────────────
+🔴 P0: 0
+🟠 P1: 3 (Help not in sidebar nav, only 10 FAQs missing 9 feature areas, payment answer incomplete)
+🟡 P2: 4 (timezone answer incomplete, no counts on category filters, email-only support, no feedback mechanism)
+Total issues: 7

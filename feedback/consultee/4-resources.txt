@@ -1,0 +1,119 @@
+Resources Tab — PM Review
+
+🔴 Critical: Logic Bugs
+
+1. SCHEDULED and IN_PROGRESS events appear in Resources
+   Resources is subtitled "Materials and recordings from your enrolled events."
+   Four events that have not yet produced recordings appear in the list:
+
+   Webinars:
+   - Advanced Topics Webinar (Elena Anderson, 30 Mar 2026) — IN PROGRESS
+   - Introduction Webinar (Grace Anderson, 3 Apr 2026) — SCHEDULED
+   - Advanced Topics Webinar (James Anderson, 29 Mar 2026) — IN PROGRESS
+
+   Classes:
+   - Beginner Class (Jessica Anderson, 30 Mar 2026) — SCHEDULED
+   - Intermediate Class (David Anderson, 26 Mar 2026) — IN PROGRESS
+   - Beginner Class (Alex Anderson, 26 Apr 2026) — SCHEDULED
+
+   A SCHEDULED event hasn't happened; an IN_PROGRESS one has no recording
+   yet. These entries clutter the Resources view and imply that recordings
+   or materials exist when they don't. Expanding them would show
+   "No materials or recordings yet" — a useless interaction. These events
+   should only appear in Resources once they are COMPLETED and have an
+   attached recording.
+
+2. CANCELLED events with no sessions appear in Resources
+   Multiple CANCELLED webinars and classes appear — e.g., Introduction
+   Webinar (Grace Anderson, CANCELLED), Expert Workshop Webinar (Jessica
+   Anderson, CANCELLED), Beginner Class (Elena Anderson, CANCELLED). If
+   these were cancelled before any sessions occurred, they will never have
+   recordings. Showing them permanently in Resources with a CANCELLED badge
+   is confusing. Either remove them entirely, or show a tombstone entry with
+   "Cancelled — no recordings available."
+
+---
+🟠 High: UX Issues
+
+3. No sort or filter across recordings
+   The list is flat: 11 webinars and 11 classes all in one tab each, mixed
+   COMPLETED / IN_PROGRESS / SCHEDULED / CANCELLED with no filter. A user
+   who wants to find recordings from 6 months ago has no date filter, no
+   status filter ("show me only COMPLETED"), and no search by event name.
+
+4. "Sync from Stream" button has no tooltip or feedback
+   A "Sync from Stream" button sits top-right with a refresh icon. Users
+   have no idea what this does, when it's needed, or whether it ran
+   successfully. In a consumer app, this kind of manual sync shouldn't be
+   exposed at all — it should run automatically. If it must be visible,
+   it needs a tooltip ("Re-fetches latest recording links from Stream.io"),
+   a loading state, and a success/failure toast.
+
+5. No empty-state explanation for CANCELLED entries on expand
+   When expanding a CANCELLED event, the user sees "No materials or
+   recordings yet" — the same message shown for events that simply haven't
+   happened yet. There is no distinction between "cancelled — nothing will
+   ever be here" and "scheduled — recordings will appear after the session."
+   The copy should reflect the terminal vs pending state.
+
+6. List ordering is not obvious
+   The Webinars tab opens with a Jessica Anderson webinar from Jan 23, 2026
+   (oldest, already COMPLETED) first. Classes opens with a Jessica Anderson
+   class dated May 5, 2026 (future, CANCELLED) first. There is no
+   consistent sort key visible to the user — not alphabetical, not
+   chronological by event date, not by recording count. This makes finding
+   a specific recording a hunt.
+
+---
+🟡 Medium: Missing Features & Polish
+
+7. No playback in-page — "Watch" links open external URLs
+   Clicking "Watch" on a recording navigates to an external URL (seed data
+   shows placeholder URLs like "aware-coil.net"). In production these should
+   be Stream.io hosted URLs. However, opening a new tab breaks the in-app
+   experience. An embedded player or at least an in-app viewer would keep
+   users engaged and reduce context-switching.
+
+8. No download option
+   Users who want to save a recording locally have no download button.
+   This is a common support request (especially for subscription customers
+   paying for recurring access).
+
+9. Status badge formatting inconsistency
+   In Resources the badge reads "IN PROGRESS" (with a space). In the
+   Calendar tab on the Appointments page (per b.txt), the same status
+   renders as the raw enum "IN_PROGRESS" with an underscore. This means
+   the formatting utility is applied in Resources but not in Calendar —
+   needs standardisation across both views.
+
+10. Subscription tab includes PENDING item
+    Basic Subscription (Charlotte Anderson, 19 May 2026) appears with a
+    PENDING badge. A PENDING subscription has not been confirmed or started,
+    so it should not appear in Resources yet.
+
+---
+Summary Priority Matrix
+
+┌──────────┬──────────────────────────────────────────────────────────────┐
+│ Priority │                          Issue                               │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🔴 P0    │ SCHEDULED / IN_PROGRESS events appearing in Resources        │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🔴 P0    │ CANCELLED events (no sessions) polluting Resources list      │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🟠 P1    │ No filter / sort (can't find recordings by date or status)   │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🟠 P1    │ "Sync from Stream" has no tooltip, loading state, or toast   │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🟠 P1    │ "No materials yet" copy doesn't differentiate cancelled/TBD  │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🟠 P1    │ List ordering is inconsistent / not user-comprehensible      │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🟠 P1    │ PENDING subscription appearing in Resources                  │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🟡 P2    │ No in-page video player — Watch opens external tab           │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🟡 P2    │ No download option for recordings                            │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🟡 P2    │ "IN PROGRESS" formatted in Resources, "IN_PROGRESS" in Cal  │
+└──────────┴──────────────────────────────────────────────────────────────┘

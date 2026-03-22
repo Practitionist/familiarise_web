@@ -1,0 +1,117 @@
+Messages Tab — PM Review
+
+🔴 Critical: Exposed Developer Tools
+
+1. "Debug Stream Chat" button is visible to end users
+   A "Debug Stream Chat" button appears at the bottom of the sidebar,
+   accessible to all consultees. This is a developer/diagnostic tool that
+   opens a dialog exposing internal Stream.io state. End users should never
+   see this. It must be hidden behind an environment check (isDev / NODE_ENV)
+   or removed entirely from the production build.
+
+2. "Initialize My Channels" button is visible to end users
+   Below the Conversations section, a black "Initialize My Channels" button
+   is displayed. This is a setup/provisioning action that should happen
+   automatically when a booking is confirmed — not a manual button a user
+   needs to click. Exposing it implies the system failed to auto-provision and
+   is asking the user to fix it. It must be hidden from the UI entirely.
+
+---
+🔴 Critical: Functionality Issues
+
+3. All channel names are non-unique — users cannot distinguish their chats
+   William has 13 class channels and 6 webinar channels visible in the sidebar.
+   The channel names are "Beginner Class", "Intermediate Class", "Advanced
+   Class", "Advanced Topics Webinar" etc. — the same generic event name
+   repeated multiple times. There is no instructor name, no date, no plan ID
+   — nothing to distinguish one "Beginner Class" from another.
+
+   Real impact: a user trying to message their instructor for a specific class
+   must click through each identically-named channel until they find the right
+   one. At 20+ bookings this becomes unusable.
+
+   The channel display name should be: "<Event Name> · <Instructor> · <Date>"
+   e.g., "Beginner Class · Elena Anderson · 14 Mar 2026"
+
+4. "Conversations" section is empty despite consultations existing
+   The Conversations section (for 1:1 DMs) shows "No conversations yet. Book
+   a consultation to start chatting." William has two consultation bookings
+   (Basic Consultation with Maria Anderson and Aditi Anderson). Either the DM
+   channels were not provisioned for these consultations, or the Conversations
+   section filters for a different status. This is a broken feature for the
+   core Consultation use case.
+
+---
+🟠 High: UX Issues
+
+5. Channel info modal exposes internal technical terminology
+   Opening the info modal for a channel shows:
+   - Channel Type: "Team Channel (Event Channel)"
+   This is raw internal taxonomy from Stream.io's data model. Users should
+   see human-readable labels like "Class Group Chat" or "Webinar Chat."
+
+6. "Leave Channel" is a prominent red destructive button with no confirmation
+   Inside the channel info modal, "Leave Channel" is rendered as a full-width
+   red button. Accidentally clicking this removes the user from the class/
+   webinar group chat. There is no confirmation step, no undo, and no
+   explanation of what leaving means (do they lose access to messages? can
+   they rejoin?). This needs a confirmation dialog.
+
+7. No unread count or last-message preview on channels
+   The channel sidebar shows only the event name — no unread message badge,
+   no last message snippet, no timestamp of last activity. Standard chat
+   interfaces (Slack, WhatsApp, Telegram) all show these. Without them, users
+   have no reason to open the Messages tab proactively.
+
+8. Page loads to "No channel selected" — no auto-selection
+   On page load the main content area shows an empty state: "No channel
+   selected — Select a channel from the sidebar to start chatting." The app
+   should auto-select the most recently active or most recent upcoming
+   channel, not force an extra click to see anything.
+
+---
+🟡 Medium: Missing Features
+
+9. No search across message content
+   The search box in the sidebar searches channel names. There is no way to
+   search within message content across channels — useful for finding a
+   resource link or an instructor's note shared weeks ago.
+
+10. "Load More Channels" pagination with no total count
+    The sidebar shows 20 channels and then a "Load More Channels" button with
+    no indication of how many more exist. Users don't know how deep the list
+    goes.
+
+11. No notification settings per channel
+    Users cannot mute noisy group channels (e.g., a class with 50 members)
+    or set per-channel notification preferences. The only action in the info
+    modal is "Mute Channel" (all or nothing), with no granular controls.
+
+---
+Summary Priority Matrix
+
+┌──────────┬──────────────────────────────────────────────────────────────┐
+│ Priority │                          Issue                               │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🔴 P0    │ "Debug Stream Chat" button visible to all users              │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🔴 P0    │ "Initialize My Channels" button visible to all users         │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🔴 P0    │ All channels have identical names — impossible to distinguish │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🔴 P0    │ Conversations section empty despite consultation bookings    │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🟠 P1    │ Channel info shows raw internal type "Team Channel (Event)"  │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🟠 P1    │ "Leave Channel" red button with no confirmation guard        │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🟠 P1    │ No unread count or last-message preview on channels          │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🟠 P1    │ Page loads to empty state — no auto-channel selection        │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🟡 P2    │ No cross-channel message search                              │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🟡 P2    │ "Load More Channels" shows no total count                    │
+├──────────┼──────────────────────────────────────────────────────────────┤
+│ 🟡 P2    │ No per-channel notification granularity                      │
+└──────────┴──────────────────────────────────────────────────────────────┘

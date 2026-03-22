@@ -1,0 +1,89 @@
+PAGE: Consultant Dashboard — Referrals
+URL: /dashboard/consultant/75075a4e-eaa1-4067-afe2-89d25ef164ca/referrals
+Audited: 2026-03-14
+
+─────────────────────────────────────────────
+VISUAL + A11Y OBSERVATIONS
+─────────────────────────────────────────────
+Page heading: "Referrals" (H1) — correct.
+Subtitle: "Invite others and earn credits when they make their first booking"
+
+Stat cards:
+  Total Referred: 0
+  Qualified:      0
+  Total Earned:   ₹0.00
+  Credit Balance: ₹500.00
+
+Referral link (readonly textbox): http://localhost:3000/r/andrewanfkgx
+Copy button (icon-only, no visible label)
+
+Custom code input: placeholder "Set custom code (e.g. MYNAME)" + "Set" button
+
+"Your Referrals" table (4 rows):
+  Patrick Anderson  | SIGNED_UP (amber badge)  | 04/03/2026 | –
+  Kevin Anderson    | REWARDED (green badge)   | 04/03/2026 | ₹500.00
+  Olivia Anderson   | QUALIFIED (plain text)   | 22/02/2026 | –
+  Priya Anderson    | QUALIFIED (plain text)   | 28/01/2026 | –
+
+"Credit History" table:
+  REFERRAL BONUS | ₹500.00 | ₹500.00 remaining | Expires: 22/06/2026
+
+─────────────────────────────────────────────
+ISSUES
+─────────────────────────────────────────────
+
+[1] 🔴 P0 — Referral link contains localhost:3000 instead of production domain
+The referral link reads "http://localhost:3000/r/andrewanfkgx" — a development server URL. If a consultant copies this link and shares it with a potential referral, the recipient will see a connection refused error or a local development UI that requires a dev server to be running on their own machine. This is a P0 production bug identical to the same issue found on the consultee dashboard.
+
+> **Proposed fix:** Set the referral link base URL from a `NEXT_PUBLIC_APP_URL` environment variable. In production this resolves to the live domain; in development it can remain localhost. Never hardcode `localhost` as the base. Example: `${process.env.NEXT_PUBLIC_APP_URL}/r/${referralCode}`.
+
+[2] 🔴 P0 — Stat cards show zeros despite 4 referral rows visible in the table
+The stat cards display Total Referred = 0, Qualified = 0, Total Earned = ₹0.00 — yet the table below shows 4 referral rows: 1 SIGNED_UP, 1 REWARDED, and 2 QUALIFIED. Kevin Anderson shows a ₹500.00 reward. The Credit Balance (₹500.00) is the only correctly computed stat — it matches the Credit History row. The three referral stats are clearly computed from a different/broken data source (possibly the wrong consultant ID, a query scoped to REWARDED-only status, or a timing race condition).
+
+> **Proposed fix:** (a) Investigate why the stats query returns 0 while the referrals query returns 4. They should share the same data source. (b) "Total Referred" should count ALL referrals regardless of status. "Qualified" should count QUALIFIED + REWARDED rows. "Total Earned" should sum rewards from REWARDED rows. Write a unit test verifying these computations.
+
+[3] 🟠 P1 — Status badges use raw ALL_CAPS enums — and "QUALIFIED" has no badge styling
+Three inconsistencies in status rendering:
+  (a) "SIGNED_UP" and "REWARDED" use colored badge pills in ALL_CAPS — raw enum values.
+  (b) "QUALIFIED" rows have no badge at all — the status appears as plain text, visually demoted below the other statuses.
+  (c) "SIGNED_UP" contains an underscore — a database enum artifact never appropriate in user-facing UI.
+
+> **Proposed fix:** Humanize all status labels: "SIGNED_UP" → "Signed Up", "QUALIFIED" → "Qualified", "REWARDED" → "Rewarded". Apply consistent badge styling to all statuses (e.g., Qualified = teal, Signed Up = blue). Do not render any status as unstyled plain text.
+
+[4] 🟠 P1 — No explanation of why 2 QUALIFIED referrals show no reward amount
+Olivia and Priya Anderson are QUALIFIED — meaning they've met the qualification criteria — but the Reward column shows "–". A consultant who sees two qualified referrals with no reward will reasonably ask: "When do I get paid?" There is no indication of the next step (QUALIFIED → REWARDED), who triggers it (automatic vs. admin), or when it happens.
+
+> **Proposed fix:** Add a tooltip or footnote: "Qualified referrals are reviewed weekly. Credit will be added automatically once verified." Or add a progress status: "Pending payment" badge for QUALIFIED rows awaiting reward processing.
+
+[5] 🟠 P1 — Credit History "Source" column shows raw "REFERRAL BONUS" in ALL_CAPS
+The Credit History table's Source column displays "REFERRAL BONUS" — a raw uppercase enum that should be humanized to "Referral Bonus".
+
+> **Proposed fix:** Humanize to "Referral Bonus". If multiple source types exist (e.g. "WELCOME_CREDIT"), apply the same transformation.
+
+[6] 🟡 P2 — Referral link textbox appears editable but is readonly — no visual signal
+The referral link is displayed in a standard input textbox with no visual indicator that it is readonly. Users may click on it expecting to edit the URL, only to find their cursor appears but no text changes. Compare with the custom code input directly below — both look identical, but one is editable and one is not. No lock icon, grey background, or "Read-only" label differentiates them.
+
+> **Proposed fix:** Apply a visually distinct style to the readonly URL field: use a non-editable text component, a grey background (`bg-muted`), or a lock icon prefix. Alternatively, display the referral code separately: "Your code: andrewanfkgx" + "Copy full link" button.
+
+[7] 🟡 P2 — Custom code input field shows no current value — existing code unclear
+Andrew already has a referral code ("andrewanfkgx" visible in the link). The "Set custom code" input shows only a placeholder — not Andrew's current code. A consultant can't tell if their current code is the auto-generated one or a custom one they previously set. The input should either show the current code pre-filled or explicitly say "Current code: andrewanfkgx".
+
+> **Proposed fix:** Pre-fill the custom code input with the current referral code value. Show a label "Current: andrewanfkgx" below the input.
+
+[8] 🟡 P2 — Copy button has no accessible label (icon-only, no aria-label)
+The copy icon button next to the referral link has no text label, no `aria-label`, and no `title` attribute in the a11y tree (`button` with no name). Screen readers will announce it as "button" with zero context.
+
+> **Proposed fix:** Add `aria-label="Copy referral link"` and a `title="Copy referral link"` attribute so screen readers and sighted users on hover both get context.
+
+[9] 🟡 P2 — Credit expiry date (22/06/2026) shown but no proactive expiry warning
+The credit of ₹500.00 expires on 22/06/2026 — roughly 3 months from the audit date. The expiry is shown as a date in a table, but there is no proactive warning (e.g. a banner "Your ₹500 credit expires in 100 days — use it soon!"). A consultant who doesn't regularly check the Referrals page may miss this and let the credit expire.
+
+> **Proposed fix:** If a credit expires within 60 days, show an amber warning banner: "₹500 referral credit expires on 22 Jun 2026. Use it before it expires." Send a Novu notification 30 days before expiry.
+
+─────────────────────────────────────────────
+SEVERITY SUMMARY
+─────────────────────────────────────────────
+🔴 P0: 2 (localhost URL in referral link, stat cards show 0 despite real data)
+🟠 P1: 3 (raw ALL_CAPS enum badges including missing badge for QUALIFIED, no QUALIFIED→REWARDED progression explanation, REFERRAL BONUS ALL_CAPS)
+🟡 P2: 4 (readonly link looks editable, custom code field empty, copy button no aria-label, no expiry warning)
+Total issues: 9

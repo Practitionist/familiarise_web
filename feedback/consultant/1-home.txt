@@ -1,0 +1,85 @@
+PAGE: Consultant Dashboard — Home
+URL: /dashboard/consultant/75075a4e-eaa1-4067-afe2-89d25ef164ca/home
+Audited: 2026-03-14
+Consultant: Andrew Anderson (451 total appointments: 79 consultations, 184 subscriptions, 79 webinars, 109 classes)
+
+─────────────────────────────────────────────
+PHASE 0 CONTEXT
+─────────────────────────────────────────────
+Pre-flight SQL confirmed Andrew has:
+- 0 PENDING requests (all CANCELLED/EXPIRED)
+- 0 TrialSession rows
+- 2 ConsultantEarnings rows (PAID ₹5,396 gross + REFUNDED ₹65,544 gross)
+- 1 ACCEPTED + 1 DECLINED WebinarCollaborator
+- 1 PENDING AppointmentDocument
+- ReferralCode: andrewanfkpx
+
+─────────────────────────────────────────────
+VISUAL + A11Y OBSERVATIONS
+─────────────────────────────────────────────
+Post-login redirect: correctly lands on /home.
+Sidebar visible with sections: (top) Home | Chats | Appointments → SERVICES: Event Planner | Requests | Collaborations | Free Trials → CONTENT: Recordings | Documents → FINANCE: Earnings | Referrals.
+
+MISSING FROM SIDEBAR: Settings, Help, Analytics — 3 pages have no sidebar nav entry. Help is only reachable via an unlabelled icon in the top bar (uid=5_32). Settings and Analytics have no discoverable entry point from any visible nav element.
+
+─────────────────────────────────────────────
+ISSUES
+─────────────────────────────────────────────
+
+[1] 🔴 P0 — Settings, Help, and Analytics have no sidebar nav link
+Three of the 14 consultant pages (Settings at .../settings, Help at .../help, Analytics at .../analytics) are completely absent from the sidebar navigation. Help is partially accessible via a small unlabelled icon in the top right, but there is no text label and no aria-label on that link (uid=5_32 has no accessible name). Settings and Analytics appear completely undiscoverable unless the user guesses the URL.
+
+> **Proposed fix:** Add Settings, Help, and Analytics to the sidebar. A natural grouping would be a fourth section (ACCOUNT) with Settings and Help as sticky bottom items, and Analytics under a new INSIGHTS section or adjacent to Earnings.
+
+[2] 🟠 P1 — All 4 stat cards show 0 despite 451 historical appointments
+Today's Sessions (0), Upcoming (0), Pending Requests (0), This Week (0) are all 0. This is technically accurate (all seed appointments are past-dated) but creates a misleading "empty account" impression for any consultant whose upcoming pipeline is temporarily quiet. There is no historical context: no "You completed X sessions last month" or "X total lifetime sessions." A new consultant can't distinguish "my dashboard works but I have nothing upcoming" from "my data isn't loading."
+
+> **Proposed fix:** Add a "Lifetime" or "Last 30 Days" stat row below the 4 forward-looking cards. Example: "Total Completed: 451" and "Joined: [date]" give consultants confidence their data is intact even when upcoming slots are empty.
+
+[3] 🟠 P1 — "Upcoming Sessions" and "Today's Appointments" both empty with no CTA to create availability
+Both panels show empty states ("No appointments today", "No upcoming appointments") with only a "View all" link. There is no prompt to set up availability, create a plan, or invite a client — the most common next action for a consultant with an empty pipeline. The empty state copy ("Enjoy your free time or check upcoming sessions" / "Your schedule is clear for now") is passive and misses a conversion opportunity.
+
+> **Proposed fix:** Add a secondary CTA button in the empty state, e.g. "Set your availability" → links to Settings → Availability, or "Create a plan" → links to Event Planner.
+
+[4] 🟠 P1 — "Total Revenue" (₹4.3K) in Business Overview only reflects PAID earnings
+The ₹4.3K figure matches the consultant's share of the single PAID earnings row (₹5,396 gross × ~80% = ~₹4,317). The REFUNDED row (₹65,544 gross) is correctly excluded, but the label "Total Revenue" implies all-time gross without clarifying it means "net paid out" or "cleared earnings." A consultant who just had a large refund might be confused why their revenue doesn't reflect their subscription sales.
+
+> **Proposed fix:** Rename to "Net Earnings (Paid)" or add a tooltip explaining "Cleared earnings after platform fee and refunds." Link to Earnings page for breakdown.
+
+[5] 🟡 P2 — "Next Payout: ₹0 / Min ₹50.0K" is cryptic without tooltip
+The "Min ₹50.0K" label appears directly beneath the ₹0 payout amount. There is no tooltip, popover, or explanation of what "Min" means. New consultants will not know this is the minimum payout threshold (₹50,000 floor before a payout is triggered), and will not understand why their ₹4.3K earned hasn't been paid out.
+
+> **Proposed fix:** Add a tooltip on the "Min ₹50.0K" badge: "Payouts are initiated once your available balance reaches ₹50,000." Also consider showing progress toward threshold (e.g. a small progress bar: ₹4.3K / ₹50K = 8.6%).
+
+[6] 🟡 P2 — "Active Clients: 0" with no definition shown
+Active Clients shows 0. With 451 appointments, a consultant might expect a non-zero number. No definition of "active" is shown (active subscription? sessions in last 30 days? non-cancelled?). The label alone is ambiguous.
+
+> **Proposed fix:** Add tooltip: "Consultees with an active (non-cancelled) subscription or a session in the last 30 days." Or rename to "Clients (Active Subscriptions)" to be self-explanatory.
+
+[7] 🟡 P2 — "Welcome back" greeting lacks personalization
+The hero heading reads "Welcome back" with no name. The consultee dashboard's navbar shows "Good [time], [Name]." The consultant home doesn't display the consultant's name anywhere in the main content area (name appears only in the left sidebar). This feels impersonal compared to the consultee side.
+
+> **Proposed fix:** Change to "Welcome back, Andrew!" (using the authenticated user's first name).
+
+[8] 🟡 P2 — Pending Requests mini-panel uses table layout even for empty state
+The Pending Requests panel renders column headers (Type, Title, Requested By, Requested At) even when there are no rows. The empty message "No pending requests" appears as a table body row. This is visually awkward — the user sees a table structure with headers and then a single center-aligned message inside it.
+
+> **Proposed fix:** Hide the table headers when no rows exist; show only the empty state message + "View all requests →" link.
+
+[9] 🟡 P2 — No subscription/class progress tracking on Home
+The plan's protocol called for checking "Upcoming Sessions progress bars for subscriptions/classes." No such component exists. Subscriptions (184 in DB) and Classes (109 in DB) typically have multi-session commitments, and a consultant managing 20+ active subscriptions would benefit from seeing how many sessions remain per subscriber. This info is absent from the home dashboard.
+
+> **Proposed fix:** Add a "Subscription Progress" panel or incorporate session-remaining indicators into the Upcoming Sessions cards when appointment type is SUBSCRIPTION or CLASS.
+
+[10] 🟡 P2 — No "Join" button visible (correct, but no explanation)
+No Join button is shown since no sessions are imminent. This is correct behavior (Join should only appear within a 5-min pre-session window). However, first-time consultants have no way to know that the Join button will appear automatically — there is no tooltip, help text, or documentation pointing to this. They might wonder "how do I join sessions?"
+
+> **Proposed fix:** Add a small info tooltip or "?" icon near Today's Appointments: "Join buttons appear 5 minutes before a session starts."
+
+─────────────────────────────────────────────
+SEVERITY SUMMARY
+─────────────────────────────────────────────
+🔴 P0: 1 (missing nav for 3 pages)
+🟠 P1: 3 (zeroed stats, empty state CTAs missing, revenue label)
+🟡 P2: 6 (payout threshold, active clients, greeting, table empty state, progress bars, join button UX)
+Total issues: 10

@@ -1,0 +1,136 @@
+⏺ Now I have the full picture across all three tabs plus the schema. Here's
+   my comprehensive PM analysis:
+
+  ---
+  Appointments Tab — PM Review
+
+  🔴 Critical: Logic Bugs
+
+  1. "Upcoming" tab shows COMPLETED / CANCELLED / EXPIRED items
+  The sort pushes inactive appointments to the end, but they're still
+  visible. With 28 appointments, William sees a wall of dead history mixed
+  with real upcoming sessions. Items like "Basic Subscription — COMPLETED",
+   "Comprehensive Subscription — CANCELLED", multiple "COMPLETED" webinars
+  and classes all appear. The "Upcoming" tab should only show appointments
+  with actionable, forward-looking states (PENDING, APPROVED, SCHEDULED,
+  IN_PROGRESS). Everything else belongs in Past.
+
+  2. "Confirmed" booking badge + "COMPLETED" / "CANCELLED" footer =
+  contradiction
+  Webinars and Classes render two separate status signals:
+  - The green Confirmed badge comes from bookingStatus, derived from
+  whether a slot exists
+  - The footer status comes from the webinar/class .status enum
+
+  So a COMPLETED webinar shows Webinar | Confirmed ✅ at the top and
+  COMPLETED at the bottom simultaneously. Users read "Confirmed" as
+  present-tense, not as "you were confirmed when this happened." This needs
+   to be reconciled — if the event is over, suppress the Confirmed badge,
+  or relabel it "Attended."
+
+  3. "Pending approval" footer on confirmed webinars/classes
+  Several webinar cards show Webinar | Confirmed at the top but Pending
+  approval at the bottom. That's a direct contradiction. If booking status
+  is CONFIRMED (has a slot), the footer label should reflect that — e.g.
+  "Registered" or the next session date — not "Pending approval."
+
+  ---
+  🟠 High: UX/Display Issues
+
+  4. Calendar tab exposes raw Prisma enum values
+  The calendar renders IN_PROGRESS, SCHEDULED, COMPLETED, CANCELLED — these
+   are Prisma model enum names. Users should see "In Progress",
+  "Scheduled", etc. These should map through a display label utility.
+
+  5. "Past" tab subtitle is wrong
+  The BookingHistoryTab says "View all your past and upcoming sessions" —
+  but it's sitting under a tab called Past. "Upcoming" is contradictory
+  here.
+
+  6. "No sessions scheduled yet" on CANCELLED subscriptions
+  Comprehensive Subscription (CANCELLED) and Extended Subscription
+  (CANCELLED) both say "No sessions scheduled yet" — implying something is
+  about to happen. The state should read something like "Subscription
+  cancelled" or just omit this message for terminal states.
+
+  7. "1 sessions" — grammatical error
+  Multiple subscription and class cards show "1 sessions." The
+  pluralisation logic {count} sessions is missing a singular check (like
+  what's correctly done for the section header item/items).
+
+  8. No filter or sort controls in the Past tab
+  The Past tab is a flat list of ~28 rows, all sharing nearly identical
+  seeded timestamps (Wed, 4 Mar 2026, 14:00/14:01). At real scale with a
+  user who has 60+ sessions over 6 months, this becomes unusable. There's
+  no filter by type (Consultation / Webinar / Class / Subscription), no
+  date range picker, and no column sorting. This tab needs at minimum a
+  type filter and a date range filter.
+
+  ---
+  🟡 Medium: Missing Actions & Polish
+
+  9. No "Reschedule" in the overflow menu
+  The OverflowMenu only offers: View Plan Details, Report Issue, Cancel.
+  For consultations especially, rescheduling is a first-class action that
+  users expect. The schema supports it (new slot + cancellation of old
+  slot), but there's no UI path.
+
+  10. "Upload Documents" visible before a consultation is confirmed
+  The Basic Consultation (Aditi Anderson — PENDING, No slots available)
+  shows an Upload Documents button. Uploading a document to a PENDING
+  consultation with no slot is premature — the consultant hasn't even
+  confirmed the booking. Either hide this button until APPROVED or
+  SCHEDULED, or add contextual copy explaining this is pre-session prep.
+
+  11. Calendar tab: no "today" highlight
+  The calendar renders March 2026 with no visual indication of today (March
+   14). Users can't quickly spot today's sessions vs upcoming ones. A today
+   highlight ring on the date cell is standard in any calendar UI.
+
+  12. No price / payment reference on cards
+  The schema has price on all plan types, and Payment records exist. Cards
+  don't link to what was paid or provide a receipt shortcut. Even a small
+  "₹X paid" or a payment receipt icon would help users verify their booking
+   financially without navigating to the Payments tab.
+
+  13. No "today's sessions" visual grouping in Upcoming
+  The Upcoming tab is a flat grid per type. There's no "Today", "This
+  Week", "Later" grouping. Given the home page already shows today's
+  sessions, the Appointments tab should go deeper — group cards
+  chronologically within each section.
+
+  ---
+  Summary Priority Matrix
+
+  ┌──────────┬──────────────────────────────────────────────────────────┐
+  │ Priority │                          Issue                           │
+  ├──────────┼──────────────────────────────────────────────────────────┤
+  │ 🔴 P0    │ Completed/Cancelled items polluting Upcoming tab         │
+  ├──────────┼──────────────────────────────────────────────────────────┤
+  │ 🔴 P0    │ Confirmed badge + COMPLETED/CANCELLED footer             │
+  │          │ contradiction                                            │
+  ├──────────┼──────────────────────────────────────────────────────────┤
+  │ 🔴 P0    │ "Pending approval" on confirmed webinar/class cards      │
+  ├──────────┼──────────────────────────────────────────────────────────┤
+  │ 🟠 P1    │ Raw enum values in Calendar (IN_PROGRESS, SCHEDULED)     │
+  ├──────────┼──────────────────────────────────────────────────────────┤
+  │ 🟠 P1    │ "Past" tab subtitle says "upcoming"                      │
+  ├──────────┼──────────────────────────────────────────────────────────┤
+  │ 🟠 P1    │ "No sessions scheduled yet" on cancelled items           │
+  ├──────────┼──────────────────────────────────────────────────────────┤
+  │ 🟠 P1    │ No filter/sort in Past tab                               │
+  ├──────────┼──────────────────────────────────────────────────────────┤
+  │ 🟠 P1    │ "1 sessions" plural bug                                  │
+  ├──────────┼──────────────────────────────────────────────────────────┤
+  │ 🟡 P2    │ No Reschedule action                                     │
+  ├──────────┼──────────────────────────────────────────────────────────┤
+  │ 🟡 P2    │ Upload Documents visible pre-confirmation                │
+  ├──────────┼──────────────────────────────────────────────────────────┤
+  │ 🟡 P2    │ No "today" highlight on calendar                         │
+  ├──────────┼──────────────────────────────────────────────────────────┤
+  │ 🟡 P2    │ No payment/price reference on cards                      │
+  ├──────────┼──────────────────────────────────────────────────────────┤
+  │ 🟡 P2    │ No chronological grouping in Upcoming                    │
+  └──────────┴──────────────────────────────────────────────────────────┘
+
+✻ Crunched for 3m 57s

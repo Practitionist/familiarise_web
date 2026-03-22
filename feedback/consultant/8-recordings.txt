@@ -1,0 +1,77 @@
+PAGE: Consultant Dashboard — Recordings
+URL: /dashboard/consultant/75075a4e-eaa1-4067-afe2-89d25ef164ca/recordings
+Audited: 2026-03-14
+
+─────────────────────────────────────────────
+VISUAL + A11Y OBSERVATIONS
+─────────────────────────────────────────────
+Page heading: "Recordings" (H1) — correct.
+Subtitle: "Manage your webinar and class recordings"
+
+3 tabs: All | Webinars | Classes — all show the same empty state.
+
+All tab empty state:
+  Icon: video camera
+  Heading: "No recordings yet"
+  Copy: "Your recorded sessions will appear here."
+  CTA: "Sync from Stream" button
+
+Webinars tab empty state:
+  Copy: "Webinar recordings will appear here after you record a session."
+  CTA: "Sync from Stream" button
+
+Classes tab empty state:
+  Copy: "Class recordings will appear here after you record a session."
+  CTA: "Sync from Stream" button
+
+"Sync from Stream" interaction:
+  - Clicking shows a spinner in the button (loading state is present — good).
+  - On completion, a Novu toast appears in the top-right: "Up to date / No new recordings found."
+  - The page content does not change (remains empty, as expected — no recordings in Stream).
+
+─────────────────────────────────────────────
+ISSUES
+─────────────────────────────────────────────
+
+[1] 🟠 P1 — Empty state copy omits the required manual sync step
+The Webinars and Classes tab empty states say "recordings will appear here after you record a session." A consultant who has recorded sessions will return to this page expecting recordings and find nothing — because recordings don't auto-populate. The missing step is: record the session AND then manually click "Sync from Stream." The current copy creates a false expectation of automatic population.
+
+> **Proposed fix:** Change the per-tab copy to: "Recorded sessions will appear here. If you've already recorded a session, click 'Sync from Stream' to import your recordings." The "All" tab copy ("Your recorded sessions will appear here.") has the same problem.
+
+[2] 🟠 P1 — "Sync from Stream" appears per-tab as if tab-scoped — but sync is global
+The "Sync from Stream" button is rendered inside each tab's empty state, implying each tab has its own independent sync. In reality, syncing from Stream.io fetches all available recordings. Placing the button inside each tab's content area (rather than in the page header) makes the UX confusing: a consultant on the Webinars tab clicking "Sync from Stream" might assume only webinar recordings are synced, then be confused if Class recordings also appear.
+
+> **Proposed fix:** Move "Sync from Stream" to the page header area (next to the "Recordings" H1 or in the top-right), independent of which tab is selected. Show the last-synced timestamp next to it (e.g. "Last synced: 5 min ago").
+
+[3] 🟠 P1 — Subtitle says "webinar and class recordings" — consultation recordings excluded without explanation
+The subtitle explicitly scopes the page to webinars and classes. But consultations are also conducted as 1:1 video sessions via Stream.io. If consultation calls can be recorded, those recordings are inaccessible from this page. If consultation recording is not supported, the page provides no explanation of this feature gap. A consultant expecting to find a recorded 1:1 call will find no tab for it.
+
+> **Proposed fix:** Add a "Consultations" tab if consultation recording is supported. If not, add a footnote: "Note: Consultation sessions are not recorded. Only Webinars and Classes support recording."
+
+[4] 🟡 P2 — Tab labels show no recording count
+The tabs read "All", "Webinars", "Classes" with no counts. When populated, a consultant can't see at a glance how many recordings they have per type. Counts in tab labels (e.g. "Webinars (12)") are a standard pattern that improves scannability.
+
+> **Proposed fix:** Append count to tab labels: "All (0)", "Webinars (0)", "Classes (0)". Update dynamically when synced.
+
+[5] 🟡 P2 — No "last synced" timestamp anywhere on the page
+After syncing, the page shows no indication of when the last sync was performed. A consultant returning to the page the following day has no way to know if the recording list is current or stale. This is especially important if recordings are added in Stream.io after the last sync.
+
+> **Proposed fix:** Display "Last synced: [relative time]" near the "Sync from Stream" button (e.g. "Last synced 2 hours ago"). Persist the timestamp in localStorage or the session.
+
+[6] 🟡 P2 — Success toast "No new recordings found" could be mistaken for a failure
+After syncing successfully with 0 new recordings, the toast reads "Up to date / No new recordings found." A consultant who expects to find recordings may interpret "No new recordings found" as an error or as confirmation that their recordings are missing. The message is technically correct but lacks reassurance.
+
+> **Proposed fix:** Rephrase as "Sync complete. You're up to date — no new recordings to import." Or differentiate: if new recordings were found, show "X new recordings imported." If not, show "Already up to date."
+
+[7] 🟡 P2 — No search or filter UI anticipated for populated state
+Based on the page structure, there is no search input, date filter, or sort control visible anywhere on the page — the tab bar is the only navigation element. At scale (Andrew has 79 webinar and 109 class sessions), finding a specific recording would require scrolling through an unfiltered list. There's no indication the populated state will have any filtering.
+
+> **Proposed fix:** Add a search bar and date range filter above the tab bar (or above the recording list) so recordings are findable by session title, consultee name, or date range.
+
+─────────────────────────────────────────────
+SEVERITY SUMMARY
+─────────────────────────────────────────────
+🔴 P0: 0
+🟠 P1: 3 (misleading empty state copy, per-tab sync button, consultation recordings absent)
+🟡 P2: 4 (no count in tab labels, no last-synced timestamp, ambiguous success toast, no search/filter)
+Total issues: 7
