@@ -19,6 +19,7 @@ import {
   Presentation,
 } from "lucide-react";
 import { signOut, useSession } from "@/lib/auth-client";
+import { disconnectStreamClients } from "@/providers/StreamProvider";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -349,7 +350,12 @@ const Navbar = () => {
 
   if (excludeNavbar) return null;
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
+    try {
+      await disconnectStreamClients();
+    } catch {
+      // Don't block sign-out if disconnect fails
+    }
     signOut({
       fetchOptions: {
         onSuccess: () => {
