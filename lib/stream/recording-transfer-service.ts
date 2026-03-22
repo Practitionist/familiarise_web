@@ -190,7 +190,9 @@ export class RecordingTransferService {
       const now = new Date();
       const year = now.getFullYear();
       const month = (now.getMonth() + 1).toString().padStart(2, "0");
-      const filename = generateStorageFileName(contentType);
+      // Strip content-type params (e.g. "video/mp4; charset=utf-8" → "video/mp4")
+      const mimeType = contentType.split(";")[0].trim();
+      const filename = generateStorageFileName(mimeType);
       const storagePath = `recordings/${year}/${month}/${recordingId}/${filename}`;
 
       // Upload to Supabase

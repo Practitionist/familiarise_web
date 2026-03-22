@@ -1,4 +1,3 @@
-import crypto from "crypto";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import type { FileObject } from "@supabase/storage-js"; // Import FileObject type
 
@@ -118,6 +117,9 @@ export const MIME_TO_EXT: Record<string, string> = {
   "video/mp4": "mp4",
   "video/webm": "webm",
   "video/quicktime": "mov",
+  "video/x-msvideo": "avi",
+  // Fallback
+  "application/octet-stream": "bin",
 };
 
 /**
@@ -127,7 +129,7 @@ export const MIME_TO_EXT: Record<string, string> = {
 export function generateStorageFileName(mimeType: string): string {
   const ext = MIME_TO_EXT[mimeType];
   if (!ext) throw new Error(`Unsupported MIME type: ${mimeType}`);
-  return `${crypto.randomUUID()}.${ext}`;
+  return `${globalThis.crypto.randomUUID()}.${ext}`;
 }
 
 /**
@@ -195,7 +197,8 @@ const ensureBucketExists = async (bucketName: string): Promise<boolean> => {
 };
 
 /**
- * @deprecated No-op function — Supabase auto-creates folder structure on file upload.
+ * @deprecated Supabase auto-creates folder structure on file upload.
+ * This function makes a storage `.list()` call but always returns `true` regardless of the result.
  * All upload functions now skip this call. Kept for backward compatibility with tests.
  */
 const ensureFolderExists = async (
