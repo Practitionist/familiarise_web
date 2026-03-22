@@ -43,6 +43,10 @@ migrations/
 *.rpm
 *.zst
 
+# Screenshots and feedback (large binaries / local notes)
+highlight-reel-screenshots/
+feedback/
+
 # dependencies
 /node_modules
 /.pnp
