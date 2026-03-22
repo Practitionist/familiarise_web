@@ -92,22 +92,22 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     const recordings =
       await RecordingService.getClassPlanRecordings(classPlanId);
 
-    // Map recordings to response format
-    const formattedRecordings = recordings.map((recording) => ({
+    // Map recordings to response format (async — presigned URLs)
+    const formattedRecordings = await Promise.all(recordings.map(async (recording) => ({
       id: recording.id,
       title: recording.title,
       durationInMinutes: recording.durationInMinutes,
       recordedAt: recording.recordedAt,
       status: recording.status,
       storageType: recording.storageType,
-      playbackUrl: RecordingTransferService.getBestRecordingUrl(recording),
+      playbackUrl: await RecordingTransferService.getBestRecordingUrl(recording),
       thumbnailUrl: recording.thumbnailUrl,
       resolution: recording.resolution,
       previewClipUrl: recording.previewClipUrl,
       previewClipDuration: recording.previewClipDuration,
       streamUrlExpiresAt: recording.streamUrlExpiresAt,
       createdAt: recording.createdAt,
-    }));
+    })));
 
     return NextResponse.json({
       planId: classPlanId,
