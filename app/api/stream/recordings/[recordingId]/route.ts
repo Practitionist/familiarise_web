@@ -45,7 +45,12 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     if (session.user.role === "CONSULTANT") {
       // Consultant can access their own recordings, or recordings of plans they collaborate on
-      const consultantProfileId = session.user.consultantProfileId;
+      const consultantProfileRecord =
+        await prisma.consultantProfile.findUnique({
+          where: { userId: session.user.id },
+          select: { id: true },
+        });
+      const consultantProfileId = consultantProfileRecord?.id;
 
       if (appointment?.webinar?.webinarPlan) {
         hasAccess =

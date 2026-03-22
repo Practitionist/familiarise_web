@@ -80,10 +80,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Look up consultant profile for the logged-in user
+    const consultantProfile = await prisma.consultantProfile.findUnique({
+      where: { userId: session.user.id },
+      select: { id: true },
+    });
+
     // Verify the consultant owns this appointment using helper function
     const { isOwner, recordingEnabled } = getMeetingSessionOwnershipInfo(
       meetingSession,
-      session.user.consultantProfileId,
+      consultantProfile?.id,
     );
 
     if (!isOwner) {
