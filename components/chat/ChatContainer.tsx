@@ -15,6 +15,7 @@ import { CustomChannelHeader } from "./CustomChannelHeader";
 import { CustomMessage } from "./CustomMessage";
 import { StreamChatErrorBoundary } from "@/components/stream/StreamErrorBoundary";
 import { useMaintenanceState } from "@/providers/MaintenanceProvider";
+import { isEventChannel } from "@/lib/stream-channel-ids";
 
 // Empty state component for when no channel is selected
 const EmptyChannelState = () => (
@@ -60,14 +61,9 @@ export const ChatContainer = () => {
       const isHighTrafficChannel =
         (isTeamChannel && memberCount > 5) ||
         messageCount > 100 ||
-        channel.id?.includes("webinar-") ||
-        channel.id?.includes("class-");
+        isEventChannel(channel.id);
 
       setShouldUseVirtualized(isHighTrafficChannel || false);
-
-      console.log(
-        `Channel ${channel.id}: members=${memberCount}, messages=${messageCount}, type=${channel.type}, useVirtualized=${isHighTrafficChannel}`,
-      );
     }
   }, [channel]);
 

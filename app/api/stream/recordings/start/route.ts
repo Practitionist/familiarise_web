@@ -10,6 +10,7 @@ import { z } from "zod";
 import { RecordingService } from "@/lib/stream/recording-service";
 import { getMeetingSessionOwnershipInfo } from "@/lib/stream/recording-utils";
 import prisma from "@/lib/prisma";
+import { streamLogger } from "@/lib/stream-logger";
 
 import { getSession } from "@/lib/auth-server";
 const startRecordingSchema = z.object({
@@ -100,11 +101,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Check if already recording
-    if (meetingSession.isRecording) {
+    // Atomically set isRecording=true (prevents race condition with concurrent requests)
+    const updated = await prisma.meetingSession.updateMany({
+      where: { id: meetingSessionId, isRecording: false },
+      data: {
+        isRecording: true,
+        recordingStartedAt: new Date(),
+        recordingStartedBy: session.user.id,
+      },
+    });
+
+    if (updated.count === 0) {
       return NextResponse.json(
         { error: "Recording is already in progress" },
-        { status: 400 },
+        { status: 409 },
       );
     }
 
@@ -115,28 +125,23 @@ export async function POST(req: NextRequest) {
     );
 
     if (!result.success) {
+      // Revert the DB state since Stream API failed
+      await prisma.meetingSession.update({
+        where: { id: meetingSessionId },
+        data: { isRecording: false, recordingStartedAt: null, recordingStartedBy: null },
+      });
       return NextResponse.json(
         { error: result.error || "Failed to start recording" },
         { status: 500 },
       );
     }
 
-    // Update meeting session (webhook will also update, but we update immediately for UI)
-    await prisma.meetingSession.update({
-      where: { id: meetingSessionId },
-      data: {
-        isRecording: true,
-        recordingStartedAt: new Date(),
-        recordingStartedBy: session.user.id,
-      },
-    });
-
     return NextResponse.json({
       success: true,
       message: "Recording started",
     });
   } catch (error) {
-    console.error("Error starting recording:", error);
+    streamLogger.error("Error starting recording", error);
 
     if (error instanceof z.ZodError) {
       return NextResponse.json(

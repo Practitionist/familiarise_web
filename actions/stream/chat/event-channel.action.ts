@@ -13,6 +13,7 @@ import {
   clearSyncCacheForUser,
 } from "@/lib/stream-cache";
 import { upsertUserToStream, upsertUsersToStream } from "./user.action";
+import { MANAGED_CHANNEL_PREFIXES } from "@/lib/stream-channel-ids";
 import { getDmChannelId } from "@/lib/stream-utils";
 
 // Validation schemas
@@ -501,19 +502,11 @@ export async function syncUserEventChannels(
 
     // Only clean up channels with managed prefixes — preserve collab, support,
     // and manually-created channels that aren't part of the event/dm lifecycle.
-    const MANAGED_PREFIXES = [
-      "consultation-",
-      "subscription-",
-      "webinar-",
-      "class-",
-      "trial-",
-      "dm-",
-    ];
     const staleChannels = streamChannels.filter(
       (ch) =>
         ch.id &&
         !expectedChannelIds.has(ch.id) &&
-        MANAGED_PREFIXES.some((prefix) => ch.id!.startsWith(prefix)),
+        MANAGED_CHANNEL_PREFIXES.some((prefix) => ch.id!.startsWith(prefix)),
     );
 
     let staleRemovedCount = 0;

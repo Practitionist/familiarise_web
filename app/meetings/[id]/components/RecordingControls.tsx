@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useCall } from "@stream-io/video-react-sdk";
 import { useSession } from "@/lib/auth-client";
 import { Circle, Square, Loader2 } from "lucide-react";
@@ -30,6 +30,12 @@ const RecordingControls = ({
   // Only consultants (hosts) should be able to control recordings
   // Use session role instead of Stream's createdBy, as consultee might join first
   const isConsultant = session?.user?.role === "CONSULTANT";
+
+  // Ref to avoid stale closure in call event handlers
+  const isRecordingRef = useRef(isRecording);
+  useEffect(() => {
+    isRecordingRef.current = isRecording;
+  }, [isRecording]);
 
   // Subscribe to call recording state changes
   useEffect(() => {
@@ -77,10 +83,10 @@ const RecordingControls = ({
     // Also subscribe to general call state updates to catch recording changes
     const unsubscribeUpdated = call.on("call.updated", () => {
       const recording = call.state.recording;
-      if (recording && !isRecording) {
+      if (recording && !isRecordingRef.current) {
         setIsRecording(true);
         setIsLoading(false);
-      } else if (!recording && isRecording) {
+      } else if (!recording && isRecordingRef.current) {
         setIsRecording(false);
         setIsLoading(false);
         setRecordingDuration(0);
@@ -93,7 +99,7 @@ const RecordingControls = ({
       unsubscribeFailed();
       unsubscribeUpdated();
     };
-  }, [call, toast, isRecording]);
+  }, [call, toast]);
 
   // Recording duration timer
   useEffect(() => {

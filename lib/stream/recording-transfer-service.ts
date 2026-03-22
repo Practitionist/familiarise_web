@@ -181,16 +181,10 @@ export class RecordingTransferService {
         return { success: false, error: uploadError.message };
       }
 
-      // Get public URL
-      const { data: urlData } = supabase.storage
-        .from(RECORDINGS_BUCKET)
-        .getPublicUrl(storagePath);
-
-      // Update recording with Supabase details
+      // Store the path (NOT a public URL) — presigned URLs are generated on access
       await prisma.recording.update({
         where: { id: recordingId },
         data: {
-          supabaseUrl: urlData.publicUrl,
           supabasePath: storagePath,
           storageType: "SUPABASE",
           status: "AVAILABLE" as RecordingStatus,
@@ -202,7 +196,6 @@ export class RecordingTransferService {
       streamLogger.info("Recording transferred successfully", {
         recordingId,
         storagePath,
-        supabaseUrl: urlData.publicUrl,
       });
 
       return { success: true };
@@ -401,9 +394,42 @@ export class RecordingTransferService {
    * Returns Supabase URL if available, otherwise Stream URL
    * @param recording The recording object
    */
-  static getBestRecordingUrl(recording: Recording): string | null {
-    if (recording.status === "AVAILABLE" && recording.supabaseUrl) {
-      return recording.supabaseUrl;
+  /**
+   * Generate a presigned URL for a Supabase-stored recording.
+   * URLs expire after the specified duration (default: 1 hour).
+   * Requires the recordings bucket to be private (not public).
+   */
+  static async generateSignedUrl(
+    storagePath: string,
+    expiresIn: number = 3600,
+  ): Promise<string | null> {
+    const { data, error } = await supabase.storage
+      .from(RECORDINGS_BUCKET)
+      .createSignedUrl(storagePath, expiresIn);
+
+    if (error || !data?.signedUrl) {
+      streamLogger.error("Failed to generate signed URL", error, {
+        storagePath,
+      });
+      return null;
+    }
+
+    return data.signedUrl;
+  }
+
+  /**
+   * Get the best available playback URL for a recording.
+   * For Supabase storage: generates a 1-hour presigned URL.
+   * For Stream S3: returns the temporary URL directly.
+   */
+  static async getBestRecordingUrl(
+    recording: Recording,
+  ): Promise<string | null> {
+    if (
+      recording.status === "AVAILABLE" &&
+      recording.supabasePath
+    ) {
+      return this.generateSignedUrl(recording.supabasePath);
     }
 
     if (recording.status === "READY" && recording.recordingUrl) {

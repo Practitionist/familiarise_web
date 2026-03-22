@@ -20,7 +20,10 @@ import { syncUserEventChannels } from "@/actions/stream/chat/event-channel.actio
 import { useUserData } from "@/hooks/useUserData";
 import { mapRoleToStream } from "@/lib/user";
 import { streamLogger } from "@/lib/stream-logger";
-import { initialSyncCompletedUsers } from "@/lib/stream-cache";
+import {
+  initialSyncCompletedUsers,
+  clearAllStreamCaches,
+} from "@/lib/stream-cache";
 import StreamErrorBoundary from "@/components/stream/StreamErrorBoundary";
 
 // Import Stream Chat CSS
@@ -32,6 +35,32 @@ const apiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
 let globalChatClient: StreamChat | null = null;
 let globalVideoClient: StreamVideoClient | null = null;
 let currentUserId: string | null = null;
+
+/**
+ * Disconnect all Stream clients and clear global state.
+ * Call this before signing out to ensure clean disconnection.
+ */
+export async function disconnectStreamClients(): Promise<void> {
+  const promises: Promise<void>[] = [];
+
+  if (globalChatClient) {
+    promises.push(
+      globalChatClient.disconnectUser().then(() => {
+        streamLogger.debug("Chat client disconnected on logout");
+      }),
+    );
+    globalChatClient = null;
+  }
+
+  if (globalVideoClient) {
+    globalVideoClient = null;
+  }
+
+  currentUserId = null;
+  clearAllStreamCaches();
+
+  await Promise.all(promises);
+}
 
 // Connection state context
 interface StreamConnectionState {
