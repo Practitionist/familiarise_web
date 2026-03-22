@@ -14,6 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/use-toast";
 import {
   AlertTriangleIcon,
+  BanIcon,
   BellIcon,
   BellOffIcon,
   InfoIcon,
@@ -210,13 +211,42 @@ export const ChannelInfoAndManageDialog = ({
     }
   };
 
-  // Report the other user in a 1-on-1 DM
+  // Permission check for clear chat (truncate)
+  const canTruncateChannel = (() => {
+    // In 1-on-1 DMs, both users can clear their view
+    if (isDirectMessage && !displayInfo.isGroupDM) return true;
+    // In group DMs and channels, only creator or privileged roles
+    const isCreator = channel.data?.created_by_id === client?.userID;
+    const userRole = client?.user?.role;
+    const isPrivileged =
+      userRole === "CONSULTANT" ||
+      userRole === "ADMIN" ||
+      userRole === "STAFF";
+    return isCreator || isPrivileged;
+  })();
+
+  // Report the other user in a 1-on-1 DM (flags in Stream + persists to DB)
   const handleReportUser = async () => {
     if (!client || !otherUserId) return;
 
     setIsLoading(true);
     try {
+      // Flag in Stream
       await client.flagUser(otherUserId, { reason: "user_report" });
+
+      // Also persist to our DB so staff can see it
+      await fetch("/api/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "PROFILE",
+          reason: "User reported via chat",
+          description:
+            "User was reported from a direct message conversation",
+          targetUserId: otherUserId,
+        }),
+      });
+
       toast({
         title: "User reported",
         description: "Our team will review this report",
@@ -233,7 +263,41 @@ export const ChannelInfoAndManageDialog = ({
     }
   };
 
-  // Toggle mute/unmute for event channels
+  // Block the other user in a 1-on-1 DM
+  const handleBlockUser = async () => {
+    if (!otherUserId) return;
+
+    setIsLoading(true);
+    try {
+      const response = await fetch("/api/stream/users/block", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetUserId: otherUserId }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Block failed");
+      }
+
+      toast({
+        title: "User blocked",
+        description: "This user can no longer message you",
+      });
+    } catch (error) {
+      console.error("Error blocking user:", error);
+      toast({
+        title: "Error",
+        description:
+          error instanceof Error ? error.message : "Failed to block user",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Toggle mute/unmute for channels and DMs
   const handleMuteChannel = async () => {
     setIsLoading(true);
     try {
@@ -333,6 +397,26 @@ export const ChannelInfoAndManageDialog = ({
                           variant="outline"
                           size="sm"
                           className="w-full flex items-center justify-center gap-2"
+                          onClick={handleMuteChannel}
+                          disabled={isLoading}
+                        >
+                          {isMuted ? (
+                            <>
+                              <BellIcon className="h-4 w-4" />
+                              Unmute Notifications
+                            </>
+                          ) : (
+                            <>
+                              <BellOffIcon className="h-4 w-4" />
+                              Mute Notifications
+                            </>
+                          )}
+                        </Button>
+
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full flex items-center justify-center gap-2"
                           onClick={handleAddMember}
                           disabled={isLoading}
                         >
@@ -340,16 +424,18 @@ export const ChannelInfoAndManageDialog = ({
                           Add Members
                         </Button>
 
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="w-full flex items-center justify-center gap-2"
-                          onClick={() => setShowClearConfirm(true)}
-                          disabled={isLoading}
-                        >
-                          <Trash2Icon className="h-4 w-4" />
-                          Clear Chat
-                        </Button>
+                        {canTruncateChannel && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full flex items-center justify-center gap-2"
+                            onClick={() => setShowClearConfirm(true)}
+                            disabled={isLoading}
+                          >
+                            <Trash2Icon className="h-4 w-4" />
+                            Clear Chat
+                          </Button>
+                        )}
 
                         <Button
                           variant="destructive"
@@ -365,6 +451,26 @@ export const ChannelInfoAndManageDialog = ({
                     ) : (
                       // Individual DM Actions
                       <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full flex items-center justify-center gap-2"
+                          onClick={handleMuteChannel}
+                          disabled={isLoading}
+                        >
+                          {isMuted ? (
+                            <>
+                              <BellIcon className="h-4 w-4" />
+                              Unmute Notifications
+                            </>
+                          ) : (
+                            <>
+                              <BellOffIcon className="h-4 w-4" />
+                              Mute Notifications
+                            </>
+                          )}
+                        </Button>
+
                         <Button
                           variant="outline"
                           size="sm"
@@ -385,6 +491,17 @@ export const ChannelInfoAndManageDialog = ({
                         >
                           <AlertTriangleIcon className="h-4 w-4" />
                           Report User
+                        </Button>
+
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full flex items-center justify-center gap-2 text-red-600 hover:text-red-700"
+                          onClick={handleBlockUser}
+                          disabled={isLoading || !otherUserId}
+                        >
+                          <BanIcon className="h-4 w-4" />
+                          Block User
                         </Button>
                       </>
                     )
