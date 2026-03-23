@@ -1,10 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { motion } from "framer-motion";
-import { FolderOpen, RefreshCw } from "lucide-react";
+import { ArrowUpDown, FolderOpen, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { EventResourceCard, type EventResource } from "./EventResourceCard";
 
@@ -27,9 +40,35 @@ const EVENT_TYPES = [
   { key: "classes", label: "Classes" },
 ] as const;
 
+type FilterOption = "all" | "with_recordings" | "with_materials" | "completed";
+
+function filterEvents(
+  events: EventResource[],
+  filter: FilterOption,
+): EventResource[] {
+  if (filter === "all") return events;
+  return events.filter((e) => {
+    if (filter === "with_recordings") return e.recordings.length > 0;
+    if (filter === "with_materials") return e.materials.length > 0;
+    return e.status === "COMPLETED";
+  });
+}
+
+function sortEvents(
+  events: EventResource[],
+  dir: "desc" | "asc",
+): EventResource[] {
+  return [...events].sort((a, b) => {
+    const diff = new Date(a.date).getTime() - new Date(b.date).getTime();
+    return dir === "desc" ? -diff : diff;
+  });
+}
+
 export function ResourcesTab({ data, onRefresh }: ResourcesTabProps) {
   const { toast } = useToast();
   const [isSyncing, setIsSyncing] = useState(false);
+  const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
+  const [resourceFilter, setResourceFilter] = useState<FilterOption>("all");
 
   const handleSync = async () => {
     setIsSyncing(true);
@@ -68,7 +107,26 @@ export function ResourcesTab({ data, onRefresh }: ResourcesTabProps) {
     }
   };
 
-  if (!data) return null;
+  const filteredData = useMemo(() => {
+    if (!data) return null;
+    return {
+      consultations: sortEvents(
+        filterEvents(data.consultations, resourceFilter),
+        sortDir,
+      ),
+      subscriptions: sortEvents(
+        filterEvents(data.subscriptions, resourceFilter),
+        sortDir,
+      ),
+      webinars: sortEvents(
+        filterEvents(data.webinars, resourceFilter),
+        sortDir,
+      ),
+      classes: sortEvents(filterEvents(data.classes, resourceFilter), sortDir),
+    };
+  }, [data, resourceFilter, sortDir]);
+
+  if (!data || !filteredData) return null;
 
   const totalResources =
     data.consultations.length +
@@ -97,7 +155,9 @@ export function ResourcesTab({ data, onRefresh }: ResourcesTabProps) {
     );
   }
 
-  // Find the first tab that has events
+  const isFiltered = resourceFilter !== "all";
+
+  // Find the first tab that has events (based on unfiltered data)
   const defaultTab =
     EVENT_TYPES.find((t) => data[t.key as keyof ResourcesData].length > 0)
       ?.key || "consultations";
@@ -115,29 +175,66 @@ export function ResourcesTab({ data, onRefresh }: ResourcesTabProps) {
             Materials and recordings from your enrolled events
           </p>
         </div>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleSync}
+                disabled={isSyncing}
+              >
+                <RefreshCw
+                  className={`h-4 w-4 mr-2 ${isSyncing ? "animate-spin" : ""}`}
+                />
+                {isSyncing ? "Syncing..." : "Sync from Stream"}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="max-w-xs">
+              Re-fetch latest recording links from Stream. Use this if a recent
+              recording doesn&apos;t appear.
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      </div>
+
+      {/* Filter + Sort controls */}
+      <div className="mb-4 flex items-center gap-3">
+        <Select
+          value={resourceFilter}
+          onValueChange={(v) => setResourceFilter(v as FilterOption)}
+        >
+          <SelectTrigger className="w-[180px]">
+            <SelectValue placeholder="Filter resources" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All resources</SelectItem>
+            <SelectItem value="with_recordings">With recordings</SelectItem>
+            <SelectItem value="with_materials">With materials</SelectItem>
+            <SelectItem value="completed">Completed only</SelectItem>
+          </SelectContent>
+        </Select>
         <Button
           variant="outline"
           size="sm"
-          onClick={handleSync}
-          disabled={isSyncing}
+          onClick={() => setSortDir((d) => (d === "desc" ? "asc" : "desc"))}
         >
-          <RefreshCw
-            className={`h-4 w-4 mr-2 ${isSyncing ? "animate-spin" : ""}`}
-          />
-          {isSyncing ? "Syncing..." : "Sync from Stream"}
+          <ArrowUpDown className="h-4 w-4 mr-2" />
+          {sortDir === "desc" ? "Newest first" : "Oldest first"}
         </Button>
       </div>
 
       <Tabs defaultValue={defaultTab} className="space-y-6">
         <TabsList>
           {EVENT_TYPES.map(({ key, label }) => {
-            const count = data[key as keyof ResourcesData].length;
+            const total = data[key as keyof ResourcesData].length;
+            const filtered = filteredData[key as keyof ResourcesData].length;
             return (
-              <TabsTrigger key={key} value={key} disabled={count === 0}>
+              <TabsTrigger key={key} value={key} disabled={total === 0}>
                 {label}
-                {count > 0 && (
+                {total > 0 && (
                   <span className="ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-zinc-200 px-1.5 text-xs font-medium text-zinc-700">
-                    {count}
+                    {isFiltered ? `${filtered}/${total}` : total}
                   </span>
                 )}
               </TabsTrigger>
@@ -145,15 +242,25 @@ export function ResourcesTab({ data, onRefresh }: ResourcesTabProps) {
           })}
         </TabsList>
 
-        {EVENT_TYPES.map(({ key }) => (
-          <TabsContent key={key} value={key}>
-            <div className="space-y-4">
-              {data[key as keyof ResourcesData].map((event) => (
-                <EventResourceCard key={event.id} event={event} />
-              ))}
-            </div>
-          </TabsContent>
-        ))}
+        {EVENT_TYPES.map(({ key }) => {
+          const total = data[key as keyof ResourcesData].length;
+          const items = filteredData[key as keyof ResourcesData];
+          return (
+            <TabsContent key={key} value={key}>
+              <div className="space-y-4">
+                {items.length === 0 && total > 0 ? (
+                  <p className="text-sm text-zinc-400 text-center py-8">
+                    No resources match the selected filter.
+                  </p>
+                ) : (
+                  items.map((event) => (
+                    <EventResourceCard key={event.id} event={event} />
+                  ))
+                )}
+              </div>
+            </TabsContent>
+          );
+        })}
       </Tabs>
     </motion.div>
   );

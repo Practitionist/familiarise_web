@@ -281,50 +281,71 @@ export async function GET(
       ],
     );
 
+    // Include if COMPLETED or has at least 1 material/recording
+    type TransformedEvent = {
+      status: string;
+      materials: unknown[];
+      recordings: unknown[];
+    };
+    const shouldInclude = (e: TransformedEvent) =>
+      e.status === "COMPLETED" ||
+      e.materials.length > 0 ||
+      e.recordings.length > 0;
+
     const transform = {
-      consultations: consultations.map((c: ConsultationWithResources) => ({
-        id: c.id,
-        planTitle: c.consultationPlan.title,
-        consultantName: c.consultationPlan.consultantProfile.user.name,
-        consultantImage: c.consultationPlan.consultantProfile.user.image,
-        status: c.requestStatus,
-        date: c.appointment?.slotsOfAppointment?.[0]?.startsAt || c.requestedAt,
-        materials: c.consultationPlan.materials,
-        recordings: extractRecordings(c.appointment ? [c.appointment] : []),
-      })),
-      subscriptions: subscriptions.map((s: SubscriptionWithResources) => ({
-        id: s.id,
-        planTitle: s.subscriptionPlan.title,
-        consultantName: s.subscriptionPlan.consultantProfile.user.name,
-        consultantImage: s.subscriptionPlan.consultantProfile.user.image,
-        status: s.requestStatus,
-        date: s.schedulingPeriodStartsAt || s.requestedAt,
-        materials: s.subscriptionPlan.materials,
-        recordings: extractRecordings(s.appointments),
-      })),
-      webinars: webinars.map((w: WebinarWithResources) => ({
-        id: w.id,
-        planTitle: w.webinarPlan.title,
-        consultantName: w.webinarPlan.consultantProfile?.user.name ?? null,
-        consultantImage: w.webinarPlan.consultantProfile?.user.image ?? null,
-        status: w.status,
-        date: w.appointment?.slotsOfAppointment?.[0]?.startsAt || w.createdAt,
-        materials: w.webinarPlan.materials,
-        recordings: extractRecordings(w.appointment ? [w.appointment] : []),
-      })),
-      classes: classes.map((cl: ClassWithResources) => ({
-        id: cl.id,
-        planTitle: cl.classPlan.title,
-        consultantName: cl.classPlan.consultantProfile?.user.name ?? null,
-        consultantImage: cl.classPlan.consultantProfile?.user.image ?? null,
-        status: cl.status,
-        date:
-          cl.schedulingPeriodStartsAt ||
-          cl.appointments?.[0]?.slotsOfAppointment?.[0]?.startsAt ||
-          cl.createdAt,
-        materials: cl.classPlan.materials,
-        recordings: extractRecordings(cl.appointments),
-      })),
+      consultations: consultations
+        .map((c: ConsultationWithResources) => ({
+          id: c.id,
+          planTitle: c.consultationPlan.title,
+          consultantName: c.consultationPlan.consultantProfile.user.name,
+          consultantImage: c.consultationPlan.consultantProfile.user.image,
+          status: c.requestStatus,
+          date:
+            c.appointment?.slotsOfAppointment?.[0]?.startsAt || c.requestedAt,
+          materials: c.consultationPlan.materials,
+          recordings: extractRecordings(c.appointment ? [c.appointment] : []),
+        }))
+        .filter(shouldInclude),
+      subscriptions: subscriptions
+        .map((s: SubscriptionWithResources) => ({
+          id: s.id,
+          planTitle: s.subscriptionPlan.title,
+          consultantName: s.subscriptionPlan.consultantProfile.user.name,
+          consultantImage: s.subscriptionPlan.consultantProfile.user.image,
+          status: s.requestStatus,
+          date: s.schedulingPeriodStartsAt || s.requestedAt,
+          materials: s.subscriptionPlan.materials,
+          recordings: extractRecordings(s.appointments),
+        }))
+        .filter((e) => e.status !== "PENDING" && shouldInclude(e)),
+      webinars: webinars
+        .map((w: WebinarWithResources) => ({
+          id: w.id,
+          planTitle: w.webinarPlan.title,
+          consultantName: w.webinarPlan.consultantProfile?.user.name ?? null,
+          consultantImage: w.webinarPlan.consultantProfile?.user.image ?? null,
+          status: w.status,
+          date:
+            w.appointment?.slotsOfAppointment?.[0]?.startsAt || w.createdAt,
+          materials: w.webinarPlan.materials,
+          recordings: extractRecordings(w.appointment ? [w.appointment] : []),
+        }))
+        .filter(shouldInclude),
+      classes: classes
+        .map((cl: ClassWithResources) => ({
+          id: cl.id,
+          planTitle: cl.classPlan.title,
+          consultantName: cl.classPlan.consultantProfile?.user.name ?? null,
+          consultantImage: cl.classPlan.consultantProfile?.user.image ?? null,
+          status: cl.status,
+          date:
+            cl.schedulingPeriodStartsAt ||
+            cl.appointments?.[0]?.slotsOfAppointment?.[0]?.startsAt ||
+            cl.createdAt,
+          materials: cl.classPlan.materials,
+          recordings: extractRecordings(cl.appointments),
+        }))
+        .filter(shouldInclude),
     };
 
     return NextResponse.json({ data: transform, success: true });
