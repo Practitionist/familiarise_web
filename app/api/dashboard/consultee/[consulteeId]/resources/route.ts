@@ -293,59 +293,74 @@ export async function GET(
       e.recordings.length > 0;
 
     const transform = {
-      consultations: consultations
-        .map((c: ConsultationWithResources) => ({
-          id: c.id,
-          planTitle: c.consultationPlan.title,
-          consultantName: c.consultationPlan.consultantProfile.user.name,
-          consultantImage: c.consultationPlan.consultantProfile.user.image,
-          status: c.requestStatus,
-          date:
-            c.appointment?.slotsOfAppointment?.[0]?.startsAt || c.requestedAt,
-          materials: c.consultationPlan.materials,
-          recordings: extractRecordings(c.appointment ? [c.appointment] : []),
-        }))
-        .filter(shouldInclude),
-      subscriptions: subscriptions
-        .map((s: SubscriptionWithResources) => ({
-          id: s.id,
-          planTitle: s.subscriptionPlan.title,
-          consultantName: s.subscriptionPlan.consultantProfile.user.name,
-          consultantImage: s.subscriptionPlan.consultantProfile.user.image,
-          status: s.requestStatus,
-          date: s.schedulingPeriodStartsAt || s.requestedAt,
-          materials: s.subscriptionPlan.materials,
-          recordings: extractRecordings(s.appointments),
-        }))
-        .filter((e) => e.status !== "PENDING" && shouldInclude(e)),
-      webinars: webinars
-        .map((w: WebinarWithResources) => ({
-          id: w.id,
-          planTitle: w.webinarPlan.title,
-          consultantName: w.webinarPlan.consultantProfile?.user.name ?? null,
-          consultantImage: w.webinarPlan.consultantProfile?.user.image ?? null,
-          status: w.status,
-          date:
-            w.appointment?.slotsOfAppointment?.[0]?.startsAt || w.createdAt,
-          materials: w.webinarPlan.materials,
-          recordings: extractRecordings(w.appointment ? [w.appointment] : []),
-        }))
-        .filter(shouldInclude),
-      classes: classes
-        .map((cl: ClassWithResources) => ({
-          id: cl.id,
-          planTitle: cl.classPlan.title,
-          consultantName: cl.classPlan.consultantProfile?.user.name ?? null,
-          consultantImage: cl.classPlan.consultantProfile?.user.image ?? null,
-          status: cl.status,
-          date:
-            cl.schedulingPeriodStartsAt ||
-            cl.appointments?.[0]?.slotsOfAppointment?.[0]?.startsAt ||
-            cl.createdAt,
-          materials: cl.classPlan.materials,
-          recordings: extractRecordings(cl.appointments),
-        }))
-        .filter(shouldInclude),
+      consultations: (
+        await Promise.all(
+          consultations.map(async (c: ConsultationWithResources) => ({
+            id: c.id,
+            planTitle: c.consultationPlan.title,
+            consultantName: c.consultationPlan.consultantProfile.user.name,
+            consultantImage: c.consultationPlan.consultantProfile.user.image,
+            status: c.requestStatus,
+            date:
+              c.appointment?.slotsOfAppointment?.[0]?.startsAt ||
+              c.requestedAt,
+            materials: c.consultationPlan.materials,
+            recordings: await extractRecordings(
+              c.appointment ? [c.appointment] : [],
+            ),
+          })),
+        )
+      ).filter(shouldInclude),
+      subscriptions: (
+        await Promise.all(
+          subscriptions.map(async (s: SubscriptionWithResources) => ({
+            id: s.id,
+            planTitle: s.subscriptionPlan.title,
+            consultantName: s.subscriptionPlan.consultantProfile.user.name,
+            consultantImage: s.subscriptionPlan.consultantProfile.user.image,
+            status: s.requestStatus,
+            date: s.schedulingPeriodStartsAt || s.requestedAt,
+            materials: s.subscriptionPlan.materials,
+            recordings: await extractRecordings(s.appointments),
+          })),
+        )
+      ).filter((e) => e.status !== "PENDING" && shouldInclude(e)),
+      webinars: (
+        await Promise.all(
+          webinars.map(async (w: WebinarWithResources) => ({
+            id: w.id,
+            planTitle: w.webinarPlan.title,
+            consultantName: w.webinarPlan.consultantProfile?.user.name ?? null,
+            consultantImage:
+              w.webinarPlan.consultantProfile?.user.image ?? null,
+            status: w.status,
+            date:
+              w.appointment?.slotsOfAppointment?.[0]?.startsAt || w.createdAt,
+            materials: w.webinarPlan.materials,
+            recordings: await extractRecordings(
+              w.appointment ? [w.appointment] : [],
+            ),
+          })),
+        )
+      ).filter(shouldInclude),
+      classes: (
+        await Promise.all(
+          classes.map(async (cl: ClassWithResources) => ({
+            id: cl.id,
+            planTitle: cl.classPlan.title,
+            consultantName: cl.classPlan.consultantProfile?.user.name ?? null,
+            consultantImage:
+              cl.classPlan.consultantProfile?.user.image ?? null,
+            status: cl.status,
+            date:
+              cl.schedulingPeriodStartsAt ||
+              cl.appointments?.[0]?.slotsOfAppointment?.[0]?.startsAt ||
+              cl.createdAt,
+            materials: cl.classPlan.materials,
+            recordings: await extractRecordings(cl.appointments),
+          })),
+        )
+      ).filter(shouldInclude),
     };
 
     return NextResponse.json({ data: transform, success: true });
@@ -358,19 +373,22 @@ export async function GET(
   }
 }
 
-function extractRecordings(appointments: AppointmentWithSlots[]) {
-  return appointments.flatMap((apt) =>
+async function extractRecordings(appointments: AppointmentWithSlots[]) {
+  const recordings = appointments.flatMap((apt) =>
     apt.slotsOfAppointment.flatMap(
-      (slot) =>
-        slot.meetingSession?.recordings?.map((rec) => ({
-          id: rec.id,
-          title: rec.title,
-          durationInMinutes: rec.durationInMinutes,
-          recordedAt: rec.recordedAt,
-          playbackUrl: RecordingTransferService.getBestRecordingUrl(rec),
-          thumbnailUrl: rec.thumbnailUrl,
-          status: rec.status,
-        })) ?? [],
+      (slot) => slot.meetingSession?.recordings?.map((rec) => rec) ?? [],
     ),
+  );
+
+  return Promise.all(
+    recordings.map(async (rec) => ({
+      id: rec.id,
+      title: rec.title,
+      durationInMinutes: rec.durationInMinutes,
+      recordedAt: rec.recordedAt,
+      playbackUrl: await RecordingTransferService.getBestRecordingUrl(rec),
+      thumbnailUrl: rec.thumbnailUrl,
+      status: rec.status,
+    })),
   );
 }
