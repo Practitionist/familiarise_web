@@ -28,16 +28,22 @@ function getKey(): Buffer {
  * Encrypt a PAN string.
  * Returns { encrypted: Buffer (IV + ciphertext + auth tag), last4: string }
  */
-export function encryptPAN(pan: string): { encrypted: Buffer; last4: string } {
+export function encryptPAN(pan: string): {
+  encrypted: Uint8Array<ArrayBuffer>;
+  last4: string;
+} {
   const key = getKey();
   const iv = randomBytes(IV_LENGTH);
   const cipher = createCipheriv(ALGORITHM, key, iv);
 
   const encrypted = Buffer.concat([cipher.update(pan, "utf8"), cipher.final()]);
   const authTag = cipher.getAuthTag();
+  const combined = Buffer.concat([iv, encrypted, authTag]);
+  const result = new Uint8Array(combined.length);
+  result.set(combined);
 
   return {
-    encrypted: Buffer.concat([iv, encrypted, authTag]),
+    encrypted: result,
     last4: pan.slice(-4),
   };
 }

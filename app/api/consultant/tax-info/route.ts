@@ -86,7 +86,9 @@ export async function PUT(req: NextRequest) {
     const isIndianResident = (validated.country || "IN") === "IN";
 
     // Encrypt PAN if provided
-    let panFields: { panEncrypted: Buffer; panLast4: string } | undefined;
+    let panFields:
+      | { panEncrypted: Uint8Array<ArrayBuffer>; panLast4: string }
+      | undefined;
     if (validated.panNumber) {
       const { encrypted, last4 } = encryptPAN(validated.panNumber);
       panFields = { panEncrypted: encrypted, panLast4: last4 };
