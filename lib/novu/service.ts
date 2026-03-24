@@ -204,6 +204,17 @@ export async function notifyAppointmentCompleted(
   );
 }
 
+export async function notifyAppointmentReminder(
+  userIds: string[],
+  payload: AppointmentPayload,
+) {
+  return triggerForMultiple(
+    NOVU_WORKFLOWS.APPOINTMENT_REMINDER,
+    userIds,
+    payload,
+  );
+}
+
 // ============================================================================
 // Payment Notifications
 // ============================================================================

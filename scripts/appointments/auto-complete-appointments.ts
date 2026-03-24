@@ -25,6 +25,8 @@ import {
   RequestStatus,
   TrialSessionStatus,
 } from "@prisma/client";
+import { notifyAppointmentCompleted } from "../../lib/novu/service";
+import { getAppUrl } from "../../lib/url";
 
 // Only complete appointments that ended at least 1 hour ago
 // This gives buffer time for any post-session activities
@@ -227,7 +229,17 @@ async function completeConsultations(): Promise<{
       },
     },
     include: {
-      consultationPlan: { select: { title: true } },
+      consultationPlan: {
+        select: {
+          title: true,
+          consultantProfile: {
+            select: { userId: true, user: { select: { name: true } } },
+          },
+        },
+      },
+      requestedBy: {
+        select: { userId: true, user: { select: { name: true } } },
+      },
       appointment: {
         include: {
           slotsOfAppointment: {
@@ -260,6 +272,29 @@ async function completeConsultations(): Promise<{
 
       console.log(`   ✅ Marked as COMPLETED`);
       completed++;
+
+      // Fire-and-forget: notify both parties
+      try {
+        const consultantUserId =
+          consultation.consultationPlan?.consultantProfile?.userId;
+        const consulteeUserId = consultation.requestedBy?.userId;
+        const userIds = [consultantUserId, consulteeUserId].filter(
+          (id): id is string => !!id,
+        );
+        if (userIds.length > 0) {
+          await notifyAppointmentCompleted(userIds, {
+            appointmentType: "consultation",
+            consultantName:
+              consultation.consultationPlan?.consultantProfile?.user?.name ??
+              "Consultant",
+            consulteeName: consultation.requestedBy?.user?.name ?? "Consultee",
+            planTitle: consultation.consultationPlan.title,
+            dashboardUrl: `${getAppUrl()}/dashboard`,
+          });
+        }
+      } catch {
+        // Notification failure should never block auto-complete
+      }
     } catch (error) {
       const msg = `Failed to complete consultation ${consultation.id}: ${error}`;
       console.error(`   ❌ ${msg}`);
@@ -306,7 +341,17 @@ async function completeSubscriptions(): Promise<{
       },
     },
     include: {
-      subscriptionPlan: { select: { title: true } },
+      subscriptionPlan: {
+        select: {
+          title: true,
+          consultantProfile: {
+            select: { userId: true, user: { select: { name: true } } },
+          },
+        },
+      },
+      requestedBy: {
+        select: { userId: true, user: { select: { name: true } } },
+      },
       appointments: {
         include: {
           slotsOfAppointment: {
@@ -347,6 +392,29 @@ async function completeSubscriptions(): Promise<{
 
       console.log(`   ✅ Marked as COMPLETED`);
       completed++;
+
+      // Fire-and-forget: notify both parties
+      try {
+        const consultantUserId =
+          subscription.subscriptionPlan?.consultantProfile?.userId;
+        const consulteeUserId = subscription.requestedBy?.userId;
+        const userIds = [consultantUserId, consulteeUserId].filter(
+          (id): id is string => !!id,
+        );
+        if (userIds.length > 0) {
+          await notifyAppointmentCompleted(userIds, {
+            appointmentType: "subscription",
+            consultantName:
+              subscription.subscriptionPlan?.consultantProfile?.user?.name ??
+              "Consultant",
+            consulteeName: subscription.requestedBy?.user?.name ?? "Consultee",
+            planTitle: subscription.subscriptionPlan.title,
+            dashboardUrl: `${getAppUrl()}/dashboard`,
+          });
+        }
+      } catch {
+        // Notification failure should never block auto-complete
+      }
     } catch (error) {
       const msg = `Failed to complete subscription ${subscription.id}: ${error}`;
       console.error(`   ❌ ${msg}`);

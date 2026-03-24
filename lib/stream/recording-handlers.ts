@@ -7,6 +7,7 @@ import prisma from "@/lib/prisma";
 import { RecordingStatus } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
 import { notifyRecordingFailed } from "@/lib/novu/service";
+import { getAppUrl } from "@/lib/url";
 
 // Types for Stream webhook payloads
 export interface StreamRecordingStartedEvent {
@@ -371,7 +372,7 @@ export async function handleRecordingFailed(
         notifyRecordingFailed(userId, {
           streamCallId,
           errorMessage: eventError?.message,
-          dashboardUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/dashboard`,
+          dashboardUrl: `${getAppUrl()}/dashboard`,
         }),
       ),
     );

@@ -1,0 +1,257 @@
+/**
+ * Send Appointment Reminders - Core Logic
+ *
+ * Sends reminder notifications for upcoming appointments.
+ * - 24-hour reminders: appointments starting in 23-25 hours
+ * - 1-hour reminders: appointments starting in 45-75 minutes
+ *
+ * This module exports the core function.
+ * It is imported by:
+ * - jobs/appointments/send-appointment-reminders.ts (GitHub Actions)
+ * - app/api/cleanup/appointment-reminders/route.ts (API endpoint)
+ *
+ * Schedule: Every 15 minutes
+ */
+
+import prisma from "../../lib/prisma";
+import { notifyAppointmentReminder } from "../../lib/novu/service";
+import { getAppUrl } from "../../lib/url";
+
+// Reminder windows (in milliseconds)
+const REMINDER_24H = {
+  label: "24h",
+  minMs: 23 * 60 * 60 * 1000, // 23 hours
+  maxMs: 25 * 60 * 60 * 1000, // 25 hours
+};
+
+const REMINDER_1H = {
+  label: "1h",
+  minMs: 45 * 60 * 1000, // 45 minutes
+  maxMs: 75 * 60 * 1000, // 75 minutes
+};
+
+export interface ReminderResult {
+  success: boolean;
+  reminders24h: number;
+  reminders1h: number;
+  errors: string[];
+  timestamp: string;
+}
+
+async function sendRemindersForWindow(
+  window: { label: string; minMs: number; maxMs: number },
+): Promise<{ sent: number; errors: string[] }> {
+  const now = Date.now();
+  const windowStart = new Date(now + window.minMs);
+  const windowEnd = new Date(now + window.maxMs);
+  const errors: string[] = [];
+  let sent = 0;
+
+  // Find slots starting within the reminder window
+  const upcomingSlots = await prisma.slotOfAppointment.findMany({
+    where: {
+      startsAt: {
+        gte: windowStart,
+        lte: windowEnd,
+      },
+      isTentative: false,
+      completionStatus: "SCHEDULED",
+    },
+    include: {
+      appointment: {
+        include: {
+          consultation: {
+            include: {
+              consultationPlan: {
+                select: {
+                  title: true,
+                  consultantProfile: {
+                    select: { userId: true, user: { select: { name: true } } },
+                  },
+                },
+              },
+              requestedBy: {
+                select: { userId: true, user: { select: { name: true } } },
+              },
+            },
+          },
+          subscription: {
+            include: {
+              subscriptionPlan: {
+                select: {
+                  title: true,
+                  consultantProfile: {
+                    select: { userId: true, user: { select: { name: true } } },
+                  },
+                },
+              },
+              requestedBy: {
+                select: { userId: true, user: { select: { name: true } } },
+              },
+            },
+          },
+          webinar: {
+            include: {
+              webinarPlan: {
+                select: {
+                  title: true,
+                  consultantProfile: {
+                    select: { userId: true, user: { select: { name: true } } },
+                  },
+                },
+              },
+            },
+          },
+          class: {
+            include: {
+              classPlan: {
+                select: {
+                  title: true,
+                  consultantProfile: {
+                    select: { userId: true, user: { select: { name: true } } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      // Get participant user IDs via M2M relation
+      user: { select: { id: true, name: true } },
+    },
+  });
+
+  console.log(
+    `Found ${upcomingSlots.length} slots in ${window.label} reminder window`,
+  );
+
+  // Deduplicate by appointmentId (multiple slots per appointment)
+  const seenAppointments = new Set<string>();
+
+  for (const slot of upcomingSlots) {
+    const apt = slot.appointment;
+    if (!apt || seenAppointments.has(apt.id)) continue;
+    seenAppointments.add(apt.id);
+
+    try {
+      // Determine event type and plan info
+      let appointmentType = "consultation";
+      let planTitle = "Unknown";
+      let consultantName = "Consultant";
+      let consulteeName = "Consultee";
+      const userIds: string[] = [];
+
+      if (apt.consultation) {
+        appointmentType = "consultation";
+        planTitle = apt.consultation.consultationPlan?.title ?? "Consultation";
+        consultantName =
+          apt.consultation.consultationPlan?.consultantProfile?.user?.name ??
+          "Consultant";
+        consulteeName =
+          apt.consultation.requestedBy?.user?.name ?? "Consultee";
+        const cId =
+          apt.consultation.consultationPlan?.consultantProfile?.userId;
+        const eId = apt.consultation.requestedBy?.userId;
+        if (cId) userIds.push(cId);
+        if (eId) userIds.push(eId);
+      } else if (apt.subscription) {
+        appointmentType = "subscription";
+        planTitle =
+          apt.subscription.subscriptionPlan?.title ?? "Subscription";
+        consultantName =
+          apt.subscription.subscriptionPlan?.consultantProfile?.user?.name ??
+          "Consultant";
+        consulteeName =
+          apt.subscription.requestedBy?.user?.name ?? "Consultee";
+        const cId =
+          apt.subscription.subscriptionPlan?.consultantProfile?.userId;
+        const eId = apt.subscription.requestedBy?.userId;
+        if (cId) userIds.push(cId);
+        if (eId) userIds.push(eId);
+      } else if (apt.webinar) {
+        appointmentType = "webinar";
+        planTitle = apt.webinar.webinarPlan?.title ?? "Webinar";
+        consultantName =
+          apt.webinar.webinarPlan?.consultantProfile?.user?.name ??
+          "Consultant";
+        // For webinars, notify all connected users (participants)
+        for (const user of slot.user) {
+          userIds.push(user.id);
+        }
+      } else if (apt.class) {
+        appointmentType = "class";
+        planTitle = apt.class.classPlan?.title ?? "Class";
+        consultantName =
+          apt.class.classPlan?.consultantProfile?.user?.name ?? "Consultant";
+        // For classes, notify all connected users (participants)
+        for (const user of slot.user) {
+          userIds.push(user.id);
+        }
+      }
+
+      // Deduplicate user IDs
+      const uniqueUserIds = Array.from(new Set(userIds));
+
+      if (uniqueUserIds.length === 0) continue;
+
+      const baseUrl = getAppUrl();
+
+      await notifyAppointmentReminder(uniqueUserIds, {
+        appointmentType,
+        consultantName,
+        consulteeName,
+        planTitle,
+        dateTime: slot.startsAt.toISOString(),
+        dashboardUrl: `${baseUrl}/dashboard`,
+      });
+
+      sent++;
+    } catch (error) {
+      errors.push(
+        `Failed to send ${window.label} reminder for appointment ${apt.id}: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
+    }
+  }
+
+  return { sent, errors };
+}
+
+/**
+ * Main function to send all appointment reminders
+ */
+export async function sendAppointmentReminders(): Promise<ReminderResult> {
+  console.log("🔔 Starting appointment reminders scan...");
+
+  const [result24h, result1h] = await Promise.all([
+    sendRemindersForWindow(REMINDER_24H),
+    sendRemindersForWindow(REMINDER_1H),
+  ]);
+
+  const allErrors = [...result24h.errors, ...result1h.errors];
+
+  const result: ReminderResult = {
+    success: allErrors.length === 0,
+    reminders24h: result24h.sent,
+    reminders1h: result1h.sent,
+    errors: allErrors,
+    timestamp: new Date().toISOString(),
+  };
+
+  console.log(
+    `📊 Reminders sent: ${result.reminders24h} (24h) + ${result.reminders1h} (1h)`,
+  );
+
+  if (allErrors.length > 0) {
+    console.log("\n⚠️ Errors encountered:");
+    allErrors.forEach((e) => console.log(`   - ${e}`));
+  }
+
+  return result;
+}
+
+/**
+ * Disconnect from database - call this when done
+ */
+export async function disconnectDatabase(): Promise<void> {
+  await prisma.$disconnect();
+}

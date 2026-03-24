@@ -1159,6 +1159,9 @@ model Newsletter {
   id    String @id @default(uuid())
   email String @unique
 
+  unsubscribed   Boolean   @default(false)
+  unsubscribedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

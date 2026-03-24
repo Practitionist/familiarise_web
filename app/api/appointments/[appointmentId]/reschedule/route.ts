@@ -8,6 +8,8 @@ import {
   AppointmentTypeMismatchError,
   AppointmentNotFoundError,
 } from "@/utils/errors/RescheduleErrors";
+import { notifyAppointmentRescheduled } from "@/lib/novu/service";
+import { getAppUrl } from "@/lib/url";
 
 const MINIMUM_HOURS_BEFORE_RESCHEDULE = 24;
 
@@ -338,6 +340,75 @@ export async function POST(
         timeout: 60000, // 60 second timeout for complex transactions
       },
     );
+
+    // Fire-and-forget: notify both parties about reschedule
+    try {
+      const appointment = await prisma.appointment.findUnique({
+        where: { id: appointmentId },
+        include: {
+          consultation: {
+            include: {
+              consultationPlan: {
+                select: {
+                  title: true,
+                  consultantProfile: {
+                    select: { userId: true, user: { select: { name: true } } },
+                  },
+                },
+              },
+              requestedBy: {
+                select: { userId: true, user: { select: { name: true } } },
+              },
+            },
+          },
+          subscription: {
+            include: {
+              subscriptionPlan: {
+                select: {
+                  title: true,
+                  consultantProfile: {
+                    select: { userId: true, user: { select: { name: true } } },
+                  },
+                },
+              },
+              requestedBy: {
+                select: { userId: true, user: { select: { name: true } } },
+              },
+            },
+          },
+        },
+      });
+
+      if (appointment) {
+        const consultation = appointment.consultation;
+        const subscription = appointment.subscription;
+        const plan =
+          consultation?.consultationPlan ??
+          subscription?.subscriptionPlan ??
+          null;
+        const requestedBy =
+          consultation?.requestedBy ?? subscription?.requestedBy ?? null;
+
+        const userIds = [
+          plan?.consultantProfile?.userId,
+          requestedBy?.userId,
+        ].filter((id): id is string => !!id);
+
+        if (userIds.length > 0) {
+          const baseUrl = getAppUrl();
+          await notifyAppointmentRescheduled(userIds, {
+            appointmentType: consultation ? "consultation" : "subscription",
+            consultantName:
+              plan?.consultantProfile?.user?.name ?? "Consultant",
+            consulteeName: requestedBy?.user?.name ?? "Consultee",
+            planTitle: plan?.title ?? "Unknown",
+            dashboardUrl: `${baseUrl}/dashboard`,
+          });
+        }
+      }
+    } catch {
+      // Notification failure should never block reschedule
+    }
 
     return NextResponse.json(result);
   } catch (error) {

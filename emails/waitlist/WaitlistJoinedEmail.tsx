@@ -9,6 +9,7 @@ import { Preview } from "@react-email/preview";
 import { Section } from "@react-email/section";
 import { Text } from "@react-email/text";
 import * as React from "react";
+import { getAppUrl } from "@/lib/url";
 
 interface WaitlistJoinedEmailProps {
   name: string;
@@ -38,7 +39,7 @@ export const WaitlistJoinedEmail = ({
         <Container style={container}>
           <Section>
             <Img
-              src={`${process.env.NEXT_PUBLIC_APP_URL}/static/assets/logos/images/logos/Familiarise-logos_transparent.avif`}
+              src={`${getAppUrl()}/static/assets/logos/images/logos/Familiarise-logos_transparent.avif`}
               width="130"
               height="50"
               alt="Familiarise"

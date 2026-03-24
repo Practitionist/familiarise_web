@@ -6,6 +6,7 @@ import { PaymentLinkEmail } from "@/emails/payments/PaymentLinkEmail";
 import { PaymentSuccessEmail } from "@/emails/payments/PaymentSuccessEmail";
 import { PaymentFailedEmail } from "@/emails/payments/PaymentFailedEmail";
 import { render } from "@react-email/render";
+import { getAppUrl } from "@/lib/url";
 
 // Initialize Resend lazily to avoid build-time issues
 let resendClient: Resend | null = null;
@@ -28,7 +29,7 @@ function getResendClient(): Resend | null {
 }
 
 // Base URL for app
-const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+const baseUrl = getAppUrl();
 
 /**
  * Send welcome email to newly registered user
