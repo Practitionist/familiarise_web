@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { uploadToSupabase, deleteFromSupabase } from "@/lib/supabase";
+import {
+  uploadToSupabase,
+  deleteFromSupabase,
+  generateStorageFileName,
+} from "@/lib/supabase";
 
 import { getSession } from "@/lib/auth-server";
 const ALLOWED_TYPES = [
@@ -112,14 +116,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Upload file to Supabase
-    // Use userId for onboarding mode when consultantProfile doesn't exist yet
     const fileBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(fileBuffer);
-    const ext = file.name.split(".").pop() || "pdf";
-    const fileIdentifier =
-      consultantProfile?.id || `onboarding-${session.user.id}`;
-    const fileName = `verification-${fileIdentifier}-${Date.now()}.${ext}`;
-    const storagePath = `verification-documents/${fileName}`;
+    const fileName = generateStorageFileName(file.type);
+    const storagePath = `verification/${session.user.id}/${fileName}`;
 
     const { url: fileUrl, error: uploadError } = await uploadToSupabase(
       storagePath,

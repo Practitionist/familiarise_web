@@ -85,18 +85,21 @@ export async function PUT(req: NextRequest) {
       },
     });
 
-    // Sync channel preferences to Novu subscriber data
-    if (
-      "inAppEnabled" in validatedData ||
-      "emailEnabled" in validatedData ||
-      "pushEnabled" in validatedData
-    ) {
-      await updateSubscriberPreferences(session.user.id, {
-        inApp: updated.inAppEnabled,
-        email: updated.emailEnabled,
-        push: updated.pushEnabled,
-      });
-    }
+    // Sync channel + category preferences to Novu subscriber data
+    await updateSubscriberPreferences(session.user.id, {
+      // Channel preferences
+      inApp: updated.inAppEnabled,
+      email: updated.emailEnabled,
+      push: updated.pushEnabled,
+      // Category preferences
+      appointmentReminders: updated.appointmentReminders,
+      paymentNotifications: updated.paymentNotifications,
+      supportUpdates: updated.supportUpdates,
+      feedbackAlerts: updated.feedbackAlerts,
+      trialNotifications: updated.trialNotifications,
+      subscriptionAlerts: updated.subscriptionAlerts,
+      marketingEmails: updated.marketingEmails,
+    });
 
     return NextResponse.json(updated);
   } catch (error) {

@@ -30,6 +30,7 @@ import { processQualifyingAction } from "@/lib/referrals/service";
 import { addUserToEventChannel } from "@/actions/stream/chat/event-channel.action";
 import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action";
 import { streamLogger } from "@/lib/stream-logger";
+import { getAppUrl } from "@/lib/url";
 
 // ============================================================================
 // Type Definitions
@@ -175,7 +176,7 @@ export async function handlePaymentSuccess(
           error: errorMessage,
           action_required:
             "IMMEDIATE: Manual appointment creation or full refund required",
-          dashboard_url: `${process.env.NEXT_PUBLIC_APP_URL}/admin/payments/${payment.id}`,
+          dashboard_url: `${getAppUrl()}/admin/payments/${payment.id}`,
           timestamp: new Date().toISOString(),
         }),
       );
@@ -475,7 +476,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       ? metadata.appointmentType
       : metadata.appointmentType || "Appointment";
 
-    const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`;
+    const dashboardUrl = `${getAppUrl()}/dashboard`;
 
     // Notify consultee of successful payment
     void notifyPaymentSuccess(userId, {
@@ -704,7 +705,7 @@ export async function handlePaymentFailure(paymentIntentId: string) {
         consultantName,
         appointmentType,
         failureReason: payment.description || "Payment could not be processed",
-        retryUrl: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`,
+        retryUrl: `${getAppUrl()}/dashboard`,
       });
     } catch (novuError) {
       console.error(
@@ -1286,7 +1287,7 @@ async function sendPaymentSuccessNotification(
         appointmentType === "CONSULTATION" ? "consultation" : "subscription",
       amount,
       currency,
-      dashboardUrl: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`,
+      dashboardUrl: `${getAppUrl()}/dashboard`,
     });
 
     console.log(
@@ -1381,7 +1382,7 @@ async function sendPaymentFailureNotification(
 
     let consultantName = "Consultant";
     let appointmentType: "consultation" | "subscription" = "consultation";
-    let retryUrl = `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`;
+    let retryUrl = `${getAppUrl()}/dashboard`;
 
     // Get consultant name and appointment type
     if (appointment.consultation?.consultationPlan?.consultantProfile?.user) {
@@ -1389,7 +1390,7 @@ async function sendPaymentFailureNotification(
         appointment.consultation.consultationPlan.consultantProfile.user.name ||
         "Consultant";
       appointmentType = "consultation";
-      retryUrl = `${process.env.NEXT_PUBLIC_APP_URL}/consultations/${appointment.consultation.id}/payment`;
+      retryUrl = `${getAppUrl()}/consultations/${appointment.consultation.id}/payment`;
     } else if (
       appointment.subscription?.subscriptionPlan?.consultantProfile?.user
     ) {
@@ -1397,7 +1398,7 @@ async function sendPaymentFailureNotification(
         appointment.subscription.subscriptionPlan.consultantProfile.user.name ||
         "Consultant";
       appointmentType = "subscription";
-      retryUrl = `${process.env.NEXT_PUBLIC_APP_URL}/subscriptions/${appointment.subscription.id}/payment`;
+      retryUrl = `${getAppUrl()}/subscriptions/${appointment.subscription.id}/payment`;
     }
 
     // Send email

@@ -10,6 +10,7 @@ import {
   notifyDisputeResolved,
 } from "@/lib/novu";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
+import { getAppUrl } from "@/lib/url";
 
 // Re-export payment handlers from lib (architectural fix)
 export {
@@ -199,7 +200,7 @@ export async function handleRefundCreated(
     void notifyRefundProcessed(payment.userId, {
       amount,
       currency,
-      dashboardUrl: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`,
+      dashboardUrl: `${getAppUrl()}/dashboard`,
     });
   });
 }
@@ -320,7 +321,7 @@ export async function handleDisputeCreated(
       currency,
       reason,
       status: mapDisputeStatus(status),
-      dashboardUrl: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`,
+      dashboardUrl: `${getAppUrl()}/dashboard`,
     });
   });
 }
@@ -373,7 +374,7 @@ export async function handleDisputeUpdated(
           currency: dispute.currency,
           reason: dispute.reason || undefined,
           status: mapDisputeStatus(status),
-          dashboardUrl: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`,
+          dashboardUrl: `${getAppUrl()}/dashboard`,
         });
       }
     }

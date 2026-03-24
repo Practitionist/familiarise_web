@@ -9,6 +9,7 @@ import { WaitlistJoinedEmail } from "@/emails/waitlist/WaitlistJoinedEmail";
 import { WaitlistSpotAvailableEmail } from "@/emails/waitlist/WaitlistSpotAvailableEmail";
 import { WaitlistExpiringEmail } from "@/emails/waitlist/WaitlistExpiringEmail";
 import { WaitlistExpiredEmail } from "@/emails/waitlist/WaitlistExpiredEmail";
+import { getAppUrl } from "@/lib/url";
 
 // Initialize Resend lazily to avoid build-time issues
 let resendClient: Resend | null = null;
@@ -31,7 +32,7 @@ function getResendClient(): Resend | null {
 }
 
 // Base URL for app
-const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+const baseUrl = getAppUrl();
 
 /**
  * Send confirmation email when user joins waitlist
