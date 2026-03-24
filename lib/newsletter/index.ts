@@ -13,4 +13,8 @@ export {
   createBroadcast,
 } from "./convertkit";
 
-export { generateUnsubscribeToken, buildUnsubscribeUrl } from "./unsubscribe";
+export {
+  generateUnsubscribeToken,
+  verifyUnsubscribeToken,
+  buildUnsubscribeUrl,
+} from "./unsubscribe";

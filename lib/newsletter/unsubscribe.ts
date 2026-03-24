@@ -5,18 +5,43 @@
  * Used by the unsubscribe route and the admin newsletter send route.
  */
 
-import { createHmac } from "crypto";
+import { createHmac, timingSafeEqual } from "crypto";
 import { getAppUrl } from "@/lib/url";
 
-const HMAC_SECRET =
-  process.env.NEWSLETTER_HMAC_SECRET ?? process.env.RESEND_API_KEY ?? "";
+function getHmacSecret(): string {
+  const secret =
+    process.env.NEWSLETTER_HMAC_SECRET ?? process.env.RESEND_API_KEY ?? "";
+  if (!secret) {
+    throw new Error(
+      "Newsletter HMAC secret not configured. Set NEWSLETTER_HMAC_SECRET or RESEND_API_KEY.",
+    );
+  }
+  return secret;
+}
 
 /**
  * Generate an HMAC token for the given email.
- * Used to create signed unsubscribe links.
+ * Throws if no HMAC secret is configured.
  */
 export function generateUnsubscribeToken(email: string): string {
-  return createHmac("sha256", HMAC_SECRET).update(email).digest("hex");
+  return createHmac("sha256", getHmacSecret()).update(email).digest("hex");
+}
+
+/**
+ * Verify an unsubscribe token using constant-time comparison.
+ * Returns false if token is invalid or secret is not configured.
+ */
+export function verifyUnsubscribeToken(
+  email: string,
+  token: string,
+): boolean {
+  try {
+    const expected = generateUnsubscribeToken(email);
+    if (token.length !== expected.length) return false;
+    return timingSafeEqual(Buffer.from(token), Buffer.from(expected));
+  } catch {
+    return false;
+  }
 }
 
 /**

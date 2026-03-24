@@ -273,29 +273,27 @@ async function completeConsultations(): Promise<{
       console.log(`   ✅ Marked as COMPLETED`);
       completed++;
 
-      // Fire-and-forget: notify both parties
-      try {
-        const consultantUserId =
-          consultation.consultationPlan?.consultantProfile?.userId;
-        const consulteeUserId = consultation.requestedBy?.userId;
-        const userIds = [consultantUserId, consulteeUserId].filter(
-          (id): id is string => !!id,
-        );
-        if (userIds.length > 0) {
-          await notifyAppointmentCompleted(userIds, {
-            appointmentType: "consultation",
-            consultantName:
-              consultation.consultationPlan?.consultantProfile?.user?.name ??
-              "Consultant",
-            consulteeName: consultation.requestedBy?.user?.name ?? "Consultee",
-            planTitle: consultation.consultationPlan.title,
-            dashboardUrl: `${getAppUrl()}/dashboard`,
-          });
-        }
-      } catch (error) {
-        console.error(
-          `[auto-complete] Failed to send consultation completion notification:`,
-          error,
+      // Fire-and-forget: notify both parties (non-blocking)
+      const consultantUserId =
+        consultation.consultationPlan?.consultantProfile?.userId;
+      const consulteeUserId = consultation.requestedBy?.userId;
+      const userIds = [consultantUserId, consulteeUserId].filter(
+        (id): id is string => !!id,
+      );
+      if (userIds.length > 0) {
+        void notifyAppointmentCompleted(userIds, {
+          appointmentType: "consultation",
+          consultantName:
+            consultation.consultationPlan?.consultantProfile?.user?.name ??
+            "Consultant",
+          consulteeName: consultation.requestedBy?.user?.name ?? "Consultee",
+          planTitle: consultation.consultationPlan.title,
+          dashboardUrl: `${getAppUrl()}/dashboard`,
+        }).catch((error) =>
+          console.error(
+            `[auto-complete] Failed to send consultation completion notification:`,
+            error,
+          ),
         );
       }
     } catch (error) {
@@ -396,29 +394,27 @@ async function completeSubscriptions(): Promise<{
       console.log(`   ✅ Marked as COMPLETED`);
       completed++;
 
-      // Fire-and-forget: notify both parties
-      try {
-        const consultantUserId =
-          subscription.subscriptionPlan?.consultantProfile?.userId;
-        const consulteeUserId = subscription.requestedBy?.userId;
-        const userIds = [consultantUserId, consulteeUserId].filter(
-          (id): id is string => !!id,
-        );
-        if (userIds.length > 0) {
-          await notifyAppointmentCompleted(userIds, {
-            appointmentType: "subscription",
-            consultantName:
-              subscription.subscriptionPlan?.consultantProfile?.user?.name ??
-              "Consultant",
-            consulteeName: subscription.requestedBy?.user?.name ?? "Consultee",
-            planTitle: subscription.subscriptionPlan.title,
-            dashboardUrl: `${getAppUrl()}/dashboard`,
-          });
-        }
-      } catch (error) {
-        console.error(
-          `[auto-complete] Failed to send subscription completion notification:`,
-          error,
+      // Fire-and-forget: notify both parties (non-blocking)
+      const consultantUserId =
+        subscription.subscriptionPlan?.consultantProfile?.userId;
+      const consulteeUserId = subscription.requestedBy?.userId;
+      const userIds = [consultantUserId, consulteeUserId].filter(
+        (id): id is string => !!id,
+      );
+      if (userIds.length > 0) {
+        void notifyAppointmentCompleted(userIds, {
+          appointmentType: "subscription",
+          consultantName:
+            subscription.subscriptionPlan?.consultantProfile?.user?.name ??
+            "Consultant",
+          consulteeName: subscription.requestedBy?.user?.name ?? "Consultee",
+          planTitle: subscription.subscriptionPlan.title,
+          dashboardUrl: `${getAppUrl()}/dashboard`,
+        }).catch((error) =>
+          console.error(
+            `[auto-complete] Failed to send subscription completion notification:`,
+            error,
+          ),
         );
       }
     } catch (error) {

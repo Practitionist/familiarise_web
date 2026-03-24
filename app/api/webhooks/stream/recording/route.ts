@@ -11,8 +11,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { notifyRecordingAvailable } from "@/lib/novu/service";
-import { createHmac } from "crypto";
+import { createHmac, timingSafeEqual } from "crypto";
 import { getAppUrl } from "@/lib/url";
+import streamLogger from "@/lib/stream-logger";
 
 const STREAM_WEBHOOK_SECRET = process.env.STREAM_WEBHOOK_SECRET ?? "";
 
@@ -24,7 +25,8 @@ function verifyStreamSignature(
   const expected = createHmac("sha256", STREAM_WEBHOOK_SECRET)
     .update(body)
     .digest("hex");
-  return signature === expected;
+  if (signature.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
@@ -37,7 +39,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       process.env.NODE_ENV === "production" &&
       !verifyStreamSignature(rawBody, signature)
     ) {
-      console.warn("[stream/recording] Invalid webhook signature");
+      streamLogger.warn("[stream/recording] Invalid webhook signature");
       return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
     }
 
@@ -53,7 +55,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const recordingUrl = body?.call_recording?.url;
 
     if (!callCid || !recordingUrl) {
-      console.warn("[stream/recording] Missing callCid or recordingUrl");
+      streamLogger.warn("[stream/recording] Missing callCid or recordingUrl");
       return NextResponse.json(
         { error: "Missing required fields" },
         { status: 400 },
@@ -171,21 +173,21 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     if (userIds.length > 0) {
       const baseUrl = getAppUrl();
 
-      await notifyRecordingAvailable(userIds, {
+      void notifyRecordingAvailable(userIds, {
         appointmentType,
         consultantName,
         recordingUrl,
         dashboardUrl: `${baseUrl}/dashboard`,
       });
 
-      console.log(
+      streamLogger.info(
         `[stream/recording] Notified ${userIds.length} users for call ${streamCallId}`,
       );
     }
 
     return NextResponse.json({ received: true, notified: userIds.length });
   } catch (error) {
-    console.error("[stream/recording] Error:", error);
+    streamLogger.error("[stream/recording] Error:", { error });
     return NextResponse.json(
       { error: "Webhook processing failed" },
       { status: 500 },

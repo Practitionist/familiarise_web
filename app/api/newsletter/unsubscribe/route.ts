@@ -1,65 +1,61 @@
 /**
- * GET /api/newsletter/unsubscribe?email=...&token=...
+ * GET/POST /api/newsletter/unsubscribe?email=...&token=...
  *
  * Handles newsletter unsubscription via signed link.
- * Token is an HMAC-SHA256 of the email using NEWSLETTER_HMAC_SECRET.
- * This prevents unauthorized unsubscribes.
+ * GET: Standard unsubscribe via email link click.
+ * POST: RFC 8058 one-click unsubscribe (List-Unsubscribe-Post header).
+ *
+ * Security:
+ * - HMAC-SHA256 token verification (constant-time comparison)
+ * - Always returns same HTML regardless of subscriber existence (prevents enumeration)
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAppUrl } from "@/lib/url";
-import { generateUnsubscribeToken } from "@/lib/newsletter/unsubscribe";
+import { verifyUnsubscribeToken } from "@/lib/newsletter/unsubscribe";
 
-export async function GET(req: NextRequest): Promise<NextResponse> {
+async function handleUnsubscribe(
+  email: string | null,
+  token: string | null,
+): Promise<NextResponse> {
+  if (!email || !token) {
+    return NextResponse.json(
+      { error: "Missing email or token" },
+      { status: 400 },
+    );
+  }
+
+  // Constant-time HMAC verification
+  if (!verifyUnsubscribeToken(email, token)) {
+    return NextResponse.json(
+      { error: "Invalid unsubscribe link" },
+      { status: 403 },
+    );
+  }
+
+  // Attempt unsubscribe — always return same confirmation to prevent enumeration
   try {
-    const { searchParams } = new URL(req.url);
-    const email = searchParams.get("email");
-    const token = searchParams.get("token");
-
-    if (!email || !token) {
-      return NextResponse.json(
-        { error: "Missing email or token" },
-        { status: 400 },
-      );
-    }
-
-    // Verify HMAC token
-    const expectedToken = generateUnsubscribeToken(email);
-    if (token !== expectedToken) {
-      return NextResponse.json(
-        { error: "Invalid unsubscribe link" },
-        { status: 403 },
-      );
-    }
-
-    // Update newsletter record
-    const subscriber = await prisma.newsletter.findUnique({
-      where: { email },
-    });
-
-    if (!subscriber) {
-      return NextResponse.json({ error: "Email not found" }, { status: 404 });
-    }
-
-    if (subscriber.unsubscribed) {
-      // Already unsubscribed — show confirmation page
-      return new NextResponse(unsubscribeHtml(email, true), {
-        headers: { "Content-Type": "text/html" },
-      });
-    }
-
     await prisma.newsletter.update({
       where: { email },
       data: { unsubscribed: true, unsubscribedAt: new Date() },
     });
+  } catch {
+    // Record doesn't exist or already unsubscribed — same response either way
+  }
 
-    // Stub: Remove from ConvertKit (Issue #334)
-    // await removeFromConvertKit(email);
+  return new NextResponse(unsubscribeHtml(email), {
+    headers: { "Content-Type": "text/html" },
+  });
+}
 
-    return new NextResponse(unsubscribeHtml(email, false), {
-      headers: { "Content-Type": "text/html" },
-    });
+export async function GET(req: NextRequest): Promise<NextResponse> {
+  try {
+    const { searchParams } = new URL(req.url);
+    return handleUnsubscribe(
+      searchParams.get("email"),
+      searchParams.get("token"),
+    );
   } catch (error) {
     console.error("[newsletter/unsubscribe] Error:", error);
     return NextResponse.json(
@@ -69,7 +65,28 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   }
 }
 
-function unsubscribeHtml(email: string, alreadyUnsubscribed: boolean): string {
+/**
+ * POST handler for RFC 8058 one-click unsubscribe.
+ * Email clients send: POST with body "List-Unsubscribe=One-Click"
+ * The email and token come from query params (same URL as GET).
+ */
+export async function POST(req: NextRequest): Promise<NextResponse> {
+  try {
+    const { searchParams } = new URL(req.url);
+    return handleUnsubscribe(
+      searchParams.get("email"),
+      searchParams.get("token"),
+    );
+  } catch (error) {
+    console.error("[newsletter/unsubscribe] POST Error:", error);
+    return NextResponse.json(
+      { error: "Failed to unsubscribe." },
+      { status: 500 },
+    );
+  }
+}
+
+function unsubscribeHtml(email: string): string {
   const baseUrl = getAppUrl();
   return `<!DOCTYPE html>
 <html>
@@ -84,8 +101,8 @@ function unsubscribeHtml(email: string, alreadyUnsubscribed: boolean): string {
 </head>
 <body>
 <div class="card">
-  <h1>${alreadyUnsubscribed ? "Already Unsubscribed" : "Successfully Unsubscribed"}</h1>
-  <p>${alreadyUnsubscribed ? `<strong>${email}</strong> was already unsubscribed from our newsletter.` : `<strong>${email}</strong> has been removed from our newsletter. You won't receive any more marketing emails from us.`}</p>
+  <h1>Successfully Unsubscribed</h1>
+  <p><strong>${email}</strong> has been removed from our newsletter. You won't receive any more marketing emails from us.</p>
   <p><a href="${baseUrl}">Return to Familiarise</a></p>
 </div>
 </body>

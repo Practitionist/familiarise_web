@@ -14,6 +14,7 @@
  */
 
 import prisma from "../../lib/prisma";
+import redis from "../../lib/redis";
 import { notifyAppointmentReminder } from "../../lib/novu/service";
 import { getAppUrl } from "../../lib/url";
 
@@ -192,6 +193,19 @@ async function sendRemindersForWindow(window: {
       const uniqueUserIds = Array.from(new Set(userIds));
 
       if (uniqueUserIds.length === 0) continue;
+
+      // Idempotency: skip if reminder already sent for this appointment+window
+      const redisKey = `reminder:${apt.id}:${window.label}`;
+      const ttlSeconds = window.label === "24h" ? 26 * 3600 : 2 * 3600;
+      try {
+        const alreadySent = await redis.set(redisKey, "1", {
+          nx: true,
+          ex: ttlSeconds,
+        });
+        if (!alreadySent) continue; // Key existed — already sent
+      } catch {
+        // Redis unavailable — send anyway rather than skip silently
+      }
 
       const baseUrl = getAppUrl();
 

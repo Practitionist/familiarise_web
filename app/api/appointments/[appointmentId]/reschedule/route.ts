@@ -396,13 +396,15 @@ export async function POST(
 
         if (userIds.length > 0) {
           const baseUrl = getAppUrl();
-          await notifyAppointmentRescheduled(userIds, {
+          void notifyAppointmentRescheduled(userIds, {
             appointmentType: consultation ? "consultation" : "subscription",
             consultantName: plan?.consultantProfile?.user?.name ?? "Consultant",
             consulteeName: requestedBy?.user?.name ?? "Consultee",
             planTitle: plan?.title ?? "Unknown",
             dashboardUrl: `${baseUrl}/dashboard`,
-          });
+          }).catch((err) =>
+            console.error("[reschedule] Failed to send notification:", err),
+          );
         }
       }
     } catch (error) {
