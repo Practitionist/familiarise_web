@@ -343,12 +343,12 @@ export async function handleRecordingReady(
         appointmentType = "webinar";
         consultantName =
           appointment.webinar.webinarPlan?.consultantProfile?.user?.name ??
-          "Consultant";
+          "Unknown Consultant";
       } else if (appointment?.class) {
         appointmentType = "class";
         consultantName =
           appointment.class.classPlan?.consultantProfile?.user?.name ??
-          "Consultant";
+          "Unknown Consultant";
       }
 
       void notifyRecordingAvailable(userIds, {
