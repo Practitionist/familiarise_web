@@ -120,11 +120,11 @@ export const WaitlistJoinedEmail = ({
               © 2023 Familiarise, All Rights Reserved
             </Text>
             <Text style={footerLinks}>
-              <Link href="https://familiarise.com/privacy" style={link}>
+              <Link href={`${getAppUrl()}/privacy`} style={link}>
                 Privacy Policy
               </Link>{" "}
               •{" "}
-              <Link href="https://familiarise.com/terms" style={link}>
+              <Link href={`${getAppUrl()}/terms`} style={link}>
                 Terms of Service
               </Link>
             </Text>
