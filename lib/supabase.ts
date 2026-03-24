@@ -87,6 +87,52 @@ const supabase: SupabaseClient = supabaseInstance;
 const supabaseAdmin: SupabaseClient | null = supabaseAdminInstance;
 
 /**
+ * Centralized MIME type to file extension map.
+ * Used by generateStorageFileName() to derive extensions from MIME types
+ * instead of user-controlled file.name values.
+ */
+export const MIME_TO_EXT: Record<string, string> = {
+  // Images
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/png": "png",
+  "image/gif": "gif",
+  "image/webp": "webp",
+  // Documents
+  "application/pdf": "pdf",
+  "application/msword": "doc",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+    "docx",
+  "application/vnd.ms-excel": "xls",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  "application/vnd.ms-powerpoint": "ppt",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+    "pptx",
+  "text/plain": "txt",
+  "text/csv": "csv",
+  "text/markdown": "md",
+  "application/zip": "zip",
+  "application/x-rar-compressed": "rar",
+  // Video
+  "video/mp4": "mp4",
+  "video/webm": "webm",
+  "video/quicktime": "mov",
+  "video/x-msvideo": "avi",
+  // Fallback
+  "application/octet-stream": "bin",
+};
+
+/**
+ * Generate a UUID-based storage filename with MIME-derived extension.
+ * Guarantees uniqueness (UUID v4) and security (extension from MIME, not user input).
+ */
+export function generateStorageFileName(mimeType: string): string {
+  const ext = MIME_TO_EXT[mimeType];
+  if (!ext) throw new Error(`Unsupported MIME type: ${mimeType}`);
+  return `${globalThis.crypto.randomUUID()}.${ext}`;
+}
+
+/**
  * Ensure a storage bucket exists, create it if it doesn't
  */
 const ensureBucketExists = async (bucketName: string): Promise<boolean> => {
@@ -151,8 +197,9 @@ const ensureBucketExists = async (bucketName: string): Promise<boolean> => {
 };
 
 /**
- * Ensure a folder exists in storage by creating a placeholder file if needed
- * Note: Supabase doesn't have "folders" per se, but we can simulate them with file paths
+ * @deprecated Supabase auto-creates folder structure on file upload.
+ * This function makes a storage `.list()` call but always returns `true` regardless of the result.
+ * All upload functions now skip this call. Kept for backward compatibility with tests.
  */
 const ensureFolderExists = async (
   bucketName: string,
@@ -280,17 +327,12 @@ const uploadAppointmentDocument = async (
       };
     }
 
-    // Generate unique filename
-    const timestamp = Date.now();
-    const safeFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
-    const fileName = `${timestamp}_${safeFileName}`;
+    // Generate unique filename using UUID + MIME-derived extension
+    const fileName = generateStorageFileName(file.type);
 
     // Create folder structure: appointments/{appointmentId}/consultee-{consulteeId}/
     const folderPath = `appointments/${appointmentId}/consultee-${consulteeId}`;
     const storagePath = `${folderPath}/${fileName}`;
-
-    // Ensure folder structure exists (this is mostly for clarity - Supabase creates folders on upload)
-    await ensureFolderExists("documents", folderPath);
 
     // Upload file to Supabase storage
     const { data: _uploadData, error: uploadError } = await supabase.storage
@@ -456,17 +498,12 @@ const uploadPlanMaterial = async (
       };
     }
 
-    // Generate unique filename
-    const timestamp = Date.now();
-    const safeFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
-    const fileName = `${timestamp}_${safeFileName}`;
+    // Generate unique filename using UUID + MIME-derived extension
+    const fileName = generateStorageFileName(file.type);
 
     // Create folder structure: plans/{planType}-plans/{planId}/
     const folderPath = `plans/${planType}-plans/${planId}`;
     const storagePath = `${folderPath}/${fileName}`;
-
-    // Ensure folder structure exists
-    await ensureFolderExists("documents", folderPath);
 
     // Upload file to Supabase storage
     const { error: uploadError } = await supabase.storage
@@ -592,17 +629,12 @@ const uploadConsultantDocument = async (
       };
     }
 
-    // Generate unique filename
-    const timestamp = Date.now();
-    const safeFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
-    const fileName = `${timestamp}_${safeFileName}`;
+    // Generate unique filename using UUID + MIME-derived extension
+    const fileName = generateStorageFileName(file.type);
 
     // Create folder structure: appointments/{appointmentId}/consultant-{consultantId}/
     const folderPath = `appointments/${appointmentId}/consultant-${consultantId}`;
     const storagePath = `${folderPath}/${fileName}`;
-
-    // Ensure folder structure exists
-    await ensureFolderExists("documents", folderPath);
 
     // Upload file to Supabase storage
     const { error: uploadError } = await supabase.storage
@@ -691,17 +723,12 @@ const uploadSupportTicketAttachment = async (
       };
     }
 
-    // Generate unique filename
-    const timestamp = Date.now();
-    const safeFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
-    const fileName = `${timestamp}_${safeFileName}`;
+    // Generate unique filename using UUID + MIME-derived extension
+    const fileName = generateStorageFileName(file.type);
 
     // Create folder structure: support-tickets/{ticketId}/
     const folderPath = `support-tickets/${ticketId}`;
     const storagePath = `${folderPath}/${fileName}`;
-
-    // Ensure folder structure exists
-    await ensureFolderExists("support-attachments", folderPath);
 
     // Upload file to Supabase storage
     const { data: _uploadData, error: uploadError } = await supabase.storage
@@ -834,9 +861,9 @@ const uploadPlanImage = async (
       };
     }
 
-    const fileExt = file.name.split(".").pop();
+    const fileName = generateStorageFileName(file.type);
     const folderPath = `${planType}/${planId}`;
-    const storagePath = `${folderPath}/cover.${fileExt}`;
+    const storagePath = `${folderPath}/${fileName}`;
 
     // Delete any existing cover images for this plan first
     try {
@@ -1008,17 +1035,12 @@ const uploadCoverImage = async (
       };
     }
 
-    // Generate unique filename
-    const timestamp = Date.now();
-    const fileExt = file.name.split(".").pop();
-    const fileName = `cover_${timestamp}.${fileExt}`;
+    // Generate unique filename using UUID + MIME-derived extension
+    const fileName = generateStorageFileName(file.type);
 
     // Create folder structure: covers/{userId}/
     const folderPath = `covers/${userId}`;
     const storagePath = `${folderPath}/${fileName}`;
-
-    // Ensure folder structure exists
-    await ensureFolderExists("profile-images", folderPath);
 
     // Delete any existing cover images for this user first
     try {
@@ -1163,17 +1185,12 @@ const uploadProfileDisplayImage = async (
       };
     }
 
-    // Generate unique filename
-    const timestamp = Date.now();
-    const fileExt = file.name.split(".").pop();
-    const fileName = `display_${timestamp}.${fileExt}`;
+    // Generate unique filename using UUID + MIME-derived extension
+    const fileName = generateStorageFileName(file.type);
 
     // Create folder structure: display/{userId}/
     const folderPath = `display/${userId}`;
     const storagePath = `${folderPath}/${fileName}`;
-
-    // Ensure folder structure exists
-    await ensureFolderExists("profile-images", folderPath);
 
     // Delete any existing profile display images for this user first
     try {
@@ -1312,20 +1329,10 @@ const uploadProfileImage = async (options: {
       };
     }
 
-    const MIME_TO_EXT: Record<string, string> = {
-      "image/jpeg": "jpg",
-      "image/jpg": "jpg",
-      "image/png": "png",
-      "image/webp": "webp",
-    };
-
-    const timestamp = Date.now();
-    const fileExt = MIME_TO_EXT[file.type] || "jpg";
-    const fileName = `avatar_${timestamp}.${fileExt}`;
+    // Generate unique filename using UUID + MIME-derived extension
+    const fileName = generateStorageFileName(file.type);
     const folderPath = `avatars/${userId}`;
     const storagePath = `${folderPath}/${fileName}`;
-
-    await ensureFolderExists("profile-images", folderPath);
 
     // Delete any existing avatar images for this user first
     try {
