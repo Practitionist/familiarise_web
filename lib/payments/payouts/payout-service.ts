@@ -703,8 +703,8 @@ export async function handlePayoutWebhook(
           dashboardUrl: `${getAppUrl()}/dashboard`,
         });
       }
-    } catch {
-      // Notification failure should never block payout processing
+    } catch (error) {
+      console.error("[payouts] Failed to send payout notification:", error);
     }
   }
 }

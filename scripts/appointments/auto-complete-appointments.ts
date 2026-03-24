@@ -292,8 +292,8 @@ async function completeConsultations(): Promise<{
             dashboardUrl: `${getAppUrl()}/dashboard`,
           });
         }
-      } catch {
-        // Notification failure should never block auto-complete
+      } catch (error) {
+        console.error(`[auto-complete] Failed to send consultation completion notification:`, error);
       }
     } catch (error) {
       const msg = `Failed to complete consultation ${consultation.id}: ${error}`;
@@ -412,8 +412,8 @@ async function completeSubscriptions(): Promise<{
             dashboardUrl: `${getAppUrl()}/dashboard`,
           });
         }
-      } catch {
-        // Notification failure should never block auto-complete
+      } catch (error) {
+        console.error(`[auto-complete] Failed to send subscription completion notification:`, error);
       }
     } catch (error) {
       const msg = `Failed to complete subscription ${subscription.id}: ${error}`;

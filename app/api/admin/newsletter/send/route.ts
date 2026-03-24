@@ -118,7 +118,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           failed += batch.length;
           errors.push(`Batch ${Math.floor(i / BATCH_SIZE) + 1}: ${result.error.message}`);
         } else {
-          sent += batch.length;
+          sent += result.data?.length ?? batch.length;
+          const failedInBatch = batch.length - (result.data?.length ?? batch.length);
+          if (failedInBatch > 0) failed += failedInBatch;
         }
       } catch (batchError) {
         failed += batch.length;

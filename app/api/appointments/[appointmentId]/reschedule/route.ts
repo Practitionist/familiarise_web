@@ -406,8 +406,8 @@ export async function POST(
           });
         }
       }
-    } catch {
-      // Notification failure should never block reschedule
+    } catch (error) {
+      console.error("[reschedule] Failed to send notification:", error);
     }
 
     return NextResponse.json(result);

@@ -129,8 +129,8 @@ export async function POST(request: NextRequest) {
           dashboardUrl: `${getAppUrl()}/dashboard/admin/verification`,
         });
       }
-    } catch {
-      // Notification failure should never block verification submission
+    } catch (error) {
+      console.error("[verification/submit] Failed to send notification:", error);
     }
 
     return NextResponse.json({

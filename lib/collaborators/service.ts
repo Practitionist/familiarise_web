@@ -162,8 +162,8 @@ export async function inviteCollaborator(
           dashboardUrl: `${getAppUrl()}/dashboard`,
         });
       }
-    } catch {
-      // Notification failure should never block invitation
+    } catch (error) {
+      console.error("[collaborators] Failed to send invitation notification:", error);
     }
   }
 
@@ -224,8 +224,8 @@ export async function respondToInvitation(
             dashboardUrl: `${getAppUrl()}/dashboard`,
           });
         }
-      } catch {
-        // Notification failure should not block acceptance
+      } catch (error) {
+        console.error("[collaborators] Failed to send acceptance notification:", error);
       }
     }
 
@@ -274,8 +274,8 @@ export async function respondToInvitation(
             dashboardUrl: `${getAppUrl()}/dashboard`,
           });
         }
-      } catch {
-        // Notification failure should not block acceptance
+      } catch (error) {
+        console.error("[collaborators] Failed to send acceptance notification:", error);
       }
     }
 
@@ -322,8 +322,8 @@ export async function removeCollaborator(
           dashboardUrl: `${getAppUrl()}/dashboard`,
         });
       }
-    } catch {
-      // Notification failure should not block removal
+    } catch (error) {
+      console.error("[collaborators] Failed to send removal notification:", error);
     }
 
     return result;
@@ -357,8 +357,8 @@ export async function removeCollaborator(
           dashboardUrl: `${getAppUrl()}/dashboard`,
         });
       }
-    } catch {
-      // Notification failure should not block removal
+    } catch (error) {
+      console.error("[collaborators] Failed to send removal notification:", error);
     }
 
     return result;
