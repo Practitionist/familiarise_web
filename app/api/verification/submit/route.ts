@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-
+import { UserRole } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
+import { notifyNewConsultantApplication } from "@/lib/novu/service";
+import { getAppUrl } from "@/lib/url";
 /**
  * POST /api/verification/submit
  * Submit verification request during onboarding or from settings
@@ -109,7 +111,30 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // TODO: Send email notification to staff about new verification request
+    // Notify admin/staff about new verification request
+    try {
+      const admins = await prisma.user.findMany({
+        where: { role: { in: [UserRole.ADMIN, UserRole.STAFF] } },
+        select: { id: true },
+      });
+      const adminIds = admins.map((a) => a.id);
+      if (adminIds.length > 0) {
+        const user = await prisma.user.findUnique({
+          where: { id: session.user.id },
+          select: { name: true, email: true },
+        });
+        await notifyNewConsultantApplication(adminIds, {
+          applicantName: user?.name ?? "Unknown",
+          applicantEmail: user?.email ?? "",
+          dashboardUrl: `${getAppUrl()}/dashboard/admin/verification`,
+        });
+      }
+    } catch (error) {
+      console.error(
+        "[verification/submit] Failed to send notification:",
+        error,
+      );
+    }
 
     return NextResponse.json({
       success: true,

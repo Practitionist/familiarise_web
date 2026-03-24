@@ -30,6 +30,7 @@ import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import StripeCheckout from "../../../components/StripeCheckout";
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
+import { getAppUrl } from "@/lib/url";
 
 type ConsultationPlanWithConsultant = ConsultationPlan & {
   consultantProfile: ConsultantProfile & {
@@ -362,7 +363,7 @@ export default function ConsultationCheckoutPage({
                   await stripe?.confirmPayment({
                     clientSecret: data.paymentIntent.client_secret,
                     confirmParams: {
-                      return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
+                      return_url: `${getAppUrl()}/checkout/checkout-success`,
                     },
                   });
                   break;

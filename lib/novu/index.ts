@@ -11,6 +11,7 @@ export {
   notifyAppointmentBooked,
   notifyAppointmentCancelled,
   notifyAppointmentRescheduled,
+  notifyAppointmentReminder,
   notifyAppointmentCompleted,
   // Payments
   notifyPaymentSuccess,

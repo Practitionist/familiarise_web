@@ -21,6 +21,8 @@ import {
 } from "./stripe-connect";
 import { randomUUID } from "crypto";
 import { acquireLock, releaseLock } from "@/lib/redis";
+import { notifyPayoutProcessed } from "@/lib/novu/service";
+import { getAppUrl } from "@/lib/url";
 
 // ============================================
 // Types
@@ -685,6 +687,24 @@ export async function handlePayoutWebhook(
       });
     }
   });
+
+  // Fire-and-forget: notify consultant when payout completes
+  if (payoutStatus === PayoutStatus.COMPLETED) {
+    const profile = await prisma.consultantProfile.findUnique({
+      where: { id: payout.consultantProfileId },
+      select: { userId: true },
+    });
+    if (profile?.userId) {
+      void notifyPayoutProcessed(profile.userId, {
+        amount: Number(payout.amount),
+        currency: payout.currency,
+        payoutId: payout.id,
+        dashboardUrl: `${getAppUrl()}/dashboard`,
+      }).catch((error) =>
+        console.error("[payouts] Failed to send payout notification:", error),
+      );
+    }
+  }
 }
 
 /**

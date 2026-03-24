@@ -44,15 +44,29 @@ export async function syncSubscriber(data: SubscriberData): Promise<void> {
 }
 
 /**
- * Update subscriber notification channel preferences in Novu.
- * Stores preference flags in subscriber custom data.
+ * Update subscriber notification channel and category preferences in Novu.
+ * Channel prefs control which channels deliver notifications (email, in-app, push).
+ * Category prefs control which types of notifications are sent at all.
+ *
+ * Category prefs are stored as subscriber custom data so Novu Dashboard
+ * workflows can use them in conditional steps (e.g., skip email step if
+ * subscriber.data.categoryAppointments === false).
  */
 export async function updateSubscriberPreferences(
   userId: string,
   preferences: {
+    // Channel preferences
     inApp?: boolean;
     email?: boolean;
     push?: boolean;
+    // Category preferences (from NotificationPreference model)
+    appointmentReminders?: boolean;
+    paymentNotifications?: boolean;
+    supportUpdates?: boolean;
+    feedbackAlerts?: boolean;
+    trialNotifications?: boolean;
+    subscriptionAlerts?: boolean;
+    marketingEmails?: boolean;
   },
 ): Promise<void> {
   if (!isNovuConfigured()) return;
@@ -62,9 +76,18 @@ export async function updateSubscriberPreferences(
     await novu.subscribers.patch(
       {
         data: {
+          // Channel preferences
           preferInApp: preferences.inApp ?? true,
           preferEmail: preferences.email ?? true,
           preferPush: preferences.push ?? false,
+          // Category preferences — used in Novu Dashboard workflow conditions
+          categoryAppointments: preferences.appointmentReminders ?? true,
+          categoryPayments: preferences.paymentNotifications ?? true,
+          categorySupport: preferences.supportUpdates ?? true,
+          categoryFeedback: preferences.feedbackAlerts ?? true,
+          categoryTrials: preferences.trialNotifications ?? true,
+          categorySubscriptions: preferences.subscriptionAlerts ?? true,
+          categoryMarketing: preferences.marketingEmails ?? false,
         },
       },
       userId,

@@ -9,6 +9,12 @@ import type {
   ClassCollaborator,
   CollaboratorStatus,
 } from "@prisma/client";
+import {
+  notifyCollaboratorInvited,
+  notifyCollaboratorAccepted,
+  notifyCollaboratorRemoved,
+} from "@/lib/novu/service";
+import { getAppUrl } from "@/lib/url";
 
 type PlanType = "webinar" | "class";
 
@@ -32,7 +38,7 @@ export async function inviteCollaborator(
 
   // FIX B1: Wrap validation + creation in a serializable transaction
   // to prevent concurrent invites from exceeding the 90% cap.
-  return prisma.$transaction(
+  const txResult = await prisma.$transaction(
     async (tx) => {
       // Validate revenue share total <= 90% INSIDE transaction
       const valid = await validateRevenueSharesTx(
@@ -118,6 +124,53 @@ export async function inviteCollaborator(
       timeout: 10000,
     },
   );
+
+  // Fire-and-forget: notify invited collaborator
+  if (txResult) {
+    try {
+      const invitedProfile = await prisma.consultantProfile.findUnique({
+        where: { id: consultantProfileId },
+        select: { userId: true },
+      });
+      const planTitle =
+        planType === "webinar"
+          ? (
+              await prisma.webinarPlan.findUnique({
+                where: { id: planId },
+                select: { title: true },
+              })
+            )?.title
+          : (
+              await prisma.classPlan.findUnique({
+                where: { id: planId },
+                select: { title: true },
+              })
+            )?.title;
+
+      const inviterProfile = await prisma.consultantProfile.findUnique({
+        where: { id: invitedById },
+        select: { user: { select: { name: true } } },
+      });
+
+      if (invitedProfile) {
+        await notifyCollaboratorInvited(invitedProfile.userId, {
+          planTitle: planTitle ?? "Unknown Plan",
+          planType,
+          role,
+          revenueSharePercentage,
+          ownerName: inviterProfile?.user?.name ?? "Plan Owner",
+          dashboardUrl: `${getAppUrl()}/dashboard`,
+        });
+      }
+    } catch (error) {
+      console.error(
+        "[collaborators] Failed to send invitation notification:",
+        error,
+      );
+    }
+  }
+
+  return txResult;
 }
 
 /**
@@ -151,6 +204,35 @@ export async function respondToInvitation(
       } catch (err) {
         console.error("Failed to create collaborator channel:", err);
       }
+
+      // Notify plan owner that collaborator accepted
+      try {
+        const plan = await prisma.webinarPlan.findUnique({
+          where: { id: collab.webinarPlanId },
+          select: {
+            title: true,
+            consultantProfile: { select: { userId: true } },
+          },
+        });
+        const collabProfile = await prisma.consultantProfile.findUnique({
+          where: { id: consultantProfileId },
+          select: { user: { select: { name: true } } },
+        });
+        if (plan?.consultantProfile?.userId) {
+          await notifyCollaboratorAccepted(plan.consultantProfile.userId, {
+            planTitle: plan.title,
+            planType: "webinar",
+            collaboratorName: collabProfile?.user?.name ?? "Collaborator",
+            role: updated.role,
+            dashboardUrl: `${getAppUrl()}/dashboard`,
+          });
+        }
+      } catch (error) {
+        console.error(
+          "[collaborators] Failed to send acceptance notification:",
+          error,
+        );
+      }
     }
 
     return updated;
@@ -175,6 +257,35 @@ export async function respondToInvitation(
       } catch (err) {
         console.error("Failed to create collaborator channel:", err);
       }
+
+      // Notify plan owner that collaborator accepted
+      try {
+        const plan = await prisma.classPlan.findUnique({
+          where: { id: collab.classPlanId },
+          select: {
+            title: true,
+            consultantProfile: { select: { userId: true } },
+          },
+        });
+        const collabProfile = await prisma.consultantProfile.findUnique({
+          where: { id: consultantProfileId },
+          select: { user: { select: { name: true } } },
+        });
+        if (plan?.consultantProfile?.userId) {
+          await notifyCollaboratorAccepted(plan.consultantProfile.userId, {
+            planTitle: plan.title,
+            planType: "class",
+            collaboratorName: collabProfile?.user?.name ?? "Collaborator",
+            role: updated.role,
+            dashboardUrl: `${getAppUrl()}/dashboard`,
+          });
+        }
+      } catch (error) {
+        console.error(
+          "[collaborators] Failed to send acceptance notification:",
+          error,
+        );
+      }
     }
 
     return updated;
@@ -196,20 +307,76 @@ export async function removeCollaborator(
     });
     if (!collab) return null;
 
-    return prisma.webinarCollaborator.update({
+    const result = await prisma.webinarCollaborator.update({
       where: { id: collaborationId },
       data: { status: "REMOVED" },
     });
+
+    // Fire-and-forget: notify removed collaborator
+    try {
+      const [profile, plan] = await Promise.all([
+        prisma.consultantProfile.findUnique({
+          where: { id: collab.consultantProfileId },
+          select: { userId: true },
+        }),
+        prisma.webinarPlan.findUnique({
+          where: { id: planId },
+          select: { title: true },
+        }),
+      ]);
+      if (profile?.userId) {
+        await notifyCollaboratorRemoved(profile.userId, {
+          planTitle: plan?.title ?? "Unknown Plan",
+          planType: "webinar",
+          dashboardUrl: `${getAppUrl()}/dashboard`,
+        });
+      }
+    } catch (error) {
+      console.error(
+        "[collaborators] Failed to send removal notification:",
+        error,
+      );
+    }
+
+    return result;
   } else {
     const collab = await prisma.classCollaborator.findFirst({
       where: { id: collaborationId, classPlanId: planId },
     });
     if (!collab) return null;
 
-    return prisma.classCollaborator.update({
+    const result = await prisma.classCollaborator.update({
       where: { id: collaborationId },
       data: { status: "REMOVED" },
     });
+
+    // Fire-and-forget: notify removed collaborator
+    try {
+      const [profile, plan] = await Promise.all([
+        prisma.consultantProfile.findUnique({
+          where: { id: collab.consultantProfileId },
+          select: { userId: true },
+        }),
+        prisma.classPlan.findUnique({
+          where: { id: planId },
+          select: { title: true },
+        }),
+      ]);
+      if (profile?.userId) {
+        await notifyCollaboratorRemoved(profile.userId, {
+          planTitle: plan?.title ?? "Unknown Plan",
+          planType: "class",
+          dashboardUrl: `${getAppUrl()}/dashboard`,
+        });
+      }
+    } catch (error) {
+      console.error(
+        "[collaborators] Failed to send removal notification:",
+        error,
+      );
+    }
+
+    return result;
   }
 }
 

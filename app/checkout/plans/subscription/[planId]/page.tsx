@@ -51,6 +51,7 @@ import {
 } from "../../utils";
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
+import { getAppUrl } from "@/lib/url";
 
 type PageProps = {
   params: Promise<{ planId: string }>;
@@ -289,7 +290,7 @@ export default function SubscriptionCheckoutPage({
                     await stripe?.confirmPayment({
                       clientSecret: data.clientSecret!,
                       confirmParams: {
-                        return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
+                        return_url: `${getAppUrl()}/checkout/checkout-success`,
                       },
                     });
                     break;
