@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { RecordingService } from "@/lib/stream/recording-service";
 import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
 import prisma from "@/lib/prisma";
+import { streamLogger } from "@/lib/stream-logger";
 
 import { getSession } from "@/lib/auth-server";
 type RouteParams = {
@@ -44,7 +45,12 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     if (session.user.role === "CONSULTANT") {
       // Consultant can access their own recordings, or recordings of plans they collaborate on
-      const consultantProfileId = session.user.consultantProfileId;
+      const consultantProfileRecord =
+        await prisma.consultantProfile.findUnique({
+          where: { userId: session.user.id },
+          select: { id: true },
+        });
+      const consultantProfileId = consultantProfileRecord?.id;
 
       if (appointment?.webinar?.webinarPlan) {
         hasAccess =
@@ -105,8 +111,25 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Get the best available URL
-    const playbackUrl = RecordingTransferService.getBestRecordingUrl(recording);
+    // Check if Stream URL has expired
+    if (
+      recording.storageType === "STREAM_S3" &&
+      recording.streamUrlExpiresAt &&
+      new Date(recording.streamUrlExpiresAt) < new Date()
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Recording has expired on Stream storage. Transfer to permanent storage or sync recordings.",
+          expired: true,
+        },
+        { status: 410 },
+      );
+    }
+
+    // Get the best available URL (async — generates presigned URL for Supabase)
+    const playbackUrl =
+      await RecordingTransferService.getBestRecordingUrl(recording);
 
     return NextResponse.json({
       recording: {
@@ -126,7 +149,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       },
     });
   } catch (error) {
-    console.error("Error getting recording:", error);
+    streamLogger.error("Error getting recording", error);
     return NextResponse.json(
       { error: "Failed to get recording" },
       { status: 500 },

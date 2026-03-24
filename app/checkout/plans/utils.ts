@@ -3,6 +3,7 @@ import { getErrorToast } from "@/lib/errors/mapping/payment-error-toast-map";
 import { CheckoutInput, checkoutResponseSchema } from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
 import { loadStripe } from "@stripe/stripe-js";
+import { getAppUrl } from "@/lib/url";
 
 export function loadScript(src: string): Promise<boolean> {
   return new Promise((resolve, reject) => {
@@ -167,7 +168,7 @@ export async function handleUnifiedCheckout(
               await stripeInstance.confirmPayment({
                 clientSecret: data.clientSecret!,
                 confirmParams: {
-                  return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
+                  return_url: `${getAppUrl()}/checkout/checkout-success`,
                 },
               });
               break;

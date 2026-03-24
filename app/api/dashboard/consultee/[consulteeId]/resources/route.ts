@@ -282,7 +282,7 @@ export async function GET(
     );
 
     const transform = {
-      consultations: consultations.map((c: ConsultationWithResources) => ({
+      consultations: await Promise.all(consultations.map(async (c: ConsultationWithResources) => ({
         id: c.id,
         planTitle: c.consultationPlan.title,
         consultantName: c.consultationPlan.consultantProfile.user.name,
@@ -290,9 +290,9 @@ export async function GET(
         status: c.requestStatus,
         date: c.appointment?.slotsOfAppointment?.[0]?.startsAt || c.requestedAt,
         materials: c.consultationPlan.materials,
-        recordings: extractRecordings(c.appointment ? [c.appointment] : []),
-      })),
-      subscriptions: subscriptions.map((s: SubscriptionWithResources) => ({
+        recordings: await extractRecordings(c.appointment ? [c.appointment] : []),
+      }))),
+      subscriptions: await Promise.all(subscriptions.map(async (s: SubscriptionWithResources) => ({
         id: s.id,
         planTitle: s.subscriptionPlan.title,
         consultantName: s.subscriptionPlan.consultantProfile.user.name,
@@ -300,9 +300,9 @@ export async function GET(
         status: s.requestStatus,
         date: s.schedulingPeriodStartsAt || s.requestedAt,
         materials: s.subscriptionPlan.materials,
-        recordings: extractRecordings(s.appointments),
-      })),
-      webinars: webinars.map((w: WebinarWithResources) => ({
+        recordings: await extractRecordings(s.appointments),
+      }))),
+      webinars: await Promise.all(webinars.map(async (w: WebinarWithResources) => ({
         id: w.id,
         planTitle: w.webinarPlan.title,
         consultantName: w.webinarPlan.consultantProfile?.user.name ?? null,
@@ -310,9 +310,9 @@ export async function GET(
         status: w.status,
         date: w.appointment?.slotsOfAppointment?.[0]?.startsAt || w.createdAt,
         materials: w.webinarPlan.materials,
-        recordings: extractRecordings(w.appointment ? [w.appointment] : []),
-      })),
-      classes: classes.map((cl: ClassWithResources) => ({
+        recordings: await extractRecordings(w.appointment ? [w.appointment] : []),
+      }))),
+      classes: await Promise.all(classes.map(async (cl: ClassWithResources) => ({
         id: cl.id,
         planTitle: cl.classPlan.title,
         consultantName: cl.classPlan.consultantProfile?.user.name ?? null,
@@ -323,8 +323,8 @@ export async function GET(
           cl.appointments?.[0]?.slotsOfAppointment?.[0]?.startsAt ||
           cl.createdAt,
         materials: cl.classPlan.materials,
-        recordings: extractRecordings(cl.appointments),
-      })),
+        recordings: await extractRecordings(cl.appointments),
+      }))),
     };
 
     return NextResponse.json({ data: transform, success: true });
@@ -337,19 +337,23 @@ export async function GET(
   }
 }
 
-function extractRecordings(appointments: AppointmentWithSlots[]) {
-  return appointments.flatMap((apt) =>
+async function extractRecordings(appointments: AppointmentWithSlots[]) {
+  const recordings = appointments.flatMap((apt) =>
     apt.slotsOfAppointment.flatMap(
       (slot) =>
-        slot.meetingSession?.recordings?.map((rec) => ({
-          id: rec.id,
-          title: rec.title,
-          durationInMinutes: rec.durationInMinutes,
-          recordedAt: rec.recordedAt,
-          playbackUrl: RecordingTransferService.getBestRecordingUrl(rec),
-          thumbnailUrl: rec.thumbnailUrl,
-          status: rec.status,
-        })) ?? [],
+        slot.meetingSession?.recordings?.map((rec) => rec) ?? [],
     ),
+  );
+
+  return Promise.all(
+    recordings.map(async (rec) => ({
+      id: rec.id,
+      title: rec.title,
+      durationInMinutes: rec.durationInMinutes,
+      recordedAt: rec.recordedAt,
+      playbackUrl: await RecordingTransferService.getBestRecordingUrl(rec),
+      thumbnailUrl: rec.thumbnailUrl,
+      status: rec.status,
+    })),
   );
 }

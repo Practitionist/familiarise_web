@@ -12,6 +12,7 @@ import {
   CURRENCY_MULTIPLIERS,
 } from "./types";
 import { RefundStatus, DisputeStatus } from "@prisma/client";
+import { getAppUrl } from "@/lib/url";
 
 // ============================================================================
 // Stripe Client Initialization
@@ -38,16 +39,7 @@ export const stripeClient = initializeStripeClient();
  * Get the base URL for payment redirects
  */
 const getBaseUrl = () => {
-  if (process.env.NEXT_PUBLIC_SITE_URL) {
-    return `https://${process.env.NEXT_PUBLIC_SITE_URL}`;
-  }
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}`;
-  }
-  if (process.env.NEXT_PUBLIC_APP_URL) {
-    return process.env.NEXT_PUBLIC_APP_URL;
-  }
-  return "http://localhost:3000";
+  return getAppUrl();
 };
 
 // After paise migration, all amounts in the DB are already in smallest currency unit (paise/cents).

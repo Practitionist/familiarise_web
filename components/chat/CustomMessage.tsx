@@ -17,9 +17,11 @@ import {
   Trash2Icon,
   CheckIcon,
   XIcon,
+  FlagIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/hooks/use-toast";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -35,6 +37,7 @@ export const CustomMessage = () => {
   const { message } = useMessageContext();
   const { client, channel } = useChatContext();
   const messageComposer = useMessageComposer();
+  const { toast } = useToast();
   const isMyMessage = message.user?.id === client.userID;
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showMoreOptions, setShowMoreOptions] = useState(false);
@@ -148,8 +151,12 @@ export const CustomMessage = () => {
         text: editText,
       });
       setIsEditing(false);
-    } catch (error) {
-      console.error("Error editing message:", error);
+    } catch {
+      toast({
+        title: "Edit failed",
+        description: "Could not edit the message. Please try again.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -167,8 +174,12 @@ export const CustomMessage = () => {
     if (!client) return;
     try {
       await client.deleteMessage(message.id);
-    } catch (error) {
-      console.error("Error deleting message:", error);
+    } catch {
+      toast({
+        title: "Delete failed",
+        description: "Could not delete the message. Please try again.",
+        variant: "destructive",
+      });
     }
     setShowDeleteDialog(false);
   };
@@ -177,8 +188,12 @@ export const CustomMessage = () => {
     if (!channel) return;
     try {
       await channel.sendReaction(message.id, { type: reactionType });
-    } catch (error) {
-      console.error("Error sending reaction:", error);
+    } catch {
+      toast({
+        title: "Reaction failed",
+        description: "Could not add reaction. Please try again.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -186,6 +201,44 @@ export const CustomMessage = () => {
   const handleReplyClick = () => {
     // Use Stream Chat v13's MessageComposer API to set quoted message
     messageComposer.setQuotedMessage(message);
+  };
+
+  // Report a message (flags in Stream + persists to DB)
+  const handleReportMessage = async () => {
+    if (!client || !message.user?.id) return;
+    try {
+      // Flag in Stream (flagMessage is on the client, not the channel)
+      await client.flagMessage(message.id);
+
+      // Persist to our DB
+      const reportResponse = await fetch("/api/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "MESSAGE",
+          reason: "Reported message",
+          targetUserId: message.user.id,
+          contentText: message.text?.substring(0, 500),
+        }),
+      });
+
+      if (!reportResponse.ok) {
+        const data = await reportResponse.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to submit report");
+      }
+
+      toast({
+        title: "Message reported",
+        description: "Our team will review this message",
+      });
+    } catch {
+      toast({
+        title: "Report failed",
+        description: "Could not report message. Please try again.",
+        variant: "destructive",
+      });
+    }
+    setShowMoreOptions(false);
   };
 
   return (
@@ -253,37 +306,47 @@ export const CustomMessage = () => {
               <ReplyIcon className="w-4 h-4 text-gray-600" />
             </button>
 
-            {/* More Options (Edit, Delete) - Only for own messages */}
-            {isMyMessage && (
-              <div className="relative" ref={moreOptionsRef}>
-                <button
-                  onClick={() => setShowMoreOptions(!showMoreOptions)}
-                  className="p-1.5 hover:bg-gray-100 rounded-r-lg transition-colors"
-                  title="More options"
-                >
-                  <MoreHorizontalIcon className="w-4 h-4 text-gray-600" />
-                </button>
-                {/* More Options Dropdown */}
-                {showMoreOptions && (
-                  <div className="absolute top-full right-0 mt-1 bg-white rounded-lg shadow-lg border py-1 min-w-[120px] z-30">
+            {/* More Options (Edit, Delete for own; Report for others) */}
+            <div className="relative" ref={moreOptionsRef}>
+              <button
+                onClick={() => setShowMoreOptions(!showMoreOptions)}
+                className="p-1.5 hover:bg-gray-100 rounded-r-lg transition-colors"
+                title="More options"
+              >
+                <MoreHorizontalIcon className="w-4 h-4 text-gray-600" />
+              </button>
+              {/* More Options Dropdown */}
+              {showMoreOptions && (
+                <div className="absolute top-full right-0 mt-1 bg-white rounded-lg shadow-lg border py-1 min-w-[120px] z-30">
+                  {isMyMessage ? (
+                    <>
+                      <button
+                        onClick={handleEditClick}
+                        className="w-full px-3 py-1.5 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
+                      >
+                        <EditIcon className="w-4 h-4" />
+                        Edit
+                      </button>
+                      <button
+                        onClick={handleDeleteClick}
+                        className="w-full px-3 py-1.5 text-left text-sm hover:bg-gray-100 text-red-600 flex items-center gap-2"
+                      >
+                        <Trash2Icon className="w-4 h-4" />
+                        Delete
+                      </button>
+                    </>
+                  ) : (
                     <button
-                      onClick={handleEditClick}
-                      className="w-full px-3 py-1.5 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
-                    >
-                      <EditIcon className="w-4 h-4" />
-                      Edit
-                    </button>
-                    <button
-                      onClick={handleDeleteClick}
+                      onClick={handleReportMessage}
                       className="w-full px-3 py-1.5 text-left text-sm hover:bg-gray-100 text-red-600 flex items-center gap-2"
                     >
-                      <Trash2Icon className="w-4 h-4" />
-                      Delete
+                      <FlagIcon className="w-4 h-4" />
+                      Report Message
                     </button>
-                  </div>
-                )}
-              </div>
-            )}
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 

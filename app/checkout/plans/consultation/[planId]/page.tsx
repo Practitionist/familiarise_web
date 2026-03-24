@@ -29,7 +29,9 @@ import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import StripeCheckout from "../../../components/StripeCheckout";
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
+import { loadStripe } from "@stripe/stripe-js";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
+import { getAppUrl } from "@/lib/url";
 
 type ConsultationPlanWithConsultant = ConsultationPlan & {
   consultantProfile: ConsultantProfile & {
@@ -359,8 +361,24 @@ export default function ConsultationCheckoutPage({
           // Small delay to let user see the toast before redirect
           setTimeout(async () => {
             try {
-              if (gateway !== "RAZORPAY") {
-                throw new Error("Unsupported payment gateway");
+              // Handle gateway-specific responses
+              switch (gateway) {
+                case "STRIPE":
+                  const stripe = await loadStripe(
+                    process.env.NEXT_PUBLIC_STRIPE_KEY!,
+                  );
+                  await stripe?.confirmPayment({
+                    clientSecret: data.paymentIntent.client_secret,
+                    confirmParams: {
+                      return_url: `${getAppUrl()}/checkout/checkout-success`,
+                    },
+                  });
+                  break;
+
+                case "RAZORPAY":
+                  // Razorpay is handled by the RazorpayCheckout component
+                  // This case shouldn't be reached since Razorpay has its own component
+                  break;
               }
             } catch (paymentError) {
               console.error("Payment confirmation error:", paymentError);

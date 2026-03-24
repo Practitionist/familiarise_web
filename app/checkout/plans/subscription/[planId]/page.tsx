@@ -55,6 +55,8 @@ type SubscriptionPlanWithConsultant = SubscriptionPlan & {
 type SubscriptionResponse = {
   data: SubscriptionPlanWithConsultant;
 };
+import { loadStripe } from "@stripe/stripe-js";
+import { getAppUrl } from "@/lib/url";
 
 type PageProps = {
   params: Promise<{ planId: string }>;
@@ -286,8 +288,19 @@ export default function SubscriptionCheckoutPage({
             // Small delay to let user see the toast before redirect
             setTimeout(async () => {
               try {
-                if (gateway !== "RAZORPAY") {
-                  throw new Error("Unsupported payment gateway");
+                // Handle gateway-specific responses
+                switch (gateway) {
+                  case "STRIPE":
+                    const stripe = await loadStripe(
+                      process.env.NEXT_PUBLIC_STRIPE_KEY!,
+                    );
+                    await stripe?.confirmPayment({
+                      clientSecret: data.clientSecret!,
+                      confirmParams: {
+                        return_url: `${getAppUrl()}/checkout/checkout-success`,
+                      },
+                    });
+                    break;
                 }
               } catch (paymentError) {
                 console.error("Payment confirmation error:", paymentError);

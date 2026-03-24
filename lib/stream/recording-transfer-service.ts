@@ -6,10 +6,17 @@
 import prisma from "@/lib/prisma";
 import { Recording, RecordingStatus } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
-import supabase, { ensureBucketExists } from "@/lib/supabase";
+import supabase, {
+  ensureBucketExists,
+  supabaseAdmin,
+  generateStorageFileName,
+} from "@/lib/supabase";
 
 // Recordings bucket name
 const RECORDINGS_BUCKET = "recordings";
+
+// Use admin client for storage operations to bypass RLS
+const storageClient = supabaseAdmin || supabase;
 
 // Maximum file size for direct transfer (500MB)
 // Files larger than this should use resumable uploads (future enhancement)
@@ -27,6 +34,41 @@ const ALLOWED_VIDEO_TYPES = [
 /**
  * Recording Transfer Service for moving recordings to permanent storage
  */
+/**
+ * Build Prisma where-clause to filter recordings by their plan's storage policy.
+ * Joins through Recording → MeetingSession → SlotOfAppointment → Appointment → Event → Plan.
+ */
+function buildStoragePolicyFilter(
+  policyFilter: "SUPABASE_PERMANENT" | "ALL",
+): object {
+  if (policyFilter === "ALL") return {};
+
+  return {
+    meetingSession: {
+      slotOfAppointment: {
+        appointment: {
+          OR: [
+            {
+              webinar: {
+                webinarPlan: {
+                  recordingStoragePolicy: "SUPABASE_PERMANENT" as const,
+                },
+              },
+            },
+            {
+              class: {
+                classPlan: {
+                  recordingStoragePolicy: "SUPABASE_PERMANENT" as const,
+                },
+              },
+            },
+          ],
+        },
+      },
+    },
+  };
+}
+
 export class RecordingTransferService {
   /**
    * Queue a recording for transfer to Supabase
@@ -144,11 +186,13 @@ export class RecordingTransferService {
         });
       }
 
-      // Create file path: recordings/{year}/{month}/{recordingId}/{filename}
+      // Create file path: recordings/{year}/{month}/{recordingId}/{uuid}.{ext}
       const now = new Date();
       const year = now.getFullYear();
       const month = (now.getMonth() + 1).toString().padStart(2, "0");
-      const filename = recording.streamRecordingId || `${recordingId}.mp4`;
+      // Strip content-type params (e.g. "video/mp4; charset=utf-8" → "video/mp4")
+      const mimeType = contentType.split(";")[0].trim();
+      const filename = generateStorageFileName(mimeType);
       const storagePath = `recordings/${year}/${month}/${recordingId}/${filename}`;
 
       // Upload to Supabase
@@ -161,7 +205,7 @@ export class RecordingTransferService {
       // Blob is more memory-efficient in most JS runtimes for large files
       const fileBlob = await response.blob();
 
-      const { error: uploadError } = await supabase.storage
+      const { error: uploadError } = await storageClient.storage
         .from(RECORDINGS_BUCKET)
         .upload(storagePath, fileBlob, {
           contentType,
@@ -181,16 +225,10 @@ export class RecordingTransferService {
         return { success: false, error: uploadError.message };
       }
 
-      // Get public URL
-      const { data: urlData } = supabase.storage
-        .from(RECORDINGS_BUCKET)
-        .getPublicUrl(storagePath);
-
-      // Update recording with Supabase details
+      // Store the path (NOT a public URL) — presigned URLs are generated on access
       await prisma.recording.update({
         where: { id: recordingId },
         data: {
-          supabaseUrl: urlData.publicUrl,
           supabasePath: storagePath,
           storageType: "SUPABASE",
           status: "AVAILABLE" as RecordingStatus,
@@ -202,7 +240,6 @@ export class RecordingTransferService {
       streamLogger.info("Recording transferred successfully", {
         recordingId,
         storagePath,
-        supabaseUrl: urlData.publicUrl,
       });
 
       return { success: true };
@@ -232,9 +269,15 @@ export class RecordingTransferService {
    * @param daysBeforeExpiry Days before expiry to start transferring
    * @param batchSize Maximum number of recordings to process in one batch
    */
+  /**
+   * Process expiring recordings that should be transferred to Supabase.
+   * @param policyFilter - "SUPABASE_PERMANENT" to only auto-transfer premium plans,
+   *                       "ALL" to transfer everything (manual/legacy mode)
+   */
   static async processExpiringRecordings(
-    daysBeforeExpiry: number = 3,
+    daysBeforeExpiry: number = 5,
     batchSize: number = 10,
+    policyFilter: "SUPABASE_PERMANENT" | "ALL" = "SUPABASE_PERMANENT",
   ): Promise<{
     processed: number;
     succeeded: number;
@@ -252,7 +295,6 @@ export class RecordingTransferService {
     };
 
     try {
-      // Get recordings that are expiring soon and still on Stream S3
       const expiringRecordings = await prisma.recording.findMany({
         where: {
           storageType: "STREAM_S3",
@@ -260,6 +302,7 @@ export class RecordingTransferService {
           streamUrlExpiresAt: {
             lte: expiryThreshold,
           },
+          ...buildStoragePolicyFilter(policyFilter),
         },
         take: batchSize,
         orderBy: {
@@ -270,6 +313,7 @@ export class RecordingTransferService {
       streamLogger.info("Processing expiring recordings", {
         count: expiringRecordings.length,
         daysBeforeExpiry,
+        policyFilter,
       });
 
       for (const recording of expiringRecordings) {
@@ -294,6 +338,94 @@ export class RecordingTransferService {
       streamLogger.error("Failed to process expiring recordings", error);
       return results;
     }
+  }
+
+  /**
+   * Get STREAM_ONLY recordings that are expiring soon (for notification purposes).
+   * These won't be auto-transferred but consultants should be warned.
+   */
+  static async getExpiringStreamOnlyRecordings(
+    daysBeforeExpiry: number = 3,
+  ): Promise<
+    { recordingId: string; title: string; consultantUserId: string; expiresAt: Date }[]
+  > {
+    const expiryThreshold = new Date();
+    expiryThreshold.setDate(expiryThreshold.getDate() + daysBeforeExpiry);
+
+    const recordings = await prisma.recording.findMany({
+      where: {
+        storageType: "STREAM_S3",
+        status: "READY",
+        streamUrlExpiresAt: {
+          lte: expiryThreshold,
+          gt: new Date(), // Not yet expired
+        },
+        meetingSession: {
+          slotOfAppointment: {
+            appointment: {
+              OR: [
+                {
+                  webinar: {
+                    webinarPlan: {
+                      recordingStoragePolicy: "STREAM_ONLY",
+                    },
+                  },
+                },
+                {
+                  class: {
+                    classPlan: {
+                      recordingStoragePolicy: "STREAM_ONLY",
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+      include: {
+        meetingSession: {
+          include: {
+            slotOfAppointment: {
+              include: {
+                appointment: {
+                  include: {
+                    webinar: {
+                      include: {
+                        webinarPlan: {
+                          include: { consultantProfile: true },
+                        },
+                      },
+                    },
+                    class: {
+                      include: {
+                        classPlan: {
+                          include: { consultantProfile: true },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return recordings.map((r) => {
+      const apt = r.meetingSession.slotOfAppointment.appointment;
+      const consultantUserId =
+        apt.webinar?.webinarPlan?.consultantProfile?.userId ||
+        apt.class?.classPlan?.consultantProfile?.userId ||
+        "";
+      return {
+        recordingId: r.id,
+        title: r.title,
+        consultantUserId,
+        expiresAt: r.streamUrlExpiresAt!,
+      };
+    });
   }
 
   /**
@@ -351,7 +483,7 @@ export class RecordingTransferService {
       }
 
       // Delete from Supabase
-      const { error: deleteError } = await supabase.storage
+      const { error: deleteError } = await storageClient.storage
         .from(RECORDINGS_BUCKET)
         .remove([recording.supabasePath]);
 
@@ -401,9 +533,42 @@ export class RecordingTransferService {
    * Returns Supabase URL if available, otherwise Stream URL
    * @param recording The recording object
    */
-  static getBestRecordingUrl(recording: Recording): string | null {
-    if (recording.status === "AVAILABLE" && recording.supabaseUrl) {
-      return recording.supabaseUrl;
+  /**
+   * Generate a presigned URL for a Supabase-stored recording.
+   * URLs expire after the specified duration (default: 1 hour).
+   * Requires the recordings bucket to be private (not public).
+   */
+  static async generateSignedUrl(
+    storagePath: string,
+    expiresIn: number = 3600,
+  ): Promise<string | null> {
+    const { data, error } = await storageClient.storage
+      .from(RECORDINGS_BUCKET)
+      .createSignedUrl(storagePath, expiresIn);
+
+    if (error || !data?.signedUrl) {
+      streamLogger.error("Failed to generate signed URL", error, {
+        storagePath,
+      });
+      return null;
+    }
+
+    return data.signedUrl;
+  }
+
+  /**
+   * Get the best available playback URL for a recording.
+   * For Supabase storage: generates a 1-hour presigned URL.
+   * For Stream S3: returns the temporary URL directly.
+   */
+  static async getBestRecordingUrl(
+    recording: Recording,
+  ): Promise<string | null> {
+    if (
+      recording.status === "AVAILABLE" &&
+      recording.supabasePath
+    ) {
+      return this.generateSignedUrl(recording.supabasePath);
     }
 
     if (recording.status === "READY" && recording.recordingUrl) {

@@ -992,9 +992,10 @@ model WebinarPlan {
   price               Int // in paise (smallest currency unit, e.g. 50000 = ₹500)
   priceCurrency       String   @default("INR")
   certificateProvided Boolean  @default(false)
-  recordingEnabled    Boolean  @default(false) // Allow consultant to record sessions
-  durationInHours     Float    @default(1) // Duration in hours
-  maxParticipants     Int      @default(100)
+  recordingEnabled       Boolean                @default(false) // Allow consultant to record sessions
+  recordingStoragePolicy RecordingStoragePolicy @default(STREAM_ONLY)
+  durationInHours        Float                  @default(1) // Duration in hours
+  maxParticipants        Int                    @default(100)
   language            String?  @default("English")
   level               String?  @default("Beginner")
   prerequisites       String?  @default("None")
@@ -1048,9 +1049,10 @@ model ClassPlan {
   classContents          ClassContent[]
   price                  Int // in paise (smallest currency unit, e.g. 50000 = ₹500)
   priceCurrency          String           @default("INR")
-  certificateProvided    Boolean          @default(false)
-  recordingEnabled       Boolean          @default(false) // Allow consultant to record sessions
-  durationInMonths       Int              @default(1) // Duration in months
+  certificateProvided    Boolean                @default(false)
+  recordingEnabled       Boolean                @default(false) // Allow consultant to record sessions
+  recordingStoragePolicy RecordingStoragePolicy @default(STREAM_ONLY)
+  durationInMonths       Int                    @default(1) // Duration in months
   meetingsPerWeek        Int              @default(1)
   sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
   totalSessions          Int              @default(4) // meetingsPerWeek × durationInMonths × 4
@@ -1160,6 +1162,9 @@ model Topic {
 model Newsletter {
   id    String @id @default(uuid())
   email String @unique
+
+  unsubscribed   Boolean   @default(false)
+  unsubscribedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1417,6 +1422,12 @@ model MeetingSession {
 enum RecordingStorageType {
   STREAM_S3 // Default: expires in 2 weeks
   SUPABASE // Permanent storage
+}
+
+// Recording storage policy for plans (determines where recordings are stored)
+enum RecordingStoragePolicy {
+  STREAM_ONLY        // 2-week temporary storage (free tier)
+  SUPABASE_PERMANENT // Permanent storage (premium tier)
 }
 
 // Recording status lifecycle
