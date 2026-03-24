@@ -49,9 +49,7 @@ export async function tagSubscriber(
   // TODO: Issue #334 — Implement ConvertKit tagging
   // API: POST https://api.convertkit.com/v3/tags/{tagId}/subscribe
   if (process.env.CONVERTKIT_API_KEY) {
-    console.log(
-      `[ConvertKit] Would tag ${email} with: ${tags.join(", ")}`,
-    );
+    console.log(`[ConvertKit] Would tag ${email} with: ${tags.join(", ")}`);
   }
 }
 
@@ -67,8 +65,6 @@ export async function createBroadcast(params: {
   // TODO: Issue #334 — Implement ConvertKit broadcast creation
   // API: POST https://api.convertkit.com/v3/broadcasts
   if (process.env.CONVERTKIT_API_KEY) {
-    console.log(
-      `[ConvertKit] Would create broadcast: "${params.subject}"`,
-    );
+    console.log(`[ConvertKit] Would create broadcast: "${params.subject}"`);
   }
 }

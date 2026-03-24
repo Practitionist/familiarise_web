@@ -49,14 +49,14 @@
 
 Configure these in **Novu Dashboard → Settings → Preferences** (or per-workflow):
 
-| Category ID | Display Name | Mapped Workflows |
-|-------------|-------------|------------------|
-| `appointments` | Appointment Notifications | appointment-booked, appointment-cancelled, appointment-reminder, new-booking-request |
-| `payments` | Payment Notifications | payment-success, payment-failed |
-| `subscriptions` | Subscription Notifications | subscription-started, subscription-cancelled |
-| `trials` | Trial Session Notifications | trial-session-requested, trial-session-scheduled, trial-session-completed, trial-session-cancelled |
-| `support` | Support Updates | support-ticket-created, support-ticket-response |
-| `feedback` | Feedback & Reviews | new-review-received |
+| Category ID     | Display Name                | Mapped Workflows                                                                                   |
+| --------------- | --------------------------- | -------------------------------------------------------------------------------------------------- |
+| `appointments`  | Appointment Notifications   | appointment-booked, appointment-cancelled, appointment-reminder, new-booking-request               |
+| `payments`      | Payment Notifications       | payment-success, payment-failed                                                                    |
+| `subscriptions` | Subscription Notifications  | subscription-started, subscription-cancelled                                                       |
+| `trials`        | Trial Session Notifications | trial-session-requested, trial-session-scheduled, trial-session-completed, trial-session-cancelled |
+| `support`       | Support Updates             | support-ticket-created, support-ticket-response                                                    |
+| `feedback`      | Feedback & Reviews          | new-review-received                                                                                |
 
 `verification-status-changed` is a system notification — no opt-out category (always sends).
 
@@ -65,6 +65,7 @@ Configure these in **Novu Dashboard → Settings → Preferences** (or per-workf
 ## Design Notes
 
 All email templates follow the existing Familiarise email design language:
+
 - **Background**: `#f5f5f5`
 - **Content card**: White (`#ffffff`), `30px` padding, `5px` border-radius
 - **Heading**: `28px` bold, `#333`
@@ -87,6 +88,7 @@ In the Novu editor, replicate this using their visual builder or paste the HTML 
 **Preference category**: `appointments`
 
 **Payload variables** (`AppointmentPayload`):
+
 ```
 {{payload.appointmentId}}     - Appointment ID
 {{payload.appointmentType}}   - "consultation" | "subscription" | "webinar" | "class"
@@ -98,56 +100,76 @@ In the Novu editor, replicate this using their visual builder or paste the HTML 
 ```
 
 **In-App notification**:
+
 ```
 Your {{payload.appointmentType}} "{{payload.planTitle}}" has been booked for {{payload.dateTime}}.
 ```
 
 **Email subject**:
+
 ```
 Booking Confirmed — {{payload.planTitle}}
 ```
 
 **Email body** (Handlebars):
+
 ```html
-<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">Booking Confirmed!</h1>
+<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">
+  Booking Confirmed!
+</h1>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
   Hi {{subscriber.firstName}},
 </p>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
-  Your {{payload.appointmentType}} <strong>"{{payload.planTitle}}"</strong> has been successfully booked.
+  Your {{payload.appointmentType}} <strong>"{{payload.planTitle}}"</strong> has
+  been successfully booked.
 </p>
 
 <table style="width:100%;border-collapse:collapse;margin:0 0 20px">
   <tr>
     <td style="padding:8px 0;color:#666;font-size:14px">Consultant</td>
-    <td style="padding:8px 0;color:#333;font-size:14px;font-weight:600">{{payload.consultantName}}</td>
+    <td style="padding:8px 0;color:#333;font-size:14px;font-weight:600">
+      {{payload.consultantName}}
+    </td>
   </tr>
   <tr>
     <td style="padding:8px 0;color:#666;font-size:14px">Consultee</td>
-    <td style="padding:8px 0;color:#333;font-size:14px;font-weight:600">{{payload.consulteeName}}</td>
+    <td style="padding:8px 0;color:#333;font-size:14px;font-weight:600">
+      {{payload.consulteeName}}
+    </td>
   </tr>
   {{#if payload.dateTime}}
   <tr>
     <td style="padding:8px 0;color:#666;font-size:14px">Date & Time</td>
-    <td style="padding:8px 0;color:#333;font-size:14px;font-weight:600">{{payload.dateTime}}</td>
+    <td style="padding:8px 0;color:#333;font-size:14px;font-weight:600">
+      {{payload.dateTime}}
+    </td>
   </tr>
   {{/if}}
   <tr>
     <td style="padding:8px 0;color:#666;font-size:14px">Type</td>
-    <td style="padding:8px 0;color:#333;font-size:14px;font-weight:600;text-transform:capitalize">{{payload.appointmentType}}</td>
+    <td
+      style="padding:8px 0;color:#333;font-size:14px;font-weight:600;text-transform:capitalize"
+    >
+      {{payload.appointmentType}}
+    </td>
   </tr>
 </table>
 
 <div style="text-align:center;margin:30px 0">
-  <a href="{{payload.dashboardUrl}}" style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block">
+  <a
+    href="{{payload.dashboardUrl}}"
+    style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block"
+  >
     View in Dashboard
   </a>
 </div>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
-  You'll receive a reminder before your session. If you need to make changes, visit your dashboard.
+  You'll receive a reminder before your session. If you need to make changes,
+  visit your dashboard.
 </p>
 ```
 
@@ -163,6 +185,7 @@ Booking Confirmed — {{payload.planTitle}}
 **Preference category**: `appointments`
 
 **Payload variables** (`AppointmentCancelledPayload`):
+
 ```
 {{payload.appointmentId}}     - Appointment ID
 {{payload.appointmentType}}   - "consultation" | "subscription" | "webinar" | "class"
@@ -176,25 +199,31 @@ Booking Confirmed — {{payload.planTitle}}
 ```
 
 **In-App notification**:
+
 ```
 Your {{payload.appointmentType}} "{{payload.planTitle}}" has been cancelled{{#if payload.reason}}: {{payload.reason}}{{/if}}.
 ```
 
 **Email subject**:
+
 ```
 Appointment Cancelled — {{payload.planTitle}}
 ```
 
 **Email body**:
+
 ```html
-<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">Appointment Cancelled</h1>
+<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">
+  Appointment Cancelled
+</h1>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
   Hi {{subscriber.firstName}},
 </p>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
-  Your {{payload.appointmentType}} <strong>"{{payload.planTitle}}"</strong> has been cancelled by the {{payload.cancelledBy}}.
+  Your {{payload.appointmentType}} <strong>"{{payload.planTitle}}"</strong> has
+  been cancelled by the {{payload.cancelledBy}}.
 </p>
 
 {{#if payload.reason}}
@@ -206,26 +235,36 @@ Appointment Cancelled — {{payload.planTitle}}
 <table style="width:100%;border-collapse:collapse;margin:0 0 20px">
   <tr>
     <td style="padding:8px 0;color:#666;font-size:14px">Consultant</td>
-    <td style="padding:8px 0;color:#333;font-size:14px;font-weight:600">{{payload.consultantName}}</td>
+    <td style="padding:8px 0;color:#333;font-size:14px;font-weight:600">
+      {{payload.consultantName}}
+    </td>
   </tr>
   <tr>
     <td style="padding:8px 0;color:#666;font-size:14px">Consultee</td>
-    <td style="padding:8px 0;color:#333;font-size:14px;font-weight:600">{{payload.consulteeName}}</td>
+    <td style="padding:8px 0;color:#333;font-size:14px;font-weight:600">
+      {{payload.consulteeName}}
+    </td>
   </tr>
   {{#if payload.dateTime}}
   <tr>
     <td style="padding:8px 0;color:#666;font-size:14px">Original Date</td>
-    <td style="padding:8px 0;color:#333;font-size:14px;font-weight:600">{{payload.dateTime}}</td>
+    <td style="padding:8px 0;color:#333;font-size:14px;font-weight:600">
+      {{payload.dateTime}}
+    </td>
   </tr>
   {{/if}}
 </table>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
-  If a refund is applicable, it will be processed automatically. Visit your dashboard for details.
+  If a refund is applicable, it will be processed automatically. Visit your
+  dashboard for details.
 </p>
 
 <div style="text-align:center;margin:30px 0">
-  <a href="{{payload.dashboardUrl}}" style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block">
+  <a
+    href="{{payload.dashboardUrl}}"
+    style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block"
+  >
     View Details
   </a>
 </div>
@@ -243,6 +282,7 @@ Appointment Cancelled — {{payload.planTitle}}
 **Preference category**: `appointments`
 
 **Payload variables** (`AppointmentPayload`):
+
 ```
 {{payload.appointmentType}}   - "consultation" | "subscription" | "webinar" | "class"
 {{payload.consultantName}}    - Consultant display name
@@ -253,44 +293,59 @@ Appointment Cancelled — {{payload.planTitle}}
 ```
 
 **In-App notification**:
+
 ```
 Reminder: Your {{payload.appointmentType}} "{{payload.planTitle}}" is coming up on {{payload.dateTime}}.
 ```
 
 **Email subject**:
+
 ```
 Reminder — {{payload.planTitle}} is coming up
 ```
 
 **Email body**:
+
 ```html
-<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">Your Session is Coming Up</h1>
+<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">
+  Your Session is Coming Up
+</h1>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
   Hi {{subscriber.firstName}},
 </p>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
-  This is a friendly reminder that your {{payload.appointmentType}} <strong>"{{payload.planTitle}}"</strong> is scheduled for <strong>{{payload.dateTime}}</strong>.
+  This is a friendly reminder that your {{payload.appointmentType}}
+  <strong>"{{payload.planTitle}}"</strong> is scheduled for
+  <strong>{{payload.dateTime}}</strong>.
 </p>
 
 <table style="width:100%;border-collapse:collapse;margin:0 0 20px">
   <tr>
     <td style="padding:8px 0;color:#666;font-size:14px">Consultant</td>
-    <td style="padding:8px 0;color:#333;font-size:14px;font-weight:600">{{payload.consultantName}}</td>
+    <td style="padding:8px 0;color:#333;font-size:14px;font-weight:600">
+      {{payload.consultantName}}
+    </td>
   </tr>
   <tr>
     <td style="padding:8px 0;color:#666;font-size:14px">Consultee</td>
-    <td style="padding:8px 0;color:#333;font-size:14px;font-weight:600">{{payload.consulteeName}}</td>
+    <td style="padding:8px 0;color:#333;font-size:14px;font-weight:600">
+      {{payload.consulteeName}}
+    </td>
   </tr>
 </table>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
-  Make sure you're ready and have a stable internet connection. The session will be accessible from your dashboard.
+  Make sure you're ready and have a stable internet connection. The session will
+  be accessible from your dashboard.
 </p>
 
 <div style="text-align:center;margin:30px 0">
-  <a href="{{payload.dashboardUrl}}" style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block">
+  <a
+    href="{{payload.dashboardUrl}}"
+    style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block"
+  >
     Go to Dashboard
   </a>
 </div>
@@ -308,6 +363,7 @@ Reminder — {{payload.planTitle}} is coming up
 **Preference category**: `payments`
 
 **Payload variables** (`PaymentSuccessPayload`):
+
 ```
 {{payload.amount}}            - Payment amount (number)
 {{payload.currency}}          - Currency code (e.g., "INR", "USD")
@@ -319,18 +375,23 @@ Reminder — {{payload.planTitle}} is coming up
 ```
 
 **In-App notification**:
+
 ```
 Payment of {{payload.currency}} {{payload.amount}} confirmed for "{{payload.planTitle}}" with {{payload.consultantName}}.
 ```
 
 **Email subject**:
+
 ```
 Payment Confirmed — {{payload.planTitle}}
 ```
 
 **Email body**:
+
 ```html
-<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">Payment Confirmed</h1>
+<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">
+  Payment Confirmed
+</h1>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
   Hi {{subscriber.firstName}},
@@ -340,33 +401,50 @@ Payment Confirmed — {{payload.planTitle}}
   Your payment has been successfully processed.
 </p>
 
-<table style="width:100%;border-collapse:collapse;margin:0 0 20px;background:#f9f9f9;border-radius:5px;padding:15px">
+<table
+  style="width:100%;border-collapse:collapse;margin:0 0 20px;background:#f9f9f9;border-radius:5px;padding:15px"
+>
   <tr>
     <td style="padding:8px 15px;color:#666;font-size:14px">Amount</td>
-    <td style="padding:8px 15px;color:#333;font-size:14px;font-weight:600">{{payload.currency}} {{payload.amount}}</td>
+    <td style="padding:8px 15px;color:#333;font-size:14px;font-weight:600">
+      {{payload.currency}} {{payload.amount}}
+    </td>
   </tr>
   <tr>
     <td style="padding:8px 15px;color:#666;font-size:14px">Service</td>
-    <td style="padding:8px 15px;color:#333;font-size:14px;font-weight:600">{{payload.planTitle}}</td>
+    <td style="padding:8px 15px;color:#333;font-size:14px;font-weight:600">
+      {{payload.planTitle}}
+    </td>
   </tr>
   <tr>
     <td style="padding:8px 15px;color:#666;font-size:14px">Consultant</td>
-    <td style="padding:8px 15px;color:#333;font-size:14px;font-weight:600">{{payload.consultantName}}</td>
+    <td style="padding:8px 15px;color:#333;font-size:14px;font-weight:600">
+      {{payload.consultantName}}
+    </td>
   </tr>
   <tr>
     <td style="padding:8px 15px;color:#666;font-size:14px">Type</td>
-    <td style="padding:8px 15px;color:#333;font-size:14px;font-weight:600;text-transform:capitalize">{{payload.appointmentType}}</td>
+    <td
+      style="padding:8px 15px;color:#333;font-size:14px;font-weight:600;text-transform:capitalize"
+    >
+      {{payload.appointmentType}}
+    </td>
   </tr>
 </table>
 
 {{#if payload.receiptUrl}}
 <p style="font-size:14px;line-height:1.5;color:#666;margin:0 0 20px">
-  <a href="{{payload.receiptUrl}}" style="color:#000;text-decoration:underline">Download Receipt</a>
+  <a href="{{payload.receiptUrl}}" style="color:#000;text-decoration:underline"
+    >Download Receipt</a
+  >
 </p>
 {{/if}}
 
 <div style="text-align:center;margin:30px 0">
-  <a href="{{payload.dashboardUrl}}" style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block">
+  <a
+    href="{{payload.dashboardUrl}}"
+    style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block"
+  >
     View in Dashboard
   </a>
 </div>
@@ -384,6 +462,7 @@ Payment Confirmed — {{payload.planTitle}}
 **Preference category**: `payments`
 
 **Payload variables** (`PaymentFailedPayload`):
+
 ```
 {{payload.amount}}            - Payment amount
 {{payload.currency}}          - Currency code
@@ -395,18 +474,23 @@ Payment Confirmed — {{payload.planTitle}}
 ```
 
 **In-App notification**:
+
 ```
 Payment of {{payload.currency}} {{payload.amount}} failed for "{{payload.planTitle}}". {{payload.failureReason}}.
 ```
 
 **Email subject**:
+
 ```
 Payment Failed — Action Required
 ```
 
 **Email body**:
+
 ```html
-<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">Payment Failed</h1>
+<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">
+  Payment Failed
+</h1>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
   Hi {{subscriber.firstName}},
@@ -419,28 +503,38 @@ Payment Failed — Action Required
 <table style="width:100%;border-collapse:collapse;margin:0 0 20px">
   <tr>
     <td style="padding:8px 0;color:#666;font-size:14px">Amount</td>
-    <td style="padding:8px 0;color:#333;font-size:14px;font-weight:600">{{payload.currency}} {{payload.amount}}</td>
+    <td style="padding:8px 0;color:#333;font-size:14px;font-weight:600">
+      {{payload.currency}} {{payload.amount}}
+    </td>
   </tr>
   <tr>
     <td style="padding:8px 0;color:#666;font-size:14px">Consultant</td>
-    <td style="padding:8px 0;color:#333;font-size:14px;font-weight:600">{{payload.consultantName}}</td>
+    <td style="padding:8px 0;color:#333;font-size:14px;font-weight:600">
+      {{payload.consultantName}}
+    </td>
   </tr>
   <tr>
     <td style="padding:8px 0;color:#666;font-size:14px">Reason</td>
-    <td style="padding:8px 0;color:#c00;font-size:14px;font-weight:600">{{payload.failureReason}}</td>
+    <td style="padding:8px 0;color:#c00;font-size:14px;font-weight:600">
+      {{payload.failureReason}}
+    </td>
   </tr>
 </table>
 
 {{#if payload.retryUrl}}
 <div style="text-align:center;margin:30px 0">
-  <a href="{{payload.retryUrl}}" style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block">
+  <a
+    href="{{payload.retryUrl}}"
+    style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block"
+  >
     Retry Payment
   </a>
 </div>
 {{/if}}
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
-  Please check your payment method and try again. If the issue persists, contact our support team.
+  Please check your payment method and try again. If the issue persists, contact
+  our support team.
 </p>
 ```
 
@@ -456,6 +550,7 @@ Payment Failed — Action Required
 **Preference category**: `appointments`
 
 **Payload variables** (`BookingRequestPayload`):
+
 ```
 {{payload.consulteeName}}      - Consultee display name
 {{payload.planTitle}}           - Plan title
@@ -465,25 +560,32 @@ Payment Failed — Action Required
 ```
 
 **In-App notification**:
+
 ```
 New booking request from {{payload.consulteeName}} for "{{payload.planTitle}}".
 ```
 
 **Email subject**:
+
 ```
 New Booking Request — {{payload.planTitle}}
 ```
 
 **Email body**:
+
 ```html
-<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">New Booking Request</h1>
+<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">
+  New Booking Request
+</h1>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
   Hi {{subscriber.firstName}},
 </p>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
-  You've received a new {{payload.appointmentType}} request from <strong>{{payload.consulteeName}}</strong> for <strong>"{{payload.planTitle}}"</strong>.
+  You've received a new {{payload.appointmentType}} request from
+  <strong>{{payload.consulteeName}}</strong> for
+  <strong>"{{payload.planTitle}}"</strong>.
 </p>
 
 {{#if payload.requestedDateTime}}
@@ -497,7 +599,10 @@ New Booking Request — {{payload.planTitle}}
 </p>
 
 <div style="text-align:center;margin:30px 0">
-  <a href="{{payload.dashboardUrl}}" style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block">
+  <a
+    href="{{payload.dashboardUrl}}"
+    style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block"
+  >
     Review Request
   </a>
 </div>
@@ -515,6 +620,7 @@ New Booking Request — {{payload.planTitle}}
 **Preference category**: `subscriptions`
 
 **Payload variables** (`SubscriptionPayload`):
+
 ```
 {{payload.subscriptionId}}    - Subscription ID (optional)
 {{payload.planTitle}}          - Plan title
@@ -524,33 +630,43 @@ New Booking Request — {{payload.planTitle}}
 ```
 
 **In-App notification**:
+
 ```
 Your subscription to "{{payload.planTitle}}" with {{payload.consultantName}} is now active.
 ```
 
 **Email subject**:
+
 ```
 Subscription Active — {{payload.planTitle}}
 ```
 
 **Email body**:
+
 ```html
-<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">Subscription Started</h1>
+<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">
+  Subscription Started
+</h1>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
   Hi {{subscriber.firstName}},
 </p>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
-  Your subscription to <strong>"{{payload.planTitle}}"</strong> with <strong>{{payload.consultantName}}</strong> is now active.
+  Your subscription to <strong>"{{payload.planTitle}}"</strong> with
+  <strong>{{payload.consultantName}}</strong> is now active.
 </p>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
-  You can now book sessions, access resources, and manage your subscription from your dashboard.
+  You can now book sessions, access resources, and manage your subscription from
+  your dashboard.
 </p>
 
 <div style="text-align:center;margin:30px 0">
-  <a href="{{payload.dashboardUrl}}" style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block">
+  <a
+    href="{{payload.dashboardUrl}}"
+    style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block"
+  >
     Go to Dashboard
   </a>
 </div>
@@ -568,6 +684,7 @@ Subscription Active — {{payload.planTitle}}
 **Preference category**: `subscriptions`
 
 **Payload variables** (`SubscriptionPayload`):
+
 ```
 {{payload.planTitle}}          - Plan title
 {{payload.consultantName}}    - Consultant display name
@@ -576,33 +693,43 @@ Subscription Active — {{payload.planTitle}}
 ```
 
 **In-App notification**:
+
 ```
 The subscription "{{payload.planTitle}}" has been cancelled.
 ```
 
 **Email subject**:
+
 ```
 Subscription Cancelled — {{payload.planTitle}}
 ```
 
 **Email body**:
+
 ```html
-<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">Subscription Cancelled</h1>
+<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">
+  Subscription Cancelled
+</h1>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
   Hi {{subscriber.firstName}},
 </p>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
-  The subscription <strong>"{{payload.planTitle}}"</strong> with <strong>{{payload.consultantName}}</strong> has been cancelled.
+  The subscription <strong>"{{payload.planTitle}}"</strong> with
+  <strong>{{payload.consultantName}}</strong> has been cancelled.
 </p>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
-  Any remaining sessions in the current billing period are still available. Visit your dashboard for details.
+  Any remaining sessions in the current billing period are still available.
+  Visit your dashboard for details.
 </p>
 
 <div style="text-align:center;margin:30px 0">
-  <a href="{{payload.dashboardUrl}}" style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block">
+  <a
+    href="{{payload.dashboardUrl}}"
+    style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block"
+  >
     View Details
   </a>
 </div>
@@ -620,6 +747,7 @@ Subscription Cancelled — {{payload.planTitle}}
 **Preference category**: `trials`
 
 **Payload variables** (`TrialSessionPayload`):
+
 ```
 {{payload.consultantName}}    - Consultant display name
 {{payload.consulteeName}}     - Consultee display name
@@ -630,25 +758,31 @@ Subscription Cancelled — {{payload.planTitle}}
 ```
 
 **In-App notification**:
+
 ```
 {{payload.consulteeName}} has requested a trial session for "{{payload.planTitle}}".
 ```
 
 **Email subject**:
+
 ```
 New Trial Request — {{payload.planTitle}}
 ```
 
 **Email body**:
+
 ```html
-<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">Trial Session Requested</h1>
+<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">
+  Trial Session Requested
+</h1>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
   Hi {{subscriber.firstName}},
 </p>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
-  <strong>{{payload.consulteeName}}</strong> has requested a trial session for <strong>"{{payload.planTitle}}"</strong>.
+  <strong>{{payload.consulteeName}}</strong> has requested a trial session for
+  <strong>"{{payload.planTitle}}"</strong>.
 </p>
 
 {{#if payload.dateTime}}
@@ -658,11 +792,15 @@ New Trial Request — {{payload.planTitle}}
 {{/if}}
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
-  Review and schedule this trial from your dashboard. Trial sessions are a great way to convert potential clients.
+  Review and schedule this trial from your dashboard. Trial sessions are a great
+  way to convert potential clients.
 </p>
 
 <div style="text-align:center;margin:30px 0">
-  <a href="{{payload.dashboardUrl}}" style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block">
+  <a
+    href="{{payload.dashboardUrl}}"
+    style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block"
+  >
     Review Trial Request
   </a>
 </div>
@@ -680,6 +818,7 @@ New Trial Request — {{payload.planTitle}}
 **Preference category**: `trials`
 
 **Payload variables** (`TrialSessionPayload`):
+
 ```
 {{payload.consultantName}}    - Consultant display name
 {{payload.consulteeName}}     - Consultee display name
@@ -689,25 +828,32 @@ New Trial Request — {{payload.planTitle}}
 ```
 
 **In-App notification**:
+
 ```
 Your trial session for "{{payload.planTitle}}" with {{payload.consultantName}} has been scheduled for {{payload.dateTime}}.
 ```
 
 **Email subject**:
+
 ```
 Trial Scheduled — {{payload.planTitle}} with {{payload.consultantName}}
 ```
 
 **Email body**:
+
 ```html
-<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">Trial Session Scheduled</h1>
+<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">
+  Trial Session Scheduled
+</h1>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
   Hi {{subscriber.firstName}},
 </p>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
-  Great news! Your trial session for <strong>"{{payload.planTitle}}"</strong> with <strong>{{payload.consultantName}}</strong> has been scheduled.
+  Great news! Your trial session for
+  <strong>"{{payload.planTitle}}"</strong> with
+  <strong>{{payload.consultantName}}</strong> has been scheduled.
 </p>
 
 {{#if payload.dateTime}}
@@ -717,11 +863,15 @@ Trial Scheduled — {{payload.planTitle}} with {{payload.consultantName}}
 {{/if}}
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
-  Make sure you have a stable internet connection. You can join the session from your dashboard when it's time.
+  Make sure you have a stable internet connection. You can join the session from
+  your dashboard when it's time.
 </p>
 
 <div style="text-align:center;margin:30px 0">
-  <a href="{{payload.dashboardUrl}}" style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block">
+  <a
+    href="{{payload.dashboardUrl}}"
+    style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block"
+  >
     View Session Details
   </a>
 </div>
@@ -739,6 +889,7 @@ Trial Scheduled — {{payload.planTitle}} with {{payload.consultantName}}
 **Preference category**: `trials`
 
 **Payload variables** (`TrialSessionPayload`):
+
 ```
 {{payload.consultantName}}    - Consultant display name
 {{payload.consulteeName}}     - Consultee display name
@@ -747,25 +898,31 @@ Trial Scheduled — {{payload.planTitle}} with {{payload.consultantName}}
 ```
 
 **In-App notification**:
+
 ```
 Your trial session for "{{payload.planTitle}}" has been completed.
 ```
 
 **Email subject**:
+
 ```
 Trial Completed — {{payload.planTitle}}
 ```
 
 **Email body**:
+
 ```html
-<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">Trial Session Completed</h1>
+<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">
+  Trial Session Completed
+</h1>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
   Hi {{subscriber.firstName}},
 </p>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
-  Your trial session for <strong>"{{payload.planTitle}}"</strong> has been completed. We hope you found it valuable!
+  Your trial session for <strong>"{{payload.planTitle}}"</strong> has been
+  completed. We hope you found it valuable!
 </p>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
@@ -773,7 +930,10 @@ Trial Completed — {{payload.planTitle}}
 </p>
 
 <div style="text-align:center;margin:30px 0">
-  <a href="{{payload.dashboardUrl}}" style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block">
+  <a
+    href="{{payload.dashboardUrl}}"
+    style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block"
+  >
     Book Full Session
   </a>
 </div>
@@ -791,6 +951,7 @@ Trial Completed — {{payload.planTitle}}
 **Preference category**: `trials`
 
 **Payload variables** (`TrialSessionPayload`):
+
 ```
 {{payload.consultantName}}    - Consultant display name
 {{payload.consulteeName}}     - Consultee display name
@@ -799,25 +960,31 @@ Trial Completed — {{payload.planTitle}}
 ```
 
 **In-App notification**:
+
 ```
 The trial session for "{{payload.planTitle}}" has been cancelled.
 ```
 
 **Email subject**:
+
 ```
 Trial Cancelled — {{payload.planTitle}}
 ```
 
 **Email body**:
+
 ```html
-<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">Trial Session Cancelled</h1>
+<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">
+  Trial Session Cancelled
+</h1>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
   Hi {{subscriber.firstName}},
 </p>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
-  The trial session for <strong>"{{payload.planTitle}}"</strong> has been cancelled.
+  The trial session for <strong>"{{payload.planTitle}}"</strong> has been
+  cancelled.
 </p>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
@@ -825,7 +992,10 @@ Trial Cancelled — {{payload.planTitle}}
 </p>
 
 <div style="text-align:center;margin:30px 0">
-  <a href="{{payload.dashboardUrl}}" style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block">
+  <a
+    href="{{payload.dashboardUrl}}"
+    style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block"
+  >
     Explore Options
   </a>
 </div>
@@ -843,6 +1013,7 @@ Trial Cancelled — {{payload.planTitle}}
 **Preference category**: `support`
 
 **Payload variables** (`SupportTicketPayload`):
+
 ```
 {{payload.ticketId}}          - Ticket ID
 {{payload.ticketTitle}}       - Ticket subject
@@ -852,18 +1023,23 @@ Trial Cancelled — {{payload.planTitle}}
 ```
 
 **In-App notification**:
+
 ```
 New support ticket: "{{payload.ticketTitle}}" ({{payload.ticketId}}).
 ```
 
 **Email subject**:
+
 ```
 New Support Ticket — {{payload.ticketTitle}}
 ```
 
 **Email body**:
+
 ```html
-<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">New Support Ticket</h1>
+<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">
+  New Support Ticket
+</h1>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
   Hi {{subscriber.firstName}},
@@ -876,22 +1052,31 @@ New Support Ticket — {{payload.ticketTitle}}
 <table style="width:100%;border-collapse:collapse;margin:0 0 20px">
   <tr>
     <td style="padding:8px 0;color:#666;font-size:14px">Ticket ID</td>
-    <td style="padding:8px 0;color:#333;font-size:14px;font-weight:600">{{payload.ticketId}}</td>
+    <td style="padding:8px 0;color:#333;font-size:14px;font-weight:600">
+      {{payload.ticketId}}
+    </td>
   </tr>
   <tr>
     <td style="padding:8px 0;color:#666;font-size:14px">Subject</td>
-    <td style="padding:8px 0;color:#333;font-size:14px;font-weight:600">{{payload.ticketTitle}}</td>
+    <td style="padding:8px 0;color:#333;font-size:14px;font-weight:600">
+      {{payload.ticketTitle}}
+    </td>
   </tr>
 </table>
 
 {{#if payload.message}}
-<div style="background:#f9f9f9;border-left:3px solid #ddd;padding:15px;margin:0 0 20px;font-size:14px;color:#555">
+<div
+  style="background:#f9f9f9;border-left:3px solid #ddd;padding:15px;margin:0 0 20px;font-size:14px;color:#555"
+>
   {{payload.message}}
 </div>
 {{/if}}
 
 <div style="text-align:center;margin:30px 0">
-  <a href="{{payload.dashboardUrl}}" style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block">
+  <a
+    href="{{payload.dashboardUrl}}"
+    style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block"
+  >
     View Ticket
   </a>
 </div>
@@ -909,6 +1094,7 @@ New Support Ticket — {{payload.ticketTitle}}
 **Preference category**: `support`
 
 **Payload variables** (`SupportTicketPayload`):
+
 ```
 {{payload.ticketId}}          - Ticket ID
 {{payload.ticketTitle}}       - Ticket subject
@@ -918,41 +1104,50 @@ New Support Ticket — {{payload.ticketTitle}}
 ```
 
 **In-App notification**:
+
 ```
 Your support ticket "{{payload.ticketTitle}}" has a new response{{#if payload.respondedBy}} from {{payload.respondedBy}}{{/if}}.
 ```
 
 **Email subject**:
+
 ```
 Update on Your Ticket — {{payload.ticketTitle}}
 ```
 
 **Email body**:
+
 ```html
-<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">Support Ticket Update</h1>
+<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">
+  Support Ticket Update
+</h1>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
   Hi {{subscriber.firstName}},
 </p>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
-  There's a new response on your support ticket <strong>"{{payload.ticketTitle}}"</strong>.
+  There's a new response on your support ticket
+  <strong>"{{payload.ticketTitle}}"</strong>.
 </p>
 
 {{#if payload.respondedBy}}
 <p style="font-size:14px;line-height:1.5;color:#666;margin:0 0 10px">
   <em>Response from {{payload.respondedBy}}:</em>
 </p>
-{{/if}}
-
-{{#if payload.message}}
-<div style="background:#f9f9f9;border-left:3px solid #ddd;padding:15px;margin:0 0 20px;font-size:14px;color:#555">
+{{/if}} {{#if payload.message}}
+<div
+  style="background:#f9f9f9;border-left:3px solid #ddd;padding:15px;margin:0 0 20px;font-size:14px;color:#555"
+>
   {{payload.message}}
 </div>
 {{/if}}
 
 <div style="text-align:center;margin:30px 0">
-  <a href="{{payload.dashboardUrl}}" style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block">
+  <a
+    href="{{payload.dashboardUrl}}"
+    style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block"
+  >
     View Full Thread
   </a>
 </div>
@@ -970,6 +1165,7 @@ Update on Your Ticket — {{payload.ticketTitle}}
 **Preference category**: `feedback`
 
 **Payload variables** (`ReviewPayload`):
+
 ```
 {{payload.reviewerName}}      - Reviewer display name
 {{payload.rating}}            - Rating (1-5)
@@ -979,18 +1175,23 @@ Update on Your Ticket — {{payload.ticketTitle}}
 ```
 
 **In-App notification**:
+
 ```
 {{payload.reviewerName}} left a {{payload.rating}}-star review{{#if payload.planTitle}} for "{{payload.planTitle}}"{{/if}}.
 ```
 
 **Email subject**:
+
 ```
 New Review — {{payload.rating}} Stars from {{payload.reviewerName}}
 ```
 
 **Email body**:
+
 ```html
-<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">New Review Received</h1>
+<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">
+  New Review Received
+</h1>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
   Hi {{subscriber.firstName}},
@@ -1008,20 +1209,24 @@ New Review — {{payload.rating}} Stars from {{payload.reviewerName}}
 <p style="font-size:14px;line-height:1.5;color:#666;margin:0 0 10px">
   For: <strong>{{payload.planTitle}}</strong>
 </p>
-{{/if}}
-
-{{#if payload.comment}}
-<div style="background:#f9f9f9;border-left:3px solid #ddd;padding:15px;margin:0 0 20px;font-size:14px;color:#555;font-style:italic">
+{{/if}} {{#if payload.comment}}
+<div
+  style="background:#f9f9f9;border-left:3px solid #ddd;padding:15px;margin:0 0 20px;font-size:14px;color:#555;font-style:italic"
+>
   "{{payload.comment}}"
 </div>
 {{/if}}
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
-  Reviews help build trust with potential clients. View your full review history in your dashboard.
+  Reviews help build trust with potential clients. View your full review history
+  in your dashboard.
 </p>
 
 <div style="text-align:center;margin:30px 0">
-  <a href="{{payload.dashboardUrl}}" style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block">
+  <a
+    href="{{payload.dashboardUrl}}"
+    style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block"
+  >
     View Reviews
   </a>
 </div>
@@ -1039,6 +1244,7 @@ New Review — {{payload.rating}} Stars from {{payload.reviewerName}}
 **Preference category**: None (system notification — always sends)
 
 **Payload variables** (`VerificationPayload`):
+
 ```
 {{payload.status}}            - "APPROVED" | "REJECTED" | "PENDING"
 {{payload.reason}}            - Reason for status change (optional)
@@ -1046,47 +1252,54 @@ New Review — {{payload.rating}} Stars from {{payload.reviewerName}}
 ```
 
 **In-App notification**:
+
 ```
 Your verification status has been updated to {{payload.status}}.{{#if payload.reason}} Reason: {{payload.reason}}{{/if}}
 ```
 
 **Email subject**:
+
 ```
 Verification Update — {{payload.status}}
 ```
 
 **Email body**:
+
 ```html
-<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">Verification Status Update</h1>
+<h1 style="font-size:28px;font-weight:bold;color:#333;margin:0 0 20px">
+  Verification Status Update
+</h1>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
   Hi {{subscriber.firstName}},
 </p>
 
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
-  Your consultant verification status has been updated to: <strong>{{payload.status}}</strong>.
+  Your consultant verification status has been updated to:
+  <strong>{{payload.status}}</strong>.
 </p>
 
 {{#if payload.reason}}
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
   <strong>Details:</strong> {{payload.reason}}
 </p>
-{{/if}}
-
-{{#equals payload.status "APPROVED"}}
+{{/if}} {{#equals payload.status "APPROVED"}}
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
-  Congratulations! Your profile is now verified and visible to potential clients. Start creating your service plans to begin receiving bookings.
+  Congratulations! Your profile is now verified and visible to potential
+  clients. Start creating your service plans to begin receiving bookings.
 </p>
-{{/equals}}
-
-{{#equals payload.status "REJECTED"}}
+{{/equals}} {{#equals payload.status "REJECTED"}}
 <p style="font-size:16px;line-height:1.5;color:#444;margin:0 0 20px">
-  Please review the feedback and update your profile accordingly. You can resubmit for verification from your dashboard.
+  Please review the feedback and update your profile accordingly. You can
+  resubmit for verification from your dashboard.
 </p>
 {{/equals}}
 
 <div style="text-align:center;margin:30px 0">
-  <a href="{{payload.dashboardUrl}}" style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block">
+  <a
+    href="{{payload.dashboardUrl}}"
+    style="background-color:#000;border-radius:5px;color:#fff;font-size:16px;text-decoration:none;padding:12px 20px;display:inline-block"
+  >
     Go to Dashboard
   </a>
 </div>
@@ -1120,6 +1333,7 @@ verification-status-changed
 ## Next: Tier 2 Workflows (Post-Launch)
 
 These need Dashboard configuration after Tier 1 is done:
+
 - `appointment-rescheduled` — AppointmentRescheduledPayload
 - `appointment-completed` — AppointmentPayload
 - `refund-processed` — RefundPayload

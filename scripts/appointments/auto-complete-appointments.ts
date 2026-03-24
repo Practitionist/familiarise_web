@@ -293,7 +293,10 @@ async function completeConsultations(): Promise<{
           });
         }
       } catch (error) {
-        console.error(`[auto-complete] Failed to send consultation completion notification:`, error);
+        console.error(
+          `[auto-complete] Failed to send consultation completion notification:`,
+          error,
+        );
       }
     } catch (error) {
       const msg = `Failed to complete consultation ${consultation.id}: ${error}`;
@@ -413,7 +416,10 @@ async function completeSubscriptions(): Promise<{
           });
         }
       } catch (error) {
-        console.error(`[auto-complete] Failed to send subscription completion notification:`, error);
+        console.error(
+          `[auto-complete] Failed to send subscription completion notification:`,
+          error,
+        );
       }
     } catch (error) {
       const msg = `Failed to complete subscription ${subscription.id}: ${error}`;

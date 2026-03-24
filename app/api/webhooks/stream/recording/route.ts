@@ -38,10 +38,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       !verifyStreamSignature(rawBody, signature)
     ) {
       console.warn("[stream/recording] Invalid webhook signature");
-      return NextResponse.json(
-        { error: "Invalid signature" },
-        { status: 401 },
-      );
+      return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
     }
 
     const body = JSON.parse(rawBody);

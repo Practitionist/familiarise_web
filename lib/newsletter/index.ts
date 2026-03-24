@@ -12,3 +12,5 @@ export {
   tagSubscriber,
   createBroadcast,
 } from "./convertkit";
+
+export { generateUnsubscribeToken, buildUnsubscribeUrl } from "./unsubscribe";

@@ -38,9 +38,11 @@ export interface ReminderResult {
   timestamp: string;
 }
 
-async function sendRemindersForWindow(
-  window: { label: string; minMs: number; maxMs: number },
-): Promise<{ sent: number; errors: string[] }> {
+async function sendRemindersForWindow(window: {
+  label: string;
+  minMs: number;
+  maxMs: number;
+}): Promise<{ sent: number; errors: string[] }> {
   const now = Date.now();
   const windowStart = new Date(now + window.minMs);
   const windowEnd = new Date(now + window.maxMs);
@@ -147,8 +149,7 @@ async function sendRemindersForWindow(
         consultantName =
           apt.consultation.consultationPlan?.consultantProfile?.user?.name ??
           "Consultant";
-        consulteeName =
-          apt.consultation.requestedBy?.user?.name ?? "Consultee";
+        consulteeName = apt.consultation.requestedBy?.user?.name ?? "Consultee";
         const cId =
           apt.consultation.consultationPlan?.consultantProfile?.userId;
         const eId = apt.consultation.requestedBy?.userId;
@@ -156,13 +157,11 @@ async function sendRemindersForWindow(
         if (eId) userIds.push(eId);
       } else if (apt.subscription) {
         appointmentType = "subscription";
-        planTitle =
-          apt.subscription.subscriptionPlan?.title ?? "Subscription";
+        planTitle = apt.subscription.subscriptionPlan?.title ?? "Subscription";
         consultantName =
           apt.subscription.subscriptionPlan?.consultantProfile?.user?.name ??
           "Consultant";
-        consulteeName =
-          apt.subscription.requestedBy?.user?.name ?? "Consultee";
+        consulteeName = apt.subscription.requestedBy?.user?.name ?? "Consultee";
         const cId =
           apt.subscription.subscriptionPlan?.consultantProfile?.userId;
         const eId = apt.subscription.requestedBy?.userId;

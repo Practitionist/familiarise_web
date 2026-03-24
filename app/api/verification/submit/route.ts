@@ -130,7 +130,10 @@ export async function POST(request: NextRequest) {
         });
       }
     } catch (error) {
-      console.error("[verification/submit] Failed to send notification:", error);
+      console.error(
+        "[verification/submit] Failed to send notification:",
+        error,
+      );
     }
 
     return NextResponse.json({

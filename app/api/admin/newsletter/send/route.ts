@@ -14,7 +14,7 @@ import { UserRole } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 import { Resend } from "resend";
 import { z } from "zod";
-import { buildUnsubscribeUrl } from "@/app/api/newsletter/unsubscribe/route";
+import { buildUnsubscribeUrl } from "@/lib/newsletter/unsubscribe";
 
 const sendSchema = z.object({
   subject: z.string().min(1, "Subject is required").max(200),
@@ -116,10 +116,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         const result = await resend.batch.send(emails);
         if (result.error) {
           failed += batch.length;
-          errors.push(`Batch ${Math.floor(i / BATCH_SIZE) + 1}: ${result.error.message}`);
+          errors.push(
+            `Batch ${Math.floor(i / BATCH_SIZE) + 1}: ${result.error.message}`,
+          );
         } else {
           sent += result.data?.length ?? batch.length;
-          const failedInBatch = batch.length - (result.data?.length ?? batch.length);
+          const failedInBatch =
+            batch.length - (result.data?.length ?? batch.length);
           if (failedInBatch > 0) failed += failedInBatch;
         }
       } catch (batchError) {
@@ -150,10 +153,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 }
 
-function appendUnsubscribeFooter(
-  html: string,
-  unsubscribeUrl: string,
-): string {
+function appendUnsubscribeFooter(html: string, unsubscribeUrl: string): string {
   const footer = `
 <div style="text-align:center;margin:30px 0 0;padding:20px 0;border-top:1px solid #eee">
   <p style="font-size:12px;color:#666;margin:10px 0;line-height:1.5">

@@ -398,8 +398,7 @@ export async function POST(
           const baseUrl = getAppUrl();
           await notifyAppointmentRescheduled(userIds, {
             appointmentType: consultation ? "consultation" : "subscription",
-            consultantName:
-              plan?.consultantProfile?.user?.name ?? "Consultant",
+            consultantName: plan?.consultantProfile?.user?.name ?? "Consultant",
             consulteeName: requestedBy?.user?.name ?? "Consultee",
             planTitle: plan?.title ?? "Unknown",
             dashboardUrl: `${baseUrl}/dashboard`,

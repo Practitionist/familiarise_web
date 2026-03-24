@@ -163,7 +163,10 @@ export async function inviteCollaborator(
         });
       }
     } catch (error) {
-      console.error("[collaborators] Failed to send invitation notification:", error);
+      console.error(
+        "[collaborators] Failed to send invitation notification:",
+        error,
+      );
     }
   }
 
@@ -225,7 +228,10 @@ export async function respondToInvitation(
           });
         }
       } catch (error) {
-        console.error("[collaborators] Failed to send acceptance notification:", error);
+        console.error(
+          "[collaborators] Failed to send acceptance notification:",
+          error,
+        );
       }
     }
 
@@ -275,7 +281,10 @@ export async function respondToInvitation(
           });
         }
       } catch (error) {
-        console.error("[collaborators] Failed to send acceptance notification:", error);
+        console.error(
+          "[collaborators] Failed to send acceptance notification:",
+          error,
+        );
       }
     }
 
@@ -323,7 +332,10 @@ export async function removeCollaborator(
         });
       }
     } catch (error) {
-      console.error("[collaborators] Failed to send removal notification:", error);
+      console.error(
+        "[collaborators] Failed to send removal notification:",
+        error,
+      );
     }
 
     return result;
@@ -358,7 +370,10 @@ export async function removeCollaborator(
         });
       }
     } catch (error) {
-      console.error("[collaborators] Failed to send removal notification:", error);
+      console.error(
+        "[collaborators] Failed to send removal notification:",
+        error,
+      );
     }
 
     return result;

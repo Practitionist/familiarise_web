@@ -8,12 +8,12 @@
 
 ## Status Legend
 
-| Symbol | Meaning |
-|--------|---------|
-| **LIVE** | Fully implemented and wired into business logic |
+| Symbol        | Meaning                                              |
+| ------------- | ---------------------------------------------------- |
+| **LIVE**      | Fully implemented and wired into business logic      |
 | **CODE DONE** | Code exists, external config needed (Novu Dashboard) |
-| **STUB** | Placeholder code, logs only, no real functionality |
-| **MISSING** | Not implemented, not stubbed |
+| **STUB**      | Placeholder code, logs only, no real functionality   |
+| **MISSING**   | Not implemented, not stubbed                         |
 
 ---
 
@@ -166,6 +166,7 @@ flowchart TB
 **Purpose:** Transactional emails that are tightly coupled to auth, payment, and waitlist flows. These bypass Novu because they don't need multi-channel delivery (no in-app, no push).
 
 **How it works:**
+
 1. Business logic calls a send function (e.g., `sendWelcomeEmail()`)
 2. Function calls `getResendClient()` (lazy singleton, graceful degradation if no API key)
 3. React Email component is rendered to HTML via `@react-email/render`
@@ -173,18 +174,18 @@ flowchart TB
 
 **10 Templates:**
 
-| Template | From Address | Triggered By |
-|----------|-------------|-------------|
-| WelcomeEmail | `onboarding@familiarise.com` | BetterAuth `user.create.after` hook |
-| PasswordResetEmail | `security@familiarise.com` | Password reset flow |
-| AccountLinkedEmail | `security@familiarise.com` | OAuth account linking |
-| PaymentLinkEmail | `payments@familiarise.com` | Consultant approves consultation/subscription request |
-| PaymentSuccessEmail | `payments@familiarise.com` | Stripe/Razorpay payment webhook |
-| PaymentFailedEmail | `payments@familiarise.com` | Stripe/Razorpay failure webhook |
-| WaitlistJoinedEmail | `notifications@familiarise.com` | User joins a full event's waitlist |
-| WaitlistSpotAvailableEmail | `notifications@familiarise.com` | Spot opens up |
-| WaitlistExpiringEmail | `notifications@familiarise.com` | 12h reminder before expiry |
-| WaitlistExpiredEmail | `notifications@familiarise.com` | 48h window expired |
+| Template                   | From Address                    | Triggered By                                          |
+| -------------------------- | ------------------------------- | ----------------------------------------------------- |
+| WelcomeEmail               | `onboarding@familiarise.com`    | BetterAuth `user.create.after` hook                   |
+| PasswordResetEmail         | `security@familiarise.com`      | Password reset flow                                   |
+| AccountLinkedEmail         | `security@familiarise.com`      | OAuth account linking                                 |
+| PaymentLinkEmail           | `payments@familiarise.com`      | Consultant approves consultation/subscription request |
+| PaymentSuccessEmail        | `payments@familiarise.com`      | Stripe/Razorpay payment webhook                       |
+| PaymentFailedEmail         | `payments@familiarise.com`      | Stripe/Razorpay failure webhook                       |
+| WaitlistJoinedEmail        | `notifications@familiarise.com` | User joins a full event's waitlist                    |
+| WaitlistSpotAvailableEmail | `notifications@familiarise.com` | Spot opens up                                         |
+| WaitlistExpiringEmail      | `notifications@familiarise.com` | 12h reminder before expiry                            |
+| WaitlistExpiredEmail       | `notifications@familiarise.com` | 48h window expired                                    |
 
 **Design system:** White card on `#f5f5f5` background, black CTA button, `-apple-system` font stack, `16px` body, `28px` heading.
 
@@ -195,6 +196,7 @@ flowchart TB
 **Purpose:** Multi-channel notifications (email + in-app + future push). Novu is the "brain" that decides what/who/where/when. Resend is the "postman" for the email channel.
 
 **How it works:**
+
 1. Business logic calls a trigger function (e.g., `notifyAppointmentBooked(userIds, payload)`)
 2. Function checks `isNovuConfigured()` — if false, logs warning and returns `{success: false}`
 3. Calls `novu.trigger()` (single user), `triggerForMultiple()` (batch of 100), or `triggerBroadcast()` (all subscribers)
@@ -206,35 +208,35 @@ flowchart TB
 
 **40 Workflow IDs (by tier):**
 
-| Tier | Workflows | Status |
-|------|-----------|--------|
-| Tier 1 (16) | appointment-booked, appointment-cancelled, appointment-reminder, payment-success, payment-failed, new-booking-request, subscription-started, subscription-cancelled, trial-session-* (4), support-ticket-created, support-ticket-response, new-review-received, verification-status-changed | Template specs ready in `docs/notifications/03-novu-template-specs.md` |
-| Tier 2 (8) | appointment-rescheduled, appointment-completed, refund-processed, payout-processed, collaborator-invited/accepted/removed, new-consultant-application | Triggers wired, Dashboard config deferred |
-| Tier 3 (16) | subscription-renewed, referral-*, maintenance-*, dispute-*, recording-*, general-announcement, feedback-received, etc. | Functions exist, wiring deferred |
+| Tier        | Workflows                                                                                                                                                                                                                                                                                    | Status                                                                 |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Tier 1 (16) | appointment-booked, appointment-cancelled, appointment-reminder, payment-success, payment-failed, new-booking-request, subscription-started, subscription-cancelled, trial-session-\* (4), support-ticket-created, support-ticket-response, new-review-received, verification-status-changed | Template specs ready in `docs/notifications/03-novu-template-specs.md` |
+| Tier 2 (8)  | appointment-rescheduled, appointment-completed, refund-processed, payout-processed, collaborator-invited/accepted/removed, new-consultant-application                                                                                                                                        | Triggers wired, Dashboard config deferred                              |
+| Tier 3 (16) | subscription-renewed, referral-_, maintenance-_, dispute-_, recording-_, general-announcement, feedback-received, etc.                                                                                                                                                                       | Functions exist, wiring deferred                                       |
 
 **Trigger wiring (which business logic calls which notification):**
 
-| Business Logic File | Notifications Fired |
-|---------------------|-------------------|
-| `lib/payments/webhooks/handlers.ts` | appointmentBooked, paymentSuccess, paymentFailed |
-| `app/api/appointments/[id]/cancel/route.ts` | appointmentCancelled |
-| `app/api/appointments/[id]/reschedule/route.ts` | appointmentRescheduled |
-| `app/api/cleanup/appointment-reminders/route.ts` | appointmentReminder (cron) |
-| `scripts/appointments/auto-complete-appointments.ts` | appointmentCompleted (cron) |
-| `app/api/slots/request-for-approval/route.ts` | newBookingRequest |
-| `app/api/events/subscriptions/` | subscriptionStarted, subscriptionCancelled |
-| `app/api/trials/route.ts` + `[trialId]/route.ts` | trialSession* (4) |
-| `app/api/user/support-tickets/route.ts` | supportTicketCreated |
-| `app/api/staff/support-tickets/[id]/responses/route.ts` | supportTicketResponse |
-| `app/api/user/reviews/route.ts` | newReview |
-| `app/api/admin/verification/` + `app/api/staff/moderation/` | verificationStatusChanged |
-| `app/api/verification/submit/route.ts` | newConsultantApplication |
-| `lib/payments/payouts/payout-service.ts` | payoutProcessed |
-| `lib/collaborators/service.ts` | collaboratorInvited, collaboratorAccepted, collaboratorRemoved |
-| `app/api/webhooks/stream/recording/route.ts` | recordingAvailable |
-| `app/api/announcements/route.ts` | generalAnnouncement (broadcast) |
-| `app/api/webhooks/utils.ts` | refundProcessed, disputeCreated, disputeResolved |
-| `app/api/user/feedbacks/route.ts` | feedbackReceived |
+| Business Logic File                                         | Notifications Fired                                            |
+| ----------------------------------------------------------- | -------------------------------------------------------------- |
+| `lib/payments/webhooks/handlers.ts`                         | appointmentBooked, paymentSuccess, paymentFailed               |
+| `app/api/appointments/[id]/cancel/route.ts`                 | appointmentCancelled                                           |
+| `app/api/appointments/[id]/reschedule/route.ts`             | appointmentRescheduled                                         |
+| `app/api/cleanup/appointment-reminders/route.ts`            | appointmentReminder (cron)                                     |
+| `scripts/appointments/auto-complete-appointments.ts`        | appointmentCompleted (cron)                                    |
+| `app/api/slots/request-for-approval/route.ts`               | newBookingRequest                                              |
+| `app/api/events/subscriptions/`                             | subscriptionStarted, subscriptionCancelled                     |
+| `app/api/trials/route.ts` + `[trialId]/route.ts`            | trialSession\* (4)                                             |
+| `app/api/user/support-tickets/route.ts`                     | supportTicketCreated                                           |
+| `app/api/staff/support-tickets/[id]/responses/route.ts`     | supportTicketResponse                                          |
+| `app/api/user/reviews/route.ts`                             | newReview                                                      |
+| `app/api/admin/verification/` + `app/api/staff/moderation/` | verificationStatusChanged                                      |
+| `app/api/verification/submit/route.ts`                      | newConsultantApplication                                       |
+| `lib/payments/payouts/payout-service.ts`                    | payoutProcessed                                                |
+| `lib/collaborators/service.ts`                              | collaboratorInvited, collaboratorAccepted, collaboratorRemoved |
+| `app/api/webhooks/stream/recording/route.ts`                | recordingAvailable                                             |
+| `app/api/announcements/route.ts`                            | generalAnnouncement (broadcast)                                |
+| `app/api/webhooks/utils.ts`                                 | refundProcessed, disputeCreated, disputeResolved               |
+| `app/api/user/feedbacks/route.ts`                           | feedbackReceived                                               |
 
 ---
 
@@ -267,6 +269,7 @@ Unsubscribe:
 ```
 
 **Database model:**
+
 ```prisma
 model Newsletter {
   id             String    @id @default(uuid())
@@ -398,14 +401,14 @@ flowchart LR
 
 ## Dashboard & Admin Features
 
-| Feature | Route | Who | What It Does |
-|---------|-------|-----|-------------|
-| **Notification Preferences** | Settings page | Admin ✅, Staff ✅, Consultant ⚠️, Consultee ⚠️ | 3 channels + 7 categories + quiet hours |
-| **Bell Icon / Inbox** | All dashboards | All roles | Novu in-app notifications, unread count, click-to-redirect |
-| **Announcements** | POST /api/announcements | Admin, Staff | Create announcement + broadcast to all Novu subscribers |
-| **Newsletter Send** | POST /api/admin/newsletter/send | Admin only | Send HTML email to all active newsletter subscribers via Resend |
-| **Newsletter Stats** | (not built) | — | Would show subscriber count, open rates |
-| **Verification Review** | /dashboard/admin/verification | Admin, Staff | Review applications → triggers verificationStatusChanged |
+| Feature                      | Route                           | Who                                             | What It Does                                                    |
+| ---------------------------- | ------------------------------- | ----------------------------------------------- | --------------------------------------------------------------- |
+| **Notification Preferences** | Settings page                   | Admin ✅, Staff ✅, Consultant ⚠️, Consultee ⚠️ | 3 channels + 7 categories + quiet hours                         |
+| **Bell Icon / Inbox**        | All dashboards                  | All roles                                       | Novu in-app notifications, unread count, click-to-redirect      |
+| **Announcements**            | POST /api/announcements         | Admin, Staff                                    | Create announcement + broadcast to all Novu subscribers         |
+| **Newsletter Send**          | POST /api/admin/newsletter/send | Admin only                                      | Send HTML email to all active newsletter subscribers via Resend |
+| **Newsletter Stats**         | (not built)                     | —                                               | Would show subscriber count, open rates                         |
+| **Verification Review**      | /dashboard/admin/verification   | Admin, Staff                                    | Review applications → triggers verificationStatusChanged        |
 
 ---
 
@@ -413,77 +416,77 @@ flowchart LR
 
 ### LIVE (fully working)
 
-| Component | Files |
-|-----------|-------|
-| Resend email client | `lib/email.ts`, `lib/waitlist/notifications.ts` |
-| 10 React Email templates | `emails/auth/`, `emails/payments/`, `emails/waitlist/` |
-| Novu client + service + workflows + subscriber | `lib/novu/*.ts` |
-| Novu React provider + bell icon + sync hook | `providers/NovuProvider.tsx`, `components/notifications/NotificationInbox.tsx`, `hooks/useNovuSubscriberSync.ts` |
-| Notification Preferences Panel | `components/notifications/NotificationPreferencesPanel.tsx` |
-| Preferences API | `app/api/novu/preferences/route.ts` (GET/PUT) |
-| Subscriber sync API | `app/api/novu/subscriber/route.ts` (POST) |
-| Newsletter subscribe | `app/api/newsletter/subscribe/route.ts` |
-| Newsletter unsubscribe | `app/api/newsletter/unsubscribe/route.ts` |
-| Admin newsletter send | `app/api/admin/newsletter/send/route.ts` |
-| Appointment reminders cron | `app/api/cleanup/appointment-reminders/route.ts` |
-| Auto-complete + notify | `scripts/appointments/auto-complete-appointments.ts` |
-| Stream recording webhook | `app/api/webhooks/stream/recording/route.ts` |
-| Stream main webhook | `app/api/stream/webhooks/route.ts` |
-| Announcements + broadcast | `app/api/announcements/route.ts` |
-| 30+ notification trigger wiring | Various API routes and services |
+| Component                                      | Files                                                                                                            |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Resend email client                            | `lib/email.ts`, `lib/waitlist/notifications.ts`                                                                  |
+| 10 React Email templates                       | `emails/auth/`, `emails/payments/`, `emails/waitlist/`                                                           |
+| Novu client + service + workflows + subscriber | `lib/novu/*.ts`                                                                                                  |
+| Novu React provider + bell icon + sync hook    | `providers/NovuProvider.tsx`, `components/notifications/NotificationInbox.tsx`, `hooks/useNovuSubscriberSync.ts` |
+| Notification Preferences Panel                 | `components/notifications/NotificationPreferencesPanel.tsx`                                                      |
+| Preferences API                                | `app/api/novu/preferences/route.ts` (GET/PUT)                                                                    |
+| Subscriber sync API                            | `app/api/novu/subscriber/route.ts` (POST)                                                                        |
+| Newsletter subscribe                           | `app/api/newsletter/subscribe/route.ts`                                                                          |
+| Newsletter unsubscribe                         | `app/api/newsletter/unsubscribe/route.ts`                                                                        |
+| Admin newsletter send                          | `app/api/admin/newsletter/send/route.ts`                                                                         |
+| Appointment reminders cron                     | `app/api/cleanup/appointment-reminders/route.ts`                                                                 |
+| Auto-complete + notify                         | `scripts/appointments/auto-complete-appointments.ts`                                                             |
+| Stream recording webhook                       | `app/api/webhooks/stream/recording/route.ts`                                                                     |
+| Stream main webhook                            | `app/api/stream/webhooks/route.ts`                                                                               |
+| Announcements + broadcast                      | `app/api/announcements/route.ts`                                                                                 |
+| 30+ notification trigger wiring                | Various API routes and services                                                                                  |
 
 ### STUB (placeholder code, no functionality)
 
-| Component | File | What It Does Now | When to Implement |
-|-----------|------|-----------------|------------------|
-| ConvertKit | `lib/newsletter/convertkit.ts` | 4 functions that log + return | 500+ subscribers |
-| Directus CMS webhook | `app/api/webhooks/directus/route.ts` | Logs event, returns 200 | When blog launches |
+| Component            | File                                 | What It Does Now              | When to Implement  |
+| -------------------- | ------------------------------------ | ----------------------------- | ------------------ |
+| ConvertKit           | `lib/newsletter/convertkit.ts`       | 4 functions that log + return | 500+ subscribers   |
+| Directus CMS webhook | `app/api/webhooks/directus/route.ts` | Logs event, returns 200       | When blog launches |
 
 ### NEEDS EXTERNAL CONFIG (code complete, config needed)
 
-| Component | What's Needed |
-|-----------|--------------|
-| Novu Dashboard | Create 16 Tier 1 workflows using `docs/notifications/03-novu-template-specs.md`, add Resend as email provider, configure preference categories |
-| Resend domain | Verify `familiarise.com` domain in Resend dashboard (DKIM, SPF, DMARC) |
-| Cron scheduling | Schedule reminder + auto-complete cron jobs in GitHub Actions or Netlify |
-| `NEWSLETTER_HMAC_SECRET` | Add env var (falls back to `RESEND_API_KEY`) |
+| Component                | What's Needed                                                                                                                                  |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Novu Dashboard           | Create 16 Tier 1 workflows using `docs/notifications/03-novu-template-specs.md`, add Resend as email provider, configure preference categories |
+| Resend domain            | Verify `familiarise.com` domain in Resend dashboard (DKIM, SPF, DMARC)                                                                         |
+| Cron scheduling          | Schedule reminder + auto-complete cron jobs in GitHub Actions or Netlify                                                                       |
+| `NEWSLETTER_HMAC_SECRET` | Add env var (falls back to `RESEND_API_KEY`)                                                                                                   |
 
 ### MISSING (no code, no stub)
 
-| Component | Impact | Recommendation |
-|-----------|--------|----------------|
-| Consultant/Consultee preferences panel | Users can't manage notification preferences | Add `NotificationPreferencesPanel` to their settings pages |
-| Newsletter subscribe UI component | No way for users to subscribe on the website | Build footer/sidebar email input form |
-| Push notifications (FCM) | No browser push | Defer until significant user base |
-| Email analytics (opens/clicks/bounces) | No deliverability monitoring | Add Resend webhook handler post-launch |
-| Notification logging/audit | No delivery audit trail | Novu Dashboard activity feed covers this |
-| Promotional email automation | 16 templates sit unused | Use external tool (Lemlist) for cold outreach |
+| Component                              | Impact                                       | Recommendation                                             |
+| -------------------------------------- | -------------------------------------------- | ---------------------------------------------------------- |
+| Consultant/Consultee preferences panel | Users can't manage notification preferences  | Add `NotificationPreferencesPanel` to their settings pages |
+| Newsletter subscribe UI component      | No way for users to subscribe on the website | Build footer/sidebar email input form                      |
+| Push notifications (FCM)               | No browser push                              | Defer until significant user base                          |
+| Email analytics (opens/clicks/bounces) | No deliverability monitoring                 | Add Resend webhook handler post-launch                     |
+| Notification logging/audit             | No delivery audit trail                      | Novu Dashboard activity feed covers this                   |
+| Promotional email automation           | 16 templates sit unused                      | Use external tool (Lemlist) for cold outreach              |
 
 ---
 
 ## Environment Variables
 
-| Variable | Required | Used By |
-|----------|----------|---------|
-| `RESEND_API_KEY` | Yes | Resend direct emails, Novu email channel, newsletter send |
-| `NOVU_SECRET_KEY` | Yes | Novu server-side SDK |
-| `NEXT_PUBLIC_NOVU_APP_ID` | Yes | Novu React SDK (client-side) |
-| `NEXT_PUBLIC_APP_URL` | Yes | Email link URLs, unsubscribe URLs |
-| `CRON_SECRET` | Yes | Auth for cron job endpoints |
-| `NEWSLETTER_HMAC_SECRET` | Optional | Unsubscribe token signing (falls back to RESEND_API_KEY) |
-| `STREAM_WEBHOOK_SECRET` | Yes | Stream webhook signature verification |
-| `CONVERTKIT_API_KEY` | No (stub) | Future ConvertKit integration |
-| `CONVERTKIT_FORM_ID` | No (stub) | Future ConvertKit form ID |
+| Variable                  | Required  | Used By                                                   |
+| ------------------------- | --------- | --------------------------------------------------------- |
+| `RESEND_API_KEY`          | Yes       | Resend direct emails, Novu email channel, newsletter send |
+| `NOVU_SECRET_KEY`         | Yes       | Novu server-side SDK                                      |
+| `NEXT_PUBLIC_NOVU_APP_ID` | Yes       | Novu React SDK (client-side)                              |
+| `NEXT_PUBLIC_APP_URL`     | Yes       | Email link URLs, unsubscribe URLs                         |
+| `CRON_SECRET`             | Yes       | Auth for cron job endpoints                               |
+| `NEWSLETTER_HMAC_SECRET`  | Optional  | Unsubscribe token signing (falls back to RESEND_API_KEY)  |
+| `STREAM_WEBHOOK_SECRET`   | Yes       | Stream webhook signature verification                     |
+| `CONVERTKIT_API_KEY`      | No (stub) | Future ConvertKit integration                             |
+| `CONVERTKIT_FORM_ID`      | No (stub) | Future ConvertKit form ID                                 |
 
 ---
 
 ## NPM Packages
 
-| Package | Version | Pipeline |
-|---------|---------|----------|
-| `resend` | 6.8.0 | Pipeline 1 + 3 |
-| `@react-email/components` | 1.0.6 | Pipeline 1 |
-| `@react-email/render` | 2.0.4 | Pipeline 1 |
-| `@novu/api` | 3.13.0 | Pipeline 2 (server) |
-| `@novu/nextjs` | 3.13.0 | Pipeline 2 (client) |
-| `@novu/react` | 3.13.0 | Pipeline 2 (client) |
+| Package                   | Version | Pipeline            |
+| ------------------------- | ------- | ------------------- |
+| `resend`                  | 6.8.0   | Pipeline 1 + 3      |
+| `@react-email/components` | 1.0.6   | Pipeline 1          |
+| `@react-email/render`     | 2.0.4   | Pipeline 1          |
+| `@novu/api`               | 3.13.0  | Pipeline 2 (server) |
+| `@novu/nextjs`            | 3.13.0  | Pipeline 2 (client) |
+| `@novu/react`             | 3.13.0  | Pipeline 2 (client) |
