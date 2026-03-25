@@ -55,8 +55,6 @@ type SubscriptionPlanWithConsultant = SubscriptionPlan & {
 type SubscriptionResponse = {
   data: SubscriptionPlanWithConsultant;
 };
-import { loadStripe } from "@stripe/stripe-js";
-import { getAppUrl } from "@/lib/url";
 
 type PageProps = {
   params: Promise<{ planId: string }>;
@@ -300,17 +298,19 @@ export default function SubscriptionCheckoutPage({
               try {
                 // Handle gateway-specific responses
                 switch (gateway) {
-                  case "STRIPE":
-                    const stripe = await loadStripe(
-                      process.env.NEXT_PUBLIC_STRIPE_KEY!,
-                    );
-                    await stripe?.confirmPayment({
-                      clientSecret: data.clientSecret!,
-                      confirmParams: {
-                        return_url: `${getAppUrl()}/checkout/checkout-success`,
-                      },
-                    });
+                  case "STRIPE": {
+                    // Backend returns a Stripe Checkout Session URL (not a Payment Intent secret)
+                    const stripeUrl =
+                      data.paymentIntent?.client_secret ||
+                      data.clientSecret ||
+                      data.checkoutUrl;
+                    if (stripeUrl) {
+                      window.location.href = stripeUrl;
+                    } else {
+                      throw new Error("No Stripe checkout URL received");
+                    }
                     break;
+                  }
                 }
               } catch (paymentError) {
                 console.error("Payment confirmation error:", paymentError);
@@ -860,21 +860,23 @@ export default function SubscriptionCheckoutPage({
                           disabled={isMaintenanceBlocked}
                         />
                       ) : null}
-                      <Button
-                        variant="secondary"
-                        onClick={() => handleCheckout(gateway.gateway, true)}
-                        disabled={isCheckoutProcessing || isMaintenanceBlocked}
-                      >
-                        {isCheckoutProcessing &&
-                        processingGateway === `${gateway.gateway}-mock` ? (
-                          <>
-                            <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
-                            Processing...
-                          </>
-                        ) : (
-                          `Mock Pay (${gateway.name})`
-                        )}
-                      </Button>
+                      {process.env.NODE_ENV === "development" && (
+                        <Button
+                          variant="secondary"
+                          onClick={() => handleCheckout(gateway.gateway, true)}
+                          disabled={isCheckoutProcessing || isMaintenanceBlocked}
+                        >
+                          {isCheckoutProcessing &&
+                          processingGateway === `${gateway.gateway}-mock` ? (
+                            <>
+                              <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
+                              Processing...
+                            </>
+                          ) : (
+                            `Mock Pay (${gateway.name})`
+                          )}
+                        </Button>
+                      )}
                     </div>
                   ) : (
                     <Button variant="outline" disabled>

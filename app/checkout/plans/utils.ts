@@ -2,8 +2,6 @@ import { useToast } from "@/hooks/use-toast";
 import { getErrorToast } from "@/lib/errors/mapping/payment-error-toast-map";
 import { CheckoutInput, checkoutResponseSchema } from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
-import { loadStripe } from "@stripe/stripe-js";
-import { getAppUrl } from "@/lib/url";
 
 export function loadScript(src: string): Promise<boolean> {
   return new Promise((resolve, reject) => {
@@ -158,20 +156,19 @@ export async function handleUnifiedCheckout(
         try {
           // Handle gateway-specific responses
           switch (gateway) {
-            case "STRIPE":
-              const stripeInstance = await loadStripe(
-                process.env.NEXT_PUBLIC_STRIPE_KEY!,
-              );
-              if (!stripeInstance) {
-                throw new Error("Failed to load Stripe");
+            case "STRIPE": {
+              // Backend returns a Stripe Checkout Session URL (not a Payment Intent secret)
+              const stripeUrl =
+                data.paymentIntent?.client_secret ||
+                data.clientSecret ||
+                data.checkoutUrl;
+              if (stripeUrl) {
+                window.location.href = stripeUrl;
+              } else {
+                throw new Error("No Stripe checkout URL received");
               }
-              await stripeInstance.confirmPayment({
-                clientSecret: data.clientSecret!,
-                confirmParams: {
-                  return_url: `${getAppUrl()}/checkout/checkout-success`,
-                },
-              });
               break;
+            }
 
             // TODO(#312/#334): Add Lemon Squeezy and XFlow cases when webhook handlers are implemented
           }

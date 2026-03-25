@@ -33,9 +33,7 @@ import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import StripeCheckout from "../../../components/StripeCheckout";
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
-import { loadStripe } from "@stripe/stripe-js";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
-import { getAppUrl } from "@/lib/url";
 
 type ConsultationPlanWithConsultant = ConsultationPlan & {
   consultantProfile: ConsultantProfile & {
@@ -367,17 +365,19 @@ export default function ConsultationCheckoutPage({
             try {
               // Handle gateway-specific responses
               switch (gateway) {
-                case "STRIPE":
-                  const stripe = await loadStripe(
-                    process.env.NEXT_PUBLIC_STRIPE_KEY!,
-                  );
-                  await stripe?.confirmPayment({
-                    clientSecret: data.paymentIntent.client_secret,
-                    confirmParams: {
-                      return_url: `${getAppUrl()}/checkout/checkout-success`,
-                    },
-                  });
+                case "STRIPE": {
+                  // Backend returns a Stripe Checkout Session URL (not a Payment Intent secret)
+                  const stripeUrl =
+                    data.paymentIntent?.client_secret ||
+                    data.clientSecret ||
+                    data.checkoutUrl;
+                  if (stripeUrl) {
+                    window.location.href = stripeUrl;
+                  } else {
+                    throw new Error("No Stripe checkout URL received");
+                  }
                   break;
+                }
 
                 case "RAZORPAY":
                   // Razorpay is handled by the RazorpayCheckout component
@@ -995,22 +995,24 @@ export default function ConsultationCheckoutPage({
                           }}
                         />
                       ) : null}
-                      {/* Mock Payment Button */}
-                      <Button
-                        variant="secondary"
-                        onClick={() => handleCheckout(gateway.gateway, true)}
-                        disabled={isCheckoutProcessing || isMaintenanceBlocked}
-                      >
-                        {isCheckoutProcessing &&
-                        processingGateway === `${gateway.gateway}-mock` ? (
-                          <>
-                            <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
-                            Processing...
-                          </>
-                        ) : (
-                          `Mock Pay (${gateway.name})`
-                        )}
-                      </Button>
+                      {/* Mock Payment Button - development only */}
+                      {process.env.NODE_ENV === "development" && (
+                        <Button
+                          variant="secondary"
+                          onClick={() => handleCheckout(gateway.gateway, true)}
+                          disabled={isCheckoutProcessing || isMaintenanceBlocked}
+                        >
+                          {isCheckoutProcessing &&
+                          processingGateway === `${gateway.gateway}-mock` ? (
+                            <>
+                              <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
+                              Processing...
+                            </>
+                          ) : (
+                            `Mock Pay (${gateway.name})`
+                          )}
+                        </Button>
+                      )}
                     </div>
                   ) : (
                     <Button variant="outline" disabled>
