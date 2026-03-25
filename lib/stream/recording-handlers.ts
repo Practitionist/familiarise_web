@@ -185,22 +185,46 @@ export async function handleRecordingReady(
               include: {
                 consultation: {
                   include: {
-                    consultationPlan: true,
+                    consultationPlan: {
+                      include: {
+                        consultantProfile: {
+                          select: { user: { select: { name: true } } },
+                        },
+                      },
+                    },
                   },
                 },
                 subscription: {
                   include: {
-                    subscriptionPlan: true,
+                    subscriptionPlan: {
+                      include: {
+                        consultantProfile: {
+                          select: { user: { select: { name: true } } },
+                        },
+                      },
+                    },
                   },
                 },
                 webinar: {
                   include: {
-                    webinarPlan: true,
+                    webinarPlan: {
+                      include: {
+                        consultantProfile: {
+                          select: { user: { select: { name: true } } },
+                        },
+                      },
+                    },
                   },
                 },
                 class: {
                   include: {
-                    classPlan: true,
+                    classPlan: {
+                      include: {
+                        consultantProfile: {
+                          select: { user: { select: { name: true } } },
+                        },
+                      },
+                    },
                   },
                 },
               },
@@ -303,27 +327,29 @@ export async function handleRecordingReady(
     );
     if (userIds && userIds.length > 0) {
       let appointmentType = "consultation";
-      let consultantName = "Consultant";
+      let consultantName = "Unknown Consultant";
 
       if (appointment?.consultation) {
         appointmentType = "consultation";
+        consultantName =
+          appointment.consultation.consultationPlan?.consultantProfile?.user
+            ?.name ?? "Unknown Consultant";
       } else if (appointment?.subscription) {
         appointmentType = "subscription";
+        consultantName =
+          appointment.subscription.subscriptionPlan?.consultantProfile?.user
+            ?.name ?? "Unknown Consultant";
       } else if (appointment?.webinar) {
         appointmentType = "webinar";
+        consultantName =
+          appointment.webinar.webinarPlan?.consultantProfile?.user?.name ??
+          "Unknown Consultant";
       } else if (appointment?.class) {
         appointmentType = "class";
+        consultantName =
+          appointment.class.classPlan?.consultantProfile?.user?.name ??
+          "Unknown Consultant";
       }
-
-      const plan =
-        appointment?.consultation?.consultationPlan ??
-        appointment?.subscription?.subscriptionPlan ??
-        appointment?.webinar?.webinarPlan ??
-        appointment?.class?.classPlan ??
-        null;
-      consultantName =
-        (plan as { consultantProfile?: { user?: { name?: string } } })
-          ?.consultantProfile?.user?.name ?? "Consultant";
 
       void notifyRecordingAvailable(userIds, {
         appointmentType,

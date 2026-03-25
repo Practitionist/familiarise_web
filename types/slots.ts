@@ -12,6 +12,7 @@ export type TSlotTiming = {
   localEndTime: string;
   isAllocated?: boolean;
   allocatedTo?: string;
+  bookingStatus?: "available" | "partially-booked" | "fully-booked";
   type: "WEEKLY" | "CUSTOM"; // Make type required to distinguish slot source
 };
 

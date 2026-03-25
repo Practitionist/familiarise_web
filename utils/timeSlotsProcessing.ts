@@ -726,3 +726,99 @@ export function processAvailabilitySlots(
   // Group by date
   return groupSlotsByDate(brokenDownSlots, timezone);
 }
+
+/**
+ * Break down pre-processed slots by duration using sliding windows,
+ * PRESERVING the bookingStatus from the API rather than recomputing from appointments.
+ *
+ * Use this on the client when the slots already have correct bookingStatus from the server
+ * and you only need to create duration-appropriate windows for display.
+ */
+export function breakDownSlotsPreservingStatus(
+  apiSlots: (TSlotTiming & {
+    isAllocated: boolean;
+    bookingStatus?: BookingStatus;
+  })[],
+  durationInHours: number,
+  timezone: string,
+): (TSlotTiming & {
+  isAllocated: boolean;
+  bookingStatus: BookingStatus;
+})[] {
+  if (!apiSlots || apiSlots.length === 0) return [];
+
+  const slidingIntervalMillis = 30 * 60 * 1000;
+  const durationInMillis = durationInHours * 60 * 60 * 1000;
+
+  // Merge consecutive available slots to allow longer duration windows
+  const mergedSlots = mergeConsecutiveSlots(apiSlots);
+  const result: (TSlotTiming & {
+    isAllocated: boolean;
+    bookingStatus: BookingStatus;
+  })[] = [];
+
+  for (const slot of mergedSlots) {
+    const slotStart = new Date(slot.slotStartTimeInUTC).getTime();
+    const slotEnd = new Date(slot.slotEndTimeInUTC).getTime();
+
+    let windowStart = slotStart;
+    while (windowStart + durationInMillis <= slotEnd) {
+      const windowEnd = windowStart + durationInMillis;
+
+      // Find all original API sub-slots overlapping this window
+      const overlapping = apiSlots.filter((s) => {
+        const sStart = new Date(s.slotStartTimeInUTC).getTime();
+        const sEnd = new Date(s.slotEndTimeInUTC).getTime();
+        return sStart < windowEnd && sEnd > windowStart;
+      });
+
+      // Derive worst-case status from overlapping sub-slots
+      let windowStatus: BookingStatus = BOOKING_STATUS.AVAILABLE;
+      let windowAllocated = false;
+
+      if (overlapping.length > 0) {
+        const hasFullyBooked = overlapping.some(
+          (s) => s.bookingStatus === BOOKING_STATUS.FULLY_BOOKED,
+        );
+        const hasPartiallyBooked = overlapping.some(
+          (s) => s.bookingStatus === BOOKING_STATUS.PARTIALLY_BOOKED,
+        );
+        windowAllocated = overlapping.some((s) => s.isAllocated);
+
+        if (
+          overlapping.every(
+            (s) => s.bookingStatus === BOOKING_STATUS.FULLY_BOOKED,
+          )
+        ) {
+          windowStatus = BOOKING_STATUS.FULLY_BOOKED;
+        } else if (hasFullyBooked || hasPartiallyBooked) {
+          windowStatus = BOOKING_STATUS.PARTIALLY_BOOKED;
+        }
+      }
+
+      const windowStartDate = new Date(windowStart);
+      const windowEndDate = new Date(windowEnd);
+
+      result.push({
+        ...slot,
+        slotId: `${slot.slotOfAvailabilityId}-${windowStart}`,
+        slotStartTimeInUTC: windowStartDate.toISOString(),
+        slotEndTimeInUTC: windowEndDate.toISOString(),
+        localStartTime: formatInTimeZone(windowStartDate, timezone, "p"),
+        localEndTime: formatInTimeZone(windowEndDate, timezone, "p"),
+        isAllocated: windowAllocated,
+        bookingStatus: windowStatus,
+      });
+
+      windowStart += slidingIntervalMillis;
+    }
+  }
+
+  result.sort(
+    (a, b) =>
+      new Date(a.slotStartTimeInUTC).getTime() -
+      new Date(b.slotStartTimeInUTC).getTime(),
+  );
+
+  return result;
+}

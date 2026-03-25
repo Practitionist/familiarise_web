@@ -17,6 +17,10 @@ interface RazorpayCheckoutProps {
   onPaymentSuccess: (response: any) => void;
   onPaymentError: (error: any) => void;
   disabled?: boolean;
+  userName?: string;
+  userEmail?: string;
+  userPhone?: string;
+  description?: string;
 }
 
 export default function RazorpayCheckout({
@@ -24,6 +28,10 @@ export default function RazorpayCheckout({
   onPaymentSuccess,
   onPaymentError,
   disabled,
+  userName,
+  userEmail,
+  userPhone,
+  description,
 }: RazorpayCheckoutProps) {
   const { toast } = useToast();
   const [isProcessing, setIsProcessing] = useState(false);
@@ -55,11 +63,22 @@ export default function RazorpayCheckout({
 
       if (!response.ok) {
         const errorData = await response.json();
-        onPaymentError(errorData);
+        onPaymentError({
+          description: errorData.error || "Payment request failed",
+          code: errorData.errorType,
+        });
         return;
       }
 
       const data = await response.json();
+
+      if (!data.success) {
+        onPaymentError({
+          description: data.error || "Payment initialization failed",
+          code: data.errorType,
+        });
+        return;
+      }
 
       if (!process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID) {
         toast({
@@ -75,22 +94,23 @@ export default function RazorpayCheckout({
         key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
         amount: data.paymentIntent.amount,
         currency: data.paymentIntent.currency,
-        name: "Your App Name",
-        description: "Test Transaction",
+        name: "Familiarise",
+        description: description || "Service Payment",
         order_id: data.paymentIntent.id,
         handler: function (response: any) {
           onPaymentSuccess(response);
         },
-        prefill: {
-          name: "Test User",
-          email: "test.user@example.com",
-          contact: "9999999999",
-        },
-        notes: {
-          address: "Test Address",
-        },
+        ...(userName || userEmail || userPhone
+          ? {
+              prefill: {
+                ...(userName && { name: userName }),
+                ...(userEmail && { email: userEmail }),
+                ...(userPhone && { contact: userPhone }),
+              },
+            }
+          : {}),
         theme: {
-          color: "#3399cc",
+          color: "#2563EB", // Familiarise brand blue
         },
       };
 
@@ -100,7 +120,9 @@ export default function RazorpayCheckout({
       });
       rzp.open();
     } catch (error) {
-      onPaymentError(error);
+      onPaymentError({
+        description: error instanceof Error ? error.message : "An unexpected error occurred",
+      });
     } finally {
       setIsProcessing(false);
     }

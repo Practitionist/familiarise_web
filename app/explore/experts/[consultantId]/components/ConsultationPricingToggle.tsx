@@ -12,15 +12,13 @@ import {
 } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
-import { ClockIcon, CheckCircle2 } from "lucide-react";
+import { ClockIcon, CheckCircle2, RefreshCw } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
 import { useMemo, useState } from "react";
 import { PricingOption } from "../defaults";
 import { TSlotTiming } from "@/types/slots";
-import {
-  breakDownSlotsByDuration,
-  mergeConsecutiveSlots,
-} from "@/utils/timeSlotsProcessing";
+import { breakDownSlotsPreservingStatus } from "@/utils/timeSlotsProcessing";
+import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrency } from "@/hooks/useCurrency";
 
@@ -37,7 +35,14 @@ interface ConsultationPricingToggleProps {
   selectedSlot: TSlotTiming | null;
   setSelectedSlot: (slot: TSlotTiming | null) => void;
   timezone: string;
+  onRefreshSlots?: () => void;
 }
+
+type SlotWithStatus = TSlotTiming & {
+  isAllocated: boolean;
+  bookingStatus: "available" | "partially-booked" | "fully-booked";
+  _isPast: boolean;
+};
 
 export default function ConsultationPricingToggle({
   consultationOptions,
@@ -52,6 +57,7 @@ export default function ConsultationPricingToggle({
   setSelectedSlot,
   timezone,
   consultantDetails,
+  onRefreshSlots,
 }: Readonly<ConsultationPricingToggleProps>) {
   const { data: session } = useSession();
   const { toast } = useToast();
@@ -62,6 +68,7 @@ export default function ConsultationPricingToggle({
       : "",
   );
   const [isRequestingApproval, setIsRequestingApproval] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const selectedDuration = useMemo(() => {
     const option = consultationOptions.find(
@@ -71,7 +78,7 @@ export default function ConsultationPricingToggle({
     return option?.durationInHours ?? 1;
   }, [activeConsultationOption, consultationOptions]);
 
-  const availableSlots = useMemo(() => {
+  const availableSlots = useMemo((): SlotWithStatus[] => {
     if (
       !slotTimings ||
       slotTimings.length === 0 ||
@@ -84,17 +91,28 @@ export default function ConsultationPricingToggle({
     const slotsWithAllocation = slotTimings.map((slot) => ({
       ...slot,
       isAllocated: slot.isAllocated || false,
+      bookingStatus: (slot.bookingStatus || "available") as
+        | "available"
+        | "partially-booked"
+        | "fully-booked",
     }));
 
-    const mergedSlots = mergeConsecutiveSlots(slotsWithAllocation);
-    const brokenDownSlots = breakDownSlotsByDuration(
-      mergedSlots,
+    // Use breakDownSlotsPreservingStatus to create duration windows
+    // WITHOUT discarding the API-computed bookingStatus
+    const brokenDownSlots = breakDownSlotsPreservingStatus(
+      slotsWithAllocation,
       selectedDuration,
-      [],
       timezone,
     );
 
-    return brokenDownSlots;
+    // Add client-side past-slot detection
+    const now = Date.now();
+    return brokenDownSlots.map((slot) => ({
+      ...slot,
+      _isPast:
+        new Date(slot.slotStartTimeInUTC).getTime() <
+        now + MINIMUM_BOOKING_LEAD_TIME_MS,
+    }));
   }, [slotTimings, selectedDuration, timezone, selectedDate]);
 
   const handleRequestForApproval = async () => {
@@ -388,10 +406,32 @@ export default function ConsultationPricingToggle({
 
                   {/* Available Slots Section */}
                   <div>
-                    <h3 className="text-lg font-semibold mb-5 flex items-center text-white">
-                      <ClockIcon className="mr-2 h-5 w-5 text-zinc-400" />{" "}
-                      Available {selectedDuration} hour Slots
-                    </h3>
+                    <div className="flex items-center justify-between mb-5">
+                      <h3 className="text-lg font-semibold flex items-center text-white">
+                        <ClockIcon className="mr-2 h-5 w-5 text-zinc-400" />{" "}
+                        Available {selectedDuration} hour Slots
+                      </h3>
+                      {onRefreshSlots && (
+                        <button
+                          type="button"
+                          className="p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-700/50 transition-colors"
+                          title="Refresh slot availability"
+                          onClick={async () => {
+                            setIsRefreshing(true);
+                            try {
+                              await onRefreshSlots();
+                            } finally {
+                              setIsRefreshing(false);
+                            }
+                          }}
+                          disabled={isRefreshing}
+                        >
+                          <RefreshCw
+                            className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
+                          />
+                        </button>
+                      )}
+                    </div>
                     {consultantDetails?.scheduleType && (
                       <div className="mb-4 p-3 bg-zinc-800/40 rounded-xl border border-zinc-700/50">
                         <p className="text-sm text-zinc-400">
@@ -413,50 +453,107 @@ export default function ConsultationPricingToggle({
                     )}
                     <div className="grid grid-cols-1 gap-3 max-h-[350px] overflow-y-auto pr-2">
                       {availableSlots.length > 0 ? (
-                        availableSlots.map((slot, index) => {
-                          const isSelected =
-                            selectedSlot?.slotId === slot.slotId &&
-                            selectedSlot?.localStartTime ===
-                              slot.localStartTime;
-                          const isAllocated = slot.isAllocated;
+                        <>
+                          {availableSlots.map((slot, index) => {
+                            const isSelected =
+                              selectedSlot?.slotId === slot.slotId &&
+                              selectedSlot?.localStartTime ===
+                                slot.localStartTime;
+                            const isPast = slot._isPast;
+                            const bookingStatus =
+                              slot.bookingStatus || "available";
+                            const isFullyBooked =
+                              bookingStatus === "fully-booked";
+                            const isPartiallyBooked =
+                              bookingStatus === "partially-booked";
+                            const isAllocated = slot.isAllocated;
+                            const isDisabled = isPast || isFullyBooked;
 
-                          return (
-                            <button
-                              key={`${slot.slotId}-${index}`}
-                              className={`w-full p-4 text-base font-medium transition-all duration-200 rounded-xl text-left
-                                  ${
-                                    isSelected
-                                      ? "bg-white text-zinc-900 shadow-md"
-                                      : isAllocated
-                                        ? "bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20"
-                                        : "bg-zinc-800/60 text-zinc-300 border border-zinc-700/50 hover:bg-zinc-700/80 hover:border-zinc-600"
-                                  }`}
-                              onClick={() => setSelectedSlot(slot)}
-                            >
-                              <div className="flex items-center">
-                                <ClockIcon className="mr-3 h-5 w-5 opacity-70" />
-                                <div className="flex-1">
-                                  <div className="flex items-center gap-2">
-                                    <span>
-                                      {slot.localStartTime} -{" "}
-                                      {slot.localEndTime}
+                            return (
+                              <button
+                                key={`${slot.slotId}-${index}`}
+                                className={`w-full p-4 text-base font-medium transition-all duration-200 rounded-xl text-left
+                                    ${
+                                      isSelected
+                                        ? "bg-white text-zinc-900 shadow-md ring-2 ring-white"
+                                        : isPast
+                                          ? "bg-zinc-800/30 text-zinc-600 border border-zinc-700/30 cursor-not-allowed opacity-60"
+                                          : isFullyBooked
+                                            ? "bg-rose-500/10 text-rose-400 border border-rose-500/30 cursor-not-allowed"
+                                            : isPartiallyBooked || isAllocated
+                                              ? "bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20"
+                                              : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 hover:border-emerald-400"
+                                    }`}
+                                onClick={() =>
+                                  !isDisabled && setSelectedSlot(slot)
+                                }
+                                disabled={isDisabled}
+                              >
+                                <div className="flex items-center">
+                                  <ClockIcon className="mr-3 h-5 w-5 opacity-70" />
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2">
+                                      <span>
+                                        {slot.localStartTime} -{" "}
+                                        {slot.localEndTime}
+                                      </span>
+                                      {slot.type && (
+                                        <span className="px-2 py-0.5 rounded text-xs bg-zinc-700/50 text-zinc-400">
+                                          {slot.type === "WEEKLY"
+                                            ? "📅"
+                                            : "🎯"}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  {isPast && (
+                                    <span className="ml-auto text-xs font-medium text-zinc-500">
+                                      Past
                                     </span>
-                                    {slot.type && (
-                                      <span className="px-2 py-0.5 rounded text-xs bg-zinc-700/50 text-zinc-400">
-                                        {slot.type === "WEEKLY" ? "📅" : "🎯"}
+                                  )}
+                                  {isFullyBooked && !isPast && (
+                                    <span className="ml-auto text-xs font-medium text-rose-400">
+                                      Fully booked
+                                    </span>
+                                  )}
+                                  {isPartiallyBooked &&
+                                    !isPast &&
+                                    !isAllocated && (
+                                      <span className="ml-auto text-xs font-medium text-amber-400">
+                                        Partially booked
                                       </span>
                                     )}
-                                  </div>
+                                  {isAllocated &&
+                                    !isPast &&
+                                    !isFullyBooked && (
+                                      <span className="ml-auto text-xs font-medium text-amber-400">
+                                        Request approval
+                                      </span>
+                                    )}
                                 </div>
-                                {isAllocated && (
-                                  <span className="ml-auto text-sm font-medium">
-                                    Request approval
-                                  </span>
-                                )}
-                              </div>
-                            </button>
-                          );
-                        })
+                              </button>
+                            );
+                          })}
+                          {/* Legend strip */}
+                          <div className="flex flex-wrap gap-3 pt-3 border-t border-zinc-800/50 mt-1">
+                            <div className="flex items-center gap-1.5 text-xs text-zinc-500">
+                              <div className="w-2.5 h-2.5 rounded-full bg-emerald-400" />{" "}
+                              Available
+                            </div>
+                            <div className="flex items-center gap-1.5 text-xs text-zinc-500">
+                              <div className="w-2.5 h-2.5 rounded-full bg-amber-400" />{" "}
+                              Partially booked
+                            </div>
+                            <div className="flex items-center gap-1.5 text-xs text-zinc-500">
+                              <div className="w-2.5 h-2.5 rounded-full bg-rose-400" />{" "}
+                              Fully booked
+                            </div>
+                            <div className="flex items-center gap-1.5 text-xs text-zinc-500">
+                              <div className="w-2.5 h-2.5 rounded-full bg-zinc-600" />{" "}
+                              Past
+                            </div>
+                          </div>
+                        </>
                       ) : (
                         <p className="text-zinc-500 text-sm py-4 text-center">
                           No available slots for the selected date.
@@ -473,7 +570,12 @@ export default function ConsultationPricingToggle({
                         ? handleRequestForApproval
                         : handleConsultationBooking
                     }
-                    disabled={!selectedSlot || isRequestingApproval}
+                    disabled={
+                      !selectedSlot ||
+                      isRequestingApproval ||
+                      (selectedSlot as SlotWithStatus)?._isPast ||
+                      selectedSlot?.bookingStatus === "fully-booked"
+                    }
                   >
                     {isRequestingApproval
                       ? "Submitting..."
