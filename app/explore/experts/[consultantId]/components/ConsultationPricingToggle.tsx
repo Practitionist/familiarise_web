@@ -480,11 +480,9 @@ export default function ConsultationPricingToggle({
                                           ? "bg-zinc-800/30 text-zinc-600 border border-zinc-700/30 cursor-not-allowed opacity-60"
                                           : isFullyBooked
                                             ? "bg-rose-500/10 text-rose-400 border border-rose-500/30 cursor-not-allowed"
-                                            : isPartiallyBooked
+                                            : isPartiallyBooked || isAllocated
                                               ? "bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20"
-                                              : isAllocated
-                                                ? "bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20"
-                                                : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 hover:border-emerald-400"
+                                              : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 hover:border-emerald-400"
                                     }`}
                                 onClick={() =>
                                   !isDisabled && setSelectedSlot(slot)

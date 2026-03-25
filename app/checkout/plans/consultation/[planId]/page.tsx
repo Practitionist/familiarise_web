@@ -15,6 +15,10 @@ import {
   consultationSearchParamsSchema,
   createCheckoutData,
 } from "@/schemas/checkout";
+import {
+  MINIMUM_BOOKING_LEAD_TIME_MS,
+  MINIMUM_BOOKING_LEAD_TIME_MINUTES,
+} from "@/lib/payments/constants";
 import type { AppliedDiscount } from "@/types/checkout";
 import {
   ConsultantProfile,
@@ -445,8 +449,7 @@ export default function ConsultationCheckoutPage({
             searchParamsValidation.data.slotStartTimeInUTC,
           );
           const now = new Date();
-          const LEAD_TIME_MS = 15 * 60 * 1000; // 15 minutes
-          if (slotStart.getTime() < now.getTime() + LEAD_TIME_MS) {
+          if (slotStart.getTime() < now.getTime() + MINIMUM_BOOKING_LEAD_TIME_MS) {
             throw new Error(
               "The selected time slot is no longer available. It has either passed or starts too soon. Please go back and select a new slot.",
             );
@@ -536,7 +539,7 @@ export default function ConsultationCheckoutPage({
         setError(
           "This time slot has passed. Please go back and select a new available slot.",
         );
-      } else if (minutesUntilSlot <= 15) {
+      } else if (minutesUntilSlot <= MINIMUM_BOOKING_LEAD_TIME_MINUTES) {
         toast({
           title: "Slot starting soon",
           description: `Your selected slot starts in ${Math.ceil(minutesUntilSlot)} minute${Math.ceil(minutesUntilSlot) === 1 ? "" : "s"}. Please complete checkout quickly or select a later slot.`,
