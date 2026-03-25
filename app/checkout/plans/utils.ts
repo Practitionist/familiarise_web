@@ -1,3 +1,5 @@
+"use client";
+
 import { useToast } from "@/hooks/use-toast";
 import { getErrorToast } from "@/lib/errors/mapping/payment-error-toast-map";
 import { CheckoutInput, checkoutResponseSchema } from "@/schemas/checkout";
@@ -142,49 +144,11 @@ export async function handleUnifiedCheckout(
 
   const data = validationResult.data;
 
-  if (data.success) {
-    // Check if this is a mock payment or skip payment scenario
-    if (data.skipPayment || isMockPayment) {
-      // Mock payment or dev mode - direct success
-      handleCheckoutSuccess(data, data.skipPayment, isMockPayment);
-    } else {
-      // Show success toast before redirecting
-      handleCheckoutSuccess(data, false, false);
-
-      // Small delay to let user see the toast before redirect
-      setTimeout(async () => {
-        try {
-          // Handle gateway-specific responses
-          switch (gateway) {
-            case "STRIPE": {
-              // Backend returns a Stripe Checkout Session URL (not a Payment Intent secret)
-              const stripeUrl =
-                data.paymentIntent?.client_secret ||
-                data.clientSecret ||
-                data.checkoutUrl;
-              if (stripeUrl) {
-                window.location.href = stripeUrl;
-              } else {
-                throw new Error("No Stripe checkout URL received");
-              }
-              break;
-            }
-
-            // TODO(#312/#334): Add Lemon Squeezy and XFlow cases when webhook handlers are implemented
-          }
-        } catch (err) {
-          console.error("Payment confirmation error:", err);
-          handleApiError({
-            error:
-              err instanceof Error
-                ? err.message
-                : "Payment confirmation failed",
-            errorType: "PAYMENT_ERROR",
-          });
-        }
-      }, 1000);
-    }
-  } else {
+  // handleUnifiedCheckout is only invoked by the dev-only Mock Pay button (isMockPayment=true).
+  // Real payments go through StripeCheckout/RazorpayCheckout components.
+  if (data.success && (data.skipPayment || isMockPayment)) {
+    handleCheckoutSuccess(data, data.skipPayment, isMockPayment);
+  } else if (!data.success) {
     handleApiError({ error: data.error, errorType: data.errorType });
   }
 }

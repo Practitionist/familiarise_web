@@ -268,64 +268,21 @@ export default function SubscriptionCheckoutPage({
 
         const data = validationResult.data;
 
-        // Handle response based on what backend returns
-        if (data.success) {
-          if (data.skipPayment || data.isMockPayment) {
-            // Development mode or mock payment - direct subscription success
-            toast({
-              title: "✅ Subscription Activated Successfully!",
-              description: data.isMockPayment
-                ? "Mock payment processed. Your subscription is now active. Check your dashboard for details."
-                : "Your subscription is now active. Check your dashboard for details.",
-              variant: "default",
-            });
+        // handleCheckout is only invoked by the dev-only Mock Pay button (isMockPayment=true).
+        // Real payments go through StripeCheckout/RazorpayCheckout components.
+        if (data.success && (data.skipPayment || data.isMockPayment)) {
+          toast({
+            title: "✅ Subscription Activated Successfully!",
+            description: data.isMockPayment
+              ? "Mock payment processed. Your subscription is now active. Check your dashboard for details."
+              : "Your subscription is now active. Check your dashboard for details.",
+            variant: "default",
+          });
 
-            // Redirect after a short delay
-            setTimeout(() => {
-              window.location.href = "/dashboard";
-            }, 2000);
-          } else {
-            // Production mode - payment initiated success
-            toast({
-              title: "🚀 Payment Initiated!",
-              description:
-                "Redirecting to secure payment gateway. Complete your payment to activate the subscription.",
-              variant: "default",
-            });
-
-            // Small delay to let user see the toast before redirect
-            setTimeout(async () => {
-              try {
-                // Handle gateway-specific responses
-                switch (gateway) {
-                  case "STRIPE": {
-                    // Backend returns a Stripe Checkout Session URL (not a Payment Intent secret)
-                    const stripeUrl =
-                      data.paymentIntent?.client_secret ||
-                      data.clientSecret ||
-                      data.checkoutUrl;
-                    if (stripeUrl) {
-                      window.location.href = stripeUrl;
-                    } else {
-                      throw new Error("No Stripe checkout URL received");
-                    }
-                    break;
-                  }
-                }
-              } catch (paymentError) {
-                console.error("Payment confirmation error:", paymentError);
-                toast({
-                  title: "Payment Error",
-                  description:
-                    paymentError instanceof Error
-                      ? paymentError.message
-                      : "Payment confirmation failed. Please try again.",
-                  variant: "destructive",
-                });
-              }
-            }, 1000);
-          }
-        } else {
+          setTimeout(() => {
+            window.location.href = "/dashboard";
+          }, 2000);
+        } else if (!data.success) {
           handleApiError({ error: data.error, errorType: data.errorType });
         }
       } catch (error) {
@@ -831,7 +788,9 @@ export default function SubscriptionCheckoutPage({
                   </div>
                   {gateway.isActive ? (
                     <div className="flex gap-2">
-                      {validatedSearchParams && gateway.gateway === "RAZORPAY" ? (
+                      {validatedSearchParams?.schedulingPeriodStartsAt &&
+                       validatedSearchParams?.schedulingPeriodEndsAt &&
+                       gateway.gateway === "RAZORPAY" ? (
                         <RazorpayCheckout
                           checkoutData={createCheckoutData({
                             appointmentType: "SUBSCRIPTION",
@@ -847,7 +806,9 @@ export default function SubscriptionCheckoutPage({
                           onPaymentError={razorpayHandlers.onPaymentError}
                           disabled={isMaintenanceBlocked}
                         />
-                      ) : validatedSearchParams && gateway.gateway === "STRIPE" ? (
+                      ) : validatedSearchParams?.schedulingPeriodStartsAt &&
+                        validatedSearchParams?.schedulingPeriodEndsAt &&
+                        gateway.gateway === "STRIPE" ? (
                         <StripeCheckout
                           checkoutData={createCheckoutData({
                             appointmentType: "SUBSCRIPTION",

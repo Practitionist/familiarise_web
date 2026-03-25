@@ -335,9 +335,9 @@ export default function ConsultationCheckoutPage({
           throw new Error("Invalid response format from server");
         }
 
-        // Handle response based on what backend returns
+        // handleCheckout is only invoked by the dev-only Mock Pay button (isMockPayment=true).
+        // Real payments go through StripeCheckout/RazorpayCheckout components.
         if (data.skipPayment || data.isMockPayment) {
-          // Development mode or mock payment - direct booking success
           toast({
             title: "✅ Consultation Booked Successfully!",
             description: data.isMockPayment
@@ -346,55 +346,9 @@ export default function ConsultationCheckoutPage({
             variant: "default",
           });
 
-          // Redirect after a short delay
           setTimeout(() => {
             window.location.href = "/dashboard";
           }, 2000);
-        } else {
-          // Production mode - payment initiated success
-          toast({
-            title: "🚀 Payment Initiated!",
-            description:
-              "Redirecting to secure payment gateway. Complete your payment to confirm the consultation.",
-            variant: "default",
-          });
-
-          // Small delay to let user see the toast before redirect
-          setTimeout(async () => {
-            try {
-              // Handle gateway-specific responses
-              switch (gateway) {
-                case "STRIPE": {
-                  // Backend returns a Stripe Checkout Session URL (not a Payment Intent secret)
-                  const stripeUrl =
-                    data.paymentIntent?.client_secret ||
-                    data.clientSecret ||
-                    data.checkoutUrl;
-                  if (stripeUrl) {
-                    window.location.href = stripeUrl;
-                  } else {
-                    throw new Error("No Stripe checkout URL received");
-                  }
-                  break;
-                }
-
-                case "RAZORPAY":
-                  // Razorpay is handled by the RazorpayCheckout component
-                  // This case shouldn't be reached since Razorpay has its own component
-                  break;
-              }
-            } catch (paymentError) {
-              console.error("Payment confirmation error:", paymentError);
-              toast({
-                title: "Payment Error",
-                description:
-                  paymentError instanceof Error
-                    ? paymentError.message
-                    : "Payment confirmation failed. Please try again.",
-                variant: "destructive",
-              });
-            }
-          }, 1000);
         }
       } catch (error) {
         // Only fires for unexpected errors (network failure, JSON parse error, etc.)

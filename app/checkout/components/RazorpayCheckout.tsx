@@ -63,7 +63,10 @@ export default function RazorpayCheckout({
 
       if (!response.ok) {
         const errorData = await response.json();
-        onPaymentError(errorData);
+        onPaymentError({
+          description: errorData.error || "Payment request failed",
+          code: errorData.errorType,
+        });
         return;
       }
 
@@ -117,7 +120,9 @@ export default function RazorpayCheckout({
       });
       rzp.open();
     } catch (error) {
-      onPaymentError(error);
+      onPaymentError({
+        description: error instanceof Error ? error.message : "An unexpected error occurred",
+      });
     } finally {
       setIsProcessing(false);
     }
