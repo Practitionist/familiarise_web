@@ -69,6 +69,14 @@ export default function RazorpayCheckout({
 
       const data = await response.json();
 
+      if (!data.success) {
+        onPaymentError({
+          description: data.error || "Payment initialization failed",
+          code: data.errorType,
+        });
+        return;
+      }
+
       if (!process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID) {
         toast({
           title: "Payment System Configuration Error",

@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { fetchReviews } from "@/lib/user";
 import {
   CheckoutInput,
+  SubscriptionSearchParams,
   checkoutResponseSchema,
   subscriptionSearchParamsSchema,
   createCheckoutData,
@@ -94,6 +95,12 @@ export default function SubscriptionCheckoutPage({
     isBlocked: isMaintenanceBlocked,
     blockReason: maintenanceBlockReason,
   } = useMaintenanceGuard();
+
+  // Validate search params once with Zod — single source of truth for all checkout flows
+  const validatedSearchParams = useMemo((): SubscriptionSearchParams | null => {
+    const result = subscriptionSearchParamsSchema.safeParse(resolvedSearchParams);
+    return result.success ? result.data : null;
+  }, [resolvedSearchParams]);
 
   // Apply discount code
   const handleApplyDiscount = async (code?: string) => {
@@ -204,9 +211,8 @@ export default function SubscriptionCheckoutPage({
         setProcessingGateway(`${gateway}-${isMockPayment ? "mock" : "real"}`);
 
         // Validate search params using the shared schema
-        const searchParamsValidation =
-          subscriptionSearchParamsSchema.safeParse(resolvedSearchParams);
-        if (!searchParamsValidation.success) {
+        // Use pre-validated search params
+        if (!validatedSearchParams) {
           throw new Error("Invalid subscription parameters");
         }
 
@@ -214,10 +220,9 @@ export default function SubscriptionCheckoutPage({
           throw new Error("Subscription plan not found");
         }
 
-        // Validate that scheduling period dates are present
         if (
-          !searchParamsValidation.data.schedulingPeriodStartsAt ||
-          !searchParamsValidation.data.schedulingPeriodEndsAt
+          !validatedSearchParams.schedulingPeriodStartsAt ||
+          !validatedSearchParams.schedulingPeriodEndsAt
         ) {
           throw new Error(
             "Scheduling period dates are required for subscriptions",
@@ -225,23 +230,18 @@ export default function SubscriptionCheckoutPage({
         }
 
         // Staleness check: verify scheduling period hasn't expired
-        const periodEnd = new Date(
-          searchParamsValidation.data.schedulingPeriodEndsAt,
-        );
+        const periodEnd = new Date(validatedSearchParams.schedulingPeriodEndsAt);
         if (periodEnd.getTime() < Date.now()) {
           throw new Error(
             "The scheduling period has expired. Please go back and select new dates.",
           );
         }
 
-        // Create checkout data using the shared utility with scheduling period
         const checkoutData = createCheckoutData({
           appointmentType: "SUBSCRIPTION",
           planId: planData.data.id,
-          schedulingPeriodStartsAt:
-            searchParamsValidation.data.schedulingPeriodStartsAt,
-          schedulingPeriodEndsAt:
-            searchParamsValidation.data.schedulingPeriodEndsAt,
+          schedulingPeriodStartsAt: validatedSearchParams.schedulingPeriodStartsAt,
+          schedulingPeriodEndsAt: validatedSearchParams.schedulingPeriodEndsAt,
           discountCode: appliedDiscount?.code,
           paymentGateway: gateway,
           displayCurrency: currency,
@@ -831,12 +831,14 @@ export default function SubscriptionCheckoutPage({
                   </div>
                   {gateway.isActive ? (
                     <div className="flex gap-2">
-                      {gateway.gateway === "RAZORPAY" ? (
+                      {validatedSearchParams && gateway.gateway === "RAZORPAY" ? (
                         <RazorpayCheckout
                           checkoutData={createCheckoutData({
                             appointmentType: "SUBSCRIPTION",
                             planId: planData?.data?.id || "",
                             paymentGateway: "RAZORPAY",
+                            schedulingPeriodStartsAt: validatedSearchParams.schedulingPeriodStartsAt,
+                            schedulingPeriodEndsAt: validatedSearchParams.schedulingPeriodEndsAt,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
                             useReferralCredits,
@@ -845,12 +847,14 @@ export default function SubscriptionCheckoutPage({
                           onPaymentError={razorpayHandlers.onPaymentError}
                           disabled={isMaintenanceBlocked}
                         />
-                      ) : gateway.gateway === "STRIPE" ? (
+                      ) : validatedSearchParams && gateway.gateway === "STRIPE" ? (
                         <StripeCheckout
                           checkoutData={createCheckoutData({
                             appointmentType: "SUBSCRIPTION",
                             planId: planData?.data?.id || "",
                             paymentGateway: "STRIPE",
+                            schedulingPeriodStartsAt: validatedSearchParams.schedulingPeriodStartsAt,
+                            schedulingPeriodEndsAt: validatedSearchParams.schedulingPeriodEndsAt,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
                             useReferralCredits,
