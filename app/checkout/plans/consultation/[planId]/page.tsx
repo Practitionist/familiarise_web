@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { fetchReviews } from "@/lib/user";
 import {
   CheckoutInput,
+  ConsultationSearchParams,
   checkoutResponseSchema,
   consultationSearchParamsSchema,
   createCheckoutData,
@@ -33,9 +34,7 @@ import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import StripeCheckout from "../../../components/StripeCheckout";
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
-import { loadStripe } from "@stripe/stripe-js";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
-import { getAppUrl } from "@/lib/url";
 
 type ConsultationPlanWithConsultant = ConsultationPlan & {
   consultantProfile: ConsultantProfile & {
@@ -96,6 +95,12 @@ export default function ConsultationCheckoutPage({
     isBlocked: isMaintenanceBlocked,
     blockReason: maintenanceBlockReason,
   } = useMaintenanceGuard();
+
+  // Validate search params once with Zod — single source of truth for all checkout flows
+  const validatedSearchParams = useMemo((): ConsultationSearchParams | null => {
+    const result = consultationSearchParamsSchema.safeParse(resolvedSearchParams);
+    return result.success ? result.data : null;
+  }, [resolvedSearchParams]);
 
   // Apply discount code
   const handleApplyDiscount = async (code?: string) => {
@@ -287,33 +292,25 @@ export default function ConsultationCheckoutPage({
         setIsCheckoutProcessing(true);
         setProcessingGateway(`${gateway}-${isMockPayment ? "mock" : "real"}`);
 
-        // Validate search params first
-        const searchParamsValidation =
-          consultationSearchParamsSchema.safeParse(resolvedSearchParams);
-        if (!searchParamsValidation.success) {
-          console.warn(
-            "[Checkout] Search params validation failed:",
-            searchParamsValidation.error.flatten().fieldErrors,
-          );
+        // Use pre-validated search params (validated once via useMemo)
+        if (!validatedSearchParams) {
           throw new Error(
             "Please select a time slot from the consultant's availability page before proceeding to checkout.",
           );
         }
 
-        // Create validated checkout data
+        // Create checkout data from validated params
         const checkoutData = createCheckoutData({
           appointmentType: "CONSULTATION",
           planId: resolvedParams.planId,
           paymentGateway: gateway as PaymentGateway,
-          slotStartTimeInUTC: searchParamsValidation.data.slotStartTimeInUTC,
-          slotEndTimeInUTC: searchParamsValidation.data.slotEndTimeInUTC,
-          slotOfAvailabilityWeeklyId:
-            searchParamsValidation.data.slotOfAvailabilityWeeklyId,
-          slotOfAvailabilityCustomId:
-            searchParamsValidation.data.slotOfAvailabilityCustomId,
-          discountCode: appliedDiscount?.code, // Use state instead of URL params
+          slotStartTimeInUTC: validatedSearchParams.slotStartTimeInUTC,
+          slotEndTimeInUTC: validatedSearchParams.slotEndTimeInUTC,
+          slotOfAvailabilityWeeklyId: validatedSearchParams.slotOfAvailabilityWeeklyId,
+          slotOfAvailabilityCustomId: validatedSearchParams.slotOfAvailabilityCustomId,
+          discountCode: appliedDiscount?.code,
           displayCurrency: currency,
-          notes: searchParamsValidation.data.notes,
+          notes: validatedSearchParams.notes,
           useReferralCredits,
         });
 
@@ -338,9 +335,9 @@ export default function ConsultationCheckoutPage({
           throw new Error("Invalid response format from server");
         }
 
-        // Handle response based on what backend returns
+        // handleCheckout is only invoked by the dev-only Mock Pay button (isMockPayment=true).
+        // Real payments go through StripeCheckout/RazorpayCheckout components.
         if (data.skipPayment || data.isMockPayment) {
-          // Development mode or mock payment - direct booking success
           toast({
             title: "✅ Consultation Booked Successfully!",
             description: data.isMockPayment
@@ -349,53 +346,9 @@ export default function ConsultationCheckoutPage({
             variant: "default",
           });
 
-          // Redirect after a short delay
           setTimeout(() => {
             window.location.href = "/dashboard";
           }, 2000);
-        } else {
-          // Production mode - payment initiated success
-          toast({
-            title: "🚀 Payment Initiated!",
-            description:
-              "Redirecting to secure payment gateway. Complete your payment to confirm the consultation.",
-            variant: "default",
-          });
-
-          // Small delay to let user see the toast before redirect
-          setTimeout(async () => {
-            try {
-              // Handle gateway-specific responses
-              switch (gateway) {
-                case "STRIPE":
-                  const stripe = await loadStripe(
-                    process.env.NEXT_PUBLIC_STRIPE_KEY!,
-                  );
-                  await stripe?.confirmPayment({
-                    clientSecret: data.paymentIntent.client_secret,
-                    confirmParams: {
-                      return_url: `${getAppUrl()}/checkout/checkout-success`,
-                    },
-                  });
-                  break;
-
-                case "RAZORPAY":
-                  // Razorpay is handled by the RazorpayCheckout component
-                  // This case shouldn't be reached since Razorpay has its own component
-                  break;
-              }
-            } catch (paymentError) {
-              console.error("Payment confirmation error:", paymentError);
-              toast({
-                title: "Payment Error",
-                description:
-                  paymentError instanceof Error
-                    ? paymentError.message
-                    : "Payment confirmation failed. Please try again.",
-                variant: "destructive",
-              });
-            }
-          }, 1000);
         }
       } catch (error) {
         // Only fires for unexpected errors (network failure, JSON parse error, etc.)
@@ -429,31 +382,20 @@ export default function ConsultationCheckoutPage({
     async function fetchEventData() {
       setIsLoading(true);
       try {
-        // Validate search params using Zod schema
-        const searchParamsValidation =
-          consultationSearchParamsSchema.safeParse(resolvedSearchParams);
-        if (!searchParamsValidation.success) {
-          // Log technical details for developers
-          console.warn(
-            "[Checkout] Search params validation failed:",
-            searchParamsValidation.error.flatten().fieldErrors,
-          );
+        // Use pre-validated search params
+        if (!validatedSearchParams) {
           throw new Error(
             "Please select a time slot from the consultant's availability page before proceeding to checkout.",
           );
         }
 
         // Staleness check: verify the selected slot hasn't passed or is too soon
-        if (searchParamsValidation.data.slotStartTimeInUTC) {
-          const slotStart = new Date(
-            searchParamsValidation.data.slotStartTimeInUTC,
+        const slotStart = new Date(validatedSearchParams.slotStartTimeInUTC);
+        const now = new Date();
+        if (slotStart.getTime() < now.getTime() + MINIMUM_BOOKING_LEAD_TIME_MS) {
+          throw new Error(
+            "The selected time slot is no longer available. It has either passed or starts too soon. Please go back and select a new slot.",
           );
-          const now = new Date();
-          if (slotStart.getTime() < now.getTime() + MINIMUM_BOOKING_LEAD_TIME_MS) {
-            throw new Error(
-              "The selected time slot is no longer available. It has either passed or starts too soon. Please go back and select a new slot.",
-            );
-          }
         }
 
         const endpoint = `/api/plans/consultations/${resolvedParams.planId}`;
@@ -526,11 +468,10 @@ export default function ConsultationCheckoutPage({
 
   // Periodic staleness check: warn user if their slot is about to expire
   useEffect(() => {
-    const slotStartStr = resolvedSearchParams.slotStartTimeInUTC;
-    if (!slotStartStr || typeof slotStartStr !== "string") return;
+    if (!validatedSearchParams) return;
 
     const checkStaleness = () => {
-      const slotStart = new Date(slotStartStr);
+      const slotStart = new Date(validatedSearchParams.slotStartTimeInUTC);
       const now = new Date();
       const minutesUntilSlot =
         (slotStart.getTime() - now.getTime()) / (60 * 1000);
@@ -548,13 +489,10 @@ export default function ConsultationCheckoutPage({
       }
     };
 
-    // Check immediately on mount
     checkStaleness();
-
-    // Check every 60 seconds
     const intervalId = setInterval(checkStaleness, 60_000);
     return () => clearInterval(intervalId);
-  }, [resolvedSearchParams.slotStartTimeInUTC, toast]);
+  }, [validatedSearchParams, toast]);
 
   if (isLoading) {
     return (
@@ -653,27 +591,28 @@ export default function ConsultationCheckoutPage({
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Date</div>
               <div>
-                {new Date(
-                  resolvedSearchParams.slotStartTimeInUTC as string,
-                ).toLocaleDateString(undefined, {
-                  weekday: "long",
-                  year: "numeric",
-                  month: "long",
-                  day: "numeric",
-                })}
+                {validatedSearchParams
+                  ? new Date(
+                      validatedSearchParams.slotStartTimeInUTC,
+                    ).toLocaleDateString(undefined, {
+                      weekday: "long",
+                      year: "numeric",
+                      month: "long",
+                      day: "numeric",
+                    })
+                  : "—"}
               </div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Time</div>
               <div>
-                {new Date(
-                  resolvedSearchParams.slotStartTimeInUTC as string,
-                ).toLocaleTimeString()}{" "}
-                -{" "}
-                {new Date(
-                  resolvedSearchParams.slotEndTimeInUTC as string,
-                ).toLocaleTimeString()}{" "}
-                ({Intl.DateTimeFormat().resolvedOptions().timeZone})
+                {validatedSearchParams
+                  ? `${new Date(
+                      validatedSearchParams.slotStartTimeInUTC,
+                    ).toLocaleTimeString()} - ${new Date(
+                      validatedSearchParams.slotEndTimeInUTC,
+                    ).toLocaleTimeString()} (${Intl.DateTimeFormat().resolvedOptions().timeZone})`
+                  : "—"}
               </div>
             </div>
             <div className="flex items-center justify-between">
@@ -883,39 +822,19 @@ export default function ConsultationCheckoutPage({
                   </div>
                   {gateway.isActive ? (
                     <div className="flex gap-2">
-                      {gateway.gateway === "RAZORPAY" ? (
+                      {validatedSearchParams && gateway.gateway === "RAZORPAY" ? (
                         <RazorpayCheckout
                           checkoutData={createCheckoutData({
                             appointmentType: "CONSULTATION",
                             planId: resolvedParams.planId,
                             paymentGateway: "RAZORPAY",
-                            slotStartTimeInUTC: Array.isArray(
-                              resolvedSearchParams.slotStartTimeInUTC,
-                            )
-                              ? resolvedSearchParams.slotStartTimeInUTC[0]
-                              : resolvedSearchParams.slotStartTimeInUTC,
-                            slotEndTimeInUTC: Array.isArray(
-                              resolvedSearchParams.slotEndTimeInUTC,
-                            )
-                              ? resolvedSearchParams.slotEndTimeInUTC[0]
-                              : resolvedSearchParams.slotEndTimeInUTC,
-                            slotOfAvailabilityWeeklyId: Array.isArray(
-                              resolvedSearchParams.slotOfAvailabilityWeeklyId,
-                            )
-                              ? resolvedSearchParams
-                                  .slotOfAvailabilityWeeklyId[0]
-                              : resolvedSearchParams.slotOfAvailabilityWeeklyId,
-                            slotOfAvailabilityCustomId: Array.isArray(
-                              resolvedSearchParams.slotOfAvailabilityCustomId,
-                            )
-                              ? resolvedSearchParams
-                                  .slotOfAvailabilityCustomId[0]
-                              : resolvedSearchParams.slotOfAvailabilityCustomId,
+                            slotStartTimeInUTC: validatedSearchParams.slotStartTimeInUTC,
+                            slotEndTimeInUTC: validatedSearchParams.slotEndTimeInUTC,
+                            slotOfAvailabilityWeeklyId: validatedSearchParams.slotOfAvailabilityWeeklyId,
+                            slotOfAvailabilityCustomId: validatedSearchParams.slotOfAvailabilityCustomId,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
-                            notes: Array.isArray(resolvedSearchParams.notes)
-                              ? resolvedSearchParams.notes[0]
-                              : resolvedSearchParams.notes,
+                            notes: validatedSearchParams.notes,
                             useReferralCredits,
                           })}
                           onPaymentSuccess={(response: {
@@ -938,42 +857,22 @@ export default function ConsultationCheckoutPage({
                             });
                           }}
                         />
-                      ) : gateway.gateway === "STRIPE" ? (
+                      ) : validatedSearchParams && gateway.gateway === "STRIPE" ? (
                         <StripeCheckout
                           checkoutData={createCheckoutData({
                             appointmentType: "CONSULTATION",
                             planId: resolvedParams.planId,
                             paymentGateway: "STRIPE",
-                            slotStartTimeInUTC: Array.isArray(
-                              resolvedSearchParams.slotStartTimeInUTC,
-                            )
-                              ? resolvedSearchParams.slotStartTimeInUTC[0]
-                              : resolvedSearchParams.slotStartTimeInUTC,
-                            slotEndTimeInUTC: Array.isArray(
-                              resolvedSearchParams.slotEndTimeInUTC,
-                            )
-                              ? resolvedSearchParams.slotEndTimeInUTC[0]
-                              : resolvedSearchParams.slotEndTimeInUTC,
-                            slotOfAvailabilityWeeklyId: Array.isArray(
-                              resolvedSearchParams.slotOfAvailabilityWeeklyId,
-                            )
-                              ? resolvedSearchParams
-                                  .slotOfAvailabilityWeeklyId[0]
-                              : resolvedSearchParams.slotOfAvailabilityWeeklyId,
-                            slotOfAvailabilityCustomId: Array.isArray(
-                              resolvedSearchParams.slotOfAvailabilityCustomId,
-                            )
-                              ? resolvedSearchParams
-                                  .slotOfAvailabilityCustomId[0]
-                              : resolvedSearchParams.slotOfAvailabilityCustomId,
+                            slotStartTimeInUTC: validatedSearchParams.slotStartTimeInUTC,
+                            slotEndTimeInUTC: validatedSearchParams.slotEndTimeInUTC,
+                            slotOfAvailabilityWeeklyId: validatedSearchParams.slotOfAvailabilityWeeklyId,
+                            slotOfAvailabilityCustomId: validatedSearchParams.slotOfAvailabilityCustomId,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
-                            notes: Array.isArray(resolvedSearchParams.notes)
-                              ? resolvedSearchParams.notes[0]
-                              : resolvedSearchParams.notes,
+                            notes: validatedSearchParams.notes,
                             useReferralCredits,
                           })}
-                          onPaymentSuccess={(response: any) => {
+                          onPaymentSuccess={(response: { message?: string }) => {
                             toast({
                               title: "Payment Successful",
                               description:
@@ -983,7 +882,7 @@ export default function ConsultationCheckoutPage({
                             window.location.href = "/dashboard";
                           }}
                           disabled={isMaintenanceBlocked}
-                          onPaymentError={(error: any) => {
+                          onPaymentError={(error: { message?: string; description?: string }) => {
                             toast({
                               title: "Payment Failed",
                               description:
@@ -995,22 +894,24 @@ export default function ConsultationCheckoutPage({
                           }}
                         />
                       ) : null}
-                      {/* Mock Payment Button */}
-                      <Button
-                        variant="secondary"
-                        onClick={() => handleCheckout(gateway.gateway, true)}
-                        disabled={isCheckoutProcessing || isMaintenanceBlocked}
-                      >
-                        {isCheckoutProcessing &&
-                        processingGateway === `${gateway.gateway}-mock` ? (
-                          <>
-                            <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
-                            Processing...
-                          </>
-                        ) : (
-                          `Mock Pay (${gateway.name})`
-                        )}
-                      </Button>
+                      {/* Mock Payment Button - development only */}
+                      {process.env.NODE_ENV === "development" && (
+                        <Button
+                          variant="secondary"
+                          onClick={() => handleCheckout(gateway.gateway, true)}
+                          disabled={isCheckoutProcessing || isMaintenanceBlocked}
+                        >
+                          {isCheckoutProcessing &&
+                          processingGateway === `${gateway.gateway}-mock` ? (
+                            <>
+                              <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
+                              Processing...
+                            </>
+                          ) : (
+                            `Mock Pay (${gateway.name})`
+                          )}
+                        </Button>
+                      )}
                     </div>
                   ) : (
                     <Button variant="outline" disabled>

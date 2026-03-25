@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { fetchReviews } from "@/lib/user";
 import {
   CheckoutInput,
+  SubscriptionSearchParams,
   checkoutResponseSchema,
   subscriptionSearchParamsSchema,
   createCheckoutData,
@@ -55,8 +56,6 @@ type SubscriptionPlanWithConsultant = SubscriptionPlan & {
 type SubscriptionResponse = {
   data: SubscriptionPlanWithConsultant;
 };
-import { loadStripe } from "@stripe/stripe-js";
-import { getAppUrl } from "@/lib/url";
 
 type PageProps = {
   params: Promise<{ planId: string }>;
@@ -96,6 +95,12 @@ export default function SubscriptionCheckoutPage({
     isBlocked: isMaintenanceBlocked,
     blockReason: maintenanceBlockReason,
   } = useMaintenanceGuard();
+
+  // Validate search params once with Zod — single source of truth for all checkout flows
+  const validatedSearchParams = useMemo((): SubscriptionSearchParams | null => {
+    const result = subscriptionSearchParamsSchema.safeParse(resolvedSearchParams);
+    return result.success ? result.data : null;
+  }, [resolvedSearchParams]);
 
   // Apply discount code
   const handleApplyDiscount = async (code?: string) => {
@@ -206,9 +211,8 @@ export default function SubscriptionCheckoutPage({
         setProcessingGateway(`${gateway}-${isMockPayment ? "mock" : "real"}`);
 
         // Validate search params using the shared schema
-        const searchParamsValidation =
-          subscriptionSearchParamsSchema.safeParse(resolvedSearchParams);
-        if (!searchParamsValidation.success) {
+        // Use pre-validated search params
+        if (!validatedSearchParams) {
           throw new Error("Invalid subscription parameters");
         }
 
@@ -216,10 +220,9 @@ export default function SubscriptionCheckoutPage({
           throw new Error("Subscription plan not found");
         }
 
-        // Validate that scheduling period dates are present
         if (
-          !searchParamsValidation.data.schedulingPeriodStartsAt ||
-          !searchParamsValidation.data.schedulingPeriodEndsAt
+          !validatedSearchParams.schedulingPeriodStartsAt ||
+          !validatedSearchParams.schedulingPeriodEndsAt
         ) {
           throw new Error(
             "Scheduling period dates are required for subscriptions",
@@ -227,23 +230,18 @@ export default function SubscriptionCheckoutPage({
         }
 
         // Staleness check: verify scheduling period hasn't expired
-        const periodEnd = new Date(
-          searchParamsValidation.data.schedulingPeriodEndsAt,
-        );
+        const periodEnd = new Date(validatedSearchParams.schedulingPeriodEndsAt);
         if (periodEnd.getTime() < Date.now()) {
           throw new Error(
             "The scheduling period has expired. Please go back and select new dates.",
           );
         }
 
-        // Create checkout data using the shared utility with scheduling period
         const checkoutData = createCheckoutData({
           appointmentType: "SUBSCRIPTION",
           planId: planData.data.id,
-          schedulingPeriodStartsAt:
-            searchParamsValidation.data.schedulingPeriodStartsAt,
-          schedulingPeriodEndsAt:
-            searchParamsValidation.data.schedulingPeriodEndsAt,
+          schedulingPeriodStartsAt: validatedSearchParams.schedulingPeriodStartsAt,
+          schedulingPeriodEndsAt: validatedSearchParams.schedulingPeriodEndsAt,
           discountCode: appliedDiscount?.code,
           paymentGateway: gateway,
           displayCurrency: currency,
@@ -270,62 +268,21 @@ export default function SubscriptionCheckoutPage({
 
         const data = validationResult.data;
 
-        // Handle response based on what backend returns
-        if (data.success) {
-          if (data.skipPayment || data.isMockPayment) {
-            // Development mode or mock payment - direct subscription success
-            toast({
-              title: "✅ Subscription Activated Successfully!",
-              description: data.isMockPayment
-                ? "Mock payment processed. Your subscription is now active. Check your dashboard for details."
-                : "Your subscription is now active. Check your dashboard for details.",
-              variant: "default",
-            });
+        // handleCheckout is only invoked by the dev-only Mock Pay button (isMockPayment=true).
+        // Real payments go through StripeCheckout/RazorpayCheckout components.
+        if (data.success && (data.skipPayment || data.isMockPayment)) {
+          toast({
+            title: "✅ Subscription Activated Successfully!",
+            description: data.isMockPayment
+              ? "Mock payment processed. Your subscription is now active. Check your dashboard for details."
+              : "Your subscription is now active. Check your dashboard for details.",
+            variant: "default",
+          });
 
-            // Redirect after a short delay
-            setTimeout(() => {
-              window.location.href = "/dashboard";
-            }, 2000);
-          } else {
-            // Production mode - payment initiated success
-            toast({
-              title: "🚀 Payment Initiated!",
-              description:
-                "Redirecting to secure payment gateway. Complete your payment to activate the subscription.",
-              variant: "default",
-            });
-
-            // Small delay to let user see the toast before redirect
-            setTimeout(async () => {
-              try {
-                // Handle gateway-specific responses
-                switch (gateway) {
-                  case "STRIPE":
-                    const stripe = await loadStripe(
-                      process.env.NEXT_PUBLIC_STRIPE_KEY!,
-                    );
-                    await stripe?.confirmPayment({
-                      clientSecret: data.clientSecret!,
-                      confirmParams: {
-                        return_url: `${getAppUrl()}/checkout/checkout-success`,
-                      },
-                    });
-                    break;
-                }
-              } catch (paymentError) {
-                console.error("Payment confirmation error:", paymentError);
-                toast({
-                  title: "Payment Error",
-                  description:
-                    paymentError instanceof Error
-                      ? paymentError.message
-                      : "Payment confirmation failed. Please try again.",
-                  variant: "destructive",
-                });
-              }
-            }, 1000);
-          }
-        } else {
+          setTimeout(() => {
+            window.location.href = "/dashboard";
+          }, 2000);
+        } else if (!data.success) {
           handleApiError({ error: data.error, errorType: data.errorType });
         }
       } catch (error) {
@@ -831,12 +788,16 @@ export default function SubscriptionCheckoutPage({
                   </div>
                   {gateway.isActive ? (
                     <div className="flex gap-2">
-                      {gateway.gateway === "RAZORPAY" ? (
+                      {validatedSearchParams?.schedulingPeriodStartsAt &&
+                       validatedSearchParams?.schedulingPeriodEndsAt &&
+                       gateway.gateway === "RAZORPAY" ? (
                         <RazorpayCheckout
                           checkoutData={createCheckoutData({
                             appointmentType: "SUBSCRIPTION",
                             planId: planData?.data?.id || "",
                             paymentGateway: "RAZORPAY",
+                            schedulingPeriodStartsAt: validatedSearchParams.schedulingPeriodStartsAt,
+                            schedulingPeriodEndsAt: validatedSearchParams.schedulingPeriodEndsAt,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
                             useReferralCredits,
@@ -845,12 +806,16 @@ export default function SubscriptionCheckoutPage({
                           onPaymentError={razorpayHandlers.onPaymentError}
                           disabled={isMaintenanceBlocked}
                         />
-                      ) : gateway.gateway === "STRIPE" ? (
+                      ) : validatedSearchParams?.schedulingPeriodStartsAt &&
+                        validatedSearchParams?.schedulingPeriodEndsAt &&
+                        gateway.gateway === "STRIPE" ? (
                         <StripeCheckout
                           checkoutData={createCheckoutData({
                             appointmentType: "SUBSCRIPTION",
                             planId: planData?.data?.id || "",
                             paymentGateway: "STRIPE",
+                            schedulingPeriodStartsAt: validatedSearchParams.schedulingPeriodStartsAt,
+                            schedulingPeriodEndsAt: validatedSearchParams.schedulingPeriodEndsAt,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
                             useReferralCredits,
@@ -860,21 +825,23 @@ export default function SubscriptionCheckoutPage({
                           disabled={isMaintenanceBlocked}
                         />
                       ) : null}
-                      <Button
-                        variant="secondary"
-                        onClick={() => handleCheckout(gateway.gateway, true)}
-                        disabled={isCheckoutProcessing || isMaintenanceBlocked}
-                      >
-                        {isCheckoutProcessing &&
-                        processingGateway === `${gateway.gateway}-mock` ? (
-                          <>
-                            <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
-                            Processing...
-                          </>
-                        ) : (
-                          `Mock Pay (${gateway.name})`
-                        )}
-                      </Button>
+                      {process.env.NODE_ENV === "development" && (
+                        <Button
+                          variant="secondary"
+                          onClick={() => handleCheckout(gateway.gateway, true)}
+                          disabled={isCheckoutProcessing || isMaintenanceBlocked}
+                        >
+                          {isCheckoutProcessing &&
+                          processingGateway === `${gateway.gateway}-mock` ? (
+                            <>
+                              <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
+                              Processing...
+                            </>
+                          ) : (
+                            `Mock Pay (${gateway.name})`
+                          )}
+                        </Button>
+                      )}
                     </div>
                   ) : (
                     <Button variant="outline" disabled>

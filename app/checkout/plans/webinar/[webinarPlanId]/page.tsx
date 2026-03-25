@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { fetchReviews } from "@/lib/user";
 import {
   createCheckoutData,
+  WebinarSearchParams,
   webinarSearchParamsSchema,
 } from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
@@ -116,6 +117,12 @@ export default function WebinarCheckoutPage({
     blockReason: maintenanceBlockReason,
   } = useMaintenanceGuard();
 
+  // Validate search params once with Zod — single source of truth for all checkout flows
+  const validatedSearchParams = useMemo((): WebinarSearchParams | null => {
+    const result = webinarSearchParamsSchema.safeParse(resolvedSearchParams);
+    return result.success ? result.data : null;
+  }, [resolvedSearchParams]);
+
   // Apply discount code
   const handleApplyDiscount = async (code?: string) => {
     const codeToApply = code || discountCodeInput;
@@ -211,10 +218,8 @@ export default function WebinarCheckoutPage({
         setIsCheckoutProcessing(true);
         setProcessingGateway(`${gateway}-${isMockPayment ? "mock" : "real"}`);
 
-        // Validate search params using the shared schema
-        const searchParamsValidation =
-          webinarSearchParamsSchema.safeParse(resolvedSearchParams);
-        if (!searchParamsValidation.success) {
+        // Use pre-validated search params
+        if (!validatedSearchParams) {
           throw new Error("Invalid webinar parameters");
         }
 
@@ -224,7 +229,7 @@ export default function WebinarCheckoutPage({
 
         // Staleness check: validate the target webinar is still available
         const targetWebinar = planData.data.webinars?.find(
-          (w) => w.id === searchParamsValidation.data.eventId,
+          (w) => w.id === validatedSearchParams.eventId,
         );
         if (!targetWebinar) {
           throw new Error("Webinar session not found.");
@@ -236,7 +241,7 @@ export default function WebinarCheckoutPage({
           throw new Error("This webinar has been cancelled.");
         }
 
-        // Create checkout data using the shared utility
+        // fromWaitlist is not in webinarSearchParamsSchema — read from raw params
         const fromWaitlist =
           typeof resolvedSearchParams.fromWaitlist === "string"
             ? resolvedSearchParams.fromWaitlist
@@ -244,7 +249,7 @@ export default function WebinarCheckoutPage({
         const checkoutData = createCheckoutData({
           appointmentType: "WEBINAR",
           planId: planData.data.id,
-          eventId: searchParamsValidation.data.eventId,
+          eventId: validatedSearchParams.eventId,
           discountCode: appliedDiscount?.code,
           paymentGateway: gateway,
           displayCurrency: currency,
@@ -778,12 +783,12 @@ export default function WebinarCheckoutPage({
                   </div>
                   {gateway.isActive ? (
                     <div className="flex gap-2">
-                      {gateway.gateway === "RAZORPAY" ? (
+                      {validatedSearchParams && gateway.gateway === "RAZORPAY" ? (
                         <RazorpayCheckout
                           checkoutData={createCheckoutData({
                             appointmentType: "WEBINAR",
                             planId: planDetails.id,
-                            eventId: planDetails.webinars[0]?.id,
+                            eventId: validatedSearchParams.eventId,
                             paymentGateway: "RAZORPAY",
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
@@ -793,12 +798,12 @@ export default function WebinarCheckoutPage({
                           onPaymentError={razorpayHandlers.onPaymentError}
                           disabled={isMaintenanceBlocked}
                         />
-                      ) : gateway.gateway === "STRIPE" ? (
+                      ) : validatedSearchParams && gateway.gateway === "STRIPE" ? (
                         <StripeCheckout
                           checkoutData={createCheckoutData({
                             appointmentType: "WEBINAR",
                             planId: planDetails.id,
-                            eventId: planDetails.webinars[0]?.id,
+                            eventId: validatedSearchParams.eventId,
                             paymentGateway: "STRIPE",
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
@@ -809,21 +814,23 @@ export default function WebinarCheckoutPage({
                           disabled={isMaintenanceBlocked}
                         />
                       ) : null}
-                      <Button
-                        variant="secondary"
-                        onClick={() => handleCheckout(gateway.gateway, true)}
-                        disabled={isCheckoutProcessing || isMaintenanceBlocked}
-                      >
-                        {isCheckoutProcessing &&
-                        processingGateway === `${gateway.gateway}-mock` ? (
-                          <>
-                            <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
-                            Processing...
-                          </>
-                        ) : (
-                          `Mock Pay (${gateway.name})`
-                        )}
-                      </Button>
+                      {process.env.NODE_ENV === "development" && (
+                        <Button
+                          variant="secondary"
+                          onClick={() => handleCheckout(gateway.gateway, true)}
+                          disabled={isCheckoutProcessing || isMaintenanceBlocked}
+                        >
+                          {isCheckoutProcessing &&
+                          processingGateway === `${gateway.gateway}-mock` ? (
+                            <>
+                              <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
+                              Processing...
+                            </>
+                          ) : (
+                            `Mock Pay (${gateway.name})`
+                          )}
+                        </Button>
+                      )}
                     </div>
                   ) : (
                     <Button variant="outline" disabled>
