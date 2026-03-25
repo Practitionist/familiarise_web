@@ -439,6 +439,20 @@ export default function ConsultationCheckoutPage({
           );
         }
 
+        // Staleness check: verify the selected slot hasn't passed or is too soon
+        if (searchParamsValidation.data.slotStartTimeInUTC) {
+          const slotStart = new Date(
+            searchParamsValidation.data.slotStartTimeInUTC,
+          );
+          const now = new Date();
+          const LEAD_TIME_MS = 15 * 60 * 1000; // 15 minutes
+          if (slotStart.getTime() < now.getTime() + LEAD_TIME_MS) {
+            throw new Error(
+              "The selected time slot is no longer available. It has either passed or starts too soon. Please go back and select a new slot.",
+            );
+          }
+        }
+
         const endpoint = `/api/plans/consultations/${resolvedParams.planId}`;
 
         const response = await fetch(endpoint);
@@ -506,6 +520,38 @@ export default function ConsultationCheckoutPage({
     availableCredits,
     checkoutTaxContext.isInternational,
   ]);
+
+  // Periodic staleness check: warn user if their slot is about to expire
+  useEffect(() => {
+    const slotStartStr = resolvedSearchParams.slotStartTimeInUTC;
+    if (!slotStartStr || typeof slotStartStr !== "string") return;
+
+    const checkStaleness = () => {
+      const slotStart = new Date(slotStartStr);
+      const now = new Date();
+      const minutesUntilSlot =
+        (slotStart.getTime() - now.getTime()) / (60 * 1000);
+
+      if (minutesUntilSlot <= 0) {
+        setError(
+          "This time slot has passed. Please go back and select a new available slot.",
+        );
+      } else if (minutesUntilSlot <= 15) {
+        toast({
+          title: "Slot starting soon",
+          description: `Your selected slot starts in ${Math.ceil(minutesUntilSlot)} minute${Math.ceil(minutesUntilSlot) === 1 ? "" : "s"}. Please complete checkout quickly or select a later slot.`,
+          variant: "destructive",
+        });
+      }
+    };
+
+    // Check immediately on mount
+    checkStaleness();
+
+    // Check every 60 seconds
+    const intervalId = setInterval(checkStaleness, 60_000);
+    return () => clearInterval(intervalId);
+  }, [resolvedSearchParams.slotStartTimeInUTC, toast]);
 
   if (isLoading) {
     return (

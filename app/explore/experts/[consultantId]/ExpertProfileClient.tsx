@@ -61,48 +61,48 @@ export function ExpertProfileClient({
     return () => clearTimeout(timer);
   }, [searchParams]);
 
-  useEffect(() => {
-    async function fetchSlots() {
-      if (selectedDate && consultantDetails && timezone && !isTimezoneLoading) {
-        try {
-          const startDateInUtc = new Date(selectedDate);
-          startDateInUtc.setHours(0, 0, 0, 0);
-          const endDateInUtc = new Date(selectedDate);
-          endDateInUtc.setHours(23, 59, 59, 999);
+  const fetchSlots = useCallback(async () => {
+    if (selectedDate && consultantDetails && timezone && !isTimezoneLoading) {
+      try {
+        const startDateInUtc = new Date(selectedDate);
+        startDateInUtc.setHours(0, 0, 0, 0);
+        const endDateInUtc = new Date(selectedDate);
+        endDateInUtc.setHours(23, 59, 59, 999);
 
-          const response = await fetch(
-            `/api/slots/availability-with-allocation/${
-              consultantDetails.id
-            }?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}&timezone=${timezone}`,
+        const response = await fetch(
+          `/api/slots/availability-with-allocation/${
+            consultantDetails.id
+          }?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}&timezone=${timezone}`,
+        );
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(
+            errorData.error || "Failed to fetch availability slots",
           );
-
-          if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(
-              errorData.error || "Failed to fetch availability slots",
-            );
-          }
-
-          const { data } = await response.json();
-          const selectedDateKey = formatInTimeZone(selectedDate, timezone, "yyyy-MM-dd");
-          const slotsForSelectedDate = data[selectedDateKey] || [];
-          setSlotTimings(slotsForSelectedDate);
-        } catch (error) {
-          console.error("Error fetching slots:", error);
-          toast({
-            title: "Error fetching slots",
-            description:
-              error instanceof Error ? error.message : "Please try again",
-            variant: "destructive",
-          });
         }
-      } else {
-        setSlotTimings([]);
-      }
-    }
 
-    fetchSlots();
+        const { data } = await response.json();
+        const selectedDateKey = formatInTimeZone(selectedDate, timezone, "yyyy-MM-dd");
+        const slotsForSelectedDate = data[selectedDateKey] || [];
+        setSlotTimings(slotsForSelectedDate);
+      } catch (error) {
+        console.error("Error fetching slots:", error);
+        toast({
+          title: "Error fetching slots",
+          description:
+            error instanceof Error ? error.message : "Please try again",
+          variant: "destructive",
+        });
+      }
+    } else {
+      setSlotTimings([]);
+    }
   }, [selectedDate, consultantDetails, timezone, isTimezoneLoading, toast]);
+
+  useEffect(() => {
+    fetchSlots();
+  }, [fetchSlots]);
 
   const handleConsultationBooking = useCallback(async () => {
     if (!selectedSlot || !consultantDetails) {
@@ -315,6 +315,7 @@ export function ExpertProfileClient({
               setSelectedSlot={setSelectedSlot}
               timezone={timezone || "UTC"}
               autoOpenTrial={autoOpenTrial}
+              onRefreshSlots={fetchSlots}
             />
           </motion.div>
         </div>
