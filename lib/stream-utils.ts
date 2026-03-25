@@ -3,6 +3,6 @@
  * IDs are sorted so the same value is produced regardless of call order.
  */
 export function getDmChannelId(userId1: string, userId2: string): string {
-  const [a, b] = [userId1, userId2].sort();
+  const [a, b] = [userId1, userId2].sort((x, y) => x.localeCompare(y));
   return `dm-${a}-${b}`;
 }

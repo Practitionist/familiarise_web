@@ -22,13 +22,12 @@ export async function GET(request: NextRequest) {
     const rawMinPrice = searchParams.get("minPrice");
     const rawMaxPrice = searchParams.get("maxPrice");
     const language = searchParams.get("language");
-    const availability = searchParams.get("availability") as
-      | "has_slots"
-      | "this_week"
-      | null;
+    const rawMinRating = searchParams.get("minRating");
+    const companies = searchParams.get("companies")?.split(",").filter(Boolean);
 
     const minPrice = rawMinPrice ? parseFloat(rawMinPrice) : undefined;
     const maxPrice = rawMaxPrice ? parseFloat(rawMaxPrice) : undefined;
+    const minRating = rawMinRating ? parseFloat(rawMinRating) : undefined;
 
     // Calculate offset
     const skip = (page - 1) * limit;
@@ -96,34 +95,19 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // Availability filter
-    if (availability === "has_slots") {
+    // Rating filter
+    if (minRating !== undefined && !isNaN(minRating)) {
+      where.AND.push({ rating: { gte: minRating } });
+    }
+
+    // Company filter (multi-select — values come from pre-fetched list, exact match)
+    if (companies && companies.length > 0) {
       where.AND.push({
-        OR: [
-          { slotsOfAvailabilityWeekly: { some: {} } },
-          { slotsOfAvailabilityCustom: { some: {} } },
-        ],
-      });
-    } else if (availability === "this_week") {
-      const now = new Date();
-      const oneWeekFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-      where.AND.push({
-        OR: [
-          // Weekly slots are recurring — if they exist, the consultant
-          // has availability every week
-          { slotsOfAvailabilityWeekly: { some: {} } },
-          // Custom slots within the next 7 days
-          {
-            slotsOfAvailabilityCustom: {
-              some: {
-                startsAt: {
-                  gte: now,
-                  lte: oneWeekFromNow,
-                },
-              },
-            },
+        user: {
+          workExperiences: {
+            some: { company: { in: companies } },
           },
-        ],
+        },
       });
     }
 

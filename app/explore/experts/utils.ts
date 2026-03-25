@@ -13,7 +13,8 @@ export interface IExpertFilters {
   sort: SortOption;
   minPrice?: number;
   maxPrice?: number;
-  availability?: "has_slots" | "this_week";
+  minRating?: number;
+  companies: string[];
   language?: string;
 }
 
@@ -26,7 +27,8 @@ export const DEFAULT_EXPERT_FILTERS: IExpertFilters = {
   sort: "nameAsc",
   minPrice: undefined,
   maxPrice: undefined,
-  availability: undefined,
+  minRating: undefined,
+  companies: [],
   language: undefined,
 };
 
@@ -44,9 +46,7 @@ export interface IExpertsMetaData {
     averageRating: number;
   };
   availableLanguages: string[];
-  availabilityStats: {
-    hasSlots: number;
-  };
+  availableCompanies: string[];
 }
 
 export interface IConsultantsByDomain {
@@ -73,7 +73,7 @@ export function filtersFromSearchParams(
   const rawMinPrice = params.get("minPrice");
   const rawMaxPrice = params.get("maxPrice");
   const rawExperience = params.get("experience");
-  const rawAvailability = params.get("availability");
+  const rawMinRating = params.get("minRating");
 
   return {
     domain: params.get("domain"),
@@ -84,10 +84,8 @@ export function filtersFromSearchParams(
     sort: (params.get("sort") as SortOption) || "nameAsc",
     minPrice: rawMinPrice ? parseFloat(rawMinPrice) || undefined : undefined,
     maxPrice: rawMaxPrice ? parseFloat(rawMaxPrice) || undefined : undefined,
-    availability:
-      rawAvailability === "has_slots" || rawAvailability === "this_week"
-        ? rawAvailability
-        : undefined,
+    minRating: rawMinRating ? parseFloat(rawMinRating) || undefined : undefined,
+    companies: params.get("companies")?.split(",").filter(Boolean) || [],
     language: params.get("language") || undefined,
   };
 }
@@ -106,7 +104,9 @@ export function filtersToSearchParams(filters: IExpertFilters): string {
     params.set("minPrice", String(filters.minPrice));
   if (filters.maxPrice !== undefined)
     params.set("maxPrice", String(filters.maxPrice));
-  if (filters.availability) params.set("availability", filters.availability);
+  if (filters.minRating !== undefined)
+    params.set("minRating", String(filters.minRating));
+  if (filters.companies.length > 0) params.set("companies", filters.companies.join(","));
   if (filters.language) params.set("language", filters.language);
   return params.toString();
 }

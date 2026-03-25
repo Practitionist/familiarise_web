@@ -5,6 +5,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { signOut } from "@/lib/auth-client";
+import { disconnectStreamClients } from "@/providers/StreamProvider";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
@@ -124,6 +125,15 @@ export function DashboardSidebar({
 
   // Get current path relative to basePath for matching
   const relativePath = pathname.replace(basePath + "/", "");
+
+  const handleSignOut = async () => {
+    try {
+      await disconnectStreamClients();
+    } catch {
+      // Don't block sign-out if disconnect fails
+    }
+    signOut();
+  };
 
   const getRoleColor = () => {
     switch (userRole) {
@@ -366,7 +376,7 @@ export function DashboardSidebar({
           })}
 
           <button
-            onClick={() => signOut()}
+            onClick={handleSignOut}
             className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-all"
           >
             <span className="flex h-8 w-8 items-center justify-center rounded-md bg-red-500/10 text-red-500">

@@ -11,6 +11,7 @@ import prisma from "@/lib/prisma";
 import { WaitlistStatus } from "@prisma/client";
 import { processExpiredNotifications, handleSlotOpening } from "@/lib/waitlist";
 import { sendWaitlistExpiredEmail } from "@/lib/waitlist/notifications";
+import { getAppUrl } from "../../lib/url";
 
 async function main() {
   console.log("🕐 Starting expired notification processor...");
@@ -73,7 +74,7 @@ async function main() {
           eventTitle,
           eventType,
           rejoinUrl: eventId
-            ? `${process.env.NEXT_PUBLIC_APP_URL}/explore/programs/plans/${eventType}s/${eventId}`
+            ? `${getAppUrl()}/explore/programs/plans/${eventType}s/${eventId}`
             : undefined,
         });
       }

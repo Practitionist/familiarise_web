@@ -1,6 +1,7 @@
 "use client";
 
 import { signOut } from "@/lib/auth-client";
+import { disconnectStreamClients } from "@/providers/StreamProvider";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -28,6 +29,21 @@ export function UserDropdown({
   settingsPath,
   profilePath,
 }: UserDropdownProps) {
+  const handleSignOut = async () => {
+    try {
+      await disconnectStreamClients();
+    } catch {
+      // Don't block sign-out if disconnect fails
+    }
+    signOut({
+      fetchOptions: {
+        onSuccess: () => {
+          window.location.href = "/auth/signin";
+        },
+      },
+    });
+  };
+
   const getRoleBadgeColor = () => {
     switch (userRole) {
       case "ADMIN":
@@ -97,15 +113,7 @@ export function UserDropdown({
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem
-          onClick={() =>
-            signOut({
-              fetchOptions: {
-                onSuccess: () => {
-                  window.location.href = "/auth/signin";
-                },
-              },
-            })
-          }
+          onClick={handleSignOut}
           className="cursor-pointer text-red-600 focus:text-red-600 focus:bg-red-50"
         >
           <LogOut className="mr-2 h-4 w-4" />

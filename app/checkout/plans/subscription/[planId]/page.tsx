@@ -22,6 +22,19 @@ import {
   SubscriptionPlan,
   PaymentGateway,
 } from "@prisma/client";
+import { CreditCard as CreditCardIcon } from "lucide-react";
+import { CompanyLogo } from "@/components/ui/company-logo";
+import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import RazorpayCheckout from "../../../components/RazorpayCheckout";
+import StripeCheckout from "../../../components/StripeCheckout";
+import {
+  createHandleApiError,
+  createRazorpayCheckoutHandlers,
+  createStripeCheckoutHandlers,
+} from "../../utils";
+import { calculatePricing, formatPercentage } from "../../math";
+import { useCurrency } from "@/hooks/useCurrency";
+import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 
 type SubscriptionPlanWithConsultant = SubscriptionPlan & {
   consultantProfile: ConsultantProfile & {
@@ -30,7 +43,11 @@ type SubscriptionPlanWithConsultant = SubscriptionPlan & {
       name: string;
       email: string;
       image: string;
-      workExperiences?: Array<{ company: string; companyDomain: string | null; isCurrent: boolean }>;
+      workExperiences?: Array<{
+        company: string;
+        companyDomain: string | null;
+        isCurrent: boolean;
+      }>;
     };
   };
 };
@@ -39,18 +56,7 @@ type SubscriptionResponse = {
   data: SubscriptionPlanWithConsultant;
 };
 import { loadStripe } from "@stripe/stripe-js";
-import { CreditCard as CreditCardIcon } from "lucide-react";
-import { CompanyLogo } from "@/components/ui/company-logo";
-import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import RazorpayCheckout from "../../../components/RazorpayCheckout";
-import StripeCheckout from "../../../components/StripeCheckout";
-import {
-  createHandleApiError,
-  createStripeCheckoutHandlers,
-  createRazorpayCheckoutHandlers,
-} from "../../utils";
-import { calculatePricing, formatPercentage } from "../../math";
-import { useCurrency } from "@/hooks/useCurrency";
+import { getAppUrl } from "@/lib/url";
 
 type PageProps = {
   params: Promise<{ planId: string }>;
@@ -65,7 +71,8 @@ export default function SubscriptionCheckoutPage({
   const resolvedParams = use(params);
   const resolvedSearchParams = use(searchParams);
 
-  const { formatPrice } = useCurrency();
+  const { formatPrice, currency } = useCurrency();
+  const checkoutTaxContext = useCheckoutTaxContext();
   const [planData, setPlanData] = useState<SubscriptionResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -229,6 +236,7 @@ export default function SubscriptionCheckoutPage({
             searchParamsValidation.data.schedulingPeriodEndsAt,
           discountCode: appliedDiscount?.code,
           paymentGateway: gateway,
+          displayCurrency: currency,
           useReferralCredits,
         });
 
@@ -289,12 +297,10 @@ export default function SubscriptionCheckoutPage({
                     await stripe?.confirmPayment({
                       clientSecret: data.clientSecret!,
                       confirmParams: {
-                        return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
+                        return_url: `${getAppUrl()}/checkout/checkout-success`,
                       },
                     });
                     break;
-
-                  // TODO: Add Lemon Squeezy and XFlow cases when webhook handlers are implemented
                 }
               } catch (paymentError) {
                 console.error("Payment confirmation error:", paymentError);
@@ -397,12 +403,14 @@ export default function SubscriptionCheckoutPage({
       discountPercent: discountAmount > 0 ? 0 : discountPercent,
       discountAmount,
       creditsApplied: useReferralCredits ? availableCredits : 0,
+      isInternational: checkoutTaxContext.isInternational,
     });
   }, [
     planData?.data?.price,
     appliedDiscount,
     useReferralCredits,
     availableCredits,
+    checkoutTaxContext.isInternational,
   ]);
 
   if (isLoading) {
@@ -472,19 +480,20 @@ export default function SubscriptionCheckoutPage({
               <div className="text-sm text-muted-foreground">
                 {consultantDetails?.headline || "Consultant"}
               </div>
-              {userDetails?.workExperiences && userDetails.workExperiences.length > 0 && (
-                <div className="flex items-center gap-1.5 mt-1">
-                  {userDetails.workExperiences.slice(0, 3).map((exp, i) => (
-                    <CompanyLogo
-                      key={`checkout-sub-company-${i}`}
-                      companyName={exp.company}
-                      companyDomain={exp.companyDomain ?? undefined}
-                      size={20}
-                      className="border-zinc-200"
-                    />
-                  ))}
-                </div>
-              )}
+              {userDetails?.workExperiences &&
+                userDetails.workExperiences.length > 0 && (
+                  <div className="flex items-center gap-1.5 mt-1">
+                    {userDetails.workExperiences.slice(0, 3).map((exp, i) => (
+                      <CompanyLogo
+                        key={`checkout-sub-company-${i}`}
+                        companyName={exp.company}
+                        companyDomain={exp.companyDomain ?? undefined}
+                        size={20}
+                        className="border-zinc-200"
+                      />
+                    ))}
+                  </div>
+                )}
             </div>
           </div>
           <div className="text-right">
@@ -760,22 +769,19 @@ export default function SubscriptionCheckoutPage({
               Select your preferred payment method
             </div>
           </div>
-          {/* Payment Gateway Cards */}
-          {/* Priority Gateways: Stripe and Razorpay with Real + Mock Payment */}
           {[
             {
               name: "Stripe",
-              description: "International payments in USD",
+              description: "Card payments (international)",
               gateway: "STRIPE" as const,
               isActive: true,
             },
             {
               name: "Razorpay",
-              description: "Indian payments in INR",
+              description: "UPI, cards & bank transfer",
               gateway: "RAZORPAY" as const,
               isActive: true,
             },
-            // TODO: Add Lemon Squeezy and XFlow when webhook appointment creation is implemented
           ].map((gateway) => (
             <Card key={gateway.gateway} className="border-zinc-200">
               <CardHeader>
@@ -796,35 +802,35 @@ export default function SubscriptionCheckoutPage({
                   </div>
                   {gateway.isActive ? (
                     <div className="flex gap-2">
-                      {/* Real Payment Button */}
-                      {gateway.gateway === "STRIPE" ? (
-                        <StripeCheckout
-                          checkoutData={createCheckoutData({
-                            appointmentType: "SUBSCRIPTION",
-                            planId: planData?.data?.id || "",
-                            paymentGateway: "STRIPE",
-                            discountCode: appliedDiscount?.code,
-                            useReferralCredits,
-                          })}
-                          onPaymentSuccess={stripeHandlers.onPaymentSuccess}
-                          onPaymentError={stripeHandlers.onPaymentError}
-                          disabled={isMaintenanceBlocked}
-                        />
-                      ) : gateway.gateway === "RAZORPAY" ? (
+                      {gateway.gateway === "RAZORPAY" ? (
                         <RazorpayCheckout
                           checkoutData={createCheckoutData({
                             appointmentType: "SUBSCRIPTION",
                             planId: planData?.data?.id || "",
                             paymentGateway: "RAZORPAY",
                             discountCode: appliedDiscount?.code,
+                            displayCurrency: currency,
                             useReferralCredits,
                           })}
                           onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
                           onPaymentError={razorpayHandlers.onPaymentError}
                           disabled={isMaintenanceBlocked}
                         />
+                      ) : gateway.gateway === "STRIPE" ? (
+                        <StripeCheckout
+                          checkoutData={createCheckoutData({
+                            appointmentType: "SUBSCRIPTION",
+                            planId: planData?.data?.id || "",
+                            paymentGateway: "STRIPE",
+                            discountCode: appliedDiscount?.code,
+                            displayCurrency: currency,
+                            useReferralCredits,
+                          })}
+                          onPaymentSuccess={stripeHandlers.onPaymentSuccess}
+                          onPaymentError={stripeHandlers.onPaymentError}
+                          disabled={isMaintenanceBlocked}
+                        />
                       ) : null}
-                      {/* Mock Payment Button */}
                       <Button
                         variant="secondary"
                         onClick={() => handleCheckout(gateway.gateway, true)}

@@ -8,6 +8,7 @@
 import { processExpiredNotifications, handleSlotOpening } from "@/lib/waitlist";
 import { sendWaitlistExpiredEmail } from "@/lib/waitlist/notifications";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import { getAppUrl } from "../../lib/url";
 
 export interface ProcessExpiredResult {
   processed: number;
@@ -52,7 +53,7 @@ export async function processExpiredNotificationsJob(): Promise<ProcessExpiredRe
           eventTitle,
           eventType,
           rejoinUrl: eventId
-            ? `${process.env.NEXT_PUBLIC_APP_URL}/explore/programs/plans/${eventType}s/${eventId}`
+            ? `${getAppUrl()}/explore/programs/plans/${eventType}s/${eventId}`
             : undefined,
         });
         emailsSent++;

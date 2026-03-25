@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { useSession } from "@/lib/auth-client";
 import {
   Card,
@@ -12,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle } from "lucide-react";
 import { useCurrency } from "@/hooks/useCurrency";
+import { formatInTimeZone } from "date-fns-tz";
 import { JoinWaitlistButton } from "@/components/waitlist/JoinWaitlistButton";
 import { WaitlistBadge } from "@/components/waitlist/WaitlistBadge";
 import { countWebinarParticipants } from "@/lib/payments/utils/participants";
@@ -46,7 +48,16 @@ export function ClientWebinarRegistration({
 }: ClientWebinarRegistrationProps) {
   const { data: session } = useSession();
   const { formatPrice } = useCurrency();
-  const isLoggedIn = !!session?.user;
+
+  // Defer auth + timezone until after hydration to avoid mismatch
+  const [hasMounted, setHasMounted] = useState(false);
+  const [userTimeZone, setUserTimeZone] = useState("UTC");
+  useEffect(() => {
+    setHasMounted(true);
+    setUserTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
+  }, []);
+
+  const isLoggedIn = hasMounted && !!session?.user;
   const userId = session?.user?.id;
 
   // Check if user is already registered for this webinar
@@ -82,11 +93,11 @@ export function ClientWebinarRegistration({
 
   let sessionInfoText: string;
   if (nextSessionDate) {
-    const formattedDate = new Date(nextSessionDate).toLocaleString(undefined, {
-      dateStyle: "long",
-      timeStyle: "short",
-      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    });
+    const formattedDate = formatInTimeZone(
+      new Date(nextSessionDate),
+      userTimeZone,
+      "MMMM d, yyyy 'at' h:mm a zzz",
+    );
     if (sessionStatus === "Completed") {
       sessionInfoText = `Session ended: ${formattedDate}`;
     } else if (sessionStatus === "Happening Now") {
@@ -142,7 +153,7 @@ export function ClientWebinarRegistration({
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Register for Webinar</CardTitle>
+          <CardTitle>Webinar Registration</CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-gray-600 mb-4">
@@ -193,7 +204,7 @@ export function ClientWebinarRegistration({
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Join Webinar</CardTitle>
+          <CardTitle>Webinar Registration</CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-sm text-gray-600 mb-4">{sessionInfoText}</p>
@@ -234,7 +245,7 @@ export function ClientWebinarRegistration({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Join Webinar</CardTitle>
+        <CardTitle>Webinar Registration</CardTitle>
       </CardHeader>
       <CardContent>
         <p className="text-sm text-gray-600 mb-4">{sessionInfoText}</p>

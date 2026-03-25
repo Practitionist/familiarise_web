@@ -7,6 +7,7 @@ import { streamLogger } from "@/lib/stream-logger";
 import { markChannelExists } from "@/lib/stream-cache";
 import { upsertUsersToStream } from "./user.action";
 import { getDmChannelId } from "@/lib/stream-utils";
+import { getChannelTypeFromId } from "@/lib/stream-channel-ids";
 
 // Input validation schemas
 const channelTypeSchema = z.enum(["messaging", "team"]);
@@ -99,10 +100,7 @@ export async function createDirectMessageChannel(
   memberIdSchema.parse(currentUserId);
   memberIdSchema.parse(targetUserId);
 
-  // Create a unique channel ID for the DM using localeCompare for reliable sorting
-  const channelId = [currentUserId, targetUserId]
-    .sort((a, b) => a.localeCompare(b))
-    .join("-");
+  const channelId = getDmChannelId(currentUserId, targetUserId);
 
   return createChannel({
     channelType: "messaging",
@@ -281,6 +279,7 @@ export async function createConsultationChannel(consultationId: string) {
     members: [consultantId, consulteeId],
     createdById: consultantId,
     additionalData: {
+      consultation_id: consultationId,
       dm_consultant_user_id: consultantId,
       dm_consultee_user_id: consulteeId,
     },
@@ -328,6 +327,7 @@ export async function createSubscriptionChannel(subscriptionId: string) {
     members: [consultantId, consulteeId],
     createdById: consultantId,
     additionalData: {
+      subscription_id: subscriptionId,
       dm_consultant_user_id: consultantId,
       dm_consultee_user_id: consulteeId,
     },
@@ -655,14 +655,7 @@ export async function addMemberToChannel(channelId: string, userId: string) {
 
   const client = getStreamChatClient();
 
-  // Infer channel type from ID pattern
-  const channelType =
-    channelId.startsWith("consultation-") ||
-    channelId.startsWith("subscription-") ||
-    channelId.startsWith("collab-") ||
-    channelId.startsWith("dm-")
-      ? "messaging"
-      : "team";
+  const channelType = getChannelTypeFromId(channelId);
 
   streamLogger.debug("Adding member to channel", {
     channelId,

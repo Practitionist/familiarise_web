@@ -26,6 +26,7 @@ import {
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import type { AppliedDiscount } from "@/types/checkout";
+import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 
 import type {
   Appointment,
@@ -46,7 +47,11 @@ export type CheckoutClassPlanData = ClassPlan & {
   consultantProfile:
     | (ConsultantProfile & {
         user: User & {
-          workExperiences?: Array<{ company: string; companyDomain: string | null; isCurrent: boolean }>;
+          workExperiences?: Array<{
+            company: string;
+            companyDomain: string | null;
+            isCurrent: boolean;
+          }>;
         };
         domain: Domain | null;
         subDomains: SubDomain[];
@@ -80,7 +85,8 @@ export default function ClassCheckoutPage({
   const resolvedParams = use(params);
   const resolvedSearchParams = use(searchParams);
 
-  const { formatPrice } = useCurrency();
+  const { formatPrice, currency } = useCurrency();
+  const checkoutTaxContext = useCheckoutTaxContext();
   const [planData, setPlanData] = useState<PlanResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -230,6 +236,7 @@ export default function ClassCheckoutPage({
           planId: planData.data.id,
           eventId: firstClassId,
           discountCode: appliedDiscount?.code,
+          displayCurrency: currency,
           paymentGateway: gateway,
           fromWaitlist,
           useReferralCredits,
@@ -354,12 +361,14 @@ export default function ClassCheckoutPage({
       discountPercent: discountAmount > 0 ? 0 : discountPercent,
       discountAmount,
       creditsApplied: useReferralCredits ? availableCredits : 0,
+      isInternational: checkoutTaxContext.isInternational,
     });
   }, [
     planData?.data?.price,
     appliedDiscount,
     useReferralCredits,
     availableCredits,
+    checkoutTaxContext.isInternational,
   ]);
 
   if (isLoading) {
@@ -443,19 +452,20 @@ export default function ClassCheckoutPage({
                   consultantDetails?.domain?.name ||
                   "Consultant"}
               </div>
-              {userDetails?.workExperiences && userDetails.workExperiences.length > 0 && (
-                <div className="flex items-center gap-1.5 mt-1">
-                  {userDetails.workExperiences.slice(0, 3).map((exp, i) => (
-                    <CompanyLogo
-                      key={`checkout-class-company-${i}`}
-                      companyName={exp.company}
-                      companyDomain={exp.companyDomain ?? undefined}
-                      size={20}
-                      className="border-zinc-200"
-                    />
-                  ))}
-                </div>
-              )}
+              {userDetails?.workExperiences &&
+                userDetails.workExperiences.length > 0 && (
+                  <div className="flex items-center gap-1.5 mt-1">
+                    {userDetails.workExperiences.slice(0, 3).map((exp, i) => (
+                      <CompanyLogo
+                        key={`checkout-class-company-${i}`}
+                        companyName={exp.company}
+                        companyDomain={exp.companyDomain ?? undefined}
+                        size={20}
+                        className="border-zinc-200"
+                      />
+                    ))}
+                  </div>
+                )}
             </div>
           </div>
           <div className="text-right">
@@ -711,17 +721,16 @@ export default function ClassCheckoutPage({
           {[
             {
               name: "Stripe",
-              description: "International payments in USD",
+              description: "Card payments (international)",
               gateway: "STRIPE" as const,
               isActive: true,
             },
             {
               name: "Razorpay",
-              description: "Indian payments in INR",
+              description: "UPI, cards & bank transfer",
               gateway: "RAZORPAY" as const,
               isActive: true,
             },
-            // TODO: Add Lemon Squeezy and XFlow when webhook appointment creation is implemented
           ].map((gateway) => (
             <Card key={gateway.name} className="border-zinc-200">
               <CardHeader>
@@ -750,6 +759,7 @@ export default function ClassCheckoutPage({
                             eventId: planDetails.classes[0]?.id,
                             paymentGateway: "RAZORPAY",
                             discountCode: appliedDiscount?.code,
+                            displayCurrency: currency,
                             useReferralCredits,
                           })}
                           onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
@@ -764,6 +774,7 @@ export default function ClassCheckoutPage({
                             eventId: planDetails.classes[0]?.id,
                             paymentGateway: "STRIPE",
                             discountCode: appliedDiscount?.code,
+                            displayCurrency: currency,
                             useReferralCredits,
                           })}
                           onPaymentSuccess={stripeHandlers.onPaymentSuccess}

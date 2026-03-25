@@ -27,6 +27,9 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
+import { addUserToEventChannel } from "@/actions/stream/chat/event-channel.action";
+import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action";
+import { streamLogger } from "@/lib/stream-logger";
 
 /**
  * Type for subscription with all related details needed for payment processing
@@ -726,6 +729,40 @@ export async function PATCH(
               dashboardUrl: "/dashboard",
             });
           }
+        }
+      }
+
+      // --- Stream channel creation (fire-and-forget, after transaction) ---
+      if (
+        !result.duplicate &&
+        status === RequestStatus.APPROVED &&
+        "data" in result &&
+        result.data
+      ) {
+        try {
+          const subData = result.data;
+          const consultantUid =
+            subData.subscriptionPlan?.consultantProfile?.user?.id;
+          const consulteeUid = subData.requestedBy?.user?.id;
+
+          if (consultantUid && consulteeUid) {
+            await addUserToEventChannel(
+              "subscription",
+              subData.id,
+              consulteeUid,
+            );
+            await createDirectMessageChannel(consultantUid, consulteeUid);
+            streamLogger.info(
+              "Stream channel created on subscription approval",
+              { subscriptionId: subData.id },
+            );
+          }
+        } catch (channelError) {
+          streamLogger.error(
+            "Auto-channel creation failed on subscription approval",
+            channelError,
+            { subscriptionId },
+          );
         }
       }
 

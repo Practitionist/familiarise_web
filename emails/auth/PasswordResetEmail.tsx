@@ -8,6 +8,7 @@ import { Preview } from "@react-email/preview";
 import { Section } from "@react-email/section";
 import { Text } from "@react-email/text";
 import * as React from "react";
+import { getAppUrl } from "@/lib/url";
 
 interface PasswordResetEmailProps {
   name: string;
@@ -69,11 +70,11 @@ export const PasswordResetEmail = ({
               123 Familiarise Way, Innovation District, Techville
             </Text>
             <Text style={footerLinks}>
-              <Link href="https://familiarise.com/privacy" style={link}>
+              <Link href={`${getAppUrl()}/privacy`} style={link}>
                 Privacy Policy
               </Link>{" "}
               •{" "}
-              <Link href="https://familiarise.com/terms" style={link}>
+              <Link href={`${getAppUrl()}/terms`} style={link}>
                 Terms of Service
               </Link>
             </Text>

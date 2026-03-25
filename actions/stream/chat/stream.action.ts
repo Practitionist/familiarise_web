@@ -8,6 +8,9 @@ import {
 } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 
+// Token expiry for both chat and video (1 hour)
+const TOKEN_EXPIRATION_SECONDS = 3600;
+
 // Input validation
 const userIdSchema = z.string().min(1, "User ID is required");
 
@@ -27,7 +30,7 @@ export async function tokenProvider(userId: string): Promise<string> {
   }
 
   try {
-    const token = generateVideoToken(validatedUserId, 3600); // 1 hour
+    const token = generateVideoToken(validatedUserId, TOKEN_EXPIRATION_SECONDS);
 
     streamLogger.debug("Generated video token", { userId: validatedUserId });
 
@@ -42,6 +45,7 @@ export async function tokenProvider(userId: string): Promise<string> {
 
 /**
  * Generate a chat token for a user
+ * Token is valid for 1 hour by default
  * @param userId The user ID to generate token for
  * @returns The chat token string
  */
@@ -55,7 +59,7 @@ export async function chatTokenProvider(userId: string): Promise<string> {
   }
 
   try {
-    const token = generateChatToken(validatedUserId);
+    const token = generateChatToken(validatedUserId, TOKEN_EXPIRATION_SECONDS);
 
     streamLogger.debug("Generated chat token", { userId: validatedUserId });
 

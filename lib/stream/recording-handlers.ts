@@ -6,7 +6,11 @@
 import prisma from "@/lib/prisma";
 import { RecordingStatus } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
-import { notifyRecordingFailed } from "@/lib/novu/service";
+import {
+  notifyRecordingAvailable,
+  notifyRecordingFailed,
+} from "@/lib/novu/service";
+import { getAppUrl } from "@/lib/url";
 
 // Types for Stream webhook payloads
 export interface StreamRecordingStartedEvent {
@@ -176,26 +180,51 @@ export async function handleRecordingReady(
       include: {
         slotOfAppointment: {
           include: {
+            user: { select: { id: true } },
             appointment: {
               include: {
                 consultation: {
                   include: {
-                    consultationPlan: true,
+                    consultationPlan: {
+                      include: {
+                        consultantProfile: {
+                          select: { user: { select: { name: true } } },
+                        },
+                      },
+                    },
                   },
                 },
                 subscription: {
                   include: {
-                    subscriptionPlan: true,
+                    subscriptionPlan: {
+                      include: {
+                        consultantProfile: {
+                          select: { user: { select: { name: true } } },
+                        },
+                      },
+                    },
                   },
                 },
                 webinar: {
                   include: {
-                    webinarPlan: true,
+                    webinarPlan: {
+                      include: {
+                        consultantProfile: {
+                          select: { user: { select: { name: true } } },
+                        },
+                      },
+                    },
                   },
                 },
                 class: {
                   include: {
-                    classPlan: true,
+                    classPlan: {
+                      include: {
+                        consultantProfile: {
+                          select: { user: { select: { name: true } } },
+                        },
+                      },
+                    },
                   },
                 },
               },
@@ -291,6 +320,48 @@ export async function handleRecordingReady(
       title,
       durationInMinutes,
     });
+
+    // Fire-and-forget: notify all participants that recording is available
+    const userIds = meetingSession.slotOfAppointment.user?.map(
+      (u: { id: string }) => u.id,
+    );
+    if (userIds && userIds.length > 0) {
+      let appointmentType = "consultation";
+      let consultantName = "Unknown Consultant";
+
+      if (appointment?.consultation) {
+        appointmentType = "consultation";
+        consultantName =
+          appointment.consultation.consultationPlan?.consultantProfile?.user
+            ?.name ?? "Unknown Consultant";
+      } else if (appointment?.subscription) {
+        appointmentType = "subscription";
+        consultantName =
+          appointment.subscription.subscriptionPlan?.consultantProfile?.user
+            ?.name ?? "Unknown Consultant";
+      } else if (appointment?.webinar) {
+        appointmentType = "webinar";
+        consultantName =
+          appointment.webinar.webinarPlan?.consultantProfile?.user?.name ??
+          "Unknown Consultant";
+      } else if (appointment?.class) {
+        appointmentType = "class";
+        consultantName =
+          appointment.class.classPlan?.consultantProfile?.user?.name ??
+          "Unknown Consultant";
+      }
+
+      void notifyRecordingAvailable(userIds, {
+        appointmentType,
+        consultantName,
+        recordingUrl: url,
+        dashboardUrl: `${getAppUrl()}/dashboard`,
+      }).catch((err) =>
+        streamLogger.error("Failed to send recording notification", err, {
+          streamCallId,
+        }),
+      );
+    }
   } catch (error) {
     streamLogger.error("Failed to handle recording ready event", error, {
       streamCallId,
@@ -371,7 +442,7 @@ export async function handleRecordingFailed(
         notifyRecordingFailed(userId, {
           streamCallId,
           errorMessage: eventError?.message,
-          dashboardUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/dashboard`,
+          dashboardUrl: `${getAppUrl()}/dashboard`,
         }),
       ),
     );

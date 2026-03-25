@@ -482,6 +482,10 @@ model ConsultantProfile {
   payouts        Payout[]
   payoutAccounts PayoutAccount[]
 
+  // Tax & compliance
+  taxInfo    ConsultantTaxInfo?
+  tdsRecords TDSRecord[]
+
   // Profile verification
   verificationRequests ConsultantProfileVerification[]
 
@@ -988,9 +992,10 @@ model WebinarPlan {
   price               Int // in paise (smallest currency unit, e.g. 50000 = ₹500)
   priceCurrency       String   @default("INR")
   certificateProvided Boolean  @default(false)
-  recordingEnabled    Boolean  @default(false) // Allow consultant to record sessions
-  durationInHours     Float    @default(1) // Duration in hours
-  maxParticipants     Int      @default(100)
+  recordingEnabled       Boolean                @default(false) // Allow consultant to record sessions
+  recordingStoragePolicy RecordingStoragePolicy @default(STREAM_ONLY)
+  durationInHours        Float                  @default(1) // Duration in hours
+  maxParticipants        Int                    @default(100)
   language            String?  @default("English")
   level               String?  @default("Beginner")
   prerequisites       String?  @default("None")
@@ -1044,9 +1049,10 @@ model ClassPlan {
   classContents          ClassContent[]
   price                  Int // in paise (smallest currency unit, e.g. 50000 = ₹500)
   priceCurrency          String           @default("INR")
-  certificateProvided    Boolean          @default(false)
-  recordingEnabled       Boolean          @default(false) // Allow consultant to record sessions
-  durationInMonths       Int              @default(1) // Duration in months
+  certificateProvided    Boolean                @default(false)
+  recordingEnabled       Boolean                @default(false) // Allow consultant to record sessions
+  recordingStoragePolicy RecordingStoragePolicy @default(STREAM_ONLY)
+  durationInMonths       Int                    @default(1) // Duration in months
   meetingsPerWeek        Int              @default(1)
   sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
   totalSessions          Int              @default(4) // meetingsPerWeek × durationInMonths × 4
@@ -1156,6 +1162,9 @@ model Topic {
 model Newsletter {
   id    String @id @default(uuid())
   email String @unique
+
+  unsubscribed   Boolean   @default(false)
+  unsubscribedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1415,6 +1424,12 @@ enum RecordingStorageType {
   SUPABASE // Permanent storage
 }
 
+// Recording storage policy for plans (determines where recordings are stored)
+enum RecordingStoragePolicy {
+  STREAM_ONLY        // 2-week temporary storage (free tier)
+  SUPABASE_PERMANENT // Permanent storage (premium tier)
+}
+
 // Recording status lifecycle
 enum RecordingStatus {
   RECORDING // Currently being recorded
@@ -1498,6 +1513,12 @@ model Payment {
   expiresAt      DateTime? // For tracking payment intent expiration
   isMockPayment  Boolean        @default(false) // For development: mock payments skip gateway calls
 
+  // International payment tracking
+  buyerCountry           String?  // ISO 3166-1 alpha-2 code detected at checkout
+  isInternational        Boolean  @default(false) // Denormalized for query efficiency
+  displayCurrencyAtCheckout String? @db.VarChar(3) // Currency code shown to the buyer at checkout
+  exchangeRateAtCheckout Float?   // Snapshot of INR→displayCurrencyAtCheckout for audit
+
   user           User          @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId         String
   appointment    Appointment?  @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
@@ -1549,7 +1570,9 @@ model Refund {
   status         RefundStatus
   refundId       String         @unique // Gateway-specific refund ID (Stripe/Razorpay)
   paymentGateway PaymentGateway
-  metadata       Json? // Additional gateway-specific metadata
+  metadata             Json? // Additional gateway-specific metadata
+  exchangeRateAtRefund Float? // INR→displayCurrency rate snapshot at refund time
+  displayCurrency      String? @db.VarChar(3) // Currency the buyer originally saw
 
   payment   Payment @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   paymentId String
@@ -1657,6 +1680,9 @@ model ConsultantEarnings {
   holdUntil DateTime // Release after hold period
   paidAt    DateTime?
 
+  // Currency (always INR for MVP, extensible for multi-currency)
+  currency String @default("INR")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1682,6 +1708,12 @@ model Payout {
   method              PayoutMethod
   batchId             String?
 
+  // TDS (Tax Deducted at Source) — Section 194J
+  tdsDeducted Int @default(0) // TDS amount deducted from this payout, in paise
+  netAmount   Int? // Amount after TDS deduction (amount - tdsDeducted), sent to gateway
+  tdsRateApplied   Float?  // TDS rate reserved for this payout, used when creating the final audit record
+  tdsFinancialYear String? // FY when TDS was calculated (e.g. "2026-27"). Persisted to avoid FY-boundary drift.
+
   // Processing
   failureReason String?
   retryCount    Int       @default(0)
@@ -1697,6 +1729,7 @@ model Payout {
 
   consultantProfile ConsultantProfile    @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   earnings          ConsultantEarnings[]
+  tdsRecords        TDSRecord[]
 
   @@index([consultantProfileId, status])
   @@index([batchId])
@@ -1736,6 +1769,62 @@ model PayoutAccount {
 
   @@index([consultantProfileId])
   @@index([isDefault])
+}
+
+////////////////////////////////////////// TAX & COMPLIANCE //////////////////////////////////////////
+
+model ConsultantTaxInfo {
+  id                  String  @id @default(cuid())
+  consultantProfileId String  @unique
+  panEncrypted        Bytes?           // AES-256-GCM encrypted PAN. Format: [12B IV][ciphertext][16B auth tag]
+  panLast4            String?  @db.VarChar(4) // Cleartext last 4 chars for masked display
+  panVerified         Boolean @default(false)
+  gstin               String? // GSTIN for registered consultants
+  gstinVerified       Boolean @default(false)
+  country             String  @default("IN") // ISO 3166-1 alpha-2
+  isIndianResident    Boolean @default(true)
+  lutNumber           String? // Letter of Undertaking for export zero-rating
+  lutValidUntil       DateTime?
+
+  consultantProfile ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([consultantProfileId])
+}
+
+model TDSRecord {
+  id                      String  @id @default(cuid())
+  consultantProfileId     String
+  financialYear           String  // "2026-27" format (Apr-Mar)
+  quarter                 Int     // 1=Apr-Jun, 2=Jul-Sep, 3=Oct-Dec, 4=Jan-Mar
+
+  // Amounts in paise
+  cumulativeAmountCredited Int    // FY cumulative of amounts credited/paid to consultant (sum of completed payouts)
+  tdsDeducted             Int     // TDS amount deducted this record
+  tdsRate                 Float   // Rate at time of deduction (10 or 20)
+
+  // Link to the payout that triggered this deduction
+  payoutId   String?
+  earningsId String?
+
+  // Reversal flag (for refund-triggered TDS reversals — negative tdsDeducted)
+  isReversal        Boolean   @default(false)
+
+  // Filing status
+  reportedInForm26Q Boolean   @default(false)
+  form26QFilingDate DateTime?
+
+  consultantProfile ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  payout            Payout?           @relation(fields: [payoutId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([consultantProfileId, financialYear])
+  @@index([financialYear, quarter])
+  @@index([reportedInForm26Q])
 }
 
 model Invoice {
@@ -1788,7 +1877,8 @@ model DiscountCode {
   code          String       @unique
   description   String
   discountType  DiscountType
-  discountValue Int // For PERCENTAGE: whole number (10 = 10%). For FIXED_AMOUNT: in paise
+  discountValue Int    // For PERCENTAGE: whole number (10 = 10%). For FIXED_AMOUNT: in paise
+  currency      String @default("INR") // Currency for FIXED_AMOUNT discounts
   isActive      Boolean      @default(true)
   expiresAt     DateTime?
   maxUses       Int?

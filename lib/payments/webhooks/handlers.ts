@@ -27,6 +27,10 @@ import {
   notifyAppointmentBooked,
 } from "@/lib/novu";
 import { processQualifyingAction } from "@/lib/referrals/service";
+import { addUserToEventChannel } from "@/actions/stream/chat/event-channel.action";
+import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action";
+import { streamLogger } from "@/lib/stream-logger";
+import { getAppUrl } from "@/lib/url";
 
 // ============================================================================
 // Type Definitions
@@ -172,7 +176,7 @@ export async function handlePaymentSuccess(
           error: errorMessage,
           action_required:
             "IMMEDIATE: Manual appointment creation or full refund required",
-          dashboard_url: `${process.env.NEXT_PUBLIC_APP_URL}/admin/payments/${payment.id}`,
+          dashboard_url: `${getAppUrl()}/admin/payments/${payment.id}`,
           timestamp: new Date().toISOString(),
         }),
       );
@@ -472,7 +476,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       ? metadata.appointmentType
       : metadata.appointmentType || "Appointment";
 
-    const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`;
+    const dashboardUrl = `${getAppUrl()}/dashboard`;
 
     // Notify consultee of successful payment
     void notifyPaymentSuccess(userId, {
@@ -504,6 +508,96 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       novuError,
     );
   }
+
+  // --- Stream channel creation (truly fire-and-forget — does not block webhook response) ---
+  void (async () => {
+    try {
+      const eventType = metadata.appointmentType?.toUpperCase();
+      const appointmentForChannel = await prisma.appointment.findUnique({
+        where: { id: appointmentId },
+        include: {
+          consultation: {
+            include: {
+              consultationPlan: {
+                include: { consultantProfile: true },
+              },
+            },
+          },
+          subscription: {
+            include: {
+              subscriptionPlan: {
+                include: { consultantProfile: true },
+              },
+            },
+          },
+          webinar: {
+            include: {
+              webinarPlan: {
+                include: { consultantProfile: true },
+              },
+            },
+          },
+          class: {
+            include: {
+              classPlan: {
+                include: { consultantProfile: true },
+              },
+            },
+          },
+        },
+      });
+
+      const consultantProfile =
+        appointmentForChannel?.consultation?.consultationPlan
+          ?.consultantProfile ||
+        appointmentForChannel?.subscription?.subscriptionPlan
+          ?.consultantProfile ||
+        appointmentForChannel?.webinar?.webinarPlan?.consultantProfile ||
+        appointmentForChannel?.class?.classPlan?.consultantProfile;
+
+      const consultantUserId = consultantProfile?.userId;
+
+      if (appointmentForChannel && consultantUserId) {
+        const consultation = appointmentForChannel.consultation;
+        const subscription = appointmentForChannel.subscription;
+        const webinar = appointmentForChannel.webinar;
+        const classEvent = appointmentForChannel.class;
+
+        if (eventType === "CONSULTATION" && consultation) {
+          await addUserToEventChannel(
+            "consultation",
+            consultation.id,
+            userId,
+          );
+          await createDirectMessageChannel(consultantUserId, userId);
+        } else if (eventType === "SUBSCRIPTION" && subscription) {
+          await addUserToEventChannel(
+            "subscription",
+            subscription.id,
+            userId,
+          );
+          await createDirectMessageChannel(consultantUserId, userId);
+        } else if (eventType === "WEBINAR" && webinar) {
+          await addUserToEventChannel("webinar", webinar.id, userId);
+        } else if (eventType === "CLASS" && classEvent) {
+          await addUserToEventChannel("class", classEvent.id, userId);
+        }
+
+        streamLogger.info("Stream channel created on payment success", {
+          appointmentType: eventType,
+          appointmentId,
+          userId,
+        });
+      }
+    } catch (channelError) {
+      // Log but never fail the payment — sync job will catch up
+      streamLogger.error(
+        "Auto-channel creation failed on payment success",
+        channelError,
+        { appointmentId, userId },
+      );
+    }
+  })();
 }
 
 /**
@@ -611,7 +705,7 @@ export async function handlePaymentFailure(paymentIntentId: string) {
         consultantName,
         appointmentType,
         failureReason: payment.description || "Payment could not be processed",
-        retryUrl: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`,
+        retryUrl: `${getAppUrl()}/dashboard`,
       });
     } catch (novuError) {
       console.error(
@@ -1193,7 +1287,7 @@ async function sendPaymentSuccessNotification(
         appointmentType === "CONSULTATION" ? "consultation" : "subscription",
       amount,
       currency,
-      dashboardUrl: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`,
+      dashboardUrl: `${getAppUrl()}/dashboard`,
     });
 
     console.log(
@@ -1288,7 +1382,7 @@ async function sendPaymentFailureNotification(
 
     let consultantName = "Consultant";
     let appointmentType: "consultation" | "subscription" = "consultation";
-    let retryUrl = `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`;
+    let retryUrl = `${getAppUrl()}/dashboard`;
 
     // Get consultant name and appointment type
     if (appointment.consultation?.consultationPlan?.consultantProfile?.user) {
@@ -1296,7 +1390,7 @@ async function sendPaymentFailureNotification(
         appointment.consultation.consultationPlan.consultantProfile.user.name ||
         "Consultant";
       appointmentType = "consultation";
-      retryUrl = `${process.env.NEXT_PUBLIC_APP_URL}/consultations/${appointment.consultation.id}/payment`;
+      retryUrl = `${getAppUrl()}/consultations/${appointment.consultation.id}/payment`;
     } else if (
       appointment.subscription?.subscriptionPlan?.consultantProfile?.user
     ) {
@@ -1304,7 +1398,7 @@ async function sendPaymentFailureNotification(
         appointment.subscription.subscriptionPlan.consultantProfile.user.name ||
         "Consultant";
       appointmentType = "subscription";
-      retryUrl = `${process.env.NEXT_PUBLIC_APP_URL}/subscriptions/${appointment.subscription.id}/payment`;
+      retryUrl = `${getAppUrl()}/subscriptions/${appointment.subscription.id}/payment`;
     }
 
     // Send email

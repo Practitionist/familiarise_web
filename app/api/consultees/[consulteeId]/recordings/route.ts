@@ -45,8 +45,8 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       { type: type || undefined },
     );
 
-    // Format recordings for response
-    const formattedRecordings = recordings.map((recording) => {
+    // Format recordings for response (async — generates presigned URLs)
+    const formattedRecordings = await Promise.all(recordings.map(async (recording) => {
       const appointment =
         recording.meetingSession?.slotOfAppointment?.appointment;
 
@@ -71,7 +71,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         recordedAt: recording.recordedAt,
         status: recording.status,
         storageType: recording.storageType,
-        playbackUrl: RecordingTransferService.getBestRecordingUrl(recording),
+        playbackUrl: await RecordingTransferService.getBestRecordingUrl(recording),
         thumbnailUrl: recording.thumbnailUrl,
         resolution: recording.resolution,
         planType,
@@ -79,7 +79,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         planTitle,
         createdAt: recording.createdAt,
       };
-    });
+    }));
 
     return NextResponse.json({
       recordings: formattedRecordings,

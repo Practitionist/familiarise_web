@@ -22,7 +22,6 @@ import {
   ConsultationPlan,
   PaymentGateway,
 } from "@prisma/client";
-import { loadStripe } from "@stripe/stripe-js";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -30,6 +29,9 @@ import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import StripeCheckout from "../../../components/StripeCheckout";
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
+import { loadStripe } from "@stripe/stripe-js";
+import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
+import { getAppUrl } from "@/lib/url";
 
 type ConsultationPlanWithConsultant = ConsultationPlan & {
   consultantProfile: ConsultantProfile & {
@@ -38,7 +40,11 @@ type ConsultationPlanWithConsultant = ConsultationPlan & {
       name: string;
       email: string;
       image: string;
-      workExperiences?: Array<{ company: string; companyDomain: string | null; isCurrent: boolean }>;
+      workExperiences?: Array<{
+        company: string;
+        companyDomain: string | null;
+        isCurrent: boolean;
+      }>;
     };
   };
 };
@@ -60,7 +66,8 @@ export default function ConsultationCheckoutPage({
   const resolvedParams = use(params);
   const resolvedSearchParams = use(searchParams);
 
-  const { formatPrice } = useCurrency();
+  const { formatPrice, currency } = useCurrency();
+  const checkoutTaxContext = useCheckoutTaxContext();
   const [eventData, setEventData] = useState<ConsultationResponse | null>(null);
   const [slotData, setSlotData] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -253,7 +260,7 @@ export default function ConsultationCheckoutPage({
   };
 
   const handleCheckout = useCallback(
-    async (gateway: "STRIPE" | "RAZORPAY", isMockPayment: boolean = false) => {
+    async (gateway: PaymentGateway, isMockPayment: boolean = false) => {
       // Block checkout during maintenance mode
       if (isMaintenanceBlocked) {
         toast({
@@ -301,6 +308,7 @@ export default function ConsultationCheckoutPage({
           slotOfAvailabilityCustomId:
             searchParamsValidation.data.slotOfAvailabilityCustomId,
           discountCode: appliedDiscount?.code, // Use state instead of URL params
+          displayCurrency: currency,
           notes: searchParamsValidation.data.notes,
           useReferralCredits,
         });
@@ -362,7 +370,7 @@ export default function ConsultationCheckoutPage({
                   await stripe?.confirmPayment({
                     clientSecret: data.paymentIntent.client_secret,
                     confirmParams: {
-                      return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
+                      return_url: `${getAppUrl()}/checkout/checkout-success`,
                     },
                   });
                   break;
@@ -371,8 +379,6 @@ export default function ConsultationCheckoutPage({
                   // Razorpay is handled by the RazorpayCheckout component
                   // This case shouldn't be reached since Razorpay has its own component
                   break;
-
-                // TODO: Add Lemon Squeezy and XFlow cases when webhook handlers are implemented
               }
             } catch (paymentError) {
               console.error("Payment confirmation error:", paymentError);
@@ -491,12 +497,14 @@ export default function ConsultationCheckoutPage({
       discountPercent: discountAmount > 0 ? 0 : discountPercent, // Don't use percent if we have a fixed amount
       discountAmount,
       creditsApplied: useReferralCredits ? availableCredits : 0,
+      isInternational: checkoutTaxContext.isInternational,
     });
   }, [
     eventData?.data?.price,
     appliedDiscount,
     useReferralCredits,
     availableCredits,
+    checkoutTaxContext.isInternational,
   ]);
 
   if (isLoading) {
@@ -566,19 +574,20 @@ export default function ConsultationCheckoutPage({
               <div className="text-sm text-muted-foreground">
                 {consultantDetails?.headline || "Consultant"}
               </div>
-              {userDetails?.workExperiences && userDetails.workExperiences.length > 0 && (
-                <div className="flex items-center gap-1.5 mt-1">
-                  {userDetails.workExperiences.slice(0, 3).map((exp, i) => (
-                    <CompanyLogo
-                      key={`checkout-consult-company-${i}`}
-                      companyName={exp.company}
-                      companyDomain={exp.companyDomain ?? undefined}
-                      size={20}
-                      className="border-zinc-200"
-                    />
-                  ))}
-                </div>
-              )}
+              {userDetails?.workExperiences &&
+                userDetails.workExperiences.length > 0 && (
+                  <div className="flex items-center gap-1.5 mt-1">
+                    {userDetails.workExperiences.slice(0, 3).map((exp, i) => (
+                      <CompanyLogo
+                        key={`checkout-consult-company-${i}`}
+                        companyName={exp.company}
+                        companyDomain={exp.companyDomain ?? undefined}
+                        size={20}
+                        className="border-zinc-200"
+                      />
+                    ))}
+                  </div>
+                )}
             </div>
           </div>
           <div className="text-right">
@@ -792,22 +801,19 @@ export default function ConsultationCheckoutPage({
               Select your preferred payment method
             </div>
           </div>
-          {/* Payment Gateway Cards */}
-          {/* Priority Gateways: Stripe and Razorpay with Real + Mock Payment */}
           {[
             {
               name: "Stripe",
-              description: "International payments in USD",
+              description: "Card payments (international)",
               gateway: "STRIPE" as const,
               isActive: true,
             },
             {
               name: "Razorpay",
-              description: "Indian payments in INR",
+              description: "UPI, cards & bank transfer",
               gateway: "RAZORPAY" as const,
               isActive: true,
             },
-            // TODO: Add Lemon Squeezy and XFlow when webhook appointment creation is implemented
           ].map((gateway) => (
             <Card key={gateway.name} className="border-zinc-200">
               <CardHeader>
@@ -828,7 +834,6 @@ export default function ConsultationCheckoutPage({
                   </div>
                   {gateway.isActive ? (
                     <div className="flex gap-2">
-                      {/* Real Payment Button */}
                       {gateway.gateway === "RAZORPAY" ? (
                         <RazorpayCheckout
                           checkoutData={createCheckoutData({
@@ -858,6 +863,7 @@ export default function ConsultationCheckoutPage({
                                   .slotOfAvailabilityCustomId[0]
                               : resolvedSearchParams.slotOfAvailabilityCustomId,
                             discountCode: appliedDiscount?.code,
+                            displayCurrency: currency,
                             notes: Array.isArray(resolvedSearchParams.notes)
                               ? resolvedSearchParams.notes[0]
                               : resolvedSearchParams.notes,
@@ -912,6 +918,7 @@ export default function ConsultationCheckoutPage({
                                   .slotOfAvailabilityCustomId[0]
                               : resolvedSearchParams.slotOfAvailabilityCustomId,
                             discountCode: appliedDiscount?.code,
+                            displayCurrency: currency,
                             notes: Array.isArray(resolvedSearchParams.notes)
                               ? resolvedSearchParams.notes[0]
                               : resolvedSearchParams.notes,

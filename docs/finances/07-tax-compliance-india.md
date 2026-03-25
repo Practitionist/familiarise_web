@@ -140,8 +140,8 @@ The `math.ts` checkout utilities calculate tax for **display and invoicing purpo
 
 The 56th GST Council meeting introduced a simplified two-rate framework:
 
-| Old Structure         | New Structure (GST 2.0, effective Sep 2025)                    |
-| --------------------- | -------------------------------------------------------------- |
+| Old Structure         | New Structure (GST 2.0, effective Sep 2025)                        |
+| --------------------- | ------------------------------------------------------------------ |
 | 0%, 5%, 12%, 18%, 28% | 5% (merit, no ITC), 18% (standard, with ITC), 40% (demerit/luxury) |
 
 **Impact**: Most platform services remain at 18% with Input Tax Credit (ITC) available.
@@ -193,12 +193,12 @@ As Familiarise collects payments on behalf of consultants (suppliers), you may b
 ### International Buyers (Export of Services)
 
 Export of services is zero-rated under GST (IGST Act Section 16). Conditions:
+
 - Supplier located in India
 - Recipient located outside India
 - Payment received in convertible foreign exchange
 
-**Current implementation:** GST is zero-rated when `currency !== "INR"` in checkout.
-For full compliance, buyer location verification via billing address should be added.
+**Current implementation:** GST is zero-rated when `buyerCountry !== "IN"` in checkout (using server-side buyer country detection via DB user.country → CF-IPCountry header → Accept-Language fallback). For full compliance, additional evidence (billing address, FIRC reference, LUT state) should be captured per payment — see `docs/payments/multi-currency/03-tds-compliance.md` launch blockers.
 
 ---
 
@@ -344,7 +344,33 @@ Consultants can claim TDS deducted by platform:
 
 ---
 
-## Implementation in Codebase
+## Implementation Status (Updated March 2026)
+
+### Implemented
+
+- **TDS calculation + auto-deduction**: `lib/payments/tax/tds-service.ts` — calculates TDS at payout time, deducts before sending to gateway. TDS records are created only on confirmed (COMPLETED) payouts; failed payouts clean up all TDS data.
+- **ConsultantTaxInfo model**: PAN, GSTIN, country tracking in `prisma/schema.prisma`
+- **TDSRecord model**: Per-deduction audit trail for Form 26Q filing
+- **Admin TDS API**: `GET/POST /api/admin/tds` — FY summary, per-consultant breakdown, filing status
+- **Consultant Tax Info API**: `GET/PUT /api/consultant/tax-info` — PAN/GSTIN collection
+- **Export zero-rating**: `lib/payments/tax/tax-engine.ts` — 0% for international buyers (buyer country detection)
+- **Gateway auto-routing**: `lib/payments/gateway-router.ts` — Razorpay for all (domestic + IBT)
+- **Invoice zero-rating**: Fixed bug where `currency !== "INR"` check never triggered
+- **Currency guards**: Discount + referral credit currency validation
+
+### Pending
+
+- [ ] CA opinion on e-commerce operator classification
+- [ ] LUT filing with GST authorities
+- [ ] Form 16A auto-generation for consultants
+- [ ] EU VAT OSS registration (when thresholds approached)
+- [ ] Razorpay IBT activation on dashboard (KYC process)
+
+See `docs/payments/multi-currency/` for detailed architecture docs.
+
+---
+
+## Original Implementation Notes (Reference)
 
 ### Track TDS-Applicable Payments
 
