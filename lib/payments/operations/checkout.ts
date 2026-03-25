@@ -510,17 +510,35 @@ export async function validateSlotAvailability(
     const slotDurationMinutes = Math.round(
       (slotEnd.getTime() - slotStart.getTime()) / (60 * 1000),
     );
-    if (
-      !isMinuteWithinWeeklySlot(
-        candidateDay,
-        candidateMinutes,
-        slotDurationMinutes,
-        avail.startDay,
-        avail.startTimeUtc,
-        avail.endTimeUtc,
-        avail.utcOffsetMinutes,
-      )
-    ) {
+
+    // FIX #520 Bug 2: Diagnostic logging for intermittent slot validation failures
+    const slotValidationResult = isMinuteWithinWeeklySlot(
+      candidateDay,
+      candidateMinutes,
+      slotDurationMinutes,
+      avail.startDay,
+      avail.startTimeUtc,
+      avail.endTimeUtc,
+      avail.utcOffsetMinutes,
+    );
+
+    if (!slotValidationResult) {
+      console.error(
+        JSON.stringify({
+          event: "slot_validation_failed",
+          candidateDay,
+          candidateMinutes,
+          slotDurationMinutes,
+          availStartDay: avail.startDay,
+          availStartTimeUtc: avail.startTimeUtc,
+          availEndTimeUtc: avail.endTimeUtc,
+          utcOffsetMinutes: avail.utcOffsetMinutes,
+          slotStartISO: data.slotStartTimeInUTC,
+          slotEndISO: data.slotEndTimeInUTC,
+          availId: data.slotOfAvailabilityWeeklyId,
+          timestamp: new Date().toISOString(),
+        }),
+      );
       throw new Error(
         "Selected slot does not fall within the specified availability window",
       );
@@ -1545,20 +1563,39 @@ export async function handleCheckout(
       }),
     );
 
+    // FIX #520: Detect zero-amount payments (credits fully cover cost)
+    // Both Stripe and Razorpay reject amount <= 0, so we skip the gateway
+    // entirely and treat this like a "free" payment that succeeds immediately.
+    const isZeroAmountPayment = amount === 0 && creditsApplied > 0;
+
     // STEP 4: Create payment intent (INSIDE LOCK)
-    try {
-      paymentResponse = await PaymentIntentManager.createWithCleanup({
-        amount,
-        currency,
-        metadata: buildPaymentMetadata(validatedData, userId),
-        paymentGateway: validatedData.paymentGateway,
-        isMockPayment,
-      });
-    } catch (paymentError) {
-      console.error("Payment intent creation failed:", paymentError);
-      throw new Error(
-        "Failed to create payment intent. Please try again later.",
+    if (isZeroAmountPayment) {
+      const freePaymentId = `free_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+      paymentResponse = { id: freePaymentId, client_secret: null };
+      console.log(
+        JSON.stringify({
+          event: "zero_amount_payment_detected",
+          creditsApplied,
+          originalAmount,
+          userId,
+          timestamp: new Date().toISOString(),
+        }),
       );
+    } else {
+      try {
+        paymentResponse = await PaymentIntentManager.createWithCleanup({
+          amount,
+          currency,
+          metadata: buildPaymentMetadata(validatedData, userId),
+          paymentGateway: validatedData.paymentGateway,
+          isMockPayment,
+        });
+      } catch (paymentError) {
+        console.error("Payment intent creation failed:", paymentError);
+        throw new Error(
+          "Failed to create payment intent. Please try again later.",
+        );
+      }
     }
 
     // STEP 5: Create tentative appointment + payment record (INSIDE LOCK)
@@ -1568,6 +1605,10 @@ export async function handleCheckout(
         async (tx) => {
           let createdAppointment;
 
+          // FIX #520: Zero-amount payments (credits cover full cost) skip the
+          // gateway, so slots should be confirmed immediately just like mock payments.
+          const skipPayment = isMockPayment || isZeroAmountPayment;
+
           // Create appointment based on type (with isTentative flag)
           switch (validatedData.appointmentType) {
             case "CONSULTATION": {
@@ -1576,7 +1617,7 @@ export async function handleCheckout(
                 validatedData,
                 consulteeProfileId,
                 userId,
-                isMockPayment, // skipPayment = isMockPayment
+                skipPayment,
               );
               createdAppointment = consultationResult.appointment;
               break;
@@ -1587,7 +1628,7 @@ export async function handleCheckout(
                 tx,
                 validatedData,
                 consulteeProfileId,
-                isMockPayment,
+                skipPayment,
               );
               // Use placeholder appointment for payment linkage
               // This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)
@@ -1600,7 +1641,7 @@ export async function handleCheckout(
                 tx,
                 validatedData,
                 userId,
-                isMockPayment,
+                skipPayment,
               );
               createdAppointment = webinarResult.appointment;
               break;
@@ -1611,7 +1652,7 @@ export async function handleCheckout(
                 tx,
                 validatedData,
                 userId,
-                isMockPayment,
+                skipPayment,
               );
               // Class creates slots across multiple appointments
               // Use first appointment for payment linkage
@@ -1633,29 +1674,26 @@ export async function handleCheckout(
               originalAmount,
               taxAmount,
               currency,
-              paymentMethod: "CARD",
+              paymentMethod: isZeroAmountPayment ? "CREDITS" : "CARD",
               paymentIntent: paymentResponse!.id,
               paymentGateway: validatedData.paymentGateway,
-              paymentStatus: PaymentStatus.PENDING,
-              isMockPayment,
+              // FIX #520: Zero-amount and mock payments succeed immediately (no webhook)
+              paymentStatus: skipPayment
+                ? PaymentStatus.SUCCEEDED
+                : PaymentStatus.PENDING,
+              isMockPayment: isMockPayment || isZeroAmountPayment,
               userId: userId,
               appointmentId: createdAppointment?.id || null,
               discountCodeId,
-              expiresAt: new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
+              expiresAt: skipPayment
+                ? null
+                : new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
               buyerCountry: detectedBuyerCountry,
               isInternational,
               displayCurrencyAtCheckout,
               exchangeRateAtCheckout,
             },
           });
-
-          // FIX Issue #6: Update mock payment status directly (no webhook for mock payments)
-          if (isMockPayment) {
-            await tx.payment.update({
-              where: { id: payment.id },
-              data: { paymentStatus: PaymentStatus.SUCCEEDED },
-            });
-          }
 
           // Increment discount code usage count atomically (only after payment is created)
           // This ensures count only increases when payment is successfully created
@@ -1718,9 +1756,11 @@ export async function handleCheckout(
         },
       );
 
-      const logMessage = isMockPayment
-        ? `🎭 Mock payment + tentative appointment created: ${paymentResponse.id}`
-        : `💳 Payment intent + tentative appointment created: ${paymentResponse.id} - Waiting for payment confirmation`;
+      const logMessage = isZeroAmountPayment
+        ? `🎁 Zero-amount payment (credits covered full cost) + appointment created: ${paymentResponse.id}`
+        : isMockPayment
+          ? `🎭 Mock payment + tentative appointment created: ${paymentResponse.id}`
+          : `💳 Payment intent + tentative appointment created: ${paymentResponse.id} - Waiting for payment confirmation`;
 
       console.log(logMessage);
       console.log(
@@ -1733,10 +1773,10 @@ export async function handleCheckout(
         }),
       );
 
-      // Mock payment post-processing: referral qualifying action + waitlist
+      // Mock/zero-amount payment post-processing: referral qualifying action + waitlist
       // Real payments handle this via handlePaymentSuccess() in the webhook,
-      // but mock payments bypass webhooks entirely.
-      if (isMockPayment) {
+      // but mock and zero-amount payments bypass webhooks entirely.
+      if (isMockPayment || isZeroAmountPayment) {
         // Trigger referral reward if this is the user's first paid booking
         try {
           await processQualifyingAction(userId, "first_paid_booking");
@@ -1855,6 +1895,77 @@ export async function handleCheckout(
           );
         }
 
+        // FIX #437: Consultant qualifying action (receiving first paid booking)
+        try {
+          const paymentForConsultantRef = await prisma.payment.findUnique({
+            where: { paymentIntent: paymentResponse!.id },
+            include: {
+              appointment: {
+                include: {
+                  consultation: {
+                    include: {
+                      consultationPlan: {
+                        select: {
+                          consultantProfile: { select: { userId: true } },
+                        },
+                      },
+                    },
+                  },
+                  subscription: {
+                    include: {
+                      subscriptionPlan: {
+                        select: {
+                          consultantProfile: { select: { userId: true } },
+                        },
+                      },
+                    },
+                  },
+                  webinar: {
+                    select: {
+                      webinarPlan: {
+                        select: {
+                          consultantProfile: { select: { userId: true } },
+                        },
+                      },
+                    },
+                  },
+                  class: {
+                    select: {
+                      classPlan: {
+                        select: {
+                          consultantProfile: { select: { userId: true } },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          });
+
+          const consultantUserId =
+            paymentForConsultantRef?.appointment?.consultation?.consultationPlan
+              ?.consultantProfile?.userId ||
+            paymentForConsultantRef?.appointment?.subscription?.subscriptionPlan
+              ?.consultantProfile?.userId ||
+            paymentForConsultantRef?.appointment?.webinar?.webinarPlan
+              ?.consultantProfile?.userId ||
+            paymentForConsultantRef?.appointment?.class?.classPlan
+              ?.consultantProfile?.userId;
+
+          if (consultantUserId && consultantUserId !== userId) {
+            await processQualifyingAction(
+              consultantUserId,
+              "first_paid_booking_received",
+            );
+          }
+        } catch (consultantRefError) {
+          console.error(
+            `⚠️ Failed to process consultant referral qualifying action:`,
+            consultantRefError,
+          );
+        }
+
         // Update waitlist status if coming from waitlist flow
         if (validatedData.fromWaitlist) {
           try {
@@ -1876,18 +1987,22 @@ export async function handleCheckout(
       return {
         success: true,
         paymentIntent: paymentResponse,
-        message: isMockPayment
-          ? "Mock payment completed and appointment created successfully"
-          : "Payment intent created. Complete payment to book appointment.",
+        message: isZeroAmountPayment
+          ? "Payment completed via referral credits. Appointment booked successfully."
+          : isMockPayment
+            ? "Mock payment completed and appointment created successfully"
+            : "Payment intent created. Complete payment to book appointment.",
         amount,
         currency,
-        isMockPayment,
+        isMockPayment: isMockPayment || isZeroAmountPayment,
+        isZeroAmountPayment,
       };
     } catch (dbError) {
       console.error("Failed to create payment record:", dbError);
 
       // CRITICAL: Cancel payment intent since DB operation failed
-      if (paymentResponse) {
+      // (Skip cleanup for zero-amount payments — they have no real gateway intent)
+      if (paymentResponse && !isZeroAmountPayment) {
         await PaymentIntentManager.cleanup(
           paymentResponse.id,
           "Database operation failed - preventing orphaned payment intent",

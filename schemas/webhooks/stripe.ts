@@ -90,6 +90,38 @@ export const stripeSubscriptionCreatedEventSchema =
     }),
   });
 
+// Checkout Session schema (session.id is the cs_... stored in Payment.paymentIntent)
+const checkoutSessionSchema = z.object({
+  id: z.string(), // cs_... ID — matches Payment.paymentIntent
+  object: z.literal("checkout.session"),
+  payment_intent: z.string().nullable(), // pi_... ID — the underlying PaymentIntent
+  payment_status: z.string(), // "paid", "unpaid", "no_payment_required"
+  status: z.string(), // "complete", "expired", "open"
+  metadata: metadataSchema,
+  amount_total: z.number().nullable(),
+  currency: z.string().nullable(),
+});
+
+// FIX CF-3: Checkout Session Completed event
+// This is the correct event for Stripe Checkout Sessions.
+// The session.id (cs_...) is what we store in Payment.paymentIntent.
+export const stripeCheckoutSessionCompletedEventSchema =
+  stripeBaseEventSchema.extend({
+    type: z.literal("checkout.session.completed"),
+    data: z.object({
+      object: checkoutSessionSchema,
+    }),
+  });
+
+// Checkout Session Expired event (session timed out without payment)
+export const stripeCheckoutSessionExpiredEventSchema =
+  stripeBaseEventSchema.extend({
+    type: z.literal("checkout.session.expired"),
+    data: z.object({
+      object: checkoutSessionSchema,
+    }),
+  });
+
 export type StripePaymentIntentSucceededEvent = z.infer<
   typeof stripePaymentIntentSucceededEventSchema
 >;
@@ -101,4 +133,10 @@ export type StripeInvoicePaidEvent = z.infer<
 >;
 export type StripeSubscriptionCreatedEvent = z.infer<
   typeof stripeSubscriptionCreatedEventSchema
+>;
+export type StripeCheckoutSessionCompletedEvent = z.infer<
+  typeof stripeCheckoutSessionCompletedEventSchema
+>;
+export type StripeCheckoutSessionExpiredEvent = z.infer<
+  typeof stripeCheckoutSessionExpiredEventSchema
 >;

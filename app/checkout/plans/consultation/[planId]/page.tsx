@@ -337,12 +337,15 @@ export default function ConsultationCheckoutPage({
 
         // handleCheckout is only invoked by the dev-only Mock Pay button (isMockPayment=true).
         // Real payments go through StripeCheckout/RazorpayCheckout components.
-        if (data.skipPayment || data.isMockPayment) {
+        // FIX #520: Also handle zero-amount payments (credits covered full cost)
+        if (data.skipPayment || data.isMockPayment || data.isZeroAmountPayment) {
           toast({
             title: "✅ Consultation Booked Successfully!",
-            description: data.isMockPayment
-              ? "Mock payment processed. Your consultation has been confirmed. Check your dashboard for details."
-              : "Your consultation has been confirmed. Check your dashboard for details.",
+            description: data.isZeroAmountPayment
+              ? "Payment completed via referral credits. Your consultation has been confirmed."
+              : data.isMockPayment
+                ? "Mock payment processed. Your consultation has been confirmed. Check your dashboard for details."
+                : "Your consultation has been confirmed. Check your dashboard for details.",
             variant: "default",
           });
 

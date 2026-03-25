@@ -172,24 +172,10 @@ export async function applyReferralCode(
           data: { totalReferrals: { increment: 1 } },
         });
 
-        // Give referee immediate welcome bonus
-        const refereeReward = ref.refereeRewardAmount;
-        if (refereeReward && refereeReward > 0) {
-          const expiresAt = new Date();
-          expiresAt.setMonth(expiresAt.getMonth() + CREDIT_EXPIRY_MONTHS);
-
-          await tx.referralCredit.create({
-            data: {
-              userId: newUserId,
-              amount: refereeReward,
-              currency: "INR",
-              source: "REFEREE_BONUS",
-              referralId: ref.id,
-              remainingAmount: refereeReward,
-              expiresAt,
-            },
-          });
-        }
+        // FIX #437: Referee bonus is NO LONGER given immediately on signup.
+        // Both referee (₹200) and referrer (₹500) bonuses are now deferred
+        // until the referred user's first paid booking via processQualifyingAction().
+        // This eliminates fake account farming (previously ₹200/account with zero revenue).
 
         return ref;
       },
@@ -244,6 +230,8 @@ export async function processQualifyingAction(
             qualifiedAt: new Date(),
             qualifyingAction: action,
             referrerRewardPaidAt: new Date(),
+            // FIX #437: Both bonuses awarded together on first paid booking
+            refereeRewardPaidAt: new Date(),
           },
         });
 
@@ -274,6 +262,27 @@ export async function processQualifyingAction(
             data: {
               successfulReferrals: { increment: 1 },
               totalEarned: { increment: referrerReward },
+            },
+          });
+        }
+
+        // FIX #437: Give referee their bonus (deferred from signup)
+        // Previously given immediately in applyReferralCode, now deferred to
+        // first paid booking to prevent fake account farming.
+        const refereeReward = referral.refereeRewardAmount;
+        if (refereeReward && refereeReward > 0) {
+          const expiresAt = new Date();
+          expiresAt.setMonth(expiresAt.getMonth() + CREDIT_EXPIRY_MONTHS);
+
+          await tx.referralCredit.create({
+            data: {
+              userId: referral.referredUserId,
+              amount: refereeReward,
+              currency: "INR",
+              source: "REFEREE_BONUS",
+              referralId: referral.id,
+              remainingAmount: refereeReward,
+              expiresAt,
             },
           });
         }

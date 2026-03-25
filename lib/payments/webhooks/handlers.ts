@@ -382,13 +382,80 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     );
   }
 
-  // --- Referral qualifying action (first paid booking triggers referrer reward) ---
+  // --- Referral qualifying action (first paid booking triggers both bonuses) ---
+  // FIX #437: Process for the buyer (consultee) — their first paid booking qualifies their referral
   try {
     await processQualifyingAction(userId, "first_paid_booking");
   } catch (referralError) {
     console.error(
       `⚠️ Failed to process referral qualifying action for user ${userId}:`,
       referralError,
+    );
+  }
+
+  // FIX #437: Also process for the consultant (service provider) — receiving their first
+  // paid booking qualifies their referral too. This fixes the broken Consultant→Consultant
+  // referral scenario where consultants never trigger qualification because they don't
+  // make bookings, they receive them.
+  try {
+    const paymentForConsultant = await prisma.payment.findUnique({
+      where: { id: paymentId },
+      include: {
+        appointment: {
+          include: {
+            consultation: {
+              include: {
+                consultationPlan: {
+                  select: { consultantProfile: { select: { userId: true } } },
+                },
+              },
+            },
+            subscription: {
+              include: {
+                subscriptionPlan: {
+                  select: { consultantProfile: { select: { userId: true } } },
+                },
+              },
+            },
+            webinar: {
+              select: {
+                webinarPlan: {
+                  select: { consultantProfile: { select: { userId: true } } },
+                },
+              },
+            },
+            class: {
+              select: {
+                classPlan: {
+                  select: { consultantProfile: { select: { userId: true } } },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const consultantUserId =
+      paymentForConsultant?.appointment?.consultation?.consultationPlan
+        ?.consultantProfile?.userId ||
+      paymentForConsultant?.appointment?.subscription?.subscriptionPlan
+        ?.consultantProfile?.userId ||
+      paymentForConsultant?.appointment?.webinar?.webinarPlan
+        ?.consultantProfile?.userId ||
+      paymentForConsultant?.appointment?.class?.classPlan?.consultantProfile
+        ?.userId;
+
+    if (consultantUserId && consultantUserId !== userId) {
+      await processQualifyingAction(
+        consultantUserId,
+        "first_paid_booking_received",
+      );
+    }
+  } catch (consultantReferralError) {
+    console.error(
+      `⚠️ Failed to process consultant referral qualifying action:`,
+      consultantReferralError,
     );
   }
 

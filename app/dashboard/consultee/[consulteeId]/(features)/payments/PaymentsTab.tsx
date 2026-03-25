@@ -396,10 +396,9 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                                       size="sm"
                                       className="text-zinc-500 hover:text-zinc-900"
                                       onClick={() => {
-                                        // TODO: Replace with actual PDF download when @react-pdf/renderer is integrated
-                                        // Will call: GET /api/invoices/{invoice.id}/pdf
-                                        window.alert(
-                                          `PDF download coming soon.\n\nInvoice: ${invoice.invoiceNumber}\nAmount: ${formatCurrencyFromMajorUnit(invoice.amount, "INR")}`,
+                                        window.open(
+                                          `/api/invoices/${invoice.id}/pdf`,
+                                          "_blank",
                                         );
                                       }}
                                     >
