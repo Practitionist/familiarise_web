@@ -226,6 +226,16 @@ export default function SubscriptionCheckoutPage({
           );
         }
 
+        // Staleness check: verify scheduling period hasn't expired
+        const periodEnd = new Date(
+          searchParamsValidation.data.schedulingPeriodEndsAt,
+        );
+        if (periodEnd.getTime() < Date.now()) {
+          throw new Error(
+            "The scheduling period has expired. Please go back and select new dates.",
+          );
+        }
+
         // Create checkout data using the shared utility with scheduling period
         const checkoutData = createCheckoutData({
           appointmentType: "SUBSCRIPTION",
@@ -412,6 +422,25 @@ export default function SubscriptionCheckoutPage({
     availableCredits,
     checkoutTaxContext.isInternational,
   ]);
+
+  // Periodic staleness check: warn if scheduling period has expired
+  useEffect(() => {
+    const periodEndStr = resolvedSearchParams.schedulingPeriodEndsAt;
+    if (!periodEndStr || typeof periodEndStr !== "string") return;
+
+    const checkStaleness = () => {
+      const periodEnd = new Date(periodEndStr);
+      if (periodEnd.getTime() < Date.now()) {
+        setError(
+          "The scheduling period has expired. Please go back and select new dates.",
+        );
+      }
+    };
+
+    checkStaleness();
+    const intervalId = setInterval(checkStaleness, 60_000);
+    return () => clearInterval(intervalId);
+  }, [resolvedSearchParams.schedulingPeriodEndsAt]);
 
   if (isLoading) {
     return (

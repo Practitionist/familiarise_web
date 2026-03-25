@@ -371,6 +371,26 @@ export default function ClassCheckoutPage({
     checkoutTaxContext.isInternational,
   ]);
 
+  // Periodic staleness check: detect if all class sessions have ended or been cancelled
+  useEffect(() => {
+    if (!planData?.data?.classes) return;
+
+    const checkStaleness = () => {
+      const hasAvailable = planData.data.classes.some(
+        (c) => c.status === "SCHEDULED" || c.status === "IN_PROGRESS",
+      );
+      if (!hasAvailable) {
+        setError(
+          "No available class sessions. All sessions may be full, cancelled, or completed.",
+        );
+      }
+    };
+
+    checkStaleness();
+    const intervalId = setInterval(checkStaleness, 60_000);
+    return () => clearInterval(intervalId);
+  }, [planData]);
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-screen bg-zinc-50">
