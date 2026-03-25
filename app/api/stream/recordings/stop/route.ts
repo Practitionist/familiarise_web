@@ -10,6 +10,7 @@ import { z } from "zod";
 import { RecordingService } from "@/lib/stream/recording-service";
 import { getMeetingSessionOwnershipInfo } from "@/lib/stream/recording-utils";
 import prisma from "@/lib/prisma";
+import { streamLogger } from "@/lib/stream-logger";
 
 import { getSession } from "@/lib/auth-server";
 const stopRecordingSchema = z.object({
@@ -77,10 +78,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Look up consultant profile for the logged-in user
+    const consultantProfile = await prisma.consultantProfile.findUnique({
+      where: { userId: session.user.id },
+      select: { id: true },
+    });
+
     // Verify the consultant owns this appointment using helper function
     const { isOwner } = getMeetingSessionOwnershipInfo(
       meetingSession,
-      session.user.consultantProfileId,
+      consultantProfile?.id,
     );
 
     if (!isOwner) {
@@ -90,11 +97,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Check if recording is active
-    if (!meetingSession.isRecording) {
+    // Atomically set isRecording=false (prevents race condition with concurrent requests)
+    const updated = await prisma.meetingSession.updateMany({
+      where: { id: meetingSessionId, isRecording: true },
+      data: { isRecording: false },
+    });
+
+    if (updated.count === 0) {
       return NextResponse.json(
         { error: "No recording in progress" },
-        { status: 400 },
+        { status: 409 },
       );
     }
 
@@ -108,20 +120,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Update meeting session (webhook will also update, but we update immediately for UI)
-    await prisma.meetingSession.update({
-      where: { id: meetingSessionId },
-      data: {
-        isRecording: false,
-      },
-    });
-
     return NextResponse.json({
       success: true,
       message: "Recording stopped",
     });
   } catch (error) {
-    console.error("Error stopping recording:", error);
+    streamLogger.error("Error stopping recording", error);
 
     if (error instanceof z.ZodError) {
       return NextResponse.json(

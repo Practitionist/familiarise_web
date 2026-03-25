@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import Image from "next/image";
@@ -16,8 +17,12 @@ import {
   Award,
   CheckCircle2,
   ArrowLeft,
-  Play,
 } from "lucide-react";
+import { formatInTimeZone } from "date-fns-tz";
+import {
+  buildSessionsFromAppointments,
+  groupSessionsByWeek,
+} from "@/app/explore/programs/plans/schedule-utils";
 import { ClientClassRegistration } from "./ClientClassRegistration";
 import { useCurrency } from "@/hooks/useCurrency";
 import type { Topic } from "@prisma/client";
@@ -39,6 +44,10 @@ interface ClassDetailsProps {
 
 export function ClassDetails({ plan }: ClassDetailsProps) {
   const { formatPrice } = useCurrency();
+  const [userTimeZone, setUserTimeZone] = useState("UTC");
+  useEffect(() => {
+    setUserTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
+  }, []);
 
   return (
     <main className="min-h-screen bg-zinc-50">
@@ -238,86 +247,90 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                   Class Schedule
                 </h2>
                 {plan.classes && plan.classes.length > 0 ? (
-                  <div className="space-y-4">
-                    {plan.classes.map((classInstance, classIndex) => (
-                      <div
-                        key={classInstance.id}
-                        className="p-4 border border-zinc-200 rounded-xl"
-                      >
-                        {plan.classes.length > 1 && (
-                          <h3 className="font-medium text-zinc-900 mb-3">
-                            Batch {classIndex + 1}
-                          </h3>
-                        )}
-                        {classInstance.appointments?.length > 0 ? (
-                          classInstance.appointments.map((appointment) => (
-                            <div key={appointment.id} className="space-y-2">
-                              {appointment.slotsOfAppointment?.length > 0 ? (
-                                appointment.slotsOfAppointment.map(
-                                  (slot, slotIndex) => {
-                                    const startTime = new Date(slot.startsAt);
-                                    const userTimeZone =
-                                      Intl.DateTimeFormat().resolvedOptions()
-                                        .timeZone;
-                                    const formattedStartTime =
-                                      new Intl.DateTimeFormat(
-                                        navigator.language,
-                                        {
-                                          dateStyle: "full",
-                                          timeStyle: "long",
-                                          timeZone: userTimeZone,
-                                        },
-                                      ).format(startTime);
+                  <div className="space-y-6">
+                    {plan.classes.map((classInstance, classIndex) => {
+                      const sessions = buildSessionsFromAppointments(
+                        classInstance.appointments ?? [],
+                      );
+                      const weeks = groupSessionsByWeek(sessions);
 
-                                    const now = new Date();
-                                    const endTime = slot.endsAt
-                                      ? new Date(slot.endsAt)
-                                      : null;
-                                    let status = "Upcoming";
-                                    if (endTime && now > endTime) {
-                                      status = "Completed";
-                                    } else if (
-                                      now >= startTime &&
-                                      (!endTime || now < endTime)
-                                    ) {
-                                      status = "Happening Now";
-                                    }
-
-                                    return (
-                                      <div
-                                        key={slot.id}
-                                        className="flex items-center justify-between p-3 bg-zinc-50 rounded-lg"
-                                      >
-                                        <div className="flex items-center gap-3">
-                                          <Play className="w-4 h-4 text-zinc-400" />
-                                          <span className="text-sm text-zinc-700">
-                                            Session {slotIndex + 1}:{" "}
-                                            {formattedStartTime}
-                                          </span>
-                                        </div>
-                                        <Badge
-                                          variant={getBadgeVariant(status)}
+                      return (
+                        <div
+                          key={classInstance.id}
+                          className="p-4 border border-zinc-200 rounded-xl"
+                        >
+                          {plan.classes.length > 1 && (
+                            <h3 className="font-medium text-zinc-900 mb-4">
+                              Batch {classIndex + 1}
+                            </h3>
+                          )}
+                          {sessions.length > 0 ? (
+                            <div className="space-y-4">
+                              {Array.from(weeks.entries()).map(
+                                ([weekNum, weekSessions]) => (
+                                  <div key={weekNum}>
+                                    <h4 className="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-2 px-1">
+                                      Week {weekNum}
+                                    </h4>
+                                    <div className="space-y-2">
+                                      {weekSessions.map((session) => (
+                                        <div
+                                          key={session.appointmentId}
+                                          className={`flex items-center justify-between p-3 rounded-lg ${
+                                            session.status === "Completed"
+                                              ? "bg-zinc-50 opacity-60"
+                                              : "bg-zinc-50"
+                                          }`}
                                         >
-                                          {status}
-                                        </Badge>
-                                      </div>
-                                    );
-                                  },
-                                )
-                              ) : (
-                                <p className="text-sm text-zinc-500">
-                                  Schedule to be announced
-                                </p>
+                                          <div className="flex items-center gap-3">
+                                            <div className="w-7 h-7 rounded-full bg-zinc-200 text-zinc-700 flex items-center justify-center text-xs font-semibold flex-shrink-0">
+                                              {session.sessionNumber}
+                                            </div>
+                                            <div className="text-sm">
+                                              <span className="font-medium text-zinc-800">
+                                                {formatInTimeZone(
+                                                  session.sessionStart,
+                                                  userTimeZone,
+                                                  "EEEE, MMMM d",
+                                                )}
+                                              </span>
+                                              <span className="text-zinc-500 ml-2">
+                                                {formatInTimeZone(
+                                                  session.sessionStart,
+                                                  userTimeZone,
+                                                  "h:mm a",
+                                                )}
+                                                {" – "}
+                                                {formatInTimeZone(
+                                                  session.sessionEnd,
+                                                  userTimeZone,
+                                                  "h:mm a zzz",
+                                                )}
+                                              </span>
+                                            </div>
+                                          </div>
+                                          <Badge
+                                            variant={getBadgeVariant(
+                                              session.status,
+                                            )}
+                                          >
+                                            {session.status}
+                                          </Badge>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ),
                               )}
                             </div>
-                          ))
-                        ) : (
-                          <p className="text-sm text-zinc-500">
-                            Schedule to be announced
-                          </p>
-                        )}
-                      </div>
-                    ))}
+                          ) : (
+                            <p className="text-sm text-zinc-500">
+                              Schedule to be announced
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : (
                   <p className="text-zinc-500">

@@ -9,6 +9,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { RecordingService } from "@/lib/stream/recording-service";
+import prisma from "@/lib/prisma";
 
 import { getSession } from "@/lib/auth-server";
 export async function POST(_req: NextRequest) {
@@ -32,7 +33,11 @@ export async function POST(_req: NextRequest) {
 
     if (session.user.role === "CONSULTANT") {
       // Consultant syncs their own sessions
-      const consultantProfileId = session.user.consultantProfileId;
+      const consultantProfile = await prisma.consultantProfile.findUnique({
+        where: { userId: session.user.id },
+        select: { id: true },
+      });
+      const consultantProfileId = consultantProfile?.id;
       if (!consultantProfileId) {
         return NextResponse.json(
           { error: "Consultant profile not found" },
@@ -44,7 +49,11 @@ export async function POST(_req: NextRequest) {
         await RecordingService.syncRecordingsForConsultant(consultantProfileId);
     } else if (session.user.role === "CONSULTEE") {
       // Consultee syncs their enrolled sessions
-      const consulteeProfileId = session.user.consulteeProfileId;
+      const consulteeProfile = await prisma.consulteeProfile.findUnique({
+        where: { userId: session.user.id },
+        select: { id: true },
+      });
+      const consulteeProfileId = consulteeProfile?.id;
       if (!consulteeProfileId) {
         return NextResponse.json(
           { error: "Consultee profile not found" },

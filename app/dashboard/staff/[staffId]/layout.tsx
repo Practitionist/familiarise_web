@@ -28,6 +28,7 @@ import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 import { signOut, useSession } from "@/lib/auth-client";
+import { disconnectStreamClients } from "@/providers/StreamProvider";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -96,7 +97,12 @@ export default function StaffDashboardLayout({
   // Sync user as Novu subscriber (once per session)
   useNovuSubscriberSync();
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
+    try {
+      await disconnectStreamClients();
+    } catch {
+      // Don't block sign-out if disconnect fails
+    }
     signOut({
       fetchOptions: {
         onSuccess: () => {

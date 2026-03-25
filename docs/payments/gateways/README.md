@@ -2,41 +2,51 @@
 
 > Overview of Familiarise's payment gateway integrations, selection logic, and configuration.
 
-**Last Updated**: 2026-02-14
+**Last Updated**: 2026-03-19
 
 ---
 
 ## Overview
 
-Familiarise uses two payment gateways to serve customers globally:
+Familiarise uses **Razorpay as the sole payment gateway** for both domestic and international payments:
 
-| Gateway      | Region        | Currency | Payouts Product          |
-| ------------ | ------------- | -------- | ------------------------ |
-| **Razorpay** | India         | INR      | RazorpayX Payouts        |
-| **Stripe**   | International | USD      | Stripe Connect (Express) |
+| Gateway      | Region                    | Currency | Payouts Product   |
+| ------------ | ------------------------- | -------- | ----------------- |
+| **Razorpay** | India + International     | INR      | RazorpayX Payouts |
 
-Two additional gateways are registered in the codebase but **not yet production-ready**:
+### Previously Evaluated & Removed
 
-- **Lemon Squeezy** — awaiting KYC completion
-- **XFlow** — awaiting production readiness
+| Gateway | Status | Reason |
+|---------|--------|--------|
+| Stripe | **Removed** | Invite-only in India since May 2024, no UPI, 5–6% international fees |
+| Lemon Squeezy | **Removed** | Services explicitly prohibited in ToS, no UPI, 6.5%+ fees |
+| Xflow | **Removed (for now)** | Not a gateway — cross-border B2B settlement. Revisit when international > Rs 5L/month |
+
+### Future Consideration
+
+| Gateway | When | Why |
+|---------|------|-----|
+| Cashfree | Month 3-6 | Cheaper fees (1.6–1.95% vs 2%), better split fees (0.1% vs 0.25%) |
+| Xflow | International > Rs 5L/mo | 0% FX markup, auto eFIRA, JP Morgan rails |
+| Wise Business | International payouts | Best FX rates for paying international consultants |
+
+> See [gateway-evaluation-mar-2026.md](./gateway-evaluation-mar-2026.md) for the full analysis.
 
 ---
 
 ## Gateway Selection
 
-Gateway selection is **user-driven** via the checkout UI. The customer explicitly picks which gateway to use during checkout.
-
-**Currency is forced by gateway**:
-
-- Razorpay selected → currency locked to **INR**
-- Stripe selected → currency locked to **USD**
+All payments route through **Razorpay**. Currency is always **INR** — Razorpay handles FX conversion for international payments via IBT (International Bank Transfer at 1% + GST).
 
 **Gateway detection from payment IDs**:
 
 | ID Prefix          | Gateway  |
 | ------------------ | -------- |
-| `cs_` or `pi_`     | Stripe   |
 | `order_` or `pay_` | Razorpay |
+
+**Buyer location detection** determines tax treatment:
+- Indian buyer → Plan price + 18% GST
+- International buyer → Plan price only (zero-rated export)
 
 **Source files**:
 
@@ -46,18 +56,22 @@ Gateway selection is **user-driven** via the checkout UI. The customer explicitl
 
 ---
 
-## Feature Comparison
+## Razorpay Features
 
-| Feature             | Razorpay                                          | Stripe                                          |
-| ------------------- | ------------------------------------------------- | ----------------------------------------------- |
-| **Checkout**        | Order → Modal (client-side SDK)                   | Checkout Session → Redirect (hosted page)       |
-| **Refunds**         | Full API (create, get, list)                      | Full API (create, get, list)                    |
-| **Disputes**        | Webhook-only (no API management)                  | Full API (get, submit evidence, list)           |
-| **Payouts**         | RazorpayX: Contacts + Fund Accounts + Payouts API | Stripe Connect: Express accounts + Transfers    |
-| **KYC**             | Platform collects data, creates accounts via API  | Stripe handles everything via hosted onboarding |
-| **Payment methods** | Cards, UPI, Net Banking, Wallets, EMI             | Cards, Apple Pay, Google Pay, ACH, SEPA         |
-| **Gateway fee**     | ~2% + 18% GST (~2.36%)                            | 2.9% + $0.30 (US), varies by region             |
-| **Settlement**      | T+2 business days                                 | 2-7 business days (varies by country)           |
+| Feature | Details |
+| ------- | ------- |
+| **Checkout** | Order → Modal (client-side SDK) |
+| **Refunds** | Full API (create, get, list). Original PG fee NOT reversed. |
+| **Disputes** | Webhook-only (no API management). ~Rs 500/chargeback. |
+| **Payouts** | RazorpayX: Contacts + Fund Accounts + Payouts API, auto-TDS |
+| **KYC** | Platform collects data, creates accounts via API |
+| **Payment methods** | Cards, UPI (0%), Net Banking, Wallets, EMI, BNPL, RuPay |
+| **Domestic fee** | UPI: 0% / Cards: 2% + 18% GST (~2.36%) |
+| **International fee** | Cards: 3% + GST / IBT: 1% + GST |
+| **Settlement** | T+2 business days (instant available for ~1% extra) |
+| **Marketplace** | Route: linked accounts, auto-splits, escrow-like hold/release |
+| **Subscriptions** | UPI Autopay, e-Mandate, card recurring (RBI-compliant) |
+| **RBI Licenses** | PA-O + PA-P + PA-CB (full house) |
 
 ---
 
@@ -69,14 +83,14 @@ A **flat 20% platform fee** applies to all consultants regardless of appointment
 Customer pays amount
     |
     v
-Gateway deducts fee (Razorpay ~2.36% / Stripe ~3.2%)
+Razorpay deducts PG fee (~2.36% domestic / ~3.54% intl cards / ~1.18% IBT)
     |
     v
 Net amount to platform
     |
     +---> Platform keeps 20% of net
     |
-    +---> Consultant receives 80% of net
+    +---> Consultant receives 80% of net (minus TDS if over ₹50K/yr)
 ```
 
 **Source**: `lib/payments/payouts/constants.ts` (`PLATFORM_FEE_PERCENTAGE: 20`)
@@ -102,21 +116,6 @@ Net amount to platform
 | `RAZORPAYX_ACCOUNT_NUMBER` | RazorpayX account number for payouts                   |
 | `RAZORPAYX_WEBHOOK_SECRET` | RazorpayX webhook signature verification               |
 
-### Stripe (Payments)
-
-| Variable                 | Purpose                        |
-| ------------------------ | ------------------------------ |
-| `STRIPE_SECRET_KEY`      | Server-side secret key         |
-| `STRIPE_WEBHOOK_SECRET`  | Webhook signature verification |
-| `NEXT_PUBLIC_STRIPE_KEY` | Client-side publishable key    |
-
-### Stripe Connect (Payouts)
-
-| Variable                        | Purpose                                |
-| ------------------------------- | -------------------------------------- |
-| `STRIPE_CONNECT_CLIENT_ID`      | OAuth client ID for Connect            |
-| `STRIPE_CONNECT_WEBHOOK_SECRET` | Connect webhook signature verification |
-
 ---
 
 ## Shared Infrastructure
@@ -135,6 +134,10 @@ Both gateways share a common abstraction layer:
 
 ## Documentation
 
+### Gateway Evaluation
+
+- [gateway-evaluation-mar-2026.md](./gateway-evaluation-mar-2026.md) — Full gateway comparison: Razorpay, Cashfree, Stripe, Lemon Squeezy, Xflow, Dodo, Polar
+
 ### Razorpay
 
 - [01-setup.md](./razorpay/01-setup.md) — Account setup, env vars, dashboard config, testing
@@ -142,7 +145,7 @@ Both gateways share a common abstraction layer:
 - [03-payout-flow.md](./razorpay/03-payout-flow.md) — RazorpayX Payouts: Contacts, Fund Accounts, payout lifecycle
 - [04-kyc-and-onboarding.md](./razorpay/04-kyc-and-onboarding.md) — KYC requirements and onboarding checklist
 
-### Stripe
+### Stripe (Historical — Removed)
 
 - [01-setup.md](./stripe/01-setup.md) — Account setup, env vars, dashboard config, testing
 - [02-architecture-and-flow.md](./stripe/02-architecture-and-flow.md) — Checkout Sessions flow, revenue split, webhook events
@@ -156,3 +159,4 @@ Both gateways share a common abstraction layer:
 - [Status Enums Reference](../03-status-enums-reference.md) — PaymentStatus, RefundStatus, DisputeStatus
 - [Payouts](../payouts/README.md) — Payout algorithm, earnings lifecycle, batch processing
 - [Webhooks](../webhooks/README.md) — Webhook monitoring and schemas
+- [Tax Compliance — Marketplace Obligations](../../finances/08-tax-compliance-marketplace-obligations.md) — GST, TCS, TDS, Section 44AD, cross-border compliance

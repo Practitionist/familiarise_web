@@ -203,6 +203,8 @@ export async function POST(request: NextRequest) {
       consultantProfileId,
       topicIds,
       classContents,
+      recordingEnabled,
+      recordingStoragePolicy,
     } = body;
 
     // Input validation
@@ -264,6 +266,8 @@ export async function POST(request: NextRequest) {
         prerequisites,
         materialProvided,
         learningOutcomes,
+        recordingEnabled: recordingEnabled ?? false,
+        recordingStoragePolicy: recordingStoragePolicy ?? "STREAM_ONLY",
         consultantProfile: { connect: { id: consultantProfileId } },
         topics: topicIds
           ? { connect: topicIds.map((id: string) => ({ id })) }

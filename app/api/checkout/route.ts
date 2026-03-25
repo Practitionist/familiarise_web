@@ -8,6 +8,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import { checkoutLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { ZodError } from "zod";
+import { routeGateway } from "@/lib/payments/gateway-router";
+import { resolveCheckoutTaxContext } from "@/lib/payments/tax/checkout-context";
 
 export async function POST(req: NextRequest) {
   try {
@@ -28,12 +30,38 @@ export async function POST(req: NextRequest) {
     const isMockPayment =
       body.isMockPayment === true && process.env.NODE_ENV === "development";
 
+    const { buyerCountry } = await resolveCheckoutTaxContext({
+      userId: session.user.id,
+      headers: req.headers,
+    });
+
+    // Auto-route to optimal gateway (Razorpay domestic/IBT, Stripe fallback)
+    const gatewayRouting = routeGateway({
+      buyerCountry,
+      requestedGateway: validatedData.paymentGateway,
+    });
+
+    // Override gateway with auto-routed selection
+    validatedData.paymentGateway = gatewayRouting.gateway;
+
+    console.log(
+      JSON.stringify({
+        event: "checkout_gateway_routed",
+        buyerCountry,
+        gateway: gatewayRouting.gateway,
+        isIBT: gatewayRouting.isIBT,
+        reason: gatewayRouting.reason,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+
     // Unified checkout flow: Create payment first, then appointment via webhook
     // Supports both real and mock payments via isMockPayment flag
     const result = await handleCheckout(
       validatedData,
       session.user.id,
       isMockPayment,
+      buyerCountry,
     );
     return NextResponse.json(result);
   } catch (error) {

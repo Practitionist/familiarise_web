@@ -176,10 +176,10 @@ describe("Channel Actions", () => {
 
       const result = await createDirectMessageChannel("bob", "alice");
 
-      expect(result.channelId).toBe("alice-bob");
+      expect(result.channelId).toBe("dm-alice-bob");
       expect(mockStreamClient.channel).toHaveBeenCalledWith(
         "messaging",
-        "alice-bob",
+        "dm-alice-bob",
         expect.anything(),
       );
     });

@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { fetchReviews } from "@/lib/user";
 import {
   createCheckoutData,
+  WebinarSearchParams,
   webinarSearchParamsSchema,
 } from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
@@ -28,6 +29,7 @@ import {
 } from "../../utils";
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
+import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 import type { AppliedDiscount } from "@/types/checkout";
 
 import type {
@@ -49,7 +51,11 @@ export type CheckoutWebinarPlanData = WebinarPlan & {
   consultantProfile:
     | (ConsultantProfile & {
         user: User & {
-          workExperiences?: Array<{ company: string; companyDomain: string | null; isCurrent: boolean }>;
+          workExperiences?: Array<{
+            company: string;
+            companyDomain: string | null;
+            isCurrent: boolean;
+          }>;
         };
         domain: Domain | null;
         subDomains: SubDomain[];
@@ -85,7 +91,8 @@ export default function WebinarCheckoutPage({
   const resolvedParams = use(params);
   const resolvedSearchParams = use(searchParams);
 
-  const { formatPrice } = useCurrency();
+  const { formatPrice, currency } = useCurrency();
+  const checkoutTaxContext = useCheckoutTaxContext();
   const [planData, setPlanData] = useState<PlanResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -109,6 +116,12 @@ export default function WebinarCheckoutPage({
     isBlocked: isMaintenanceBlocked,
     blockReason: maintenanceBlockReason,
   } = useMaintenanceGuard();
+
+  // Validate search params once with Zod — single source of truth for all checkout flows
+  const validatedSearchParams = useMemo((): WebinarSearchParams | null => {
+    const result = webinarSearchParamsSchema.safeParse(resolvedSearchParams);
+    return result.success ? result.data : null;
+  }, [resolvedSearchParams]);
 
   // Apply discount code
   const handleApplyDiscount = async (code?: string) => {
@@ -205,10 +218,8 @@ export default function WebinarCheckoutPage({
         setIsCheckoutProcessing(true);
         setProcessingGateway(`${gateway}-${isMockPayment ? "mock" : "real"}`);
 
-        // Validate search params using the shared schema
-        const searchParamsValidation =
-          webinarSearchParamsSchema.safeParse(resolvedSearchParams);
-        if (!searchParamsValidation.success) {
+        // Use pre-validated search params
+        if (!validatedSearchParams) {
           throw new Error("Invalid webinar parameters");
         }
 
@@ -216,7 +227,21 @@ export default function WebinarCheckoutPage({
           throw new Error("Webinar plan not found");
         }
 
-        // Create checkout data using the shared utility
+        // Staleness check: validate the target webinar is still available
+        const targetWebinar = planData.data.webinars?.find(
+          (w) => w.id === validatedSearchParams.eventId,
+        );
+        if (!targetWebinar) {
+          throw new Error("Webinar session not found.");
+        }
+        if (targetWebinar.status === "COMPLETED") {
+          throw new Error("This webinar has already ended.");
+        }
+        if (targetWebinar.status === "CANCELLED") {
+          throw new Error("This webinar has been cancelled.");
+        }
+
+        // fromWaitlist is not in webinarSearchParamsSchema — read from raw params
         const fromWaitlist =
           typeof resolvedSearchParams.fromWaitlist === "string"
             ? resolvedSearchParams.fromWaitlist
@@ -224,9 +249,10 @@ export default function WebinarCheckoutPage({
         const checkoutData = createCheckoutData({
           appointmentType: "WEBINAR",
           planId: planData.data.id,
-          eventId: searchParamsValidation.data.eventId,
+          eventId: validatedSearchParams.eventId,
           discountCode: appliedDiscount?.code,
           paymentGateway: gateway,
+          displayCurrency: currency,
           fromWaitlist,
           useReferralCredits,
         });
@@ -351,13 +377,54 @@ export default function WebinarCheckoutPage({
       discountPercent: discountAmount > 0 ? 0 : discountPercent,
       discountAmount,
       creditsApplied: useReferralCredits ? availableCredits : 0,
+      isInternational: checkoutTaxContext.isInternational,
     });
   }, [
     planData?.data?.price,
     appliedDiscount,
     useReferralCredits,
     availableCredits,
+    checkoutTaxContext.isInternational,
   ]);
+
+  // Periodic staleness check: detect if webinar has ended or been cancelled
+  useEffect(() => {
+    if (!planData?.data?.webinars) return;
+
+    const eventId =
+      typeof resolvedSearchParams.eventId === "string"
+        ? resolvedSearchParams.eventId
+        : undefined;
+
+    const checkStaleness = () => {
+      const targetWebinar = eventId
+        ? planData.data.webinars.find((w) => w.id === eventId)
+        : planData.data.webinars[0];
+
+      if (!targetWebinar) return;
+
+      if (targetWebinar.status === "COMPLETED") {
+        setError("This webinar has already ended.");
+      } else if (targetWebinar.status === "CANCELLED") {
+        setError("This webinar has been cancelled.");
+      } else if (targetWebinar.appointment?.slotsOfAppointment?.[0]) {
+        const firstSlotEnd = new Date(
+          targetWebinar.appointment.slotsOfAppointment[
+            targetWebinar.appointment.slotsOfAppointment.length - 1
+          ].endsAt,
+        );
+        if (firstSlotEnd.getTime() < Date.now()) {
+          setError(
+            "This webinar session has already ended. Please go back.",
+          );
+        }
+      }
+    };
+
+    checkStaleness();
+    const intervalId = setInterval(checkStaleness, 60_000);
+    return () => clearInterval(intervalId);
+  }, [planData, resolvedSearchParams.eventId]);
 
   if (isLoading) {
     return (
@@ -440,19 +507,20 @@ export default function WebinarCheckoutPage({
                   consultantDetails?.domain?.name ||
                   "Consultant"}
               </div>
-              {userDetails?.workExperiences && userDetails.workExperiences.length > 0 && (
-                <div className="flex items-center gap-1.5 mt-1">
-                  {userDetails.workExperiences.slice(0, 3).map((exp, i) => (
-                    <CompanyLogo
-                      key={`checkout-webinar-company-${i}`}
-                      companyName={exp.company}
-                      companyDomain={exp.companyDomain ?? undefined}
-                      size={20}
-                      className="border-zinc-200"
-                    />
-                  ))}
-                </div>
-              )}
+              {userDetails?.workExperiences &&
+                userDetails.workExperiences.length > 0 && (
+                  <div className="flex items-center gap-1.5 mt-1">
+                    {userDetails.workExperiences.slice(0, 3).map((exp, i) => (
+                      <CompanyLogo
+                        key={`checkout-webinar-company-${i}`}
+                        companyName={exp.company}
+                        companyDomain={exp.companyDomain ?? undefined}
+                        size={20}
+                        className="border-zinc-200"
+                      />
+                    ))}
+                  </div>
+                )}
             </div>
           </div>
           <div className="text-right">
@@ -682,21 +750,19 @@ export default function WebinarCheckoutPage({
               Select your preferred payment method
             </div>
           </div>
-          {/* Payment Gateway Cards */}
           {[
             {
               name: "Stripe",
-              description: "International payments in USD",
+              description: "Card payments (international)",
               gateway: "STRIPE" as const,
               isActive: true,
             },
             {
               name: "Razorpay",
-              description: "Indian payments in INR",
+              description: "UPI, cards & bank transfer",
               gateway: "RAZORPAY" as const,
               isActive: true,
             },
-            // TODO: Add Lemon Squeezy and XFlow when webhook appointment creation is implemented
           ].map((gateway) => (
             <Card key={gateway.name} className="border-zinc-200">
               <CardHeader>
@@ -717,29 +783,30 @@ export default function WebinarCheckoutPage({
                   </div>
                   {gateway.isActive ? (
                     <div className="flex gap-2">
-                      {/* Real Payment Button */}
-                      {gateway.gateway === "RAZORPAY" ? (
+                      {validatedSearchParams && gateway.gateway === "RAZORPAY" ? (
                         <RazorpayCheckout
                           checkoutData={createCheckoutData({
                             appointmentType: "WEBINAR",
                             planId: planDetails.id,
-                            eventId: planDetails.webinars[0]?.id,
+                            eventId: validatedSearchParams.eventId,
                             paymentGateway: "RAZORPAY",
                             discountCode: appliedDiscount?.code,
+                            displayCurrency: currency,
                             useReferralCredits,
                           })}
                           onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
                           onPaymentError={razorpayHandlers.onPaymentError}
                           disabled={isMaintenanceBlocked}
                         />
-                      ) : gateway.gateway === "STRIPE" ? (
+                      ) : validatedSearchParams && gateway.gateway === "STRIPE" ? (
                         <StripeCheckout
                           checkoutData={createCheckoutData({
                             appointmentType: "WEBINAR",
                             planId: planDetails.id,
-                            eventId: planDetails.webinars[0]?.id,
+                            eventId: validatedSearchParams.eventId,
                             paymentGateway: "STRIPE",
                             discountCode: appliedDiscount?.code,
+                            displayCurrency: currency,
                             useReferralCredits,
                           })}
                           onPaymentSuccess={stripeHandlers.onPaymentSuccess}
@@ -747,22 +814,23 @@ export default function WebinarCheckoutPage({
                           disabled={isMaintenanceBlocked}
                         />
                       ) : null}
-                      {/* Mock Payment Button */}
-                      <Button
-                        variant="secondary"
-                        onClick={() => handleCheckout(gateway.gateway, true)}
-                        disabled={isCheckoutProcessing || isMaintenanceBlocked}
-                      >
-                        {isCheckoutProcessing &&
-                        processingGateway === `${gateway.gateway}-mock` ? (
-                          <>
-                            <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
-                            Processing...
-                          </>
-                        ) : (
-                          `Mock Pay (${gateway.name})`
-                        )}
-                      </Button>
+                      {process.env.NODE_ENV === "development" && (
+                        <Button
+                          variant="secondary"
+                          onClick={() => handleCheckout(gateway.gateway, true)}
+                          disabled={isCheckoutProcessing || isMaintenanceBlocked}
+                        >
+                          {isCheckoutProcessing &&
+                          processingGateway === `${gateway.gateway}-mock` ? (
+                            <>
+                              <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
+                              Processing...
+                            </>
+                          ) : (
+                            `Mock Pay (${gateway.name})`
+                          )}
+                        </Button>
+                      )}
                     </div>
                   ) : (
                     <Button variant="outline" disabled>

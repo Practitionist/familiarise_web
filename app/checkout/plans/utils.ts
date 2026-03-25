@@ -1,8 +1,9 @@
+"use client";
+
 import { useToast } from "@/hooks/use-toast";
 import { getErrorToast } from "@/lib/errors/mapping/payment-error-toast-map";
 import { CheckoutInput, checkoutResponseSchema } from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
-import { loadStripe } from "@stripe/stripe-js";
 
 export function loadScript(src: string): Promise<boolean> {
   return new Promise((resolve, reject) => {
@@ -143,50 +144,11 @@ export async function handleUnifiedCheckout(
 
   const data = validationResult.data;
 
-  if (data.success) {
-    // Check if this is a mock payment or skip payment scenario
-    if (data.skipPayment || isMockPayment) {
-      // Mock payment or dev mode - direct success
-      handleCheckoutSuccess(data, data.skipPayment, isMockPayment);
-    } else {
-      // Show success toast before redirecting
-      handleCheckoutSuccess(data, false, false);
-
-      // Small delay to let user see the toast before redirect
-      setTimeout(async () => {
-        try {
-          // Handle gateway-specific responses
-          switch (gateway) {
-            case "STRIPE":
-              const stripeInstance = await loadStripe(
-                process.env.NEXT_PUBLIC_STRIPE_KEY!,
-              );
-              if (!stripeInstance) {
-                throw new Error("Failed to load Stripe");
-              }
-              await stripeInstance.confirmPayment({
-                clientSecret: data.clientSecret!,
-                confirmParams: {
-                  return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
-                },
-              });
-              break;
-
-            // TODO(#312/#334): Add Lemon Squeezy and XFlow cases when webhook handlers are implemented
-          }
-        } catch (err) {
-          console.error("Payment confirmation error:", err);
-          handleApiError({
-            error:
-              err instanceof Error
-                ? err.message
-                : "Payment confirmation failed",
-            errorType: "PAYMENT_ERROR",
-          });
-        }
-      }, 1000);
-    }
-  } else {
+  // handleUnifiedCheckout is only invoked by the dev-only Mock Pay button (isMockPayment=true).
+  // Real payments go through StripeCheckout/RazorpayCheckout components.
+  if (data.success && (data.skipPayment || isMockPayment)) {
+    handleCheckoutSuccess(data, data.skipPayment, isMockPayment);
+  } else if (!data.success) {
     handleApiError({ error: data.error, errorType: data.errorType });
   }
 }
@@ -195,12 +157,12 @@ export async function handleUnifiedCheckout(
 export const paymentGateways = [
   {
     name: "Stripe",
-    description: "International payments in USD",
+    description: "Card payments (international)",
     gateway: "STRIPE" as const,
   },
   {
     name: "Razorpay",
-    description: "Indian payments in INR",
+    description: "UPI, cards & bank transfer",
     gateway: "RAZORPAY" as const,
   },
   // TODO: Add Lemon Squeezy and XFlow when webhook appointment creation is implemented

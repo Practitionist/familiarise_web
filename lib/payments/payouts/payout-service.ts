@@ -21,6 +21,14 @@ import {
 } from "./stripe-connect";
 import { randomUUID } from "crypto";
 import { acquireLock, releaseLock } from "@/lib/redis";
+import {
+  calculateTDS,
+  getFYDateRange,
+  getIndianFinancialYear,
+  recordTDSDeduction,
+} from "@/lib/payments/tax/tds-service";
+import { notifyPayoutProcessed } from "@/lib/novu/service";
+import { getAppUrl } from "@/lib/url";
 
 // ============================================
 // Types
@@ -453,21 +461,64 @@ async function processSinglePayout(payout: {
       throw new Error("No payout account found");
     }
 
+    // Non-resident payout guard — Razorpay only pays to Indian bank accounts
+    const consultantTaxInfo = await prisma.consultantTaxInfo.findUnique({
+      where: { consultantProfileId: payout.consultantProfileId },
+    });
+    if (consultantTaxInfo && !consultantTaxInfo.isIndianResident) {
+      throw new Error(
+        "Payouts to non-resident consultants are not supported yet (Section 195 TDS not implemented). " +
+          `Consultant: ${payout.consultantProfileId}. Please process this payout manually.`,
+      );
+    }
+
+    // Calculate TDS (Section 194J) — deduct before sending to gateway
+    const tdsResult = await calculateTDS({
+      consultantProfileId: payout.consultantProfileId,
+      payoutAmountPaise: payout.amount,
+    });
+
+    const payoutAmountAfterTDS = payout.amount - tdsResult.tdsAmount;
+
+    if (tdsResult.tdsAmount > 0) {
+      console.log(
+        JSON.stringify({
+          event: "tds_deduction",
+          payoutId: payout.id,
+          consultantProfileId: payout.consultantProfileId,
+          grossAmount: payout.amount,
+          tdsAmount: tdsResult.tdsAmount,
+          tdsRate: tdsResult.tdsRate,
+          netAmount: payoutAmountAfterTDS,
+          financialYear: tdsResult.financialYear,
+          cumulativeBeforePayout: tdsResult.cumulativeBeforePayout,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    }
+
+    // Use the payout object but with reduced amount for gateway call
+    const payoutForGateway = { ...payout, amount: payoutAmountAfterTDS };
+
     let providerPayoutId: string | undefined;
 
     if (payout.provider === PaymentGateway.RAZORPAY) {
-      providerPayoutId = await processRazorpayPayout(payout, account);
+      providerPayoutId = await processRazorpayPayout(payoutForGateway, account);
     } else if (payout.provider === PaymentGateway.STRIPE) {
-      providerPayoutId = await processStripePayout(payout, account);
+      providerPayoutId = await processStripePayout(payoutForGateway, account);
     } else {
       throw new Error(`Unsupported provider: ${payout.provider}`);
     }
 
-    // Update payout with provider ID
+    // Update payout with provider ID and TDS info
     await prisma.payout.update({
       where: { id: payout.id },
       data: {
         providerPayoutId,
+        tdsDeducted: tdsResult.tdsAmount,
+        netAmount: payoutAmountAfterTDS,
+        tdsRateApplied: tdsResult.tdsRate || null,
+        tdsFinancialYear: tdsResult.financialYear,
         status: PayoutStatus.PROCESSING, // Will be updated via webhook
       },
     });
@@ -488,6 +539,10 @@ async function processSinglePayout(payout: {
         status: PayoutStatus.FAILED,
         failureReason: errorMessage,
         retryCount: { increment: 1 },
+        tdsDeducted: 0,
+        netAmount: null,
+        tdsRateApplied: null,
+        tdsFinancialYear: null,
       },
     });
 
@@ -526,6 +581,14 @@ async function processRazorpayPayout(
 ): Promise<string> {
   if (!isRazorpayPayoutsConfigured()) {
     throw new Error("RazorpayX Payouts not configured");
+  }
+
+  // Guard: Razorpay only processes INR payouts
+  if (payout.currency !== "INR") {
+    throw new Error(
+      `Razorpay payouts only support INR. Got: ${payout.currency}. ` +
+        `International payouts require manual processing for MVP.`,
+    );
   }
 
   if (!account.razorpayFundAccId) {
@@ -653,6 +716,20 @@ export async function handlePayoutWebhook(
 
     // If completed, update earnings and consultant stats
     if (payoutStatus === PayoutStatus.COMPLETED) {
+      const financialYear = payout.tdsFinancialYear || getIndianFinancialYear();
+      const { start, end } = getFYDateRange(financialYear);
+      const previousCompletedPayouts = await tx.payout.aggregate({
+        where: {
+          consultantProfileId: payout.consultantProfileId,
+          status: PayoutStatus.COMPLETED,
+          processedAt: { gte: start, lte: end },
+          id: { not: payout.id },
+        },
+        _sum: { amount: true },
+      });
+      const cumulativeCreditedPayments =
+        (previousCompletedPayouts._sum.amount || 0) + payout.amount;
+
       // Update earnings to PAID
       await tx.consultantEarnings.updateMany({
         where: { payoutId: payout.id },
@@ -670,9 +747,25 @@ export async function handlePayoutWebhook(
           pendingRevenue: { decrement: payout.amount },
         },
       });
+
+      if (payout.tdsDeducted > 0 && payout.tdsRateApplied) {
+        await tx.tDSRecord.deleteMany({
+          where: { payoutId: payout.id },
+        });
+
+        await recordTDSDeduction({
+          consultantProfileId: payout.consultantProfileId,
+          financialYear,
+          tdsDeducted: payout.tdsDeducted,
+          tdsRate: payout.tdsRateApplied,
+          cumulativeAmountCredited: cumulativeCreditedPayments,
+          payoutId: payout.id,
+          db: tx,
+        });
+      }
     }
 
-    // If failed or cancelled, unlink earnings so they can be included in next batch
+    // If failed or cancelled, unlink earnings and reverse TDS records
     if (
       payoutStatus === PayoutStatus.FAILED ||
       payoutStatus === PayoutStatus.CANCELLED
@@ -683,8 +776,42 @@ export async function handlePayoutWebhook(
           payoutId: null,
         },
       });
+
+      // Delete TDS records — payout never completed, so TDS was never actually withheld
+      await tx.tDSRecord.deleteMany({
+        where: { payoutId: payout.id },
+      });
+
+      // Reset TDS fields on the payout record
+      await tx.payout.update({
+        where: { id: payout.id },
+        data: {
+          tdsDeducted: 0,
+          netAmount: null,
+          tdsRateApplied: null,
+          tdsFinancialYear: null,
+        },
+      });
     }
   });
+
+  // Fire-and-forget: notify consultant when payout completes
+  if (payoutStatus === PayoutStatus.COMPLETED) {
+    const profile = await prisma.consultantProfile.findUnique({
+      where: { id: payout.consultantProfileId },
+      select: { userId: true },
+    });
+    if (profile?.userId) {
+      void notifyPayoutProcessed(profile.userId, {
+        amount: Number(payout.amount),
+        currency: payout.currency,
+        payoutId: payout.id,
+        dashboardUrl: `${getAppUrl()}/dashboard`,
+      }).catch((error) =>
+        console.error("[payouts] Failed to send payout notification:", error),
+      );
+    }
+  }
 }
 
 /**
