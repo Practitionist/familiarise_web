@@ -222,6 +222,20 @@ export default function WebinarCheckoutPage({
           throw new Error("Webinar plan not found");
         }
 
+        // Staleness check: validate the target webinar is still available
+        const targetWebinar = planData.data.webinars?.find(
+          (w) => w.id === searchParamsValidation.data.eventId,
+        );
+        if (!targetWebinar) {
+          throw new Error("Webinar session not found.");
+        }
+        if (targetWebinar.status === "COMPLETED") {
+          throw new Error("This webinar has already ended.");
+        }
+        if (targetWebinar.status === "CANCELLED") {
+          throw new Error("This webinar has been cancelled.");
+        }
+
         // Create checkout data using the shared utility
         const fromWaitlist =
           typeof resolvedSearchParams.fromWaitlist === "string"
@@ -367,6 +381,45 @@ export default function WebinarCheckoutPage({
     availableCredits,
     checkoutTaxContext.isInternational,
   ]);
+
+  // Periodic staleness check: detect if webinar has ended or been cancelled
+  useEffect(() => {
+    if (!planData?.data?.webinars) return;
+
+    const eventId =
+      typeof resolvedSearchParams.eventId === "string"
+        ? resolvedSearchParams.eventId
+        : undefined;
+
+    const checkStaleness = () => {
+      const targetWebinar = eventId
+        ? planData.data.webinars.find((w) => w.id === eventId)
+        : planData.data.webinars[0];
+
+      if (!targetWebinar) return;
+
+      if (targetWebinar.status === "COMPLETED") {
+        setError("This webinar has already ended.");
+      } else if (targetWebinar.status === "CANCELLED") {
+        setError("This webinar has been cancelled.");
+      } else if (targetWebinar.appointment?.slotsOfAppointment?.[0]) {
+        const firstSlotEnd = new Date(
+          targetWebinar.appointment.slotsOfAppointment[
+            targetWebinar.appointment.slotsOfAppointment.length - 1
+          ].endsAt,
+        );
+        if (firstSlotEnd.getTime() < Date.now()) {
+          setError(
+            "This webinar session has already ended. Please go back.",
+          );
+        }
+      }
+    };
+
+    checkStaleness();
+    const intervalId = setInterval(checkStaleness, 60_000);
+    return () => clearInterval(intervalId);
+  }, [planData, resolvedSearchParams.eventId]);
 
   if (isLoading) {
     return (
