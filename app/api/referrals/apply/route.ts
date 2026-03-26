@@ -38,7 +38,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       data: referral,
-      message: "Referral code applied successfully",
+      // FIX #437: Credits are now deferred to first booking, not given on signup
+      message:
+        "Referral code applied successfully! You'll receive your bonus credits after your first booking.",
     });
   } catch (error) {
     console.error("Error applying referral code:", error);

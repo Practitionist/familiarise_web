@@ -63,11 +63,32 @@ export default function RazorpayCheckout({
 
       if (!response.ok) {
         const errorData = await response.json();
-        onPaymentError(errorData);
+        onPaymentError({
+          description: errorData.error || "Payment request failed",
+          code: errorData.errorType,
+        });
         return;
       }
 
       const data = await response.json();
+
+      if (!data.success) {
+        onPaymentError({
+          description: data.error || "Payment initialization failed",
+          code: data.errorType,
+        });
+        return;
+      }
+
+      // FIX #520: Zero-amount payments (credits covered full cost) — no gateway needed
+      if (data.isZeroAmountPayment) {
+        onPaymentSuccess({
+          message:
+            data.message ||
+            "Payment completed via referral credits. Appointment booked successfully.",
+        });
+        return;
+      }
 
       if (!process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID) {
         toast({
@@ -109,7 +130,9 @@ export default function RazorpayCheckout({
       });
       rzp.open();
     } catch (error) {
-      onPaymentError(error);
+      onPaymentError({
+        description: error instanceof Error ? error.message : "An unexpected error occurred",
+      });
     } finally {
       setIsProcessing(false);
     }

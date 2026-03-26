@@ -59,6 +59,8 @@ export async function GET(
         valid: true,
         referrerName: user?.name ?? null,
         refereeReward: referralCode.refereeReward,
+        // FIX #437: Credits are now given after first booking, not on signup
+        rewardTiming: "after_first_booking",
       },
     });
   } catch (error) {

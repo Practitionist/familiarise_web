@@ -226,6 +226,7 @@ export const checkoutSuccessResponseSchema = z.object({
   message: z.string().optional(),
   skipPayment: z.boolean().optional(),
   isMockPayment: z.boolean().optional(), // Mock payment flag
+  isZeroAmountPayment: z.boolean().optional(), // Credits fully covered payment
   // Production flow fields
   paymentIntent: z
     .object({

@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { useMaintenanceGuard } from "@/hooks/useMaintenanceGuard";
 import { useToast } from "@/hooks/use-toast";
 import { fetchReviews } from "@/lib/user";
-import { searchParamsSchema, createCheckoutData } from "@/schemas/checkout";
+import { SearchParams, searchParamsSchema, createCheckoutData } from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { CompanyLogo } from "@/components/ui/company-logo";
@@ -111,6 +111,20 @@ export default function ClassCheckoutPage({
     blockReason: maintenanceBlockReason,
   } = useMaintenanceGuard();
 
+  // Validate search params once with Zod — single source of truth for all checkout flows
+  const validatedSearchParams = useMemo((): SearchParams | null => {
+    const result = searchParamsSchema.safeParse(resolvedSearchParams);
+    return result.success ? result.data : null;
+  }, [resolvedSearchParams]);
+
+  // Derive the first available class ID — used by both component renders and handleCheckout
+  const availableClassId = useMemo(() => {
+    const availableClass = planData?.data?.classes?.find(
+      (c) => c.status === "SCHEDULED" || c.status === "IN_PROGRESS",
+    );
+    return availableClass?.id ?? null;
+  }, [planData]);
+
   // Apply discount code
   const handleApplyDiscount = async (code?: string) => {
     const codeToApply = code || discountCodeInput;
@@ -203,9 +217,7 @@ export default function ClassCheckoutPage({
         setIsCheckoutProcessing(true);
         setProcessingGateway(`${gateway}-${isMockPayment ? "mock" : "real"}`);
 
-        const searchParamsValidation =
-          searchParamsSchema.safeParse(resolvedSearchParams);
-        if (!searchParamsValidation.success) {
+        if (!validatedSearchParams) {
           throw new Error("Invalid class parameters");
         }
 
@@ -213,20 +225,13 @@ export default function ClassCheckoutPage({
           throw new Error("Class plan not found");
         }
 
-        // Find the first SCHEDULED or IN_PROGRESS class instance
-        const availableClass = planData.data.classes?.find(
-          (c) => c.status === "SCHEDULED" || c.status === "IN_PROGRESS",
-        );
-
-        if (!availableClass?.id) {
+        if (!availableClassId) {
           throw new Error(
             "No available class sessions. All sessions may be full, cancelled, or completed.",
           );
         }
 
-        const firstClassId = availableClass.id;
-
-        // Get waitlist ID from URL if coming from waitlist flow
+        // fromWaitlist is not in searchParamsSchema — read from raw params
         const fromWaitlist =
           typeof resolvedSearchParams.fromWaitlist === "string"
             ? resolvedSearchParams.fromWaitlist
@@ -234,7 +239,7 @@ export default function ClassCheckoutPage({
         const checkoutData = createCheckoutData({
           appointmentType: "CLASS",
           planId: planData.data.id,
-          eventId: firstClassId,
+          eventId: availableClassId,
           discountCode: appliedDiscount?.code,
           displayCurrency: currency,
           paymentGateway: gateway,
@@ -370,6 +375,26 @@ export default function ClassCheckoutPage({
     availableCredits,
     checkoutTaxContext.isInternational,
   ]);
+
+  // Periodic staleness check: detect if all class sessions have ended or been cancelled
+  useEffect(() => {
+    if (!planData?.data?.classes) return;
+
+    const checkStaleness = () => {
+      const hasAvailable = planData.data.classes.some(
+        (c) => c.status === "SCHEDULED" || c.status === "IN_PROGRESS",
+      );
+      if (!hasAvailable) {
+        setError(
+          "No available class sessions. All sessions may be full, cancelled, or completed.",
+        );
+      }
+    };
+
+    checkStaleness();
+    const intervalId = setInterval(checkStaleness, 60_000);
+    return () => clearInterval(intervalId);
+  }, [planData]);
 
   if (isLoading) {
     return (
@@ -751,12 +776,12 @@ export default function ClassCheckoutPage({
                   </div>
                   {gateway.isActive ? (
                     <div className="flex gap-2">
-                      {gateway.gateway === "RAZORPAY" ? (
+                      {availableClassId && gateway.gateway === "RAZORPAY" ? (
                         <RazorpayCheckout
                           checkoutData={createCheckoutData({
                             appointmentType: "CLASS",
                             planId: planDetails.id,
-                            eventId: planDetails.classes[0]?.id,
+                            eventId: availableClassId,
                             paymentGateway: "RAZORPAY",
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
@@ -766,12 +791,12 @@ export default function ClassCheckoutPage({
                           onPaymentError={razorpayHandlers.onPaymentError}
                           disabled={isMaintenanceBlocked}
                         />
-                      ) : gateway.gateway === "STRIPE" ? (
+                      ) : availableClassId && gateway.gateway === "STRIPE" ? (
                         <StripeCheckout
                           checkoutData={createCheckoutData({
                             appointmentType: "CLASS",
                             planId: planDetails.id,
-                            eventId: planDetails.classes[0]?.id,
+                            eventId: availableClassId,
                             paymentGateway: "STRIPE",
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
@@ -782,21 +807,23 @@ export default function ClassCheckoutPage({
                           disabled={isMaintenanceBlocked}
                         />
                       ) : null}
-                      <Button
-                        variant="secondary"
-                        onClick={() => handleCheckout(gateway.gateway, true)}
-                        disabled={isCheckoutProcessing || isMaintenanceBlocked}
-                      >
-                        {isCheckoutProcessing &&
-                        processingGateway === `${gateway.gateway}-mock` ? (
-                          <>
-                            <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
-                            Processing...
-                          </>
-                        ) : (
-                          `Mock Pay (${gateway.name})`
-                        )}
-                      </Button>
+                      {process.env.NODE_ENV === "development" && (
+                        <Button
+                          variant="secondary"
+                          onClick={() => handleCheckout(gateway.gateway, true)}
+                          disabled={isCheckoutProcessing || isMaintenanceBlocked}
+                        >
+                          {isCheckoutProcessing &&
+                          processingGateway === `${gateway.gateway}-mock` ? (
+                            <>
+                              <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
+                              Processing...
+                            </>
+                          ) : (
+                            `Mock Pay (${gateway.name})`
+                          )}
+                        </Button>
+                      )}
                     </div>
                   ) : (
                     <Button variant="outline" disabled>
