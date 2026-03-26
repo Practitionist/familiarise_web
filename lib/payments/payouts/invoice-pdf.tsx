@@ -609,6 +609,12 @@ export async function getInvoicePdfData(
         name: string | null;
         email: string;
       };
+      discountCode?: {
+        code: string;
+        discountType: string;
+        discountValue: number;
+      } | null;
+      creditUsages?: { amount: number }[];
     } | null;
   },
   companyInfo?: {
@@ -624,11 +630,16 @@ export async function getInvoicePdfData(
   const taxAmount = invoice.taxAmount ?? 0;
   const isInternational = payment?.isInternational ?? false;
 
-  // Calculate credits/discount from difference between original and final
-  const creditsOrDiscount =
-    payment && payment.originalAmount > 0
-      ? payment.originalAmount + taxAmount - invoice.amount
-      : 0;
+  // Separate credits from discounts using actual relation data
+  const creditsAppliedAmount = payment?.creditUsages?.reduce(
+    (sum, cu) => sum + cu.amount,
+    0,
+  ) ?? 0;
+
+  // Derive discount from the difference: originalAmount + tax - credits - finalAmount
+  const discountAmount = payment && payment.originalAmount > 0
+    ? Math.max(0, payment.originalAmount + taxAmount - creditsAppliedAmount - invoice.amount)
+    : 0;
 
   return {
     invoiceNumber: invoice.invoiceNumber,
@@ -649,7 +660,8 @@ export async function getInvoicePdfData(
     subtotal,
     taxRate: invoice.taxRate ?? (isInternational ? 0 : TAX_CONSTANTS.GST_RATE),
     taxAmount,
-    creditsApplied: creditsOrDiscount > 0 ? creditsOrDiscount : undefined,
+    discountAmount: discountAmount > 0 ? discountAmount : undefined,
+    creditsApplied: creditsAppliedAmount > 0 ? creditsAppliedAmount : undefined,
     total: invoice.amount,
     currency: invoice.currency,
     isInternational,

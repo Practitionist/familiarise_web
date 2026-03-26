@@ -35,6 +35,7 @@ import {
   applyCreditsToPayment,
   getUserCredits,
   processQualifyingAction,
+  processConsultantBookingReferral,
 } from "@/lib/referrals/service";
 import { TAX_CONSTANTS } from "@/lib/payments/payouts/constants";
 import {
@@ -1897,68 +1898,10 @@ export async function handleCheckout(
 
         // FIX #437: Consultant qualifying action (receiving first paid booking)
         try {
-          const paymentForConsultantRef = await prisma.payment.findUnique({
-            where: { paymentIntent: paymentResponse!.id },
-            include: {
-              appointment: {
-                include: {
-                  consultation: {
-                    include: {
-                      consultationPlan: {
-                        select: {
-                          consultantProfile: { select: { userId: true } },
-                        },
-                      },
-                    },
-                  },
-                  subscription: {
-                    include: {
-                      subscriptionPlan: {
-                        select: {
-                          consultantProfile: { select: { userId: true } },
-                        },
-                      },
-                    },
-                  },
-                  webinar: {
-                    select: {
-                      webinarPlan: {
-                        select: {
-                          consultantProfile: { select: { userId: true } },
-                        },
-                      },
-                    },
-                  },
-                  class: {
-                    select: {
-                      classPlan: {
-                        select: {
-                          consultantProfile: { select: { userId: true } },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          });
-
-          const consultantUserId =
-            paymentForConsultantRef?.appointment?.consultation?.consultationPlan
-              ?.consultantProfile?.userId ||
-            paymentForConsultantRef?.appointment?.subscription?.subscriptionPlan
-              ?.consultantProfile?.userId ||
-            paymentForConsultantRef?.appointment?.webinar?.webinarPlan
-              ?.consultantProfile?.userId ||
-            paymentForConsultantRef?.appointment?.class?.classPlan
-              ?.consultantProfile?.userId;
-
-          if (consultantUserId && consultantUserId !== userId) {
-            await processQualifyingAction(
-              consultantUserId,
-              "first_paid_booking_received",
-            );
-          }
+          await processConsultantBookingReferral(
+            { paymentIntent: paymentResponse!.id },
+            userId,
+          );
         } catch (consultantRefError) {
           console.error(
             `⚠️ Failed to process consultant referral qualifying action:`,

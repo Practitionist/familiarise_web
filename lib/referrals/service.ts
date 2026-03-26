@@ -593,3 +593,72 @@ export async function expireStaleCredits(): Promise<number> {
 
   return result.count;
 }
+
+/**
+ * Process consultant referral qualifying action when they receive a paid booking.
+ * Looks up the consultant userId from the payment's appointment chain and triggers
+ * processQualifyingAction for "first_paid_booking_received".
+ *
+ * Used by both checkout.ts (mock/zero-amount) and handlers.ts (webhook-confirmed).
+ */
+export async function processConsultantBookingReferral(
+  paymentLookup: { id?: string; paymentIntent?: string },
+  buyerUserId: string,
+): Promise<void> {
+  const where = paymentLookup.id
+    ? { id: paymentLookup.id }
+    : { paymentIntent: paymentLookup.paymentIntent! };
+
+  const payment = await prisma.payment.findUnique({
+    where,
+    include: {
+      appointment: {
+        include: {
+          consultation: {
+            include: {
+              consultationPlan: {
+                select: { consultantProfile: { select: { userId: true } } },
+              },
+            },
+          },
+          subscription: {
+            include: {
+              subscriptionPlan: {
+                select: { consultantProfile: { select: { userId: true } } },
+              },
+            },
+          },
+          webinar: {
+            select: {
+              webinarPlan: {
+                select: { consultantProfile: { select: { userId: true } } },
+              },
+            },
+          },
+          class: {
+            select: {
+              classPlan: {
+                select: { consultantProfile: { select: { userId: true } } },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const consultantUserId =
+    payment?.appointment?.consultation?.consultationPlan?.consultantProfile
+      ?.userId ||
+    payment?.appointment?.subscription?.subscriptionPlan?.consultantProfile
+      ?.userId ||
+    payment?.appointment?.webinar?.webinarPlan?.consultantProfile?.userId ||
+    payment?.appointment?.class?.classPlan?.consultantProfile?.userId;
+
+  if (consultantUserId && consultantUserId !== buyerUserId) {
+    await processQualifyingAction(
+      consultantUserId,
+      "first_paid_booking_received",
+    );
+  }
+}

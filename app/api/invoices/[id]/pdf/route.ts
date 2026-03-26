@@ -35,6 +35,14 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         payment: {
           include: {
             user: { select: { name: true, email: true } },
+            discountCode: {
+              select: {
+                code: true,
+                discountType: true,
+                discountValue: true,
+              },
+            },
+            creditUsages: { select: { amount: true } },
           },
         },
       },
@@ -129,19 +137,23 @@ async function uploadToStorage(
   const bucketName = "invoices";
   const filePath = `${invoiceId}/${invoiceNumber}.pdf`;
 
-  // Ensure bucket exists (create if missing)
-  const { data: buckets } = await supabase.storage.listBuckets();
-  if (!buckets?.find((b: { name: string }) => b.name === bucketName)) {
-    await supabase.storage.createBucket(bucketName, { public: false });
-  }
-
-  // Upload PDF
-  const { error: uploadError } = await supabase.storage
+  // Try upload directly; create bucket only if it doesn't exist
+  let { error: uploadError } = await supabase.storage
     .from(bucketName)
     .upload(filePath, pdfBuffer, {
       contentType: "application/pdf",
       upsert: true,
     });
+
+  if (uploadError?.message?.includes("Bucket not found")) {
+    await supabase.storage.createBucket(bucketName, { public: false });
+    ({ error: uploadError } = await supabase.storage
+      .from(bucketName)
+      .upload(filePath, pdfBuffer, {
+        contentType: "application/pdf",
+        upsert: true,
+      }));
+  }
 
   if (uploadError) {
     console.error(`[invoice-pdf] Upload failed: ${uploadError.message}`);

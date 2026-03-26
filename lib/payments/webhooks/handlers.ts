@@ -26,7 +26,10 @@ import {
   notifyPaymentFailed,
   notifyAppointmentBooked,
 } from "@/lib/novu";
-import { processQualifyingAction } from "@/lib/referrals/service";
+import {
+  processQualifyingAction,
+  processConsultantBookingReferral,
+} from "@/lib/referrals/service";
 import { addUserToEventChannel } from "@/actions/stream/chat/event-channel.action";
 import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action";
 import { streamLogger } from "@/lib/stream-logger";
@@ -398,60 +401,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
   // referral scenario where consultants never trigger qualification because they don't
   // make bookings, they receive them.
   try {
-    const paymentForConsultant = await prisma.payment.findUnique({
-      where: { id: paymentId },
-      include: {
-        appointment: {
-          include: {
-            consultation: {
-              include: {
-                consultationPlan: {
-                  select: { consultantProfile: { select: { userId: true } } },
-                },
-              },
-            },
-            subscription: {
-              include: {
-                subscriptionPlan: {
-                  select: { consultantProfile: { select: { userId: true } } },
-                },
-              },
-            },
-            webinar: {
-              select: {
-                webinarPlan: {
-                  select: { consultantProfile: { select: { userId: true } } },
-                },
-              },
-            },
-            class: {
-              select: {
-                classPlan: {
-                  select: { consultantProfile: { select: { userId: true } } },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-
-    const consultantUserId =
-      paymentForConsultant?.appointment?.consultation?.consultationPlan
-        ?.consultantProfile?.userId ||
-      paymentForConsultant?.appointment?.subscription?.subscriptionPlan
-        ?.consultantProfile?.userId ||
-      paymentForConsultant?.appointment?.webinar?.webinarPlan
-        ?.consultantProfile?.userId ||
-      paymentForConsultant?.appointment?.class?.classPlan?.consultantProfile
-        ?.userId;
-
-    if (consultantUserId && consultantUserId !== userId) {
-      await processQualifyingAction(
-        consultantUserId,
-        "first_paid_booking_received",
-      );
-    }
+    await processConsultantBookingReferral({ id: paymentId }, userId);
   } catch (consultantReferralError) {
     console.error(
       `⚠️ Failed to process consultant referral qualifying action:`,
