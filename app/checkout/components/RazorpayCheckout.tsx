@@ -80,6 +80,16 @@ export default function RazorpayCheckout({
         return;
       }
 
+      // FIX #520: Zero-amount payments (credits covered full cost) — no gateway needed
+      if (data.isZeroAmountPayment) {
+        onPaymentSuccess({
+          message:
+            data.message ||
+            "Payment completed via referral credits. Appointment booked successfully.",
+        });
+        return;
+      }
+
       if (!process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID) {
         toast({
           title: "Payment System Configuration Error",

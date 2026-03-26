@@ -101,6 +101,16 @@ export default function StripeCheckout({
         return;
       }
 
+      // FIX #520: Zero-amount payments (credits covered full cost) — no gateway redirect needed
+      if (data.isZeroAmountPayment) {
+        onPaymentSuccess({
+          message:
+            data.message ||
+            "Payment completed via referral credits. Appointment booked successfully.",
+        });
+        return;
+      }
+
       // Handle payment based on what the server returns
       if (data.checkoutUrl) {
         // For hosted checkout sessions, redirect directly

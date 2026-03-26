@@ -26,7 +26,10 @@ import {
   notifyPaymentFailed,
   notifyAppointmentBooked,
 } from "@/lib/novu";
-import { processQualifyingAction } from "@/lib/referrals/service";
+import {
+  processQualifyingAction,
+  processConsultantBookingReferral,
+} from "@/lib/referrals/service";
 import { addUserToEventChannel } from "@/actions/stream/chat/event-channel.action";
 import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action";
 import { streamLogger } from "@/lib/stream-logger";
@@ -382,13 +385,27 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     );
   }
 
-  // --- Referral qualifying action (first paid booking triggers referrer reward) ---
+  // --- Referral qualifying action (first paid booking triggers both bonuses) ---
+  // FIX #437: Process for the buyer (consultee) — their first paid booking qualifies their referral
   try {
     await processQualifyingAction(userId, "first_paid_booking");
   } catch (referralError) {
     console.error(
       `⚠️ Failed to process referral qualifying action for user ${userId}:`,
       referralError,
+    );
+  }
+
+  // FIX #437: Also process for the consultant (service provider) — receiving their first
+  // paid booking qualifies their referral too. This fixes the broken Consultant→Consultant
+  // referral scenario where consultants never trigger qualification because they don't
+  // make bookings, they receive them.
+  try {
+    await processConsultantBookingReferral({ id: paymentId }, userId);
+  } catch (consultantReferralError) {
+    console.error(
+      `⚠️ Failed to process consultant referral qualifying action:`,
+      consultantReferralError,
     );
   }
 

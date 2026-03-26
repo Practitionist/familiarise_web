@@ -15,6 +15,8 @@ import {
   stripeBaseEventSchema,
   stripePaymentIntentSucceededEventSchema,
   stripePaymentIntentFailedEventSchema,
+  stripeCheckoutSessionCompletedEventSchema,
+  stripeCheckoutSessionExpiredEventSchema,
 } from "../../../../schemas/webhooks/stripe";
 
 export async function POST(req: NextRequest) {
@@ -71,7 +73,32 @@ export async function POST(req: NextRequest) {
 
     try {
       switch (eventType) {
-        // Payment events
+        // FIX CF-3: Checkout Session events — primary handler for Stripe Checkout flow.
+        // createStripeCheckoutSession stores session.id (cs_...) in Payment.paymentIntent,
+        // so we must handle checkout.session.completed to match by cs_... ID.
+        // NOTE: Ensure these events are enabled in the Stripe Dashboard webhook settings.
+        case "checkout.session.completed": {
+          const sessionEvent =
+            stripeCheckoutSessionCompletedEventSchema.parse(event);
+          const session = sessionEvent.data.object;
+          // Use session.id (cs_...) which matches Payment.paymentIntent
+          await handlePaymentSuccess(
+            session.id,
+            session.metadata || {},
+          );
+          break;
+        }
+
+        case "checkout.session.expired": {
+          const sessionEvent =
+            stripeCheckoutSessionExpiredEventSchema.parse(event);
+          await handlePaymentFailure(sessionEvent.data.object.id);
+          break;
+        }
+
+        // Payment Intent events — kept for backward compatibility.
+        // If a payment was stored with pi_... (legacy flow), this handler catches it.
+        // Idempotency: handlePaymentSuccess is a no-op if already SUCCEEDED.
         case "payment_intent.succeeded": {
           const succeededEvent =
             stripePaymentIntentSucceededEventSchema.parse(event);

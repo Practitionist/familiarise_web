@@ -270,12 +270,18 @@ export default function SubscriptionCheckoutPage({
 
         // handleCheckout is only invoked by the dev-only Mock Pay button (isMockPayment=true).
         // Real payments go through StripeCheckout/RazorpayCheckout components.
-        if (data.success && (data.skipPayment || data.isMockPayment)) {
+        // FIX #520: Also handle zero-amount payments (credits covered full cost)
+        if (
+          data.success &&
+          (data.skipPayment || data.isMockPayment || data.isZeroAmountPayment)
+        ) {
           toast({
             title: "✅ Subscription Activated Successfully!",
-            description: data.isMockPayment
-              ? "Mock payment processed. Your subscription is now active. Check your dashboard for details."
-              : "Your subscription is now active. Check your dashboard for details.",
+            description: data.isZeroAmountPayment
+              ? "Payment completed via referral credits. Your subscription is now active."
+              : data.isMockPayment
+                ? "Mock payment processed. Your subscription is now active. Check your dashboard for details."
+                : "Your subscription is now active. Check your dashboard for details.",
             variant: "default",
           });
 
