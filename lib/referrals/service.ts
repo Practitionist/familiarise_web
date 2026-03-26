@@ -6,12 +6,17 @@ import type {
   ReferralCredit,
   Prisma,
 } from "@prisma/client";
+import {
+  QUALIFICATION_WINDOW_DAYS,
+  CREDIT_EXPIRY_MONTHS,
+} from "./constants";
+
+// Re-export so existing server-side consumers can still import from service
+export { QUALIFICATION_WINDOW_DAYS, CREDIT_EXPIRY_MONTHS };
 
 // Constants
 const DEFAULT_REFERRER_REWARD = 50000; // ₹500 in paise
 const DEFAULT_REFEREE_REWARD = 20000; // ₹200 in paise
-const QUALIFICATION_WINDOW_DAYS = 30;
-const CREDIT_EXPIRY_MONTHS = 6;
 const SERIALIZABLE_MAX_RETRIES = 3;
 
 /**

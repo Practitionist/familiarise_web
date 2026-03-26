@@ -54,6 +54,9 @@ const staggerChildren = {
   },
 };
 
+const DEFAULT_MEETING_DURATION_MS = 60 * 60 * 1000; // 1 hour
+const JOIN_WINDOW_BEFORE_START_MS = 10 * 60 * 1000; // 10 minutes
+
 const fadeInUp = {
   hidden: { opacity: 0, y: 16 },
   visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: "easeOut" } },
@@ -115,8 +118,8 @@ function UpcomingSessionCard({
     const start = new Date(event.joinableSlot.startsAt).getTime();
     const end = event.joinableSlot.endsAt
       ? new Date(event.joinableSlot.endsAt).getTime()
-      : start + 60 * 60 * 1000; // DEFAULT_MEETING_DURATION_MS
-    const joinWindow = start - 10 * 60 * 1000; // 10 min before
+      : start + DEFAULT_MEETING_DURATION_MS;
+    const joinWindow = start - JOIN_WINDOW_BEFORE_START_MS;
     return now >= joinWindow && now <= end;
   })();
 

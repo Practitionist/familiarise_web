@@ -1,0 +1,2 @@
+export const QUALIFICATION_WINDOW_DAYS = 30;
+export const CREDIT_EXPIRY_MONTHS = 6;
