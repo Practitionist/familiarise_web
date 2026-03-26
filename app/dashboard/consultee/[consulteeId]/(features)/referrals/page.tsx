@@ -211,7 +211,7 @@ export default function ConsulteeReferralsPage({
           </div>
         </div>
 
-        {/* Program Details */}
+        {/* TODO: Program Details - hidden for now
         <div className="mt-6 bg-white rounded-xl border border-zinc-200 p-6">
           <h3 className="text-sm font-medium text-zinc-900 mb-3">
             Program Details
@@ -233,6 +233,7 @@ export default function ConsulteeReferralsPage({
             </div>
           </div>
         </div>
+        */}
 
         {/* Referrals List */}
         <div className="mt-6 bg-white rounded-xl border border-zinc-200 overflow-hidden">

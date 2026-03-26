@@ -225,13 +225,12 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
     return map;
   }, [data]);
 
-  const spentByCurrency = useMemo(() => {
-    if (!data) return new Map<string, number>();
-    const map = new Map<string, number>();
-    for (const p of data.payments.filter((p) => p.status === "SUCCEEDED")) {
-      map.set(p.currency, (map.get(p.currency) || 0) + p.amount);
-    }
-    return map;
+  // TODO: currently sums all currencies as INR — add multi-currency support later
+  const totalSpent = useMemo(() => {
+    if (!data) return 0;
+    return data.payments
+      .filter((p) => p.status === "SUCCEEDED")
+      .reduce((sum, p) => sum + p.amount, 0);
   }, [data]);
 
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -286,13 +285,7 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
             </Tooltip>
           </TooltipProvider>
           <p className="text-2xl font-bold text-zinc-900">
-            {spentByCurrency.size === 0
-              ? formatCurrencyFromMajorUnit(0, "INR")
-              : Array.from(spentByCurrency.entries())
-                  .map(([currency, amount]) =>
-                    formatCurrencyFromMajorUnit(amount, currency),
-                  )
-                  .join(" + ")}
+            {formatCurrencyFromMajorUnit(totalSpent, "INR")}
           </p>
           <p className="text-xs text-zinc-400 mt-1">
             {(() => {
