@@ -1,3 +1,5 @@
+import { Suspense } from "react";
+
 import { HeroSection } from "@/components/home/HeroSection";
 import { TrustedBySection } from "@/components/home/TrustedBySection";
 import { FeaturesSection } from "@/components/home/FeaturesSection";
@@ -14,14 +16,33 @@ import { BecomeExpertSection } from "@/components/home/BecomeExpertSection";
 import { FAQSection } from "@/components/home/FAQSection";
 import { SatisfiedTestimonial } from "@/app/explore/experts/components/SatisfiedTestimonial";
 import { getHomeExperts, getHomeReviews, getHomeImages } from "@/lib/data/home";
+import {
+  BenefitsSkeleton,
+  FeaturedExpertsSkeleton,
+  TestimonialsSkeleton,
+} from "@/components/home/HomeSectionSkeletons";
 
-export default async function Home() {
-  const [experts, reviews, images] = await Promise.all([
-    getHomeExperts(),
-    getHomeReviews(),
-    getHomeImages(),
-  ]);
+async function BenefitsLoader() {
+  const images = await getHomeImages();
+  return <BenefitsSection images={images} />;
+}
 
+async function FeaturedExpertsLoader() {
+  const experts = await getHomeExperts();
+  return <FeaturedExpertsSection experts={experts} isLoading={false} />;
+}
+
+async function ReviewsLoader() {
+  const reviews = await getHomeReviews();
+  return (
+    <>
+      <TestimonialsSection reviews={reviews} isLoading={false} />
+      <UpcomingEventsSection reviews={reviews} />
+    </>
+  );
+}
+
+export default function Home() {
   return (
     <main className="flex-1 w-full overflow-hidden">
       {/* Hero - Black with animated orbs */}
@@ -37,22 +58,25 @@ export default async function Home() {
       <CategoriesSection />
 
       {/* Why Familiarise / Benefits - Light silver gradient */}
-      <BenefitsSection images={images} />
+      <Suspense fallback={<BenefitsSkeleton />}>
+        <BenefitsLoader />
+      </Suspense>
 
       {/* Success Stories - Dark gradient */}
       <SuccessStoriesSection />
 
       {/* Featured Experts Marquee - White with dot pattern */}
-      <FeaturedExpertsSection experts={experts} isLoading={false} />
+      <Suspense fallback={<FeaturedExpertsSkeleton />}>
+        <FeaturedExpertsLoader />
+      </Suspense>
 
       {/* Platform Features - Light with diagonal stripes */}
       <PlatformFeaturesSection />
 
-      {/* Testimonials Marquee - Dark gradient */}
-      <TestimonialsSection reviews={reviews} isLoading={false} />
-
-      {/* Reviews + Upcoming Events Split - Dark */}
-      <UpcomingEventsSection reviews={reviews} />
+      {/* Testimonials Marquee + Upcoming Events - Dark */}
+      <Suspense fallback={<TestimonialsSkeleton />}>
+        <ReviewsLoader />
+      </Suspense>
 
       {/* Trust & Security Badges - Dark strip */}
       <TrustBadgesSection />
