@@ -423,6 +423,21 @@ export async function getWaitlistStats(consultantProfileId: string) {
 }
 
 /**
+ * Get the total number of WAITING entries for the same event as a given entry
+ */
+async function getTotalWaitingCount(entry: {
+  webinarId: string | null;
+  classId: string | null;
+}): Promise<number> {
+  const filter = entry.webinarId
+    ? { webinarId: entry.webinarId }
+    : { classId: entry.classId };
+  return prisma.waitlist.count({
+    where: { ...filter, status: WaitlistStatus.WAITING },
+  });
+}
+
+/**
  * Get all waitlist entries for a user
  */
 export async function getUserWaitlistEntries(userId: string) {
@@ -490,14 +505,15 @@ export async function getUserWaitlistEntries(userId: string) {
     ],
   });
 
-  // Calculate positions for waiting entries
+  // Calculate positions and total waiting counts
   const entriesWithPositions = await Promise.all(
     entries.map(async (entry) => {
       const position =
         entry.status === WaitlistStatus.WAITING
           ? await calculatePosition(entry.id)
           : null;
-      return { ...entry, position };
+      const totalWaiting = await getTotalWaitingCount(entry);
+      return { ...entry, position, totalWaiting };
     }),
   );
 
