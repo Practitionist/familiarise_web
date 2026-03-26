@@ -37,6 +37,7 @@ const nextConfig = {
     "@prisma/adapter-pg",
     "pg-pool",
     "pg-connection-string",
+    "@react-pdf/renderer",
   ],
 
   images: {
