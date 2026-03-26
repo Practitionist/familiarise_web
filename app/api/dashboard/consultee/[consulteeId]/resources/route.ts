@@ -376,7 +376,7 @@ export async function GET(
 async function extractRecordings(appointments: AppointmentWithSlots[]) {
   const recordings = appointments.flatMap((apt) =>
     apt.slotsOfAppointment.flatMap(
-      (slot) => slot.meetingSession?.recordings?.map((rec) => rec) ?? [],
+      (slot) => slot.meetingSession?.recordings ?? [],
     ),
   );
 

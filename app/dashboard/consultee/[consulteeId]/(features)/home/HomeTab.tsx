@@ -33,6 +33,7 @@ import {
 } from "./event-processor";
 import { WaitlistStatusBadge } from "@/components/ui/waitlist-status-badge";
 import { getStatusStyle } from "../../utils/statusConfig";
+import { DEFAULT_MEETING_DURATION_MS } from "../appointments/types";
 
 interface HomeTabProps {
   userDetails: {
@@ -54,7 +55,6 @@ const staggerChildren = {
   },
 };
 
-const DEFAULT_MEETING_DURATION_MS = 60 * 60 * 1000; // 1 hour
 const JOIN_WINDOW_BEFORE_START_MS = 10 * 60 * 1000; // 10 minutes
 
 const fadeInUp = {

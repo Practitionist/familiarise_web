@@ -295,11 +295,10 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                   .join(" + ")}
           </p>
           <p className="text-xs text-zinc-400 mt-1">
-            {data.payments.filter((p) => p.status === "SUCCEEDED").length}{" "}
-            successful{" "}
-            {data.payments.filter((p) => p.status === "SUCCEEDED").length === 1
-              ? "transaction"
-              : "transactions"}{" "}
+            {(() => {
+              const count = data.payments.filter((p) => p.status === "SUCCEEDED").length;
+              return `${count} successful ${count === 1 ? "transaction" : "transactions"} `;
+            })()}
             &middot; {data.payments.length} total
           </p>
         </div>
