@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
@@ -13,6 +13,16 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import {
   Clock,
@@ -22,14 +32,18 @@ import {
   Bell,
   Trash2,
   ExternalLink,
+  ArrowUpDown,
+  Info,
 } from "lucide-react";
 import { WaitlistBadge } from "@/components/waitlist/WaitlistBadge";
 import { SlotAvailableModal } from "@/components/waitlist/SlotAvailableModal";
-import { format } from "date-fns";
+import { format, formatDistanceToNow } from "date-fns";
+
 interface WaitlistEntry {
   id: string;
   status: "WAITING" | "NOTIFIED";
   position: number | null;
+  totalWaiting?: number;
   joinedAt: string;
   notifiedAt: string | null;
   expiresAt: string | null;
@@ -86,6 +100,13 @@ const fadeInUp = {
   visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: "easeOut" } },
 };
 
+const getScheduledDate = (entry: WaitlistEntry): Date | null => {
+  const dateStr =
+    entry.webinar?.appointment?.slotsOfAppointment?.[0]?.startsAt ||
+    entry.class?.appointments?.[0]?.slotsOfAppointment?.[0]?.startsAt;
+  return dateStr ? new Date(dateStr) : null;
+};
+
 export default function WaitlistsPage() {
   const router = useRouter();
   const { toast } = useToast();
@@ -97,6 +118,14 @@ export default function WaitlistsPage() {
   const [leavingId, setLeavingId] = useState<string | null>(null);
   const [selectedNotifiedEntry, setSelectedNotifiedEntry] =
     useState<WaitlistEntry | null>(null);
+  const [leaveConfirmEntry, setLeaveConfirmEntry] =
+    useState<WaitlistEntry | null>(null);
+  const [filterType, setFilterType] = useState<"all" | "webinar" | "class">(
+    "all",
+  );
+  const [sortOrder, setSortOrder] = useState<"soonest" | "position">(
+    "soonest",
+  );
 
   useEffect(() => {
     const fetchWaitlists = async () => {
@@ -130,6 +159,52 @@ export default function WaitlistsPage() {
 
     fetchWaitlists();
   }, [toast]);
+
+  // Step 1 — Split into upcoming vs ended, sorted by date or position
+  const { upcomingWebinars, endedWebinars, upcomingClasses, endedClasses } =
+    useMemo(() => {
+      const now = new Date();
+
+      const splitAndSort = (items: WaitlistEntry[]) => {
+        const upcoming = items
+          .filter((e) => {
+            const d = getScheduledDate(e);
+            return !d || d >= now; // no date = treat as upcoming
+          })
+          .sort((a, b) => {
+            if (sortOrder === "position") {
+              const pa = a.position ?? Infinity;
+              const pb = b.position ?? Infinity;
+              return pa - pb;
+            }
+            const da = getScheduledDate(a)?.getTime() ?? Infinity;
+            const db = getScheduledDate(b)?.getTime() ?? Infinity;
+            return da - db; // soonest first
+          });
+
+        const ended = items
+          .filter((e) => {
+            const d = getScheduledDate(e);
+            return d && d < now;
+          })
+          .sort((a, b) => {
+            const da = getScheduledDate(a)!.getTime();
+            const db = getScheduledDate(b)!.getTime();
+            return db - da; // most recently ended first
+          });
+
+        return { upcoming, ended };
+      };
+
+      const w = splitAndSort(entries.webinars);
+      const c = splitAndSort(entries.classes);
+      return {
+        upcomingWebinars: w.upcoming,
+        endedWebinars: w.ended,
+        upcomingClasses: c.upcoming,
+        endedClasses: c.ended,
+      };
+    }, [entries, sortOrder]);
 
   const handleLeaveWaitlist = async (waitlistId: string) => {
     setLeavingId(waitlistId);
@@ -170,7 +245,11 @@ export default function WaitlistsPage() {
     }
   };
 
-  const renderEntry = (entry: WaitlistEntry, type: "webinar" | "class") => {
+  const renderEntry = (
+    entry: WaitlistEntry,
+    type: "webinar" | "class",
+    isPast: boolean,
+  ) => {
     const isNotified = entry.status === "NOTIFIED";
     const eventData = type === "webinar" ? entry.webinar : entry.class;
     const plan =
@@ -188,7 +267,11 @@ export default function WaitlistsPage() {
       <motion.div key={entry.id} variants={fadeInUp}>
         <Card
           className={`${
-            isNotified ? "border-green-300 bg-green-50/50" : ""
+            isPast
+              ? "opacity-60 border-gray-200"
+              : isNotified
+                ? "border-green-300 bg-green-50/50"
+                : ""
           } hover:shadow-md transition-shadow`}
         >
           <CardContent className="p-4">
@@ -218,16 +301,27 @@ export default function WaitlistsPage() {
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    {isNotified ? (
+                    {isPast ? (
+                      <Badge className="bg-red-100 text-red-800 border-red-300">
+                        Event Ended
+                      </Badge>
+                    ) : isNotified ? (
                       <Badge className="bg-green-100 text-green-800 border-green-300">
                         <Bell className="h-3 w-3 mr-1" />
                         Spot Available!
                       </Badge>
                     ) : (
-                      <WaitlistBadge
-                        position={entry.position}
-                        variant="extended"
-                      />
+                      <div className="flex items-center gap-1.5">
+                        <WaitlistBadge
+                          position={entry.position}
+                          variant="extended"
+                        />
+                        {entry.totalWaiting != null && (
+                          <span className="text-xs text-gray-400">
+                            of {entry.totalWaiting}
+                          </span>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
@@ -252,11 +346,15 @@ export default function WaitlistsPage() {
 
                   <span className="flex items-center gap-1">
                     <Clock className="h-3.5 w-3.5" />
-                    Joined {format(new Date(entry.joinedAt), "MMM d, yyyy")}
+                    Joined {format(new Date(entry.joinedAt), "MMM d, yyyy")} (
+                    {formatDistanceToNow(new Date(entry.joinedAt), {
+                      addSuffix: false,
+                    })}{" "}
+                    ago)
                   </span>
                 </div>
 
-                {isNotified && entry.expiresAt && (
+                {!isPast && isNotified && entry.expiresAt && (
                   <div className="mt-3 p-3 bg-green-100 rounded-lg">
                     <p className="text-sm text-green-800 font-medium">
                       A spot is available! Book before{" "}
@@ -269,51 +367,107 @@ export default function WaitlistsPage() {
                 )}
 
                 <div className="mt-4 flex items-center gap-2">
-                  {isNotified ? (
-                    <Button
-                      size="sm"
-                      className="bg-green-600 hover:bg-green-700"
-                      onClick={() => setSelectedNotifiedEntry(entry)}
-                    >
-                      <ExternalLink className="h-4 w-4 mr-2" />
-                      Book Now
-                    </Button>
-                  ) : (
+                  {isPast ? (
+                    // Past entries: only show Remove button
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() =>
-                        router.push(
-                          `/explore/programs/plans/${type === "class" ? "classes" : "webinars"}/${plan.id}`,
-                        )
-                      }
+                      className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                      onClick={() => setLeaveConfirmEntry(entry)}
+                      disabled={leavingId === entry.id}
                     >
-                      <ExternalLink className="h-4 w-4 mr-2" />
-                      View Event
+                      {leavingId === entry.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <>
+                          <Trash2 className="h-4 w-4 mr-1" />
+                          Remove
+                        </>
+                      )}
                     </Button>
-                  )}
+                  ) : (
+                    <>
+                      {isNotified ? (
+                        <Button
+                          size="sm"
+                          className="bg-green-600 hover:bg-green-700"
+                          onClick={() => setSelectedNotifiedEntry(entry)}
+                        >
+                          <ExternalLink className="h-4 w-4 mr-2" />
+                          Book Now
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() =>
+                            router.push(
+                              `/explore/programs/plans/${type === "class" ? "classes" : "webinars"}/${plan.id}`,
+                            )
+                          }
+                        >
+                          <ExternalLink className="h-4 w-4 mr-2" />
+                          View Event
+                        </Button>
+                      )}
 
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                    onClick={() => handleLeaveWaitlist(entry.id)}
-                    disabled={leavingId === entry.id}
-                  >
-                    {leavingId === entry.id ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <>
-                        <Trash2 className="h-4 w-4 mr-1" />
-                        Leave
-                      </>
-                    )}
-                  </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                        onClick={() => setLeaveConfirmEntry(entry)}
+                        disabled={leavingId === entry.id}
+                      >
+                        {leavingId === entry.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <>
+                            <Trash2 className="h-4 w-4 mr-1" />
+                            Leave
+                          </>
+                        )}
+                      </Button>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
           </CardContent>
         </Card>
+      </motion.div>
+    );
+  };
+
+  const renderSection = (
+    title: string,
+    upcoming: WaitlistEntry[],
+    ended: WaitlistEntry[],
+    type: "webinar" | "class",
+  ) => {
+    if (upcoming.length === 0 && ended.length === 0) return null;
+
+    return (
+      <motion.div variants={fadeInUp}>
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">
+          {title} ({upcoming.length + ended.length})
+        </h2>
+
+        {upcoming.length > 0 && (
+          <div className="space-y-4">
+            {upcoming.map((entry) => renderEntry(entry, type, false))}
+          </div>
+        )}
+
+        {ended.length > 0 && (
+          <div className="mt-6">
+            <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">
+              Ended
+            </h3>
+            <div className="space-y-4">
+              {ended.map((entry) => renderEntry(entry, type, true))}
+            </div>
+          </div>
+        )}
       </motion.div>
     );
   };
@@ -358,6 +512,18 @@ export default function WaitlistsPage() {
         </Card>
       </motion.div>
 
+      {/* Scope note */}
+      <motion.div variants={fadeInUp}>
+        <div className="flex items-start gap-2.5 rounded-lg border border-blue-200 bg-blue-50/60 px-4 py-3 text-sm text-blue-800">
+          <Info className="h-4 w-4 mt-0.5 shrink-0" />
+          <p>
+            Waitlists are available for <strong>Webinars</strong> and{" "}
+            <strong>Classes</strong>. For Consultations, you can book directly
+            from the consultant&apos;s profile.
+          </p>
+        </div>
+      </motion.div>
+
       {totalEntries === 0 ? (
         <motion.div variants={fadeInUp}>
           <Card>
@@ -380,31 +546,100 @@ export default function WaitlistsPage() {
         </motion.div>
       ) : (
         <>
-          {/* Webinars */}
-          {entries.webinars.length > 0 && (
-            <motion.div variants={fadeInUp}>
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">
-                Webinars ({entries.webinars.length})
-              </h2>
-              <div className="space-y-4">
-                {entries.webinars.map((entry) => renderEntry(entry, "webinar"))}
+          {/* Filter & Sort Controls */}
+          <motion.div variants={fadeInUp}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              {/* Filter pills */}
+              <div className="flex items-center gap-2">
+                {(
+                  [
+                    { value: "all", label: "All" },
+                    { value: "webinar", label: "Webinars" },
+                    { value: "class", label: "Classes" },
+                  ] as const
+                ).map(({ value, label }) => (
+                  <Button
+                    key={value}
+                    size="sm"
+                    variant={filterType === value ? "default" : "outline"}
+                    onClick={() => setFilterType(value)}
+                    className="h-8"
+                  >
+                    {label}
+                  </Button>
+                ))}
               </div>
-            </motion.div>
-          )}
+
+              {/* Sort toggle */}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  setSortOrder((prev) =>
+                    prev === "soonest" ? "position" : "soonest",
+                  )
+                }
+                className="h-8 gap-1.5"
+              >
+                <ArrowUpDown className="h-3.5 w-3.5" />
+                {sortOrder === "soonest" ? "Date" : "Position"}
+              </Button>
+            </div>
+          </motion.div>
+
+          {/* Webinars */}
+          {filterType !== "class" &&
+            renderSection(
+              "Webinars",
+              upcomingWebinars,
+              endedWebinars,
+              "webinar",
+            )}
 
           {/* Classes */}
-          {entries.classes.length > 0 && (
-            <motion.div variants={fadeInUp}>
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">
-                Classes ({entries.classes.length})
-              </h2>
-              <div className="space-y-4">
-                {entries.classes.map((entry) => renderEntry(entry, "class"))}
-              </div>
-            </motion.div>
-          )}
+          {filterType !== "webinar" &&
+            renderSection(
+              "Classes",
+              upcomingClasses,
+              endedClasses,
+              "class",
+            )}
         </>
       )}
+
+      {/* Leave Confirmation Dialog */}
+      <AlertDialog
+        open={!!leaveConfirmEntry}
+        onOpenChange={(open) => !open && setLeaveConfirmEntry(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Leave waitlist?</AlertDialogTitle>
+            <AlertDialogDescription>
+              You will lose your current position
+              {leaveConfirmEntry?.position
+                ? ` (#${leaveConfirmEntry.position})`
+                : ""}{" "}
+              on the waitlist for &quot;
+              {leaveConfirmEntry?.webinar?.webinarPlan?.title ||
+                leaveConfirmEntry?.class?.classPlan?.title}
+              &quot;. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                handleLeaveWaitlist(leaveConfirmEntry!.id);
+                setLeaveConfirmEntry(null);
+              }}
+              className="bg-red-600 hover:bg-red-700 text-white"
+            >
+              Leave Waitlist
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Slot Available Modal */}
       {selectedNotifiedEntry && (

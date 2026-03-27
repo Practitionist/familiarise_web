@@ -36,7 +36,7 @@ export interface ProcessedEvent {
   startsAt: Date;
   endsAt: Date;
   status: string;
-  slots: Array<{ startsAt: Date; endsAt: Date }>;
+  slots: Array<{ startsAt: Date; endsAt: Date; appointmentId: string }>;
   appointmentId?: string;
   // Data needed for joining meetings
   joinableAppointment?: MeetingAppointment;
@@ -134,6 +134,7 @@ export function processConsultation(
     slots: slots.map((s) => ({
       startsAt: new Date(s.startsAt),
       endsAt: new Date(s.endsAt ?? s.startsAt),
+      appointmentId,
     })),
     appointmentId,
     joinableAppointment,
@@ -211,7 +212,7 @@ export function processSubscription(
     startsAt: nextSlot.startsAt,
     endsAt: nextSlot.endsAt,
     status: subscription.requestStatus ?? "PENDING",
-    slots: allSlots.map((s) => ({ startsAt: s.startsAt, endsAt: s.endsAt })),
+    slots: allSlots.map((s) => ({ startsAt: s.startsAt, endsAt: s.endsAt, appointmentId: s.appointmentId })),
     appointmentId: nextSlot.appointmentId,
     joinableAppointment,
     joinableSlot: nextSlot.rawSlot,
@@ -307,7 +308,7 @@ export function processWebinar(
     startsAt: nextSlot.startsAt,
     endsAt: nextSlot.endsAt,
     status: webinar.status ?? "APPROVED",
-    slots: allSlots.map((s) => ({ startsAt: s.startsAt, endsAt: s.endsAt })),
+    slots: allSlots.map((s) => ({ startsAt: s.startsAt, endsAt: s.endsAt, appointmentId: s.appointmentId })),
     appointmentId,
     joinableAppointment,
     joinableSlot: nextSlot.rawSlot,
@@ -413,7 +414,7 @@ export function processClass(
     startsAt: nextSlot.startsAt,
     endsAt: nextSlot.endsAt,
     status: classEvent.status ?? "APPROVED",
-    slots: allSlots.map((s) => ({ startsAt: s.startsAt, endsAt: s.endsAt })),
+    slots: allSlots.map((s) => ({ startsAt: s.startsAt, endsAt: s.endsAt, appointmentId: s.appointmentId })),
     appointmentId: nextSlot.appointmentId,
     joinableAppointment,
     joinableSlot: nextSlot.rawSlot,
@@ -421,6 +422,47 @@ export function processClass(
     waitlistPosition,
     collaborators,
   };
+}
+
+/**
+ * A session is a group of contiguous slots belonging to the same appointment.
+ */
+export interface SessionGroup {
+  appointmentId: string;
+  startTime: Date;
+  endTime: Date;
+  status: "completed" | "upcoming";
+}
+
+/** Group an event's slots by appointmentId into sessions with time-based status. */
+export function groupSlotsIntoSessions(
+  slots: ProcessedEvent["slots"],
+): SessionGroup[] {
+  const now = new Date();
+  const groups = new Map<string, ProcessedEvent["slots"]>();
+
+  for (const slot of slots) {
+    const key = slot.appointmentId;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(slot);
+  }
+
+  return Array.from(groups.entries())
+    .map(([appointmentId, sessionSlots]) => {
+      const sorted = sessionSlots.sort(
+        (a, b) => a.startsAt.getTime() - b.startsAt.getTime(),
+      );
+      const endTime = sorted[sorted.length - 1].endsAt;
+      return {
+        appointmentId,
+        startTime: sorted[0].startsAt,
+        endTime,
+        status: (endTime < now ? "completed" : "upcoming") as
+          | "completed"
+          | "upcoming",
+      };
+    })
+    .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
 }
 
 /**
@@ -475,11 +517,20 @@ export function getMonthlyEvents(
   events: ProcessedEvent[],
   month: Date,
 ): ProcessedEvent[] {
-  return events.filter((e) =>
-    e.slots.some(
-      (s) =>
-        s.startsAt.getMonth() === month.getMonth() &&
-        s.startsAt.getFullYear() === month.getFullYear(),
-    ),
-  );
+  const inactive = ["cancelled", "rejected", "completed", "expired"];
+
+  return events
+    .filter((e) =>
+      e.slots.some(
+        (s) =>
+          s.startsAt.getMonth() === month.getMonth() &&
+          s.startsAt.getFullYear() === month.getFullYear(),
+      ),
+    )
+    .sort((a, b) => {
+      const aInactive = inactive.includes(a.status.toLowerCase());
+      const bInactive = inactive.includes(b.status.toLowerCase());
+      if (aInactive !== bInactive) return aInactive ? 1 : -1;
+      return a.startsAt.getTime() - b.startsAt.getTime();
+    });
 }

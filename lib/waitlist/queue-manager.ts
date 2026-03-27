@@ -423,6 +423,21 @@ export async function getWaitlistStats(consultantProfileId: string) {
 }
 
 /**
+ * Get the total number of WAITING entries for the same event as a given entry
+ */
+async function getTotalWaitingCount(entry: {
+  webinarId: string | null;
+  classId: string | null;
+}): Promise<number> {
+  const filter = entry.webinarId
+    ? { webinarId: entry.webinarId }
+    : { classId: entry.classId };
+  return prisma.waitlist.count({
+    where: { ...filter, status: WaitlistStatus.WAITING },
+  });
+}
+
+/**
  * Get all waitlist entries for a user
  */
 export async function getUserWaitlistEntries(userId: string) {
@@ -490,16 +505,68 @@ export async function getUserWaitlistEntries(userId: string) {
     ],
   });
 
-  // Calculate positions for waiting entries
-  const entriesWithPositions = await Promise.all(
-    entries.map(async (entry) => {
-      const position =
-        entry.status === WaitlistStatus.WAITING
-          ? await calculatePosition(entry.id)
-          : null;
-      return { ...entry, position };
-    }),
+  // Batch-fetch all WAITING entries for the user's events to avoid N+1 queries
+  const webinarIds = Array.from(
+    new Set(entries.filter((e) => e.webinarId).map((e) => e.webinarId!)),
   );
+  const classIds = Array.from(
+    new Set(entries.filter((e) => e.classId).map((e) => e.classId!)),
+  );
+
+  const eventFilter = [
+    ...(webinarIds.length > 0 ? [{ webinarId: { in: webinarIds } }] : []),
+    ...(classIds.length > 0 ? [{ classId: { in: classIds } }] : []),
+  ];
+
+  const allWaitingEntries =
+    eventFilter.length > 0
+      ? await prisma.waitlist.findMany({
+          where: {
+            status: WaitlistStatus.WAITING,
+            OR: eventFilter,
+          },
+          select: {
+            id: true,
+            webinarId: true,
+            classId: true,
+            priority: true,
+            joinedAt: true,
+          },
+        })
+      : [];
+
+  // Group waiting entries by event key for O(1) lookup
+  const waitingByEvent = new Map<string, typeof allWaitingEntries>();
+  for (const w of allWaitingEntries) {
+    const key = w.webinarId ?? w.classId!;
+    const list = waitingByEvent.get(key);
+    if (list) {
+      list.push(w);
+    } else {
+      waitingByEvent.set(key, [w]);
+    }
+  }
+
+  // Calculate positions and total waiting counts in memory
+  const entriesWithPositions = entries.map((entry) => {
+    const eventKey = entry.webinarId ?? entry.classId!;
+    const waitingForEvent = waitingByEvent.get(eventKey) ?? [];
+    const totalWaiting = waitingForEvent.length;
+
+    let position: number | null = null;
+    if (entry.status === WaitlistStatus.WAITING) {
+      // Count entries ahead: higher priority, or same priority + earlier joinedAt
+      const ahead = waitingForEvent.filter(
+        (w) =>
+          w.priority > entry.priority ||
+          (w.priority === entry.priority &&
+            w.joinedAt.getTime() < entry.joinedAt.getTime()),
+      ).length;
+      position = ahead + 1;
+    }
+
+    return { ...entry, position, totalWaiting };
+  });
 
   // Separate into webinars and classes
   const webinars = entriesWithPositions.filter((e) => e.webinarId);

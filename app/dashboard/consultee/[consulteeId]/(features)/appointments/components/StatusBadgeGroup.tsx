@@ -28,6 +28,16 @@ export function StatusBadgeGroup({
   const displayStatus = isTentative ? "PENDING" : status?.toUpperCase();
   const displayStatusStyle = isTentative ? STATUS_CONFIG.PENDING : statusStyle;
 
+  const isTerminal = ["cancelled", "rejected", "completed", "expired"].includes(
+    status?.toLowerCase(),
+  );
+
+  // Show WaitlistStatusBadge only for active webinars/classes — not terminal ones
+  const showWaitlistBadge =
+    (eventType === "Webinar" || eventType === "Class") &&
+    !!bookingStatus &&
+    !isTerminal;
+
   return (
     <div className="flex items-center gap-2 flex-wrap">
       <Badge className="text-[10px] font-medium px-2 py-0.5 bg-transparent border border-zinc-300 text-zinc-600 rounded-md">
@@ -38,7 +48,7 @@ export function StatusBadgeGroup({
           Free Trial
         </Badge>
       )}
-      {(eventType === "Webinar" || eventType === "Class") && bookingStatus ? (
+      {showWaitlistBadge ? (
         <WaitlistStatusBadge
           bookingStatus={bookingStatus}
           waitlistPosition={waitlistPosition}
