@@ -252,6 +252,22 @@ export const hasUpcomingSlots = (appointment: TAppointment): boolean => {
   return getSlotTimes(appointment).some((time) => new Date(time) > now);
 };
 
+// Get the next upcoming slot time (first future slot), falling back to the earliest slot
+export const getNextUpcomingSlotTime = (
+  appointment: TAppointment,
+): Date | null => {
+  const now = new Date();
+  const times = getSlotTimes(appointment);
+  const futureTimes = times
+    .filter((time) => new Date(time) > now)
+    .sort((a, b) => a.getTime() - b.getTime());
+  return futureTimes.length > 0
+    ? futureTimes[0]
+    : times.length > 0
+      ? times[0]
+      : null;
+};
+
 // Check if appointment has any slots today
 export const hasTodaySlots = (appointment: TAppointment): boolean => {
   const now = new Date();
@@ -312,8 +328,11 @@ export const getAppointmentStatus = (appointment: TAppointment): string => {
     return "Completed";
   }
 
+  // For appointments with both past and future slots, use the next upcoming slot
+  const effectiveTime = getNextUpcomingSlotTime(appointment) ?? startTime;
+
   // Calculate time differences using local time
-  const diffMs = startTime.getTime() - now.getTime();
+  const diffMs = effectiveTime.getTime() - now.getTime();
   const diffMinutes = Math.floor(diffMs / (1000 * 60));
 
   // Use calendar-based day comparison for accurate "Today"/"Tomorrow" labels
@@ -329,7 +348,7 @@ export const getAppointmentStatus = (appointment: TAppointment): string => {
     now.getDate() + 2,
   );
 
-  const appointmentDate = new Date(startTime);
+  const appointmentDate = new Date(effectiveTime);
 
   // Upcoming appointments with more precise timing
   if (diffMinutes <= 5 && diffMinutes > 0) return "Meeting in 5 min";

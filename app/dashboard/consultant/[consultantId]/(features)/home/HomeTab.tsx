@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
@@ -29,7 +30,14 @@ import {
   DollarSign,
   CheckCircle2,
   Wallet,
+  Info,
 } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   calculateSessionProgress,
   formatAppointmentTime,
@@ -38,6 +46,7 @@ import {
   getConsumeeImage,
   getConsumeeName,
   getStartTime,
+  getNextUpcomingSlotTime,
   groupRecurringAppointments,
   sortAppointmentsByStartTime,
   getTodayAppointments,
@@ -55,6 +64,7 @@ import { RequestSlotAllocationTabMini } from "../requests/RequestSlotAllocationT
 interface HomeTabProps {
   appointments: TAppointment[];
   consultantId: string;
+  consultantName?: string;
 }
 
 const staggerChildren = {
@@ -93,15 +103,17 @@ function QuickStatsPanel({
   consultantId: string;
 }) {
   const activeClients = useMemo(() => {
-    const consulteeNames = new Set<string>();
+    const consulteeIds = new Set<string>();
     for (const apt of appointments) {
       const status = getAppointmentStatus(apt);
       if (status !== "Completed" && status !== "Cancelled") {
-        const name = getConsumeeName(apt);
-        if (name) consulteeNames.add(name);
+        const id =
+          apt.consultation?.requestedBy?.id ??
+          apt.subscription?.requestedBy?.id;
+        if (id) consulteeIds.add(id);
       }
     }
-    return consulteeNames.size;
+    return consulteeIds.size;
   }, [appointments]);
 
   const completedThisMonth = useMemo(() => {
@@ -114,6 +126,18 @@ function QuickStatsPanel({
       if (!startTime) return false;
       return startTime >= startOfMonth && startTime <= now;
     }).length;
+  }, [appointments]);
+
+  const activePrograms = useMemo(() => {
+    const subscriptionIds = new Set<string>();
+    const classIds = new Set<string>();
+    for (const apt of appointments) {
+      const status = getAppointmentStatus(apt);
+      if (status === "Completed" || status === "Cancelled") continue;
+      if (apt.subscription?.id) subscriptionIds.add(apt.subscription.id);
+      if (apt.class?.id) classIds.add(apt.class.id);
+    }
+    return subscriptionIds.size + classIds.size;
   }, [appointments]);
 
   const { data: earningsData } = useQuery<EarningsResponse>({
@@ -134,68 +158,110 @@ function QuickStatsPanel({
 
   return (
     <DataCard title="Business Overview" icon={BarChart3}>
-      <div className="divide-y divide-zinc-100">
-        <div className="flex items-center justify-between py-3 first:pt-0">
-          <div className="flex items-center gap-2.5">
-            <div className="h-8 w-8 rounded-lg bg-blue-50 flex items-center justify-center">
-              <Users className="h-4 w-4 text-blue-600" />
+      <TooltipProvider>
+        <div className="divide-y divide-zinc-100">
+          <div className="flex items-center justify-between py-3 first:pt-0">
+            <div className="flex items-center gap-2.5">
+              <div className="h-8 w-8 rounded-lg bg-blue-50 flex items-center justify-center">
+                <Users className="h-4 w-4 text-blue-600" />
+              </div>
+              <span className="text-sm text-zinc-600">Active Clients</span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Info className="h-3.5 w-3.5 text-zinc-400 cursor-help" />
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Unique clients with ongoing appointments (excludes completed and cancelled)</p>
+                </TooltipContent>
+              </Tooltip>
             </div>
-            <span className="text-sm text-zinc-600">Active Clients</span>
-          </div>
-          <span className="text-lg font-semibold text-zinc-900">
-            {activeClients}
-          </span>
-        </div>
-
-        <div className="flex items-center justify-between py-3">
-          <div className="flex items-center gap-2.5">
-            <div className="h-8 w-8 rounded-lg bg-emerald-50 flex items-center justify-center">
-              <DollarSign className="h-4 w-4 text-emerald-600" />
-            </div>
-            <span className="text-sm text-zinc-600">Total Revenue</span>
-          </div>
-          <span className="text-lg font-semibold text-zinc-900">
-            {earningsData?.summary
-              ? formatCurrency(earningsData.summary.totalEarnings)
-              : "—"}
-          </span>
-        </div>
-
-        <div className="flex items-center justify-between py-3">
-          <div className="flex items-center gap-2.5">
-            <div className="h-8 w-8 rounded-lg bg-amber-50 flex items-center justify-center">
-              <Wallet className="h-4 w-4 text-amber-600" />
-            </div>
-            <span className="text-sm text-zinc-600">Next Payout</span>
-          </div>
-          <div className="text-right">
             <span className="text-lg font-semibold text-zinc-900">
-              {earningsData?.eligibility
-                ? formatCurrency(earningsData.eligibility.readyAmount)
+              {activeClients}
+            </span>
+          </div>
+
+          <div className="flex items-center justify-between py-3">
+            <div className="flex items-center gap-2.5">
+              <div className="h-8 w-8 rounded-lg bg-indigo-50 flex items-center justify-center">
+                <Calendar className="h-4 w-4 text-indigo-600" />
+              </div>
+              <span className="text-sm text-zinc-600">Active Programs</span>
+            </div>
+            <span className="text-lg font-semibold text-zinc-900">
+              {activePrograms}
+            </span>
+          </div>
+
+          <div className="flex items-center justify-between py-3">
+            <div className="flex items-center gap-2.5">
+              <div className="h-8 w-8 rounded-lg bg-emerald-50 flex items-center justify-center">
+                <DollarSign className="h-4 w-4 text-emerald-600" />
+              </div>
+              <span className="text-sm text-zinc-600">Total Revenue</span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Info className="h-3.5 w-3.5 text-zinc-400 cursor-help" />
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Total earnings excluding refunded amounts</p>
+                </TooltipContent>
+              </Tooltip>
+            </div>
+            <span className="text-lg font-semibold text-zinc-900">
+              {earningsData?.summary
+                ? formatCurrency(earningsData.summary.totalEarnings)
                 : "—"}
             </span>
-            {earningsData?.eligibility && (
-              <p className="text-xs text-zinc-400">
-                {earningsData.eligibility.isEligible
-                  ? "Ready"
-                  : `Min ${formatCurrency(earningsData.eligibility.minimumAmount)}`}
-              </p>
-            )}
           </div>
-        </div>
 
-        <div className="flex items-center justify-between py-3 last:pb-0">
-          <div className="flex items-center gap-2.5">
-            <div className="h-8 w-8 rounded-lg bg-violet-50 flex items-center justify-center">
-              <CheckCircle2 className="h-4 w-4 text-violet-600" />
+          <div className="flex items-center justify-between py-3">
+            <div className="flex items-center gap-2.5">
+              <div className="h-8 w-8 rounded-lg bg-amber-50 flex items-center justify-center">
+                <Wallet className="h-4 w-4 text-amber-600" />
+              </div>
+              <span className="text-sm text-zinc-600">Next Payout</span>
             </div>
-            <span className="text-sm text-zinc-600">Completed This Month</span>
+            <div className="text-right">
+              <span className="text-lg font-semibold text-zinc-900">
+                {earningsData?.eligibility
+                  ? formatCurrency(earningsData.eligibility.readyAmount)
+                  : "—"}
+              </span>
+              {earningsData?.eligibility && (
+                <div className="flex items-center justify-end gap-1">
+                  <p className="text-xs text-zinc-400">
+                    {earningsData.eligibility.isEligible
+                      ? "Ready"
+                      : `Min ${formatCurrency(earningsData.eligibility.minimumAmount)}`}
+                  </p>
+                  {!earningsData.eligibility.isEligible && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="h-3 w-3 text-zinc-400 cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Minimum payout threshold. Your ready balance must reach this amount before a payout can be initiated.</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
-          <span className="text-lg font-semibold text-zinc-900">
-            {completedThisMonth}
-          </span>
+
+          <div className="flex items-center justify-between py-3 last:pb-0">
+            <div className="flex items-center gap-2.5">
+              <div className="h-8 w-8 rounded-lg bg-violet-50 flex items-center justify-center">
+                <CheckCircle2 className="h-4 w-4 text-violet-600" />
+              </div>
+              <span className="text-sm text-zinc-600">Completed This Month</span>
+            </div>
+            <span className="text-lg font-semibold text-zinc-900">
+              {completedThisMonth}
+            </span>
+          </div>
         </div>
-      </div>
+      </TooltipProvider>
     </DataCard>
   );
 }
@@ -203,6 +269,7 @@ function QuickStatsPanel({
 export function HomeTab({
   appointments,
   consultantId,
+  consultantName,
 }: Readonly<HomeTabProps>) {
   const router = useRouter();
   const client = useStreamVideoClient();
@@ -300,10 +367,20 @@ export function HomeTab({
     return { pendingRequests: pending, completedThisWeek: completed };
   }, [appointments, expandedAppointments]);
 
+  const totalCompleted = useMemo(
+    () =>
+      expandedAppointments.filter(
+        (apt) => getAppointmentStatus(apt) === "Completed",
+      ).length,
+    [expandedAppointments],
+  );
+
+  const firstName = consultantName?.split(" ")[0];
+
   return (
     <>
       <DashboardHeader
-        title="Welcome back"
+        title={firstName ? `Welcome back, ${firstName}` : "Welcome back"}
         subtitle="Here's what's happening with your appointments today"
       />
 
@@ -342,9 +419,9 @@ export function HomeTab({
                 }
               />
               <StatCard
-                title="This Week"
-                value={completedThisWeek}
-                subtitle="Sessions completed"
+                title="Completed"
+                value={totalCompleted}
+                subtitle={`${completedThisWeek} this week`}
                 icon={TrendingUp}
                 variant="success"
               />
@@ -424,14 +501,23 @@ export function HomeTab({
                           </Badge>
 
                           {isJoinable && (
-                            <Button
-                              onClick={() => handleJoinMeeting(appointment)}
-                              className="flex-shrink-0 bg-zinc-900 hover:bg-zinc-800 text-white gap-1.5"
-                              size="sm"
-                            >
-                              <Video className="h-3.5 w-3.5" />
-                              Join
-                            </Button>
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    onClick={() => handleJoinMeeting(appointment)}
+                                    className="flex-shrink-0 bg-zinc-900 hover:bg-zinc-800 text-white gap-1.5"
+                                    size="sm"
+                                  >
+                                    <Video className="h-3.5 w-3.5" />
+                                    Join
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>Join the meeting room</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
                           )}
                         </div>
                       );
@@ -442,6 +528,20 @@ export function HomeTab({
                     icon={Calendar}
                     title="No appointments today"
                     description="Enjoy your free time or check upcoming sessions"
+                    action={
+                      <div className="flex gap-2">
+                        <Button variant="outline" size="sm" asChild>
+                          <Link href={`/dashboard/consultant/${consultantId}/planner`}>
+                            Set up availability
+                          </Link>
+                        </Button>
+                        <Button variant="outline" size="sm" asChild>
+                          <Link href={`/dashboard/consultant/${consultantId}/appointments`}>
+                            View all appointments
+                          </Link>
+                        </Button>
+                      </div>
+                    }
                   />
                 )}
               </DataCard>
@@ -462,7 +562,9 @@ export function HomeTab({
                       const firstAppointment = groupAppointments[0];
                       const userName = getConsumeeName(firstAppointment);
                       const status = getAppointmentStatus(firstAppointment);
-                      const startTime = getStartTime(firstAppointment);
+                      const startTime = isRecurring
+                        ? getNextUpcomingSlotTime(firstAppointment)
+                        : getStartTime(firstAppointment);
 
                       const {
                         completedSessions,
@@ -544,6 +646,13 @@ export function HomeTab({
                     icon={Clock}
                     title="No upcoming appointments"
                     description="Your schedule is clear for now"
+                    action={
+                      <Button variant="outline" size="sm" asChild>
+                        <Link href={`/dashboard/consultant/${consultantId}/planner`}>
+                          Set up availability
+                        </Link>
+                      </Button>
+                    }
                   />
                 )}
               </DataCard>

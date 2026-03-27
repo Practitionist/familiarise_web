@@ -1,7 +1,7 @@
 "use client";
 
 import { use } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { HomeSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { createConsultantQueries } from "@/lib/dashboard-queries";
@@ -14,6 +14,11 @@ export default function HomePage({
   params: Promise<{ consultantId: string }>;
 }) {
   const { consultantId } = use(params);
+  const queryClient = useQueryClient();
+
+  // Read consultant name from the cached profile (already fetched by layout)
+  const consultantProfile = queryClient.getQueryData<{ user?: { name?: string } }>(["consultant-data", consultantId]);
+  const consultantName = consultantProfile?.user?.name;
 
   // Use the centralized query configuration with optimized settings for immediate rendering
   const dashboardQuery = {
@@ -82,6 +87,7 @@ export default function HomePage({
       <HomeTab
         appointments={dashboardData.appointments}
         consultantId={consultantId}
+        consultantName={consultantName}
       />
     </DashboardErrorBoundary>
   );

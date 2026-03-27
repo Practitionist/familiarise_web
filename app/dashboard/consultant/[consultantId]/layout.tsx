@@ -53,6 +53,7 @@ const NAV_SECTIONS: NavSection[] = [
     title: "Finance",
     items: [
       { name: "Earnings", path: "earnings", icon: "wallet" },
+      { name: "Analytics", path: "analytics", icon: "analytics" },
       { name: "Referrals", path: "referrals", icon: "gift" },
     ],
   },
@@ -563,7 +564,11 @@ export default function ConsultantLayout({
       userRole="CONSULTANT"
       basePath={`/dashboard/consultant/${consultantId}`}
       navSections={NAV_SECTIONS}
-      hideBottomActions={true}
+      hideBottomActions={false}
+      bottomNavItems={[
+        { name: "Settings", path: "settings", icon: "settings" },
+        { name: "Help", path: "help", icon: "help" },
+      ]}
       isLoading={isLoading}
     />
   );

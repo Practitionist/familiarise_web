@@ -97,6 +97,14 @@ export function RequestSlotAllocationTabMini() {
     return <div className="p-4 text-red-600">{error}</div>;
   }
 
+  if (requests.length === 0) {
+    return (
+      <div className="p-4 text-center text-muted-foreground">
+        No pending requests
+      </div>
+    );
+  }
+
   return (
     <div className="overflow-x-auto">
       <Table>
@@ -121,12 +129,6 @@ export function RequestSlotAllocationTabMini() {
           ))}
         </TableBody>
       </Table>
-
-      {requests.length === 0 && (
-        <div className="p-4 text-center text-muted-foreground">
-          No pending requests
-        </div>
-      )}
     </div>
   );
 }
