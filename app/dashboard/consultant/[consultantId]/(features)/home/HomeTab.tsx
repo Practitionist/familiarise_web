@@ -49,7 +49,7 @@ import {
 
 import { getBadgeStyle } from "../../types";
 import { TAppointment } from "@/types/appointment";
-import { getInitials } from "@/utils/formatting";
+import { getInitials, formatCurrencyAmount } from "@/utils/formatting";
 import { RequestSlotAllocationTabMini } from "../requests/RequestSlotAllocationTabMini";
 
 interface HomeTabProps {
@@ -126,11 +126,7 @@ function QuickStatsPanel({
     staleTime: 60_000,
   });
 
-  const formatCurrency = (amount: number) => {
-    if (amount >= 100000) return `₹${(amount / 100000).toFixed(1)}L`;
-    if (amount >= 1000) return `₹${(amount / 1000).toFixed(1)}K`;
-    return `₹${amount.toFixed(0)}`;
-  };
+  const formatCurrency = (amount: number) => formatCurrencyAmount(amount, "INR");
 
   return (
     <DataCard title="Business Overview" icon={BarChart3}>
