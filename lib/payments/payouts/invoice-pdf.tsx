@@ -27,8 +27,7 @@ import React from "react";
 
 // Load React 18.3.1 from node_modules via native require, bypassing the RSC
 // webpack alias that would otherwise give us the Next.js vendored canary.
-declare const __non_webpack_require__: NodeRequire;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+declare const __non_webpack_require__: typeof require;
 const pdfReact = __non_webpack_require__("react") as typeof React;
 import {
   Document,
