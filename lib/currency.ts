@@ -37,7 +37,7 @@ export async function getExchangeRates(): Promise<Record<string, number>> {
 
 /**
  * Force-invalidates the in-memory exchange rate cache.
- * Called by POST /api/admin/exchange-rates/refresh (admin-only).
+ * Called by POST /api/admin/exchange-rates (admin-only).
  */
 export function invalidateExchangeRateCache(): void {
   cachedRates = null;
@@ -159,7 +159,8 @@ export function getCurrencySymbol(currency: string): string {
 export const CURRENCY_SYMBOLS: Record<string, string> = new Proxy(
   {} as Record<string, string>,
   {
-    get(_target, prop: string) {
+    get(_target, prop: string | symbol) {
+      if (typeof prop === "symbol") return undefined;
       return getCurrencySymbol(prop);
     },
     has(_target, _prop) {

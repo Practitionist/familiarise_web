@@ -1725,9 +1725,15 @@ export async function handleCheckout(
               where: { id: discountCodeId },
               select: { maxUses: true, currentUses: true },
             });
+
+            if (!discountForIncrement) {
+              throw new Error(
+                "Discount code is no longer available. Please remove the code and try again.",
+              );
+            }
+
             if (
-              discountForIncrement?.maxUses !== null &&
-              discountForIncrement !== null &&
+              discountForIncrement.maxUses !== null &&
               discountForIncrement.currentUses >= discountForIncrement.maxUses
             ) {
               throw new Error(

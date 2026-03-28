@@ -49,16 +49,24 @@ export async function POST() {
   const auth = await requireAdmin();
   if ("error" in auth) return auth.error;
 
-  invalidateExchangeRateCache();
+  try {
+    invalidateExchangeRateCache();
 
-  // Eagerly fetch fresh rates so the next request is fast
-  const rates = await getExchangeRates();
-  const currencyCount = Object.keys(rates).length;
+    // Eagerly fetch fresh rates so the next request is fast
+    const rates = await getExchangeRates();
+    const currencyCount = Object.keys(rates).length;
 
-  return NextResponse.json({
-    success: true,
-    message: "Exchange rate cache invalidated and refreshed",
-    currencyCount,
-    refreshedAt: new Date().toISOString(),
-  });
+    return NextResponse.json({
+      success: true,
+      message: "Exchange rate cache invalidated and refreshed",
+      currencyCount,
+      refreshedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("Error refreshing exchange rate cache:", error);
+    return NextResponse.json(
+      { success: false, message: "Failed to refresh exchange rate cache" },
+      { status: 500 },
+    );
+  }
 }
