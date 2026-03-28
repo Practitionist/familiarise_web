@@ -1,5 +1,15 @@
 "use client";
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -43,6 +53,7 @@ export const ChannelInfoAndManageDialog = ({
   const [isLoading, setIsLoading] = useState(false);
   const [isLeavingChannel, setIsLeavingChannel] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const [showAddMembers, setShowAddMembers] = useState(false);
   const { client, setActiveChannel } = useChatContext();
   const { toast } = useToast();
@@ -367,11 +378,10 @@ export const ChannelInfoAndManageDialog = ({
                 <h3 className="text-sm font-medium">Channel Type</h3>
                 <p className="text-sm text-gray-500">
                   {isTeamChannel
-                    ? "Team Channel"
+                    ? "Group Chat"
                     : displayInfo.isGroupDM
-                      ? "Group Direct Message"
+                      ? "Group Conversation"
                       : "Direct Message"}
-                  {isEvent && " (Event Channel)"}
                 </p>
               </div>
 
@@ -444,7 +454,7 @@ export const ChannelInfoAndManageDialog = ({
                           variant="destructive"
                           size="sm"
                           className="w-full flex items-center justify-center gap-2"
-                          onClick={handleLeaveChannel}
+                          onClick={() => setShowLeaveConfirm(true)}
                           disabled={isLoading}
                         >
                           <UserMinusIcon className="h-4 w-4" />
@@ -535,7 +545,7 @@ export const ChannelInfoAndManageDialog = ({
                         variant="destructive"
                         size="sm"
                         className="w-full flex items-center justify-center gap-2"
-                        onClick={handleLeaveChannel}
+                        onClick={() => setShowLeaveConfirm(true)}
                         disabled={isLoading}
                       >
                         <UserMinusIcon className="h-4 w-4" />
@@ -673,6 +683,31 @@ export const ChannelInfoAndManageDialog = ({
         existingMemberIds={Object.keys(channel.state.members || {})}
         onMembersAdded={handleMembersAdded}
       />
+
+      {/* Leave Channel Confirmation Dialog */}
+      <AlertDialog open={showLeaveConfirm} onOpenChange={setShowLeaveConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {displayInfo.isGroupDM ? "Leave group?" : "Leave channel?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              You will lose access to this{" "}
+              {displayInfo.isGroupDM ? "group" : "channel"} and its message
+              history. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleLeaveChannel}
+              className="bg-red-600 hover:bg-red-700 text-white"
+            >
+              Yes, Leave
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 };

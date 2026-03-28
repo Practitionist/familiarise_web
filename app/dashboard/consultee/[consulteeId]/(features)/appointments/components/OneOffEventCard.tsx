@@ -104,11 +104,13 @@ export function OneOffEventCard({
   const isDev = process.env.NODE_ENV === "development";
   const canDevJoin = isDev && rawSlots.length > 0 && !!appointment;
 
+  const isConfirmed = ["APPROVED", "SCHEDULED", "IN_PROGRESS"].includes(
+    status?.toUpperCase(),
+  );
   const showDocUpload =
     (type === "Consultation" || type === "Trial") &&
     !!appointmentId &&
-    !isPendingPayment &&
-    !isInactive;
+    isConfirmed;
 
   const appointmentStatus: AppointmentStatus =
     status?.toLowerCase() === "completed" ? "COMPLETED" : "UPCOMING";
@@ -185,7 +187,15 @@ export function OneOffEventCard({
             <div className="bg-zinc-50 rounded-lg p-3 border border-zinc-100">
               <div className="flex items-center gap-2 text-xs text-zinc-500">
                 <Clock className="h-3.5 w-3.5" />
-                <span>No slots available</span>
+                <span>
+                  {isTentative
+                    ? "Awaiting schedule confirmation"
+                    : status?.toLowerCase() === "completed"
+                      ? "Session details unavailable"
+                      : isInactive
+                        ? "No session was scheduled"
+                        : "No session scheduled yet"}
+                </span>
               </div>
             </div>
           )}
@@ -264,7 +274,7 @@ export function OneOffEventCard({
             <div className="flex-1 text-xs text-zinc-400 text-center py-2">
               {isTentative
                 ? "Awaiting confirmation"
-                : isPendingPayment
+                : isPendingPayment || bookingStatus === "CONFIRMED"
                   ? ""
                   : "Pending approval"}
             </div>

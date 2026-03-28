@@ -12,6 +12,10 @@ import {
   Video,
 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
+import {
+  formatStatusLabel,
+  getStatusStyle,
+} from "@/app/dashboard/consultee/[consulteeId]/utils/statusConfig";
 
 export interface EventResource {
   id: string;
@@ -63,15 +67,19 @@ function formatDate(date: string): string {
   });
 }
 
-const STATUS_STYLES: Record<string, string> = {
-  APPROVED: "bg-emerald-50 text-emerald-700",
-  COMPLETED: "bg-emerald-50 text-emerald-700",
-  SCHEDULED: "bg-blue-50 text-blue-700",
-  IN_PROGRESS: "bg-blue-50 text-blue-700",
-  PENDING: "bg-amber-50 text-amber-700",
-  EXPIRED: "bg-zinc-100 text-zinc-500",
-  CANCELLED: "bg-zinc-100 text-zinc-500",
-};
+function getEmptyStateMessage(status: string): string {
+  switch (status) {
+    case "SCHEDULED":
+    case "IN_PROGRESS":
+      return "Recordings will appear here after the session ends.";
+    case "CANCELLED":
+      return "This event was cancelled — no recordings are available.";
+    case "COMPLETED":
+      return "No recordings were captured for this session.";
+    default:
+      return "No materials or recordings yet.";
+  }
+}
 
 export function EventResourceCard({ event }: { event: EventResource }) {
   const totalItems = event.materials.length + event.recordings.length;
@@ -108,10 +116,13 @@ export function EventResourceCard({ event }: { event: EventResource }) {
           <span
             className={cn(
               "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium",
-              STATUS_STYLES[event.status] || "bg-zinc-100 text-zinc-600",
+              (() => {
+                const s = getStatusStyle(event.status);
+                return `${s.bg} ${s.text}`;
+              })(),
             )}
           >
-            {event.status.replace(/_/g, " ")}
+            {formatStatusLabel(event.status)}
           </span>
           {totalItems > 0 && (
             <div className="flex items-center gap-2 text-xs text-zinc-500">
@@ -142,7 +153,7 @@ export function EventResourceCard({ event }: { event: EventResource }) {
         <div className="border-t border-zinc-100 p-4 space-y-4">
           {totalItems === 0 && (
             <p className="text-sm text-zinc-400 text-center py-3">
-              No materials or recordings yet
+              {getEmptyStateMessage(event.status)}
             </p>
           )}
 

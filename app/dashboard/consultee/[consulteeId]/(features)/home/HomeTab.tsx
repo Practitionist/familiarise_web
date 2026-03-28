@@ -29,9 +29,11 @@ import {
   processAllEvents,
   getUpcomingEvents,
   getMonthlyEvents,
+  groupSlotsIntoSessions,
 } from "./event-processor";
 import { WaitlistStatusBadge } from "@/components/ui/waitlist-status-badge";
 import { getStatusStyle } from "../../utils/statusConfig";
+import { DEFAULT_MEETING_DURATION_MS } from "../appointments/types";
 
 interface HomeTabProps {
   userDetails: {
@@ -52,6 +54,8 @@ const staggerChildren = {
     transition: { staggerChildren: 0.08 },
   },
 };
+
+const JOIN_WINDOW_BEFORE_START_MS = 10 * 60 * 1000; // 10 minutes
 
 const fadeInUp = {
   hidden: { opacity: 0, y: 16 },
@@ -90,6 +94,34 @@ function UpcomingSessionCard({
   isJoining?: boolean;
 }) {
   const timeAway = getTimeAway(event.startsAt);
+
+  // Match Appointments tab guards (OneOffEventCard.tsx:96-103)
+  const statusUpper = event.status?.toUpperCase();
+  const isInactive =
+    statusUpper === "CANCELLED" ||
+    statusUpper === "REJECTED" ||
+    statusUpper === "COMPLETED" ||
+    statusUpper === "EXPIRED";
+  const isApproved = (() => {
+    if (event.type === "webinar" || event.type === "class") {
+      return event.bookingStatus === "CONFIRMED";
+    }
+    return statusUpper === "APPROVED";
+  })();
+  const isTentative = event.joinableSlot?.isTentative ?? true;
+  const canShowJoin = !isTentative && isApproved && !isInactive;
+
+  // Time-window gate (matching JoinButton.tsx:getJoinState)
+  const isWithinJoinWindow = (() => {
+    if (!event.joinableSlot) return false;
+    const now = Date.now();
+    const start = new Date(event.joinableSlot.startsAt).getTime();
+    const end = event.joinableSlot.endsAt
+      ? new Date(event.joinableSlot.endsAt).getTime()
+      : start + DEFAULT_MEETING_DURATION_MS;
+    const joinWindow = start - JOIN_WINDOW_BEFORE_START_MS;
+    return now >= joinWindow && now <= end;
+  })();
 
   // Type badges - outline/border style only, no background colors
   const typeLabels: Record<string, string> = {
@@ -216,24 +248,26 @@ function UpcomingSessionCard({
             </Badge>
           )}
         </div>
-        <Button
-          size="sm"
-          className="h-7 px-3 text-xs bg-white hover:bg-zinc-100 text-zinc-900 font-semibold rounded-md shrink-0"
-          onClick={(e) => {
-            e.stopPropagation();
-            onJoin?.();
-          }}
-          disabled={
-            isJoining || !event.joinableAppointment || !event.joinableSlot
-          }
-        >
-          {isJoining ? (
-            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-          ) : (
-            <Video className="h-3 w-3 mr-1" />
-          )}
-          {isJoining ? "Joining..." : "Join"}
-        </Button>
+        {canShowJoin && (
+          <Button
+            size="sm"
+            className="h-7 px-3 text-xs bg-white hover:bg-zinc-100 text-zinc-900 font-semibold rounded-md shrink-0"
+            onClick={(e) => {
+              e.stopPropagation();
+              onJoin?.();
+            }}
+            disabled={
+              isJoining || !isWithinJoinWindow || !event.joinableAppointment
+            }
+          >
+            {isJoining ? (
+              <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+            ) : (
+              <Video className="h-3 w-3 mr-1" />
+            )}
+            {isJoining ? "Joining..." : "Join"}
+          </Button>
+        )}
       </div>
     </motion.div>
   );
@@ -409,37 +443,58 @@ function MonthlyEventItem({
         </div>
       </div>
 
-      {/* Expanded slots */}
-      {isExpanded && event.slots.length > 0 && (
-        <motion.div
-          initial={{ height: 0, opacity: 0 }}
-          animate={{ height: "auto", opacity: 1 }}
-          exit={{ height: 0, opacity: 0 }}
-          className="pl-16 pr-4 pb-4"
-        >
-          <div className="space-y-2 bg-zinc-50 rounded-lg p-3">
-            {event.slots.slice(0, 10).map((slot, idx) => (
-              <div
-                key={idx}
-                className="flex items-center gap-4 text-sm text-zinc-600"
-              >
-                <span className="w-24 font-medium text-zinc-700">
-                  {format(slot.startsAt, "EEE d MMM")}
-                </span>
-                <span className="text-zinc-500">
-                  {format(slot.startsAt, "h:mm a")} -{" "}
-                  {format(slot.endsAt, "h:mm a")}
-                </span>
-              </div>
-            ))}
-            {event.slots.length > 10 && (
-              <p className="text-xs text-zinc-400 pt-1">
-                +{event.slots.length - 10} more sessions
-              </p>
-            )}
-          </div>
-        </motion.div>
-      )}
+      {/* Expanded sessions (slots grouped by appointment) */}
+      {isExpanded && event.slots.length > 0 && (() => {
+        const sessions = groupSlotsIntoSessions(event.slots);
+        return (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="pl-16 pr-4 pb-4"
+          >
+            <div className="space-y-2 bg-zinc-50 rounded-lg p-3">
+              {sessions.slice(0, 10).map((session) => (
+                <div
+                  key={session.appointmentId}
+                  className="flex items-center gap-4 text-sm text-zinc-600"
+                >
+                  <span
+                    className={cn(
+                      "h-2 w-2 rounded-full flex-shrink-0",
+                      session.status === "completed"
+                        ? "bg-zinc-300"
+                        : "bg-emerald-500",
+                    )}
+                  />
+                  <span className="w-24 font-medium text-zinc-700">
+                    {format(session.startTime, "EEE d MMM")}
+                  </span>
+                  <span className="text-zinc-500">
+                    {format(session.startTime, "h:mm a")} -{" "}
+                    {format(session.endTime, "h:mm a")}
+                  </span>
+                  <span
+                    className={cn(
+                      "text-xs ml-auto capitalize",
+                      session.status === "completed"
+                        ? "text-zinc-400"
+                        : "text-emerald-600",
+                    )}
+                  >
+                    {session.status}
+                  </span>
+                </div>
+              ))}
+              {sessions.length > 10 && (
+                <p className="text-xs text-zinc-400 pt-1">
+                  +{sessions.length - 10} more sessions
+                </p>
+              )}
+            </div>
+          </motion.div>
+        );
+      })()}
     </div>
   );
 }
@@ -448,17 +503,27 @@ function MonthlyEventItem({
 function LearningStatsPanel({ events }: { events: ProcessedEvent[] }) {
   const stats = useMemo(() => {
     const now = new Date();
-    let completedSlots = 0;
+    const inactive = ["cancelled", "rejected", "expired"];
+    let completedSessions = 0;
     let hoursLearned = 0;
     const activePrograms = new Set<string>();
     const experts = new Set<string>();
 
     for (const event of events) {
+      if (inactive.includes(event.status.toLowerCase())) continue;
+
       experts.add(event.consultantName);
+
+      // Count grouped sessions (not raw slots) for "Sessions Completed"
+      const sessions = groupSlotsIntoSessions(event.slots);
+      completedSessions += sessions.filter(
+        (s) => s.status === "completed",
+      ).length;
+
+      // Hours still computed per-slot (correct granularity for duration)
       let hasUpcoming = false;
       for (const slot of event.slots) {
         if (slot.endsAt < now) {
-          completedSlots++;
           hoursLearned +=
             (slot.endsAt.getTime() - slot.startsAt.getTime()) / 3_600_000;
         }
@@ -468,7 +533,7 @@ function LearningStatsPanel({ events }: { events: ProcessedEvent[] }) {
     }
 
     return {
-      completedSlots,
+      completedSessions,
       hoursLearned: Math.round(hoursLearned * 10) / 10,
       activePrograms: activePrograms.size,
       experts: experts.size,
@@ -479,7 +544,7 @@ function LearningStatsPanel({ events }: { events: ProcessedEvent[] }) {
     {
       icon: CheckCircle2,
       label: "Sessions Completed",
-      value: stats.completedSlots,
+      value: stats.completedSessions,
       color: "text-emerald-600 bg-emerald-50",
     },
     {

@@ -11,7 +11,9 @@ import {
   TClassWithPlan,
   TTrialWithPlan,
 } from "@/hooks/useEvents";
+import { cn } from "@/utils/tailwind";
 import { getStatusColor } from "../../utils/getMetadata";
+import { formatStatusLabel } from "../../utils/statusConfig";
 import { getActualSlots } from "../../utils/scheduleHelpers";
 
 interface CalendarProps {
@@ -43,6 +45,7 @@ export function Calendar({
   trials,
 }: Readonly<CalendarProps>) {
   const [currentDate, setCurrentDate] = useState(new Date());
+  const today = new Date();
 
   // Generate unique colors for each subscription
   const subscriptionColors = React.useMemo(() => {
@@ -218,7 +221,7 @@ export function Calendar({
             year: "numeric",
           })}
         </h2>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
           <Button
             variant="outline"
             size="icon"
@@ -234,6 +237,13 @@ export function Calendar({
             className="rounded-full"
           >
             <ArrowLeftIcon className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setCurrentDate(new Date())}
+          >
+            Today
           </Button>
           <Button
             variant="outline"
@@ -278,16 +288,28 @@ export function Calendar({
                   currentDate.getMonth() + 1,
                   0,
                 ).getDate();
+            const isToday =
+              isCurrentMonth &&
+              dayNumber === today.getDate() &&
+              currentDate.getMonth() === today.getMonth() &&
+              currentDate.getFullYear() === today.getFullYear();
             const dayEvents = isCurrentMonth ? getEventsForDay(dayNumber) : [];
 
             return (
               <div
                 key={`day-${i}`}
-                className={`min-h-[100px] p-2 bg-white ${
-                  isCurrentMonth ? "" : "text-gray-400"
-                }`}
+                className={cn(
+                  "min-h-[100px] p-2 bg-white",
+                  !isCurrentMonth && "text-gray-400",
+                  isToday && "ring-2 ring-blue-500 ring-inset bg-blue-50/50",
+                )}
               >
-                <div className="font-medium mb-1">
+                <div
+                  className={cn(
+                    "font-medium mb-1",
+                    isToday && "text-blue-600 font-bold",
+                  )}
+                >
                   {isCurrentMonth ? dayNumber : ""}
                 </div>
                 <div className="space-y-1">
@@ -296,13 +318,13 @@ export function Calendar({
                       key={event.id}
                       onClick={() => handleEventClick(event)}
                       className={`w-full text-left text-xs p-1.5 rounded truncate font-medium hover:opacity-80 focus:ring-2 focus:ring-offset-1 focus:outline-none ${getEventColor(event)}`}
-                      title={`${event.title} - ${event.consultant} - ${event.time} - ${event.status}${event.isTentative ? " (Subject to change)" : ""}`}
+                      title={`${event.title} - ${event.consultant} - ${event.time} - ${formatStatusLabel(event.status)}${event.isTentative ? " (Subject to change)" : ""}`}
                     >
                       <div className="flex justify-between items-center">
                         <div className="flex flex-col">
                           <span>{event.title}</span>
                           <span className="text-xs opacity-75">
-                            {event.status}
+                            {formatStatusLabel(event.status)}
                             {event.isTentative && (
                               <span className="ml-1 text-red-500">*</span>
                             )}

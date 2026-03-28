@@ -6,12 +6,17 @@ import type {
   ReferralCredit,
   Prisma,
 } from "@prisma/client";
+import {
+  QUALIFICATION_WINDOW_DAYS,
+  CREDIT_EXPIRY_MONTHS,
+} from "./constants";
+
+// Re-export so existing server-side consumers can still import from service
+export { QUALIFICATION_WINDOW_DAYS, CREDIT_EXPIRY_MONTHS };
 
 // Constants
 const DEFAULT_REFERRER_REWARD = 50000; // ₹500 in paise
 const DEFAULT_REFEREE_REWARD = 20000; // ₹200 in paise
-const QUALIFICATION_WINDOW_DAYS = 30;
-const CREDIT_EXPIRY_MONTHS = 6;
 const SERIALIZABLE_MAX_RETRIES = 3;
 
 /**
@@ -78,15 +83,20 @@ export async function createReferralCode(
 export async function generateUniqueCode(
   name?: string | null,
 ): Promise<string> {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
   if (name) {
-    const baseCode = name
+    const prefix = name
       .toUpperCase()
       .replace(/[^A-Z]/g, "")
-      .slice(0, 6);
+      .slice(0, 4);
 
-    if (baseCode.length >= 3) {
+    if (prefix.length >= 3) {
       for (let i = 0; i < 100; i++) {
-        const code = i === 0 ? baseCode : `${baseCode}${i}`;
+        const suffix =
+          chars[Math.floor(Math.random() * chars.length)] +
+          chars[Math.floor(Math.random() * chars.length)];
+        const code = `${prefix}${suffix}`;
         const exists = await prisma.referralCode.findUnique({
           where: { code },
         });
@@ -96,7 +106,6 @@ export async function generateUniqueCode(
   }
 
   // Fallback to random code
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let code: string;
   do {
     code = Array.from(
