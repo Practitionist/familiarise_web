@@ -89,7 +89,7 @@ export function AppointmentsTab({
   const [highlightedGroup, setHighlightedGroup] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<
-    "ALL" | "UPCOMING" | "COMPLETED" | "CANCELLED"
+    "ALL" | "UPCOMING" | "PAST"
   >("ALL");
   const groupRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
@@ -289,13 +289,15 @@ export function AppointmentsTab({
       // Status filter
       if (statusFilter !== "ALL") {
         const s = getAppointmentStatus(apt);
-        if (
-          statusFilter === "UPCOMING" &&
-          (s === "Completed" || s === "Cancelled" || s === "Not Scheduled")
-        )
-          return false;
-        if (statusFilter === "COMPLETED" && s !== "Completed") return false;
-        if (statusFilter === "CANCELLED" && s !== "Cancelled") return false;
+        if (statusFilter === "UPCOMING") {
+          // Upcoming = has future sessions (exclude completed, cancelled, not scheduled)
+          if (s === "Completed" || s === "Cancelled" || s === "Not Scheduled")
+            return false;
+        }
+        if (statusFilter === "PAST") {
+          // Past = all sessions are done (completed or cancelled)
+          if (s !== "Completed" && s !== "Cancelled") return false;
+        }
       }
       // Name/plan search
       if (searchQuery.trim()) {
@@ -372,8 +374,7 @@ export function AppointmentsTab({
             [
               { label: "All", value: "ALL" },
               { label: "Upcoming", value: "UPCOMING" },
-              { label: "Completed", value: "COMPLETED" },
-              { label: "Cancelled", value: "CANCELLED" },
+              { label: "Past", value: "PAST" },
             ] as const
           ).map((tab) => (
             <button
