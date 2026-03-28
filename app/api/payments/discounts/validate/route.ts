@@ -89,6 +89,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Sanity-check stored discount value (guards against bad data created directly in DB)
+    if (
+      discountCode.discountType === DiscountType.PERCENTAGE &&
+      (discountCode.discountValue < 1 || discountCode.discountValue > 100)
+    ) {
+      return NextResponse.json<DiscountCodeResponse>(
+        { valid: false, message: "This discount code has an invalid configuration" },
+        { status: 400 },
+      );
+    }
+
     // Calculate discount amount if base amount provided
     let discountAmount: number | undefined;
     if (amount && amount > 0) {

@@ -62,9 +62,10 @@ model User {
   supportTickets   SupportTicket[]
   supportResponses SupportResponse[]
 
-  accounts Account[] // BetterAuth Accounts
-  sessions Session[] // BetterAuth Sessions
-  members  Member[] // Organization memberships
+  accounts         Account[]     // BetterAuth Accounts
+  sessions         Session[]     // BetterAuth Sessions
+  members          Member[]      // Organization memberships
+  invitationsSent  Invitation[]  @relation("InvitationsSent")
 
   // Staff Dashboard Relations
   reportsSubmitted  ModerationReport[] @relation("ReportsSubmitted")
@@ -413,6 +414,7 @@ model Invitation {
   inviterId      String
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  inviter      User         @relation("InvitationsSent", fields: [inviterId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
 
@@ -1898,7 +1900,6 @@ model DiscountCode {
 enum DiscountType {
   PERCENTAGE
   FIXED_AMOUNT
-  FREE_SHIPPING
 }
 
 ////////////////////////////////////////// REFERRAL SYSTEM //////////////////////////////////////////
@@ -1966,6 +1967,11 @@ model ReferralCredit {
 
   createdAt DateTime @default(now())
 
+  // Prevents duplicate credit rows for the same referral event.
+  // Note: PostgreSQL does NOT enforce this constraint when referralId IS NULL
+  // (NULL != NULL in unique indexes), so PROMOTION/MANUAL/COMPENSATION sources
+  // rely on the Serializable transaction in processQualifyingAction() for deduplication.
+  @@unique([userId, referralId, source])
   @@index([userId])
   @@index([expiresAt])
   @@index([userId, expiresAt])
