@@ -122,25 +122,31 @@ export default function Profile() {
   // Load cookie and notification preferences
   useEffect(() => {
     async function loadPreferences() {
-      try {
-        const [cookieRes, notifRes] = await Promise.all([
-          fetch("/api/user/cookie-preferences"),
-          fetch("/api/user/notification-preferences"),
-        ]);
-        if (cookieRes.ok) {
-          const { data } = await cookieRes.json();
+      const [cookieResult, notifResult] = await Promise.allSettled([
+        fetch("/api/user/cookie-preferences"),
+        fetch("/api/user/notification-preferences"),
+      ]);
+
+      if (cookieResult.status === "fulfilled" && cookieResult.value.ok) {
+        try {
+          const { data } = await cookieResult.value.json();
           setCookieAnalytics(data.analytics);
           setCookieMarketing(data.marketing);
+        } catch (e) {
+          console.error("Failed to parse cookie preferences:", e);
         }
-        if (notifRes.ok) {
-          const { data } = await notifRes.json();
+      }
+
+      if (notifResult.status === "fulfilled" && notifResult.value.ok) {
+        try {
+          const { data } = await notifResult.value.json();
           setNotifAll(data.allNotifications);
           setNotifMentions(data.mentions);
           setNotifDirect(data.directMessages);
           setNotifUpdates(data.updates);
+        } catch (e) {
+          console.error("Failed to parse notification preferences:", e);
         }
-      } catch (error) {
-        console.error("Failed to load preferences:", error);
       }
     }
     loadPreferences();
@@ -162,10 +168,13 @@ export default function Profile() {
         title: "Cookie preferences saved",
         description: "Your cookie preferences have been updated.",
       });
-    } catch {
+    } catch (error) {
       toast({
         title: "Error",
-        description: "Failed to save cookie preferences. Please try again.",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Failed to save cookie preferences. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -191,11 +200,13 @@ export default function Profile() {
         title: "Notification preferences saved",
         description: "Your notification preferences have been updated.",
       });
-    } catch {
+    } catch (error) {
       toast({
         title: "Error",
         description:
-          "Failed to save notification preferences. Please try again.",
+          error instanceof Error
+            ? error.message
+            : "Failed to save notification preferences. Please try again.",
         variant: "destructive",
       });
     } finally {

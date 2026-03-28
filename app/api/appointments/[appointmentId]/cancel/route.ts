@@ -270,7 +270,8 @@ export async function POST(
       });
     }
 
-    // Fire-and-forget: log cancellation activity for consultant dashboard
+    // Log cancellation activity for consultant dashboard (awaited — DB write
+    // that should not be dropped in serverless; logActivity swallows errors)
     const actor = {
       id: session.user.id,
       name: session.user.name || "User",
@@ -285,7 +286,7 @@ export async function POST(
       const cpId =
         appointment.consultation.consultationPlan?.consultantProfileId;
       if (cpId) {
-        void logConsultationCancelled(
+        await logConsultationCancelled(
           cpId,
           appointment.consultation.id,
           actor,
@@ -297,7 +298,7 @@ export async function POST(
       const cpId =
         appointment.subscription.subscriptionPlan?.consultantProfileId;
       if (cpId) {
-        void logSubscriptionCancelled(
+        await logSubscriptionCancelled(
           cpId,
           appointment.subscription.id,
           actor,

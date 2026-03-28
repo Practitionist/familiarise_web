@@ -284,10 +284,10 @@ export async function PATCH(request: NextRequest) {
           });
         }
 
-        // Fire-and-forget: log cancellation activity for consultant dashboard
+        // Log cancellation activity (awaited — DB write should not be dropped in serverless)
         const cpId = subscription.subscriptionPlan?.consultantProfileId;
         if (cpId) {
-          void logSubscriptionCancelled(
+          await logSubscriptionCancelled(
             cpId,
             subscription.id,
             {

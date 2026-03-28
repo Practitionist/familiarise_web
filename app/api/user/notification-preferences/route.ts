@@ -56,8 +56,17 @@ export async function PUT(request: NextRequest) {
   if (authResult.error) return authResult.error;
   const { session } = authResult;
 
+  let body: unknown;
   try {
-    const body = await request.json();
+    body = await request.json();
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid JSON in request body" },
+      { status: 400 },
+    );
+  }
+
+  try {
     const result = UpdateNotificationPreferencesSchema.safeParse(body);
     if (!result.success) {
       return NextResponse.json(
