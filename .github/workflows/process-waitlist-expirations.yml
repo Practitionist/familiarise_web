@@ -108,8 +108,8 @@ jobs:
                 labels: ['bug', 'automated', 'waitlist'],
               });
             }
-          env:
-            ERROR_LOG: ${{ steps.error_output.outputs.log }}
+        env:
+          ERROR_LOG: ${{ steps.error_output.outputs.log }}
 
       - name: Fail the job
         if: steps.run_script.outcome == 'failure'
