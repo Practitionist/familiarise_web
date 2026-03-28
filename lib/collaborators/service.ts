@@ -36,6 +36,16 @@ export async function inviteCollaborator(
     return null;
   }
 
+  // Verify the invited consultant profile exists before creating a collaborator record.
+  // Without this check, a stale or fabricated consultantProfileId creates an orphaned row.
+  const inviteeProfile = await prisma.consultantProfile.findUnique({
+    where: { id: consultantProfileId },
+    select: { id: true },
+  });
+  if (!inviteeProfile) {
+    return null;
+  }
+
   // FIX B1: Wrap validation + creation in a serializable transaction
   // to prevent concurrent invites from exceeding the 90% cap.
   const txResult = await prisma.$transaction(
