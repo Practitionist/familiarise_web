@@ -257,15 +257,10 @@ export const getNextUpcomingSlotTime = (
   appointment: TAppointment,
 ): Date | null => {
   const now = new Date();
-  const times = getSlotTimes(appointment);
-  const futureTimes = times
-    .filter((time) => new Date(time) > now)
-    .sort((a, b) => a.getTime() - b.getTime());
-  return futureTimes.length > 0
-    ? futureTimes[0]
-    : times.length > 0
-      ? times[0]
-      : null;
+  const sortedTimes = getSlotTimes(appointment).sort(
+    (a, b) => a.getTime() - b.getTime(),
+  );
+  return sortedTimes.find((time) => time > now) ?? sortedTimes[0] ?? null;
 };
 
 // Check if appointment has any slots today
