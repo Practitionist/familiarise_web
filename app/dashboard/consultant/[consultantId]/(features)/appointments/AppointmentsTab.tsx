@@ -651,9 +651,6 @@ export function AppointmentsTab({
                               />
                             </div>
 
-                            <div className="text-xs text-center text-gray-500 font-medium">
-                              {completedSessions} of {totalSessions} sessions
-                            </div>
                           </div>
                         </div>
                       )}
@@ -829,36 +826,30 @@ export function AppointmentsTab({
 
                                       {/* Right side: Status and Join button */}
                                       <div className="flex items-center gap-3 flex-shrink-0">
-                                        <Badge
-                                          variant="secondary"
-                                          className={getStyleFromBadgeData(
-                                            status,
-                                          )}
-                                        >
-                                          {status}
-                                        </Badge>
+                                        {status !== "Not Scheduled" && (
+                                          <Badge
+                                            variant="secondary"
+                                            className={getStyleFromBadgeData(
+                                              status,
+                                            )}
+                                          >
+                                            {status}
+                                          </Badge>
+                                        )}
                                         {status !== "Completed" &&
                                           status !== "Not Scheduled" && (
                                             <Button
                                               variant="default"
                                               size="sm"
                                               className={`${joinButtonStyle} h-8 px-4 text-xs`}
-                                              disabled={
-                                                process.env.NODE_ENV ===
-                                                "production"
-                                                  ? !isJoinable
-                                                  : false
-                                              }
+                                              disabled={!isJoinable}
                                               onClick={() =>
                                                 handleJoinMeeting(appointment)
                                               }
                                             >
-                                              {process.env.NODE_ENV ===
-                                              "production"
-                                                ? isJoinable
-                                                  ? "Join meet"
-                                                  : "Not available"
-                                                : "Join (Dev)"}
+                                              {isJoinable
+                                                ? "Join meet"
+                                                : "Not available"}
                                             </Button>
                                           )}
                                       </div>
