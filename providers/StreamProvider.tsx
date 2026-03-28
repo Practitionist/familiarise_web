@@ -59,6 +59,13 @@ export async function disconnectStreamClients(): Promise<void> {
   currentUserId = null;
   clearAllStreamCaches();
 
+  // Clear sessionStorage sync flags so a re-login triggers a fresh sync
+  if (typeof sessionStorage !== "undefined") {
+    Object.keys(sessionStorage)
+      .filter((k) => k.startsWith("stream_sync_"))
+      .forEach((k) => sessionStorage.removeItem(k));
+  }
+
   await Promise.all(promises);
 }
 
@@ -239,20 +246,32 @@ const StreamProvider = ({
       setChatClient(client);
       setChatConnected(true);
 
-      // Initial channel sync only once per user per session
-      if (!initialSyncCompletedUsers.has(userDetails.id)) {
+      // Initial channel sync — once per user per browser session.
+      // The in-memory Set resets on page reload (client module re-evaluation),
+      // so we persist to sessionStorage to survive refreshes within the same tab.
+      const syncKey = `stream_sync_${userDetails.id}`;
+      const alreadySynced =
+        initialSyncCompletedUsers.has(userDetails.id) ||
+        (typeof sessionStorage !== "undefined" &&
+          sessionStorage.getItem(syncKey) === "1");
+
+      if (!alreadySynced) {
         try {
           streamLogger.info("Starting initial channel sync", {
             userId: userDetails.id,
           });
           await syncUserEventChannels(userDetails.id);
           initialSyncCompletedUsers.add(userDetails.id);
+          if (typeof sessionStorage !== "undefined") {
+            sessionStorage.setItem(syncKey, "1");
+          }
           streamLogger.info("Initial channel sync completed", {
             userId: userDetails.id,
           });
         } catch (syncError) {
           streamLogger.warn("Channel sync failed", { userId: userDetails.id });
-          // Still mark as completed to avoid repeated failed attempts
+          // Mark in-memory to avoid retry within same component lifecycle,
+          // but don't persist to sessionStorage so next load retries.
           initialSyncCompletedUsers.add(userDetails.id);
         }
       } else {
@@ -417,7 +436,18 @@ const StreamProvider = ({
     connectServices();
   }, [connectServices]);
 
-  // Initialize connections
+  // Keep a stable ref to connectServices/disconnect so the effect doesn't
+  // re-fire when useCallback identities change due to object reference churn.
+  const connectServicesRef = useRef(connectServices);
+  useEffect(() => {
+    connectServicesRef.current = connectServices;
+  }, [connectServices]);
+  const disconnectRef = useRef(disconnect);
+  useEffect(() => {
+    disconnectRef.current = disconnect;
+  }, [disconnect]);
+
+  // Initialize connections — deps are only stable primitives (userId, loading, apiKey)
   useEffect(() => {
     if (!isLoading && userDetails && apiKey) {
       // Check if user changed - if so, disconnect old user first
@@ -426,11 +456,11 @@ const StreamProvider = ({
           from: currentUserId,
           to: userDetails.id,
         });
-        disconnect(true).then(() => {
-          connectServices();
+        disconnectRef.current(true).then(() => {
+          connectServicesRef.current();
         });
       } else {
-        connectServices();
+        connectServicesRef.current();
       }
     }
 
@@ -440,7 +470,8 @@ const StreamProvider = ({
       // Intentionally not calling disconnect() here
       // Global clients are reused across component remounts
     };
-  }, [userDetails?.id, isLoading, apiKey, connectServices, disconnect]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userDetails?.id, isLoading, apiKey]);
 
   // Connection state for context
   const connectionState: StreamConnectionState = {
