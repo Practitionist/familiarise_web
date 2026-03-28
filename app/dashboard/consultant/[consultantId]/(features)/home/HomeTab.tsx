@@ -65,6 +65,7 @@ interface HomeTabProps {
   appointments: TAppointment[];
   consultantId: string;
   consultantName?: string;
+  pendingRequestsCount?: number;
 }
 
 const staggerChildren = {
@@ -270,6 +271,7 @@ export function HomeTab({
   appointments,
   consultantId,
   consultantName,
+  pendingRequestsCount = 0,
 }: Readonly<HomeTabProps>) {
   const router = useRouter();
   const client = useStreamVideoClient();
@@ -307,14 +309,18 @@ export function HomeTab({
 
   const expandedAppointments = appointments || [];
 
-  const todayAppointments = useMemo(
+  const todayRemainingAppointments = useMemo(
     () =>
-      getTodayAppointments(expandedAppointments)
-        .filter(
-          (appointment) => getAppointmentStatus(appointment) !== "Completed",
-        )
-        .slice(0, 6),
+      getTodayAppointments(expandedAppointments).filter(
+        (appointment) => getAppointmentStatus(appointment) !== "Completed",
+      ),
     [expandedAppointments],
+  );
+
+  // Limit display to 6 items, but keep the full count for stats
+  const todayAppointments = useMemo(
+    () => todayRemainingAppointments.slice(0, 6),
+    [todayRemainingAppointments],
   );
 
   const allUpcomingAppointments = useMemo(
@@ -327,7 +333,24 @@ export function HomeTab({
 
   const upcomingGroups = useMemo(() => {
     const groupedAll = groupRecurringAppointments(allUpcomingAppointments);
-    return Object.entries(groupedAll).slice(0, 5);
+    return Object.entries(groupedAll)
+      .sort(([keyA, aptsA], [keyB, aptsB]) => {
+        const isRecurringA =
+          keyA.startsWith("subscription-") || keyA.startsWith("class-");
+        const isRecurringB =
+          keyB.startsWith("subscription-") || keyB.startsWith("class-");
+        const timeA = isRecurringA
+          ? getNextUpcomingSlotTime(aptsA[0])
+          : getStartTime(aptsA[0]);
+        const timeB = isRecurringB
+          ? getNextUpcomingSlotTime(aptsB[0])
+          : getStartTime(aptsB[0]);
+        if (!timeA && !timeB) return 0;
+        if (!timeA) return 1;
+        if (!timeB) return -1;
+        return timeA.getTime() - timeB.getTime();
+      })
+      .slice(0, 5);
   }, [allUpcomingAppointments]);
 
   // Calculate stats from real data
@@ -337,35 +360,21 @@ export function HomeTab({
   );
   const totalUpcoming = allUpcomingAppointments.length;
 
-  // Calculate pending requests and completed this week with memoization
-  const { pendingRequests, completedThisWeek } = useMemo(() => {
-    // Calculate pending requests from appointments with PENDING status
-    const pending = (appointments || []).filter((appointment) => {
-      const consultation = appointment.consultation;
-      const subscription = appointment.subscription;
-      const status =
-        consultation?.requestStatus ?? subscription?.requestStatus ?? null;
-      return status === "PENDING" || status === "APPROVED_PENDING_PAYMENT";
-    }).length;
-
-    // Calculate completed this week
+  // Calculate completed this month
+  const completedThisMonth = useMemo(() => {
     const now = new Date();
-    const startOfWeek = new Date(now);
-    startOfWeek.setDate(now.getDate() - now.getDay()); // Go to Sunday
-    startOfWeek.setHours(0, 0, 0, 0);
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    const completed = expandedAppointments.filter((appointment) => {
+    return expandedAppointments.filter((appointment) => {
       const status = getAppointmentStatus(appointment);
       if (status !== "Completed") return false;
 
       const startTime = getStartTime(appointment);
       if (!startTime) return false;
 
-      return startTime >= startOfWeek && startTime <= now;
+      return startTime >= startOfMonth && startTime <= now;
     }).length;
-
-    return { pendingRequests: pending, completedThisWeek: completed };
-  }, [appointments, expandedAppointments]);
+  }, [expandedAppointments]);
 
   const totalCompleted = useMemo(
     () =>
@@ -397,20 +406,20 @@ export function HomeTab({
               <StatCard
                 title="Today's Sessions"
                 value={totalToday}
-                subtitle={`${todayAppointments.length} remaining`}
+                subtitle={`${todayRemainingAppointments.length} remaining`}
                 icon={Calendar}
                 variant="info"
               />
               <StatCard
                 title="Upcoming"
                 value={totalUpcoming}
-                subtitle="Next 30 days"
+                subtitle="All scheduled"
                 icon={Clock}
                 variant="default"
               />
               <StatCard
                 title="Pending Requests"
-                value={pendingRequests}
+                value={pendingRequestsCount}
                 subtitle="Awaiting response"
                 icon={Bell}
                 variant="warning"
@@ -421,7 +430,7 @@ export function HomeTab({
               <StatCard
                 title="Completed"
                 value={totalCompleted}
-                subtitle={`${completedThisWeek} this week`}
+                subtitle={`${completedThisMonth} this month`}
                 icon={TrendingUp}
                 variant="success"
               />

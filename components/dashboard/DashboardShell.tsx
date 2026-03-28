@@ -78,7 +78,7 @@ export function DashboardShell({
                 animate={{ x: 0 }}
                 exit={{ x: "-100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed left-0 top-maintenance h-screen-maintenance z-50 w-72 lg:hidden"
+                className="fixed left-0 top-0 h-screen z-[60] w-72 lg:hidden"
               >
                 {/* Close button */}
                 <Button

@@ -88,6 +88,7 @@ export default function HomePage({
         appointments={dashboardData.appointments}
         consultantId={consultantId}
         consultantName={consultantName}
+        pendingRequestsCount={dashboardData.approvals?.length ?? 0}
       />
     </DashboardErrorBoundary>
   );
