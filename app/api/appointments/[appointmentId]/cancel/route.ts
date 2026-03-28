@@ -315,8 +315,6 @@ export async function POST(
 
     return NextResponse.json(result);
   } catch (error) {
-    console.error("Error canceling appointment:", error);
-
     if (error instanceof Error && error.message === "Appointment not found") {
       return NextResponse.json(
         { error: "Appointment not found" },
@@ -324,6 +322,7 @@ export async function POST(
       );
     }
 
+    console.error("Error canceling appointment:", error);
     return NextResponse.json(
       { error: "Failed to cancel appointment" },
       { status: 500 },

@@ -421,7 +421,7 @@ export class SlotValidationService {
       }
 
       if (hasInvalidSlots) {
-        console.error("[SlotValidationService] Invalid slots found:", {
+        console.warn("[SlotValidationService] Invalid slots found:", {
           invalidSlots: invalidSlotsList,
         });
 
