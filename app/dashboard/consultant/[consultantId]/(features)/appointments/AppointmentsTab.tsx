@@ -46,6 +46,7 @@ import {
   getConsumeeName,
   getGroupStatus,
   getGroupTitle,
+  getNextUpcomingSlotTime,
   getStartTime,
   groupRecurringAppointments,
   groupAppointmentsByType,
@@ -341,13 +342,52 @@ export function AppointmentsTab({
     {} as { [key: string]: TAppointment[] },
   );
 
-  // Sort groups by appointment type order
+  // Sort groups: by type order first, then within each type —
+  // upcoming groups first (nearest future first), past groups after (most recent first)
   const typeOrder = ["CONSULTATION", "SUBSCRIPTION", "WEBINAR", "CLASS"];
+  const now = new Date();
+
+  const getGroupSortTime = (groupAppts: TAppointment[]): Date | null => {
+    if (groupAppts.length === 0) return null;
+    // For recurring groups, use the next upcoming slot across all appointments
+    const times = groupAppts
+      .map((apt) => getNextUpcomingSlotTime(apt))
+      .filter((t): t is Date => t !== null);
+    if (times.length === 0) return null;
+    // Return the earliest time in the group
+    return times.reduce((a, b) => (a < b ? a : b));
+  };
+
   const sortedGroupedAppointments = Object.entries(groupedAppointments).sort(
-    ([keyA], [keyB]) => {
+    ([keyA, apptsA], [keyB, apptsB]) => {
       const typeA = keyA.split("-")[0];
       const typeB = keyB.split("-")[0];
-      return typeOrder.indexOf(typeA) - typeOrder.indexOf(typeB);
+      // First sort by type
+      const typeCompare =
+        typeOrder.indexOf(typeA) - typeOrder.indexOf(typeB);
+      if (typeCompare !== 0) return typeCompare;
+
+      // Within same type: upcoming before past, empty groups last
+      const timeA = getGroupSortTime(apptsA);
+      const timeB = getGroupSortTime(apptsB);
+      if (!timeA && !timeB) return 0;
+      if (!timeA) return 1;
+      if (!timeB) return -1;
+
+      const aIsUpcoming = timeA >= now;
+      const bIsUpcoming = timeB >= now;
+
+      // Upcoming groups come before past groups
+      if (aIsUpcoming && !bIsUpcoming) return -1;
+      if (!aIsUpcoming && bIsUpcoming) return 1;
+
+      // Both upcoming: nearest future first (ascending)
+      if (aIsUpcoming && bIsUpcoming) {
+        return timeA.getTime() - timeB.getTime();
+      }
+
+      // Both past: most recent first (descending)
+      return timeB.getTime() - timeA.getTime();
     },
   );
 
