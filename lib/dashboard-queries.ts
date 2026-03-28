@@ -74,7 +74,7 @@ export const consultantFetchers = {
 
   appointments: (consultantId: string) =>
     fetchWithErrorHandling<TAppointment[]>(
-      `/api/slots/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&classStatus=APPROVED`,
+      `/api/slots/appointments?consultantProfileId=${consultantId}`,
       "Appointments fetch failed",
     ),
 

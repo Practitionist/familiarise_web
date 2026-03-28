@@ -37,27 +37,34 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // Validate statuses
-  const validStatuses = ["PENDING", "APPROVED", "REJECTED", "CANCELLED"];
-  if (consultationStatus && !validStatuses.includes(consultationStatus)) {
+  // Validate statuses — consultations/subscriptions use RequestStatus,
+  // webinars/classes use their own event status enums
+  const validRequestStatuses = [
+    "PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED",
+    "COMPLETED", "REJECTED", "CANCELLED", "EXPIRED",
+  ];
+  const validEventStatuses = [
+    "SCHEDULED", "IN_PROGRESS", "COMPLETED", "CANCELLED",
+  ];
+  if (consultationStatus && !validRequestStatuses.includes(consultationStatus)) {
     return NextResponse.json(
       { error: "Invalid consultation status" },
       { status: 400 },
     );
   }
-  if (subscriptionStatus && !validStatuses.includes(subscriptionStatus)) {
+  if (subscriptionStatus && !validRequestStatuses.includes(subscriptionStatus)) {
     return NextResponse.json(
       { error: "Invalid subscription status" },
       { status: 400 },
     );
   }
-  if (webinarStatus && !validStatuses.includes(webinarStatus)) {
+  if (webinarStatus && !validEventStatuses.includes(webinarStatus)) {
     return NextResponse.json(
       { error: "Invalid webinar status" },
       { status: 400 },
     );
   }
-  if (classStatus && !validStatuses.includes(classStatus)) {
+  if (classStatus && !validEventStatuses.includes(classStatus)) {
     return NextResponse.json(
       { error: "Invalid class status" },
       { status: 400 },
@@ -74,30 +81,10 @@ export async function GET(request: NextRequest) {
       consulteeProfileId,
       userId,
       {
-        consultation: consultationStatus as
-          | "PENDING"
-          | "APPROVED"
-          | "REJECTED"
-          | "CANCELLED"
-          | undefined,
-        subscription: subscriptionStatus as
-          | "PENDING"
-          | "APPROVED"
-          | "REJECTED"
-          | "CANCELLED"
-          | undefined,
-        webinar: webinarStatus as
-          | "PENDING"
-          | "APPROVED"
-          | "REJECTED"
-          | "CANCELLED"
-          | undefined,
-        class: classStatus as
-          | "PENDING"
-          | "APPROVED"
-          | "REJECTED"
-          | "CANCELLED"
-          | undefined,
+        consultation: consultationStatus,
+        subscription: subscriptionStatus,
+        webinar: webinarStatus,
+        class: classStatus,
       },
       startDate,
       endDate,
@@ -125,10 +112,10 @@ async function getAppointments(
   consulteeProfileId?: string | null,
   userId?: string | null,
   statuses?: {
-    consultation?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
-    subscription?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
-    webinar?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
-    class?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
+    consultation?: string;
+    subscription?: string;
+    webinar?: string;
+    class?: string;
   },
   startDate?: string | null,
   endDate?: string | null,
@@ -278,6 +265,32 @@ async function getAppointments(
   }
   if (eventIds?.subscriptionId) {
     whereClause.subscription = { id: eventIds.subscriptionId };
+  }
+
+  // Apply status filters
+  if (statuses?.consultation) {
+    whereClause.consultation = {
+      ...(whereClause.consultation as Prisma.ConsultationWhereInput),
+      requestStatus: statuses.consultation as any,
+    };
+  }
+  if (statuses?.subscription) {
+    whereClause.subscription = {
+      ...(whereClause.subscription as Prisma.SubscriptionWhereInput),
+      requestStatus: statuses.subscription as any,
+    };
+  }
+  if (statuses?.webinar) {
+    whereClause.webinar = {
+      ...(whereClause.webinar as Prisma.WebinarWhereInput),
+      status: statuses.webinar as any,
+    };
+  }
+  if (statuses?.class) {
+    whereClause.class = {
+      ...(whereClause.class as Prisma.ClassWhereInput),
+      status: statuses.class as any,
+    };
   }
 
   const appointments = await prisma.appointment.findMany({
