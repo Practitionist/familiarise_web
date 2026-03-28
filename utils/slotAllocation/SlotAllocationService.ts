@@ -279,16 +279,11 @@ export class SlotAllocationService {
             pastConfirmedSlotCount > 0 &&
             isRecurringEventType(eventType);
 
-          // Guard: for classes/subscriptions, reject re-allocation when already fully scheduled.
-          // Webinars are handled by the DB unique constraint on webinarId (P2002 → 409).
-          // Classes/subscriptions have no such constraint, so we enforce it here to prevent
+          // Guard: reject re-allocation when event is already fully scheduled.
+          // Applies to all event types (webinar, class, subscription) to prevent
           // concurrent auto-allocate calls from creating duplicate session sets.
-          // For in-progress reallocation, only count FUTURE confirmed slots.
-          if (
-            isRecurringEventType(eventType) &&
-            !isReschedule &&
-            existingNonTentativeSlotCount > 0
-          ) {
+          // For in-progress reallocation (recurring only), only count FUTURE confirmed slots.
+          if (!isReschedule && existingNonTentativeSlotCount > 0) {
             const requiredForGuard =
               SlotCalculationService.calculateRequiredSlots(eventType, config);
             const futureNonTentativeSlotCount =

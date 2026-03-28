@@ -413,8 +413,6 @@ export async function POST(
 
     return NextResponse.json(result);
   } catch (error) {
-    console.error("Error requesting reschedule:", error);
-
     // Type-safe error handling using custom error classes
     if (error instanceof RescheduleAuthorizationError) {
       return NextResponse.json({ error: error.message }, { status: 403 });
@@ -432,6 +430,8 @@ export async function POST(
       return NextResponse.json({ error: error.message }, { status: 404 });
     }
 
+    // Only log unexpected errors — the known error types above are normal control flow
+    console.error("Error requesting reschedule:", error);
     return NextResponse.json(
       { error: "Failed to request reschedule" },
       { status: 500 },

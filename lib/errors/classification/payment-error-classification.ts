@@ -89,6 +89,13 @@ export const BUSINESS_ERROR_PATTERNS: ReadonlyArray<{
     errorType: ErrorTypes.REFUND_BLOCKED,
   },
 
+  // Discount / pricing validation
+  { pattern: "discount code", errorType: ErrorTypes.AVAILABILITY },
+  { pattern: "maximum uses", errorType: ErrorTypes.AVAILABILITY },
+  { pattern: "minimum order", errorType: ErrorTypes.AVAILABILITY },
+  { pattern: "below the", errorType: ErrorTypes.AVAILABILITY },
+  { pattern: "percentage value must be", errorType: ErrorTypes.AVAILABILITY },
+
   // Lock contention (payout batches, etc.)
   { pattern: "already in progress", errorType: ErrorTypes.LOCK_CONTENTION },
 ] as const;

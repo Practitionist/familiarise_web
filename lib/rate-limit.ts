@@ -9,6 +9,7 @@
  * - referralApplyLimiter:   3/24h per user   — POST /api/referrals/apply (farming)
  * - spamLimiter:            5/hr per user    — support-tickets, feedbacks, reviews, report
  * - waitlistLimiter:        5/hr per user    — POST /api/waitlist
+ * - trialRequestLimiter:    3/24h per user   — POST /api/trials (spam prevention)
  * - requestApprovalLimiter: 10/hr per user   — POST /api/slots/request-for-approval
  * - searchLimiter:          60/min per IP    — GET /api/user/consultants, /api/consultants/search
  * - eligibilityLimiter:     20/min per IP    — GET /api/trials/check-eligibility
@@ -53,6 +54,9 @@ export const spamLimiter = makeLimiter(5, "1 h", "rl:spam");
 
 /** 5 per hour — POST /api/waitlist */
 export const waitlistLimiter = makeLimiter(5, "1 h", "rl:waitlist");
+
+/** 3 per 24 hours — POST /api/trials (prevents flooding consultant inboxes) */
+export const trialRequestLimiter = makeLimiter(3, "24 h", "rl:trial-request");
 
 /** 10 per hour — POST /api/slots/request-for-approval */
 export const requestApprovalLimiter = makeLimiter(

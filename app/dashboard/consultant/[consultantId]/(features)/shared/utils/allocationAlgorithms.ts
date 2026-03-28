@@ -197,7 +197,7 @@ export class AllocationAlgorithms {
         strategy: "manual",
       };
     } catch (error) {
-      console.error("Manual allocation error:", error);
+      console.warn("Manual allocation error:", error);
       return {
         success: false,
         selectedSlots: [],
@@ -337,7 +337,7 @@ export class AllocationAlgorithms {
         strategy,
       };
     } catch (error) {
-      console.error("Auto allocation error:", error);
+      console.warn("Auto allocation error:", error);
       return {
         success: false,
         selectedSlots: [],
@@ -404,7 +404,7 @@ export class AllocationAlgorithms {
         strategy: "requested-slots",
       };
     } catch (error) {
-      console.error("Pre-allocation error:", error);
+      console.warn("Pre-allocation error:", error);
       return {
         success: false,
         selectedSlots: [],

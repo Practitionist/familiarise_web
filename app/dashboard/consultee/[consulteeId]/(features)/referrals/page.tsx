@@ -16,6 +16,7 @@ import {
   QUALIFICATION_WINDOW_DAYS,
   CREDIT_EXPIRY_MONTHS,
 } from "@/lib/referrals/constants";
+import { useCurrency } from "@/hooks/useCurrency";
 
 interface ReferralCode {
   id: string;
@@ -59,6 +60,7 @@ export default function ConsulteeReferralsPage({
 }) {
   use(params);
   const { toast } = useToast();
+  const { formatPrice } = useCurrency();
   const [copied, setCopied] = useState(false);
 
   const { data: codeData } = useQuery<{ data: ReferralCode }>({
@@ -99,13 +101,13 @@ export default function ConsulteeReferralsPage({
     : "";
 
   const shareMessage = referralLink
-    ? `Hey! I've been using Familiarise and it's been great. Use my referral link to get ${formatAmount(code?.refereeReward ?? 0)} off your first booking: ${referralLink}`
+    ? `Hey! I've been using Familiarise and it's been great. Use my referral link to get ${formatPrice(code?.refereeReward ?? 0)} off your first booking: ${referralLink}`
     : "";
   const whatsappUrl = referralLink
     ? `https://wa.me/?text=${encodeURIComponent(shareMessage)}`
     : "";
   const emailUrl = referralLink
-    ? `mailto:?subject=${encodeURIComponent(`Get ${formatAmount(code?.refereeReward ?? 0)} off your first booking on Familiarise`)}&body=${encodeURIComponent(shareMessage)}`
+    ? `mailto:?subject=${encodeURIComponent(`Get ${formatPrice(code?.refereeReward ?? 0)} off your first booking on Familiarise`)}&body=${encodeURIComponent(shareMessage)}`
     : "";
 
   const handleCopy = () => {
@@ -115,12 +117,7 @@ export default function ConsulteeReferralsPage({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  function formatAmount(paise: number) {
-    return new Intl.NumberFormat("en-IN", {
-      style: "currency",
-      currency: "INR",
-    }).format(paise / 100);
-  }
+  // formatPrice from useCurrency handles paise→display conversion with currency preference
 
   return (
     <>
@@ -144,7 +141,7 @@ export default function ConsulteeReferralsPage({
           />
           <StatCard
             title="Credit Balance"
-            value={formatAmount(credits?.totalAvailable ?? 0)}
+            value={formatPrice(credits?.totalAvailable ?? 0)}
             icon={IndianRupee}
             variant="info"
             tooltip="Credits earned from referrals. Applied at checkout."
@@ -158,8 +155,8 @@ export default function ConsulteeReferralsPage({
           </h3>
           {code && (
             <div className="mb-3 rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800">
-              Earn {formatAmount(code.referrerReward)} for each friend who
-              books. Your friend gets {formatAmount(code.refereeReward)} off
+              Earn {formatPrice(code.referrerReward)} for each friend who
+              books. Your friend gets {formatPrice(code.refereeReward)} off
               their first booking!
             </div>
           )}
@@ -281,7 +278,7 @@ export default function ConsulteeReferralsPage({
                     </td>
                     <td className="px-6 py-3 text-right">
                       {ref.status === "REWARDED"
-                        ? formatAmount(ref.referrerRewardAmount)
+                        ? formatPrice(ref.referrerRewardAmount)
                         : "-"}
                     </td>
                   </tr>
@@ -317,9 +314,9 @@ export default function ConsulteeReferralsPage({
                     <td className="px-6 py-3">
                       {credit.source.replace(/_/g, " ")}
                     </td>
-                    <td className="px-6 py-3">{formatAmount(credit.amount)}</td>
+                    <td className="px-6 py-3">{formatPrice(credit.amount)}</td>
                     <td className="px-6 py-3">
-                      {formatAmount(credit.remainingAmount)}
+                      {formatPrice(credit.remainingAmount)}
                     </td>
                     <td className="px-6 py-3 text-zinc-500">
                       {credit.expiresAt

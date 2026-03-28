@@ -1,8 +1,8 @@
 // Server-side currency conversion service using ExchangeRate-API
 // (open.er-api.com) — supports INR as base natively, no API key needed,
-// updates once daily. We cache for 24 hours.
+// updates once daily. We cache for 1 hour to reduce rate drift exposure.
 
-const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+const CACHE_TTL = 60 * 60 * 1000; // 1 hour (reduced from 24h)
 
 let cachedRates: Record<string, number> | null = null;
 let cachedAt = 0;
@@ -33,6 +33,23 @@ export async function getExchangeRates(): Promise<Record<string, number>> {
   cachedRates = data.rates as Record<string, number>;
   cachedAt = now;
   return cachedRates;
+}
+
+/**
+ * Force-invalidates the in-memory exchange rate cache.
+ * Called by POST /api/admin/exchange-rates (admin-only).
+ */
+export function invalidateExchangeRateCache(): void {
+  cachedRates = null;
+  cachedAt = 0;
+}
+
+/**
+ * Returns cache metadata for admin monitoring.
+ */
+export function getExchangeRateCacheInfo(): { cachedAt: number | null; ageMs: number | null } {
+  if (!cachedRates) return { cachedAt: null, ageMs: null };
+  return { cachedAt, ageMs: Date.now() - cachedAt };
 }
 
 export function convertPrice(
@@ -109,30 +126,45 @@ export function detectCurrencyFromLocale(locale: string): string {
   return "INR";
 }
 
-// Currency symbol lookup
-export const CURRENCY_SYMBOLS: Record<string, string> = {
-  USD: "$",
-  EUR: "\u20AC",
-  GBP: "\u00A3",
-  INR: "\u20B9",
-  JPY: "\u00A5",
-  CNY: "\u00A5",
-  AUD: "A$",
-  CAD: "C$",
-  BRL: "R$",
-  KRW: "\u20A9",
-  AED: "AED",
-  SAR: "SAR",
-  RUB: "\u20BD",
-  SEK: "kr",
-  PLN: "z\u0142",
-  TRY: "\u20BA",
-  THB: "\u0E3F",
-  IDR: "Rp",
-  MYR: "RM",
-  SGD: "S$",
-  NZD: "NZ$",
-  DKK: "kr",
-  NOK: "kr",
-  ZAR: "R",
-};
+/**
+ * Returns the display symbol for any ISO 4217 currency code using the Intl API.
+ * Replaces the previous hardcoded CURRENCY_SYMBOLS map — handles all ISO currencies
+ * automatically without needing manual updates for new currencies.
+ *
+ * Examples: getCurrencySymbol("INR") → "₹", getCurrencySymbol("USD") → "$"
+ */
+export function getCurrencySymbol(currency: string): string {
+  try {
+    // Extract just the symbol from a formatted number (e.g. "₹0" → "₹")
+    return (
+      new Intl.NumberFormat("en", {
+        style: "currency",
+        currency,
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+      })
+        .formatToParts(0)
+        .find((part) => part.type === "currency")?.value ?? currency
+    );
+  } catch {
+    // Fallback to currency code for unsupported/unknown codes
+    return currency;
+  }
+}
+
+/**
+ * @deprecated Use getCurrencySymbol(code) instead.
+ * Kept as a Proxy for backward compatibility with existing callers.
+ */
+export const CURRENCY_SYMBOLS: Record<string, string> = new Proxy(
+  {} as Record<string, string>,
+  {
+    get(_target, prop: string | symbol) {
+      if (typeof prop === "symbol") return undefined;
+      return getCurrencySymbol(prop);
+    },
+    has(_target, _prop) {
+      return true; // All ISO 4217 codes are "present"
+    },
+  },
+);

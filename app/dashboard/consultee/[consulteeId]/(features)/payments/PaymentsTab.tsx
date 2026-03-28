@@ -3,10 +3,7 @@
 import { useMemo, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
-import {
-  formatCurrencyAmount,
-  formatCurrencyFromMajorUnit,
-} from "@/utils/formatting";
+import { useCurrency } from "@/hooks/useCurrency";
 import { cn } from "@/utils/tailwind";
 import {
   CreditCard,
@@ -213,6 +210,8 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
+  const { formatPrice } = useCurrency();
+
   // Build a map from paymentId → invoice for quick lookup
   const invoiceByPaymentId = useMemo(() => {
     if (!data) return new Map<string, InvoiceItem>();
@@ -285,7 +284,7 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
             </Tooltip>
           </TooltipProvider>
           <p className="text-2xl font-bold text-zinc-900">
-            {formatCurrencyFromMajorUnit(totalSpent, "INR")}
+            {formatPrice(totalSpent)}
           </p>
           <p className="text-xs text-zinc-400 mt-1">
             {(() => {
@@ -298,16 +297,16 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
         <div className="bg-white rounded-xl border border-zinc-200 p-4">
           <p className="text-sm text-zinc-500">Credits Earned</p>
           <p className="text-2xl font-bold text-zinc-900">
-            {formatCurrencyAmount(data.creditSummary.total, "INR")}
+            {formatPrice(data.creditSummary.total)}
           </p>
           <p className="text-xs text-zinc-400 mt-1">
-            {formatCurrencyAmount(data.creditSummary.used, "INR")} used
+            {formatPrice(data.creditSummary.used)} used
           </p>
         </div>
         <div className="bg-white rounded-xl border border-zinc-200 p-4">
           <p className="text-sm text-zinc-500">Credit Balance</p>
           <p className="text-2xl font-bold text-emerald-600">
-            {formatCurrencyAmount(data.creditSummary.remaining, "INR")}
+            {formatPrice(data.creditSummary.remaining)}
           </p>
           <p className="text-xs text-zinc-400 mt-1">Available to use</p>
         </div>
@@ -431,18 +430,12 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                           </td>
                           <td className="px-4 py-3 text-right whitespace-nowrap">
                             <span className="font-medium text-zinc-900">
-                              {formatCurrencyFromMajorUnit(
-                                payment.amount,
-                                payment.currency,
-                              )}
+                              {formatPrice(payment.amount)}
                             </span>
                             {payment.taxAmount && payment.taxAmount > 0 && (
                               <span className="block text-xs text-zinc-400">
                                 incl.{" "}
-                                {formatCurrencyFromMajorUnit(
-                                  payment.taxAmount,
-                                  payment.currency,
-                                )}{" "}
+                                {formatPrice(payment.taxAmount ?? 0)}{" "}
                                 GST
                               </span>
                             )}
@@ -460,7 +453,7 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                                       {" \u2014 "}
                                       {payment.discount.type === "PERCENTAGE"
                                         ? `${payment.discount.value}% off`
-                                        : `${formatCurrencyFromMajorUnit(payment.discount.value, payment.currency)} off`}
+                                        : `${formatPrice(payment.discount.value)} off`}
                                     </p>
                                   </TooltipContent>
                                 </Tooltip>
@@ -595,13 +588,10 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                             {credit.source.toLowerCase().replace(/_/g, " ")}
                           </td>
                           <td className="px-4 py-3 text-right font-medium text-zinc-900">
-                            {formatCurrencyAmount(credit.amount, "INR")}
+                            {formatPrice(credit.amount)}
                           </td>
                           <td className="px-4 py-3 text-right font-medium text-emerald-600">
-                            {formatCurrencyAmount(
-                              credit.remainingAmount,
-                              "INR",
-                            )}
+                            {formatPrice(credit.remainingAmount)}
                           </td>
                           <td className="px-4 py-3 text-zinc-500">
                             {credit.expiresAt
@@ -650,7 +640,7 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                                 .replace(/_/g, " ")}
                             </td>
                             <td className="px-4 py-3 text-right font-medium text-red-600">
-                              -{formatCurrencyAmount(usage.amount, "INR")}
+                              -{formatPrice(usage.amount)}
                             </td>
                           </tr>
                         ))}

@@ -51,8 +51,17 @@ const ZERO_DECIMAL_CURRENCIES = new Set([
  * ISO 4217 three-decimal currencies.
  * These currencies have 1000 subunits per major unit
  * (e.g., 1 KWD = 1000 fils, stored as 1000).
+ * @see https://en.wikipedia.org/wiki/ISO_4217#Active_codes_(List_One)
  */
-const THREE_DECIMAL_CURRENCIES = new Set(["BHD", "KWD", "OMR"]);
+const THREE_DECIMAL_CURRENCIES = new Set([
+  "BHD", // Bahraini dinar
+  "IQD", // Iraqi dinar
+  "JOD", // Jordanian dinar
+  "KWD", // Kuwaiti dinar
+  "LYD", // Libyan dinar
+  "OMR", // Omani rial
+  "TND", // Tunisian dinar
+]);
 
 /**
  * Get the divisor to convert from smallest currency unit to major unit.

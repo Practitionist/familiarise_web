@@ -16,6 +16,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import { isRecurringEventType } from "@/utils/slotAllocation/types";
 import { WebinarStatus, ClassStatus } from "@prisma/client";
 import {
@@ -107,18 +108,9 @@ const eventTypeConfig: Record<
   },
 };
 
-// Currency formatting utility
+// Currency formatting utility — prices are stored in smallest unit (paise for INR)
 const formatCurrency = (price: number, currency: string) => {
-  try {
-    return new Intl.NumberFormat("en-IN", {
-      style: "currency",
-      currency: currency,
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }).format(price);
-  } catch {
-    return `${currency} ${price}`;
-  }
+  return formatCurrencyAmount(price, currency);
 };
 
 // Helper functions for extracting event data
