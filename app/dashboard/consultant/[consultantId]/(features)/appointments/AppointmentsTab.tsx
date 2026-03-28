@@ -468,39 +468,51 @@ export function AppointmentsTab({
                   {isNewTypeSection &&
                     groupType === "CLASS" &&
                     unscheduledClasses.length > 0 && (
-                      <div className="mb-4 space-y-3">
-                        {unscheduledClasses.map((classEvent) => (
-                          <UnscheduledEventCard
-                            key={classEvent.id}
-                            title={classEvent.classPlan.title}
-                            subtitle={`${classEvent.classPlan.meetingsPerWeek} meeting${classEvent.classPlan.meetingsPerWeek !== 1 ? "s" : ""}/week · ${classEvent.classPlan.totalSessions} sessions · ${classEvent.classPlan.sessionDurationInHours}h each`}
-                            onSetSchedule={() => {
-                              setSelectedAppointment(
-                                buildSyntheticClassAppointment(classEvent),
-                              );
-                              setSelectedGroupProgress(null);
-                            }}
-                          />
-                        ))}
+                      <div className="mb-4">
+                        <h4 className="text-sm font-semibold text-orange-700 mb-3 flex items-center gap-2">
+                          <Clock className="h-4 w-4" />
+                          Unscheduled Classes ({unscheduledClasses.length})
+                        </h4>
+                        <div className="space-y-3">
+                          {unscheduledClasses.map((classEvent) => (
+                            <UnscheduledEventCard
+                              key={classEvent.id}
+                              title={classEvent.classPlan.title}
+                              subtitle={`${classEvent.classPlan.meetingsPerWeek} meeting${classEvent.classPlan.meetingsPerWeek !== 1 ? "s" : ""}/week · ${classEvent.classPlan.totalSessions} sessions · ${classEvent.classPlan.sessionDurationInHours}h each`}
+                              onSetSchedule={() => {
+                                setSelectedAppointment(
+                                  buildSyntheticClassAppointment(classEvent),
+                                );
+                                setSelectedGroupProgress(null);
+                              }}
+                            />
+                          ))}
+                        </div>
                       </div>
                     )}
                   {isNewTypeSection &&
                     groupType === "WEBINAR" &&
                     unscheduledWebinars.length > 0 && (
-                      <div className="mb-4 space-y-3">
-                        {unscheduledWebinars.map((webinarEvent) => (
-                          <UnscheduledEventCard
-                            key={webinarEvent.id}
-                            title={webinarEvent.webinarPlan.title}
-                            subtitle={`Single session · ${webinarEvent.webinarPlan.durationInHours}h`}
-                            onSetSchedule={() => {
-                              setSelectedAppointment(
-                                buildSyntheticWebinarAppointment(webinarEvent),
-                              );
-                              setSelectedGroupProgress(null);
-                            }}
-                          />
-                        ))}
+                      <div className="mb-4">
+                        <h4 className="text-sm font-semibold text-orange-700 mb-3 flex items-center gap-2">
+                          <Clock className="h-4 w-4" />
+                          Unscheduled Webinars ({unscheduledWebinars.length})
+                        </h4>
+                        <div className="space-y-3">
+                          {unscheduledWebinars.map((webinarEvent) => (
+                            <UnscheduledEventCard
+                              key={webinarEvent.id}
+                              title={webinarEvent.webinarPlan.title}
+                              subtitle={`Single session · ${webinarEvent.webinarPlan.durationInHours}h`}
+                              onSetSchedule={() => {
+                                setSelectedAppointment(
+                                  buildSyntheticWebinarAppointment(webinarEvent),
+                                );
+                                setSelectedGroupProgress(null);
+                              }}
+                            />
+                          ))}
+                        </div>
                       </div>
                     )}
 
