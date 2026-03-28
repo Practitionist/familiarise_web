@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import {
   getOrCreateAppointmentMeeting,
@@ -21,6 +22,7 @@ import {
   Gift,
   Video,
   Loader2,
+  Search,
 } from "lucide-react";
 import {
   AppointmentsTabProps,
@@ -85,6 +87,10 @@ export function AppointmentsTab({
     Map<string, { currentPage: number; showAll: boolean }>
   >(new Map());
   const [highlightedGroup, setHighlightedGroup] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<
+    "ALL" | "UPCOMING" | "COMPLETED" | "CANCELLED"
+  >("ALL");
   const groupRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   const PAGE_SIZE = 5; // Show 5 items per page
@@ -277,8 +283,38 @@ export function AppointmentsTab({
     });
   };
 
-  // Group appointments by type (CONSULTATION, SUBSCRIPTION, WEBINAR, CLASS)
-  const appointmentsByType = groupAppointmentsByType(appointments || []);
+  // Apply search and status filters
+  const filteredAppointments = useMemo(() => {
+    return (appointments || []).filter((apt) => {
+      // Status filter
+      if (statusFilter !== "ALL") {
+        const s = getAppointmentStatus(apt);
+        if (
+          statusFilter === "UPCOMING" &&
+          (s === "Completed" || s === "Cancelled" || s === "Not Scheduled")
+        )
+          return false;
+        if (statusFilter === "COMPLETED" && s !== "Completed") return false;
+        if (statusFilter === "CANCELLED" && s !== "Cancelled") return false;
+      }
+      // Name/plan search
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        if (
+          !getConsumeeName(apt).toLowerCase().includes(q) &&
+          !getAppointmentTypeAndPlan(apt).toLowerCase().includes(q)
+        )
+          return false;
+      }
+      return true;
+    });
+  }, [appointments, statusFilter, searchQuery]);
+
+  // Keep unfiltered counts for section headers
+  const allAppointmentsByType = groupAppointmentsByType(appointments || []);
+
+  // Group filtered appointments by type
+  const appointmentsByType = groupAppointmentsByType(filteredAppointments);
 
   // Further group recurring appointments (subscriptions/classes) within each type
   const groupedAppointments = Object.entries(appointmentsByType).reduce(
@@ -321,6 +357,39 @@ export function AppointmentsTab({
       <h2 className="text-xl font-semibold mb-4 text-gray-800">
         All Appointments
       </h2>
+      <div className="space-y-3 mb-4">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <Input
+            placeholder="Search by name or plan..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10 h-10"
+          />
+        </div>
+        <div className="flex items-center gap-2 border-b border-zinc-200 overflow-x-auto">
+          {(
+            [
+              { label: "All", value: "ALL" },
+              { label: "Upcoming", value: "UPCOMING" },
+              { label: "Completed", value: "COMPLETED" },
+              { label: "Cancelled", value: "CANCELLED" },
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.value}
+              onClick={() => setStatusFilter(tab.value)}
+              className={`px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
+                statusFilter === tab.value
+                  ? "border-zinc-900 text-zinc-900"
+                  : "border-transparent text-zinc-500 hover:text-zinc-700 hover:border-zinc-300"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="space-y-6">
         {(() => {
           let currentType: string | null = null;
@@ -357,7 +426,7 @@ export function AppointmentsTab({
                       <h3 className="text-lg font-semibold text-gray-900 border-b-2 border-gray-300 pb-2">
                         {getAppointmentTypeDisplayName(groupType)}
                         <span className="text-sm font-normal text-gray-500 ml-2">
-                          ({(appointmentsByType[groupType]?.length ?? 0) +
+                          ({(allAppointmentsByType[groupType]?.length ?? 0) +
                             (groupType === "CLASS"
                               ? unscheduledClasses.length
                               : 0) +
