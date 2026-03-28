@@ -44,22 +44,46 @@ jobs:
         run: npx prisma generate
 
       - name: Run expiration processor
-        run: npx tsx scripts/waitlist/process-expired-notifications.ts
+        id: run_script
+        run: npx tsx scripts/waitlist/process-expired-notifications.ts 2>&1 | tee /tmp/job-output.txt
         env:
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        continue-on-error: true
+
+      - name: Capture error output
+        if: steps.run_script.outcome == 'failure'
+        id: error_output
+        run: |
+          ERROR_LOG=$(tail -50 /tmp/job-output.txt || echo "No output captured")
+          echo "log<<EOFLOG" >> $GITHUB_OUTPUT
+          echo "$ERROR_LOG" >> $GITHUB_OUTPUT
+          echo "EOFLOG" >> $GITHUB_OUTPUT
 
       - name: Summary
-        if: success()
+        if: steps.run_script.outcome == 'success'
         run: |
           echo "## Waitlist Expiration Processing Complete" >> $GITHUB_STEP_SUMMARY
           echo "Processed expired notifications and notified next users in queue." >> $GITHUB_STEP_SUMMARY
 
       - name: Notify on failure
-        if: failure()
+        if: steps.run_script.outcome == 'failure'
         uses: actions/github-script@v7
         with:
           script: |
             const title = 'Waitlist Expiration Job Failed';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const errorLog = process.env.ERROR_LOG || 'No error output captured';
+            const body = [
+              `The waitlist expiration processing job failed at ${new Date().toISOString()}`,
+              '',
+              '**Error output (last 50 lines):**',
+              '```',
+              errorLog,
+              '```',
+              '',
+              `See full run: ${runUrl}`,
+            ].join('\n');
+
             const { data: existing } = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -73,14 +97,20 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: match.number,
-                body: `Job failed again at ${new Date().toISOString()}\n\nSee: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                body,
               });
             } else {
               await github.rest.issues.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 title: `🚨 ${title}`,
-                body: `The waitlist expiration processing job failed at ${new Date().toISOString()}\n\nSee: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                body,
                 labels: ['bug', 'automated', 'waitlist'],
               });
             }
+          env:
+            ERROR_LOG: ${{ steps.error_output.outputs.log }}
+
+      - name: Fail the job
+        if: steps.run_script.outcome == 'failure'
+        run: exit 1
