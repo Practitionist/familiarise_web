@@ -13,7 +13,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
-import { formatCurrencyFromMajorUnit } from "@/utils/formatting";
+import { useCurrency } from "@/hooks/useCurrency";
 import { cn } from "@/utils/tailwind";
 
 interface PendingPayment {
@@ -43,6 +43,7 @@ interface PendingPaymentsWidgetProps {
 export function PendingPaymentsWidget({
   consulteeId,
 }: PendingPaymentsWidgetProps) {
+  const { formatPrice } = useCurrency();
   const router = useRouter();
   const [pendingPayments, setPendingPayments] = useState<PendingPayment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -157,10 +158,7 @@ export function PendingPaymentsWidget({
                   </p>
                 </div>
                 <span className="text-sm font-semibold text-zinc-900 tabular-nums shrink-0">
-                  {formatCurrencyFromMajorUnit(
-                    payment.amount,
-                    payment.currency,
-                  )}
+                  {formatPrice(payment.amount)}
                 </span>
               </div>
               <div className="flex items-center justify-between mt-2.5">

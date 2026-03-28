@@ -6,6 +6,7 @@ import {
   notifySubscriptionStarted,
   notifySubscriptionCancelled,
 } from "@/lib/novu";
+import { logSubscriptionCancelled } from "@/lib/activity/log-activity";
 import { UpdateSubscriptionStatusSchema } from "@/schemas/subscriptions";
 import {
   requireApiAuth,
@@ -281,6 +282,22 @@ export async function PATCH(request: NextRequest) {
             consulteeName: subscription.requestedBy?.user?.name || undefined,
             dashboardUrl: "/dashboard",
           });
+        }
+
+        // Fire-and-forget: log cancellation activity for consultant dashboard
+        const cpId = subscription.subscriptionPlan?.consultantProfileId;
+        if (cpId) {
+          void logSubscriptionCancelled(
+            cpId,
+            subscription.id,
+            {
+              id: session.user.id,
+              name: session.user.name || "User",
+              image: session.user.image,
+            },
+            subscription.subscriptionPlan?.title || "Subscription",
+            session.user.id === consultantUserId ? "consultant" : "consultee",
+          );
         }
       }
 

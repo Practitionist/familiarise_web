@@ -3,6 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { CancellationReason } from "@prisma/client";
 import { notifyAppointmentCancelled } from "@/lib/novu";
 import { CancelAppointmentSchema } from "@/schemas/appointments";
+import {
+  logConsultationCancelled,
+  logSubscriptionCancelled,
+} from "@/lib/activity/log-activity";
 
 import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
@@ -264,6 +268,43 @@ export async function POST(
             ? "consultant"
             : "consultee",
       });
+    }
+
+    // Fire-and-forget: log cancellation activity for consultant dashboard
+    const actor = {
+      id: session.user.id,
+      name: session.user.name || "User",
+      image: session.user.image,
+    };
+    const cancelledBy =
+      session.user.id === notificationMeta.consultantUserId
+        ? ("consultant" as const)
+        : ("consultee" as const);
+
+    if (appointment.consultation) {
+      const cpId =
+        appointment.consultation.consultationPlan?.consultantProfileId;
+      if (cpId) {
+        void logConsultationCancelled(
+          cpId,
+          appointment.consultation.id,
+          actor,
+          planTitle || "Consultation",
+          cancelledBy,
+        );
+      }
+    } else if (appointment.subscription) {
+      const cpId =
+        appointment.subscription.subscriptionPlan?.consultantProfileId;
+      if (cpId) {
+        void logSubscriptionCancelled(
+          cpId,
+          appointment.subscription.id,
+          actor,
+          planTitle || "Subscription",
+          cancelledBy,
+        );
+      }
     }
 
     // Note: This route cancels the entire event (sets parent to CANCELLED),

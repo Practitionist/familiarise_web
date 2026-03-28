@@ -98,6 +98,18 @@ export default function Profile() {
   const [deleteConfirmEmail, setDeleteConfirmEmail] = useState("");
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
 
+  // Cookie preferences state
+  const [cookieAnalytics, setCookieAnalytics] = useState(false);
+  const [cookieMarketing, setCookieMarketing] = useState(false);
+  const [isSavingCookies, setIsSavingCookies] = useState(false);
+
+  // Notification preferences state
+  const [notifAll, setNotifAll] = useState(true);
+  const [notifMentions, setNotifMentions] = useState(false);
+  const [notifDirect, setNotifDirect] = useState(false);
+  const [notifUpdates, setNotifUpdates] = useState(false);
+  const [isSavingNotifs, setIsSavingNotifs] = useState(false);
+
   // Sync form state when session loads
   useEffect(() => {
     if (session?.user) {
@@ -106,6 +118,90 @@ export default function Profile() {
       setAddress(session.user.address ?? "");
     }
   }, [session?.user]);
+
+  // Load cookie and notification preferences
+  useEffect(() => {
+    async function loadPreferences() {
+      try {
+        const [cookieRes, notifRes] = await Promise.all([
+          fetch("/api/user/cookie-preferences"),
+          fetch("/api/user/notification-preferences"),
+        ]);
+        if (cookieRes.ok) {
+          const { data } = await cookieRes.json();
+          setCookieAnalytics(data.analytics);
+          setCookieMarketing(data.marketing);
+        }
+        if (notifRes.ok) {
+          const { data } = await notifRes.json();
+          setNotifAll(data.allNotifications);
+          setNotifMentions(data.mentions);
+          setNotifDirect(data.directMessages);
+          setNotifUpdates(data.updates);
+        }
+      } catch (error) {
+        console.error("Failed to load preferences:", error);
+      }
+    }
+    loadPreferences();
+  }, []);
+
+  const saveCookiePreferences = async () => {
+    setIsSavingCookies(true);
+    try {
+      const res = await fetch("/api/user/cookie-preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          analytics: cookieAnalytics,
+          marketing: cookieMarketing,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      toast({
+        title: "Cookie preferences saved",
+        description: "Your cookie preferences have been updated.",
+      });
+    } catch {
+      toast({
+        title: "Error",
+        description: "Failed to save cookie preferences. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSavingCookies(false);
+    }
+  };
+
+  const saveNotificationPreferences = async () => {
+    setIsSavingNotifs(true);
+    try {
+      const res = await fetch("/api/user/notification-preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          allNotifications: notifAll,
+          mentions: notifMentions,
+          directMessages: notifDirect,
+          updates: notifUpdates,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      toast({
+        title: "Notification preferences saved",
+        description: "Your notification preferences have been updated.",
+      });
+    } catch {
+      toast({
+        title: "Error",
+        description:
+          "Failed to save notification preferences. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSavingNotifs(false);
+    }
+  };
 
   // Load linked accounts
   const loadLinkedAccounts = useCallback(async () => {
@@ -907,7 +1003,11 @@ export default function Profile() {
                     >
                       Analytics
                     </Label>
-                    <Switch id="analytics" />
+                    <Switch
+                      id="analytics"
+                      checked={cookieAnalytics}
+                      onCheckedChange={setCookieAnalytics}
+                    />
                   </div>
                   <p className="text-sm text-zinc-500">
                     Help us improve site performance
@@ -921,7 +1021,11 @@ export default function Profile() {
                     >
                       Marketing
                     </Label>
-                    <Switch id="marketing" />
+                    <Switch
+                      id="marketing"
+                      checked={cookieMarketing}
+                      onCheckedChange={setCookieMarketing}
+                    />
                   </div>
                   <p className="text-sm text-zinc-500">
                     Personalized recommendations
@@ -929,6 +1033,22 @@ export default function Profile() {
                 </div>
               </div>
             </CardContent>
+            <CardFooter className="pt-0">
+              <Button
+                className="ml-auto bg-zinc-900 hover:bg-zinc-800 text-white"
+                onClick={saveCookiePreferences}
+                disabled={isSavingCookies}
+              >
+                {isSavingCookies ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  "Save Preferences"
+                )}
+              </Button>
+            </CardFooter>
           </Card>
         </motion.div>
 
@@ -966,7 +1086,11 @@ export default function Profile() {
                       </p>
                     </div>
                   </div>
-                  <Switch id="all" />
+                  <Switch
+                    id="all"
+                    checked={notifAll}
+                    onCheckedChange={setNotifAll}
+                  />
                 </div>
                 <div className="flex items-center justify-between p-4 rounded-xl border border-zinc-100 hover:border-zinc-200 transition-colors">
                   <div className="flex items-center gap-3">
@@ -980,7 +1104,11 @@ export default function Profile() {
                       </p>
                     </div>
                   </div>
-                  <Switch id="mentions" />
+                  <Switch
+                    id="mentions"
+                    checked={notifMentions}
+                    onCheckedChange={setNotifMentions}
+                  />
                 </div>
                 <div className="flex items-center justify-between p-4 rounded-xl border border-zinc-100 hover:border-zinc-200 transition-colors">
                   <div className="flex items-center gap-3">
@@ -996,7 +1124,11 @@ export default function Profile() {
                       </p>
                     </div>
                   </div>
-                  <Switch id="direct-messages" />
+                  <Switch
+                    id="direct-messages"
+                    checked={notifDirect}
+                    onCheckedChange={setNotifDirect}
+                  />
                 </div>
                 <div className="flex items-center justify-between p-4 rounded-xl border border-zinc-100 hover:border-zinc-200 transition-colors">
                   <div className="flex items-center gap-3">
@@ -1012,13 +1144,28 @@ export default function Profile() {
                       </p>
                     </div>
                   </div>
-                  <Switch id="updates" />
+                  <Switch
+                    id="updates"
+                    checked={notifUpdates}
+                    onCheckedChange={setNotifUpdates}
+                  />
                 </div>
               </div>
             </CardContent>
             <CardFooter className="pt-0">
-              <Button className="ml-auto bg-zinc-900 hover:bg-zinc-800 text-white">
-                Save Preferences
+              <Button
+                className="ml-auto bg-zinc-900 hover:bg-zinc-800 text-white"
+                onClick={saveNotificationPreferences}
+                disabled={isSavingNotifs}
+              >
+                {isSavingNotifs ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  "Save Preferences"
+                )}
               </Button>
             </CardFooter>
           </Card>

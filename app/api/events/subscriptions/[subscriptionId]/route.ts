@@ -18,6 +18,7 @@ import {
   notifySubscriptionStarted,
   notifySubscriptionCancelled,
 } from "@/lib/novu";
+import { logSubscriptionCancelled } from "@/lib/activity/log-activity";
 import {
   UpdateSubscriptionSchema,
   PatchSubscriptionStatusSchema,
@@ -728,6 +729,24 @@ export async function PATCH(
               consulteeName: subData.requestedBy?.user?.name || undefined,
               dashboardUrl: "/dashboard",
             });
+          }
+
+          // Fire-and-forget: log cancellation activity for consultant dashboard
+          const cpId = subData.subscriptionPlan?.consultantProfileId;
+          if (cpId) {
+            void logSubscriptionCancelled(
+              cpId,
+              subData.id,
+              {
+                id: session.user.id,
+                name: session.user.name || "User",
+                image: session.user.image,
+              },
+              subData.subscriptionPlan?.title || "Subscription",
+              session.user.id === consultantUserId
+                ? "consultant"
+                : "consultee",
+            );
           }
         }
       }
