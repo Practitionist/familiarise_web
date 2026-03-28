@@ -6,6 +6,7 @@ import {
   notifySubscriptionStarted,
   notifySubscriptionCancelled,
 } from "@/lib/novu";
+import { logSubscriptionCancelled } from "@/lib/activity/log-activity";
 import { UpdateSubscriptionStatusSchema } from "@/schemas/subscriptions";
 import {
   requireApiAuth,
@@ -281,6 +282,22 @@ export async function PATCH(request: NextRequest) {
             consulteeName: subscription.requestedBy?.user?.name || undefined,
             dashboardUrl: "/dashboard",
           });
+        }
+
+        // Log cancellation activity (awaited — DB write should not be dropped in serverless)
+        const cpId = subscription.subscriptionPlan?.consultantProfileId;
+        if (cpId) {
+          await logSubscriptionCancelled(
+            cpId,
+            subscription.id,
+            {
+              id: session.user.id,
+              name: session.user.name || "User",
+              image: session.user.image,
+            },
+            subscription.subscriptionPlan?.title || "Subscription",
+            session.user.id === consultantUserId ? "consultant" : "consultee",
+          );
         }
       }
 

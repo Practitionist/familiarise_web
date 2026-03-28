@@ -15,7 +15,7 @@ export interface PricingConfig {
   isInternational?: boolean; // If true, zero-rate tax (export of services)
   discountPercent?: number; // Applied discount percentage (0.10 = 10%)
   discountAmount?: number; // Fixed discount amount
-  creditsApplied?: number; // Referral credits applied (in major currency unit)
+  creditsApplied?: number; // Referral credits applied (same unit as baseAmount, typically paise)
 }
 
 export interface PricingBreakdown {

@@ -9,11 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { useMaintenanceGuard } from "@/hooks/useMaintenanceGuard";
 import { useToast } from "@/hooks/use-toast";
 import { fetchReviews } from "@/lib/user";
-import {
-  createCheckoutData,
-  WebinarSearchParams,
-  webinarSearchParamsSchema,
-} from "@/schemas/checkout";
+import { SearchParams, searchParamsSchema, createCheckoutData } from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { CompanyLogo } from "@/components/ui/company-logo";
@@ -29,25 +25,25 @@ import {
 } from "../../utils";
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
-import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 import type { AppliedDiscount } from "@/types/checkout";
+import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 
 import type {
   Appointment,
+  ClassContent,
+  ClassPlan,
   ConsultantProfile,
   ConsultantReview,
   Domain,
+  Class as PrismaClass,
   Tag as PrismaTag,
   Topic as PrismaTopic,
-  Webinar as PrismaWebinar,
   SlotOfAppointment,
   SubDomain,
   User,
-  WebinarPlan,
 } from "@prisma/client";
 
-// Define a type for the fetched WebinarPlan data
-export type CheckoutWebinarPlanData = WebinarPlan & {
+export type CheckoutClassPlanData = ClassPlan & {
   consultantProfile:
     | (ConsultantProfile & {
         user: User & {
@@ -62,32 +58,30 @@ export type CheckoutWebinarPlanData = WebinarPlan & {
         tags: PrismaTag[];
       })
     | null;
-  webinars: (PrismaWebinar & {
-    appointment:
-      | (Appointment & {
-          slotsOfAppointment: SlotOfAppointment[];
-        })
-      | null;
+  classes: (PrismaClass & {
+    appointments: (Appointment & {
+      slotsOfAppointment: SlotOfAppointment[];
+    })[];
   })[];
   topics: PrismaTopic[];
-  type: "webinar";
+  classContents: ClassContent[];
+  type: "class";
   imageUrl: string;
 };
 
 type PlanResponse = {
-  data: CheckoutWebinarPlanData;
+  data: CheckoutClassPlanData;
 };
 
 type PageProps = {
-  params: Promise<{ webinarPlanId: string }>;
+  params: Promise<{ planId: string }>;
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 };
 
-export default function WebinarCheckoutPage({
+export default function ClassCheckoutPage({
   params,
   searchParams,
 }: Readonly<PageProps>) {
-  // Next.js 15 Synchronous params and searchParams
   const resolvedParams = use(params);
   const resolvedSearchParams = use(searchParams);
 
@@ -118,10 +112,18 @@ export default function WebinarCheckoutPage({
   } = useMaintenanceGuard();
 
   // Validate search params once with Zod — single source of truth for all checkout flows
-  const validatedSearchParams = useMemo((): WebinarSearchParams | null => {
-    const result = webinarSearchParamsSchema.safeParse(resolvedSearchParams);
+  const validatedSearchParams = useMemo((): SearchParams | null => {
+    const result = searchParamsSchema.safeParse(resolvedSearchParams);
     return result.success ? result.data : null;
   }, [resolvedSearchParams]);
+
+  // Derive the first available class ID — used by both component renders and handleCheckout
+  const availableClassId = useMemo(() => {
+    const availableClass = planData?.data?.classes?.find(
+      (c) => c.status === "SCHEDULED" || c.status === "IN_PROGRESS",
+    );
+    return availableClass?.id ?? null;
+  }, [planData]);
 
   // Apply discount code
   const handleApplyDiscount = async (code?: string) => {
@@ -188,9 +190,8 @@ export default function WebinarCheckoutPage({
     fetchCredits();
   }, []);
 
-  // Create utility functions using the toast instance
   const handleApiError = createHandleApiError(toast);
-  const handleCheckoutSuccess = createHandleCheckoutSuccess(toast, "WEBINAR");
+  const handleCheckoutSuccess = createHandleCheckoutSuccess(toast, "CLASS");
   const stripeHandlers = createStripeCheckoutHandlers(toast);
   const razorpayHandlers = createRazorpayCheckoutHandlers(toast);
 
@@ -207,57 +208,45 @@ export default function WebinarCheckoutPage({
         return;
       }
 
-      // Prevent double-clicks: ref provides synchronous guard (React state is async)
       if (isProcessingRef.current || isCheckoutProcessing) {
         return;
       }
       isProcessingRef.current = true;
 
       try {
-        // Set loading state
         setIsCheckoutProcessing(true);
         setProcessingGateway(`${gateway}-${isMockPayment ? "mock" : "real"}`);
 
-        // Use pre-validated search params
         if (!validatedSearchParams) {
-          throw new Error("Invalid webinar parameters");
+          throw new Error("Invalid class parameters");
         }
 
         if (!planData?.data?.id) {
-          throw new Error("Webinar plan not found");
+          throw new Error("Class plan not found");
         }
 
-        // Staleness check: validate the target webinar is still available
-        const targetWebinar = planData.data.webinars?.find(
-          (w) => w.id === validatedSearchParams.eventId,
-        );
-        if (!targetWebinar) {
-          throw new Error("Webinar session not found.");
-        }
-        if (targetWebinar.status === "COMPLETED") {
-          throw new Error("This webinar has already ended.");
-        }
-        if (targetWebinar.status === "CANCELLED") {
-          throw new Error("This webinar has been cancelled.");
+        if (!availableClassId) {
+          throw new Error(
+            "No available class sessions. All sessions may be full, cancelled, or completed.",
+          );
         }
 
-        // fromWaitlist is not in webinarSearchParamsSchema — read from raw params
+        // fromWaitlist is not in searchParamsSchema — read from raw params
         const fromWaitlist =
           typeof resolvedSearchParams.fromWaitlist === "string"
             ? resolvedSearchParams.fromWaitlist
             : undefined;
         const checkoutData = createCheckoutData({
-          appointmentType: "WEBINAR",
+          appointmentType: "CLASS",
           planId: planData.data.id,
-          eventId: validatedSearchParams.eventId,
+          eventId: availableClassId,
           discountCode: appliedDiscount?.code,
-          paymentGateway: gateway,
           displayCurrency: currency,
+          paymentGateway: gateway,
           fromWaitlist,
           useReferralCredits,
         });
 
-        // Handle unified checkout flow using the utility
         await handleUnifiedCheckout(
           checkoutData,
           gateway,
@@ -269,17 +258,17 @@ export default function WebinarCheckoutPage({
         console.error("Checkout error:", error);
         if (error instanceof Error) {
           // Provide more informative error messages based on the error type
-          let errorTitle = "Unable to Complete Registration";
+          let errorTitle = "Unable to Complete Enrollment";
           let errorDescription = error.message;
 
-          if (error.message.includes("Invalid webinar parameters")) {
-            errorTitle = "Registration Link Error";
+          if (error.message.includes("Invalid class parameters")) {
+            errorTitle = "Enrollment Link Error";
             errorDescription =
-              "The registration information is incomplete. Please go back to the webinar page and click 'Register Now' again to ensure all required information is included.";
-          } else if (error.message.includes("Webinar plan not found")) {
-            errorTitle = "Webinar Not Found";
+              "The enrollment information is incomplete. Please go back to the class page and click 'Enroll Now' again to ensure all required information is included.";
+          } else if (error.message.includes("Class plan not found")) {
+            errorTitle = "Class Not Found";
             errorDescription =
-              "This webinar could not be found or may no longer be available. Please go back and select a different webinar, or contact support if you believe this is an error.";
+              "This class could not be found or may no longer be available. Please go back and select a different class, or contact support if you believe this is an error.";
           } else if (
             error.message.includes("network") ||
             error.message.includes("fetch")
@@ -298,9 +287,9 @@ export default function WebinarCheckoutPage({
           });
         }
       } finally {
-        isProcessingRef.current = false;
         setIsCheckoutProcessing(false);
         setProcessingGateway(null);
+        isProcessingRef.current = false;
       }
     },
     [
@@ -309,6 +298,7 @@ export default function WebinarCheckoutPage({
       maintenanceBlockReason,
       resolvedSearchParams,
       planData?.data?.id,
+      resolvedParams.planId,
       handleApiError,
       handleCheckoutSuccess,
       toast,
@@ -321,7 +311,7 @@ export default function WebinarCheckoutPage({
     async function fetchPlanData() {
       setIsLoading(true);
       try {
-        const endpoint = `/api/plans/webinars/${resolvedParams.webinarPlanId}`;
+        const endpoint = `/api/plans/classes/${resolvedParams.planId}`;
 
         const response = await fetch(endpoint);
         if (!response.ok) {
@@ -336,7 +326,6 @@ export default function WebinarCheckoutPage({
 
         setPlanData(data);
 
-        // Fetch reviews for the consultant
         const reviewsData = await fetchReviews(
           data.data.consultantProfile?.id ?? "",
         );
@@ -354,7 +343,7 @@ export default function WebinarCheckoutPage({
     }
 
     fetchPlanData();
-  }, [resolvedParams.webinarPlanId]);
+  }, [resolvedParams.planId]);
 
   // Calculate pricing using the proper math functions
   // NOTE: This must be before early returns to maintain consistent hook order
@@ -387,44 +376,25 @@ export default function WebinarCheckoutPage({
     checkoutTaxContext.isInternational,
   ]);
 
-  // Periodic staleness check: detect if webinar has ended or been cancelled
+  // Periodic staleness check: detect if all class sessions have ended or been cancelled
   useEffect(() => {
-    if (!planData?.data?.webinars) return;
-
-    const eventId =
-      typeof resolvedSearchParams.eventId === "string"
-        ? resolvedSearchParams.eventId
-        : undefined;
+    if (!planData?.data?.classes) return;
 
     const checkStaleness = () => {
-      const targetWebinar = eventId
-        ? planData.data.webinars.find((w) => w.id === eventId)
-        : planData.data.webinars[0];
-
-      if (!targetWebinar) return;
-
-      if (targetWebinar.status === "COMPLETED") {
-        setError("This webinar has already ended.");
-      } else if (targetWebinar.status === "CANCELLED") {
-        setError("This webinar has been cancelled.");
-      } else if (targetWebinar.appointment?.slotsOfAppointment?.[0]) {
-        const firstSlotEnd = new Date(
-          targetWebinar.appointment.slotsOfAppointment[
-            targetWebinar.appointment.slotsOfAppointment.length - 1
-          ].endsAt,
+      const hasAvailable = planData.data.classes.some(
+        (c) => c.status === "SCHEDULED" || c.status === "IN_PROGRESS",
+      );
+      if (!hasAvailable) {
+        setError(
+          "No available class sessions. All sessions may be full, cancelled, or completed.",
         );
-        if (firstSlotEnd.getTime() < Date.now()) {
-          setError(
-            "This webinar session has already ended. Please go back.",
-          );
-        }
       }
     };
 
     checkStaleness();
     const intervalId = setInterval(checkStaleness, 60_000);
     return () => clearInterval(intervalId);
-  }, [planData, resolvedSearchParams.eventId]);
+  }, [planData]);
 
   if (isLoading) {
     return (
@@ -473,13 +443,13 @@ export default function WebinarCheckoutPage({
   const consultantDetails = planDetails?.consultantProfile;
   const userDetails = consultantDetails?.user;
 
-  const nextSession =
-    planDetails?.webinars?.[0]?.appointment?.slotsOfAppointment?.[0];
+  const nextClassSession =
+    planDetails?.classes?.[0]?.appointments?.[0]?.slotsOfAppointment?.[0];
 
   if (!planData || !planDetails || !consultantDetails || !userDetails) {
     return (
       <div className="flex items-center justify-center h-screen">
-        <p>Essential webinar data is missing. Please try again later.</p>
+        <p>Essential class data is missing. Please try again later.</p>
       </div>
     );
   }
@@ -512,7 +482,7 @@ export default function WebinarCheckoutPage({
                   <div className="flex items-center gap-1.5 mt-1">
                     {userDetails.workExperiences.slice(0, 3).map((exp, i) => (
                       <CompanyLogo
-                        key={`checkout-webinar-company-${i}`}
+                        key={`checkout-class-company-${i}`}
                         companyName={exp.company}
                         companyDomain={exp.companyDomain ?? undefined}
                         size={20}
@@ -524,22 +494,22 @@ export default function WebinarCheckoutPage({
             </div>
           </div>
           <div className="text-right">
-            <div className="font-semibold">Webinar</div>
+            <div className="font-semibold">Class</div>
             <div className="text-sm text-muted-foreground">
-              {planDetails?.title || "Online Session"}
+              {planDetails?.title || "Online Class"}
             </div>
           </div>
         </div>
         <Separator className="bg-zinc-200" />
         <div className="grid gap-2">
-          <div className="font-semibold">Webinar Details</div>
+          <div className="font-semibold">Class Details</div>
           <div className="grid gap-2">
-            {nextSession && (
+            {nextClassSession && (
               <>
                 <div className="flex items-center justify-between">
-                  <div className="text-muted-foreground">Date</div>
+                  <div className="text-muted-foreground">First Session</div>
                   <div>
-                    {new Date(nextSession.startsAt).toLocaleDateString(
+                    {new Date(nextClassSession.startsAt).toLocaleDateString(
                       undefined,
                       {
                         weekday: "long",
@@ -553,8 +523,8 @@ export default function WebinarCheckoutPage({
                 <div className="flex items-center justify-between">
                   <div className="text-muted-foreground">Time</div>
                   <div>
-                    {new Date(nextSession.startsAt).toLocaleTimeString()} -{" "}
-                    {new Date(nextSession.endsAt).toLocaleTimeString()} (
+                    {new Date(nextClassSession.startsAt).toLocaleTimeString()} -{" "}
+                    {new Date(nextClassSession.endsAt).toLocaleTimeString()} (
                     {Intl.DateTimeFormat().resolvedOptions().timeZone})
                   </div>
                 </div>
@@ -562,7 +532,17 @@ export default function WebinarCheckoutPage({
             )}
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Duration</div>
-              <div>{planDetails?.durationInHours || 1} hours</div>
+              <div>
+                {planDetails?.durationInMonths} month
+                {planDetails?.durationInMonths !== 1 ? "s" : ""} (
+                {planDetails?.totalSessions ||
+                  planDetails?.durationInMonths * 4}{" "}
+                sessions)
+              </div>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="text-muted-foreground">Sessions per Week</div>
+              <div>{planDetails?.meetingsPerWeek || 2}</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Max Participants</div>
@@ -636,17 +616,17 @@ export default function WebinarCheckoutPage({
           <div className="grid gap-2">
             <div className="flex items-center justify-between">
               <div>
-                <div className="font-medium">WEBINAR10</div>
+                <div className="font-medium">CLASS15</div>
                 <div className="text-sm text-muted-foreground">
-                  Get 10% off your webinar registration
+                  Get 15% off your class enrollment
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <div className="text-muted-foreground">10% off</div>
+                <div className="text-muted-foreground">15% off</div>
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => handleApplyDiscount("WEBINAR10")}
+                  onClick={() => handleApplyDiscount("CLASS15")}
                   disabled={isApplyingDiscount || !!appliedDiscount}
                 >
                   Apply
@@ -687,12 +667,12 @@ export default function WebinarCheckoutPage({
       <div className="flex flex-col gap-8 p-8 bg-white">
         <Card className="border-zinc-200 shadow-sm">
           <CardHeader>
-            <CardTitle className="text-zinc-900">Webinar Pricing</CardTitle>
+            <CardTitle className="text-zinc-900">Class Pricing</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-4">
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
-                <div>Registration Fee</div>
+                <div>Enrollment Fee</div>
                 <div>{formatPrice(planDetails?.price || 0)}</div>
               </div>
               <div className="flex items-center justify-between">
@@ -701,10 +681,23 @@ export default function WebinarCheckoutPage({
                 </div>
                 <div className="font-semibold">
                   <ul className="list-disc">
-                    <li>Live webinar access</li>
-                    <li>Q&A session</li>
-                    <li>Recording access</li>
-                    <li>Certificate of attendance</li>
+                    <li>
+                      {planDetails?.totalSessions ||
+                        (planDetails?.meetingsPerWeek || 2) *
+                          (planDetails?.durationInMonths || 1) *
+                          4}{" "}
+                      total sessions (
+                      {planDetails?.totalHours ||
+                        (planDetails?.meetingsPerWeek || 2) *
+                          (planDetails?.durationInMonths || 1) *
+                          4}{" "}
+                      hours)
+                    </li>
+                    <li>
+                      {planDetails?.meetingsPerWeek || 2} sessions per week
+                    </li>
+                    <li>Course materials</li>
+                    <li>Certificate of completion</li>
                   </ul>
                 </div>
               </div>
@@ -783,12 +776,12 @@ export default function WebinarCheckoutPage({
                   </div>
                   {gateway.isActive ? (
                     <div className="flex gap-2">
-                      {validatedSearchParams && gateway.gateway === "RAZORPAY" ? (
+                      {availableClassId && gateway.gateway === "RAZORPAY" ? (
                         <RazorpayCheckout
                           checkoutData={createCheckoutData({
-                            appointmentType: "WEBINAR",
+                            appointmentType: "CLASS",
                             planId: planDetails.id,
-                            eventId: validatedSearchParams.eventId,
+                            eventId: availableClassId,
                             paymentGateway: "RAZORPAY",
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
@@ -798,12 +791,12 @@ export default function WebinarCheckoutPage({
                           onPaymentError={razorpayHandlers.onPaymentError}
                           disabled={isMaintenanceBlocked}
                         />
-                      ) : validatedSearchParams && gateway.gateway === "STRIPE" ? (
+                      ) : availableClassId && gateway.gateway === "STRIPE" ? (
                         <StripeCheckout
                           checkoutData={createCheckoutData({
-                            appointmentType: "WEBINAR",
+                            appointmentType: "CLASS",
                             planId: planDetails.id,
-                            eventId: validatedSearchParams.eventId,
+                            eventId: availableClassId,
                             paymentGateway: "STRIPE",
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,

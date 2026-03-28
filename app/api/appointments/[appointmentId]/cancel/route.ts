@@ -3,6 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { CancellationReason } from "@prisma/client";
 import { notifyAppointmentCancelled } from "@/lib/novu";
 import { CancelAppointmentSchema } from "@/schemas/appointments";
+import {
+  logConsultationCancelled,
+  logSubscriptionCancelled,
+} from "@/lib/activity/log-activity";
 
 import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
@@ -266,6 +270,44 @@ export async function POST(
       });
     }
 
+    // Log cancellation activity for consultant dashboard (awaited — DB write
+    // that should not be dropped in serverless; logActivity swallows errors)
+    const actor = {
+      id: session.user.id,
+      name: session.user.name || "User",
+      image: session.user.image,
+    };
+    const cancelledBy =
+      session.user.id === notificationMeta.consultantUserId
+        ? ("consultant" as const)
+        : ("consultee" as const);
+
+    if (appointment.consultation) {
+      const cpId =
+        appointment.consultation.consultationPlan?.consultantProfileId;
+      if (cpId) {
+        await logConsultationCancelled(
+          cpId,
+          appointment.consultation.id,
+          actor,
+          planTitle || "Consultation",
+          cancelledBy,
+        );
+      }
+    } else if (appointment.subscription) {
+      const cpId =
+        appointment.subscription.subscriptionPlan?.consultantProfileId;
+      if (cpId) {
+        await logSubscriptionCancelled(
+          cpId,
+          appointment.subscription.id,
+          actor,
+          planTitle || "Subscription",
+          cancelledBy,
+        );
+      }
+    }
+
     // Note: This route cancels the entire event (sets parent to CANCELLED),
     // so we do NOT notify waitlisted users — there is no "spot" to offer.
     // Waitlist notifications should only fire when a participant leaves an
@@ -273,8 +315,6 @@ export async function POST(
 
     return NextResponse.json(result);
   } catch (error) {
-    console.error("Error canceling appointment:", error);
-
     if (error instanceof Error && error.message === "Appointment not found") {
       return NextResponse.json(
         { error: "Appointment not found" },
@@ -282,6 +322,7 @@ export async function POST(
       );
     }
 
+    console.error("Error canceling appointment:", error);
     return NextResponse.json(
       { error: "Failed to cancel appointment" },
       { status: 500 },
