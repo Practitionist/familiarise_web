@@ -312,9 +312,6 @@ export function AppointmentsTab({
     });
   }, [appointments, statusFilter, searchQuery]);
 
-  // Keep unfiltered counts for section headers
-  const allAppointmentsByType = groupAppointmentsByType(appointments || []);
-
   // Group filtered appointments by type
   const appointmentsByType = groupAppointmentsByType(filteredAppointments);
 
@@ -427,20 +424,23 @@ export function AppointmentsTab({
                       <h3 className="text-lg font-semibold text-gray-900 border-b-2 border-gray-300 pb-2">
                         {getAppointmentTypeDisplayName(groupType)}
                         <span className="text-sm font-normal text-gray-500 ml-2">
-                          ({(allAppointmentsByType[groupType]?.length ?? 0) +
-                            (groupType === "CLASS"
-                              ? unscheduledClasses.length
-                              : 0) +
-                            (groupType === "WEBINAR"
-                              ? unscheduledWebinars.length
+                          ({(appointmentsByType[groupType]?.length ?? 0) +
+                            (statusFilter === "ALL"
+                              ? (groupType === "CLASS"
+                                  ? unscheduledClasses.length
+                                  : 0) +
+                                (groupType === "WEBINAR"
+                                  ? unscheduledWebinars.length
+                                  : 0)
                               : 0)})
                         </span>
                       </h3>
                     </div>
                   )}
 
-                  {/* Free Trials Sub-section (only for SUBSCRIPTION type) */}
+                  {/* Free Trials Sub-section (only for SUBSCRIPTION type, only in "All" view) */}
                   {isNewTypeSection &&
+                    statusFilter === "ALL" &&
                     groupType === "SUBSCRIPTION" &&
                     scheduledTrials.length > 0 && (
                       <div className="mb-6 bg-purple-50/50 border border-purple-200 rounded-lg p-4">
@@ -534,8 +534,9 @@ export function AppointmentsTab({
                       </div>
                     )}
 
-                  {/* Unscheduled events — rendered once per section, before any scheduled groups */}
+                  {/* Unscheduled events — only in "All" view (they're neither upcoming nor past) */}
                   {isNewTypeSection &&
+                    statusFilter === "ALL" &&
                     groupType === "CLASS" &&
                     unscheduledClasses.length > 0 && (
                       <div className="mb-4">
@@ -561,6 +562,7 @@ export function AppointmentsTab({
                       </div>
                     )}
                   {isNewTypeSection &&
+                    statusFilter === "ALL" &&
                     groupType === "WEBINAR" &&
                     unscheduledWebinars.length > 0 && (
                       <div className="mb-4">
@@ -589,16 +591,17 @@ export function AppointmentsTab({
                   {/* Empty state — only shown when section has no scheduled appointments
                       AND no unscheduled items were already rendered above */}
                   {groupAppointments.length === 0 ? (
-                    (groupType === "CLASS" && unscheduledClasses.length > 0) ||
-                    (groupType === "WEBINAR" &&
-                      unscheduledWebinars.length > 0) ? null : (
+                    (statusFilter === "ALL" &&
+                      ((groupType === "CLASS" && unscheduledClasses.length > 0) ||
+                        (groupType === "WEBINAR" &&
+                          unscheduledWebinars.length > 0))) ? null : (
                       <div className="border rounded-lg p-8 bg-gray-50 text-center">
                         <p className="text-gray-500 text-sm">
-                          No{" "}
-                          {getAppointmentTypeDisplayName(
-                            groupType,
-                          ).toLowerCase()}{" "}
-                          scheduled
+                          {statusFilter === "UPCOMING"
+                            ? `No upcoming ${getAppointmentTypeDisplayName(groupType).toLowerCase()}`
+                            : statusFilter === "PAST"
+                              ? `No past ${getAppointmentTypeDisplayName(groupType).toLowerCase()}`
+                              : `No ${getAppointmentTypeDisplayName(groupType).toLowerCase()} scheduled`}
                         </p>
                       </div>
                     )
@@ -1034,10 +1037,18 @@ export function AppointmentsTab({
               </svg>
             </div>
             <h3 className="text-xl font-semibold text-gray-900 mb-2">
-              No Appointments Found
+              {statusFilter === "UPCOMING"
+                ? "No Upcoming Appointments"
+                : statusFilter === "PAST"
+                  ? "No Past Appointments"
+                  : "No Appointments Found"}
             </h3>
             <p className="text-gray-500 text-center">
-              You don't have any appointments scheduled at the moment.
+              {statusFilter === "UPCOMING"
+                ? "You don't have any upcoming appointments."
+                : statusFilter === "PAST"
+                  ? "You don't have any past appointments."
+                  : "You don't have any appointments scheduled at the moment."}
             </p>
           </div>
         )}
