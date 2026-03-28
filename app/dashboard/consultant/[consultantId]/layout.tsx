@@ -19,6 +19,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { use, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { consultantFetchers, schedulePrefetch } from "@/lib/dashboard-queries";
+import { useChatUnreadCount } from "@/hooks/useChatUnreadCount";
 import { motion } from "framer-motion";
 import { VerificationPendingOverlay } from "@/components/verification/VerificationPendingOverlay";
 import type { VerificationStatus } from "@/components/verification/VerificationStatusBadge";
@@ -469,6 +470,19 @@ export default function ConsultantLayout({
     }, 3000);
   }, [userId, consultantId, pathname, router, hasConsultantAccess]);
 
+  // Unread badge count for Chats nav item
+  const chatUnreadCount = useChatUnreadCount();
+  const navSections = useMemo(() => {
+    return NAV_SECTIONS.map((section) => ({
+      ...section,
+      items: section.items.map((item) =>
+        item.path === "chats" && chatUnreadCount > 0
+          ? { ...item, badge: chatUnreadCount > 99 ? "99+" : chatUnreadCount }
+          : item,
+      ),
+    }));
+  }, [chatUnreadCount]);
+
   // Memoize StreamProvider children to prevent re-initialization on tab switches
   // Must be called before any early returns to comply with Rules of Hooks
   const memoizedStreamContent = useMemo(
@@ -563,7 +577,7 @@ export default function ConsultantLayout({
       userName={consultantData?.user?.name}
       userRole="CONSULTANT"
       basePath={`/dashboard/consultant/${consultantId}`}
-      navSections={NAV_SECTIONS}
+      navSections={navSections}
       hideBottomActions={false}
       bottomNavItems={[
         { name: "Settings", path: "settings", icon: "settings" },
