@@ -356,6 +356,15 @@ export function AppointmentsTab({
                     <div className="mb-4 pt-6 first:pt-0">
                       <h3 className="text-lg font-semibold text-gray-900 border-b-2 border-gray-300 pb-2">
                         {getAppointmentTypeDisplayName(groupType)}
+                        <span className="text-sm font-normal text-gray-500 ml-2">
+                          ({(appointmentsByType[groupType]?.length ?? 0) +
+                            (groupType === "CLASS"
+                              ? unscheduledClasses.length
+                              : 0) +
+                            (groupType === "WEBINAR"
+                              ? unscheduledWebinars.length
+                              : 0)})
+                        </span>
                       </h3>
                     </div>
                   )}
@@ -364,8 +373,8 @@ export function AppointmentsTab({
                   {isNewTypeSection &&
                     groupType === "SUBSCRIPTION" &&
                     scheduledTrials.length > 0 && (
-                      <div className="mb-6">
-                        <h4 className="text-sm font-medium text-purple-700 mb-3 flex items-center gap-2">
+                      <div className="mb-6 bg-purple-50/50 border border-purple-200 rounded-lg p-4">
+                        <h4 className="text-sm font-semibold text-purple-700 mb-3 flex items-center gap-2">
                           <Gift className="h-4 w-4" />
                           Free Trial Sessions ({scheduledTrials.length})
                         </h4>
