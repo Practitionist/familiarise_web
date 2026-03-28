@@ -436,18 +436,11 @@ const StreamProvider = ({
     connectServices();
   }, [connectServices]);
 
-  // Keep a stable ref to connectServices/disconnect so the effect doesn't
-  // re-fire when useCallback identities change due to object reference churn.
-  const connectServicesRef = useRef(connectServices);
-  useEffect(() => {
-    connectServicesRef.current = connectServices;
-  }, [connectServices]);
-  const disconnectRef = useRef(disconnect);
-  useEffect(() => {
-    disconnectRef.current = disconnect;
-  }, [disconnect]);
-
-  // Initialize connections — deps are only stable primitives (userId, loading, apiKey)
+  // Initialize connections.
+  // connectServices/disconnect are in deps and may cause re-fires when their
+  // useCallback identities change, but this is safe because:
+  // - connectChat guards with globalChatClient + currentUserId check (no-op if already connected)
+  // - syncUserEventChannels is guarded by sessionStorage (no-op after first sync)
   useEffect(() => {
     if (!isLoading && userDetails && apiKey) {
       // Check if user changed - if so, disconnect old user first
@@ -456,11 +449,11 @@ const StreamProvider = ({
           from: currentUserId,
           to: userDetails.id,
         });
-        disconnectRef.current(true).then(() => {
-          connectServicesRef.current();
+        disconnect(true).then(() => {
+          connectServices();
         });
       } else {
-        connectServicesRef.current();
+        connectServices();
       }
     }
 
@@ -470,8 +463,7 @@ const StreamProvider = ({
       // Intentionally not calling disconnect() here
       // Global clients are reused across component remounts
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userDetails?.id, isLoading, apiKey]);
+  }, [userDetails?.id, isLoading, apiKey, connectServices, disconnect]);
 
   // Connection state for context
   const connectionState: StreamConnectionState = {
