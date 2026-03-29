@@ -707,7 +707,8 @@ async function addUserToDmChannel(
 }
 
 /**
- * Get webinar IDs for a user
+ * Get webinar IDs for a user (both hosted and enrolled).
+ * Handles dual-role users who are both consultant and consultee.
  */
 async function getWebinarIdsForUser(
   userId: string,
@@ -716,19 +717,22 @@ async function getWebinarIdsForUser(
     consulteeProfileId: string | null;
   },
 ): Promise<string[]> {
+  const queries: Promise<{ id: string }[]>[] = [];
+
+  // Consultant: get webinars they host
   if (user.consultantProfileId) {
-    // Consultant: get webinars they host
-    const webinars = await prisma.webinar.findMany({
-      where: {
-        webinarPlan: { consultantProfileId: user.consultantProfileId },
-      },
-      select: { id: true },
-    });
-    return webinars.map((w) => w.id);
+    queries.push(
+      prisma.webinar.findMany({
+        where: {
+          webinarPlan: { consultantProfileId: user.consultantProfileId },
+        },
+        select: { id: true },
+      }),
+    );
   }
 
   // Consultee: get webinars from waitlist or appointments
-  const [waitlistWebinars, appointmentWebinars] = await Promise.all([
+  queries.push(
     prisma.webinar.findMany({
       where: { waitlist: { some: { userId } } },
       select: { id: true },
@@ -741,18 +745,15 @@ async function getWebinarIdsForUser(
       },
       select: { id: true },
     }),
-  ]);
-
-  return Array.from(
-    new Set([
-      ...waitlistWebinars.map((w) => w.id),
-      ...appointmentWebinars.map((w) => w.id),
-    ]),
   );
+
+  const results = await Promise.all(queries);
+  return Array.from(new Set(results.flatMap((r) => r.map((w) => w.id))));
 }
 
 /**
- * Get class IDs for a user
+ * Get class IDs for a user (both hosted and enrolled).
+ * Handles dual-role users who are both consultant and consultee.
  */
 async function getClassIdsForUser(
   userId: string,
@@ -761,19 +762,22 @@ async function getClassIdsForUser(
     consulteeProfileId: string | null;
   },
 ): Promise<string[]> {
+  const queries: Promise<{ id: string }[]>[] = [];
+
+  // Consultant: get classes they host
   if (user.consultantProfileId) {
-    // Consultant: get classes they host
-    const classes = await prisma.class.findMany({
-      where: {
-        classPlan: { consultantProfileId: user.consultantProfileId },
-      },
-      select: { id: true },
-    });
-    return classes.map((c) => c.id);
+    queries.push(
+      prisma.class.findMany({
+        where: {
+          classPlan: { consultantProfileId: user.consultantProfileId },
+        },
+        select: { id: true },
+      }),
+    );
   }
 
   // Consultee: get classes from waitlist or appointments
-  const [waitlistClasses, appointmentClasses] = await Promise.all([
+  queries.push(
     prisma.class.findMany({
       where: { waitlist: { some: { userId } } },
       select: { id: true },
@@ -788,12 +792,8 @@ async function getClassIdsForUser(
       },
       select: { id: true },
     }),
-  ]);
-
-  return Array.from(
-    new Set([
-      ...waitlistClasses.map((c) => c.id),
-      ...appointmentClasses.map((c) => c.id),
-    ]),
   );
+
+  const results = await Promise.all(queries);
+  return Array.from(new Set(results.flatMap((r) => r.map((c) => c.id))));
 }

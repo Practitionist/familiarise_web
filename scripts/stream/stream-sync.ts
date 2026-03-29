@@ -15,7 +15,7 @@
  * - jobs/stream/stream-sync.ts (GitHub Actions)
  * - app/api/cleanup/stream-sync/route.ts (API endpoint)
  *
- * Schedule: Weekly (Sunday 3 AM UTC)
+ * Schedule: Daily at 03:30 UTC (9:00 AM IST)
  */
 
 import { StreamChat, UserResponse } from "stream-chat";
@@ -259,13 +259,14 @@ export async function performStreamUserSync(
         continue;
       }
 
-      // Delete stale users from Stream
+      // Soft-delete stale users from Stream (preserves data for 30-day grace period).
+      // TODO: Add a separate job to hard-delete soft-deleted users older than 30 days.
       try {
         const deleteResponse = await serverStreamClient.deleteUsers(
           staleUsers,
           {
-            user: "hard",
-            messages: "hard",
+            user: "soft",
+            messages: "soft",
           },
         );
 
