@@ -158,7 +158,7 @@ export function EventPlannerForClass({
           classContents: [],
           planType: "class",
         },
-    mode: "onChange",
+    mode: "onSubmit",
   });
 
   useEffect(() => {

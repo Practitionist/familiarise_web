@@ -88,6 +88,7 @@ export function PriceField<T extends FieldValues = FieldValues>({
         <Input
           type="number"
           min="0"
+          max={99999999}
           placeholder="0"
           className={cn("flex-1", error && "border-destructive")}
           value={priceField.value}

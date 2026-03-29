@@ -648,10 +648,10 @@ export function EventManagementDashboard({
           className="mb-8 sm:mb-12"
         >
           <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-zinc-900 tracking-tight">
-            Event Management
+            Event Planner
           </h1>
           <p className="mt-1 sm:mt-2 text-sm sm:text-base lg:text-lg text-zinc-500">
-            Manage your service templates and scheduled sessions
+            Create and manage your plans and scheduled sessions
           </p>
 
           {/* Quick Stats */}
@@ -665,7 +665,7 @@ export function EventManagementDashboard({
             <div className="flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-zinc-100 border border-zinc-200/60">
               <Radio className="h-4 w-4 text-zinc-600" />
               <span className="text-xs sm:text-sm font-medium text-zinc-700">
-                {totalSessions} Live Sessions
+                {totalSessions} Upcoming Sessions
               </span>
             </div>
           </div>
