@@ -52,6 +52,15 @@ export async function disconnectStreamClients(): Promise<void> {
     );
   }
 
+  if (globalVideoClient) {
+    const videoClient = globalVideoClient;
+    promises.push(
+      videoClient.disconnectUser().then(() => {
+        streamLogger.debug("Video client disconnected on logout");
+      }),
+    );
+  }
+
   await Promise.all(promises);
 
   // Nullify references only after disconnect completes to avoid
@@ -113,6 +122,8 @@ const StreamProvider = ({
   const [videoConnected, setVideoConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Separate state for retry count display (ref doesn't trigger re-renders)
+  const [retryCount, setRetryCount] = useState(0);
 
   // Use ref for connection attempts to avoid stale closures in retry logic
   const connectionAttemptsRef = useRef(0);
@@ -368,13 +379,16 @@ const StreamProvider = ({
       }
 
       if (videoClient) {
-        // Note: StreamVideoClient doesn't have explicit disconnect method
-        // It's cleaned up when the component unmounts
-        setVideoClient(null);
-        setVideoConnected(false);
-        if (clearGlobal) {
-          globalVideoClient = null;
-        }
+        promises.push(
+          videoClient.disconnectUser().then(() => {
+            streamLogger.debug("Video client disconnected");
+            setVideoClient(null);
+            setVideoConnected(false);
+            if (clearGlobal) {
+              globalVideoClient = null;
+            }
+          }),
+        );
       }
 
       await Promise.all(promises);
@@ -402,6 +416,7 @@ const StreamProvider = ({
 
       await Promise.all(promises);
       connectionAttemptsRef.current = 0; // Reset on success
+      setRetryCount(0);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Connection failed";
@@ -409,6 +424,7 @@ const StreamProvider = ({
 
       // Implement exponential backoff retry using ref
       connectionAttemptsRef.current += 1;
+      setRetryCount(connectionAttemptsRef.current); // Sync state for UI display
       const currentAttempts = connectionAttemptsRef.current;
 
       if (currentAttempts < 5) {
@@ -505,12 +521,12 @@ const StreamProvider = ({
   }
 
   // Retry-in-progress state (between retries, not yet exhausted)
-  if (error && connectionAttemptsRef.current > 0 && connectionAttemptsRef.current < 5) {
+  if (error && retryCount > 0 && retryCount < 5) {
     return (
       <div className="flex items-center justify-center min-h-[200px]">
         <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary"></div>
         <p className="ml-4 text-sm text-gray-600">
-          Retrying connection (attempt {connectionAttemptsRef.current}/5)...
+          Retrying connection (attempt {retryCount}/5)...
         </p>
       </div>
     );

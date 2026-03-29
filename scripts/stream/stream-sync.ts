@@ -1,7 +1,7 @@
 /**
  * Stream User Sync - Core Logic
  *
- * Identifies and removes stale Stream Chat users that no longer exist in the database.
+ * Identifies and soft-deletes stale Stream Chat users that no longer exist in the database.
  * Uses distributed locking via Redis to prevent concurrent runs.
  *
  * Features:
@@ -287,12 +287,12 @@ export async function performStreamUserSync(
           );
         }
 
-        const successfullyDeleted =
+        const successfullySoftDeleted =
           staleUsers.length - sdkFailedDeletions.length;
-        totalStaleUsersDeleted += successfullyDeleted;
+        totalStaleUsersDeleted += successfullySoftDeleted;
 
         console.log(
-          `   ✅ Deleted ${successfullyDeleted}/${staleUsers.length} users`,
+          `   ✅ Soft-deleted ${successfullySoftDeleted}/${staleUsers.length} users`,
         );
 
         // Rate limiting between batches
@@ -302,7 +302,7 @@ export async function performStreamUserSync(
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : "Batch deletion failed";
-        console.error(`   ❌ Batch deletion error: ${errorMessage}`);
+        console.error(`   ❌ Batch soft-deletion error: ${errorMessage}`);
 
         const failures = staleUsers.map((id) => ({
           id,
@@ -349,7 +349,7 @@ export function printSyncSummary(summary: SyncSummary): void {
   console.log(
     `   Stale Users Identified: ${summary.totalStaleUsersIdentified}`,
   );
-  console.log(`   Users Deleted: ${summary.totalStaleUsersDeleted}`);
+  console.log(`   Users Soft-Deleted: ${summary.totalStaleUsersDeleted}`);
   console.log(`   Failed Deletions: ${summary.totalFailedDeletions}`);
   console.log(`   Success: ${summary.success}`);
 

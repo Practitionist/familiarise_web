@@ -45,7 +45,9 @@ jobs:
 
       - name: Run expiration processor
         id: run_script
-        run: npx tsx scripts/waitlist/process-expired-notifications.ts 2>&1 | tee /tmp/job-output.txt
+        run: |
+          set -o pipefail
+          npx tsx scripts/waitlist/process-expired-notifications.ts 2>&1 | tee /tmp/job-output.txt
         env:
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
         continue-on-error: true

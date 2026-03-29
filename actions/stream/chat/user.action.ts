@@ -256,6 +256,7 @@ export const searchUsersWithRelationships = async (
               subscriptionPlan: { consultantProfileId: currentUser.consultantProfileId },
               requestedById: { in: resultConsulteeProfileIds },
               requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+              schedulingPeriodEndsAt: { gte: new Date() },
             },
             select: { requestedBy: { select: { user: { select: { id: true } } } } },
           })
@@ -291,6 +292,7 @@ export const searchUsersWithRelationships = async (
               subscriptionPlan: { consultantProfileId: { in: resultConsultantProfileIds } },
               requestedById: currentUser.consulteeProfileId,
               requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+              schedulingPeriodEndsAt: { gte: new Date() },
             },
             select: {
               subscriptionPlan: {
