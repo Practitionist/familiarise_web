@@ -431,8 +431,11 @@ function mapDisputeStatus(
 // ============================================================================
 
 /**
- * Log webhook event for audit trail and debugging
- * Prevents duplicate processing via unique eventId constraint
+ * Log webhook event for audit trail and debugging.
+ * Prevents duplicate processing via unique eventId constraint.
+ *
+ * If a previous attempt exists but failed (has error and processed=true),
+ * it is eligible for retry — returns isNew: true so the handler re-runs.
  */
 export async function logWebhookEvent(
   provider: string,
@@ -442,13 +445,41 @@ export async function logWebhookEvent(
   signature?: string,
 ): Promise<{ isNew: boolean; eventRecordId?: string }> {
   try {
-    // Check if event already processed (idempotency)
+    // Check if event already exists
     const existing = await prisma.webhookEvent.findUnique({
       where: { eventId },
     });
 
     if (existing) {
-      console.log(`⚠️ Webhook event ${eventId} already received, skipping`);
+      // If previously processed successfully, skip (true idempotency)
+      if (existing.processed && !existing.error) {
+        console.log(
+          `⚠️ Webhook event ${eventId} already processed successfully, skipping`,
+        );
+        return { isNew: false, eventRecordId: existing.id };
+      }
+
+      // If previous attempt failed, allow retry by resetting state
+      if (existing.error) {
+        console.log(
+          `🔄 Webhook event ${eventId} previously failed, allowing retry`,
+        );
+        await prisma.webhookEvent.update({
+          where: { eventId },
+          data: {
+            processed: false,
+            processedAt: null,
+            error: null,
+            payload: payload as Prisma.InputJsonValue,
+          },
+        });
+        return { isNew: true, eventRecordId: existing.id };
+      }
+
+      // Currently being processed (processed=false, no error) — skip
+      console.log(
+        `⚠️ Webhook event ${eventId} currently being processed, skipping`,
+      );
       return { isNew: false, eventRecordId: existing.id };
     }
 
@@ -479,7 +510,10 @@ export async function logWebhookEvent(
 }
 
 /**
- * Mark webhook event as processed
+ * Mark webhook event as processed.
+ * Only sets processed=true on success (no error).
+ * On failure, records the error but leaves processed=true so the
+ * retry logic in logWebhookEvent can detect it as a failed attempt.
  */
 export async function markWebhookEventProcessed(
   eventId: string,
@@ -490,7 +524,7 @@ export async function markWebhookEventProcessed(
     data: {
       processed: true,
       processedAt: new Date(),
-      error,
+      error: error || null,
     },
   });
 }

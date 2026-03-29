@@ -145,9 +145,10 @@ export class RecordingTransferService {
       const response = await fetch(recording.recordingUrl);
 
       if (!response.ok) {
+        // Revert to READY so cron and manual retries can re-attempt
         await prisma.recording.update({
           where: { id: recordingId },
-          data: { status: "FAILED" as RecordingStatus },
+          data: { status: "READY" as RecordingStatus },
         });
         return {
           success: false,
@@ -214,9 +215,10 @@ export class RecordingTransferService {
         });
 
       if (uploadError) {
+        // Revert to READY so cron and manual retries can re-attempt
         await prisma.recording.update({
           where: { id: recordingId },
-          data: { status: "FAILED" as RecordingStatus },
+          data: { status: "READY" as RecordingStatus },
         });
         streamLogger.error("Failed to upload to Supabase", uploadError, {
           recordingId,
@@ -244,11 +246,11 @@ export class RecordingTransferService {
 
       return { success: true };
     } catch (error) {
-      // Revert status on error
+      // Revert to READY so cron and manual retries can re-attempt
       if (recording) {
         await prisma.recording.update({
           where: { id: recordingId },
-          data: { status: "FAILED" as RecordingStatus },
+          data: { status: "READY" as RecordingStatus },
         });
       }
 

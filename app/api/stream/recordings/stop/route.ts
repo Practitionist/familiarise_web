@@ -97,13 +97,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Atomically set isRecording=false (prevents race condition with concurrent requests)
-    const updated = await prisma.meetingSession.updateMany({
+    // Verify recording is actually in progress before calling Stream API
+    if (!meetingSession.isRecording) {
+      return NextResponse.json(
+        { error: "No recording in progress" },
+        { status: 409 },
+      );
+    }
+
+    // Atomically claim the stop operation (prevents concurrent stop requests)
+    const claimed = await prisma.meetingSession.updateMany({
       where: { id: meetingSessionId, isRecording: true },
       data: { isRecording: false },
     });
 
-    if (updated.count === 0) {
+    if (claimed.count === 0) {
+      // Another concurrent request already claimed the stop
       return NextResponse.json(
         { error: "No recording in progress" },
         { status: 409 },
@@ -114,6 +123,15 @@ export async function POST(req: NextRequest) {
     const result = await RecordingService.stopRecording(streamCallId);
 
     if (!result.success) {
+      // Rollback: restore isRecording=true since Stream stop failed
+      await prisma.meetingSession.update({
+        where: { id: meetingSessionId },
+        data: { isRecording: true },
+      });
+      streamLogger.error("Stream stop failed, rolled back DB state", null, {
+        meetingSessionId,
+        streamCallId,
+      });
       return NextResponse.json(
         { error: result.error || "Failed to stop recording" },
         { status: 500 },
