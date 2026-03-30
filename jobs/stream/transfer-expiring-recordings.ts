@@ -8,9 +8,11 @@
  */
 
 import { RecordingTransferService } from "../../lib/stream/recording-transfer-service";
+import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import fs from "fs";
 
 async function main(): Promise<void> {
+  await abortIfMaintenance("transfer-expiring-recordings");
   const startTime = Date.now();
   console.log("🚀 Starting transfer-expiring-recordings job...");
   console.log(`   Timestamp: ${new Date().toISOString()}`);

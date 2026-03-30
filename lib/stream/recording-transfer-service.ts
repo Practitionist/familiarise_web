@@ -97,6 +97,13 @@ export class RecordingTransferService {
   /**
    * Transfer a recording from Stream S3 to Supabase
    * @param recordingId The recording ID to transfer
+   *
+   * **Failure strategy:** All failure paths revert status to READY (not FAILED)
+   * so that both the cron job and the manual /transfer API endpoint can retry.
+   * A FAILED status would permanently dead-end the recording since the manual
+   * transfer route only accepts READY recordings. The only exceptions are
+   * "bucket missing" and "file too large" which also revert to READY since
+   * the underlying issue is environmental, not permanent.
    */
   static async transferRecordingToSupabase(
     recordingId: string,
@@ -145,9 +152,10 @@ export class RecordingTransferService {
       const response = await fetch(recording.recordingUrl);
 
       if (!response.ok) {
+        // Revert to READY so cron and manual retries can re-attempt
         await prisma.recording.update({
           where: { id: recordingId },
-          data: { status: "FAILED" as RecordingStatus },
+          data: { status: "READY" as RecordingStatus },
         });
         return {
           success: false,
@@ -214,9 +222,10 @@ export class RecordingTransferService {
         });
 
       if (uploadError) {
+        // Revert to READY so cron and manual retries can re-attempt
         await prisma.recording.update({
           where: { id: recordingId },
-          data: { status: "FAILED" as RecordingStatus },
+          data: { status: "READY" as RecordingStatus },
         });
         streamLogger.error("Failed to upload to Supabase", uploadError, {
           recordingId,
@@ -244,11 +253,11 @@ export class RecordingTransferService {
 
       return { success: true };
     } catch (error) {
-      // Revert status on error
+      // Revert to READY so cron and manual retries can re-attempt
       if (recording) {
         await prisma.recording.update({
           where: { id: recordingId },
-          data: { status: "FAILED" as RecordingStatus },
+          data: { status: "READY" as RecordingStatus },
         });
       }
 

@@ -44,22 +44,38 @@ export async function disconnectStreamClients(): Promise<void> {
   const promises: Promise<void>[] = [];
 
   if (globalChatClient) {
+    const client = globalChatClient;
     promises.push(
-      globalChatClient.disconnectUser().then(() => {
+      client.disconnectUser().then(() => {
         streamLogger.debug("Chat client disconnected on logout");
       }),
     );
-    globalChatClient = null;
   }
 
   if (globalVideoClient) {
-    globalVideoClient = null;
+    const videoClient = globalVideoClient;
+    promises.push(
+      videoClient.disconnectUser().then(() => {
+        streamLogger.debug("Video client disconnected on logout");
+      }),
+    );
   }
 
+  await Promise.all(promises);
+
+  // Nullify references only after disconnect completes to avoid
+  // another code path creating a new client while still disconnecting
+  globalChatClient = null;
+  globalVideoClient = null;
   currentUserId = null;
   clearAllStreamCaches();
 
-  await Promise.all(promises);
+  // Clear sessionStorage sync flags so a re-login triggers a fresh sync
+  if (typeof sessionStorage !== "undefined") {
+    Object.keys(sessionStorage)
+      .filter((k) => k.startsWith("stream_sync_"))
+      .forEach((k) => sessionStorage.removeItem(k));
+  }
 }
 
 // Connection state context
@@ -106,12 +122,18 @@ const StreamProvider = ({
   const [videoConnected, setVideoConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // We need BOTH a ref and state for retry count: the ref (connectionAttemptsRef)
+  // is used inside setTimeout/async closures where state would be stale, while
+  // this state variable drives re-renders so the UI shows the correct attempt count.
+  const [retryCount, setRetryCount] = useState(0);
 
   // Use ref for connection attempts to avoid stale closures in retry logic
   const connectionAttemptsRef = useRef(0);
   // Guard against concurrent connectUser calls (race: connectVideo resolves first,
   // triggers re-render + effect re-run before connectChat has set globalChatClient)
   const isChatConnectingRef = useRef(false);
+  // Track retry timeout so we can cancel on unmount
+  const retryTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
 
   const { userDetails, isLoading } = useUserData(userId);
 
@@ -119,18 +141,22 @@ const StreamProvider = ({
   // (useState here caused getCachedToken → connectChat → connectServices to
   //  be recreated on every token fetch, making the connectUser useEffect fire
   //  repeatedly and producing "Consecutive calls to connectUser" warnings)
+  // Each token type has its own expiry to avoid one overwriting the other's validity window.
   const tokenCacheRef = useRef<{
     chatToken?: string;
+    chatExpiresAt?: number;
     videoToken?: string;
-    expiresAt?: number;
+    videoExpiresAt?: number;
   }>({});
 
   const isTokenValid = useCallback((type: "chat" | "video") => {
     const cache = tokenCacheRef.current;
     const token = type === "chat" ? cache.chatToken : cache.videoToken;
-    if (!token || !cache.expiresAt) return false;
+    const expiresAt =
+      type === "chat" ? cache.chatExpiresAt : cache.videoExpiresAt;
+    if (!token || !expiresAt) return false;
     // Check if token expires within next 5 minutes
-    return Date.now() < cache.expiresAt - 5 * 60 * 1000;
+    return Date.now() < expiresAt - 5 * 60 * 1000;
   }, []);
 
   const getCachedToken = useCallback(
@@ -147,11 +173,14 @@ const StreamProvider = ({
           : await tokenProvider(userId);
 
       // Cache with 50-minute expiry (tokens usually last 1 hour)
-      tokenCacheRef.current = {
-        ...tokenCacheRef.current,
-        [`${type}Token`]: newToken,
-        expiresAt: Date.now() + 50 * 60 * 1000,
-      };
+      const expiresAt = Date.now() + 50 * 60 * 1000;
+      if (type === "chat") {
+        tokenCacheRef.current.chatToken = newToken;
+        tokenCacheRef.current.chatExpiresAt = expiresAt;
+      } else {
+        tokenCacheRef.current.videoToken = newToken;
+        tokenCacheRef.current.videoExpiresAt = expiresAt;
+      }
 
       return newToken;
     },
@@ -239,20 +268,32 @@ const StreamProvider = ({
       setChatClient(client);
       setChatConnected(true);
 
-      // Initial channel sync only once per user per session
-      if (!initialSyncCompletedUsers.has(userDetails.id)) {
+      // Initial channel sync — once per user per browser session.
+      // The in-memory Set resets on page reload (client module re-evaluation),
+      // so we persist to sessionStorage to survive refreshes within the same tab.
+      const syncKey = `stream_sync_${userDetails.id}`;
+      const alreadySynced =
+        initialSyncCompletedUsers.has(userDetails.id) ||
+        (typeof sessionStorage !== "undefined" &&
+          sessionStorage.getItem(syncKey) === "1");
+
+      if (!alreadySynced) {
         try {
           streamLogger.info("Starting initial channel sync", {
             userId: userDetails.id,
           });
           await syncUserEventChannels(userDetails.id);
           initialSyncCompletedUsers.add(userDetails.id);
+          if (typeof sessionStorage !== "undefined") {
+            sessionStorage.setItem(syncKey, "1");
+          }
           streamLogger.info("Initial channel sync completed", {
             userId: userDetails.id,
           });
         } catch (syncError) {
           streamLogger.warn("Channel sync failed", { userId: userDetails.id });
-          // Still mark as completed to avoid repeated failed attempts
+          // Mark in-memory to avoid retry within same component lifecycle,
+          // but don't persist to sessionStorage so next load retries.
           initialSyncCompletedUsers.add(userDetails.id);
         }
       } else {
@@ -340,13 +381,16 @@ const StreamProvider = ({
       }
 
       if (videoClient) {
-        // Note: StreamVideoClient doesn't have explicit disconnect method
-        // It's cleaned up when the component unmounts
-        setVideoClient(null);
-        setVideoConnected(false);
-        if (clearGlobal) {
-          globalVideoClient = null;
-        }
+        promises.push(
+          videoClient.disconnectUser().then(() => {
+            streamLogger.debug("Video client disconnected");
+            setVideoClient(null);
+            setVideoConnected(false);
+            if (clearGlobal) {
+              globalVideoClient = null;
+            }
+          }),
+        );
       }
 
       await Promise.all(promises);
@@ -374,6 +418,7 @@ const StreamProvider = ({
 
       await Promise.all(promises);
       connectionAttemptsRef.current = 0; // Reset on success
+      setRetryCount(0);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Connection failed";
@@ -381,6 +426,7 @@ const StreamProvider = ({
 
       // Implement exponential backoff retry using ref
       connectionAttemptsRef.current += 1;
+      setRetryCount(connectionAttemptsRef.current); // Sync state for UI display
       const currentAttempts = connectionAttemptsRef.current;
 
       if (currentAttempts < 5) {
@@ -389,8 +435,8 @@ const StreamProvider = ({
         streamLogger.debug(`Retrying connection in ${delay}ms`, {
           attempt: currentAttempts,
         });
-        setTimeout(() => {
-          setIsConnecting(false);
+        setIsConnecting(false);
+        retryTimeoutRef.current = setTimeout(() => {
           // Re-run connection (the ref ensures we get current attempt count)
           connectServices();
         }, delay);
@@ -417,7 +463,11 @@ const StreamProvider = ({
     connectServices();
   }, [connectServices]);
 
-  // Initialize connections
+  // Initialize connections.
+  // connectServices/disconnect are in deps and may cause re-fires when their
+  // useCallback identities change, but this is safe because:
+  // - connectChat guards with globalChatClient + currentUserId check (no-op if already connected)
+  // - syncUserEventChannels is guarded by sessionStorage (no-op after first sync)
   useEffect(() => {
     if (!isLoading && userDetails && apiKey) {
       // Check if user changed - if so, disconnect old user first
@@ -437,6 +487,11 @@ const StreamProvider = ({
     // Don't disconnect on unmount - keep global clients alive for tab switching
     // Only disconnect when user explicitly logs out or changes
     return () => {
+      // Cancel any pending retry timeout to avoid state updates after unmount
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = undefined;
+      }
       // Intentionally not calling disconnect() here
       // Global clients are reused across component remounts
     };
@@ -463,6 +518,18 @@ const StreamProvider = ({
         {isConnecting && (
           <p className="ml-4 text-sm text-gray-600">Connecting to Stream...</p>
         )}
+      </div>
+    );
+  }
+
+  // Retry-in-progress state (between retries, not yet exhausted)
+  if (error && retryCount > 0 && retryCount < 5) {
+    return (
+      <div className="flex items-center justify-center min-h-[200px]">
+        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary"></div>
+        <p className="ml-4 text-sm text-gray-600">
+          Retrying connection (attempt {retryCount}/5)...
+        </p>
       </div>
     );
   }

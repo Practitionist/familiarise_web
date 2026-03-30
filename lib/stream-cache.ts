@@ -9,15 +9,18 @@ interface CacheEntry<T> {
 }
 
 /**
- * Generic TTL cache for storing temporary data
+ * Generic TTL cache for storing temporary data.
+ * Supports an optional max size to prevent unbounded growth
+ * in long-running server processes.
  */
 class TTLCache<T> {
   private cache = new Map<string, CacheEntry<T>>();
   private defaultTTL: number;
+  private maxSize: number;
 
-  constructor(defaultTTLMs: number = 60000) {
-    // Default 1 minute
+  constructor(defaultTTLMs: number = 60000, maxSize: number = Infinity) {
     this.defaultTTL = defaultTTLMs;
+    this.maxSize = maxSize;
   }
 
   /**
@@ -43,6 +46,16 @@ class TTLCache<T> {
    * Set a value in cache
    */
   set(key: string, value: T, ttlMs?: number): void {
+    // Evict if at capacity (cleanup expired first, then evict oldest)
+    if (this.cache.size >= this.maxSize && !this.cache.has(key)) {
+      this.cleanup();
+      if (this.cache.size >= this.maxSize) {
+        // Evict the oldest entry (first key in insertion order)
+        const firstKey = this.cache.keys().next().value;
+        if (firstKey !== undefined) this.cache.delete(firstKey);
+      }
+    }
+
     const expiresAt = Date.now() + (ttlMs ?? this.defaultTTL);
     this.cache.set(key, { value, expiresAt });
   }
@@ -98,19 +111,19 @@ class TTLCache<T> {
  * Cache for tracking users that have been synced to Stream
  * TTL: 5 minutes - users don't need to be re-synced frequently
  */
-export const userSyncCache = new TTLCache<boolean>(5 * 60 * 1000);
+export const userSyncCache = new TTLCache<boolean>(5 * 60 * 1000, 1000);
 
 /**
  * Cache for channel existence checks
  * TTL: 2 minutes - channels rarely get deleted
  */
-export const channelExistsCache = new TTLCache<boolean>(2 * 60 * 1000);
+export const channelExistsCache = new TTLCache<boolean>(2 * 60 * 1000, 2000);
 
 /**
  * Cache for user-to-channel membership
  * TTL: 1 minute - membership can change more frequently
  */
-export const membershipCache = new TTLCache<boolean>(60 * 1000);
+export const membershipCache = new TTLCache<boolean>(60 * 1000, 5000);
 
 /**
  * Track users who have completed initial sync in current session

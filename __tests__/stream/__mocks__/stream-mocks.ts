@@ -30,6 +30,7 @@ export const createMockPrisma = () => ({
   },
   slotOfAppointment: {
     findFirst: jest.fn(),
+    findMany: jest.fn(),
   },
 });
 

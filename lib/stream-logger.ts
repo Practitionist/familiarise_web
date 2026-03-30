@@ -46,13 +46,10 @@ export const streamLogger = {
   },
 
   /**
-   * Info level - logs in development, minimal in production
+   * Info level - always logs (connection events, sync completions, channel ops)
    */
   info(message: string, context?: LogContext): void {
-    if (isDevelopment) {
-      console.log(formatMessage("Stream:INFO", message, context));
-    }
-    // In production, could send to monitoring service
+    console.log(formatMessage("Stream:INFO", message, context));
   },
 
   /**
