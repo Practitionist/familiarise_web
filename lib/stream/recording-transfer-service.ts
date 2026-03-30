@@ -97,6 +97,13 @@ export class RecordingTransferService {
   /**
    * Transfer a recording from Stream S3 to Supabase
    * @param recordingId The recording ID to transfer
+   *
+   * **Failure strategy:** All failure paths revert status to READY (not FAILED)
+   * so that both the cron job and the manual /transfer API endpoint can retry.
+   * A FAILED status would permanently dead-end the recording since the manual
+   * transfer route only accepts READY recordings. The only exceptions are
+   * "bucket missing" and "file too large" which also revert to READY since
+   * the underlying issue is environmental, not permanent.
    */
   static async transferRecordingToSupabase(
     recordingId: string,

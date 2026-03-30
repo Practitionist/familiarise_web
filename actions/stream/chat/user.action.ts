@@ -250,6 +250,9 @@ export const searchUsersWithRelationships = async (
           .then((rows) => rows.forEach((r) => {
             if (r.requestedBy?.user?.id) relatedUserIds.add(r.requestedBy.user.id);
           })),
+        // Subscriptions are time-bounded (have a scheduling period), so we must
+        // filter by schedulingPeriodEndsAt to exclude expired ones. Consultations
+        // are per-event with no time window, so status alone is sufficient.
         prisma.subscription
           .findMany({
             where: {

@@ -122,7 +122,9 @@ const StreamProvider = ({
   const [videoConnected, setVideoConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Separate state for retry count display (ref doesn't trigger re-renders)
+  // We need BOTH a ref and state for retry count: the ref (connectionAttemptsRef)
+  // is used inside setTimeout/async closures where state would be stale, while
+  // this state variable drives re-renders so the UI shows the correct attempt count.
   const [retryCount, setRetryCount] = useState(0);
 
   // Use ref for connection attempts to avoid stale closures in retry logic

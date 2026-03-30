@@ -451,6 +451,12 @@ export async function logWebhookEvent(
     });
 
     if (existing) {
+      // Three-state machine using processed + error fields:
+      //   processed=true  + no error  → SUCCESS: skip (idempotent)
+      //   processed=true  + error set → FAILED:  allow retry (reset & re-process)
+      //   processed=false + no error  → IN-PROGRESS: skip (another worker handling it)
+      // This avoids a separate status enum while letting providers like Stream
+      // retry failed events instead of silently dropping them.
       // If previously processed successfully, skip (true idempotency)
       if (existing.processed && !existing.error) {
         console.log(
