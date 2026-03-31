@@ -11,7 +11,10 @@ import {
   notifyRecordingFailed,
 } from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
-import { generateRecordingTitle } from "@/lib/stream/recording-utils";
+import {
+  generateRecordingTitle,
+  getEventAttendeeIds,
+} from "@/lib/stream/recording-utils";
 
 // Types for Stream webhook payloads
 export interface StreamRecordingStartedEvent {
@@ -305,43 +308,10 @@ export async function handleRecordingReady(
 
     // Build recipient list — for webinar/class, include all enrolled attendees
     // (the meeting session slot only has the consultant's allocation slot users)
-    let userIds = meetingSession.slotOfAppointment.user?.map(
+    const slotUserIds = meetingSession.slotOfAppointment.user?.map(
       (u: { id: string }) => u.id,
     ) ?? [];
-
-    if (appointment?.webinar) {
-      // Get users from all appointment slots for this webinar
-      const slotUsers = await prisma.slotOfAppointment.findMany({
-        where: { appointment: { webinarId: appointment.webinar.id } },
-        select: { user: { select: { id: true } } },
-      });
-      // Get booked waitlist users
-      const waitlistEntries = await prisma.waitlist.findMany({
-        where: { webinarId: appointment.webinar.id, status: "BOOKED" },
-        select: { userId: true },
-      });
-      const allIds = [
-        ...userIds,
-        ...slotUsers.flatMap((s) => s.user.map((u) => u.id)),
-        ...waitlistEntries.map((w) => w.userId),
-      ];
-      userIds = Array.from(new Set(allIds));
-    } else if (appointment?.class) {
-      const slotUsers = await prisma.slotOfAppointment.findMany({
-        where: { appointment: { classId: appointment.class.id } },
-        select: { user: { select: { id: true } } },
-      });
-      const waitlistEntries = await prisma.waitlist.findMany({
-        where: { classId: appointment.class.id, status: "BOOKED" },
-        select: { userId: true },
-      });
-      const allIds = [
-        ...userIds,
-        ...slotUsers.flatMap((s) => s.user.map((u) => u.id)),
-        ...waitlistEntries.map((w) => w.userId),
-      ];
-      userIds = Array.from(new Set(allIds));
-    }
+    const userIds = await getEventAttendeeIds(appointment, slotUserIds);
 
     if (userIds.length > 0) {
       let appointmentType = "consultation";
@@ -461,41 +431,9 @@ export async function handleRecordingFailed(
 
     // Build recipient list — for webinar/class, include all enrolled attendees
     const appointment = meetingSession.slotOfAppointment.appointment;
-    let userIds = meetingSession.slotOfAppointment.user.map((u) => u.id);
+    const slotUserIds = meetingSession.slotOfAppointment.user.map((u) => u.id);
+    const userIds = await getEventAttendeeIds(appointment, slotUserIds);
 
-    if (appointment?.webinar) {
-      // Get users from all appointment slots for this webinar
-      const slotUsers = await prisma.slotOfAppointment.findMany({
-        where: { appointment: { webinarId: appointment.webinar.id } },
-        select: { user: { select: { id: true } } },
-      });
-      // Get booked waitlist users
-      const waitlistEntries = await prisma.waitlist.findMany({
-        where: { webinarId: appointment.webinar.id, status: "BOOKED" },
-        select: { userId: true },
-      });
-      const allIds = [
-        ...userIds,
-        ...slotUsers.flatMap((s) => s.user.map((u) => u.id)),
-        ...waitlistEntries.map((w) => w.userId),
-      ];
-      userIds = Array.from(new Set(allIds));
-    } else if (appointment?.class) {
-      const slotUsers = await prisma.slotOfAppointment.findMany({
-        where: { appointment: { classId: appointment.class.id } },
-        select: { user: { select: { id: true } } },
-      });
-      const waitlistEntries = await prisma.waitlist.findMany({
-        where: { classId: appointment.class.id, status: "BOOKED" },
-        select: { userId: true },
-      });
-      const allIds = [
-        ...userIds,
-        ...slotUsers.flatMap((s) => s.user.map((u) => u.id)),
-        ...waitlistEntries.map((w) => w.userId),
-      ];
-      userIds = Array.from(new Set(allIds));
-    }
     const notificationResults = await Promise.allSettled(
       userIds.map((userId) =>
         notifyRecordingFailed(userId, {

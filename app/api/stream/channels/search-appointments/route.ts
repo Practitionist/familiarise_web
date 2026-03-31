@@ -260,12 +260,12 @@ export async function GET(request: NextRequest) {
           },
           {
             OR: [
-              // User is on the waitlist with active status
+              // User is on the waitlist with booked status
               {
                 waitlist: {
                   some: {
                     userId: userId,
-                    status: { in: ["BOOKED", "WAITING", "NOTIFIED"] },
+                    status: "BOOKED",
                   },
                 },
               },
@@ -342,12 +342,12 @@ export async function GET(request: NextRequest) {
           },
           {
             OR: [
-              // User is on the waitlist with active status
+              // User is on the waitlist with booked status
               {
                 waitlist: {
                   some: {
                     userId: userId,
-                    status: { in: ["BOOKED", "WAITING", "NOTIFIED"] },
+                    status: "BOOKED",
                   },
                 },
               },
