@@ -11,6 +11,7 @@ import {
   notifyRecordingFailed,
 } from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
+import { generateRecordingTitle } from "@/lib/stream/recording-utils";
 
 // Types for Stream webhook payloads
 export interface StreamRecordingStartedEvent {
@@ -248,27 +249,8 @@ export async function handleRecordingReady(
       (endDate.getTime() - startDate.getTime()) / (1000 * 60),
     );
 
-    // Generate title from appointment info
     const appointment = meetingSession.slotOfAppointment.appointment;
-    let title = "Recording";
-
-    if (appointment?.webinar?.webinarPlan?.title) {
-      title = `Webinar: ${appointment.webinar.webinarPlan.title}`;
-    } else if (appointment?.class?.classPlan?.title) {
-      title = `Class: ${appointment.class.classPlan.title}`;
-    } else if (appointment?.consultation?.consultationPlan?.title) {
-      title = `Consultation: ${appointment.consultation.consultationPlan.title}`;
-    } else if (appointment?.subscription?.subscriptionPlan?.title) {
-      title = `Subscription: ${appointment.subscription.subscriptionPlan.title}`;
-    }
-
-    // Add date to title
-    const dateStr = startDate.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-    title = `${title} - ${dateStr}`;
+    const title = generateRecordingTitle(appointment, startDate);
 
     // Calculate Stream URL expiration (2 weeks from now)
     const streamUrlExpiresAt = new Date();

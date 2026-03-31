@@ -113,6 +113,45 @@ export function getRecordingOwnershipInfo(
  * @param consultantProfileId - The consultant's profile ID to check against
  * @returns Object with isOwner and recordingEnabled flags
  */
+/**
+ * Appointment shape for title generation (includes plan titles for all event types)
+ */
+interface AppointmentWithTitles {
+  webinar?: { webinarPlan?: { title?: string } | null } | null;
+  class?: { classPlan?: { title?: string } | null } | null;
+  consultation?: { consultationPlan?: { title?: string } | null } | null;
+  subscription?: { subscriptionPlan?: { title?: string } | null } | null;
+}
+
+/**
+ * Generate a recording title from appointment info and date.
+ * Shared across recording handlers and sync functions to avoid duplication.
+ */
+export function generateRecordingTitle(
+  appointment: AppointmentWithTitles | null | undefined,
+  recordedAt: Date,
+): string {
+  let title = "Recording";
+
+  if (appointment?.webinar?.webinarPlan?.title) {
+    title = `Webinar: ${appointment.webinar.webinarPlan.title}`;
+  } else if (appointment?.class?.classPlan?.title) {
+    title = `Class: ${appointment.class.classPlan.title}`;
+  } else if (appointment?.consultation?.consultationPlan?.title) {
+    title = `Consultation: ${appointment.consultation.consultationPlan.title}`;
+  } else if (appointment?.subscription?.subscriptionPlan?.title) {
+    title = `Subscription: ${appointment.subscription.subscriptionPlan.title}`;
+  }
+
+  const dateStr = recordedAt.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+
+  return `${title} - ${dateStr}`;
+}
+
 export function getMeetingSessionOwnershipInfo(
   meetingSession: {
     slotOfAppointment?: {

@@ -7,6 +7,7 @@ import { getStreamVideoClient } from "@/lib/stream-client";
 import prisma from "@/lib/prisma";
 import { Prisma, Recording, RecordingStatus } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
+import { generateRecordingTitle } from "@/lib/stream/recording-utils";
 import type {
   ConsultantRecordingWithDetails,
   ConsulteeRecordingWithDetails,
@@ -784,25 +785,7 @@ export class RecordingService {
 
             // Generate title from appointment info (same logic as handleRecordingReady)
             const appointment = session.slotOfAppointment.appointment;
-            let title = "Recording";
-
-            if (appointment?.webinar?.webinarPlan?.title) {
-              title = `Webinar: ${appointment.webinar.webinarPlan.title}`;
-            } else if (appointment?.class?.classPlan?.title) {
-              title = `Class: ${appointment.class.classPlan.title}`;
-            } else if (appointment?.consultation?.consultationPlan?.title) {
-              title = `Consultation: ${appointment.consultation.consultationPlan.title}`;
-            } else if (appointment?.subscription?.subscriptionPlan?.title) {
-              title = `Subscription: ${appointment.subscription.subscriptionPlan.title}`;
-            }
-
-            // Add date to title
-            const dateStr = startDate.toLocaleDateString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-            });
-            title = `${title} - ${dateStr}`;
+            const title = generateRecordingTitle(appointment, startDate);
 
             // Calculate Stream URL expiration (2 weeks from now)
             const streamUrlExpiresAt = new Date();
@@ -1006,25 +989,7 @@ export class RecordingService {
 
             // Generate title from appointment info (same logic as handleRecordingReady)
             const appointment = session.slotOfAppointment.appointment;
-            let title = "Recording";
-
-            if (appointment?.webinar?.webinarPlan?.title) {
-              title = `Webinar: ${appointment.webinar.webinarPlan.title}`;
-            } else if (appointment?.class?.classPlan?.title) {
-              title = `Class: ${appointment.class.classPlan.title}`;
-            } else if (appointment?.consultation?.consultationPlan?.title) {
-              title = `Consultation: ${appointment.consultation.consultationPlan.title}`;
-            } else if (appointment?.subscription?.subscriptionPlan?.title) {
-              title = `Subscription: ${appointment.subscription.subscriptionPlan.title}`;
-            }
-
-            // Add date to title
-            const dateStr = startDate.toLocaleDateString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-            });
-            title = `${title} - ${dateStr}`;
+            const title = generateRecordingTitle(appointment, startDate);
 
             // Calculate Stream URL expiration (2 weeks from now)
             const streamUrlExpiresAt = new Date();
