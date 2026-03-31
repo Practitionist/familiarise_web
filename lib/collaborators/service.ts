@@ -10,6 +10,7 @@ import type {
   CollaboratorStatus,
 } from "@prisma/client";
 import { removeUserFromEventChannel } from "@/actions/stream/chat/event-channel.action";
+import { getStreamChatClient } from "@/lib/stream-client";
 import {
   notifyCollaboratorInvited,
   notifyCollaboratorAccepted,
@@ -345,10 +346,17 @@ export async function removeCollaborator(
           planType: "webinar",
           dashboardUrl: `${getAppUrl()}/dashboard`,
         });
-        // FIX #592: Remove collaborator from all webinar event channels
-        for (const webinar of webinars) {
-          await removeUserFromEventChannel("webinar", webinar.id, profile.userId);
-        }
+        // FIX #592: Remove collaborator from all webinar event channels + collab channel
+        await Promise.all([
+          ...webinars.map((webinar) =>
+            removeUserFromEventChannel("webinar", webinar.id, profile.userId),
+          ),
+          // Also remove from the plan-level collaborator channel
+          getStreamChatClient()
+            .channel("messaging", `collab-webinar-${planId}`)
+            .removeMembers([profile.userId])
+            .catch(() => {}), // Ignore if channel doesn't exist
+        ]);
       }
     } catch (error) {
       console.error(
@@ -391,10 +399,17 @@ export async function removeCollaborator(
           planType: "class",
           dashboardUrl: `${getAppUrl()}/dashboard`,
         });
-        // FIX #592: Remove collaborator from all class event channels
-        for (const classEvent of classes) {
-          await removeUserFromEventChannel("class", classEvent.id, profile.userId);
-        }
+        // FIX #592: Remove collaborator from all class event channels + collab channel
+        await Promise.all([
+          ...classes.map((classEvent) =>
+            removeUserFromEventChannel("class", classEvent.id, profile.userId),
+          ),
+          // Also remove from the plan-level collaborator channel
+          getStreamChatClient()
+            .channel("messaging", `collab-class-${planId}`)
+            .removeMembers([profile.userId])
+            .catch(() => {}), // Ignore if channel doesn't exist
+        ]);
       }
     } catch (error) {
       console.error(
