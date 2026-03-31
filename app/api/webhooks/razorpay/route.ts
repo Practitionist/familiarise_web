@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
       event.payload?.dispute?.entity?.id ||
       event.payload?.payout?.entity?.id ||
       event.account_id ||
-      "unknown";
+      `noid_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const eventId = `${eventType}:${entityId}`;
 
     const { isNew } = await logWebhookEvent(

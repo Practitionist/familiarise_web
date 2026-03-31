@@ -703,24 +703,13 @@ export async function handlePayoutWebhook(
   }
 
   await prisma.$transaction(async (tx) => {
-    // Idempotency guard inside transaction: re-read payout to prevent race
-    // condition where two concurrent webhooks both pass an outside-tx check.
-    const currentPayout = await tx.payout.findUnique({
-      where: { id: payout.id },
-    });
-    if (
-      currentPayout?.status === PayoutStatus.COMPLETED ||
-      currentPayout?.status === PayoutStatus.CANCELLED
-    ) {
-      console.log(
-        `Payout ${payout.id} already in terminal state ${currentPayout.status}, skipping duplicate ${status} webhook`,
-      );
-      return;
-    }
-
-    // Update payout status
-    await tx.payout.update({
-      where: { id: payout.id },
+    // Atomic conditional update: only transition if payout is NOT already terminal.
+    // Uses updateMany with status filter so concurrent duplicates cannot both succeed.
+    const { count } = await tx.payout.updateMany({
+      where: {
+        id: payout.id,
+        status: { notIn: [PayoutStatus.COMPLETED, PayoutStatus.CANCELLED] },
+      },
       data: {
         status: payoutStatus,
         processedAt:
@@ -728,6 +717,13 @@ export async function handlePayoutWebhook(
         failureReason: failureReason,
       },
     });
+
+    if (count === 0) {
+      console.log(
+        `Payout ${payout.id} already in terminal state, skipping duplicate ${status} webhook`,
+      );
+      return;
+    }
 
     // If completed, update earnings and consultant stats
     if (payoutStatus === PayoutStatus.COMPLETED) {
