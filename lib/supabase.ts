@@ -175,7 +175,7 @@ const ensureBucketExists = async (
 
       const { data: _createData, error: createError } =
         await clientToUse.storage.createBucket(bucketName, {
-          public: options?.public ?? false,
+          public: options?.public ?? true,
           allowedMimeTypes: options?.allowedMimeTypes ?? [
             "application/pdf",
             "application/msword",
@@ -328,7 +328,7 @@ const uploadAppointmentDocument = async (
     }
 
     // Ensure the documents bucket exists (create if it doesn't)
-    const bucketReady = await ensureBucketExists("documents");
+    const bucketReady = await ensureBucketExists("documents", { public: false });
     if (!bucketReady) {
       return {
         success: false,
@@ -505,7 +505,7 @@ const uploadPlanMaterial = async (
     }
 
     // Ensure the documents bucket exists
-    const bucketReady = await ensureBucketExists("documents");
+    const bucketReady = await ensureBucketExists("documents", { public: false });
     if (!bucketReady) {
       return {
         success: false,
@@ -642,7 +642,7 @@ const uploadConsultantDocument = async (
     }
 
     // Ensure the documents bucket exists
-    const bucketReady = await ensureBucketExists("documents");
+    const bucketReady = await ensureBucketExists("documents", { public: false });
     if (!bucketReady) {
       return {
         success: false,
@@ -1456,8 +1456,12 @@ const uploadToSupabase = async (
   bucketName: string = "documents",
 ): Promise<{ url: string | null; error: string | null }> => {
   try {
-    // Ensure bucket exists
-    const bucketReady = await ensureBucketExists(bucketName);
+    // Ensure bucket exists — documents bucket is private
+    const isPrivateBucket = bucketName === "documents";
+    const bucketReady = await ensureBucketExists(
+      bucketName,
+      isPrivateBucket ? { public: false } : undefined,
+    );
     if (!bucketReady) {
       return {
         url: null,
