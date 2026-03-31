@@ -9,6 +9,8 @@ import type {
   ClassCollaborator,
   CollaboratorStatus,
 } from "@prisma/client";
+import { removeUserFromEventChannel } from "@/actions/stream/chat/event-channel.action";
+import { getStreamChatClient } from "@/lib/stream-client";
 import {
   notifyCollaboratorInvited,
   notifyCollaboratorAccepted,
@@ -322,30 +324,50 @@ export async function removeCollaborator(
       data: { status: "REMOVED" },
     });
 
-    // Fire-and-forget: notify removed collaborator
-    try {
-      const [profile, plan] = await Promise.all([
-        prisma.consultantProfile.findUnique({
-          where: { id: collab.consultantProfileId },
-          select: { userId: true },
-        }),
-        prisma.webinarPlan.findUnique({
+    // Fire-and-forget: notify removed collaborator + revoke Stream channel access
+    // Fire-and-forget: notification and Stream removal are independent.
+    // Separate try/catch so a Novu outage doesn't block Stream revocation.
+    const profile = await prisma.consultantProfile
+      .findUnique({
+        where: { id: collab.consultantProfileId },
+        select: { userId: true },
+      })
+      .catch(() => null);
+
+    if (profile?.userId) {
+      // Notification — independent failure
+      try {
+        const plan = await prisma.webinarPlan.findUnique({
           where: { id: planId },
           select: { title: true },
-        }),
-      ]);
-      if (profile?.userId) {
+        });
         await notifyCollaboratorRemoved(profile.userId, {
           planTitle: plan?.title ?? "Unknown Plan",
           planType: "webinar",
           dashboardUrl: `${getAppUrl()}/dashboard`,
         });
+      } catch (error) {
+        console.error("[collaborators] Failed to send removal notification:", error);
       }
-    } catch (error) {
-      console.error(
-        "[collaborators] Failed to send removal notification:",
-        error,
-      );
+
+      // Stream channel revocation — independent failure
+      try {
+        const webinars = await prisma.webinar.findMany({
+          where: { webinarPlanId: planId },
+          select: { id: true },
+        });
+        await Promise.all([
+          ...webinars.map((webinar) =>
+            removeUserFromEventChannel("webinar", webinar.id, profile.userId),
+          ),
+          getStreamChatClient()
+            .channel("messaging", `collab-webinar-${planId}`)
+            .removeMembers([profile.userId])
+            .catch(() => {}),
+        ]);
+      } catch (error) {
+        console.error("[collaborators] Failed to revoke Stream access:", error);
+      }
     }
 
     return result;
@@ -360,30 +382,48 @@ export async function removeCollaborator(
       data: { status: "REMOVED" },
     });
 
-    // Fire-and-forget: notify removed collaborator
-    try {
-      const [profile, plan] = await Promise.all([
-        prisma.consultantProfile.findUnique({
-          where: { id: collab.consultantProfileId },
-          select: { userId: true },
-        }),
-        prisma.classPlan.findUnique({
+    // Fire-and-forget: notification and Stream removal are independent.
+    const classProfile = await prisma.consultantProfile
+      .findUnique({
+        where: { id: collab.consultantProfileId },
+        select: { userId: true },
+      })
+      .catch(() => null);
+
+    if (classProfile?.userId) {
+      // Notification — independent failure
+      try {
+        const plan = await prisma.classPlan.findUnique({
           where: { id: planId },
           select: { title: true },
-        }),
-      ]);
-      if (profile?.userId) {
-        await notifyCollaboratorRemoved(profile.userId, {
+        });
+        await notifyCollaboratorRemoved(classProfile.userId, {
           planTitle: plan?.title ?? "Unknown Plan",
           planType: "class",
           dashboardUrl: `${getAppUrl()}/dashboard`,
         });
+      } catch (error) {
+        console.error("[collaborators] Failed to send removal notification:", error);
       }
-    } catch (error) {
-      console.error(
-        "[collaborators] Failed to send removal notification:",
-        error,
-      );
+
+      // Stream channel revocation — independent failure
+      try {
+        const classes = await prisma.class.findMany({
+          where: { classPlanId: planId },
+          select: { id: true },
+        });
+        await Promise.all([
+          ...classes.map((classEvent) =>
+            removeUserFromEventChannel("class", classEvent.id, classProfile.userId),
+          ),
+          getStreamChatClient()
+            .channel("messaging", `collab-class-${planId}`)
+            .removeMembers([classProfile.userId])
+            .catch(() => {}),
+        ]);
+      } catch (error) {
+        console.error("[collaborators] Failed to revoke Stream access:", error);
+      }
     }
 
     return result;
