@@ -20,6 +20,8 @@ export const UpdateTrialSchema = z.object({
     })
     .optional(),
   notes: z.string().optional(),
+  // Required when status = CONVERTED — the subscription created via checkout
+  subscriptionId: z.string().optional(),
 });
 
 export type CreateTrialInput = z.infer<typeof CreateTrialSchema>;
