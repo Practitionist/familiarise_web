@@ -14,8 +14,7 @@ import prisma from "@/lib/prisma";
 
 // Only allow in development or with explicit production flag
 const ALLOW_IN_PRODUCTION = process.env.ALLOW_DEBUG_IN_PRODUCTION === "true";
-const DEBUG_SECRET =
-  process.env.STREAM_DEBUG_SECRET || process.env.STREAM_SYNC_SECRET;
+const DEBUG_SECRET = process.env.STREAM_DEBUG_SECRET;
 
 export async function GET(req: NextRequest) {
   // Security checks

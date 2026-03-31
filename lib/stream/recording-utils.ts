@@ -3,6 +3,8 @@
  * Shared helpers for recording-related operations
  */
 
+import prisma from "@/lib/prisma";
+
 /**
  * Type for appointment with ownership relations
  * Used for checking if a consultant owns a recording/session
@@ -113,6 +115,97 @@ export function getRecordingOwnershipInfo(
  * @param consultantProfileId - The consultant's profile ID to check against
  * @returns Object with isOwner and recordingEnabled flags
  */
+/**
+ * Appointment shape for title generation (includes plan titles for all event types)
+ */
+interface AppointmentWithTitles {
+  webinar?: { webinarPlan?: { title?: string } | null } | null;
+  class?: { classPlan?: { title?: string } | null } | null;
+  consultation?: { consultationPlan?: { title?: string } | null } | null;
+  subscription?: { subscriptionPlan?: { title?: string } | null } | null;
+}
+
+/**
+ * Generate a recording title from appointment info and date.
+ * Shared across recording handlers and sync functions to avoid duplication.
+ */
+export function generateRecordingTitle(
+  appointment: AppointmentWithTitles | null | undefined,
+  recordedAt: Date,
+): string {
+  let title = "Recording";
+
+  if (appointment?.webinar?.webinarPlan?.title) {
+    title = `Webinar: ${appointment.webinar.webinarPlan.title}`;
+  } else if (appointment?.class?.classPlan?.title) {
+    title = `Class: ${appointment.class.classPlan.title}`;
+  } else if (appointment?.consultation?.consultationPlan?.title) {
+    title = `Consultation: ${appointment.consultation.consultationPlan.title}`;
+  } else if (appointment?.subscription?.subscriptionPlan?.title) {
+    title = `Subscription: ${appointment.subscription.subscriptionPlan.title}`;
+  }
+
+  const dateStr = recordedAt.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+
+  return `${title} - ${dateStr}`;
+}
+
+/**
+ * Get all attendee user IDs for a webinar or class event.
+ * Queries appointment slot users and booked waitlist users in parallel.
+ */
+export async function getEventAttendeeIds(
+  appointment: {
+    webinar?: { id: string } | null;
+    class?: { id: string } | null;
+  } | null | undefined,
+  existingUserIds: string[] = [],
+): Promise<string[]> {
+  if (!appointment) return existingUserIds;
+
+  if (appointment.webinar) {
+    const [slotUsers, waitlistEntries] = await Promise.all([
+      prisma.slotOfAppointment.findMany({
+        where: { appointment: { webinarId: appointment.webinar.id } },
+        select: { user: { select: { id: true } } },
+      }),
+      prisma.waitlist.findMany({
+        where: { webinarId: appointment.webinar.id, status: "BOOKED" },
+        select: { userId: true },
+      }),
+    ]);
+    return Array.from(new Set([
+      ...existingUserIds,
+      ...slotUsers.flatMap((s) => s.user.map((u) => u.id)),
+      ...waitlistEntries.map((w) => w.userId),
+    ]));
+  }
+
+  if (appointment.class) {
+    const [slotUsers, waitlistEntries] = await Promise.all([
+      prisma.slotOfAppointment.findMany({
+        where: { appointment: { classId: appointment.class.id } },
+        select: { user: { select: { id: true } } },
+      }),
+      prisma.waitlist.findMany({
+        where: { classId: appointment.class.id, status: "BOOKED" },
+        select: { userId: true },
+      }),
+    ]);
+    return Array.from(new Set([
+      ...existingUserIds,
+      ...slotUsers.flatMap((s) => s.user.map((u) => u.id)),
+      ...waitlistEntries.map((w) => w.userId),
+    ]));
+  }
+
+  return existingUserIds;
+}
+
 export function getMeetingSessionOwnershipInfo(
   meetingSession: {
     slotOfAppointment?: {

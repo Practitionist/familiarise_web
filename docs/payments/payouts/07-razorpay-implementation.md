@@ -691,11 +691,22 @@ export async function handlePayoutWebhook(event: RazorpayTransferEvent) {
 }
 
 async function handleTransferProcessed(payout: any) {
+  // Idempotency guard (Mar 2026): Use updateMany with status guard
+  // to prevent double-applying revenue on duplicate webhooks
+  const result = await prisma.payout.updateMany({
+    where: {
+      id: payout.id,
+      status: { notIn: [PayoutStatus.SUCCEEDED, PayoutStatus.CANCELLED] },
+    },
+    data: { status: PayoutStatus.SUCCEEDED },
+  });
+
+  if (result.count === 0) {
+    console.log(`Payout ${payout.id} already in terminal state, skipping`);
+    return;
+  }
+
   await prisma.$transaction([
-    prisma.payout.update({
-      where: { id: payout.id },
-      data: { status: PayoutStatus.SUCCEEDED },
-    }),
     prisma.consultantEarnings.updateMany({
       where: { payoutId: payout.id },
       data: { status: EarningStatus.PAID },

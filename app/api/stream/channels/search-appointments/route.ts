@@ -260,11 +260,20 @@ export async function GET(request: NextRequest) {
           },
           {
             OR: [
-              // User is on the waitlist
+              // User is on the waitlist with booked status
               {
                 waitlist: {
                   some: {
                     userId: userId,
+                    status: "BOOKED",
+                  },
+                },
+              },
+              // User is on an appointment slot
+              {
+                appointment: {
+                  slotsOfAppointment: {
+                    some: { user: { some: { id: userId } } },
                   },
                 },
               },
@@ -333,11 +342,22 @@ export async function GET(request: NextRequest) {
           },
           {
             OR: [
-              // User is on the waitlist
+              // User is on the waitlist with booked status
               {
                 waitlist: {
                   some: {
                     userId: userId,
+                    status: "BOOKED",
+                  },
+                },
+              },
+              // User is on an appointment slot
+              {
+                appointments: {
+                  some: {
+                    slotsOfAppointment: {
+                      some: { user: { some: { id: userId } } },
+                    },
                   },
                 },
               },

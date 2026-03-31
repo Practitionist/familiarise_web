@@ -124,8 +124,11 @@ export const getOrCreateAppointmentMeeting = async (
       // 2a. Found existing session, use its Stream Call ID
       streamCallId = existingMeetingSession.streamCallId;
     } else {
-      // 2b. No existing session found, create a new one
-      streamCallId = crypto.randomUUID();
+      // 2b. No existing session found, create a new one.
+      // Use a deterministic call ID derived from the slot ID so concurrent
+      // callers produce the same Stream call. Stream's getOrCreate is
+      // idempotent for the same call ID, preventing orphaned calls.
+      streamCallId = `slot-${slot.id}`;
 
       // 3. Create the Stream call
       const call: Call = client.call("default", streamCallId);

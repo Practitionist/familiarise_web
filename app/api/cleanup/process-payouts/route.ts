@@ -1,14 +1,14 @@
 /**
  * Process Payouts API Endpoint
  *
- * Thin wrapper around scripts/process-payouts.ts
- * Provides HTTP endpoint for manual triggering or alternative cron systems.
+ * FIX #620: Uses canonical lib/payments/payouts service (with distributed locking
+ * and atomic transactions) instead of scripts/payouts which lacks those safety features.
  *
  * Schedule: Weekly on Mondays at 9:00 PM UTC (via GitHub Actions or external cron)
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { processApprovedPayouts } from "@/scripts/payouts/process-payouts";
+import { processApprovedPayouts } from "@/lib/payments/payouts";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -24,15 +24,19 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     console.log("🔄 Starting payout processing via API...");
 
-    const result = await processApprovedPayouts();
+    const results = await processApprovedPayouts();
 
-    console.log("✅ Payout processing completed:", {
-      processed: result.processed,
-      succeeded: result.succeeded,
-      failed: result.failed,
+    const succeeded = results.filter((r) => r.success).length;
+    const failed = results.filter((r) => !r.success).length;
+    console.log(`✅ Payout processing completed: ${succeeded} succeeded, ${failed} failed`);
+
+    return NextResponse.json({
+      success: failed === 0,
+      processed: results.length,
+      succeeded,
+      failed,
+      results,
     });
-
-    return NextResponse.json(result);
   } catch (error) {
     console.error("Error in payout processing:", error);
     return NextResponse.json(

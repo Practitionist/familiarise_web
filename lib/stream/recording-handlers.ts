@@ -11,6 +11,10 @@ import {
   notifyRecordingFailed,
 } from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
+import {
+  generateRecordingTitle,
+  getEventAttendeeIds,
+} from "@/lib/stream/recording-utils";
 
 // Types for Stream webhook payloads
 export interface StreamRecordingStartedEvent {
@@ -248,27 +252,8 @@ export async function handleRecordingReady(
       (endDate.getTime() - startDate.getTime()) / (1000 * 60),
     );
 
-    // Generate title from appointment info
     const appointment = meetingSession.slotOfAppointment.appointment;
-    let title = "Recording";
-
-    if (appointment?.webinar?.webinarPlan?.title) {
-      title = `Webinar: ${appointment.webinar.webinarPlan.title}`;
-    } else if (appointment?.class?.classPlan?.title) {
-      title = `Class: ${appointment.class.classPlan.title}`;
-    } else if (appointment?.consultation?.consultationPlan?.title) {
-      title = `Consultation: ${appointment.consultation.consultationPlan.title}`;
-    } else if (appointment?.subscription?.subscriptionPlan?.title) {
-      title = `Subscription: ${appointment.subscription.subscriptionPlan.title}`;
-    }
-
-    // Add date to title
-    const dateStr = startDate.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-    title = `${title} - ${dateStr}`;
+    const title = generateRecordingTitle(appointment, startDate);
 
     // Calculate Stream URL expiration (2 weeks from now)
     const streamUrlExpiresAt = new Date();
@@ -321,11 +306,14 @@ export async function handleRecordingReady(
       durationInMinutes,
     });
 
-    // Fire-and-forget: notify all participants that recording is available
-    const userIds = meetingSession.slotOfAppointment.user?.map(
+    // Build recipient list — for webinar/class, include all enrolled attendees
+    // (the meeting session slot only has the consultant's allocation slot users)
+    const slotUserIds = meetingSession.slotOfAppointment.user?.map(
       (u: { id: string }) => u.id,
-    );
-    if (userIds && userIds.length > 0) {
+    ) ?? [];
+    const userIds = await getEventAttendeeIds(appointment, slotUserIds);
+
+    if (userIds.length > 0) {
       let appointmentType = "consultation";
       let consultantName = "Unknown Consultant";
 
@@ -399,6 +387,12 @@ export async function handleRecordingFailed(
         slotOfAppointment: {
           include: {
             user: { select: { id: true } },
+            appointment: {
+              include: {
+                webinar: { select: { id: true } },
+                class: { select: { id: true } },
+              },
+            },
           },
         },
       },
@@ -435,8 +429,11 @@ export async function handleRecordingFailed(
       },
     });
 
-    // Notify all users linked to the slot (consultant + consultee)
-    const userIds = meetingSession.slotOfAppointment.user.map((u) => u.id);
+    // Build recipient list — for webinar/class, include all enrolled attendees
+    const appointment = meetingSession.slotOfAppointment.appointment;
+    const slotUserIds = meetingSession.slotOfAppointment.user.map((u) => u.id);
+    const userIds = await getEventAttendeeIds(appointment, slotUserIds);
+
     const notificationResults = await Promise.allSettled(
       userIds.map((userId) =>
         notifyRecordingFailed(userId, {

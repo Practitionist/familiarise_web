@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import supabase from "@/lib/supabase";
+import { supabaseAdmin } from "@/lib/supabase";
 import { Prisma } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
@@ -128,10 +128,25 @@ export async function GET(
       );
     }
 
-    // Download file from Supabase
-    const { data: fileData, error: downloadError } = await supabase.storage
-      .from("documents")
-      .download(document.storagePath);
+    // Download file from Supabase — require admin client for private bucket access
+    if (!supabaseAdmin) {
+      console.error(
+        "Supabase admin client not configured. Set SUPABASE_SERVICE_ROLE_KEY to enable document downloads.",
+      );
+      return NextResponse.json(
+        {
+          error: "Storage configuration error",
+          message: "Document storage is not properly configured on the server.",
+          code: "STORAGE_CONFIG_ERROR",
+        },
+        { status: 500 },
+      );
+    }
+
+    const { data: fileData, error: downloadError } =
+      await supabaseAdmin.storage
+        .from("documents")
+        .download(document.storagePath);
 
     if (downloadError || !fileData) {
       console.error("Supabase download error:", downloadError);

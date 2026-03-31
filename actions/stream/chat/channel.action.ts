@@ -54,6 +54,9 @@ export async function createChannel(input: {
     memberCount: allMembers.length,
   });
 
+  // Ensure all members exist in Stream before channel creation
+  await upsertUsersToStream(allMembers);
+
   // Create the channel with members atomically
   // Note: Explicitly typing channel data for stream-chat v9
   const createChannelData = {
@@ -68,23 +71,19 @@ export async function createChannel(input: {
     createChannelData as Record<string, unknown>,
   );
 
-  await channel.create();
+  const channelData = await channel.create();
 
   // Cache the channel existence
   markChannelExists(validated.channelType, validated.channelId);
 
-  // Verify membership was established
-  const channelData = await channel.query();
-  const actualMembers = Object.keys(channelData.members || {});
-
   streamLogger.debug("Channel created successfully", {
     channelId: validated.channelId,
-    actualMemberCount: actualMembers.length,
+    memberCount: allMembers.length,
   });
 
   return {
     channelId: validated.channelId,
-    members: actualMembers,
+    members: allMembers,
     channelData,
   };
 }
@@ -127,7 +126,10 @@ export async function createWebinarChannel(webinarId: string) {
           },
         },
       },
-      waitlist: { select: { userId: true } },
+      waitlist: {
+        where: { status: "BOOKED" },
+        select: { userId: true },
+      },
       appointment: {
         include: {
           slotsOfAppointment: {
@@ -147,7 +149,7 @@ export async function createWebinarChannel(webinarId: string) {
     throw new Error(`Consultant not found for webinar: ${webinarId}`);
   }
 
-  // Collect all participant IDs efficiently
+  // Collect all participant IDs — only BOOKED waitlist users get chat access
   const waitlistIds = webinar.waitlist.map((entry) => entry.userId);
   const appointmentIds =
     webinar.appointment?.slotsOfAppointment?.flatMap((slot) =>
@@ -158,18 +160,25 @@ export async function createWebinarChannel(webinarId: string) {
     new Set([...waitlistIds, ...appointmentIds]),
   );
 
+  const allMembers = Array.from(
+    new Set([consultantUserId, ...allParticipantIds]),
+  );
+
   streamLogger.debug("Creating webinar channel", {
     webinarId,
     waitlistCount: waitlistIds.length,
     appointmentCount: appointmentIds.length,
-    totalUnique: allParticipantIds.length,
+    totalUnique: allMembers.length,
   });
+
+  // Ensure all members exist in Stream before channel creation
+  await upsertUsersToStream(allMembers);
 
   return createChannel({
     channelType: "team",
     channelId: `webinar-${webinarId}`,
     channelName: webinar.webinarPlan.title,
-    members: [consultantUserId, ...allParticipantIds],
+    members: allMembers,
     createdById: consultantUserId,
     additionalData: { webinar_id: webinarId },
   });
@@ -191,7 +200,10 @@ export async function createClassChannel(classId: string) {
           },
         },
       },
-      waitlist: { select: { userId: true } },
+      waitlist: {
+        where: { status: "BOOKED" },
+        select: { userId: true },
+      },
       appointments: {
         include: {
           slotsOfAppointment: {
@@ -211,28 +223,32 @@ export async function createClassChannel(classId: string) {
     throw new Error(`Consultant not found for class: ${classId}`);
   }
 
+  // Only BOOKED waitlist users get chat access
   const waitlistIds = classData.waitlist.map((entry) => entry.userId);
   const appointmentIds =
     classData.appointments?.flatMap((apt) =>
       apt.slotsOfAppointment?.flatMap((slot) => slot.user.map((u) => u.id)),
     ) || [];
 
-  const allParticipantIds = Array.from(
-    new Set([...waitlistIds, ...appointmentIds]),
+  const allMembers = Array.from(
+    new Set([consultantUserId, ...waitlistIds, ...appointmentIds]),
   );
 
   streamLogger.debug("Creating class channel", {
     classId,
     waitlistCount: waitlistIds.length,
     appointmentCount: appointmentIds.length,
-    totalUnique: allParticipantIds.length,
+    totalUnique: allMembers.length,
   });
+
+  // Ensure all members exist in Stream before channel creation
+  await upsertUsersToStream(allMembers);
 
   return createChannel({
     channelType: "team",
     channelId: `class-${classId}`,
     channelName: classData.classPlan.title,
-    members: [consultantUserId, ...allParticipantIds],
+    members: allMembers,
     createdById: consultantUserId,
     additionalData: { class_id: classId },
   });
@@ -273,13 +289,18 @@ export async function createConsultationChannel(consultationId: string) {
     );
   }
 
+  // Ensure both users exist in Stream before channel creation
+  await upsertUsersToStream([consultantId, consulteeId]);
+
+  // DM channel is per consultant-consultee pair (not per event).
+  // Per-event IDs are not stored on the channel since multiple
+  // consultations/subscriptions between the same pair share one DM.
   return createChannel({
     channelType: "messaging",
     channelId: getDmChannelId(consultantId, consulteeId),
     members: [consultantId, consulteeId],
     createdById: consultantId,
     additionalData: {
-      consultation_id: consultationId,
       dm_consultant_user_id: consultantId,
       dm_consultee_user_id: consulteeId,
     },
@@ -321,13 +342,18 @@ export async function createSubscriptionChannel(subscriptionId: string) {
     );
   }
 
+  // Ensure both users exist in Stream before channel creation
+  await upsertUsersToStream([consultantId, consulteeId]);
+
+  // DM channel is per consultant-consultee pair (not per event).
+  // Per-event IDs are not stored on the channel since multiple
+  // consultations/subscriptions between the same pair share one DM.
   return createChannel({
     channelType: "messaging",
     channelId: getDmChannelId(consultantId, consulteeId),
     members: [consultantId, consulteeId],
     createdById: consultantId,
     additionalData: {
-      subscription_id: subscriptionId,
       dm_consultant_user_id: consultantId,
       dm_consultee_user_id: consulteeId,
     },
@@ -350,7 +376,10 @@ export async function initializeAllChannels() {
             consultantProfile: { include: { user: { select: { id: true } } } },
           },
         },
-        waitlist: { select: { userId: true } },
+        waitlist: {
+          where: { status: "BOOKED" },
+          select: { userId: true },
+        },
       },
     }),
     prisma.class.findMany({
@@ -360,7 +389,10 @@ export async function initializeAllChannels() {
             consultantProfile: { include: { user: { select: { id: true } } } },
           },
         },
-        waitlist: { select: { userId: true } },
+        waitlist: {
+          where: { status: "BOOKED" },
+          select: { userId: true },
+        },
       },
     }),
     prisma.consultation.findMany({
@@ -649,22 +681,26 @@ export async function createCollaboratorChannel(
 /**
  * Adds a user to a specific channel
  */
-export async function addMemberToChannel(channelId: string, userId: string) {
+export async function addMemberToChannel(
+  channelId: string,
+  userId: string,
+  channelType?: "messaging" | "team",
+) {
   channelIdSchema.parse(channelId);
   memberIdSchema.parse(userId);
 
   const client = getStreamChatClient();
 
-  const channelType = getChannelTypeFromId(channelId);
+  const resolvedChannelType = channelType ?? getChannelTypeFromId(channelId);
 
   streamLogger.debug("Adding member to channel", {
     channelId,
     userId,
-    channelType,
+    channelType: resolvedChannelType,
   });
 
   try {
-    const channel = client.channel(channelType, channelId);
+    const channel = client.channel(resolvedChannelType, channelId);
     await channel.create(); // Creates if doesn't exist, no-op if exists
 
     const response = await channel.addMembers([userId]);

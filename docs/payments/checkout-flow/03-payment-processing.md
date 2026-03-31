@@ -631,6 +631,11 @@ export async function handlePaymentSuccess(
       `✅ Payment ${paymentIntentId} processed successfully. Appointment ID: ${appointment.id}`,
     );
   });
+
+  // Phase 2 (post-commit): Send notification emails AFTER transaction commits
+  // Moved outside the transaction in Mar 2026 to prevent false confirmation
+  // emails being sent if the transaction later rolls back.
+  await sendPaymentSuccessNotification(paymentIntentId, metadata);
 }
 ```
 

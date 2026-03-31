@@ -15,6 +15,7 @@ const ALLOWED_TYPES = [
   "application/pdf",
 ];
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_DOCS_PER_VERIFICATION = 10;
 
 /**
  * POST /api/verification/documents
@@ -114,6 +115,43 @@ export async function POST(request: NextRequest) {
         });
       }
     }
+
+    // Enforce server-side document count limit (max 10 per verification).
+    // For onboarding mode (no verification yet), count all docs owned by
+    // this user's consultant profile to prevent storage abuse via onboarding=true.
+    if (verification) {
+      const existingDocCount =
+        await prisma.profileVerificationDocument.count({
+          where: { verificationId: verification.id },
+        });
+      if (existingDocCount >= MAX_DOCS_PER_VERIFICATION) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Maximum ${MAX_DOCS_PER_VERIFICATION} documents per verification request. Delete an existing document before uploading a new one.`,
+          },
+          { status: 400 },
+        );
+      }
+    } else if (consultantProfile) {
+      // Onboarding with existing profile but no verification yet
+      const totalDocs = await prisma.profileVerificationDocument.count({
+        where: {
+          verification: { consultantProfileId: consultantProfile.id },
+        },
+      });
+      if (totalDocs >= MAX_DOCS_PER_VERIFICATION) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Maximum ${MAX_DOCS_PER_VERIFICATION} documents allowed. Delete an existing document before uploading a new one.`,
+          },
+          { status: 400 },
+        );
+      }
+    }
+    // For pure onboarding (no profile at all), uploads are transient
+    // Supabase storage and file size limits (10MB) provide baseline protection
 
     // Upload file to Supabase
     const fileBuffer = await file.arrayBuffer();

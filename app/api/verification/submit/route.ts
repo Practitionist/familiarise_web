@@ -57,6 +57,32 @@ export async function POST(request: NextRequest) {
       (latestVerification.status === "PENDING" ||
         latestVerification.status === "NEEDS_INFO");
 
+    // Validate document ownership before connecting — prevents reassigning
+    // another consultant's documents to this verification request.
+    // Deduplicate IDs first to avoid false 403 when duplicates are passed.
+    const uniqueDocumentIds: string[] = documentIds?.length
+      ? Array.from(new Set(documentIds as string[]))
+      : [];
+    if (uniqueDocumentIds.length) {
+      const ownedDocs = await prisma.profileVerificationDocument.findMany({
+        where: {
+          id: { in: uniqueDocumentIds },
+          verification: { consultantProfileId: consultantProfile.id },
+        },
+        select: { id: true },
+      });
+      if (ownedDocs.length !== uniqueDocumentIds.length) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "One or more document IDs do not belong to your verification request",
+          },
+          { status: 403 },
+        );
+      }
+    }
+
     let verification;
 
     if (shouldUpdate) {
@@ -71,10 +97,10 @@ export async function POST(request: NextRequest) {
           reviewNotes: null,
           rejectionReason: null,
           feedbackDetails: null,
-          // Connect new documents if provided
-          ...(documentIds?.length && {
+          // Connect new documents if provided (using deduplicated + validated IDs)
+          ...(uniqueDocumentIds.length && {
             documents: {
-              connect: documentIds.map((id: string) => ({ id })),
+              connect: uniqueDocumentIds.map((id) => ({ id })),
             },
           }),
         },
@@ -89,10 +115,10 @@ export async function POST(request: NextRequest) {
           consultantProfileId: consultantProfile.id,
           notes,
           status: "PENDING",
-          // Connect existing documents if provided
-          ...(documentIds?.length && {
+          // Connect existing documents if provided (using deduplicated + validated IDs)
+          ...(uniqueDocumentIds.length && {
             documents: {
-              connect: documentIds.map((id: string) => ({ id })),
+              connect: uniqueDocumentIds.map((id) => ({ id })),
             },
           }),
         },

@@ -1669,9 +1669,10 @@ model ConsultantEarnings {
   payoutId            String?
 
   // Revenue breakdown
-  grossAmount     Int // Total sale price
-  platformFee     Int // Platform cut (20%)
-  consultantShare Int // Consultant cut (80%)
+  grossAmount         Int // Total sale price
+  platformFee         Int // Platform cut (20%)
+  consultantShare     Int // Consultant cut (80%)
+  refundedShareAmount Int @default(0) // Cumulative refunded amount (for partial refunds, in smallest currency unit)
 
   // Collaborator support
   role            EarningRole @default(OWNER)

@@ -9,7 +9,6 @@
  */
 
 import "stream-chat";
-import type { User } from "@prisma/client";
 
 declare module "stream-chat" {
   /**
