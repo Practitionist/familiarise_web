@@ -42,7 +42,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
                 discountValue: true,
               },
             },
-            creditUsages: { select: { amount: true } },
+            creditUsages: { select: { amount: true, originalAmount: true } },
           },
         },
       },
