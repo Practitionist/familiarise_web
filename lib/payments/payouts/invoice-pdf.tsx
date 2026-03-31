@@ -723,7 +723,7 @@ export async function getInvoicePdfData(
         discountType: string;
         discountValue: number;
       } | null;
-      creditUsages?: { amount: number }[];
+      creditUsages?: { amount: number; originalAmount?: number }[];
     } | null;
   },
   companyInfo?: {
@@ -739,8 +739,10 @@ export async function getInvoicePdfData(
   const taxAmount = invoice.taxAmount ?? 0;
   const isInternational = payment?.isInternational ?? false;
 
+  // FIX #604: Use originalAmount (immutable) instead of amount (mutable,
+  // decremented on partial refund). Prevents invoice discount drift on regeneration.
   const creditsAppliedAmount =
-    payment?.creditUsages?.reduce((sum, cu) => sum + cu.amount, 0) ?? 0;
+    payment?.creditUsages?.reduce((sum, cu) => sum + (cu.originalAmount ?? cu.amount), 0) ?? 0;
 
   const discountAmount =
     payment && payment.originalAmount > 0
