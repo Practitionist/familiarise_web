@@ -357,9 +357,10 @@ const uploadAppointmentDocument = async (
       return { success: false, error: uploadError.message };
     }
 
-    // Generate a signed URL (1 hour expiry) for private bucket access
+    // Generate a signed URL (1 hour expiry) for private bucket — use admin client
+    const signingClient = supabaseAdmin || supabase;
     const { data: signedUrlData, error: signedUrlError } =
-      await supabase.storage
+      await signingClient.storage
         .from("documents")
         .createSignedUrl(storagePath, 3600);
 
@@ -1483,18 +1484,28 @@ const uploadToSupabase = async (
       return { url: null, error: uploadError.message };
     }
 
-    // Generate a signed URL for private bucket access (1 hour expiry)
-    const { data: signedUrlData, error: signedUrlError } =
-      await supabase.storage
-        .from(bucketName)
-        .createSignedUrl(storagePath, 3600);
+    // Private buckets: generate a signed URL via admin client
+    // Public buckets: use getPublicUrl for permanent, CDN-friendly links
+    if (isPrivateBucket) {
+      const signingClient = supabaseAdmin || supabase;
+      const { data: signedUrlData, error: signedUrlError } =
+        await signingClient.storage
+          .from(bucketName)
+          .createSignedUrl(storagePath, 3600);
 
-    if (signedUrlError || !signedUrlData?.signedUrl) {
-      console.error("Failed to create signed URL:", signedUrlError);
-      return { url: null, error: "Failed to generate document URL" };
+      if (signedUrlError || !signedUrlData?.signedUrl) {
+        console.error("Failed to create signed URL:", signedUrlError);
+        return { url: null, error: "Failed to generate document URL" };
+      }
+
+      return { url: signedUrlData.signedUrl, error: null };
     }
 
-    return { url: signedUrlData.signedUrl, error: null };
+    const { data: urlData } = supabase.storage
+      .from(bucketName)
+      .getPublicUrl(storagePath);
+
+    return { url: urlData.publicUrl, error: null };
   } catch (error) {
     console.error("Error in uploadToSupabase:", error);
     return {
