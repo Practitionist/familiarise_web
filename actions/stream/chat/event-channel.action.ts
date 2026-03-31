@@ -186,6 +186,48 @@ export async function addUserToEventChannel(
 }
 
 /**
+ * Remove a user from an event channel.
+ * Used when a collaborator is removed from a webinar/class plan.
+ */
+export async function removeUserFromEventChannel(
+  eventType: EventType,
+  eventId: string,
+  userId: string,
+): Promise<{ success: boolean }> {
+  eventTypeSchema.parse(eventType);
+  eventIdSchema.parse(eventId);
+  userIdSchema.parse(userId);
+
+  const channelId = getChannelId(eventType, eventId);
+  const channelType = getChannelType(eventType);
+
+  const client = getStreamChatClient();
+
+  try {
+    const channel = client.channel(channelType, channelId);
+    await channel.removeMembers([userId]);
+    markMembership(channelId, userId, false);
+    streamLogger.info("Removed user from event channel", {
+      channelId,
+      userId,
+    });
+    return { success: true };
+  } catch (error) {
+    // Clear membership cache regardless — if removal failed, we don't want
+    // stale "is member" cache entries preventing future add/remove operations.
+    markMembership(channelId, userId, false);
+    // Channel may not exist — that's fine, user has no access anyway
+    streamLogger.warn("Failed to remove user from event channel", {
+      eventType,
+      eventId,
+      userId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { success: false };
+  }
+}
+
+/**
  * Get event data for channel creation
  */
 async function getEventData(eventType: EventType, eventId: string) {
