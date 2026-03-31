@@ -20,7 +20,7 @@
  */
 
 import prisma from "../../lib/prisma";
-import { EarningStatus, PaymentStatus, AppointmentsType } from "@prisma/client";
+import { EarningStatus, EarningRole, PaymentStatus, AppointmentsType } from "@prisma/client";
 import {
   PAYOUT_CONSTANTS,
   AppointmentType,
@@ -232,6 +232,8 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
       consultantShare: number;
       status: EarningStatus;
       holdUntil: Date;
+      role?: EarningRole;
+      sharePercentage?: number;
     }> = [];
     const revenueUpdates: Map<string, number> = new Map();
 
@@ -306,12 +308,22 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
 
       if (splits.length > 0) {
         // Multi-party earnings (collaborator splits)
+        // Owner gets full grossAmount/platformFee; collaborators get 0 for those fields.
         for (const split of splits) {
-          const splitEarnings = calculateEarningsData(payment, split.consultantProfileId);
-          splitEarnings.consultantShare = split.share;
-          splitEarnings.platformFee = baseEarnings.platformFee;
-          splitEarnings.grossAmount = baseEarnings.grossAmount;
-          earningsToCreate.push(splitEarnings);
+          const isOwner = split.role === "OWNER";
+          const splitBase = calculateEarningsData(payment, split.consultantProfileId);
+          const sharePercentage = totalConsultantPool > 0
+            ? Math.round((split.share / totalConsultantPool) * 10000) / 100
+            : 0;
+
+          earningsToCreate.push({
+            ...splitBase,
+            consultantShare: split.share,
+            grossAmount: isOwner ? baseEarnings.grossAmount : 0,
+            platformFee: isOwner ? baseEarnings.platformFee : 0,
+            role: isOwner ? EarningRole.OWNER : EarningRole.COLLABORATOR,
+            sharePercentage,
+          });
 
           const currentRevenue = revenueUpdates.get(split.consultantProfileId) || 0;
           revenueUpdates.set(
@@ -321,7 +333,11 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
         }
       } else {
         // Single-party earnings (owner only, or no collaborators)
-        earningsToCreate.push(baseEarnings);
+        earningsToCreate.push({
+          ...baseEarnings,
+          role: EarningRole.OWNER,
+          sharePercentage: 100,
+        });
 
         const currentRevenue = revenueUpdates.get(consultantProfileId) || 0;
         revenueUpdates.set(

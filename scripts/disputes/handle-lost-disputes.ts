@@ -102,14 +102,14 @@ export async function handleLostDisputes(): Promise<LostDisputeHandlerResult> {
       continue;
     }
 
-    // Check if any earnings are already PAID (for logging)
-    const hasPaidEarnings = earningsList.some(
+    // Count PAID earnings for summary reporting
+    const paidEarningsCount = earningsList.filter(
       (e) => e.status === EarningStatus.PAID,
-    );
-    if (hasPaidEarnings) {
-      alreadyPaidCount++;
+    ).length;
+    if (paidEarningsCount > 0) {
+      alreadyPaidCount += paidEarningsCount;
       console.warn(
-        `⚠️ Dispute ${dispute.disputeId} has PAID earnings — forceRefund will reverse revenue + TDS`,
+        `⚠️ Dispute ${dispute.disputeId} has ${paidEarningsCount} PAID earnings — forceRefund will reverse revenue + TDS`,
       );
     }
 

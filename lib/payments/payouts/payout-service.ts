@@ -295,15 +295,24 @@ export async function createPayoutBatch(
           },
         });
 
-        // Link the exact earnings we summed (by ID, not by status filter)
-        await tx.consultantEarnings.updateMany({
+        // Link the exact earnings we summed, with guards against concurrent state changes
+        const linkResult = await tx.consultantEarnings.updateMany({
           where: {
             id: { in: readyEarnings.map((e) => e.id) },
+            status: EarningStatus.READY,
+            payoutId: null,
           },
           data: {
             payoutId: payout.id,
           },
         });
+
+        // If not all targeted earnings were linked, some changed state concurrently
+        if (linkResult.count !== readyEarnings.length) {
+          throw new Error(
+            `Payout linking race: expected ${readyEarnings.length} earnings, linked ${linkResult.count} for consultant ${consultantProfileId}. Rolling back.`,
+          );
+        }
       });
     }
 
