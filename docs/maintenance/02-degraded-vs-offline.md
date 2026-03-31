@@ -43,6 +43,13 @@
 | **Participants** (`/api/participants/*`)                 | Allowed                                 | Blocked                    | LOW        |
 | **Trials** (`/api/trials`, `/api/trials/[id]`)           | Allowed (gap)                           | Blocked                    | MEDIUM     |
 | **Plans** (`/api/plans/*`)                               | GET: Allowed, POST/PATCH: Allowed (gap) | Blocked                    | MEDIUM     |
+| **Slot appointments** (`/api/slots/appointments`)        | **Writes blocked (503)** (Mar 2026)     | Blocked                    | HIGH       |
+| **Waitlist** (`/api/waitlist`)                           | **Writes blocked (503)** (Mar 2026)     | Blocked                    | MEDIUM     |
+| **Referrals** (`/api/referrals`)                         | **Writes blocked (503)** (Mar 2026)     | Blocked                    | MEDIUM     |
+| **Collaborators** (`/api/collaborators`)                 | **Writes blocked (503)** (Mar 2026)     | Blocked                    | MEDIUM     |
+| **Refunds** (`/api/payments/refunds`)                    | **Writes blocked (503)** (Mar 2026)     | Blocked                    | HIGH       |
+| **Disputes** (`/api/payments/disputes`)                  | **Writes blocked (503)** (Mar 2026)     | Blocked                    | HIGH       |
+| **Admin payouts** (`/api/admin/payouts`)                 | **Writes blocked (503)** (Mar 2026)     | Blocked                    | HIGH       |
 | **User routes** (`/api/user/*`)                          | Allowed                                 | Blocked                    | LOW        |
 | **Admin routes** (`/api/admin/*`)                        | Allowed                                 | Blocked                    | LOW        |
 | **Staff routes** (`/api/staff/*`)                        | Allowed                                 | Blocked                    | LOW        |
@@ -61,13 +68,23 @@
 
 ## Current Gaps
 
-### Gap 1: DEGRADED Does Not Block Writes
+### Gap 1: DEGRADED Now Blocks Critical Writes (Partially Resolved Mar 2026)
 
-**Problem**: In DEGRADED mode, the middleware only adds informational headers (`x-maintenance-phase`, `x-maintenance-reason`, `x-maintenance-eta`). All write operations (POST, PATCH, DELETE) proceed normally.
+**Previous problem**: In DEGRADED mode, the middleware only added informational headers (`x-maintenance-phase`, `x-maintenance-reason`, `x-maintenance-eta`). All write operations (POST, PATCH, DELETE) proceeded normally.
 
-**Impact**: Users can complete checkouts, create appointments, modify events, and perform other transactional operations during DEGRADED mode.
+**Mar 2026 fix**: The following routes are now **write-blocked** (return 503) during DEGRADED mode:
 
-**When this matters**: If DEGRADED is used during a deployment that changes business logic but not the DB schema, writes could produce inconsistent data.
+| Route | Reason |
+| --- | --- |
+| `/api/slots/appointments` | Prevent slot modifications during maintenance |
+| `/api/waitlist` | Prevent waitlist mutations |
+| `/api/referrals` | Prevent referral creation |
+| `/api/collaborators` | Prevent collaborator changes |
+| `/api/payments/refunds` | Prevent refund processing |
+| `/api/payments/disputes` | Prevent dispute evidence submission |
+| `/api/admin/payouts` | Prevent payout batch creation/approval |
+
+**Remaining gap**: Checkout (`/api/checkout`), appointment cancel/reschedule, event CRUD, and trial routes are still **not** write-blocked in DEGRADED mode. These may be addressed in a future update.
 
 ### Gap 2: Cron Jobs Bypass Middleware Entirely
 

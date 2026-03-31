@@ -288,6 +288,29 @@ Available balance is calculated as:
 availableBalance = payment.amount - SUM(SUCCEEDED refunds) - SUM(PENDING refunds)
 ```
 
+### Proportional Earnings Reversal (Mar 2026)
+
+When a partial refund is processed, `refundEarnings()` now accepts `refundAmount` and `paymentAmount` to compute proportional reversal of consultant earnings:
+
+```typescript
+// Example: $100 payment, $30 partial refund
+refundEarnings(paymentId, {
+  refundAmount: 3000,   // $30.00
+  paymentAmount: 10000, // $100.00
+});
+
+// Result: 30% of consultantShare is reversed
+// refundedShareAmount += proportional amount
+```
+
+A new `refundedShareAmount` field on `ConsultantEarnings` tracks the cumulative amount reversed across partial refunds. When `refundedShareAmount` reaches the full `consultantShare`, the earnings record auto-transitions to `REFUNDED` status.
+
+| Scenario | Behavior |
+| --- | --- |
+| Partial refund (e.g., 30%) | Proportional share deducted, earnings remain in current status |
+| Full refund (100%) | Earnings auto-transition to REFUNDED |
+| Multiple partial refunds totalling 100% | Earnings auto-transition to REFUNDED on final refund |
+
 ---
 
 ## Code References

@@ -219,6 +219,7 @@ SKIP_PAYMENT=true # Remove for production
 - ✅ Use HTTPS for webhook URLs
 - ✅ Keep webhook secrets secure
 - ✅ Implement idempotency for webhook processing
+- ✅ **Razorpay composite eventId** (Mar 2026): eventId is now formatted as `{eventType}:{entityId}` to prevent cross-event collisions (e.g., a `payment.captured` and `refund.created` for the same entity no longer share an idempotency key)
 
 ### 2. Error Handling
 
