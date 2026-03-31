@@ -62,22 +62,19 @@ async function clearTentativeOnSuccessfulPayments(): Promise<{
               paymentStatus: PaymentStatus.SUCCEEDED,
             },
           },
-          // Exclude reschedule-in-progress: if the related event is in PENDING
-          // status despite a SUCCEEDED payment, it's likely mid-reschedule.
-          // For webinar/class: if the appointment also has confirmed (non-tentative)
-          // slots, the tentative ones may be from a reschedule, not stale payment.
+          // FIX #623: Only clear tentative on consultation/subscription appointments
+          // where tentative = "payment succeeded but flag wasn't cleared".
+          // Webinar/class tentative semantics differ (reschedule marks ALL slots
+          // tentative with no status change to distinguish), so we exclude them
+          // from this reconciliation entirely.
+          OR: [
+            { consultationId: { not: null } },
+            { subscriptionId: { not: null } },
+          ],
           NOT: {
             OR: [
               { consultation: { requestStatus: "PENDING" } },
               { subscription: { requestStatus: "PENDING" } },
-              {
-                webinarId: { not: null },
-                slotsOfAppointment: { some: { isTentative: false } },
-              },
-              {
-                classId: { not: null },
-                slotsOfAppointment: { some: { isTentative: false } },
-              },
             ],
           },
         },
@@ -159,7 +156,9 @@ async function detectDoubleBookings(): Promise<{
         },
       },
       // FIX #625: Include all 5 appointment types (not just consultation/subscription)
-      // so webinar, class, and trial overlaps are also detected.
+      // so webinar and class overlaps are also detected. Note: trial sessions
+      // typically lack SUCCEEDED payments, so they won't match this query's
+      // payment filter — their inclusion here is for consultant resolution only.
       include: {
         appointment: {
           include: {

@@ -7,6 +7,7 @@ import { addMonthsSafely } from "@/utils/dateUtils";
 import { findOrCreateTopics, transformNestedPlanTopics } from "@/lib/topics";
 import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
 import { checkConsultantVerification } from "@/lib/verification";
+import { countUniqueParticipants } from "@/lib/payments/utils/participants";
 
 import { getSession } from "@/lib/auth-server";
 // Schema for class content input (without Prisma-managed fields like createdAt, updatedAt, classPlanId)
@@ -467,41 +468,48 @@ export async function PATCH(request: NextRequest) {
         },
       });
 
-      // FIX #627: Block scheduling period changes when bookings exist
-      // (period metadata would diverge from actual appointment slots)
-      if (
-        activePayments > 0 &&
-        (startDateString !== undefined || endDateString !== undefined)
-      ) {
-        return NextResponse.json(
-          {
-            error:
-              "Cannot modify class schedule with enrolled participants. Use the reschedule workflow instead.",
-          },
-          { status: 400 },
-        );
+      // FIX #627: Block scheduling period changes when bookings exist.
+      // Only block when dates ACTUALLY differ from current values
+      // (the planner client may always send startDate/endDate even for non-date edits).
+      if (activePayments > 0) {
+        const startChanged =
+          startDateString !== undefined &&
+          startDateString !== null &&
+          classToUpdate.schedulingPeriodStartsAt?.toISOString()?.slice(0, 10) !==
+            new Date(startDateString).toISOString().slice(0, 10);
+        const endChanged =
+          endDateString !== undefined &&
+          endDateString !== null &&
+          classToUpdate.schedulingPeriodEndsAt?.toISOString()?.slice(0, 10) !==
+            new Date(endDateString).toISOString().slice(0, 10);
+
+        if (startChanged || endChanged) {
+          return NextResponse.json(
+            {
+              error:
+                "Cannot modify class schedule with enrolled participants. Use the reschedule workflow instead.",
+            },
+            { status: 400 },
+          );
+        }
       }
 
       // FIX #628: Block lowering maxParticipants below current enrollment.
-      // Count distinct users across all class appointment slots (not slot count).
-      // Exclude the consultant (host).
+      // Use shared countUniqueParticipants helper for consistent counting.
+      // Include ALL slots (not just non-tentative) because during reschedule
+      // all slots become tentative but participants are still enrolled.
       if (maxParticipants !== undefined) {
-        const slotsWithUsers = await prisma.slotOfAppointment.findMany({
-          where: {
-            appointment: { classId: classToUpdate.id },
-            isTentative: false,
+        const classAppointments = await prisma.appointment.findMany({
+          where: { classId: classToUpdate.id },
+          include: {
+            slotsOfAppointment: { include: { user: { select: { id: true } } } },
           },
-          select: { user: { select: { id: true } } },
         });
         const consultantUserId = existingPlan.consultantProfile?.userId;
-        const uniqueParticipantIds = Array.from(
-          new Set(
-            slotsWithUsers
-              .flatMap((s) => s.user.map((u) => u.id))
-              .filter((id) => id !== consultantUserId),
-          ),
+        const enrolledCount = countUniqueParticipants(
+          classAppointments,
+          consultantUserId ? [consultantUserId] : [],
         );
-        const enrolledCount = uniqueParticipantIds.length;
         if (maxParticipants < enrolledCount) {
           return NextResponse.json(
             {

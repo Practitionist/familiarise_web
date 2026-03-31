@@ -6,6 +6,7 @@ import { WebinarStatus } from "@prisma/client";
 import { findOrCreateTopics, transformNestedPlanTopics } from "@/lib/topics";
 import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
 import { checkConsultantVerification } from "@/lib/verification";
+import { countWebinarParticipants } from "@/lib/payments/utils/participants";
 
 import { getSession } from "@/lib/auth-server";
 // Schema for POST request body based on WebinarPlanSchema
@@ -518,37 +519,45 @@ export async function PATCH(request: NextRequest) {
         },
       });
 
-      // FIX #626: Block time changes when bookings exist
+      // FIX #626: Block time changes when bookings exist.
+      // Only block when the time ACTUALLY differs from the current slot
+      // (the planner client may always send scheduledAt even for non-time edits).
       if (activePayments > 0 && (startTime || endTime)) {
-        return NextResponse.json(
-          {
-            error:
-              "Cannot reschedule a webinar with confirmed bookings. Use the reschedule workflow instead.",
-          },
-          { status: 400 },
-        );
+        const existingSlot =
+          webinarToUpdate.appointment?.slotsOfAppointment?.[0];
+        const timeChanged =
+          !existingSlot ||
+          (startTime &&
+            existingSlot.startsAt.getTime() !== startTime.getTime()) ||
+          (endTime && existingSlot.endsAt.getTime() !== endTime.getTime());
+
+        if (timeChanged) {
+          return NextResponse.json(
+            {
+              error:
+                "Cannot reschedule a webinar with confirmed bookings. Use the reschedule workflow instead.",
+            },
+            { status: 400 },
+          );
+        }
       }
 
       // FIX #628: Block lowering maxParticipants below current enrollment.
-      // Count distinct users on confirmed slots (not slot count — slots are time-chunks
-      // and each has a M2M user relation). Exclude the consultant (host).
+      // Use shared countWebinarParticipants helper for consistent counting.
+      // Include ALL slots (not just non-tentative) because during reschedule
+      // all slots become tentative but participants are still enrolled.
       if (maxParticipants !== undefined) {
-        const slotsWithUsers = await prisma.slotOfAppointment.findMany({
-          where: {
-            appointmentId: webinarToUpdate.appointment.id,
-            isTentative: false,
+        const appointmentWithSlots = await prisma.appointment.findUnique({
+          where: { id: webinarToUpdate.appointment.id },
+          include: {
+            slotsOfAppointment: { include: { user: { select: { id: true } } } },
           },
-          select: { user: { select: { id: true } } },
         });
         const consultantUserId = existingPlan.consultantProfile?.userId;
-        const uniqueParticipantIds = Array.from(
-          new Set(
-            slotsWithUsers
-              .flatMap((s) => s.user.map((u) => u.id))
-              .filter((id) => id !== consultantUserId),
-          ),
+        const enrolledCount = countWebinarParticipants(
+          appointmentWithSlots,
+          consultantUserId ? [consultantUserId] : [],
         );
-        const enrolledCount = uniqueParticipantIds.length;
         if (maxParticipants < enrolledCount) {
           return NextResponse.json(
             {
