@@ -201,7 +201,10 @@ async function getEventData(eventType: EventType, eventId: string) {
               },
             },
           },
-          waitlist: { select: { userId: true } },
+          waitlist: {
+            where: { status: "BOOKED" },
+            select: { userId: true },
+          },
           appointment: {
             include: {
               slotsOfAppointment: {
@@ -237,7 +240,10 @@ async function getEventData(eventType: EventType, eventId: string) {
               },
             },
           },
-          waitlist: { select: { userId: true } },
+          waitlist: {
+            where: { status: "BOOKED" },
+            select: { userId: true },
+          },
           appointments: {
             include: {
               slotsOfAppointment: {
@@ -731,10 +737,10 @@ async function getWebinarIdsForUser(
     );
   }
 
-  // Consultee: get webinars from waitlist or appointments
+  // Consultee: get webinars from booked waitlist or appointments
   queries.push(
     prisma.webinar.findMany({
-      where: { waitlist: { some: { userId } } },
+      where: { waitlist: { some: { userId, status: "BOOKED" } } },
       select: { id: true },
     }),
     prisma.webinar.findMany({
@@ -776,10 +782,10 @@ async function getClassIdsForUser(
     );
   }
 
-  // Consultee: get classes from waitlist or appointments
+  // Consultee: get classes from booked waitlist or appointments
   queries.push(
     prisma.class.findMany({
-      where: { waitlist: { some: { userId } } },
+      where: { waitlist: { some: { userId, status: "BOOKED" } } },
       select: { id: true },
     }),
     prisma.class.findMany({

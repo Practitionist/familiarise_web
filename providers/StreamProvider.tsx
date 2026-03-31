@@ -20,10 +20,11 @@ import { syncUserEventChannels } from "@/actions/stream/chat/event-channel.actio
 import { useUserData } from "@/hooks/useUserData";
 import { mapRoleToStream } from "@/lib/user";
 import { streamLogger } from "@/lib/stream-logger";
-import {
-  initialSyncCompletedUsers,
-  clearAllStreamCaches,
-} from "@/lib/stream-cache";
+import { clearAllStreamCaches } from "@/lib/stream-cache";
+
+// Client-side only: tracks which users have completed initial sync within this
+// browser tab's module lifecycle. Separate from the server-side Set in stream-cache.ts.
+const clientSyncCompletedUsers = new Set<string>();
 import StreamErrorBoundary from "@/components/stream/StreamErrorBoundary";
 
 // Import Stream Chat CSS
@@ -236,7 +237,7 @@ const StreamProvider = ({
       }
 
       // Ensure user exists in Stream's database (only if not synced before)
-      if (!initialSyncCompletedUsers.has(userDetails.id)) {
+      if (!clientSyncCompletedUsers.has(userDetails.id)) {
         try {
           await upsertUserToStream(userDetails.id);
           streamLogger.debug("User upserted to Stream", {
@@ -273,7 +274,7 @@ const StreamProvider = ({
       // so we persist to sessionStorage to survive refreshes within the same tab.
       const syncKey = `stream_sync_${userDetails.id}`;
       const alreadySynced =
-        initialSyncCompletedUsers.has(userDetails.id) ||
+        clientSyncCompletedUsers.has(userDetails.id) ||
         (typeof sessionStorage !== "undefined" &&
           sessionStorage.getItem(syncKey) === "1");
 
@@ -283,7 +284,7 @@ const StreamProvider = ({
             userId: userDetails.id,
           });
           await syncUserEventChannels(userDetails.id);
-          initialSyncCompletedUsers.add(userDetails.id);
+          clientSyncCompletedUsers.add(userDetails.id);
           if (typeof sessionStorage !== "undefined") {
             sessionStorage.setItem(syncKey, "1");
           }
@@ -294,7 +295,7 @@ const StreamProvider = ({
           streamLogger.warn("Channel sync failed", { userId: userDetails.id });
           // Mark in-memory to avoid retry within same component lifecycle,
           // but don't persist to sessionStorage so next load retries.
-          initialSyncCompletedUsers.add(userDetails.id);
+          clientSyncCompletedUsers.add(userDetails.id);
         }
       } else {
         streamLogger.debug("Skipping channel sync (already completed)", {

@@ -540,7 +540,8 @@ async function checkSharedAppointments(
 }
 
 /**
- * Legacy search function for backward compatibility
+ * @deprecated Use searchUsersWithRelationships instead — this performs a global
+ * unscoped search that exposes PII of arbitrary users.
  * @param searchTerm The term to search for (name or email)
  * @returns The users that match the search term
  */
