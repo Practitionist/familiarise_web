@@ -490,10 +490,30 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             dashboardUrl: "/dashboard",
           },
         );
+
+        // FIX #579: Clean up linked appointment and slots to free availability.
+        // Without this, PATCH cancellation leaves slots occupied while DELETE
+        // correctly frees them — same business action, different behavior.
+        // Wrapped in a transaction: disconnect trial first (avoids FK violation),
+        // then delete appointment (cascade handles slots automatically).
+        if (existingTrial.appointmentId) {
+          const appointmentIdToDelete = existingTrial.appointmentId;
+          await prisma.$transaction(async (tx) => {
+            // 1. Disconnect the appointment from the trial first
+            await tx.trialSession.update({
+              where: { id: trialId },
+              data: { appointment: { disconnect: true } },
+            });
+            // 2. Now safe to delete — cascade handles SlotOfAppointment
+            await tx.appointment.delete({
+              where: { id: appointmentIdToDelete },
+            });
+          });
+        }
       }
     }
 
-    // Update the trial session
+    // Update the trial session (status + any other fields)
     const updatedTrial = await prisma.trialSession.update({
       where: { id: trialId },
       data: updateData,
@@ -576,6 +596,15 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
               ],
             }),
       },
+      include: {
+        consultantProfile: {
+          include: { user: { select: { id: true, name: true } } },
+        },
+        consulteeProfile: {
+          include: { user: { select: { id: true, name: true } } },
+        },
+        subscriptionPlan: { select: { title: true } },
+      },
     });
 
     if (!existingTrial) {
@@ -598,21 +627,44 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       );
     }
 
-    // Update status to cancelled
-    const updatedTrial = await prisma.trialSession.update({
-      where: { id: trialId },
-      data: { status: TrialSessionStatus.CANCELLED },
+    // Atomic: cancel trial + clean up appointment in one transaction.
+    // Disconnect appointment first to avoid FK violation, then delete
+    // (cascade handles SlotOfAppointment automatically).
+    const updatedTrial = await prisma.$transaction(async (tx) => {
+      const trial = await tx.trialSession.update({
+        where: { id: trialId },
+        data: {
+          status: TrialSessionStatus.CANCELLED,
+          ...(existingTrial.appointmentId
+            ? { appointment: { disconnect: true } }
+            : {}),
+        },
+      });
+
+      if (existingTrial.appointmentId) {
+        await tx.appointment.delete({
+          where: { id: existingTrial.appointmentId },
+        });
+      }
+
+      return trial;
     });
 
-    // Clean up linked appointment and slots to free availability
-    if (existingTrial.appointmentId) {
-      await prisma.slotOfAppointment.deleteMany({
-        where: { appointmentId: existingTrial.appointmentId },
-      });
-      await prisma.appointment.delete({
-        where: { id: existingTrial.appointmentId },
-      });
-    }
+    // FIX #554: Send cancellation notification (DELETE path was missing this)
+    void notifyTrialSessionCancelled(
+      [
+        existingTrial.consultantProfile.user.id,
+        existingTrial.consulteeProfile.user.id,
+      ],
+      {
+        consultantName:
+          existingTrial.consultantProfile.user.name || "Consultant",
+        consulteeName: existingTrial.consulteeProfile.user.name || "User",
+        planTitle: existingTrial.subscriptionPlan.title,
+        status: TrialSessionStatus.CANCELLED,
+        dashboardUrl: "/dashboard",
+      },
+    );
 
     return NextResponse.json({ data: updatedTrial });
   } catch (error) {
