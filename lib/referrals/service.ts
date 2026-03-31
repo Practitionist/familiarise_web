@@ -679,6 +679,7 @@ export async function processConsultantBookingReferral(
           },
           webinar: {
             select: {
+              webinarPlanId: true,
               webinarPlan: {
                 select: { consultantProfile: { select: { userId: true } } },
               },
@@ -686,6 +687,7 @@ export async function processConsultantBookingReferral(
           },
           class: {
             select: {
+              classPlanId: true,
               classPlan: {
                 select: { consultantProfile: { select: { userId: true } } },
               },
@@ -709,5 +711,42 @@ export async function processConsultantBookingReferral(
       consultantUserId,
       "first_paid_booking_received",
     );
+  }
+
+  // FIX #619: Also qualify ACCEPTED collaborators on webinar/class bookings.
+  // Collaborators earn revenue from these bookings and should trigger referral
+  // qualification just like plan owners.
+  const webinarPlanId = payment?.appointment?.webinar?.webinarPlanId;
+  const classPlanId = payment?.appointment?.class?.classPlanId;
+
+  const collaboratorUserIds: string[] = [];
+
+  if (webinarPlanId) {
+    const collabs = await prisma.webinarCollaborator.findMany({
+      where: { webinarPlanId, status: "ACCEPTED" },
+      select: { consultantProfile: { select: { userId: true } } },
+    });
+    collaboratorUserIds.push(...collabs.map((c) => c.consultantProfile.userId));
+  }
+
+  if (classPlanId) {
+    const collabs = await prisma.classCollaborator.findMany({
+      where: { classPlanId, status: "ACCEPTED" },
+      select: { consultantProfile: { select: { userId: true } } },
+    });
+    collaboratorUserIds.push(...collabs.map((c) => c.consultantProfile.userId));
+  }
+
+  // Deduplicate and exclude buyer + plan owner (already processed above)
+  const uniqueCollabUserIds = Array.from(
+    new Set(
+      collaboratorUserIds.filter(
+        (id) => id !== buyerUserId && id !== consultantUserId,
+      ),
+    ),
+  );
+
+  for (const collabUserId of uniqueCollabUserIds) {
+    await processQualifyingAction(collabUserId, "first_paid_booking_received");
   }
 }

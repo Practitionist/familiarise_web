@@ -132,7 +132,13 @@ export async function handleRefundCreated(
             (r.metadata as Record<string, unknown>).forceRefund === true,
         );
 
-        await refundEarnings(paymentId, { forceRefund: hasForceRefund });
+        // FIX #618: Pass refund amount context so partial refunds only
+        // reverse a proportional share of earnings, not the full amount.
+        await refundEarnings(paymentId, {
+          forceRefund: hasForceRefund,
+          refundAmount: refundAmt,
+          paymentAmount: originalPaymentAmt,
+        });
         console.log(`💰 Earnings refunded for payment ${paymentId}`);
       } catch (earningsError) {
         // Log but don't fail - earnings can be manually updated
@@ -633,10 +639,12 @@ export async function handleRefundForEarnings(
     return;
   }
 
-  // Check if any refund for this payment has forceRefund in metadata
+  // FIX #618: Query the latest SUCCEEDED refund to get the actual refund amount
+  // so partial refunds only reverse a proportional share of earnings.
   const refunds = await prisma.refund.findMany({
     where: { paymentId: payment.id },
-    select: { metadata: true },
+    select: { metadata: true, amount: true, status: true },
+    orderBy: { createdAt: "desc" },
   });
   const hasForceRefund = refunds.some(
     (r) =>
@@ -644,10 +652,12 @@ export async function handleRefundForEarnings(
       typeof r.metadata === "object" &&
       (r.metadata as Record<string, unknown>).forceRefund === true,
   );
+  const latestSucceeded = refunds.find((r) => r.status === "SUCCEEDED");
 
-  // Refund the earnings (will mark as REFUNDED and update consultant balance)
   const success = await refundEarnings(payment.id, {
     forceRefund: hasForceRefund,
+    refundAmount: latestSucceeded?.amount,
+    paymentAmount: payment.amount,
   });
 
   if (success) {

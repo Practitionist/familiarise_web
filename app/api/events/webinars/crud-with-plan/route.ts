@@ -509,6 +509,46 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
+    // FIX #626/#628: Guard against unsafe edits on webinars with confirmed bookings.
+    if (webinarToUpdate?.appointment) {
+      const activePayments = await prisma.payment.count({
+        where: {
+          appointmentId: webinarToUpdate.appointment.id,
+          paymentStatus: { notIn: ["FAILED", "EXPIRED"] },
+        },
+      });
+
+      // FIX #626: Block time changes when bookings exist
+      if (activePayments > 0 && (startTime || endTime)) {
+        return NextResponse.json(
+          {
+            error:
+              "Cannot reschedule a webinar with confirmed bookings. Use the reschedule workflow instead.",
+          },
+          { status: 400 },
+        );
+      }
+
+      // FIX #628: Block lowering maxParticipants below current enrollment
+      if (maxParticipants !== undefined) {
+        const enrolledCount = await prisma.slotOfAppointment.count({
+          where: {
+            appointmentId: webinarToUpdate.appointment.id,
+            isTentative: false,
+          },
+        });
+        // Each enrolled user creates one slot; subtract 1 for the consultant slot if present
+        if (maxParticipants < enrolledCount) {
+          return NextResponse.json(
+            {
+              error: `Cannot set max participants to ${maxParticipants}. There are ${enrolledCount} confirmed bookings.`,
+            },
+            { status: 400 },
+          );
+        }
+      }
+    }
+
     // Update webinar plan and related data in a transaction
     const result = await prisma.$transaction(
       async (tx) => {

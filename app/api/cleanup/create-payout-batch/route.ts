@@ -1,14 +1,14 @@
 /**
  * Create Payout Batch API Endpoint
  *
- * Thin wrapper around scripts/create-payout-batch.ts
- * Provides HTTP endpoint for manual triggering or alternative cron systems.
+ * FIX #620: Uses canonical lib/payments/payouts service (with distributed locking
+ * and atomic transactions) instead of scripts/payouts which lacks those safety features.
  *
  * Schedule: Weekly on Mondays at 8:00 PM UTC (via GitHub Actions or external cron)
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { createPayoutBatch } from "@/scripts/payouts/create-payout-batch";
+import { createPayoutBatch } from "@/lib/payments/payouts";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -24,17 +24,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     console.log("🔄 Starting payout batch creation via API...");
 
-    const result = await createPayoutBatch();
+    const batchId = await createPayoutBatch();
 
-    console.log("✅ Payout batch creation completed:", {
-      batchId: result.batchId,
-      payoutsCreated: result.payoutsCreated,
-      totalAmount: result.totalAmount,
-      autoApproved: result.autoApproved,
-      pendingApproval: result.pendingApproval,
-    });
+    console.log(`✅ Payout batch creation completed: ${batchId}`);
 
-    return NextResponse.json(result);
+    return NextResponse.json({ success: true, batchId });
   } catch (error) {
     console.error("Error in payout batch creation:", error);
     return NextResponse.json(

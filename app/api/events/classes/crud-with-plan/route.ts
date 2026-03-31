@@ -458,6 +458,49 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
+    // FIX #627/#628: Guard against unsafe edits on classes with confirmed bookings.
+    if (classToUpdate) {
+      const activePayments = await prisma.payment.count({
+        where: {
+          appointment: { classId: classToUpdate.id },
+          paymentStatus: { notIn: ["FAILED", "EXPIRED"] },
+        },
+      });
+
+      // FIX #627: Block scheduling period changes when bookings exist
+      // (period metadata would diverge from actual appointment slots)
+      if (
+        activePayments > 0 &&
+        (startDateString !== undefined || endDateString !== undefined)
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Cannot modify class schedule with enrolled participants. Use the reschedule workflow instead.",
+          },
+          { status: 400 },
+        );
+      }
+
+      // FIX #628: Block lowering maxParticipants below current enrollment
+      if (maxParticipants !== undefined) {
+        const enrolledCount = await prisma.slotOfAppointment.count({
+          where: {
+            appointment: { classId: classToUpdate.id },
+            isTentative: false,
+          },
+        });
+        if (maxParticipants < enrolledCount) {
+          return NextResponse.json(
+            {
+              error: `Cannot set max participants to ${maxParticipants}. There are ${enrolledCount} confirmed bookings.`,
+            },
+            { status: 400 },
+          );
+        }
+      }
+    }
+
     // Update class plan and related data in a transaction
     const result = await prisma.$transaction(
       async (tx) => {
