@@ -337,7 +337,13 @@ export async function getConsultantEarnings(
  */
 export async function refundEarnings(
   paymentId: string,
-  options?: { forceRefund?: boolean },
+  options?: {
+    forceRefund?: boolean;
+    /** For partial refunds: the refund amount in smallest currency unit */
+    refundAmount?: number;
+    /** For partial refunds: the original payment amount in smallest currency unit */
+    paymentAmount?: number;
+  },
 ): Promise<boolean> {
   const allEarnings = await prisma.consultantEarnings.findMany({
     where: { paymentId },
@@ -346,6 +352,24 @@ export async function refundEarnings(
   if (allEarnings.length === 0) {
     console.warn(`No earnings found for payment ${paymentId}`);
     return false;
+  }
+
+  // Calculate refund ratio for partial refunds.
+  // If refundAmount < paymentAmount, only reverse a proportional share of earnings.
+  const isPartialRefund =
+    options?.refundAmount != null &&
+    options?.paymentAmount != null &&
+    options.refundAmount > 0 &&
+    options.paymentAmount > 0 &&
+    options.refundAmount < options.paymentAmount;
+  const refundRatio = isPartialRefund
+    ? options.refundAmount! / options.paymentAmount!
+    : 1;
+
+  if (isPartialRefund) {
+    console.log(
+      `Partial refund: ${options!.refundAmount}/${options!.paymentAmount} = ${(refundRatio * 100).toFixed(1)}% reversal for payment ${paymentId}`,
+    );
   }
 
   // Refund each earnings record (supports multi-party collaborator payments)
@@ -357,6 +381,9 @@ export async function refundEarnings(
       );
       continue;
     }
+
+    // Calculate the proportional share to reverse
+    const shareToReverse = Math.round(earnings.consultantShare * refundRatio);
 
     // Handle already-paid earnings (payout completed)
     if (earnings.status === EarningStatus.PAID) {
@@ -378,13 +405,14 @@ export async function refundEarnings(
         });
 
         if (tdsRecord && tdsRecord.tdsDeducted > 0) {
+          const tdsToReverse = Math.round(tdsRecord.tdsDeducted * refundRatio);
           await prisma.tDSRecord.create({
             data: {
               consultantProfileId: earnings.consultantProfileId,
               financialYear: tdsRecord.financialYear,
               quarter: getIndianFYQuarter(),
               cumulativeAmountCredited: tdsRecord.cumulativeAmountCredited,
-              tdsDeducted: -tdsRecord.tdsDeducted,
+              tdsDeducted: -tdsToReverse,
               tdsRate: tdsRecord.tdsRate,
               payoutId: earnings.payoutId,
               earningsId: earnings.id,
@@ -393,39 +421,62 @@ export async function refundEarnings(
           });
 
           console.log(
-            `TDS reversal created for earnings ${earnings.id}: -${tdsRecord.tdsDeducted} paise`,
+            `TDS reversal created for earnings ${earnings.id}: -${tdsToReverse} paise (${isPartialRefund ? "partial" : "full"})`,
           );
         }
       }
 
-      // Mark as refunded
-      await prisma.consultantEarnings.update({
-        where: { id: earnings.id },
-        data: { status: EarningStatus.REFUNDED },
-      });
+      // For partial refunds, update the refunded share amount but keep status
+      // For full refunds, mark as REFUNDED
+      if (isPartialRefund) {
+        await prisma.consultantEarnings.update({
+          where: { id: earnings.id },
+          data: {
+            refundedShareAmount: {
+              increment: shareToReverse,
+            },
+          },
+        });
+      } else {
+        await prisma.consultantEarnings.update({
+          where: { id: earnings.id },
+          data: { status: EarningStatus.REFUNDED },
+        });
+      }
 
       // For PAID earnings, decrement totalRevenue (not pendingRevenue — already paid)
       await prisma.consultantProfile.update({
         where: { id: earnings.consultantProfileId },
-        data: { totalRevenue: { decrement: earnings.consultantShare } },
+        data: { totalRevenue: { decrement: shareToReverse } },
       });
 
       continue;
     }
 
-    // Update earnings status to refunded (PENDING/HELD/READY)
-    await prisma.consultantEarnings.update({
-      where: { id: earnings.id },
-      data: {
-        status: EarningStatus.REFUNDED,
-      },
-    });
+    // Update earnings status/amount for non-paid earnings (PENDING/HELD/READY)
+    if (isPartialRefund) {
+      await prisma.consultantEarnings.update({
+        where: { id: earnings.id },
+        data: {
+          refundedShareAmount: {
+            increment: shareToReverse,
+          },
+        },
+      });
+    } else {
+      await prisma.consultantEarnings.update({
+        where: { id: earnings.id },
+        data: {
+          status: EarningStatus.REFUNDED,
+        },
+      });
+    }
 
-    // Decrease consultant's pending revenue
+    // Decrease consultant's pending revenue by the proportional share
     await prisma.consultantProfile.update({
       where: { id: earnings.consultantProfileId },
       data: {
-        pendingRevenue: { decrement: earnings.consultantShare },
+        pendingRevenue: { decrement: shareToReverse },
       },
     });
   }

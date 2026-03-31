@@ -53,14 +53,18 @@ export async function POST(req: NextRequest) {
     const event = JSON.parse(body);
     const { event: eventType } = razorpayBaseEventSchema.parse(event);
 
-    // Log webhook event for audit trail (idempotency check)
-    const eventId =
+    // Log webhook event for audit trail (idempotency check).
+    // Use composite key (eventType + entityId) to prevent collisions between
+    // different lifecycle events for the same entity (e.g., payment.captured
+    // vs refund.created both referencing the same payment ID).
+    const entityId =
       event.payload?.payment?.entity?.id ||
       event.payload?.order?.entity?.id ||
       event.payload?.refund?.entity?.id ||
       event.payload?.dispute?.entity?.id ||
       event.payload?.payout?.entity?.id ||
       `razorpay_${Date.now()}`;
+    const eventId = `${eventType}:${entityId}`;
 
     const { isNew } = await logWebhookEvent(
       "razorpay",
