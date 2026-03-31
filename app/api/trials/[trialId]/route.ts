@@ -531,7 +531,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           where: { id: subscriptionId },
           select: {
             id: true,
-            subscriptionPlan: { select: { id: true } },
+            subscriptionPlanId: true,
             requestedById: true,
           },
         });
@@ -544,8 +544,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         }
 
         if (
-          subscription.subscriptionPlan.id !==
-          existingTrial.subscriptionPlan.id
+          subscription.subscriptionPlanId !==
+          existingTrial.subscriptionPlanId
         ) {
           return NextResponse.json(
             {
