@@ -14,7 +14,7 @@ import { getAppUrl } from "@/lib/url";
 interface PaymentSuccessEmailProps {
   name: string;
   consultantName: string;
-  appointmentType: "consultation" | "subscription";
+  appointmentType: "consultation" | "subscription" | "webinar" | "class";
   amount: number;
   currency: string;
   receiptUrl?: string;

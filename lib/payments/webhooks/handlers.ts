@@ -1280,6 +1280,28 @@ async function sendPaymentSuccessNotification(
             },
           },
         },
+        webinar: {
+          include: {
+            webinarPlan: {
+              include: {
+                consultantProfile: {
+                  include: { user: { select: { name: true } } },
+                },
+              },
+            },
+          },
+        },
+        class: {
+          include: {
+            classPlan: {
+              include: {
+                consultantProfile: {
+                  include: { user: { select: { name: true } } },
+                },
+              },
+            },
+          },
+        },
       },
     });
 
@@ -1305,6 +1327,18 @@ async function sendPaymentSuccessNotification(
       consultantName =
         appointment.subscription.subscriptionPlan.consultantProfile.user.name ||
         "Consultant";
+    } else if (
+      appointment.webinar?.webinarPlan?.consultantProfile?.user
+    ) {
+      consultantName =
+        appointment.webinar.webinarPlan.consultantProfile.user.name ||
+        "Consultant";
+    } else if (
+      appointment.class?.classPlan?.consultantProfile?.user
+    ) {
+      consultantName =
+        appointment.class.classPlan.consultantProfile.user.name ||
+        "Consultant";
     }
 
     // Send email
@@ -1312,8 +1346,11 @@ async function sendPaymentSuccessNotification(
       email: payment.user.email || "",
       name: payment.user.name || "User",
       consultantName,
-      appointmentType:
-        appointmentType === "CONSULTATION" ? "consultation" : "subscription",
+      appointmentType: appointmentType.toLowerCase() as
+        | "consultation"
+        | "subscription"
+        | "webinar"
+        | "class",
       amount,
       currency,
       dashboardUrl: `${getAppUrl()}/dashboard`,
