@@ -1312,8 +1312,11 @@ async function sendPaymentSuccessNotification(
       email: payment.user.email || "",
       name: payment.user.name || "User",
       consultantName,
-      appointmentType:
-        appointmentType === "CONSULTATION" ? "consultation" : "subscription",
+      appointmentType: appointmentType.toLowerCase() as
+        | "consultation"
+        | "subscription"
+        | "webinar"
+        | "class",
       amount,
       currency,
       dashboardUrl: `${getAppUrl()}/dashboard`,

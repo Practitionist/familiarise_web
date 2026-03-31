@@ -146,6 +146,10 @@ const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/verification/documents", // Block verification document uploads
   "/api/verification/submit", // Block verification submission
   "/api/verification/resubmit", // Block verification resubmission
+  "/api/slots/appointments", // Block direct appointment creation/mutation
+  "/api/waitlist", // Block waitlist mutations
+  "/api/referrals", // Block referral code creation
+  "/api/collaborators", // Block collaborator management
 ];
 
 const READ_ONLY_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
