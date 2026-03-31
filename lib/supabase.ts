@@ -132,10 +132,20 @@ export function generateStorageFileName(mimeType: string): string {
   return `${globalThis.crypto.randomUUID()}.${ext}`;
 }
 
+interface BucketOptions {
+  public?: boolean;
+  allowedMimeTypes?: string[];
+  fileSizeLimit?: number;
+}
+
 /**
- * Ensure a storage bucket exists, create it if it doesn't
+ * Ensure a storage bucket exists, create it if it doesn't.
+ * Pass options to customize bucket settings per use case.
  */
-const ensureBucketExists = async (bucketName: string): Promise<boolean> => {
+const ensureBucketExists = async (
+  bucketName: string,
+  options?: BucketOptions,
+): Promise<boolean> => {
   try {
     // First check if bucket exists by trying to list files
     const { data: _files, error: listError } = await supabase.storage
@@ -165,8 +175,8 @@ const ensureBucketExists = async (bucketName: string): Promise<boolean> => {
 
       const { data: _createData, error: createError } =
         await clientToUse.storage.createBucket(bucketName, {
-          public: true,
-          allowedMimeTypes: [
+          public: options?.public ?? true,
+          allowedMimeTypes: options?.allowedMimeTypes ?? [
             "application/pdf",
             "application/msword",
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -175,7 +185,7 @@ const ensureBucketExists = async (bucketName: string): Promise<boolean> => {
             "image/gif",
             "text/plain",
           ],
-          fileSizeLimit: 10485760, // 10MB
+          fileSizeLimit: options?.fileSizeLimit ?? 10485760, // 10MB
         });
 
       if (createError) {

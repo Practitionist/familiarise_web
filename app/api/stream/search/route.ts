@@ -1,5 +1,4 @@
 import {
-  searchUsers,
   searchUsersWithRelationships,
   upsertUsersToStream,
 } from "@/actions/stream/chat/user.action";
@@ -20,7 +19,6 @@ export async function GET(req: NextRequest) {
 
     const url = new URL(req.url);
     const searchTerm = url.searchParams.get("term");
-    const withRelationships = url.searchParams.get("relationships") === "true";
 
     if (!searchTerm) {
       return NextResponse.json(
@@ -29,17 +27,13 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    streamLogger.debug("Searching users", { searchTerm, withRelationships });
+    streamLogger.debug("Searching users", { searchTerm });
 
-    let users;
-
-    if (withRelationships) {
-      // Use enhanced search with relationship checking
-      users = await searchUsersWithRelationships(searchTerm, session.user.id);
-    } else {
-      // Use legacy search for backward compatibility
-      users = await searchUsers(searchTerm);
-    }
+    // Always use relationship-scoped search to prevent global user enumeration
+    const users = await searchUsersWithRelationships(
+      searchTerm,
+      session.user.id,
+    );
 
     streamLogger.debug("Search results", { count: users.length });
 

@@ -131,7 +131,17 @@ export class RecordingTransferService {
       });
 
       // Ensure the recordings bucket exists
-      const bucketReady = await ensureBucketExists(RECORDINGS_BUCKET);
+      const bucketReady = await ensureBucketExists(RECORDINGS_BUCKET, {
+        public: false,
+        allowedMimeTypes: [
+          "video/mp4",
+          "video/webm",
+          "video/quicktime",
+          "video/x-msvideo",
+          "application/octet-stream",
+        ],
+        fileSizeLimit: 524288000, // 500MB
+      });
       if (!bucketReady) {
         await prisma.recording.update({
           where: { id: recordingId },

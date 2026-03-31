@@ -14,7 +14,6 @@ import { streamLogger } from "@/lib/stream-logger";
 
 import { getSession } from "@/lib/auth-server";
 const stopRecordingSchema = z.object({
-  streamCallId: z.string().min(1, "Stream call ID is required"),
   meetingSessionId: z.string().min(1, "Meeting session ID is required"),
 });
 
@@ -36,7 +35,7 @@ export async function POST(req: NextRequest) {
 
     // Parse and validate request body
     const body = await req.json();
-    const { streamCallId, meetingSessionId } = stopRecordingSchema.parse(body);
+    const { meetingSessionId } = stopRecordingSchema.parse(body);
 
     // Verify the meeting session exists
     const meetingSession = await prisma.meetingSession.findUnique({
@@ -119,8 +118,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Stop recording via Stream API
-    const result = await RecordingService.stopRecording(streamCallId);
+    // Stop recording via Stream API (use DB-stored call ID, never trust client)
+    const result = await RecordingService.stopRecording(meetingSession.streamCallId);
 
     if (!result.success) {
       // Rollback: restore isRecording=true since Stream stop failed
@@ -130,7 +129,7 @@ export async function POST(req: NextRequest) {
       });
       streamLogger.error("Stream stop failed, rolled back DB state", null, {
         meetingSessionId,
-        streamCallId,
+        streamCallId: meetingSession.streamCallId,
       });
       return NextResponse.json(
         { error: result.error || "Failed to stop recording" },

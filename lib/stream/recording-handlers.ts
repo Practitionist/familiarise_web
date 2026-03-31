@@ -321,11 +321,47 @@ export async function handleRecordingReady(
       durationInMinutes,
     });
 
-    // Fire-and-forget: notify all participants that recording is available
-    const userIds = meetingSession.slotOfAppointment.user?.map(
+    // Build recipient list — for webinar/class, include all enrolled attendees
+    // (the meeting session slot only has the consultant's allocation slot users)
+    let userIds = meetingSession.slotOfAppointment.user?.map(
       (u: { id: string }) => u.id,
-    );
-    if (userIds && userIds.length > 0) {
+    ) ?? [];
+
+    if (appointment?.webinar) {
+      // Get users from all appointment slots for this webinar
+      const slotUsers = await prisma.slotOfAppointment.findMany({
+        where: { appointment: { webinarId: appointment.webinar.id } },
+        select: { user: { select: { id: true } } },
+      });
+      // Get booked waitlist users
+      const waitlistEntries = await prisma.waitlist.findMany({
+        where: { webinarId: appointment.webinar.id, status: "BOOKED" },
+        select: { userId: true },
+      });
+      const allIds = [
+        ...userIds,
+        ...slotUsers.flatMap((s) => s.user.map((u) => u.id)),
+        ...waitlistEntries.map((w) => w.userId),
+      ];
+      userIds = Array.from(new Set(allIds));
+    } else if (appointment?.class) {
+      const slotUsers = await prisma.slotOfAppointment.findMany({
+        where: { appointment: { classId: appointment.class.id } },
+        select: { user: { select: { id: true } } },
+      });
+      const waitlistEntries = await prisma.waitlist.findMany({
+        where: { classId: appointment.class.id, status: "BOOKED" },
+        select: { userId: true },
+      });
+      const allIds = [
+        ...userIds,
+        ...slotUsers.flatMap((s) => s.user.map((u) => u.id)),
+        ...waitlistEntries.map((w) => w.userId),
+      ];
+      userIds = Array.from(new Set(allIds));
+    }
+
+    if (userIds.length > 0) {
       let appointmentType = "consultation";
       let consultantName = "Unknown Consultant";
 
@@ -399,6 +435,12 @@ export async function handleRecordingFailed(
         slotOfAppointment: {
           include: {
             user: { select: { id: true } },
+            appointment: {
+              include: {
+                webinar: { select: { id: true } },
+                class: { select: { id: true } },
+              },
+            },
           },
         },
       },
@@ -435,8 +477,43 @@ export async function handleRecordingFailed(
       },
     });
 
-    // Notify all users linked to the slot (consultant + consultee)
-    const userIds = meetingSession.slotOfAppointment.user.map((u) => u.id);
+    // Build recipient list — for webinar/class, include all enrolled attendees
+    const appointment = meetingSession.slotOfAppointment.appointment;
+    let userIds = meetingSession.slotOfAppointment.user.map((u) => u.id);
+
+    if (appointment?.webinar) {
+      // Get users from all appointment slots for this webinar
+      const slotUsers = await prisma.slotOfAppointment.findMany({
+        where: { appointment: { webinarId: appointment.webinar.id } },
+        select: { user: { select: { id: true } } },
+      });
+      // Get booked waitlist users
+      const waitlistEntries = await prisma.waitlist.findMany({
+        where: { webinarId: appointment.webinar.id, status: "BOOKED" },
+        select: { userId: true },
+      });
+      const allIds = [
+        ...userIds,
+        ...slotUsers.flatMap((s) => s.user.map((u) => u.id)),
+        ...waitlistEntries.map((w) => w.userId),
+      ];
+      userIds = Array.from(new Set(allIds));
+    } else if (appointment?.class) {
+      const slotUsers = await prisma.slotOfAppointment.findMany({
+        where: { appointment: { classId: appointment.class.id } },
+        select: { user: { select: { id: true } } },
+      });
+      const waitlistEntries = await prisma.waitlist.findMany({
+        where: { classId: appointment.class.id, status: "BOOKED" },
+        select: { userId: true },
+      });
+      const allIds = [
+        ...userIds,
+        ...slotUsers.flatMap((s) => s.user.map((u) => u.id)),
+        ...waitlistEntries.map((w) => w.userId),
+      ];
+      userIds = Array.from(new Set(allIds));
+    }
     const notificationResults = await Promise.allSettled(
       userIds.map((userId) =>
         notifyRecordingFailed(userId, {

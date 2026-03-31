@@ -86,7 +86,18 @@ export async function POST(req: NextRequest) {
         throw eventError; // Re-throw to be caught by outer catch block
       }
     } else {
-      // Custom channel creation - use basic channel creation
+      // Custom channel creation - restricted to admin/staff to prevent
+      // arbitrary member inclusion by unprivileged users
+      if (!isPrivileged) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Custom channel creation requires admin privileges",
+          },
+          { status: 403 },
+        );
+      }
+
       if (!channelName) {
         return NextResponse.json(
           {
