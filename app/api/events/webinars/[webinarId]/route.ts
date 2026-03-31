@@ -152,6 +152,45 @@ export async function DELETE(
   try {
     const { webinarId } = await params;
 
+    // FIX #425: Check for active bookings/payments before allowing deletion.
+    // Use same ownership filter as the delete to prevent info disclosure.
+    const ownershipFilter = isPrivileged(session.user.role)
+      ? {}
+      : { webinarPlan: { consultantProfileId: session.user.consultantProfileId ?? "__none__" } };
+    const now = new Date();
+    const webinar = await prisma.webinar.findUnique({
+      where: { id: webinarId, ...ownershipFilter },
+      select: {
+        appointment: {
+          select: {
+            payment: {
+              where: { paymentStatus: { notIn: ["FAILED", "EXPIRED"] } },
+              select: { id: true },
+            },
+            slotsOfAppointment: {
+              where: { endsAt: { gt: now } },
+              select: { id: true },
+            },
+          },
+        },
+      },
+    });
+    if (!webinar) {
+      return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
+    }
+    if (webinar.appointment?.payment?.length) {
+      return NextResponse.json(
+        { error: "Cannot delete webinar with active payments. Cancel or refund first." },
+        { status: 400 },
+      );
+    }
+    if (webinar.appointment?.slotsOfAppointment?.length) {
+      return NextResponse.json(
+        { error: "Cannot delete webinar with upcoming or in-progress slots." },
+        { status: 400 },
+      );
+    }
+
     // Only the owning consultant or ADMIN/STAFF can delete a webinar instance
     const webinarData = await prisma.webinar.delete({
       where: {

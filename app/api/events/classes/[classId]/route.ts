@@ -155,6 +155,54 @@ export async function DELETE(
   try {
     const { classId } = await params;
 
+    // FIX #425: Check for active bookings/payments before allowing deletion.
+    // Use same ownership filter as the delete to prevent info disclosure.
+    // Use DB-side existence checks to avoid loading all appointments into memory.
+    const classOwnershipFilter = isPrivileged(session.user.role)
+      ? {}
+      : { classPlan: { consultantProfileId: session.user.consultantProfileId ?? "__none__" } };
+    const now = new Date();
+
+    const classExists = await prisma.class.findUnique({
+      where: { id: classId, ...classOwnershipFilter },
+      select: { id: true },
+    });
+    if (!classExists) {
+      return NextResponse.json({ error: "Class not found" }, { status: 404 });
+    }
+
+    const hasActivePayments = !!(await prisma.class.findFirst({
+      where: {
+        id: classId,
+        appointments: {
+          some: { payment: { some: { paymentStatus: { notIn: ["FAILED", "EXPIRED"] } } } },
+        },
+      },
+      select: { id: true },
+    }));
+    if (hasActivePayments) {
+      return NextResponse.json(
+        { error: "Cannot delete class with active payments. Cancel or refund first." },
+        { status: 400 },
+      );
+    }
+
+    const hasUpcomingSlots = !!(await prisma.class.findFirst({
+      where: {
+        id: classId,
+        appointments: {
+          some: { slotsOfAppointment: { some: { endsAt: { gt: now } } } },
+        },
+      },
+      select: { id: true },
+    }));
+    if (hasUpcomingSlots) {
+      return NextResponse.json(
+        { error: "Cannot delete class with upcoming or in-progress slots." },
+        { status: 400 },
+      );
+    }
+
     // Only the owning consultant or ADMIN/STAFF can delete a class instance
     const classData = await prisma.class.delete({
       where: {
