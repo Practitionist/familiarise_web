@@ -283,6 +283,10 @@ export const syncUserEventChannels = async (userId: string) => {
 
 ## Channel Membership Rules
 
+### Waitlist Channel Membership
+
+Only waitlist users with status `BOOKED` are included in event channel membership. Users with WAITING or NOTIFIED status are not added to Stream channels. This prevents users who have not yet confirmed their booking from accessing event chat.
+
 ### Participant Sources
 
 Users can be added to event channels through multiple paths:
