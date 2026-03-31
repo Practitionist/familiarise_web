@@ -490,6 +490,20 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             dashboardUrl: "/dashboard",
           },
         );
+
+        // FIX #579: Clean up linked appointment and slots to free availability.
+        // Without this, PATCH cancellation leaves slots occupied while DELETE
+        // correctly frees them — same business action, different behavior.
+        if (existingTrial.appointmentId) {
+          await prisma.slotOfAppointment.deleteMany({
+            where: { appointmentId: existingTrial.appointmentId },
+          });
+          await prisma.appointment.delete({
+            where: { id: existingTrial.appointmentId },
+          });
+          // Disconnect the appointment relation on the trial
+          updateData.appointment = { disconnect: true };
+        }
       }
     }
 
@@ -576,6 +590,15 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
               ],
             }),
       },
+      include: {
+        consultantProfile: {
+          include: { user: { select: { id: true, name: true } } },
+        },
+        consulteeProfile: {
+          include: { user: { select: { id: true, name: true } } },
+        },
+        subscriptionPlan: { select: { title: true } },
+      },
     });
 
     if (!existingTrial) {
@@ -603,6 +626,22 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       where: { id: trialId },
       data: { status: TrialSessionStatus.CANCELLED },
     });
+
+    // FIX #554: Send cancellation notification (DELETE path was missing this)
+    void notifyTrialSessionCancelled(
+      [
+        existingTrial.consultantProfile.user.id,
+        existingTrial.consulteeProfile.user.id,
+      ],
+      {
+        consultantName:
+          existingTrial.consultantProfile.user.name || "Consultant",
+        consulteeName: existingTrial.consulteeProfile.user.name || "User",
+        planTitle: existingTrial.subscriptionPlan.title,
+        status: TrialSessionStatus.CANCELLED,
+        dashboardUrl: "/dashboard",
+      },
+    );
 
     // Clean up linked appointment and slots to free availability
     if (existingTrial.appointmentId) {
