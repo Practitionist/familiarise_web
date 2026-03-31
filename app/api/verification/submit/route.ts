@@ -57,6 +57,28 @@ export async function POST(request: NextRequest) {
       (latestVerification.status === "PENDING" ||
         latestVerification.status === "NEEDS_INFO");
 
+    // Validate document ownership before connecting — prevents reassigning
+    // another consultant's documents to this verification request
+    if (documentIds?.length) {
+      const ownedDocs = await prisma.profileVerificationDocument.findMany({
+        where: {
+          id: { in: documentIds },
+          verification: { consultantProfileId: consultantProfile.id },
+        },
+        select: { id: true },
+      });
+      if (ownedDocs.length !== documentIds.length) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "One or more document IDs do not belong to your verification request",
+          },
+          { status: 403 },
+        );
+      }
+    }
+
     let verification;
 
     if (shouldUpdate) {

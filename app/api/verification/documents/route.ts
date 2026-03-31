@@ -115,6 +115,24 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Enforce server-side document count limit (max 10 per verification)
+    if (verification) {
+      const existingDocCount =
+        await prisma.profileVerificationDocument.count({
+          where: { verificationId: verification.id },
+        });
+      if (existingDocCount >= 10) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "Maximum 10 documents per verification request. Delete an existing document before uploading a new one.",
+          },
+          { status: 400 },
+        );
+      }
+    }
+
     // Upload file to Supabase
     const fileBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(fileBuffer);
