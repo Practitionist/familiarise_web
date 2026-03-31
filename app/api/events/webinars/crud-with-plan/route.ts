@@ -511,6 +511,9 @@ export async function PATCH(request: NextRequest) {
     }
 
     // FIX #626/#628: Guard against unsafe edits on webinars with confirmed bookings.
+    // TODO: These guards run outside the transaction — a booking could theoretically
+    // land between the check and the transaction commit. The window is milliseconds
+    // and the risk is low, but moving inside the transaction would be more robust.
     if (webinarToUpdate?.appointment) {
       const activePayments = await prisma.payment.count({
         where: {

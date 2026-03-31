@@ -31,6 +31,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     console.log(`✅ Payout processing completed: ${succeeded} succeeded, ${failed} failed`);
 
     return NextResponse.json({
+      success: failed === 0,
       processed: results.length,
       succeeded,
       failed,

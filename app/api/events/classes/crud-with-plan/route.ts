@@ -460,6 +460,9 @@ export async function PATCH(request: NextRequest) {
     }
 
     // FIX #627/#628: Guard against unsafe edits on classes with confirmed bookings.
+    // TODO: These guards run outside the transaction — a booking could theoretically
+    // land between the check and the transaction commit. The window is milliseconds
+    // and the risk is low, but moving inside the transaction would be more robust.
     if (classToUpdate) {
       const activePayments = await prisma.payment.count({
         where: {

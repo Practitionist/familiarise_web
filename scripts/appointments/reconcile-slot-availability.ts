@@ -64,9 +64,13 @@ async function clearTentativeOnSuccessfulPayments(): Promise<{
           },
           // FIX #623: Only clear tentative on consultation/subscription appointments
           // where tentative = "payment succeeded but flag wasn't cleared".
-          // Webinar/class tentative semantics differ (reschedule marks ALL slots
-          // tentative with no status change to distinguish), so we exclude them
-          // from this reconciliation entirely.
+          // Webinar/class are intentionally excluded because:
+          // 1. Their reschedule marks ALL slots tentative with no status signal
+          //    to distinguish "stale payment" from "reschedule-in-progress"
+          // 2. Without a reliable discriminator, clearing would break reschedules
+          // Trade-off: stale webinar/class tentative slots won't auto-heal here,
+          // but that's safer than breaking active reschedules. A future
+          // `tentativeReason` column would let us reconcile all event types.
           OR: [
             { consultationId: { not: null } },
             { subscriptionId: { not: null } },
