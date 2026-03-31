@@ -127,6 +127,100 @@ async function isAppointmentParticipant(
   return false;
 }
 
+/**
+ * Check if the user is the consultant (plan owner or accepted collaborator)
+ * for the given appointment. Consultees are excluded — use this for
+ * write operations where only the service provider should have access.
+ */
+async function isAppointmentConsultant(
+  consultantProfileId: string | null | undefined,
+  appointmentId: string,
+): Promise<boolean> {
+  if (!consultantProfileId) return false;
+
+  const appointment = await prisma.appointment.findUnique({
+    where: { id: appointmentId },
+    select: {
+      consultation: {
+        select: {
+          consultationPlan: { select: { consultantProfileId: true } },
+        },
+      },
+      subscription: {
+        select: {
+          subscriptionPlan: { select: { consultantProfileId: true } },
+        },
+      },
+      webinar: {
+        select: {
+          webinarPlan: {
+            select: {
+              consultantProfileId: true,
+              collaborators: {
+                where: { status: "ACCEPTED" },
+                select: { consultantProfileId: true },
+              },
+            },
+          },
+        },
+      },
+      class: {
+        select: {
+          classPlan: {
+            select: {
+              consultantProfileId: true,
+              collaborators: {
+                where: { status: "ACCEPTED" },
+                select: { consultantProfileId: true },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!appointment) return false;
+
+  if (
+    appointment.consultation?.consultationPlan.consultantProfileId ===
+    consultantProfileId
+  )
+    return true;
+  if (
+    appointment.subscription?.subscriptionPlan.consultantProfileId ===
+    consultantProfileId
+  )
+    return true;
+  if (appointment.webinar) {
+    if (
+      appointment.webinar.webinarPlan.consultantProfileId ===
+      consultantProfileId
+    )
+      return true;
+    if (
+      appointment.webinar.webinarPlan.collaborators.some(
+        (c) => c.consultantProfileId === consultantProfileId,
+      )
+    )
+      return true;
+  }
+  if (appointment.class) {
+    if (
+      appointment.class.classPlan.consultantProfileId === consultantProfileId
+    )
+      return true;
+    if (
+      appointment.class.classPlan.collaborators.some(
+        (c) => c.consultantProfileId === consultantProfileId,
+      )
+    )
+      return true;
+  }
+
+  return false;
+}
+
 interface UpdateSlotsRequest {
   slotsOfAppointment?: {
     deleteMany?: Record<string, never>;
@@ -462,12 +556,12 @@ export async function PATCH(
   try {
     const { appointmentId } = await params;
 
-    // Only privileged users can directly mutate appointment slots
+    // PATCH is destructive (delete-all + recreate slots) — restrict to
+    // the consultant (plan owner / accepted collaborator) or admin/staff.
+    // Consultees must not be able to rewrite appointment slots.
     if (!isPrivileged(session.user.role)) {
-      const allowed = await isAppointmentParticipant(
-        session.user.id,
+      const allowed = await isAppointmentConsultant(
         session.user.consultantProfileId,
-        session.user.consulteeProfileId,
         appointmentId,
       );
       if (!allowed) {
