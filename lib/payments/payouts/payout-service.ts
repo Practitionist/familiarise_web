@@ -217,10 +217,12 @@ export async function createPayoutBatch(
       },
     });
 
-    // Create payouts for each eligible consultant
+    // FIX #568: Create each payout inside a transaction so the amount
+    // recorded always matches the earnings actually linked. The groupBy
+    // above gives us candidates; the transaction re-queries the exact
+    // earnings, sums them, creates the payout, and links — atomically.
     for (const consultant of eligibleConsultants) {
-      const { consultantProfileId, _sum } = consultant;
-      const amount = _sum?.consultantShare || 0;
+      const { consultantProfileId } = consultant;
 
       // Get consultant's default payout account
       const account = await prisma.payoutAccount.findFirst({
@@ -251,38 +253,66 @@ export async function createPayoutBatch(
           method = PayoutMethod.BANK_TRANSFER;
       }
 
-      // Determine if auto-approve applies
-      const shouldAutoApprove =
-        amount < PAYOUT_CONSTANTS.AUTO_APPROVE_THRESHOLD;
+      await prisma.$transaction(async (tx) => {
+        // Re-query exact READY earnings inside the transaction
+        const readyEarnings = await tx.consultantEarnings.findMany({
+          where: {
+            consultantProfileId,
+            status: EarningStatus.READY,
+            payoutId: null,
+          },
+          select: { id: true, consultantShare: true },
+        });
 
-      // Create payout record
-      const payout = await prisma.payout.create({
-        data: {
-          consultantProfileId,
-          provider: account.provider,
-          amount,
-          currency: "INR",
-          status: shouldAutoApprove
-            ? PayoutStatus.APPROVED
-            : PayoutStatus.PENDING,
-          method,
-          batchId,
-          idempotencyKey: `payout_${consultantProfileId}_${batchId}`,
-          approvedAt: shouldAutoApprove ? new Date() : undefined,
-          approvedBy: shouldAutoApprove ? "SYSTEM_AUTO_APPROVE" : undefined,
-        },
-      });
+        if (readyEarnings.length === 0) return;
 
-      // Link earnings to this payout
-      await prisma.consultantEarnings.updateMany({
-        where: {
-          consultantProfileId,
-          status: EarningStatus.READY,
-          payoutId: null,
-        },
-        data: {
-          payoutId: payout.id,
-        },
+        // Calculate amount from the actual earnings being linked
+        const amount = readyEarnings.reduce(
+          (sum, e) => sum + e.consultantShare,
+          0,
+        );
+
+        if (amount < PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT) return;
+
+        const shouldAutoApprove =
+          amount < PAYOUT_CONSTANTS.AUTO_APPROVE_THRESHOLD;
+
+        // Create payout with the exact amount
+        const payout = await tx.payout.create({
+          data: {
+            consultantProfileId,
+            provider: account.provider,
+            amount,
+            currency: "INR",
+            status: shouldAutoApprove
+              ? PayoutStatus.APPROVED
+              : PayoutStatus.PENDING,
+            method,
+            batchId,
+            idempotencyKey: `payout_${consultantProfileId}_${batchId}`,
+            approvedAt: shouldAutoApprove ? new Date() : undefined,
+            approvedBy: shouldAutoApprove ? "SYSTEM_AUTO_APPROVE" : undefined,
+          },
+        });
+
+        // Link the exact earnings we summed, with guards against concurrent state changes
+        const linkResult = await tx.consultantEarnings.updateMany({
+          where: {
+            id: { in: readyEarnings.map((e) => e.id) },
+            status: EarningStatus.READY,
+            payoutId: null,
+          },
+          data: {
+            payoutId: payout.id,
+          },
+        });
+
+        // If not all targeted earnings were linked, some changed state concurrently
+        if (linkResult.count !== readyEarnings.length) {
+          throw new Error(
+            `Payout linking race: expected ${readyEarnings.length} earnings, linked ${linkResult.count} for consultant ${consultantProfileId}. Rolling back.`,
+          );
+        }
       });
     }
 
