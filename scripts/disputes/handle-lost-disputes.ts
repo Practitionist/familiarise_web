@@ -21,6 +21,7 @@
 
 import prisma from "../../lib/prisma";
 import { DisputeStatus, EarningStatus } from "@prisma/client";
+import { refundEarnings } from "../../lib/payments/payouts/earnings-service";
 
 export interface LostDisputeHandlerResult {
   success: boolean;
@@ -89,73 +90,45 @@ export async function handleLostDisputes(): Promise<LostDisputeHandlerResult> {
       continue;
     }
 
-    for (const earnings of earningsList) {
-      // Check if earnings were already paid out
-      if (earnings.status === EarningStatus.PAID) {
-        // This is a critical situation - earnings were paid but dispute was lost
-        console.error(
-          `⚠️ CRITICAL: Dispute ${dispute.disputeId} lost but earnings ${earnings.id} already PAID!`,
-        );
-        console.error(
-          `   Consultant: ${earnings.consultantProfile.user.name || "Unknown"} (${earnings.consultantProfile.user.email})`,
-        );
-        console.error(
-          `   Amount: ₹${(earnings.consultantShare / 100).toFixed(2)}`,
-        );
-        console.error(`   Manual recovery required!`);
+    // FIX #567: Use the canonical refundEarnings() path instead of reimplementing.
+    // This ensures TDS reversal for PAID earnings, correct revenue field
+    // (totalRevenue for PAID, pendingRevenue for non-PAID), and refundedShareAmount tracking.
+    const paymentId = dispute.payment?.id;
+    if (!paymentId) {
+      console.warn(
+        `⏭️ Skipping dispute ${dispute.disputeId} - no payment linked`,
+      );
+      skippedCount++;
+      continue;
+    }
 
-        // Still mark as REFUNDED to prevent double-payout, but flag for manual review
-        try {
-          await prisma.consultantEarnings.update({
-            where: { id: earnings.id },
-            data: {
-              status: EarningStatus.REFUNDED,
-            },
-          });
+    // Check if any earnings are already PAID (for logging)
+    const hasPaidEarnings = earningsList.some(
+      (e) => e.status === EarningStatus.PAID,
+    );
+    if (hasPaidEarnings) {
+      alreadyPaidCount++;
+      console.warn(
+        `⚠️ Dispute ${dispute.disputeId} has PAID earnings — forceRefund will reverse revenue + TDS`,
+      );
+    }
 
-          alreadyPaidCount++;
-          updatedCount++;
-        } catch (error) {
-          const errorMessage =
-            error instanceof Error ? error.message : String(error);
-          errors.push(`Earnings ${earnings.id} (PAID): ${errorMessage}`);
-          errorCount++;
-        }
-        continue;
-      }
-
-      try {
-        // Update earnings status to REFUNDED
-        await prisma.consultantEarnings.update({
-          where: { id: earnings.id },
-          data: {
-            status: EarningStatus.REFUNDED,
-          },
-        });
-
-        // Decrease consultant's pending revenue
-        await prisma.consultantProfile.update({
-          where: { id: earnings.consultantProfileId },
-          data: {
-            pendingRevenue: { decrement: earnings.consultantShare },
-          },
-        });
-
-        console.log(
-          `✅ Updated earnings ${earnings.id} to REFUNDED (dispute: ${dispute.disputeId}, amount: ₹${(earnings.consultantShare / 100).toFixed(2)})`,
-        );
-        updatedCount++;
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
-        errors.push(`Earnings ${earnings.id}: ${errorMessage}`);
-        console.error(
-          `❌ Error updating earnings ${earnings.id}:`,
-          errorMessage,
-        );
-        errorCount++;
-      }
-    } // end for earnings
+    try {
+      await refundEarnings(paymentId, { forceRefund: true });
+      updatedCount += earningsList.length;
+      console.log(
+        `✅ Refunded earnings for dispute ${dispute.disputeId} (${earningsList.length} records via refundEarnings)`,
+      );
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      errors.push(`Dispute ${dispute.disputeId}: ${errorMessage}`);
+      console.error(
+        `❌ Error refunding earnings for dispute ${dispute.disputeId}:`,
+        errorMessage,
+      );
+      errorCount++;
+    }
   }
 
   // Log summary of critical cases
