@@ -10,10 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { use, useState } from "react";
-import {
-  formatCurrencyAmount,
-  formatCurrencyFromMajorUnit,
-} from "@/utils/formatting";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import type {
   PaymentDetail,
   PaymentDetailRefund,
@@ -173,7 +170,7 @@ export default function PaymentDetailsPage({ params }: PageProps) {
             <div>
               <Label className="text-gray-500">Amount</Label>
               <p className="text-2xl font-bold">
-                {formatCurrencyFromMajorUnit(payment.amount, payment.currency)}
+                {formatCurrencyAmount(payment.amount, payment.currency)}
               </p>
             </div>
             <div>
@@ -287,7 +284,7 @@ export default function PaymentDetailsPage({ params }: PageProps) {
                     <Input
                       id="refundAmount"
                       type="number"
-                      placeholder={`Max: ${formatCurrencyFromMajorUnit(remainingRefundable, payment.currency)}`}
+                      placeholder={`Max: ${formatCurrencyAmount(remainingRefundable, payment.currency)}`}
                       value={refundAmount}
                       onChange={(e) => setRefundAmount(e.target.value)}
                       max={remainingRefundable}
@@ -296,12 +293,12 @@ export default function PaymentDetailsPage({ params }: PageProps) {
                     {successfulRefunds > 0 && (
                       <p className="text-xs text-muted-foreground mt-1">
                         Already refunded:{" "}
-                        {formatCurrencyFromMajorUnit(
+                        {formatCurrencyAmount(
                           successfulRefunds,
                           payment.currency,
                         )}{" "}
                         • Remaining:{" "}
-                        {formatCurrencyFromMajorUnit(
+                        {formatCurrencyAmount(
                           remainingRefundable,
                           payment.currency,
                         )}
@@ -356,7 +353,7 @@ export default function PaymentDetailsPage({ params }: PageProps) {
                 >
                   <div>
                     <p className="font-medium">
-                      {formatCurrencyFromMajorUnit(
+                      {formatCurrencyAmount(
                         refund.amount,
                         refund.currency,
                       )}

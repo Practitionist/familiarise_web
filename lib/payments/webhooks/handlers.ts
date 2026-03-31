@@ -247,14 +247,6 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     // Confirm appointment: set isTentative = false and update status to APPROVED
     await confirmExistingAppointment(tx, appointment.id, payment.userId);
 
-    // Send payment success email
-    await sendPaymentSuccessNotification(
-      tx,
-      payment,
-      appointment.id,
-      metadata.appointmentType,
-    );
-
     console.log(
       `✅ Payment ${paymentIntentId} processed successfully. Appointment ID: ${appointment.id}`,
     );
@@ -263,6 +255,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     return {
       paymentId: payment.id,
       appointmentId: appointment.id,
+      appointmentType: metadata.appointmentType,
       userId: payment.userId,
       userName: payment.user.name,
       amount: payment.amount,
@@ -276,6 +269,25 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
   // Phase 2: Non-critical post-transaction work (earnings, invoice, waitlist, notifications)
   // Failures here are logged but do NOT roll back the payment.
   // The `sync-payment-earnings` and related background jobs serve as safety nets.
+
+  // M5 FIX: Send payment success email in Phase 2 (post-commit) so a
+  // transaction rollback cannot leave the user with a false confirmation.
+  try {
+    const paymentForEmail = await prisma.payment.findUnique({
+      where: { id: txResult.paymentId },
+      include: { user: { include: { consulteeProfile: true } } },
+    });
+    if (paymentForEmail) {
+      await sendPaymentSuccessNotification(
+        prisma,
+        paymentForEmail as PaymentWithUser,
+        txResult.appointmentId,
+        txResult.appointmentType,
+      );
+    }
+  } catch (emailError) {
+    console.error("Failed to send payment success email (Phase 2):", emailError);
+  }
 
   const { paymentId, appointmentId, userId, userName, amount, currency } =
     txResult;
