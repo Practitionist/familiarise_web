@@ -79,15 +79,39 @@ export async function createReferralCode(
   } catch (error) {
     // FIX #596: Handle race condition — concurrent first-use requests
     // can both pass the findUnique check, then one fails on unique constraint.
-    // Return the existing code instead of throwing a 500.
     if (
       error instanceof PrismaNamespace.PrismaClientKnownRequestError &&
       error.code === "P2002"
     ) {
-      const raced = await prisma.referralCode.findUnique({
-        where: { userId },
-      });
-      if (raced) return raced;
+      const rawTarget = error.meta?.target;
+      const target = Array.isArray(rawTarget)
+        ? rawTarget
+        : typeof rawTarget === "string"
+          ? [rawTarget]
+          : [];
+      const isUserIdConflict = target.includes("userId");
+
+      // userId conflict: another request created the record first — return it
+      if (isUserIdConflict) {
+        const raced = await prisma.referralCode.findUnique({
+          where: { userId },
+        });
+        if (raced) return raced;
+      }
+
+      // code conflict: generated code collided — retry with a new code
+      const isCodeConflict = target.includes("code");
+      if (isCodeConflict) {
+        const retryCode = await generateUniqueCode(user?.name);
+        return prisma.referralCode.create({
+          data: {
+            userId,
+            code: retryCode,
+            referrerReward: DEFAULT_REFERRER_REWARD,
+            refereeReward: DEFAULT_REFEREE_REWARD,
+          },
+        });
+      }
     }
     throw error;
   }

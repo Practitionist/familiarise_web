@@ -150,6 +150,9 @@ const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/waitlist", // Block waitlist mutations
   "/api/referrals", // Block referral code creation
   "/api/collaborators", // Block collaborator management
+  "/api/payments/refunds", // Block refund mutations
+  "/api/payments/disputes", // Block dispute handling mutations
+  "/api/admin/payouts", // Block admin payout mutations
 ];
 
 const READ_ONLY_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);

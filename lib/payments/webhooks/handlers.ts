@@ -1280,6 +1280,28 @@ async function sendPaymentSuccessNotification(
             },
           },
         },
+        webinar: {
+          include: {
+            webinarPlan: {
+              include: {
+                consultantProfile: {
+                  include: { user: { select: { name: true } } },
+                },
+              },
+            },
+          },
+        },
+        class: {
+          include: {
+            classPlan: {
+              include: {
+                consultantProfile: {
+                  include: { user: { select: { name: true } } },
+                },
+              },
+            },
+          },
+        },
       },
     });
 
@@ -1304,6 +1326,18 @@ async function sendPaymentSuccessNotification(
     ) {
       consultantName =
         appointment.subscription.subscriptionPlan.consultantProfile.user.name ||
+        "Consultant";
+    } else if (
+      appointment.webinar?.webinarPlan?.consultantProfile?.user
+    ) {
+      consultantName =
+        appointment.webinar.webinarPlan.consultantProfile.user.name ||
+        "Consultant";
+    } else if (
+      appointment.class?.classPlan?.consultantProfile?.user
+    ) {
+      consultantName =
+        appointment.class.classPlan.consultantProfile.user.name ||
         "Consultant";
     }
 
