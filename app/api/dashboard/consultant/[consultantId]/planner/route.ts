@@ -81,10 +81,13 @@ interface PlannerData {
 async function getParticipantCounts(
   webinarIds: string[],
   classIds: string[],
+  excludeConsultantUserId?: string,
 ): Promise<Record<string, number>> {
   const counts: Record<string, number> = {};
 
-  // Fetch webinar participant counts in a single query
+  // FIX #556: Fetch webinar participant counts with host exclusion.
+  // Use actual user IDs (not _count) to deduplicate across multi-slot
+  // webinars and exclude the consultant host.
   if (webinarIds.length > 0) {
     const webinarCounts = await prisma.webinar.findMany({
       where: { id: { in: webinarIds } },
@@ -93,7 +96,9 @@ async function getParticipantCounts(
         appointment: {
           select: {
             slotsOfAppointment: {
-              select: { _count: { select: { user: true } } },
+              select: {
+                user: { select: { id: true } },
+              },
               where: { isTentative: false },
             },
           },
@@ -102,11 +107,15 @@ async function getParticipantCounts(
     });
 
     for (const webinar of webinarCounts) {
-      counts[webinar.id] =
-        webinar.appointment?.slotsOfAppointment.reduce(
-          (total, slot) => total + slot._count.user,
-          0,
-        ) || 0;
+      const uniqueUserIds = new Set<string>();
+      for (const slot of webinar.appointment?.slotsOfAppointment || []) {
+        for (const user of slot.user) {
+          if (user.id !== excludeConsultantUserId) {
+            uniqueUserIds.add(user.id);
+          }
+        }
+      }
+      counts[webinar.id] = uniqueUserIds.size;
     }
   }
 
@@ -133,13 +142,15 @@ async function getParticipantCounts(
 
     for (const classEvent of classCounts) {
       // Use a Set to count unique users across ALL appointments/sessions
+      // FIX #556: Exclude the consultant host from participant count
       const uniqueUserIds = new Set<string>();
 
       for (const appointment of classEvent.appointments) {
         for (const slot of appointment.slotsOfAppointment) {
-          // slot.user is an array of users connected to this slot
           for (const user of slot.user) {
-            uniqueUserIds.add(user.id);
+            if (user.id !== excludeConsultantUserId) {
+              uniqueUserIds.add(user.id);
+            }
           }
         }
       }
@@ -288,7 +299,16 @@ export async function GET(
     const webinarIds = webinars.map((w) => w.id);
     const classIds = classes.map((c) => c.id);
 
-    const participantCounts = await getParticipantCounts(webinarIds, classIds);
+    // FIX #556: Pass consultant's userId to exclude from participant counts
+    const consultantProfile = await prisma.consultantProfile.findUnique({
+      where: { id: consultantId },
+      select: { userId: true },
+    });
+    const participantCounts = await getParticipantCounts(
+      webinarIds,
+      classIds,
+      consultantProfile?.userId,
+    );
 
     const plannerData: PlannerData = {
       webinars,

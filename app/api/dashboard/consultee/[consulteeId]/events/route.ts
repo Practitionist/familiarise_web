@@ -120,14 +120,26 @@ export async function GET(
           },
           orderBy: { requestedAt: "desc" },
         }),
-        // Webinars: User registered via waitlist or via appointment slots
+        // Webinars: User registered via appointment slots OR waitlisted
         prisma.webinar.findMany({
           where: {
-            appointment: {
-              slotsOfAppointment: {
-                some: { user: { some: { id: userId } } },
+            OR: [
+              {
+                appointment: {
+                  slotsOfAppointment: {
+                    some: { user: { some: { id: userId } } },
+                  },
+                },
               },
-            },
+              {
+                waitlist: {
+                  some: {
+                    userId,
+                    status: { in: ["WAITING", "NOTIFIED", "BOOKED"] },
+                  },
+                },
+              },
+            ],
           },
           include: {
             webinarPlan: {
@@ -181,16 +193,28 @@ export async function GET(
           },
           orderBy: { createdAt: "desc" },
         }),
-        // Classes: User registered via waitlist or via appointment slots
+        // Classes: User registered via appointment slots OR waitlisted
         prisma.class.findMany({
           where: {
-            appointments: {
-              some: {
-                slotsOfAppointment: {
-                  some: { user: { some: { id: userId } } },
+            OR: [
+              {
+                appointments: {
+                  some: {
+                    slotsOfAppointment: {
+                      some: { user: { some: { id: userId } } },
+                    },
+                  },
                 },
               },
-            },
+              {
+                waitlist: {
+                  some: {
+                    userId,
+                    status: { in: ["WAITING", "NOTIFIED", "BOOKED"] },
+                  },
+                },
+              },
+            ],
           },
           include: {
             classPlan: {
