@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { WaitlistStatus } from "@prisma/client";
 import {
   requireApiAuth,
   isPrivileged,
@@ -135,7 +136,7 @@ export async function GET(
                 waitlist: {
                   some: {
                     userId,
-                    status: { in: ["WAITING", "NOTIFIED", "BOOKED"] },
+                    status: { in: [WaitlistStatus.WAITING, WaitlistStatus.NOTIFIED, WaitlistStatus.BOOKED] },
                   },
                 },
               },
@@ -210,7 +211,7 @@ export async function GET(
                 waitlist: {
                   some: {
                     userId,
-                    status: { in: ["WAITING", "NOTIFIED", "BOOKED"] },
+                    status: { in: [WaitlistStatus.WAITING, WaitlistStatus.NOTIFIED, WaitlistStatus.BOOKED] },
                   },
                 },
               },

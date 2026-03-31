@@ -65,6 +65,7 @@ export async function GET(request: NextRequest) {
     "APPROVED",
     "APPROVED_PENDING_PAYMENT",
     "SCHEDULED",
+    "COMPLETED",
     "REJECTED",
     "CANCELLED",
     "EXPIRED",
