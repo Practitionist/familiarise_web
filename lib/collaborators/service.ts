@@ -9,6 +9,7 @@ import type {
   ClassCollaborator,
   CollaboratorStatus,
 } from "@prisma/client";
+import { removeUserFromEventChannel } from "@/actions/stream/chat/event-channel.action";
 import {
   notifyCollaboratorInvited,
   notifyCollaboratorAccepted,
@@ -322,9 +323,9 @@ export async function removeCollaborator(
       data: { status: "REMOVED" },
     });
 
-    // Fire-and-forget: notify removed collaborator
+    // Fire-and-forget: notify removed collaborator + revoke Stream channel access
     try {
-      const [profile, plan] = await Promise.all([
+      const [profile, plan, webinars] = await Promise.all([
         prisma.consultantProfile.findUnique({
           where: { id: collab.consultantProfileId },
           select: { userId: true },
@@ -333,6 +334,10 @@ export async function removeCollaborator(
           where: { id: planId },
           select: { title: true },
         }),
+        prisma.webinar.findMany({
+          where: { webinarPlanId: planId },
+          select: { id: true },
+        }),
       ]);
       if (profile?.userId) {
         await notifyCollaboratorRemoved(profile.userId, {
@@ -340,6 +345,10 @@ export async function removeCollaborator(
           planType: "webinar",
           dashboardUrl: `${getAppUrl()}/dashboard`,
         });
+        // FIX #592: Remove collaborator from all webinar event channels
+        for (const webinar of webinars) {
+          await removeUserFromEventChannel("webinar", webinar.id, profile.userId);
+        }
       }
     } catch (error) {
       console.error(
@@ -360,9 +369,9 @@ export async function removeCollaborator(
       data: { status: "REMOVED" },
     });
 
-    // Fire-and-forget: notify removed collaborator
+    // Fire-and-forget: notify removed collaborator + revoke Stream channel access
     try {
-      const [profile, plan] = await Promise.all([
+      const [profile, plan, classes] = await Promise.all([
         prisma.consultantProfile.findUnique({
           where: { id: collab.consultantProfileId },
           select: { userId: true },
@@ -371,6 +380,10 @@ export async function removeCollaborator(
           where: { id: planId },
           select: { title: true },
         }),
+        prisma.class.findMany({
+          where: { classPlanId: planId },
+          select: { id: true },
+        }),
       ]);
       if (profile?.userId) {
         await notifyCollaboratorRemoved(profile.userId, {
@@ -378,6 +391,10 @@ export async function removeCollaborator(
           planType: "class",
           dashboardUrl: `${getAppUrl()}/dashboard`,
         });
+        // FIX #592: Remove collaborator from all class event channels
+        for (const classEvent of classes) {
+          await removeUserFromEventChannel("class", classEvent.id, profile.userId);
+        }
       }
     } catch (error) {
       console.error(
