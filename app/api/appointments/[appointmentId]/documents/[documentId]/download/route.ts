@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import supabase from "@/lib/supabase";
+import supabase, { supabaseAdmin } from "@/lib/supabase";
 import { Prisma } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
@@ -128,8 +128,9 @@ export async function GET(
       );
     }
 
-    // Download file from Supabase
-    const { data: fileData, error: downloadError } = await supabase.storage
+    // Download file from Supabase — use admin client for private bucket access
+    const storageClient = supabaseAdmin || supabase;
+    const { data: fileData, error: downloadError } = await storageClient.storage
       .from("documents")
       .download(document.storagePath);
 

@@ -175,7 +175,7 @@ const ensureBucketExists = async (
 
       const { data: _createData, error: createError } =
         await clientToUse.storage.createBucket(bucketName, {
-          public: options?.public ?? true,
+          public: options?.public ?? false,
           allowedMimeTypes: options?.allowedMimeTypes ?? [
             "application/pdf",
             "application/msword",
@@ -333,7 +333,7 @@ const uploadAppointmentDocument = async (
       return {
         success: false,
         error:
-          "Document storage bucket not found. Please create a 'documents' bucket in your Supabase dashboard with public access enabled, or add SUPABASE_SERVICE_ROLE_KEY to your environment variables for automatic bucket creation.",
+          "Document storage bucket not found. Please create a 'documents' bucket in your Supabase dashboard (private), or add SUPABASE_SERVICE_ROLE_KEY to your environment variables for automatic bucket creation.",
       };
     }
 
@@ -357,14 +357,20 @@ const uploadAppointmentDocument = async (
       return { success: false, error: uploadError.message };
     }
 
-    // Get public URL
-    const { data: urlData } = supabase.storage
-      .from("documents")
-      .getPublicUrl(storagePath);
+    // Generate a signed URL (1 hour expiry) for private bucket access
+    const { data: signedUrlData, error: signedUrlError } =
+      await supabase.storage
+        .from("documents")
+        .createSignedUrl(storagePath, 3600);
+
+    if (signedUrlError || !signedUrlData?.signedUrl) {
+      console.error("Failed to create signed URL:", signedUrlError);
+      return { success: false, error: "Failed to generate document URL" };
+    }
 
     return {
       success: true,
-      fileUrl: urlData.publicUrl,
+      fileUrl: signedUrlData.signedUrl,
       storagePath,
       fileName,
       fileSize: file.size,
@@ -528,14 +534,20 @@ const uploadPlanMaterial = async (
       return { success: false, error: uploadError.message };
     }
 
-    // Get public URL
-    const { data: urlData } = supabase.storage
-      .from("documents")
-      .getPublicUrl(storagePath);
+    // Generate a signed URL for private bucket access (1 hour expiry)
+    const { data: signedUrlData, error: signedUrlError } =
+      await supabase.storage
+        .from("documents")
+        .createSignedUrl(storagePath, 3600);
+
+    if (signedUrlError || !signedUrlData?.signedUrl) {
+      console.error("Failed to create signed URL:", signedUrlError);
+      return { success: false, error: "Failed to generate document URL" };
+    }
 
     return {
       success: true,
-      fileUrl: urlData.publicUrl,
+      fileUrl: signedUrlData.signedUrl,
       storagePath,
       fileName,
       fileSize: file.size,
@@ -659,14 +671,20 @@ const uploadConsultantDocument = async (
       return { success: false, error: uploadError.message };
     }
 
-    // Get public URL
-    const { data: urlData } = supabase.storage
-      .from("documents")
-      .getPublicUrl(storagePath);
+    // Generate a signed URL for private bucket access (1 hour expiry)
+    const { data: signedUrlData, error: signedUrlError } =
+      await supabase.storage
+        .from("documents")
+        .createSignedUrl(storagePath, 3600);
+
+    if (signedUrlError || !signedUrlData?.signedUrl) {
+      console.error("Failed to create signed URL:", signedUrlError);
+      return { success: false, error: "Failed to generate document URL" };
+    }
 
     return {
       success: true,
-      fileUrl: urlData.publicUrl,
+      fileUrl: signedUrlData.signedUrl,
       storagePath,
       fileName,
       fileSize: file.size,
@@ -1461,12 +1479,18 @@ const uploadToSupabase = async (
       return { url: null, error: uploadError.message };
     }
 
-    // Get public URL
-    const { data: urlData } = supabase.storage
-      .from(bucketName)
-      .getPublicUrl(storagePath);
+    // Generate a signed URL for private bucket access (1 hour expiry)
+    const { data: signedUrlData, error: signedUrlError } =
+      await supabase.storage
+        .from(bucketName)
+        .createSignedUrl(storagePath, 3600);
 
-    return { url: urlData.publicUrl, error: null };
+    if (signedUrlError || !signedUrlData?.signedUrl) {
+      console.error("Failed to create signed URL:", signedUrlError);
+      return { url: null, error: "Failed to generate document URL" };
+    }
+
+    return { url: signedUrlData.signedUrl, error: null };
   } catch (error) {
     console.error("Error in uploadToSupabase:", error);
     return {
