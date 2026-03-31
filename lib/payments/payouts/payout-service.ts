@@ -137,17 +137,22 @@ export async function getPayoutById(payoutId: string) {
 export async function checkPayoutEligibility(
   consultantProfileId: string,
 ): Promise<ConsultantPayoutEligibility> {
-  // Get ready earnings amount
-  const readyEarnings = await prisma.consultantEarnings.aggregate({
+  // FIX #617: Subtract refundedShareAmount from payout eligibility.
+  // Use aggregate _sum of both fields (efficient DB-side) then subtract in JS.
+  // refundedShareAmount is capped at consultantShare by refundEarnings(), so the
+  // difference is always >= 0.
+  const readyEarningsAgg = await prisma.consultantEarnings.aggregate({
     where: {
       consultantProfileId,
       status: EarningStatus.READY,
       payoutId: null,
     },
-    _sum: { consultantShare: true },
+    _sum: { consultantShare: true, refundedShareAmount: true },
   });
 
-  const readyAmount = readyEarnings._sum.consultantShare || 0;
+  const readyAmount =
+    (readyEarningsAgg._sum.consultantShare || 0) -
+    (readyEarningsAgg._sum.refundedShareAmount || 0);
 
   // Get default payout account
   const defaultAccount = await prisma.payoutAccount.findFirst({
@@ -261,14 +266,16 @@ export async function createPayoutBatch(
             status: EarningStatus.READY,
             payoutId: null,
           },
-          select: { id: true, consultantShare: true },
+          select: { id: true, consultantShare: true, refundedShareAmount: true },
         });
 
         if (readyEarnings.length === 0) return;
 
-        // Calculate amount from the actual earnings being linked
+        // FIX #617: Subtract refundedShareAmount so partially refunded earnings
+        // are paid at the correct (reduced) amount, not the original full share.
         const amount = readyEarnings.reduce(
-          (sum, e) => sum + e.consultantShare,
+          (sum, e) =>
+            sum + Math.max(e.consultantShare - e.refundedShareAmount, 0),
           0,
         );
 

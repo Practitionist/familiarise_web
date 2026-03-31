@@ -6,6 +6,7 @@ import { WebinarStatus } from "@prisma/client";
 import { findOrCreateTopics, transformNestedPlanTopics } from "@/lib/topics";
 import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
 import { checkConsultantVerification } from "@/lib/verification";
+import { countWebinarParticipants } from "@/lib/payments/utils/participants";
 
 import { getSession } from "@/lib/auth-server";
 // Schema for POST request body based on WebinarPlanSchema
@@ -507,6 +508,68 @@ export async function PATCH(request: NextRequest) {
           newDuration: durationInHours,
         },
       );
+    }
+
+    // FIX #626/#628: Guard against unsafe edits on webinars with confirmed bookings.
+    // TODO: These guards run outside the transaction — a booking could theoretically
+    // land between the check and the transaction commit. The window is milliseconds
+    // and the risk is low, but moving inside the transaction would be more robust.
+    if (webinarToUpdate?.appointment) {
+      const activePayments = await prisma.payment.count({
+        where: {
+          appointmentId: webinarToUpdate.appointment.id,
+          paymentStatus: { notIn: ["FAILED", "EXPIRED"] },
+        },
+      });
+
+      // FIX #626: Block time changes when bookings exist.
+      // Only block when the time ACTUALLY differs from the current slot
+      // (the planner client may always send scheduledAt even for non-time edits).
+      if (activePayments > 0 && (startTime || endTime)) {
+        const existingSlot =
+          webinarToUpdate.appointment?.slotsOfAppointment?.[0];
+        const timeChanged =
+          !existingSlot ||
+          (startTime &&
+            existingSlot.startsAt.getTime() !== startTime.getTime()) ||
+          (endTime && existingSlot.endsAt.getTime() !== endTime.getTime());
+
+        if (timeChanged) {
+          return NextResponse.json(
+            {
+              error:
+                "Cannot reschedule a webinar with confirmed bookings. Use the reschedule workflow instead.",
+            },
+            { status: 400 },
+          );
+        }
+      }
+
+      // FIX #628: Block lowering maxParticipants below current enrollment.
+      // Use shared countWebinarParticipants helper for consistent counting.
+      // Include ALL slots (not just non-tentative) because during reschedule
+      // all slots become tentative but participants are still enrolled.
+      if (maxParticipants !== undefined) {
+        const appointmentWithSlots = await prisma.appointment.findUnique({
+          where: { id: webinarToUpdate.appointment.id },
+          include: {
+            slotsOfAppointment: { include: { user: { select: { id: true } } } },
+          },
+        });
+        const consultantUserId = existingPlan.consultantProfile?.userId;
+        const enrolledCount = countWebinarParticipants(
+          appointmentWithSlots,
+          consultantUserId ? [consultantUserId] : [],
+        );
+        if (maxParticipants < enrolledCount) {
+          return NextResponse.json(
+            {
+              error: `Cannot set max participants to ${maxParticipants}. There are ${enrolledCount} enrolled participants.`,
+            },
+            { status: 400 },
+          );
+        }
+      }
     }
 
     // Update webinar plan and related data in a transaction

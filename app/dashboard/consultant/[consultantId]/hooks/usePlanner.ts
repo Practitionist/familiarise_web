@@ -75,8 +75,10 @@ export function useWebinarMutations(consultantId: string) {
 
   const deleteWebinar = useMutation({
     mutationFn: async (webinarId: string) => {
+      // FIX #622: Use the guarded route that checks for active payments
+      // and upcoming slots before allowing deletion.
       const response = await fetch(
-        `/api/events/webinars/crud-with-plan/${webinarId}`,
+        `/api/events/webinars/${webinarId}`,
         {
           method: "DELETE",
         },
@@ -116,8 +118,10 @@ export function useClassMutations(consultantId: string) {
 
   const deleteClass = useMutation({
     mutationFn: async (classId: string) => {
+      // FIX #622: Use the guarded route that checks for active payments
+      // and upcoming slots before allowing deletion.
       const response = await fetch(
-        `/api/events/classes/crud-with-plan/${classId}`,
+        `/api/events/classes/${classId}`,
         {
           method: "DELETE",
         },

@@ -132,7 +132,13 @@ export async function handleRefundCreated(
             (r.metadata as Record<string, unknown>).forceRefund === true,
         );
 
-        await refundEarnings(paymentId, { forceRefund: hasForceRefund });
+        // FIX #618: Pass refund amount context so partial refunds only
+        // reverse a proportional share of earnings, not the full amount.
+        await refundEarnings(paymentId, {
+          forceRefund: hasForceRefund,
+          refundAmount: refundAmt,
+          paymentAmount: originalPaymentAmt,
+        });
         console.log(`💰 Earnings refunded for payment ${paymentId}`);
       } catch (earningsError) {
         // Log but don't fail - earnings can be manually updated
@@ -615,44 +621,3 @@ export async function handleStripePayoutWebhook(
   console.log(`✅ Stripe payout ${payoutData.id} webhook processed: ${status}`);
 }
 
-/**
- * Handle refund event - update earnings status
- */
-export async function handleRefundForEarnings(
-  paymentIntentId: string,
-): Promise<void> {
-  // Find the payment by intent
-  const payment = await prisma.payment.findUnique({
-    where: { paymentIntent: paymentIntentId },
-  });
-
-  if (!payment) {
-    console.warn(
-      `Payment not found for refund earnings update: ${paymentIntentId}`,
-    );
-    return;
-  }
-
-  // Check if any refund for this payment has forceRefund in metadata
-  const refunds = await prisma.refund.findMany({
-    where: { paymentId: payment.id },
-    select: { metadata: true },
-  });
-  const hasForceRefund = refunds.some(
-    (r) =>
-      r.metadata &&
-      typeof r.metadata === "object" &&
-      (r.metadata as Record<string, unknown>).forceRefund === true,
-  );
-
-  // Refund the earnings (will mark as REFUNDED and update consultant balance)
-  const success = await refundEarnings(payment.id, {
-    forceRefund: hasForceRefund,
-  });
-
-  if (success) {
-    console.log(`✅ Earnings refunded for payment ${payment.id}`);
-  } else {
-    console.warn(`⚠️ Could not refund earnings for payment ${payment.id}`);
-  }
-}
