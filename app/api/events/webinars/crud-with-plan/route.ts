@@ -529,19 +529,30 @@ export async function PATCH(request: NextRequest) {
         );
       }
 
-      // FIX #628: Block lowering maxParticipants below current enrollment
+      // FIX #628: Block lowering maxParticipants below current enrollment.
+      // Count distinct users on confirmed slots (not slot count — slots are time-chunks
+      // and each has a M2M user relation). Exclude the consultant (host).
       if (maxParticipants !== undefined) {
-        const enrolledCount = await prisma.slotOfAppointment.count({
+        const slotsWithUsers = await prisma.slotOfAppointment.findMany({
           where: {
             appointmentId: webinarToUpdate.appointment.id,
             isTentative: false,
           },
+          select: { user: { select: { id: true } } },
         });
-        // Each enrolled user creates one slot; subtract 1 for the consultant slot if present
+        const consultantUserId = existingPlan.consultantProfile?.userId;
+        const uniqueParticipantIds = Array.from(
+          new Set(
+            slotsWithUsers
+              .flatMap((s) => s.user.map((u) => u.id))
+              .filter((id) => id !== consultantUserId),
+          ),
+        );
+        const enrolledCount = uniqueParticipantIds.length;
         if (maxParticipants < enrolledCount) {
           return NextResponse.json(
             {
-              error: `Cannot set max participants to ${maxParticipants}. There are ${enrolledCount} confirmed bookings.`,
+              error: `Cannot set max participants to ${maxParticipants}. There are ${enrolledCount} enrolled participants.`,
             },
             { status: 400 },
           );

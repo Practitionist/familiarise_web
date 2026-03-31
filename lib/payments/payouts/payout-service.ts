@@ -137,21 +137,22 @@ export async function getPayoutById(payoutId: string) {
 export async function checkPayoutEligibility(
   consultantProfileId: string,
 ): Promise<ConsultantPayoutEligibility> {
-  // FIX #617: Use findMany + manual sum so we can subtract refundedShareAmount.
-  // Prisma aggregate._sum cannot express (consultantShare - refundedShareAmount).
-  const readyEarningsList = await prisma.consultantEarnings.findMany({
+  // FIX #617: Subtract refundedShareAmount from payout eligibility.
+  // Use aggregate _sum of both fields (efficient DB-side) then subtract in JS.
+  // refundedShareAmount is capped at consultantShare by refundEarnings(), so the
+  // difference is always >= 0.
+  const readyEarningsAgg = await prisma.consultantEarnings.aggregate({
     where: {
       consultantProfileId,
       status: EarningStatus.READY,
       payoutId: null,
     },
-    select: { consultantShare: true, refundedShareAmount: true },
+    _sum: { consultantShare: true, refundedShareAmount: true },
   });
 
-  const readyAmount = readyEarningsList.reduce(
-    (sum, e) => sum + Math.max(e.consultantShare - e.refundedShareAmount, 0),
-    0,
-  );
+  const readyAmount =
+    (readyEarningsAgg._sum.consultantShare || 0) -
+    (readyEarningsAgg._sum.refundedShareAmount || 0);
 
   // Get default payout account
   const defaultAccount = await prisma.payoutAccount.findFirst({

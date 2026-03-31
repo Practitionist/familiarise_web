@@ -64,10 +64,20 @@ async function clearTentativeOnSuccessfulPayments(): Promise<{
           },
           // Exclude reschedule-in-progress: if the related event is in PENDING
           // status despite a SUCCEEDED payment, it's likely mid-reschedule.
+          // For webinar/class: if the appointment also has confirmed (non-tentative)
+          // slots, the tentative ones may be from a reschedule, not stale payment.
           NOT: {
             OR: [
               { consultation: { requestStatus: "PENDING" } },
               { subscription: { requestStatus: "PENDING" } },
+              {
+                webinarId: { not: null },
+                slotsOfAppointment: { some: { isTentative: false } },
+              },
+              {
+                classId: { not: null },
+                slotsOfAppointment: { some: { isTentative: false } },
+              },
             ],
           },
         },
@@ -131,7 +141,11 @@ async function detectDoubleBookings(): Promise<{
   console.log("\n🔍 Detecting double-booked slots...");
 
   try {
-    // Get all confirmed (non-tentative) future slots grouped by consultant
+    // Get all confirmed (non-tentative) future slots grouped by consultant.
+    // TODO: The canonical occupancy policy (buildOccupiedAppointmentFilter) also treats
+    // unpaid-but-active states (PENDING, APPROVED, APPROVED_PENDING_PAYMENT) as occupied.
+    // This detection is limited to SUCCEEDED payments, so overlaps involving those states
+    // will be missed. A future improvement could use buildOccupiedAppointmentFilter here.
     const confirmedSlots = await prisma.slotOfAppointment.findMany({
       where: {
         isTentative: false,

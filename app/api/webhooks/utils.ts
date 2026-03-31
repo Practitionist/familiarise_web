@@ -654,6 +654,15 @@ export async function handleRefundForEarnings(
   );
   const latestSucceeded = refunds.find((r) => r.status === "SUCCEEDED");
 
+  // If no SUCCEEDED refund exists yet (only PENDING/FAILED), skip earnings reversal
+  // to avoid defaulting to a full reversal with no amount context.
+  if (!latestSucceeded && !hasForceRefund) {
+    console.warn(
+      `⏭️ Skipping earnings refund for payment ${payment.id}: no SUCCEEDED refund found yet`,
+    );
+    return;
+  }
+
   const success = await refundEarnings(payment.id, {
     forceRefund: hasForceRefund,
     refundAmount: latestSucceeded?.amount,
