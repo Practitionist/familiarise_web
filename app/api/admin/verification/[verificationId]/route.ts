@@ -145,11 +145,13 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       NEEDS_INFO: "PENDING_VERIFICATION",
     };
 
-    // Prepare document feedback updates
+    // FIX #582: Scope document updates to this verification to prevent
+    // staff from accidentally/maliciously updating documents belonging
+    // to a different verification request.
     const documentUpdates =
       documentFeedback?.map((df) =>
-        prisma.profileVerificationDocument.update({
-          where: { id: df.documentId },
+        prisma.profileVerificationDocument.updateMany({
+          where: { id: df.documentId, verificationId },
           data: {
             isValid: df.isValid,
             staffFeedback: df.staffFeedback || null,

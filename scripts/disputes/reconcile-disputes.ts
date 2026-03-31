@@ -171,7 +171,10 @@ export async function reconcileDisputes(): Promise<DisputeReconciliationResult> 
       // Also check error code as fallback for StripeError
       const errorCode = (error as { code?: string })?.code;
 
-      // Handle "dispute not found" case - check both error code and message patterns
+      // Handle "dispute not found" case - check both error code and message patterns.
+      // FIX #566: Do NOT mark as WON — a missing dispute could be a transient
+      // API error, a Stripe-side delay, or a dispute that was resolved outside
+      // our system. Log it for manual review instead.
       if (
         errorCode === "resource_missing" ||
         errorMessage.includes("resource_missing") ||
@@ -186,19 +189,17 @@ export async function reconcileDisputes(): Promise<DisputeReconciliationResult> 
         await prisma.dispute.update({
           where: { disputeId: dispute.disputeId },
           data: {
-            status: DisputeStatus.WON,
             evidence: {
               ...existingEvidence,
               reconciliation_note:
-                "Dispute no longer exists at gateway - marked as WON",
+                "Dispute not found at gateway — flagged for manual review (not auto-resolved)",
               reconciled_at: new Date().toISOString(),
             } as Prisma.InputJsonValue,
           },
         });
-        console.log(
-          `✅ Dispute ${dispute.disputeId} no longer exists at gateway - marked as WON`,
+        console.warn(
+          `⚠️ Dispute ${dispute.disputeId} not found at gateway — flagged for manual review (status unchanged)`,
         );
-        reconciledCount++;
       } else {
         errors.push(`Dispute ${dispute.disputeId}: ${errorMessage}`);
         console.error(
