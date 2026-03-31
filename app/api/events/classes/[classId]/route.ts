@@ -155,6 +155,33 @@ export async function DELETE(
   try {
     const { classId } = await params;
 
+    // FIX #425: Check for active bookings/payments before allowing deletion
+    const classEvent = await prisma.class.findUnique({
+      where: { id: classId },
+      select: {
+        appointments: {
+          select: {
+            payment: { where: { paymentStatus: "SUCCEEDED" }, select: { id: true } },
+            slotsOfAppointment: { where: { startsAt: { gt: new Date() } }, select: { id: true } },
+          },
+        },
+      },
+    });
+    const hasActivePayments = classEvent?.appointments?.some((a) => a.payment?.length > 0);
+    const hasUpcomingSlots = classEvent?.appointments?.some((a) => a.slotsOfAppointment?.length > 0);
+    if (hasActivePayments) {
+      return NextResponse.json(
+        { error: "Cannot delete class with active payments. Cancel or refund first." },
+        { status: 400 },
+      );
+    }
+    if (hasUpcomingSlots) {
+      return NextResponse.json(
+        { error: "Cannot delete class with upcoming scheduled slots." },
+        { status: 400 },
+      );
+    }
+
     // Only the owning consultant or ADMIN/STAFF can delete a class instance
     const classData = await prisma.class.delete({
       where: {
