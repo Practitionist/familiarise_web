@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   logTrialCompleted,
   logTrialScheduled,
+  logTrialConverted,
 } from "@/lib/activity/log-activity";
 import {
   lockTrialSlot,
@@ -157,7 +158,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         { status: 400 },
       );
     }
-    const { status, scheduledTime, slotData, notes } = parseResult.data;
+    const { status, scheduledTime, slotData, notes, subscriptionId } =
+      parseResult.data;
 
     // Fetch the existing trial session
     const existingTrial = await prisma.trialSession.findUnique({
@@ -510,6 +512,77 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             });
           });
         }
+      }
+
+      // Handle trial conversion — requires a linked subscription
+      if (status === TrialSessionStatus.CONVERTED) {
+        if (!subscriptionId) {
+          return NextResponse.json(
+            {
+              error:
+                "subscriptionId is required when converting a trial to a subscription",
+            },
+            { status: 400 },
+          );
+        }
+
+        // Validate the subscription exists and belongs to the same plan/consultee
+        const subscription = await prisma.subscription.findUnique({
+          where: { id: subscriptionId },
+          select: {
+            id: true,
+            subscriptionPlan: { select: { id: true } },
+            requestedById: true,
+          },
+        });
+
+        if (!subscription) {
+          return NextResponse.json(
+            { error: "Subscription not found" },
+            { status: 404 },
+          );
+        }
+
+        if (
+          subscription.subscriptionPlan.id !==
+          existingTrial.subscriptionPlan.id
+        ) {
+          return NextResponse.json(
+            {
+              error:
+                "Subscription must belong to the same plan as the trial",
+            },
+            { status: 400 },
+          );
+        }
+
+        if (subscription.requestedById !== existingTrial.consulteeProfileId) {
+          return NextResponse.json(
+            {
+              error:
+                "Subscription must belong to the same consultee as the trial",
+            },
+            { status: 400 },
+          );
+        }
+
+        // Link the subscription to the trial
+        updateData.convertedToSubscription = {
+          connect: { id: subscriptionId },
+        };
+
+        // Log the conversion activity
+        void logTrialConverted(
+          existingTrial.consultantProfileId,
+          trialId,
+          subscriptionId,
+          {
+            id: existingTrial.consulteeProfile.user.id,
+            name: existingTrial.consulteeProfile.user.name || "User",
+            image: existingTrial.consulteeProfile.user.image,
+          },
+          existingTrial.subscriptionPlan.title,
+        );
       }
     }
 
