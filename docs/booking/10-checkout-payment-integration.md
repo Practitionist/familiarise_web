@@ -182,6 +182,10 @@ The semaphore uses a Redis Lua script that atomically reads the counter, checks 
 
 **TOCTOU protection**: After acquiring the lock, `revalidateInsideLock()` re-runs all availability checks (slot conflicts, capacity, plan existence) inside the protected region. This prevents the classic time-of-check-to-time-of-use race where conditions change between initial validation and the locked transaction.
 
+**Slot conflict filtering**: The conflict check inside `revalidateInsideLock()` uses `buildOccupiedAppointmentFilter()` to exclude appointments with terminal statuses (CANCELLED, REJECTED, EXPIRED). This means cancelled, rejected, or expired appointment slots no longer block new bookings for the same time range.
+
+**Waitlist validation**: When `fromWaitlist` is provided, `revalidateInsideLock()` validates the waitlist entry inside the lock-protected region. It checks ownership (the waitlist entry belongs to the current user), status (must be NOTIFIED), and expiration (must not have passed `expiresAt`). This prevents race conditions where a waitlist entry could be used by the wrong user or after expiration.
+
 > Cross-reference: `docs/booking/12-concurrency-and-locking.md` for full locking architecture and Redis infrastructure details.
 
 ---
@@ -291,8 +295,12 @@ The `fromWaitlist` parameter in the checkout schema carries the waitlist entry I
 **Flow**:
 
 1. Frontend passes `fromWaitlist: "<waitlistId>"` in checkout data
-2. `buildPaymentMetadata()` includes it in payment intent metadata
-3. After successful payment:
+2. `revalidateInsideLock()` validates the waitlist entry inside the lock-protected region:
+   - Confirms ownership (entry belongs to current user)
+   - Confirms status is NOTIFIED (not WAITING, EXPIRED, CANCELLED, etc.)
+   - Confirms the notification has not expired (current time < `expiresAt`)
+3. `buildPaymentMetadata()` includes `fromWaitlist` in payment intent metadata
+4. After successful payment:
    - **Mock payment**: `markWaitlistAsBooked()` called synchronously in `handleCheckout()`
    - **Real payment**: `markWaitlistAsBooked()` called in Phase 2 of `handlePaymentSuccess()`
 

@@ -13,6 +13,32 @@ All endpoints require session-based authentication. The `{id}` parameter accepts
 
 ---
 
+## Slot Endpoint Authentication
+
+All `/api/slots/` endpoints are covered by `AUTHENTICATED_API_PREFIXES` in middleware, meaning they require a valid session cookie. Two sub-paths are exempted as public:
+
+| Path                                    | Auth Required | Notes                                                              |
+| --------------------------------------- | ------------- | ------------------------------------------------------------------ |
+| `/api/slots/availability/`              | No            | Public -- consultees can view consultant availability without auth |
+| `/api/slots/availability-with-allocation/` | No         | Public -- includes allocation data for calendar display            |
+| `/api/slots/appointments` (GET)         | Yes           | Non-privileged users are filtered to their own profile only        |
+| `/api/slots/appointments` (POST)        | Yes           | Admin/staff only                                                   |
+| `/api/slots/appointments/[id]` (GET)    | Yes           | Requires participant check (consultant or consultee on the appointment) |
+| `/api/slots/appointments/[id]` (PATCH)  | Yes           | Consultant-only check (not consultee)                              |
+| `/api/slots/appointments/[id]` (PUT)    | Yes           | Admin/staff only                                                   |
+| `/api/slots/appointments/[id]` (DELETE) | Yes           | Admin/staff only                                                   |
+
+### Status Filters
+
+The `/api/slots/appointments` GET endpoint supports status filtering. The accepted status values depend on the event type:
+
+| Event Type                   | Status Enum    | Valid Values                                       |
+| ---------------------------- | -------------- | -------------------------------------------------- |
+| Consultation / Subscription  | `RequestStatus` | PENDING, APPROVED, APPROVED_PENDING_PAYMENT, etc. |
+| Webinar / Class              | Event status   | SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED       |
+
+---
+
 ## Validate Endpoints
 
 **Method**: `POST /api/events/{type}/{id}/validate`

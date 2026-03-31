@@ -95,6 +95,32 @@ Valid transitions (enforced in `app/api/trials/[trialId]/route.ts`):
 | `CANCELLED` | (terminal)                           |
 | `REJECTED`  | (terminal)                           |
 
+### Cancellation Behavior (PATCH CANCELLED and DELETE)
+
+Both `PATCH` (with `status: CANCELLED`) and `DELETE` now exhibit identical cleanup behavior:
+
+- **Appointment/slot cleanup**: If the trial has a linked appointment, the associated `SlotOfAppointment` records and the `Appointment` record are deleted inside a transaction.
+- **Notifications**: Both paths send cancellation notifications to both parties via Novu (`trial-session-cancelled`).
+- **Transaction wrapping**: All database operations (status update, appointment deletion, slot deletion) are wrapped in a Prisma `$transaction` to ensure atomicity.
+
+Previously, PATCH CANCELLED did not clean up appointments/slots, and DELETE did not send cancellation notifications. Both paths now handle both concerns.
+
+### Conversion Handler (PATCH CONVERTED)
+
+The `CONVERTED` transition requires a `subscriptionId` in the request body. The handler validates:
+
+1. The subscription exists and belongs to the same plan as the trial (`subscriptionPlanId` match).
+2. The subscription belongs to the same consultee as the trial.
+3. The trial is linked to the subscription via `convertedToSubscriptionId`.
+4. An activity log entry is created via `logTrialConverted()`.
+
+```json
+{
+  "status": "CONVERTED",
+  "subscriptionId": "subscription-uuid-here"
+}
+```
+
 ---
 
 ## Booking Flow
@@ -208,7 +234,14 @@ TrialSession.convertedToSubscriptionId --> Subscription.id
 Subscription.convertedFromTrial --> TrialSession
 ```
 
-This is a one-to-one relationship (both FKs carry `@unique`). The link enables:
+This is a one-to-one relationship (both FKs carry `@unique`). The conversion is triggered by a `PATCH` to `/api/trials/[trialId]` with `status: "CONVERTED"` and a `subscriptionId` in the body. The handler:
+
+1. Validates the `subscriptionId` is provided (returns 400 if missing).
+2. Confirms the subscription belongs to the same plan and consultee as the trial.
+3. Sets `convertedToSubscriptionId` on the trial record.
+4. Calls `logTrialConverted()` to create an `ActivityLog` entry with `activityType = TRIAL_CONVERTED`.
+
+The link enables:
 
 - Tracking trial-to-subscription conversion rates
 - Displaying conversion status on the consultant dashboard
@@ -244,12 +277,14 @@ Users can disable trial notifications via `NotificationPreference.trialNotificat
 
 ## API Reference
 
-| Method   | Endpoint                        | Purpose                                  |
-| -------- | ------------------------------- | ---------------------------------------- |
-| `GET`    | `/api/trials`                   | List trials (paginated, filterable)      |
-| `POST`   | `/api/trials`                   | Request a new trial session              |
-| `GET`    | `/api/trials/[trialId]`         | Get a specific trial session             |
-| `PATCH`  | `/api/trials/[trialId]`         | Update status (schedule, complete, etc.) |
-| `DELETE` | `/api/trials/[trialId]`         | Cancel a PENDING or SCHEDULED trial      |
-| `GET`    | `/api/trials/check-eligibility` | Check if consultee can request a trial   |
-| `GET`    | `/api/trials/stats`             | Trial session statistics                 |
+| Method   | Endpoint                        | Auth Required              | Purpose                                       |
+| -------- | ------------------------------- | -------------------------- | --------------------------------------------- |
+| `GET`    | `/api/trials`                   | Yes (session)              | List trials (paginated, filterable)            |
+| `POST`   | `/api/trials`                   | Yes (session)              | Request a new trial session                    |
+| `GET`    | `/api/trials/[trialId]`         | Yes (session)              | Get a specific trial session                   |
+| `PATCH`  | `/api/trials/[trialId]`         | Yes (session)              | Update status (schedule, complete, convert)    |
+| `DELETE` | `/api/trials/[trialId]`         | Yes (session)              | Cancel a PENDING or SCHEDULED trial            |
+| `GET`    | `/api/trials/check-eligibility` | Yes (session)              | Check if consultee can request a trial         |
+| `GET`    | `/api/trials/stats`             | Yes (session + ownership)  | Trial session statistics (own profile only)    |
+
+**Note**: `/api/trials/stats` was previously in `PUBLIC_API_PREFIXES` (no auth required). It now requires authentication and enforces an ownership check -- users can only view stats for their own consultant profile.

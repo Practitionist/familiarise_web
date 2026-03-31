@@ -64,7 +64,7 @@ graph TD
     Z --> AA[View Document Details]
     AA --> BB{Action?}
     BB -->|Review| CC[Update Review Status]
-    BB -->|Download| DD[Access File URL]
+    BB -->|Download| DD[Access Signed URL]
     BB -->|Delete| EE{Document Pending?}
     EE -->|No| FF[Cannot Delete]
     EE -->|Yes| GG[Delete from Storage]
@@ -187,19 +187,23 @@ documents/                                    # Main bucket
 
 ### 1. Bucket Management
 
+The `documents` bucket is configured as **private** (`public: false`). All file access requires signed URLs generated via `supabaseAdmin` (service role).
+
 ```typescript
 // Automatically creates bucket if it doesn't exist
 const ensureBucketExists = async (bucketName: string): Promise<boolean> => {
-  // Check existence → Create if missing → Configure permissions
+  // Check existence → Create if missing → Configure as private
 };
 ```
 
 **Features:**
 
 - **Auto-Detection**: Checks bucket existence before operations
-- **Auto-Creation**: Creates bucket with proper configuration if missing
-- **Permission Setup**: Configures public access and file type restrictions
+- **Auto-Creation**: Creates bucket with `public: false` configuration if missing
+- **Private by default**: No public URLs; all access via signed URLs
+- **Signed URL generation**: Uses `supabaseAdmin.storage.from('documents').createSignedUrl()` with service role
 - **Size Limits**: Enforces 10MB file size limit
+- **Service role required**: All storage operations use `supabaseAdmin` (not the anon client). If `SUPABASE_SERVICE_ROLE_KEY` is missing, the download proxy returns an explicit error
 
 ### 2. Folder Creation
 
@@ -360,7 +364,11 @@ sequenceDiagram
     Note over C,SB: Document Download/View
 
     C->>UI: Click download/view
-    UI->>SB: Access public file URL
+    UI->>API: Request signed URL
+    API->>SB: createSignedUrl() via supabaseAdmin
+    SB->>API: Signed URL (time-limited)
+    API->>UI: Return signed URL
+    UI->>SB: Access file via signed URL
     SB->>C: Stream file content
 ```
 
@@ -669,10 +677,13 @@ npm run scripts:cleanup-empty-folders:dev
 - **Appointment Isolation**: Users only access their appointment documents
 - **File Type Restrictions**: Only allow safe file types
 - **Size Limits**: Prevent storage abuse with file size limits
+- **Verification document limits**: Server-side limit of 10 documents per verification. Document submission validates ownership before connecting document IDs to a verification record.
 
 ### 2. Data Protection
 
-- **Public URLs**: Secure public URL generation
+- **Private Bucket**: The `documents` bucket is private (`public: false`). No direct public URL access.
+- **Signed URLs**: All document access uses time-limited signed URLs generated via `supabaseAdmin.storage.from('documents').createSignedUrl()`. The service role key (`SUPABASE_SERVICE_ROLE_KEY`) is required.
+- **Download Proxy**: The download API endpoint uses `supabaseAdmin` to generate signed URLs. If the service role key is not configured, the endpoint returns an explicit error rather than silently failing.
 - **File Scanning**: Virus scanning for uploaded files (future)
 - **Audit Logging**: Track all file operations
 - **Encryption**: At-rest encryption through Supabase
