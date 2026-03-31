@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { AppointmentsType, Prisma } from "@prisma/client";
+import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 
 export async function GET(request: NextRequest) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   const { searchParams } = new URL(request.url);
 
   const type = searchParams.get("type")?.toUpperCase();
@@ -25,6 +30,22 @@ export async function GET(request: NextRequest) {
     ?.toUpperCase();
   const webinarStatus = searchParams.get("webinarStatus")?.toUpperCase();
   const classStatus = searchParams.get("classStatus")?.toUpperCase();
+
+  // Non-privileged users must scope to their own data
+  if (!isPrivileged(session.user.role)) {
+    const hasOwnFilter =
+      (consultantProfileId &&
+        consultantProfileId === session.user.consultantProfileId) ||
+      (consulteeProfileId &&
+        consulteeProfileId === session.user.consulteeProfileId) ||
+      (userId && userId === session.user.id);
+    if (!hasOwnFilter) {
+      return NextResponse.json(
+        { error: "Forbidden: must filter by your own profile" },
+        { status: 403 },
+      );
+    }
+  }
 
   // Validate appointment type
   if (
@@ -405,6 +426,19 @@ async function getAppointments(
 }
 
 export async function POST(request: NextRequest) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
+  // Only privileged users (admin/staff) can directly create appointments.
+  // Normal booking goes through the checkout flow which has its own validation.
+  if (!isPrivileged(session.user.role)) {
+    return NextResponse.json(
+      { error: "Forbidden: appointment creation requires admin/staff role" },
+      { status: 403 },
+    );
+  }
+
   try {
     const body = await request.json();
     const { appointmentType, slotsOfAppointment, ...appointmentData } = body;

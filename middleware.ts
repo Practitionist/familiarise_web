@@ -45,6 +45,7 @@ const ROUTE_PATTERNS = {
     "/api/participants/", // Private: participant management for classes/webinars/etc.
     "/api/dashboard/", // Private: dashboard data routes
     "/api/trials/", // Private: trial session routes (public sub-routes exempted below)
+    "/api/slots/", // Private: appointment slot data and mutations
   ],
   // Note: /api/auth/ must remain public for BetterAuth to work
   // /api/user/consultants routes are public for explore page (verification filter enforced in API)
@@ -60,6 +61,8 @@ const ROUTE_PATTERNS = {
     "/api/plans/classes", // Public: browse and view class plans (sub-routes enforce their own auth)
     "/api/plans/webinars", // Public: browse and view webinar plans (sub-routes enforce their own auth)
     "/api/trials/stats", // Public: aggregate trial stats
+    "/api/slots/availability/", // Public: consultant availability for booking page
+    "/api/slots/availability-with-allocation/", // Public: consultant availability with allocation info
   ],
 };
 
