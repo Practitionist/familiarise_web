@@ -63,7 +63,8 @@ export async function POST(req: NextRequest) {
       event.payload?.refund?.entity?.id ||
       event.payload?.dispute?.entity?.id ||
       event.payload?.payout?.entity?.id ||
-      `razorpay_${Date.now()}`;
+      event.account_id ||
+      "unknown";
     const eventId = `${eventType}:${entityId}`;
 
     const { isNew } = await logWebhookEvent(

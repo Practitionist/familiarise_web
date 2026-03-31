@@ -275,7 +275,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
   try {
     const paymentForEmail = await prisma.payment.findUnique({
       where: { id: txResult.paymentId },
-      include: { user: { select: { name: true, email: true } } },
+      include: { user: { include: { consulteeProfile: true } } },
     });
     if (paymentForEmail) {
       await sendPaymentSuccessNotification(

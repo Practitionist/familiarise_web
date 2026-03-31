@@ -702,19 +702,22 @@ export async function handlePayoutWebhook(
       payoutStatus = PayoutStatus.PENDING;
   }
 
-  // Idempotency guard: if payout is already in a terminal state, skip.
-  // Duplicate webhook deliveries are normal in production (gateway retries).
-  if (
-    payout.status === PayoutStatus.COMPLETED ||
-    payout.status === PayoutStatus.CANCELLED
-  ) {
-    console.log(
-      `Payout ${payout.id} already in terminal state ${payout.status}, skipping duplicate ${status} webhook`,
-    );
-    return;
-  }
-
   await prisma.$transaction(async (tx) => {
+    // Idempotency guard inside transaction: re-read payout to prevent race
+    // condition where two concurrent webhooks both pass an outside-tx check.
+    const currentPayout = await tx.payout.findUnique({
+      where: { id: payout.id },
+    });
+    if (
+      currentPayout?.status === PayoutStatus.COMPLETED ||
+      currentPayout?.status === PayoutStatus.CANCELLED
+    ) {
+      console.log(
+        `Payout ${payout.id} already in terminal state ${currentPayout.status}, skipping duplicate ${status} webhook`,
+      );
+      return;
+    }
+
     // Update payout status
     await tx.payout.update({
       where: { id: payout.id },
