@@ -58,8 +58,9 @@ sequenceDiagram
     DB-->>PS: consultant list
 
     loop For each consultant
-        PS->>DB: Get consultant's READY earnings
-        DB-->>PS: earnings list
+        PS->>DB: BEGIN $transaction
+        PS->>DB: Re-query exact READY earnings (inside TX)
+        DB-->>PS: earnings list (authoritative)
 
         PS->>PS: Sum consultantShare amounts
 
@@ -83,14 +84,19 @@ sequenceDiagram
                     Note over DB: Needs admin approval
                 end
 
-                PS->>DB: Link earnings to payout
+                PS->>DB: Link earnings to payout by ID
                 Note over DB: Set payoutId on each earning
+                PS->>PS: Count-mismatch guard
+                Note over PS: Verify linked count == expected count
             end
         end
+        PS->>DB: COMMIT $transaction
     end
 
     PS-->>GH: Batch complete
 ```
+
+> **Batch Integrity (Mar 2026):** Each consultant's payout is now wrapped in a `$transaction` that re-queries exact READY earnings, sums them, creates the payout, and links earnings by ID -- all atomically. A count-mismatch guard ensures the number of linked earnings matches expectations, preventing partial batches from concurrent modifications.
 
 ### Eligibility Criteria
 
@@ -273,6 +279,8 @@ sequenceDiagram
     DB-->>PS: payout record
 
     alt Status: processed/succeeded
+        PS->>DB: Atomic updateMany with guard
+        Note over DB: WHERE status NOT IN<br/>(COMPLETED, CANCELLED)
         PS->>DB: Update payout status to COMPLETED
         PS->>DB: Set processedAt
         PS->>DB: Update linked earnings to PAID
@@ -289,6 +297,8 @@ sequenceDiagram
     PS-->>WH: Handled
     WH-->>PG: 200 OK
 ```
+
+> **Idempotency (Mar 2026):** `handlePayoutWebhook` now uses atomic `updateMany` with a `status: { notIn: [COMPLETED, CANCELLED] }` guard to prevent double-applying revenue on duplicate webhooks. If the payout has already reached a terminal state, the duplicate webhook is safely ignored.
 
 ### Webhook Events
 

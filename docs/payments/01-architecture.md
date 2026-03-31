@@ -35,6 +35,10 @@ The payment system supports multiple payment gateways (Stripe, Razorpay) with pl
 - **Two-Phase Refund Pattern**: Atomically claims amount before gateway call
 - **Reconciliation Crons**: Catch stuck records from crashes/timeouts
 - **Webhook Idempotency**: All handlers check if record already exists/processed
+- **Payout Webhook Idempotency** (Mar 2026): `handlePayoutWebhook` uses atomic `updateMany` with terminal-status guard to prevent double-applying revenue
+- **Razorpay Composite EventId** (Mar 2026): Webhook eventId formatted as `{eventType}:{entityId}` to prevent cross-event collisions
+- **Post-Commit Emails** (Mar 2026): Payment success notifications sent after transaction commits to prevent false confirmations on rollback
+- **Payout Batch Integrity** (Mar 2026): Each consultant's batch payout wrapped in `$transaction` with count-mismatch guard
 
 ---
 
@@ -672,8 +676,16 @@ RequestStatus:
                                  |
                                  v
 +-----------------------------------------------------------------------------------+
+|  Phase 1 (Transaction):                                                           |
 |  UPDATE PAYMENT STATUS = SUCCEEDED                                                |
+|  CONFIRM APPOINTMENT                                                              |
++-----------------------------------------------------------------------------------+
+                                        |
+                                        v
++-----------------------------------------------------------------------------------+
+|  Phase 2 (Post-Commit):                                                           |
 |  SEND PAYMENT SUCCESS EMAIL                                                       |
+|  (Moved outside transaction in Mar 2026 to prevent false emails on rollback)      |
 +-----------------------------------------------------------------------------------+
 ```
 

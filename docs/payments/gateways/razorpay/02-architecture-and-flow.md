@@ -181,6 +181,10 @@ In our system, these map to `PaymentStatus`: `PENDING` (created/authorized), `SU
 
 **Source**: `app/api/webhooks/razorpay/route.ts`
 
+### Webhook Idempotency (Mar 2026)
+
+Razorpay webhook eventId is now constructed as a **composite key**: `{eventType}:{entityId}` (e.g., `payment.captured:pay_abc123`). This prevents cross-event collisions where different event types for the same entity (e.g., `payment.captured` and `refund.created` both referencing the same payment) would previously share the same idempotency key and incorrectly deduplicate.
+
 ---
 
 ## Currency
