@@ -24,6 +24,7 @@ import {
 } from "@/utils/appointmentlock";
 import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
 import { isMinuteWithinWeeklySlot } from "@/utils/slotAllocation/slotTimeUtils";
+import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
 import {
   countUniqueParticipants,
   isUserEnrolled,
@@ -590,6 +591,8 @@ export async function validateSlotAvailability(
   // 1. Check for confirmed overlapping appointments FOR THIS CONSULTANT ONLY
   // FIX Bug #05: Use canonical overlap predicate that catches all 4 overlap shapes
   // (partial start, partial end, full containment, and exact match)
+  // FIX #540: Only check slots belonging to occupied (active) appointments.
+  // Cancelled/rejected/expired appointment slots should NOT block new bookings.
   const existingBooking = await tx.slotOfAppointment.findFirst({
     where: {
       AND: [
@@ -608,6 +611,12 @@ export async function validateSlotAvailability(
               },
             ]
           : []),
+        // FIX #540: Only count slots from active/occupied appointments
+        {
+          appointment: {
+            OR: buildOccupiedAppointmentFilter(),
+          },
+        },
       ],
     },
   });
@@ -958,6 +967,31 @@ async function revalidateInsideLock(
 
     // BUG-E: Re-validate plan still exists (could be deleted between initial validation and lock)
     await verifyPlanExistsInsideLock(tx, data.appointmentType, data.planId);
+
+    // FIX #548: Validate waitlist entry if this checkout originates from a waitlist offer.
+    // Verify the entry belongs to this user, is in NOTIFIED status, and hasn't expired.
+    if (
+      data.fromWaitlist &&
+      (data.appointmentType === "WEBINAR" || data.appointmentType === "CLASS")
+    ) {
+      const waitlistEntry = await tx.waitlist.findUnique({
+        where: { id: data.fromWaitlist },
+      });
+      if (!waitlistEntry) {
+        throw new Error("Waitlist entry not found");
+      }
+      if (waitlistEntry.userId !== userId) {
+        throw new Error("Waitlist entry does not belong to this user");
+      }
+      if (waitlistEntry.status !== "NOTIFIED") {
+        throw new Error(
+          "Waitlist offer is no longer valid (expired, cancelled, or already used)",
+        );
+      }
+      if (waitlistEntry.expiresAt && waitlistEntry.expiresAt < new Date()) {
+        throw new Error("Waitlist offer has expired");
+      }
+    }
 
     // Re-validate slot availability based on appointment type
     switch (data.appointmentType) {

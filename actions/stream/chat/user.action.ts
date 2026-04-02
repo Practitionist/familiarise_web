@@ -157,7 +157,8 @@ export const upsertUsersToStream = async (userIds: string[]) => {
 };
 
 /**
- * Enhanced user search with relationship status for Direct Message dialog
+ * Enhanced user search with relationship status for Direct Message dialog.
+ * Uses batched queries instead of per-user relationship checks to minimize DB round-trips.
  * @param searchTerm The term to search for (name or email)
  * @param currentUserId The current user's ID to exclude from results
  * @returns Users with relationship status information
@@ -171,54 +172,170 @@ export const searchUsersWithRelationships = async (
   const validatedUserId = userIdSchema.parse(currentUserId);
 
   try {
-    const users = await prisma.user.findMany({
-      where: {
-        AND: [
-          { id: { not: validatedUserId } },
-          {
-            NOT: [
-              { id: { startsWith: "recording-egress-" } },
-              { id: { startsWith: "system-" } },
-            ],
-          },
-          {
-            OR: [
-              { name: { contains: validatedTerm, mode: "insensitive" } },
-              { email: { contains: validatedTerm, mode: "insensitive" } },
-            ],
-          },
-        ],
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        image: true,
-        role: true,
-        consultantProfileId: true,
-        consulteeProfileId: true,
-      },
-      take: 20,
-      orderBy: [{ name: "asc" }],
-    });
-
-    // Check relationships in parallel for better performance
-    const usersWithRelationships = await Promise.all(
-      users.map(async (user) => {
-        const hasRelationship = await checkUserRelationship(
-          validatedUserId,
-          user.id,
-        );
-        return {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          image: user.image,
-          role: user.role,
-          hasRelationship,
-        };
+    // Fetch current user's profile IDs once
+    const [currentUser, users] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: validatedUserId },
+        select: { consultantProfileId: true, consulteeProfileId: true },
       }),
-    );
+      prisma.user.findMany({
+        where: {
+          AND: [
+            { id: { not: validatedUserId } },
+            {
+              NOT: [
+                { id: { startsWith: "recording-egress-" } },
+                { id: { startsWith: "system-" } },
+              ],
+            },
+            {
+              OR: [
+                { name: { contains: validatedTerm, mode: "insensitive" } },
+                { email: { contains: validatedTerm, mode: "insensitive" } },
+              ],
+            },
+          ],
+        },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+          role: true,
+          consultantProfileId: true,
+          consulteeProfileId: true,
+        },
+        take: 20,
+        orderBy: [{ name: "asc" }],
+      }),
+    ]);
+
+    if (!currentUser || users.length === 0) {
+      return users.map((u) => ({
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        image: u.image,
+        role: u.role,
+        hasRelationship: false,
+      }));
+    }
+
+    // Batch: find all related user IDs in a few queries instead of N+1
+    const resultUserIds = users.map((u) => u.id);
+    const resultConsultantProfileIds = users
+      .map((u) => u.consultantProfileId)
+      .filter((id): id is string => !!id);
+    const resultConsulteeProfileIds = users
+      .map((u) => u.consulteeProfileId)
+      .filter((id): id is string => !!id);
+
+    const relatedUserIds = new Set<string>();
+
+    // Build parallel batched relationship queries
+    const relationshipQueries: Promise<void>[] = [];
+
+    // Current user is consultant → find consultees among results
+    if (currentUser.consultantProfileId && resultConsulteeProfileIds.length > 0) {
+      relationshipQueries.push(
+        prisma.consultation
+          .findMany({
+            where: {
+              consultationPlan: { consultantProfileId: currentUser.consultantProfileId },
+              requestedById: { in: resultConsulteeProfileIds },
+              requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+            },
+            select: { requestedBy: { select: { user: { select: { id: true } } } } },
+          })
+          .then((rows) => rows.forEach((r) => {
+            if (r.requestedBy?.user?.id) relatedUserIds.add(r.requestedBy.user.id);
+          })),
+        // Subscriptions are time-bounded (have a scheduling period), so we must
+        // filter by schedulingPeriodEndsAt to exclude expired ones. Consultations
+        // are per-event with no time window, so status alone is sufficient.
+        prisma.subscription
+          .findMany({
+            where: {
+              subscriptionPlan: { consultantProfileId: currentUser.consultantProfileId },
+              requestedById: { in: resultConsulteeProfileIds },
+              requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+              schedulingPeriodEndsAt: { gte: new Date() },
+            },
+            select: { requestedBy: { select: { user: { select: { id: true } } } } },
+          })
+          .then((rows) => rows.forEach((r) => {
+            if (r.requestedBy?.user?.id) relatedUserIds.add(r.requestedBy.user.id);
+          })),
+      );
+    }
+
+    // Current user is consultee → find consultants among results
+    if (currentUser.consulteeProfileId && resultConsultantProfileIds.length > 0) {
+      relationshipQueries.push(
+        prisma.consultation
+          .findMany({
+            where: {
+              consultationPlan: { consultantProfileId: { in: resultConsultantProfileIds } },
+              requestedById: currentUser.consulteeProfileId,
+              requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+            },
+            select: {
+              consultationPlan: {
+                select: { consultantProfile: { select: { user: { select: { id: true } } } } },
+              },
+            },
+          })
+          .then((rows) => rows.forEach((r) => {
+            if (r.consultationPlan?.consultantProfile?.user?.id)
+              relatedUserIds.add(r.consultationPlan.consultantProfile.user.id);
+          })),
+        prisma.subscription
+          .findMany({
+            where: {
+              subscriptionPlan: { consultantProfileId: { in: resultConsultantProfileIds } },
+              requestedById: currentUser.consulteeProfileId,
+              requestStatus: { in: ["APPROVED", "SCHEDULED"] },
+              schedulingPeriodEndsAt: { gte: new Date() },
+            },
+            select: {
+              subscriptionPlan: {
+                select: { consultantProfile: { select: { user: { select: { id: true } } } } },
+              },
+            },
+          })
+          .then((rows) => rows.forEach((r) => {
+            if (r.subscriptionPlan?.consultantProfile?.user?.id)
+              relatedUserIds.add(r.subscriptionPlan.consultantProfile.user.id);
+          })),
+      );
+    }
+
+    // Shared appointments (webinars, classes) - single batched query
+    if (resultUserIds.length > 0) {
+      relationshipQueries.push(
+        prisma.slotOfAppointment
+          .findMany({
+            where: {
+              user: { some: { id: validatedUserId } },
+              AND: { user: { some: { id: { in: resultUserIds } } } },
+            },
+            select: { user: { where: { id: { in: resultUserIds } }, select: { id: true } } },
+          })
+          .then((slots) => slots.forEach((s) => s.user.forEach((u) => relatedUserIds.add(u.id)))),
+      );
+    }
+
+    await Promise.all(relationshipQueries);
+
+    // Map results with batch-resolved relationship status
+    const usersWithRelationships = users.map((user) => ({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      image: user.image,
+      role: user.role,
+      hasRelationship: relatedUserIds.has(user.id),
+    }));
 
     // Sort by relationship status (connected users first), then by name
     usersWithRelationships.sort((a, b) => {
@@ -230,6 +347,7 @@ export const searchUsersWithRelationships = async (
     streamLogger.debug("User search completed", {
       term: validatedTerm,
       resultCount: usersWithRelationships.length,
+      relatedCount: relatedUserIds.size,
     });
 
     return usersWithRelationships;
@@ -422,7 +540,8 @@ async function checkSharedAppointments(
 }
 
 /**
- * Legacy search function for backward compatibility
+ * @deprecated Use searchUsersWithRelationships instead — this performs a global
+ * unscoped search that exposes PII of arbitrary users.
  * @param searchTerm The term to search for (name or email)
  * @returns The users that match the search term
  */

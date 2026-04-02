@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { AppointmentsType, Prisma } from "@prisma/client";
+import { AppointmentsType, Prisma, RequestStatus } from "@prisma/client";
+import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 
 export async function GET(request: NextRequest) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   const { searchParams } = new URL(request.url);
 
   const type = searchParams.get("type")?.toUpperCase();
@@ -26,6 +31,22 @@ export async function GET(request: NextRequest) {
   const webinarStatus = searchParams.get("webinarStatus")?.toUpperCase();
   const classStatus = searchParams.get("classStatus")?.toUpperCase();
 
+  // Non-privileged users must scope to their own data
+  if (!isPrivileged(session.user.role)) {
+    const hasOwnFilter =
+      (consultantProfileId &&
+        consultantProfileId === session.user.consultantProfileId) ||
+      (consulteeProfileId &&
+        consulteeProfileId === session.user.consulteeProfileId) ||
+      (userId && userId === session.user.id);
+    if (!hasOwnFilter) {
+      return NextResponse.json(
+        { error: "Forbidden: must filter by your own profile" },
+        { status: 403 },
+      );
+    }
+  }
+
   // Validate appointment type
   if (
     type &&
@@ -37,14 +58,23 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // Validate statuses — consultations/subscriptions use RequestStatus,
-  // webinars/classes use their own event status enums
+  // Validate statuses — consultation/subscription use RequestStatus enum,
+  // webinar/class use their own event lifecycle statuses
   const validRequestStatuses = [
-    "PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED",
-    "COMPLETED", "REJECTED", "CANCELLED", "EXPIRED",
+    "PENDING",
+    "APPROVED",
+    "APPROVED_PENDING_PAYMENT",
+    "SCHEDULED",
+    "COMPLETED",
+    "REJECTED",
+    "CANCELLED",
+    "EXPIRED",
   ];
   const validEventStatuses = [
-    "SCHEDULED", "IN_PROGRESS", "COMPLETED", "CANCELLED",
+    "SCHEDULED",
+    "IN_PROGRESS",
+    "COMPLETED",
+    "CANCELLED",
   ];
   if (consultationStatus && !validRequestStatuses.includes(consultationStatus)) {
     return NextResponse.json(
@@ -81,10 +111,10 @@ export async function GET(request: NextRequest) {
       consulteeProfileId,
       userId,
       {
-        consultation: consultationStatus,
-        subscription: subscriptionStatus,
-        webinar: webinarStatus,
-        class: classStatus,
+        consultation: consultationStatus || undefined,
+        subscription: subscriptionStatus || undefined,
+        webinar: webinarStatus || undefined,
+        class: classStatus || undefined,
       },
       startDate,
       endDate,
@@ -267,30 +297,39 @@ async function getAppointments(
     whereClause.subscription = { id: eventIds.subscriptionId };
   }
 
-  // Apply status filters
+  // FIX #551: Apply status filters that were previously parsed but never used.
+  // Build an OR clause so appointments matching ANY of the provided status
+  // filters are returned (allows fetching e.g., APPROVED consultations AND
+  // SCHEDULED webinars in one call).
+  const statusFilters: Prisma.AppointmentWhereInput[] = [];
   if (statuses?.consultation) {
-    whereClause.consultation = {
-      ...(whereClause.consultation as Prisma.ConsultationWhereInput),
-      requestStatus: statuses.consultation as any,
-    };
+    statusFilters.push({
+      consultation: { requestStatus: statuses.consultation as RequestStatus },
+    });
   }
   if (statuses?.subscription) {
-    whereClause.subscription = {
-      ...(whereClause.subscription as Prisma.SubscriptionWhereInput),
-      requestStatus: statuses.subscription as any,
-    };
+    statusFilters.push({
+      subscription: { requestStatus: statuses.subscription as RequestStatus },
+    });
   }
   if (statuses?.webinar) {
-    whereClause.webinar = {
-      ...(whereClause.webinar as Prisma.WebinarWhereInput),
-      status: statuses.webinar as any,
-    };
+    statusFilters.push({
+      webinar: { status: statuses.webinar as Prisma.EnumWebinarStatusFilter },
+    });
   }
   if (statuses?.class) {
-    whereClause.class = {
-      ...(whereClause.class as Prisma.ClassWhereInput),
-      status: statuses.class as any,
-    };
+    statusFilters.push({
+      class: { status: statuses.class as Prisma.EnumClassStatusFilter },
+    });
+  }
+  if (statusFilters.length > 0) {
+    // Combine with existing AND clauses
+    const existingAnd = whereClause.AND
+      ? Array.isArray(whereClause.AND)
+        ? whereClause.AND
+        : [whereClause.AND]
+      : [];
+    whereClause.AND = [...existingAnd, { OR: statusFilters }];
   }
 
   const appointments = await prisma.appointment.findMany({
@@ -418,6 +457,19 @@ async function getAppointments(
 }
 
 export async function POST(request: NextRequest) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
+  // Only privileged users (admin/staff) can directly create appointments.
+  // Normal booking goes through the checkout flow which has its own validation.
+  if (!isPrivileged(session.user.role)) {
+    return NextResponse.json(
+      { error: "Forbidden: appointment creation requires admin/staff role" },
+      { status: 403 },
+    );
+  }
+
   try {
     const body = await request.json();
     const { appointmentType, slotsOfAppointment, ...appointmentData } = body;
