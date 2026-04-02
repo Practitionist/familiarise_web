@@ -1,4 +1,14 @@
-import { Clock, AlertCircle, CheckCircle, X } from "lucide-react";
+import {
+  Clock,
+  AlertCircle,
+  CheckCircle,
+  X,
+  FileText,
+  FileImage,
+  FileType,
+  FileSpreadsheet,
+  FileArchive,
+} from "lucide-react";
 import { createElement } from "react";
 
 /**
@@ -55,4 +65,62 @@ export function getStatusIcon(status: string) {
     default:
       return createElement(Clock, { className: "h-4 w-4 text-gray-500" });
   }
+}
+
+/**
+ * Get human-readable label for document review status enum
+ */
+export function getStatusLabel(status: string): string {
+  switch (status) {
+    case "PENDING":
+      return "Pending";
+    case "IN_REVIEW":
+      return "In Review";
+    case "APPROVED":
+      return "Approved";
+    case "REJECTED":
+      return "Rejected";
+    case "NEEDS_REVISION":
+      return "Needs Revision";
+    default:
+      return status;
+  }
+}
+
+/**
+ * Get Lucide icon element for a document based on its MIME type
+ */
+export function getDocumentTypeIcon(mimeType: string) {
+  if (mimeType === "application/pdf") {
+    return createElement(FileText, { className: "h-5 w-5 text-red-500" });
+  }
+  if (mimeType.startsWith("image/")) {
+    return createElement(FileImage, { className: "h-5 w-5 text-green-500" });
+  }
+  if (
+    mimeType ===
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    mimeType === "application/msword"
+  ) {
+    return createElement(FileType, { className: "h-5 w-5 text-blue-500" });
+  }
+  if (
+    mimeType ===
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+    mimeType === "application/vnd.ms-excel"
+  ) {
+    return createElement(FileSpreadsheet, {
+      className: "h-5 w-5 text-green-600",
+    });
+  }
+  if (
+    mimeType === "application/zip" ||
+    mimeType === "application/x-rar-compressed" ||
+    mimeType === "application/gzip"
+  ) {
+    return createElement(FileArchive, {
+      className: "h-5 w-5 text-yellow-500",
+    });
+  }
+  return createElement(FileText, { className: "h-5 w-5 text-gray-400" });
 }
