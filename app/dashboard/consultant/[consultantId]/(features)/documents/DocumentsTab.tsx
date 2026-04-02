@@ -28,6 +28,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { DocumentsTabProps, IDocument } from "../../types";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -40,6 +46,7 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
+  MoreHorizontal,
 } from "lucide-react";
 import { ConsultantResponseUpload } from "./ConsultantResponseUpload";
 import {
@@ -410,24 +417,24 @@ export function DocumentsTab({
         </div>
       )}
 
-      <div className="overflow-x-auto -mx-6 px-6">
-        <Table className="table-fixed w-full">
+      <div className="overflow-x-auto">
+        <Table className="min-w-[900px]">
           <TableHeader>
             <TableRow>
               {/* Fix #8: Checkbox column header */}
-              <TableHead className="w-[40px]">
+              <TableHead className="w-10">
                 <Checkbox
                   checked={allOnPageSelected && paginatedDocuments.length > 0}
                   onCheckedChange={toggleSelectAll}
                   aria-label="Select all documents on this page"
                 />
               </TableHead>
-              <TableHead className="w-[28%]">Document</TableHead>
-              <TableHead className="w-[12%]">Client</TableHead>
-              <TableHead className="w-[15%]">Appointment</TableHead>
-              <TableHead className="w-[12%]">Upload Date</TableHead>
-              <TableHead className="w-[12%]">Status</TableHead>
-              <TableHead className="w-[21%]">Actions</TableHead>
+              <TableHead>Document</TableHead>
+              <TableHead>Client</TableHead>
+              <TableHead>Appointment</TableHead>
+              <TableHead>Upload Date</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -505,44 +512,31 @@ export function DocumentsTab({
                   )}
                 </TableCell>
                 <TableCell>
-                  <div className="flex flex-wrap gap-1">
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="h-8 w-8 bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200"
-                      onClick={() => handleView(document)}
-                      title="View"
-                    >
-                      <Eye className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="h-8 w-8 bg-gray-50 hover:bg-gray-100"
-                      onClick={() => handleDownload(document)}
-                      title="Download"
-                    >
-                      <Download className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="h-8 w-8 bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-200"
-                      onClick={() => handleUploadResponse(document)}
-                      title="Upload Response"
-                    >
-                      <Reply className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="default"
-                      size="sm"
-                      className="bg-green-600 hover:bg-green-700"
-                      onClick={() => handleReviewClick(document)}
-                    >
-                      <MessageSquare className="h-4 w-4 mr-1" />
-                      Review
-                    </Button>
-                  </div>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 cursor-pointer">
+                        <MoreHorizontal className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem className="cursor-pointer" onClick={() => handleView(document)}>
+                        <Eye className="h-4 w-4 mr-2" />
+                        View
+                      </DropdownMenuItem>
+                      <DropdownMenuItem className="cursor-pointer" onClick={() => handleDownload(document)}>
+                        <Download className="h-4 w-4 mr-2" />
+                        Download
+                      </DropdownMenuItem>
+                      <DropdownMenuItem className="cursor-pointer" onClick={() => handleUploadResponse(document)}>
+                        <Reply className="h-4 w-4 mr-2" />
+                        Upload Response
+                      </DropdownMenuItem>
+                      <DropdownMenuItem className="cursor-pointer" onClick={() => handleReviewClick(document)}>
+                        <MessageSquare className="h-4 w-4 mr-2" />
+                        Review
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </TableCell>
               </TableRow>
             ))}
