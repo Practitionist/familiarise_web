@@ -31,7 +31,7 @@ export function DashboardNavbar({
 }: DashboardNavbarProps) {
   return (
     <div
-      className="flex h-16 items-center justify-end gap-2 px-6 border-b border-zinc-200/50 bg-white/80 backdrop-blur-xl"
+      className="flex h-16 items-center justify-end gap-2 px-6 border-b border-zinc-200 bg-white"
       style={{ overflow: "visible" }}
     >
       {/* Left spacer - future home for breadcrumbs */}

@@ -305,7 +305,7 @@ export function DocumentsTab({
   };
 
   return (
-    <div className="bg-white p-6">
+    <div className="bg-white p-6 overflow-hidden">
       {/* Fix #2 + #5: h1 heading with badge count */}
       <div className="mb-6">
         <div className="flex items-center gap-3">
