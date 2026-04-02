@@ -35,12 +35,20 @@ export interface RecordingData {
   playbackUrl: string | null;
   thumbnailUrl: string | null;
   resolution: string | null;
+  fileSize: number | null;
   streamUrlExpiresAt: string | null;
   transferredAt: string | null;
   planType: "webinar" | "class" | null;
   planId: string | null;
   planTitle: string | null;
   createdAt: string;
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  if (bytes < 1024 * 1024 * 1024)
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
 interface RecordingCardProps {
@@ -188,6 +196,11 @@ export function RecordingCard({ recording, onTransfer }: RecordingCardProps) {
               {recording.resolution}
             </span>
           )}
+          {recording.fileSize && (
+            <span className="text-xs bg-muted px-2 py-0.5 rounded">
+              {formatFileSize(recording.fileSize)}
+            </span>
+          )}
         </div>
 
         {/* Expiration warning */}
@@ -275,6 +288,7 @@ export function RecordingCard({ recording, onTransfer }: RecordingCardProps) {
               </Tooltip>
             </TooltipProvider>
           )}
+
         </div>
       </CardContent>
     </Card>

@@ -43,13 +43,19 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     const { searchParams } = new URL(req.url);
     const type = searchParams.get("type") as "webinar" | "class" | null;
     const status = searchParams.get("status") as RecordingStatus | null;
+    const search = searchParams.get("search") || undefined;
+    const page = parseInt(searchParams.get("page") || "1");
+    const limit = parseInt(searchParams.get("limit") || "12");
 
     // Get recordings with database-level filtering
-    const recordings = await RecordingService.getConsultantRecordings(
+    const { recordings, total } = await RecordingService.getConsultantRecordings(
       consultantId,
       {
         type: type || undefined,
         status: status || undefined,
+        search,
+        page,
+        limit,
       },
     );
 
@@ -82,6 +88,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         playbackUrl: await RecordingTransferService.getBestRecordingUrl(recording),
         thumbnailUrl: recording.thumbnailUrl,
         resolution: recording.resolution,
+        fileSize: recording.fileSize ? Number(recording.fileSize) : null,
         streamUrlExpiresAt: recording.streamUrlExpiresAt,
         transferredAt: recording.transferredAt,
         planType,
@@ -93,7 +100,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({
       recordings: formattedRecordings,
-      total: formattedRecordings.length,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
     });
   } catch (error) {
     console.error("Error getting consultant recordings:", error);

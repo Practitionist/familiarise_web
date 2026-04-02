@@ -246,16 +246,22 @@ export class RecordingService {
   /**
    * Get all recordings for a consultant
    * @param consultantProfileId The consultant profile ID
-   * @param filters Optional filters for type and status
+   * @param filters Optional filters for type, status, search, and pagination
    */
   static async getConsultantRecordings(
     consultantProfileId: string,
     filters?: {
       type?: "webinar" | "class";
       status?: RecordingStatus;
+      search?: string;
+      page?: number;
+      limit?: number;
     },
-  ): Promise<ConsultantRecordingWithDetails[]> {
+  ): Promise<{ recordings: ConsultantRecordingWithDetails[]; total: number }> {
     try {
+      const page = filters?.page ?? 1;
+      const limit = filters?.limit ?? 12;
+
       // Build type-specific conditions based on filter
       const typeConditions = [];
 
@@ -296,23 +302,36 @@ export class RecordingService {
         ? { status: filters.status }
         : { status: { notIn: ["FAILED", "EXPIRED"] as RecordingStatus[] } };
 
-      const recordings = await prisma.recording.findMany({
-        where: {
-          OR: typeConditions,
-          ...statusFilter,
-        },
-        include: consultantRecordingInclude,
-        orderBy: {
-          recordedAt: "desc",
-        },
-      });
+      // Build search filter
+      const searchFilter = filters?.search
+        ? { title: { contains: filters.search, mode: "insensitive" as const } }
+        : {};
 
-      return recordings;
+      const where = {
+        OR: typeConditions,
+        ...statusFilter,
+        ...searchFilter,
+      };
+
+      const [recordings, total] = await Promise.all([
+        prisma.recording.findMany({
+          where,
+          include: consultantRecordingInclude,
+          orderBy: {
+            recordedAt: "desc",
+          },
+          skip: (page - 1) * limit,
+          take: limit,
+        }),
+        prisma.recording.count({ where }),
+      ]);
+
+      return { recordings, total };
     } catch (error) {
       streamLogger.error("Failed to get consultant recordings", error, {
         consultantProfileId,
       });
-      return [];
+      return { recordings: [], total: 0 };
     }
   }
 
