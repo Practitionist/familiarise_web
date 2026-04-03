@@ -5,6 +5,12 @@ import {
   validateAllSlotsDetailed,
   getSlotStatistics,
 } from "@/utils/timeSlotValidation";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { SlotsType, ValidationFeedback } from "@/utils/schedule/types";
 
 interface SlotValidationFeedbackProps {
@@ -42,14 +48,23 @@ export function SlotValidationFeedback({
   return (
     <div className={`p-3 rounded-lg bg-muted/50 border ${className}`}>
       <div className="flex items-center justify-between">
-        <div className="text-sm text-muted-foreground">
-          {feedback.validSlots} valid slot
-          {feedback.validSlots !== 1 ? "s" : ""}
-          {feedback.totalDurationHours > 0 &&
-            ` (${feedback.totalDurationHours}h total)`}
-          {feedback.overnightSlots > 0 &&
-            `, ${feedback.overnightSlots} overnight`}
-        </div>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="text-sm text-muted-foreground cursor-help">
+                {feedback.validSlots} valid slot
+                {feedback.validSlots !== 1 ? "s" : ""}
+                {feedback.totalDurationHours > 0 &&
+                  ` (${feedback.totalDurationHours}h total)`}
+                {feedback.overnightSlots > 0 &&
+                  `, ${feedback.overnightSlots} overnight`}
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Slots with no time conflicts and valid start/end times</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
         {feedback.isValid ? (
           <span className="text-sm text-green-600 dark:text-green-400">
             Ready to proceed

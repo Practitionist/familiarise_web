@@ -1342,75 +1342,75 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
               </Label>
               <RadioGroupItem id="WEEKLY" value={ScheduleType.WEEKLY} />
             </div>
-            <div
-              className={`space-y-4 ${scheduleType !== ScheduleType.WEEKLY ? "opacity-50 pointer-events-none" : ""}`}
-            >
-              {DAYS_OF_WEEK.map((day) => (
-                <div key={day} className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <Label>{formatDayDisplay(day)}</Label>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleAddSlot(day.toLowerCase())}
-                    >
-                      Add Slot
-                    </Button>
-                  </div>
-                  {weeklySlots[day.toLowerCase()]?.map((slot, slotIndex) => (
-                    <div key={`${day}-${slotIndex}`} className="space-y-2">
-                      <div className="grid grid-cols-7 gap-2 items-center">
-                        <Input
-                          type="time"
-                          value={slot.startTime}
-                          onChange={(e) =>
-                            handleUpdateSlot(
-                              day.toLowerCase(),
-                              slotIndex,
-                              "startTime",
-                              e.target.value,
-                            )
-                          }
-                          className={`col-span-3 ${!slot.isValid ? "border-red-500" : ""}`}
-                          step="900"
-                        />
-                        <span className="text-center">to</span>
-                        <Input
-                          type="time"
-                          value={slot.endTime}
-                          onChange={(e) =>
-                            handleUpdateSlot(
-                              day.toLowerCase(),
-                              slotIndex,
-                              "endTime",
-                              e.target.value,
-                            )
-                          }
-                          className={`col-span-2 ${!slot.isValid ? "border-red-500" : ""}`}
-                          step="900"
-                        />
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleDeleteSlot(day.toLowerCase(), slotIndex)
-                          }
-                          className="p-1 hover:bg-zinc-100 rounded"
-                          aria-label={`Delete slot ${slotIndex + 1} for ${day}`}
-                        >
-                          <TrashIcon className="w-5 h-5" />
-                        </button>
-                      </div>
-                      {!slot.isValid && slot.errorMessage && (
-                        <p className="text-red-500 text-sm">
-                          {slot.errorMessage}
-                        </p>
-                      )}
+            {scheduleType === ScheduleType.WEEKLY && (
+              <div className="space-y-4">
+                {DAYS_OF_WEEK.map((day) => (
+                  <div key={day} className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <Label>{formatDayDisplay(day)}</Label>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleAddSlot(day.toLowerCase())}
+                      >
+                        Add Slot
+                      </Button>
                     </div>
-                  ))}
-                </div>
-              ))}
-            </div>
+                    {weeklySlots[day.toLowerCase()]?.map((slot, slotIndex) => (
+                      <div key={`${day}-${slotIndex}`} className="space-y-2">
+                        <div className="grid grid-cols-7 gap-2 items-center">
+                          <Input
+                            type="time"
+                            value={slot.startTime}
+                            onChange={(e) =>
+                              handleUpdateSlot(
+                                day.toLowerCase(),
+                                slotIndex,
+                                "startTime",
+                                e.target.value,
+                              )
+                            }
+                            className={`col-span-3 ${!slot.isValid ? "border-red-500" : ""}`}
+                            step="900"
+                          />
+                          <span className="text-center">to</span>
+                          <Input
+                            type="time"
+                            value={slot.endTime}
+                            onChange={(e) =>
+                              handleUpdateSlot(
+                                day.toLowerCase(),
+                                slotIndex,
+                                "endTime",
+                                e.target.value,
+                              )
+                            }
+                            className={`col-span-2 ${!slot.isValid ? "border-red-500" : ""}`}
+                            step="900"
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleDeleteSlot(day.toLowerCase(), slotIndex)
+                            }
+                            className="p-1 hover:bg-zinc-100 rounded"
+                            aria-label={`Delete slot ${slotIndex + 1} for ${day}`}
+                          >
+                            <TrashIcon className="w-5 h-5" />
+                          </button>
+                        </div>
+                        {!slot.isValid && slot.errorMessage && (
+                          <p className="text-red-500 text-sm">
+                            {slot.errorMessage}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Custom Schedule */}
@@ -1425,10 +1425,9 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
               </Label>
               <RadioGroupItem id="CUSTOM" value={ScheduleType.CUSTOM} />
             </div>
-            <div
-              className={`space-y-4 ${scheduleType !== ScheduleType.CUSTOM ? "opacity-50 pointer-events-none" : ""}`}
-            >
-              <div className="calendar-container bg-white border p-4 rounded-lg">
+            {scheduleType === ScheduleType.CUSTOM && (
+              <div className="space-y-4">
+                <div className="calendar-container bg-white border p-4 rounded-lg">
                 <div className="flex justify-between items-center mb-4">
                   <button
                     type="button"
@@ -1539,7 +1538,8 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                     </div>
                   );
                 })}
-            </div>
+              </div>
+            )}
           </div>
         </RadioGroup>
       </div>
