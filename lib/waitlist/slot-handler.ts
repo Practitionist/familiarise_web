@@ -64,16 +64,24 @@ export async function handleSlotOpening(params: SlotOpeningParams): Promise<{
         now.getTime() + NOTIFICATION_WINDOW_HOURS * 60 * 60 * 1000,
       );
 
-      // Update waitlist entry to NOTIFIED
-      await prisma.waitlist.update({
-        where: { id: nextInQueue.id },
+      // Use updateMany with a status guard to prevent double-notification under concurrent
+      // slot openings. If two calls race on the same top-of-queue user, only one updateMany
+      // will match (the other sees status already = NOTIFIED and returns count=0).
+      const updated = await prisma.waitlist.updateMany({
+        where: { id: nextInQueue.id, status: WaitlistStatus.WAITING },
         data: {
           status: WaitlistStatus.NOTIFIED,
           notifiedAt: now,
           expiresAt,
-          position: null, // Clear position since they're no longer in the queue
         },
       });
+
+      if (updated.count === 0) {
+        // This entry was already claimed by a concurrent slot-opening call.
+        // Decrement i so we retry this iteration and pick the next person in queue.
+        i--;
+        continue;
+      }
 
       // Send notification email
       if (nextInQueue.user.email) {
@@ -450,6 +458,14 @@ export async function joinWaitlist(params: {
     return {
       success: false,
       message: "Either webinarId or classId must be provided",
+    };
+  }
+
+  // XOR: exactly one event type must be specified
+  if (webinarId && classId) {
+    return {
+      success: false,
+      message: "Provide either webinarId or classId, not both",
     };
   }
 

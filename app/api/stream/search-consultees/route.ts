@@ -149,7 +149,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // 3. Get attendees from webinars
+    // 3. Get attendees from webinars (only BOOKED/WAITING/NOTIFIED waitlist users)
     const webinars = await prisma.webinar.findMany({
       where: {
         webinarPlan: {
@@ -161,6 +161,9 @@ export async function GET(req: NextRequest) {
       },
       include: {
         waitlist: {
+          where: {
+            status: { in: ["BOOKED", "WAITING", "NOTIFIED"] },
+          },
           include: {
             user: {
               select: {
@@ -197,7 +200,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // 4. Get attendees from classes
+    // 4. Get attendees from classes (only BOOKED/WAITING/NOTIFIED waitlist users)
     const classes = await prisma.class.findMany({
       where: {
         classPlan: {
@@ -209,6 +212,9 @@ export async function GET(req: NextRequest) {
       },
       include: {
         waitlist: {
+          where: {
+            status: { in: ["BOOKED", "WAITING", "NOTIFIED"] },
+          },
           include: {
             user: {
               select: {

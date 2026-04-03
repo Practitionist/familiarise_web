@@ -24,6 +24,7 @@ import {
 } from "@/utils/appointmentlock";
 import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
 import { isMinuteWithinWeeklySlot } from "@/utils/slotAllocation/slotTimeUtils";
+import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
 import {
   countUniqueParticipants,
   isUserEnrolled,
@@ -396,7 +397,15 @@ export async function calculateAmountAndValidate(
 
         // Calculate discounted amount with maxDiscount cap
         if (discount.discountType === "PERCENTAGE") {
-          let discountAmount = amount * (discount.discountValue / 100);
+          // Guard: discountValue must be 1–100 for PERCENTAGE (data integrity check)
+          if (discount.discountValue < 1 || discount.discountValue > 100) {
+            throw new Error(
+              `Invalid discount code: percentage value must be between 1 and 100, got ${discount.discountValue}`,
+            );
+          }
+          let discountAmount = Math.round(
+            amount * (discount.discountValue / 100),
+          );
           // Apply maxDiscount cap if set
           if (
             discount.maxDiscount !== null &&
@@ -442,6 +451,17 @@ export async function calculateAmountAndValidate(
         creditsApplied = Math.min(totalAvailable, amount);
         amount = amount - creditsApplied;
       }
+    }
+
+    // Guard: reject amounts in the 1-99 paise range (> ₹0 but < ₹1).
+    // Razorpay requires a minimum order value of ₹1 (100 paise). An amount of exactly 0
+    // is allowed — it triggers the mock/zero-amount payment path (free tier, full-credit cover).
+    const MINIMUM_CHECKOUT_AMOUNT_PAISE = 100;
+    if (amount > 0 && amount < MINIMUM_CHECKOUT_AMOUNT_PAISE) {
+      throw new Error(
+        `Final checkout amount (${amount} paise) is below the ₹1 minimum after discounts and credits. ` +
+          `Please adjust the discount or use a free-session mechanism for zero-price bookings.`,
+      );
     }
 
     return {
@@ -571,6 +591,8 @@ export async function validateSlotAvailability(
   // 1. Check for confirmed overlapping appointments FOR THIS CONSULTANT ONLY
   // FIX Bug #05: Use canonical overlap predicate that catches all 4 overlap shapes
   // (partial start, partial end, full containment, and exact match)
+  // FIX #540: Only check slots belonging to occupied (active) appointments.
+  // Cancelled/rejected/expired appointment slots should NOT block new bookings.
   const existingBooking = await tx.slotOfAppointment.findFirst({
     where: {
       AND: [
@@ -589,6 +611,12 @@ export async function validateSlotAvailability(
               },
             ]
           : []),
+        // FIX #540: Only count slots from active/occupied appointments
+        {
+          appointment: {
+            OR: buildOccupiedAppointmentFilter(),
+          },
+        },
       ],
     },
   });
@@ -939,6 +967,31 @@ async function revalidateInsideLock(
 
     // BUG-E: Re-validate plan still exists (could be deleted between initial validation and lock)
     await verifyPlanExistsInsideLock(tx, data.appointmentType, data.planId);
+
+    // FIX #548: Validate waitlist entry if this checkout originates from a waitlist offer.
+    // Verify the entry belongs to this user, is in NOTIFIED status, and hasn't expired.
+    if (
+      data.fromWaitlist &&
+      (data.appointmentType === "WEBINAR" || data.appointmentType === "CLASS")
+    ) {
+      const waitlistEntry = await tx.waitlist.findUnique({
+        where: { id: data.fromWaitlist },
+      });
+      if (!waitlistEntry) {
+        throw new Error("Waitlist entry not found");
+      }
+      if (waitlistEntry.userId !== userId) {
+        throw new Error("Waitlist entry does not belong to this user");
+      }
+      if (waitlistEntry.status !== "NOTIFIED") {
+        throw new Error(
+          "Waitlist offer is no longer valid (expired, cancelled, or already used)",
+        );
+      }
+      if (waitlistEntry.expiresAt && waitlistEntry.expiresAt < new Date()) {
+        throw new Error("Waitlist offer has expired");
+      }
+    }
 
     // Re-validate slot availability based on appointment type
     switch (data.appointmentType) {
@@ -1697,8 +1750,30 @@ export async function handleCheckout(
           });
 
           // Increment discount code usage count atomically (only after payment is created)
-          // This ensures count only increases when payment is successfully created
+          // This ensures count only increases when payment is successfully created.
+          // Re-validate maxUses inside the Serializable TX: two concurrent checkouts could
+          // both pass the check in calculateAmountAndValidate (non-Serializable TX) and
+          // both reach here. The Serializable re-read ensures only one succeeds.
           if (discountCodeId) {
+            const discountForIncrement = await tx.discountCode.findUnique({
+              where: { id: discountCodeId },
+              select: { maxUses: true, currentUses: true },
+            });
+
+            if (!discountForIncrement) {
+              throw new Error(
+                "Discount code is no longer available. Please remove the code and try again.",
+              );
+            }
+
+            if (
+              discountForIncrement.maxUses !== null &&
+              discountForIncrement.currentUses >= discountForIncrement.maxUses
+            ) {
+              throw new Error(
+                "Discount code has reached maximum uses — please remove the code and try again.",
+              );
+            }
             await tx.discountCode.update({
               where: { id: discountCodeId },
               data: { currentUses: { increment: 1 } },

@@ -14,7 +14,7 @@ import { MultiSessionEventCard } from "./components/MultiSessionEventCard";
 import type { SlotOfAppointment } from "@prisma/client";
 import type { TAppointment } from "@/types/appointment";
 import type { SlotWithMeetingSession } from "./types";
-import React, { useRef, useState, useEffect, useCallback } from "react";
+import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -22,9 +22,14 @@ import {
   Video,
   Users,
   BookOpen,
+  ArrowUpDown,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import type { BookingStatus } from "@/components/ui/waitlist-status-badge";
+
+const TERMINAL_STATUSES = ["cancelled", "rejected", "completed", "expired", "converted"];
+
+type OverviewMode = "upcoming" | "past";
 
 interface OverviewProps {
   consultations: TConsultationWithPlan[];
@@ -32,6 +37,7 @@ interface OverviewProps {
   webinars: TWebinarWithPlan[];
   classes: TClassWithPlan[];
   trials: TTrialWithPlan[];
+  mode?: OverviewMode;
 }
 
 interface CollaboratorInfo {
@@ -46,6 +52,7 @@ interface DashboardCardProps {
   accentColor: string;
   itemCount: number;
   children: React.ReactNode;
+  emptySubtext?: string;
 }
 
 // Extract collaborators from a webinar or class plan
@@ -96,6 +103,24 @@ function sortByStatusAndTime<
   });
 }
 
+// Sort items by time descending (most recent first) — used for past events
+function sortByTimeDescending<T extends { firstSlotTime?: number }>(
+  items: T[],
+): T[] {
+  return [...items].sort(
+    (a, b) => (b.firstSlotTime ?? 0) - (a.firstSlotTime ?? 0),
+  );
+}
+
+// Sort items by time ascending (oldest first) — used for past events
+function sortByTimeAscending<T extends { firstSlotTime?: number }>(
+  items: T[],
+): T[] {
+  return [...items].sort(
+    (a, b) => (a.firstSlotTime ?? 0) - (b.firstSlotTime ?? 0),
+  );
+}
+
 const fadeInUp = {
   hidden: { opacity: 0, y: 20 },
   visible: { opacity: 1, y: 0, transition: { duration: 0.4 } },
@@ -107,54 +132,115 @@ export function Overview({
   classes,
   webinars,
   trials,
+  mode = "upcoming",
 }: Readonly<OverviewProps>) {
+  const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
+
+  const isTerminal = (status: string) =>
+    TERMINAL_STATUSES.includes(status.toLowerCase());
+  const shouldInclude = (status: string) =>
+    mode === "upcoming" ? !isTerminal(status) : isTerminal(status);
+
+  const sortFn = useMemo(() => {
+    if (mode !== "past") return sortByStatusAndTime;
+    return sortDir === "desc" ? sortByTimeDescending : sortByTimeAscending;
+  }, [mode, sortDir]);
+
+  const emptySubtext =
+    mode === "past"
+      ? (title: string) =>
+        `Completed or cancelled ${title.toLowerCase()} will appear here`
+      : (title: string) =>
+        `Your ${title.toLowerCase()} will appear here once scheduled`;
+
   // Prepare sorted consultation items
-  const sortedConsultations = sortByStatusAndTime(
-    consultations.map((c) => ({
-      data: c,
-      status: c.requestStatus.toString(),
-      firstSlotTime: c.appointment?.slotsOfAppointment?.[0]
-        ? new Date(c.appointment.slotsOfAppointment[0].startsAt).getTime()
-        : Infinity,
-    })),
+  const sortedConsultations = sortFn(
+    consultations
+      .filter((c) => shouldInclude(c.requestStatus.toString()))
+      .map((c) => ({
+        data: c,
+        status: c.requestStatus.toString(),
+        firstSlotTime: c.appointment?.slotsOfAppointment?.[0]
+          ? new Date(c.appointment.slotsOfAppointment[0].startsAt).getTime()
+          : Infinity,
+      })),
   );
 
   // Prepare sorted subscription + trial items
-  const subItems = subscriptions.map((s) => ({
-    kind: "subscription" as const,
-    data: s,
-    status: s.requestStatus.toString(),
-    firstSlotTime: getNextSlotTime(s.appointments?.[0]?.slotsOfAppointment),
-  }));
-  const trialItems = trials.map((t) => ({
-    kind: "trial" as const,
-    data: t,
-    status: t.status,
-    firstSlotTime: t.appointment?.slotsOfAppointment?.[0]
-      ? new Date(t.appointment.slotsOfAppointment[0].startsAt).getTime()
-      : Infinity,
-  }));
-  const sortedSubsAndTrials = sortByStatusAndTime([...subItems, ...trialItems]);
+  const subItems = subscriptions
+    .filter((s) => shouldInclude(s.requestStatus.toString()))
+    .map((s) => ({
+      kind: "subscription" as const,
+      data: s,
+      status: s.requestStatus.toString(),
+      firstSlotTime: getNextSlotTime(s.appointments?.[0]?.slotsOfAppointment),
+    }));
+  const trialItems = trials
+    .filter((t) => shouldInclude(t.status))
+    .map((t) => ({
+      kind: "trial" as const,
+      data: t,
+      status: t.status,
+      firstSlotTime: t.appointment?.slotsOfAppointment?.[0]
+        ? new Date(t.appointment.slotsOfAppointment[0].startsAt).getTime()
+        : Infinity,
+    }));
+  const sortedSubsAndTrials = sortFn([...subItems, ...trialItems]);
 
   // Prepare sorted webinar items
-  const sortedWebinars = sortByStatusAndTime(
-    webinars.map((w) => ({
-      data: w,
-      status: w.status.toString(),
-      firstSlotTime: w.appointment?.slotsOfAppointment?.[0]
-        ? new Date(w.appointment.slotsOfAppointment[0].startsAt).getTime()
-        : Infinity,
-    })),
+  const sortedWebinars = sortFn(
+    webinars
+      .filter((w) => shouldInclude(w.status.toString()))
+      .map((w) => ({
+        data: w,
+        status: w.status.toString(),
+        firstSlotTime: w.appointment?.slotsOfAppointment?.[0]
+          ? new Date(w.appointment.slotsOfAppointment[0].startsAt).getTime()
+          : Infinity,
+      })),
   );
 
   // Prepare sorted class items
-  const sortedClasses = sortByStatusAndTime(
-    classes.map((c) => ({
-      data: c,
-      status: c.status.toString(),
-      firstSlotTime: getNextSlotTime(c.appointments?.[0]?.slotsOfAppointment),
-    })),
+  const sortedClasses = sortFn(
+    classes
+      .filter((c) => shouldInclude(c.status.toString()))
+      .map((c) => ({
+        data: c,
+        status: c.status.toString(),
+        firstSlotTime: getNextSlotTime(c.appointments?.[0]?.slotsOfAppointment),
+      })),
   );
+
+  // Global empty state when all filtered arrays are empty
+  const totalItems =
+    sortedConsultations.length +
+    sortedSubsAndTrials.length +
+    sortedWebinars.length +
+    sortedClasses.length;
+
+  if (totalItems === 0) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="flex flex-col items-center justify-center min-h-[400px] p-8 bg-white rounded-xl shadow-sm"
+      >
+        <div className="w-16 h-16 mb-4 text-gray-400">
+          <Calendar className="w-full h-full" />
+        </div>
+        <h3 className="text-xl font-semibold text-gray-900 mb-2">
+          {mode === "upcoming"
+            ? "No Upcoming Events"
+            : "No Past Events"}
+        </h3>
+        <p className="text-gray-500 text-center">
+          {mode === "upcoming"
+            ? "No upcoming events — Book a session to get started!"
+            : "No past events — Completed or cancelled events will appear here."}
+        </p>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div
@@ -163,6 +249,21 @@ export function Overview({
       className="space-y-8"
       data-testid="overview-grid"
     >
+      {/* Sort toggle — past mode only */}
+      {mode === "past" && totalItems > 0 && (
+        <div className="flex justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setSortDir((d) => (d === "desc" ? "asc" : "desc"))}
+            className="h-8 text-xs font-medium gap-1.5"
+          >
+            <ArrowUpDown className="h-3.5 w-3.5" />
+            {sortDir === "desc" ? "Newest first" : "Oldest first"}
+          </Button>
+        </div>
+      )}
+
       {/* Consultations */}
       <motion.div variants={fadeInUp}>
         <DashboardCard
@@ -170,6 +271,7 @@ export function Overview({
           icon={Video}
           accentColor="blue"
           itemCount={sortedConsultations.length}
+          emptySubtext={emptySubtext("Consultations")}
         >
           {sortedConsultations.map(({ data: consultation }) => {
             const rawSlots = getActualSlots({
@@ -214,6 +316,7 @@ export function Overview({
           icon={Calendar}
           accentColor="violet"
           itemCount={sortedSubsAndTrials.length}
+          emptySubtext={emptySubtext("Subscriptions")}
         >
           {sortedSubsAndTrials.map((item) => {
             if (item.kind === "trial") {
@@ -294,6 +397,7 @@ export function Overview({
           icon={Users}
           accentColor="amber"
           itemCount={sortedWebinars.length}
+          emptySubtext={emptySubtext("Webinars")}
         >
           {sortedWebinars.map(({ data: webinar }) => {
             const rawSlots = getActualSlots({
@@ -358,6 +462,7 @@ export function Overview({
           icon={BookOpen}
           accentColor="emerald"
           itemCount={sortedClasses.length}
+          emptySubtext={emptySubtext("Classes")}
         >
           {sortedClasses.map(({ data: classItem }) => {
             const rawSlots = getActualSlots({
@@ -433,6 +538,7 @@ function DashboardCard({
   accentColor,
   itemCount,
   children,
+  emptySubtext,
 }: Readonly<DashboardCardProps>) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
@@ -555,7 +661,8 @@ function DashboardCard({
               No {title.toLowerCase()} found
             </p>
             <p className="text-sm text-zinc-400">
-              Your {title.toLowerCase()} will appear here once scheduled
+              {emptySubtext ??
+                `Your ${title.toLowerCase()} will appear here once scheduled`}
             </p>
           </div>
         </div>

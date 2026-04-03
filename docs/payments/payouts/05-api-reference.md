@@ -613,6 +613,12 @@ All endpoints return consistent error formats:
 
 ---
 
+## Currency Display (Mar 2026)
+
+All amounts in the API and database are stored in **paise** (smallest currency unit). Admin dashboard pages now use `formatCurrencyAmount()` (which divides by 100) instead of the previous `formatCurrencyFromMajorUnit()` when displaying DB-sourced values. This ensures correct rendering -- e.g., a DB value of `80000` (paise) is displayed as "800.00 INR" rather than "80,000.00 INR".
+
+---
+
 ## Authentication
 
 All endpoints require authentication via NextAuth session.

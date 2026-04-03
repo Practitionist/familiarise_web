@@ -1,6 +1,7 @@
 "use server";
 
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { getMaintenanceState } from "@/lib/maintenance";
 /**
@@ -115,6 +116,22 @@ export async function createDbMeetingSession(
 
     return meetingSession;
   } catch (error) {
+    // Race condition: another caller already created a session for this slot.
+    // Return the existing session instead of throwing.
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      streamLogger.info(
+        "Meeting session already exists (concurrent creation), returning existing",
+        { slotId: slot.id },
+      );
+      const existing = await prisma.meetingSession.findUnique({
+        where: { slotOfAppointmentId: slot.id },
+      });
+      if (existing) return existing;
+    }
+
     streamLogger.error("Failed to create meeting session", error, {
       slotId: slot.id,
       streamCallId: validatedStreamCallId,

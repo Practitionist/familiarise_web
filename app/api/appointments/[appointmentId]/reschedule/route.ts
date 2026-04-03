@@ -342,6 +342,7 @@ export async function POST(
     );
 
     // Fire-and-forget: notify both parties about reschedule
+    // FIX #624: Include webinar/class so group event participants are also notified.
     try {
       const appointment = await prisma.appointment.findUnique({
         where: { id: appointmentId },
@@ -376,30 +377,88 @@ export async function POST(
               },
             },
           },
+          webinar: {
+            include: {
+              webinarPlan: {
+                select: {
+                  title: true,
+                  consultantProfile: {
+                    select: { userId: true, user: { select: { name: true } } },
+                  },
+                },
+              },
+            },
+          },
+          class: {
+            include: {
+              classPlan: {
+                select: {
+                  title: true,
+                  consultantProfile: {
+                    select: { userId: true, user: { select: { name: true } } },
+                  },
+                },
+              },
+            },
+          },
+          slotsOfAppointment: {
+            select: {
+              user: { select: { id: true, name: true } },
+            },
+          },
         },
       });
 
       if (appointment) {
         const consultation = appointment.consultation;
         const subscription = appointment.subscription;
+        const webinar = appointment.webinar;
+        const classEvent = appointment.class;
+
         const plan =
           consultation?.consultationPlan ??
           subscription?.subscriptionPlan ??
+          webinar?.webinarPlan ??
+          classEvent?.classPlan ??
           null;
         const requestedBy =
           consultation?.requestedBy ?? subscription?.requestedBy ?? null;
 
-        const userIds = [
-          plan?.consultantProfile?.userId,
-          requestedBy?.userId,
-        ].filter((id): id is string => !!id);
+        // For 1:1 events, notify consultant + consultee
+        // For group events (webinar/class), notify consultant + all slot participants
+        const userIds: string[] = [];
+        if (plan?.consultantProfile?.userId) {
+          userIds.push(plan.consultantProfile.userId);
+        }
+        if (requestedBy?.userId) {
+          userIds.push(requestedBy.userId);
+        }
+        // FIX #624: Add all participants from slots (webinar/class attendees)
+        if (appointment.slotsOfAppointment) {
+          for (const slot of appointment.slotsOfAppointment) {
+            for (const user of slot.user) {
+              userIds.push(user.id);
+            }
+          }
+        }
 
-        if (userIds.length > 0) {
+        // Deduplicate
+        const uniqueUserIds = Array.from(new Set(userIds));
+
+        const appointmentType = consultation
+          ? "consultation"
+          : subscription
+            ? "subscription"
+            : webinar
+              ? "webinar"
+              : "class";
+
+        if (uniqueUserIds.length > 0) {
           const baseUrl = getAppUrl();
-          void notifyAppointmentRescheduled(userIds, {
-            appointmentType: consultation ? "consultation" : "subscription",
+          void notifyAppointmentRescheduled(uniqueUserIds, {
+            appointmentType,
             consultantName: plan?.consultantProfile?.user?.name ?? "Consultant",
-            consulteeName: requestedBy?.user?.name ?? "Consultee",
+            consulteeName: requestedBy?.user?.name ?? "Participant",
             planTitle: plan?.title ?? "Unknown",
             dashboardUrl: `${baseUrl}/dashboard`,
           }).catch((err) =>
@@ -413,8 +472,6 @@ export async function POST(
 
     return NextResponse.json(result);
   } catch (error) {
-    console.error("Error requesting reschedule:", error);
-
     // Type-safe error handling using custom error classes
     if (error instanceof RescheduleAuthorizationError) {
       return NextResponse.json({ error: error.message }, { status: 403 });
@@ -432,6 +489,8 @@ export async function POST(
       return NextResponse.json({ error: error.message }, { status: 404 });
     }
 
+    // Only log unexpected errors — the known error types above are normal control flow
+    console.error("Error requesting reschedule:", error);
     return NextResponse.json(
       { error: "Failed to request reschedule" },
       { status: 500 },

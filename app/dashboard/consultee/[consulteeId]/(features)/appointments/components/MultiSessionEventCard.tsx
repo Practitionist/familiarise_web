@@ -129,11 +129,11 @@ export function MultiSessionEventCard({
   const isApproved = status?.toUpperCase() === "APPROVED";
   const isDev = process.env.NODE_ENV === "development";
   const canDevJoin = isDev && rawSlots.length > 0 && !!appointment;
+  const isConfirmed = ["APPROVED", "SCHEDULED", "IN_PROGRESS"].includes(
+    status?.toUpperCase(),
+  );
   const showDocUpload =
-    type === "Subscription" &&
-    !!appointmentId &&
-    !isPendingPayment &&
-    !isInactive;
+    type === "Subscription" && !!appointmentId && isConfirmed;
 
   const appointmentStatus: AppointmentStatus =
     status?.toLowerCase() === "completed" ? "COMPLETED" : "UPCOMING";
@@ -230,7 +230,7 @@ export function MultiSessionEventCard({
             consultant={consultant}
             image={image}
             collaborators={collaborators}
-            metaLine={`${total} sessions`}
+            metaLine={`${total} ${total === 1 ? "session" : "sessions"}`}
           />
         </div>
 
@@ -273,7 +273,11 @@ export function MultiSessionEventCard({
                 <span>
                   {isTentative
                     ? "Awaiting schedule confirmation"
-                    : "No sessions scheduled yet"}
+                    : status?.toLowerCase() === "completed"
+                      ? "Session details unavailable"
+                      : isInactive
+                        ? "No sessions were scheduled"
+                        : "No sessions scheduled yet"}
                 </span>
               </div>
             </div>
@@ -347,7 +351,7 @@ export function MultiSessionEventCard({
             <div className="flex-1 text-xs text-zinc-400 text-center py-1">
               {isTentative
                 ? "Awaiting confirmation"
-                : isPendingPayment
+                : isPendingPayment || bookingStatus === "CONFIRMED"
                   ? ""
                   : "Pending approval"}
             </div>

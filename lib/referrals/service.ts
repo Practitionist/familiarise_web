@@ -6,12 +6,17 @@ import type {
   ReferralCredit,
   Prisma,
 } from "@prisma/client";
+import {
+  QUALIFICATION_WINDOW_DAYS,
+  CREDIT_EXPIRY_MONTHS,
+} from "./constants";
+
+// Re-export so existing server-side consumers can still import from service
+export { QUALIFICATION_WINDOW_DAYS, CREDIT_EXPIRY_MONTHS };
 
 // Constants
 const DEFAULT_REFERRER_REWARD = 50000; // ₹500 in paise
 const DEFAULT_REFEREE_REWARD = 20000; // ₹200 in paise
-const QUALIFICATION_WINDOW_DAYS = 30;
-const CREDIT_EXPIRY_MONTHS = 6;
 const SERIALIZABLE_MAX_RETRIES = 3;
 
 /**
@@ -62,14 +67,54 @@ export async function createReferralCode(
 
   const code = await generateUniqueCode(user?.name);
 
-  return prisma.referralCode.create({
-    data: {
-      userId,
-      code,
-      referrerReward: DEFAULT_REFERRER_REWARD,
-      refereeReward: DEFAULT_REFEREE_REWARD,
-    },
-  });
+  try {
+    return await prisma.referralCode.create({
+      data: {
+        userId,
+        code,
+        referrerReward: DEFAULT_REFERRER_REWARD,
+        refereeReward: DEFAULT_REFEREE_REWARD,
+      },
+    });
+  } catch (error) {
+    // FIX #596: Handle race condition — concurrent first-use requests
+    // can both pass the findUnique check, then one fails on unique constraint.
+    if (
+      error instanceof PrismaNamespace.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      const rawTarget = error.meta?.target;
+      const target = Array.isArray(rawTarget)
+        ? rawTarget
+        : typeof rawTarget === "string"
+          ? [rawTarget]
+          : [];
+      const isUserIdConflict = target.includes("userId");
+
+      // userId conflict: another request created the record first — return it
+      if (isUserIdConflict) {
+        const raced = await prisma.referralCode.findUnique({
+          where: { userId },
+        });
+        if (raced) return raced;
+      }
+
+      // code conflict: generated code collided — retry with a new code
+      const isCodeConflict = target.includes("code");
+      if (isCodeConflict) {
+        const retryCode = await generateUniqueCode(user?.name);
+        return prisma.referralCode.create({
+          data: {
+            userId,
+            code: retryCode,
+            referrerReward: DEFAULT_REFERRER_REWARD,
+            refereeReward: DEFAULT_REFEREE_REWARD,
+          },
+        });
+      }
+    }
+    throw error;
+  }
 }
 
 /**
@@ -78,15 +123,20 @@ export async function createReferralCode(
 export async function generateUniqueCode(
   name?: string | null,
 ): Promise<string> {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
   if (name) {
-    const baseCode = name
+    const prefix = name
       .toUpperCase()
       .replace(/[^A-Z]/g, "")
-      .slice(0, 6);
+      .slice(0, 4);
 
-    if (baseCode.length >= 3) {
+    if (prefix.length >= 3) {
       for (let i = 0; i < 100; i++) {
-        const code = i === 0 ? baseCode : `${baseCode}${i}`;
+        const suffix =
+          chars[Math.floor(Math.random() * chars.length)] +
+          chars[Math.floor(Math.random() * chars.length)];
+        const code = `${prefix}${suffix}`;
         const exists = await prisma.referralCode.findUnique({
           where: { code },
         });
@@ -96,7 +146,6 @@ export async function generateUniqueCode(
   }
 
   // Fallback to random code
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let code: string;
   do {
     code = Array.from(
@@ -630,6 +679,7 @@ export async function processConsultantBookingReferral(
           },
           webinar: {
             select: {
+              webinarPlanId: true,
               webinarPlan: {
                 select: { consultantProfile: { select: { userId: true } } },
               },
@@ -637,6 +687,7 @@ export async function processConsultantBookingReferral(
           },
           class: {
             select: {
+              classPlanId: true,
               classPlan: {
                 select: { consultantProfile: { select: { userId: true } } },
               },
@@ -660,5 +711,42 @@ export async function processConsultantBookingReferral(
       consultantUserId,
       "first_paid_booking_received",
     );
+  }
+
+  // FIX #619: Also qualify ACCEPTED collaborators on webinar/class bookings.
+  // Collaborators earn revenue from these bookings and should trigger referral
+  // qualification just like plan owners.
+  const webinarPlanId = payment?.appointment?.webinar?.webinarPlanId;
+  const classPlanId = payment?.appointment?.class?.classPlanId;
+
+  const collaboratorUserIds: string[] = [];
+
+  if (webinarPlanId) {
+    const collabs = await prisma.webinarCollaborator.findMany({
+      where: { webinarPlanId, status: "ACCEPTED" },
+      select: { consultantProfile: { select: { userId: true } } },
+    });
+    collaboratorUserIds.push(...collabs.map((c) => c.consultantProfile.userId));
+  }
+
+  if (classPlanId) {
+    const collabs = await prisma.classCollaborator.findMany({
+      where: { classPlanId, status: "ACCEPTED" },
+      select: { consultantProfile: { select: { userId: true } } },
+    });
+    collaboratorUserIds.push(...collabs.map((c) => c.consultantProfile.userId));
+  }
+
+  // Deduplicate and exclude buyer + plan owner (already processed above)
+  const uniqueCollabUserIds = Array.from(
+    new Set(
+      collaboratorUserIds.filter(
+        (id) => id !== buyerUserId && id !== consultantUserId,
+      ),
+    ),
+  );
+
+  for (const collabUserId of uniqueCollabUserIds) {
+    await processQualifyingAction(collabUserId, "first_paid_booking_received");
   }
 }

@@ -131,8 +131,15 @@ This ensures that when new members are added to collaborator channels, the corre
 │     └─ Discuss content, logistics, timings                   │
 │                                                              │
 │  4. Host removes Collaborator B                              │
-│     └─ Channel member removal NOT auto-triggered             │
-│        (future improvement: remove from channel on REMOVED)  │
+│     └─ Collaborator removed from BOTH:                       │
+│        a) Event channel (webinar-{eventId} or               │
+│           class-{eventId})                                    │
+│        b) Plan-level collab channel                           │
+│           (collab-webinar-{planId} or                         │
+│            collab-class-{planId})                              │
+│        Notification and Stream removal use independent        │
+│        try/catch blocks -- one failure does not block the     │
+│        other.                                                 │
 │                                                              │
 │  5. Channel persists for ongoing collaboration               │
 │     └─ No auto-deletion                                      │

@@ -94,9 +94,10 @@ export async function createPayoutBatch(
     }
 
     // Process each eligible consultant
+    // FIX #617: The groupBy _sum.consultantShare is only used for candidate selection.
+    // The actual payable amount is re-computed inside the transaction to subtract refundedShareAmount.
     for (const consultant of eligibleConsultants) {
-      const { consultantProfileId, _sum } = consultant;
-      const amount = _sum?.consultantShare || 0;
+      const { consultantProfileId } = consultant;
 
       try {
         // Get consultant's default payout account
@@ -113,16 +114,6 @@ export async function createPayoutBatch(
             `⚠️ No verified payout account for consultant ${consultantProfileId}`,
           );
           result.skippedNoAccount++;
-
-          // Get consultant info for logging
-          const profile = await prisma.consultantProfile.findUnique({
-            where: { id: consultantProfileId },
-            include: { user: { select: { name: true, email: true } } },
-          });
-          console.warn(
-            `   Consultant: ${profile?.user.name || "Unknown"} (${profile?.user.email || "no email"})`,
-          );
-          console.warn(`   Amount pending: ₹${(amount / 100).toFixed(2)}`);
           continue;
         }
 
@@ -139,11 +130,30 @@ export async function createPayoutBatch(
             method = PayoutMethod.BANK_TRANSFER;
         }
 
-        // Determine if auto-approve applies
-        const shouldAutoApprove = amount < AUTO_APPROVE_THRESHOLD;
+        // FIX #617: Re-query earnings inside transaction and compute payable amount
+        // that subtracts refundedShareAmount from partial refunds.
+        const txResult = await prisma.$transaction(async (tx) => {
+          const readyEarnings = await tx.consultantEarnings.findMany({
+            where: {
+              consultantProfileId,
+              status: EarningStatus.READY,
+              payoutId: null,
+            },
+            select: { id: true, consultantShare: true, refundedShareAmount: true },
+          });
 
-        // Create payout record in a transaction
-        await prisma.$transaction(async (tx) => {
+          if (readyEarnings.length === 0) return null;
+
+          const amount = readyEarnings.reduce(
+            (sum, e) =>
+              sum + Math.max(e.consultantShare - e.refundedShareAmount, 0),
+            0,
+          );
+
+          if (amount < MINIMUM_PAYOUT_AMOUNT) return null;
+
+          const shouldAutoApprove = amount < AUTO_APPROVE_THRESHOLD;
+
           const payout = await tx.payout.create({
             data: {
               consultantProfileId,
@@ -161,10 +171,10 @@ export async function createPayoutBatch(
             },
           });
 
-          // Link earnings to this payout
-          await tx.consultantEarnings.updateMany({
+          // Link the exact earnings by ID (not broad filter)
+          const linkResult = await tx.consultantEarnings.updateMany({
             where: {
-              consultantProfileId,
+              id: { in: readyEarnings.map((e) => e.id) },
               status: EarningStatus.READY,
               payoutId: null,
             },
@@ -173,20 +183,23 @@ export async function createPayoutBatch(
             },
           });
 
-          // Get consultant info for logging
-          const profile = await tx.consultantProfile.findUnique({
-            where: { id: consultantProfileId },
-            include: { user: { select: { name: true } } },
-          });
+          if (linkResult.count !== readyEarnings.length) {
+            throw new Error(
+              `Payout linking race: expected ${readyEarnings.length}, linked ${linkResult.count} for ${consultantProfileId}`,
+            );
+          }
 
           console.log(
-            `✅ Created payout for ${profile?.user.name || "Unknown"}: ₹${(amount / 100).toFixed(2)} [${shouldAutoApprove ? "AUTO-APPROVED" : "PENDING"}]`,
+            `✅ Created payout for consultant ${consultantProfileId}: ₹${(amount / 100).toFixed(2)} [${shouldAutoApprove ? "AUTO-APPROVED" : "PENDING"}]`,
           );
+
+          return { amount, shouldAutoApprove };
         });
 
+        if (!txResult) continue;
         result.payoutsCreated++;
-        result.totalAmount += amount;
-        if (shouldAutoApprove) {
+        result.totalAmount += txResult.amount;
+        if (txResult.shouldAutoApprove) {
           result.autoApproved++;
         } else {
           result.pendingApproval++;

@@ -83,18 +83,31 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       }
     } else if (session.user.role === "CONSULTEE") {
       // Consultee can access recordings for sessions they participated in
-      // Check if user is enrolled in the webinar/class
-      // Get the appointment ID from the recording chain to check payments
-      const appointmentId =
-        recording.meetingSession.slotOfAppointment.appointmentId;
-
-      if (appointmentId && (appointment?.webinar || appointment?.class)) {
-        // Check if user has paid for this appointment (webinar or class)
+      // Use plan-level entitlement: the recording's appointment is the consultant's
+      // allocation slot, not the attendee's enrollment slot, so we check by plan ID
+      if (appointment?.webinar?.webinarPlan?.id) {
         const payment = await prisma.payment.findFirst({
           where: {
             userId: session.user.id,
-            appointmentId,
             paymentStatus: "SUCCEEDED",
+            appointment: {
+              webinar: {
+                webinarPlanId: appointment.webinar.webinarPlan.id,
+              },
+            },
+          },
+        });
+        hasAccess = !!payment;
+      } else if (appointment?.class?.classPlan?.id) {
+        const payment = await prisma.payment.findFirst({
+          where: {
+            userId: session.user.id,
+            paymentStatus: "SUCCEEDED",
+            appointment: {
+              class: {
+                classPlanId: appointment.class.classPlan.id,
+              },
+            },
           },
         });
         hasAccess = !!payment;

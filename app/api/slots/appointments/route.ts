@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { AppointmentsType, Prisma } from "@prisma/client";
+import { AppointmentsType, Prisma, RequestStatus } from "@prisma/client";
+import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 
 export async function GET(request: NextRequest) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
   const { searchParams } = new URL(request.url);
 
   const type = searchParams.get("type")?.toUpperCase();
@@ -26,6 +31,22 @@ export async function GET(request: NextRequest) {
   const webinarStatus = searchParams.get("webinarStatus")?.toUpperCase();
   const classStatus = searchParams.get("classStatus")?.toUpperCase();
 
+  // Non-privileged users must scope to their own data
+  if (!isPrivileged(session.user.role)) {
+    const hasOwnFilter =
+      (consultantProfileId &&
+        consultantProfileId === session.user.consultantProfileId) ||
+      (consulteeProfileId &&
+        consulteeProfileId === session.user.consulteeProfileId) ||
+      (userId && userId === session.user.id);
+    if (!hasOwnFilter) {
+      return NextResponse.json(
+        { error: "Forbidden: must filter by your own profile" },
+        { status: 403 },
+      );
+    }
+  }
+
   // Validate appointment type
   if (
     type &&
@@ -37,27 +58,43 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // Validate statuses
-  const validStatuses = ["PENDING", "APPROVED", "REJECTED", "CANCELLED"];
-  if (consultationStatus && !validStatuses.includes(consultationStatus)) {
+  // Validate statuses — consultation/subscription use RequestStatus enum,
+  // webinar/class use their own event lifecycle statuses
+  const validRequestStatuses = [
+    "PENDING",
+    "APPROVED",
+    "APPROVED_PENDING_PAYMENT",
+    "SCHEDULED",
+    "COMPLETED",
+    "REJECTED",
+    "CANCELLED",
+    "EXPIRED",
+  ];
+  const validEventStatuses = [
+    "SCHEDULED",
+    "IN_PROGRESS",
+    "COMPLETED",
+    "CANCELLED",
+  ];
+  if (consultationStatus && !validRequestStatuses.includes(consultationStatus)) {
     return NextResponse.json(
       { error: "Invalid consultation status" },
       { status: 400 },
     );
   }
-  if (subscriptionStatus && !validStatuses.includes(subscriptionStatus)) {
+  if (subscriptionStatus && !validRequestStatuses.includes(subscriptionStatus)) {
     return NextResponse.json(
       { error: "Invalid subscription status" },
       { status: 400 },
     );
   }
-  if (webinarStatus && !validStatuses.includes(webinarStatus)) {
+  if (webinarStatus && !validEventStatuses.includes(webinarStatus)) {
     return NextResponse.json(
       { error: "Invalid webinar status" },
       { status: 400 },
     );
   }
-  if (classStatus && !validStatuses.includes(classStatus)) {
+  if (classStatus && !validEventStatuses.includes(classStatus)) {
     return NextResponse.json(
       { error: "Invalid class status" },
       { status: 400 },
@@ -74,30 +111,10 @@ export async function GET(request: NextRequest) {
       consulteeProfileId,
       userId,
       {
-        consultation: consultationStatus as
-          | "PENDING"
-          | "APPROVED"
-          | "REJECTED"
-          | "CANCELLED"
-          | undefined,
-        subscription: subscriptionStatus as
-          | "PENDING"
-          | "APPROVED"
-          | "REJECTED"
-          | "CANCELLED"
-          | undefined,
-        webinar: webinarStatus as
-          | "PENDING"
-          | "APPROVED"
-          | "REJECTED"
-          | "CANCELLED"
-          | undefined,
-        class: classStatus as
-          | "PENDING"
-          | "APPROVED"
-          | "REJECTED"
-          | "CANCELLED"
-          | undefined,
+        consultation: consultationStatus || undefined,
+        subscription: subscriptionStatus || undefined,
+        webinar: webinarStatus || undefined,
+        class: classStatus || undefined,
       },
       startDate,
       endDate,
@@ -125,10 +142,10 @@ async function getAppointments(
   consulteeProfileId?: string | null,
   userId?: string | null,
   statuses?: {
-    consultation?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
-    subscription?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
-    webinar?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
-    class?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
+    consultation?: string;
+    subscription?: string;
+    webinar?: string;
+    class?: string;
   },
   startDate?: string | null,
   endDate?: string | null,
@@ -280,6 +297,41 @@ async function getAppointments(
     whereClause.subscription = { id: eventIds.subscriptionId };
   }
 
+  // FIX #551: Apply status filters that were previously parsed but never used.
+  // Build an OR clause so appointments matching ANY of the provided status
+  // filters are returned (allows fetching e.g., APPROVED consultations AND
+  // SCHEDULED webinars in one call).
+  const statusFilters: Prisma.AppointmentWhereInput[] = [];
+  if (statuses?.consultation) {
+    statusFilters.push({
+      consultation: { requestStatus: statuses.consultation as RequestStatus },
+    });
+  }
+  if (statuses?.subscription) {
+    statusFilters.push({
+      subscription: { requestStatus: statuses.subscription as RequestStatus },
+    });
+  }
+  if (statuses?.webinar) {
+    statusFilters.push({
+      webinar: { status: statuses.webinar as Prisma.EnumWebinarStatusFilter },
+    });
+  }
+  if (statuses?.class) {
+    statusFilters.push({
+      class: { status: statuses.class as Prisma.EnumClassStatusFilter },
+    });
+  }
+  if (statusFilters.length > 0) {
+    // Combine with existing AND clauses
+    const existingAnd = whereClause.AND
+      ? Array.isArray(whereClause.AND)
+        ? whereClause.AND
+        : [whereClause.AND]
+      : [];
+    whereClause.AND = [...existingAnd, { OR: statusFilters }];
+  }
+
   const appointments = await prisma.appointment.findMany({
     where: whereClause,
     include: {
@@ -405,6 +457,19 @@ async function getAppointments(
 }
 
 export async function POST(request: NextRequest) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+
+  // Only privileged users (admin/staff) can directly create appointments.
+  // Normal booking goes through the checkout flow which has its own validation.
+  if (!isPrivileged(session.user.role)) {
+    return NextResponse.json(
+      { error: "Forbidden: appointment creation requires admin/staff role" },
+      { status: 403 },
+    );
+  }
+
   try {
     const body = await request.json();
     const { appointmentType, slotsOfAppointment, ...appointmentData } = body;

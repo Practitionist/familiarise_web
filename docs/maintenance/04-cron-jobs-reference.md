@@ -198,7 +198,7 @@ All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 | -------------------- | -------------------------------------------------------------------------------------------------------------- |
 | **Schedule**         | `0 */6 * * *` (every 6 hours)                                                                                  |
 | **Script**           | `jobs/disputes/handle-lost-disputes.ts`                                                                        |
-| **Description**      | Processes disputes marked as lost. Updates earnings status and sends alerts if earnings were already paid out. |
+| **Description**      | Processes disputes marked as lost. Now uses canonical `refundEarnings(paymentId, { forceRefund: true })` instead of manual logic (Mar 2026). Correctly creates TDS reversal records and decrements `totalRevenue` for PAID earnings. |
 | **DB Connection**    | Yes (Prisma)                                                                                                   |
 | **External APIs**    | Stripe                                                                                                         |
 | **Maintenance Risk** | HIGH -- May incorrectly process earnings if data is in flux                                                    |
@@ -250,7 +250,7 @@ All 27 scheduled jobs run as GitHub Actions workflows, executing standalone Node
 | -------------------- | ---------------------------------------------------------------------------------------------- |
 | **Schedule**         | `0 * * * *` (hourly)                                                                           |
 | **Script**           | `jobs/earnings/sync-payment-earnings.ts`                                                       |
-| **Description**      | Matches confirmed payments with consultant earnings records. Creates missing earnings entries. |
+| **Description**      | Matches confirmed payments with consultant earnings records. Creates missing earnings entries. Uses cursor-based pagination (Mar 2026, replacing skip-based). For WEBINAR/CLASS payments, calls `calculateRevenueSplit()` to create multi-party earnings with proper role/sharePercentage for collaborators. |
 | **DB Connection**    | Yes (Prisma)                                                                                   |
 | **External APIs**    | None                                                                                           |
 | **Maintenance Risk** | HIGH -- May create incorrect earnings if payment/earnings tables are being migrated            |

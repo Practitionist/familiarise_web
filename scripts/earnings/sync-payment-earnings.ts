@@ -20,11 +20,12 @@
  */
 
 import prisma from "../../lib/prisma";
-import { EarningStatus, PaymentStatus, AppointmentsType } from "@prisma/client";
+import { EarningStatus, EarningRole, PaymentStatus, AppointmentsType } from "@prisma/client";
 import {
   PAYOUT_CONSTANTS,
   AppointmentType,
 } from "../../lib/payments/payouts/constants";
+import { calculateRevenueSplit } from "../../lib/collaborators/service";
 
 // Only sync payments within the last 30 days
 const SYNC_WINDOW_DAYS = 30;
@@ -135,11 +136,14 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
     Date.now() - SYNC_WINDOW_DAYS * 24 * 60 * 60 * 1000,
   );
 
-  let skip = 0;
+  // FIX #571: Use cursor-based pagination instead of skip-based.
+  // Skip-based pagination on a mutating result set (earnings: { none: {} })
+  // can silently skip payments when items are removed from the set mid-iteration.
+  let cursor: string | undefined;
   let hasMore = true;
 
   while (hasMore) {
-    // Fetch batch with limit
+    // Fetch batch with cursor-based pagination
     const payments = await prisma.payment.findMany({
       where: {
         paymentStatus: PaymentStatus.SUCCEEDED,
@@ -147,7 +151,9 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
         earnings: { none: {} }, // No linked earnings
       },
       take: BATCH_SIZE,
-      skip,
+      ...(cursor
+        ? { cursor: { id: cursor }, skip: 1 } // skip the cursor item itself
+        : {}),
       include: {
         appointment: {
           include: {
@@ -168,27 +174,35 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
             webinar: {
               include: {
                 webinarPlan: {
-                  select: { consultantProfileId: true },
+                  select: {
+                    id: true,
+                    consultantProfileId: true,
+                  },
                 },
               },
             },
             class: {
               include: {
                 classPlan: {
-                  select: { consultantProfileId: true },
+                  select: {
+                    id: true,
+                    consultantProfileId: true,
+                  },
                 },
               },
             },
           },
         },
       },
-      orderBy: { createdAt: "asc" },
+      orderBy: { id: "asc" },
     });
 
     if (payments.length < BATCH_SIZE) {
       hasMore = false;
     }
-    skip += BATCH_SIZE;
+    if (payments.length > 0) {
+      cursor = payments[payments.length - 1].id;
+    }
     totalProcessed += payments.length;
 
     if (payments.length === 0) {
@@ -218,6 +232,8 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
       consultantShare: number;
       status: EarningStatus;
       holdUntil: Date;
+      role?: EarningRole;
+      sharePercentage?: number;
     }> = [];
     const revenueUpdates: Map<string, number> = new Map();
 
@@ -247,15 +263,88 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
         continue;
       }
 
-      const earningsData = calculateEarningsData(payment, consultantProfileId);
-      earningsToCreate.push(earningsData);
+      // FIX #572: For webinar/class payments, check for collaborator revenue splits
+      // instead of giving 100% to the plan owner.
+      const appointmentType = appointment?.appointmentType;
+      const webinarPlanId = appointment?.webinar?.webinarPlan?.id;
+      const classPlanId = appointment?.class?.classPlan?.id;
 
-      // Accumulate revenue updates per consultant
-      const currentRevenue = revenueUpdates.get(consultantProfileId) || 0;
-      revenueUpdates.set(
-        consultantProfileId,
-        currentRevenue + earningsData.consultantShare,
-      );
+      const baseEarnings = calculateEarningsData(payment, consultantProfileId);
+      const totalConsultantPool = baseEarnings.consultantShare;
+
+      let splits: Array<{
+        consultantProfileId: string;
+        share: number;
+        role: string;
+      }> = [];
+
+      if (
+        appointmentType === AppointmentsType.WEBINAR &&
+        webinarPlanId
+      ) {
+        try {
+          splits = await calculateRevenueSplit(
+            "webinar",
+            webinarPlanId,
+            totalConsultantPool,
+          );
+        } catch {
+          // Fallback to owner-only if split calculation fails
+        }
+      } else if (
+        appointmentType === AppointmentsType.CLASS &&
+        classPlanId
+      ) {
+        try {
+          splits = await calculateRevenueSplit(
+            "class",
+            classPlanId,
+            totalConsultantPool,
+          );
+        } catch {
+          // Fallback to owner-only if split calculation fails
+        }
+      }
+
+      if (splits.length > 0) {
+        // Multi-party earnings (collaborator splits)
+        // Owner gets full grossAmount/platformFee; collaborators get 0 for those fields.
+        for (const split of splits) {
+          const isOwner = split.role === "OWNER";
+          const splitBase = calculateEarningsData(payment, split.consultantProfileId);
+          const sharePercentage = totalConsultantPool > 0
+            ? Math.round((split.share / totalConsultantPool) * 10000) / 100
+            : 0;
+
+          earningsToCreate.push({
+            ...splitBase,
+            consultantShare: split.share,
+            grossAmount: isOwner ? baseEarnings.grossAmount : 0,
+            platformFee: isOwner ? baseEarnings.platformFee : 0,
+            role: isOwner ? EarningRole.OWNER : EarningRole.COLLABORATOR,
+            sharePercentage,
+          });
+
+          const currentRevenue = revenueUpdates.get(split.consultantProfileId) || 0;
+          revenueUpdates.set(
+            split.consultantProfileId,
+            currentRevenue + split.share,
+          );
+        }
+      } else {
+        // Single-party earnings (owner only, or no collaborators)
+        earningsToCreate.push({
+          ...baseEarnings,
+          role: EarningRole.OWNER,
+          sharePercentage: 100,
+        });
+
+        const currentRevenue = revenueUpdates.get(consultantProfileId) || 0;
+        revenueUpdates.set(
+          consultantProfileId,
+          currentRevenue + baseEarnings.consultantShare,
+        );
+      }
     }
 
     // Batch create earnings

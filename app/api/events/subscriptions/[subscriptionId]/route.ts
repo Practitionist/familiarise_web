@@ -18,6 +18,7 @@ import {
   notifySubscriptionStarted,
   notifySubscriptionCancelled,
 } from "@/lib/novu";
+import { logSubscriptionCancelled } from "@/lib/activity/log-activity";
 import {
   UpdateSubscriptionSchema,
   PatchSubscriptionStatusSchema,
@@ -728,6 +729,24 @@ export async function PATCH(
               consulteeName: subData.requestedBy?.user?.name || undefined,
               dashboardUrl: "/dashboard",
             });
+          }
+
+          // Log cancellation activity (awaited — DB write should not be dropped in serverless)
+          const cpId = subData.subscriptionPlan?.consultantProfileId;
+          if (cpId) {
+            await logSubscriptionCancelled(
+              cpId,
+              subData.id,
+              {
+                id: session.user.id,
+                name: session.user.name || "User",
+                image: session.user.image,
+              },
+              subData.subscriptionPlan?.title || "Subscription",
+              session.user.id === consultantUserId
+                ? "consultant"
+                : "consultee",
+            );
           }
         }
       }

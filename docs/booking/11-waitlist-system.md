@@ -290,7 +290,13 @@ See: `docs/booking/08-cancellation-flow.md`
 
 ### Checkout --> Waitlist
 
-The checkout flow accepts a `fromWaitlist` query parameter containing the waitlist entry ID. After successful payment, the checkout handler calls `markWaitlistAsBooked(waitlistId)` to finalize the waitlist entry.
+The checkout flow accepts a `fromWaitlist` query parameter containing the waitlist entry ID. During checkout, `revalidateInsideLock()` validates the waitlist entry inside the lock-protected region:
+
+1. **Ownership**: The entry must belong to the current user.
+2. **Status**: The entry must have status `NOTIFIED` (not WAITING, EXPIRED, CANCELLED, etc.).
+3. **Expiration**: The notification must not have expired (`expiresAt > now`).
+
+After successful payment, the checkout handler calls `markWaitlistAsBooked(waitlistId)` to finalize the waitlist entry.
 
 Checkout URL format:
 
@@ -299,6 +305,10 @@ Checkout URL format:
 ```
 
 See: `docs/booking/10-checkout-payment-integration.md`
+
+### Consultee Dashboard Integration
+
+The consultee dashboard events API includes webinars and classes where the user has a waitlist entry with status WAITING, NOTIFIED, or BOOKED -- not just events where the user has a `SlotOfAppointment`. This ensures users can see events they are queued for in their dashboard before they have actually been booked.
 
 ### Cron Jobs
 

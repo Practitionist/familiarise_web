@@ -13,7 +13,7 @@ export async function createDiscountCodes() {
       const discountType = faker.helpers.arrayElement(
         Object.values(DiscountType),
       );
-      let discountValue: number;
+      let discountValue = 0;
 
       switch (discountType) {
         case DiscountType.PERCENTAGE:
@@ -21,9 +21,6 @@ export async function createDiscountCodes() {
           break;
         case DiscountType.FIXED_AMOUNT:
           discountValue = faker.number.int({ min: 50000, max: 500000 }); // Fixed amount in paise (₹500-₹5000)
-          break;
-        case DiscountType.FREE_SHIPPING:
-          discountValue = 0;
           break;
       }
 

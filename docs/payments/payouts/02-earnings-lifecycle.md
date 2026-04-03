@@ -172,6 +172,12 @@ gantt
 
 ---
 
+## Multi-Party Revenue Splits (Mar 2026)
+
+For WEBINAR and CLASS payments with collaborators, the `sync-payment-earnings` job and the earnings creation flow now call `calculateRevenueSplit()` to create **multiple** `ConsultantEarnings` records per payment -- one for the owner and one for each collaborator, each with their `role` and `sharePercentage`. This replaces the previous single-earnings-per-payment assumption.
+
+---
+
 ## Revenue Split Calculation
 
 ```mermaid
@@ -204,7 +210,7 @@ function calculateSplit(grossAmount: number) {
 
 ## Refund Handling
 
-When a payment is refunded, the associated earnings are marked as REFUNDED.
+When a payment is refunded, the associated earnings are reversed proportionally (partial) or fully.
 
 ```mermaid
 sequenceDiagram
@@ -213,30 +219,43 @@ sequenceDiagram
     participant DB as Database
     participant CP as ConsultantProfile
 
-    WH->>ES: refundEarnings(paymentId)
+    WH->>ES: refundEarnings(paymentId, opts)
+    Note over WH,ES: opts: { refundAmount, paymentAmount }
 
     ES->>DB: Find earnings by paymentId
     DB-->>ES: earnings record
 
-    alt Earnings status is PENDING or READY
+    alt Full refund or refundedShareAmount exhausted
         ES->>DB: Update status to REFUNDED
-        ES->>CP: Decrement pendingRevenue
-        ES-->>WH: Refund processed
-    else Earnings status is PAID
-        ES-->>WH: Error: Already paid out
-        Note over WH: Platform absorbs loss or<br/>initiates recovery
+        ES->>DB: Increment refundedShareAmount
+        ES->>CP: Decrement pendingRevenue/totalRevenue
+        ES-->>WH: Refund processed (full)
+    else Partial refund
+        ES->>DB: Increment refundedShareAmount by proportional amount
+        ES->>CP: Decrement pendingRevenue/totalRevenue proportionally
+        ES-->>WH: Refund processed (partial)
+    else Earnings status is PAID (with forceRefund)
+        ES->>DB: Reverse via forceRefund path
+        ES->>CP: Decrement totalRevenue
+        ES-->>WH: Forced refund processed
     end
 ```
 
+### Partial Refund Support (Mar 2026)
+
+`refundEarnings()` now accepts `refundAmount`/`paymentAmount` for proportional reversal. A new `refundedShareAmount` field on `ConsultantEarnings` tracks cumulative partial refunds. Earnings auto-transition to `REFUNDED` when `refundedShareAmount >= consultantShare`.
+
 ### Refund States
 
-| Original Status | Can Refund? | Action            |
-| --------------- | ----------- | ----------------- |
-| PENDING         | Yes         | Mark as REFUNDED  |
-| READY           | Yes         | Mark as REFUNDED  |
-| HELD            | Yes         | Mark as REFUNDED  |
-| PAID            | No          | Already disbursed |
-| REFUNDED        | No          | Already refunded  |
+| Original Status | Can Refund? | Action                                             |
+| --------------- | ----------- | -------------------------------------------------- |
+| PENDING         | Yes         | Proportional or full reversal, may mark REFUNDED   |
+| READY           | Yes         | Proportional or full reversal, may mark REFUNDED   |
+| HELD            | Yes         | Proportional or full reversal, may mark REFUNDED   |
+| PAID            | Yes*        | Via `forceRefund: true` (lost disputes), decrements totalRevenue |
+| REFUNDED        | No          | Already refunded                                   |
+
+> *PAID earnings can now be refunded using `forceRefund: true`, used by the lost-dispute handler. This creates TDS reversal records and decrements `totalRevenue`.
 
 ---
 
@@ -273,9 +292,13 @@ await holdEarnings(paymentId);
 await releaseHeldEarnings(earningsId);
 // Status: HELD → READY
 
-// Resolve in customer's favor
+// Resolve in customer's favor (standard)
 await refundEarnings(paymentId);
 // Status: HELD → REFUNDED
+
+// Lost dispute on already-PAID earnings (Mar 2026)
+await refundEarnings(paymentId, { forceRefund: true });
+// Creates TDS reversal records, decrements totalRevenue
 ```
 
 ---
@@ -341,6 +364,7 @@ model ConsultantEarnings {
   grossAmount          Int                // Total payment amount
   platformFee          Int                // 20% platform cut
   consultantShare      Int                // 80% consultant share
+  refundedShareAmount  Int  @default(0)   // Cumulative partial refund amount (Mar 2026)
 
   // Status tracking
   status               EarningStatus      @default(PENDING)

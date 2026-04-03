@@ -7,6 +7,7 @@ import { addMonthsSafely } from "@/utils/dateUtils";
 import { findOrCreateTopics, transformNestedPlanTopics } from "@/lib/topics";
 import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
 import { checkConsultantVerification } from "@/lib/verification";
+import { countUniqueParticipants } from "@/lib/payments/utils/participants";
 
 import { getSession } from "@/lib/auth-server";
 // Schema for class content input (without Prisma-managed fields like createdAt, updatedAt, classPlanId)
@@ -456,6 +457,71 @@ export async function PATCH(request: NextRequest) {
         { error: "Cannot update status or dates: no class instance found" },
         { status: 400 },
       );
+    }
+
+    // FIX #627/#628: Guard against unsafe edits on classes with confirmed bookings.
+    // TODO: These guards run outside the transaction — a booking could theoretically
+    // land between the check and the transaction commit. The window is milliseconds
+    // and the risk is low, but moving inside the transaction would be more robust.
+    if (classToUpdate) {
+      const activePayments = await prisma.payment.count({
+        where: {
+          appointment: { classId: classToUpdate.id },
+          paymentStatus: { notIn: ["FAILED", "EXPIRED"] },
+        },
+      });
+
+      // FIX #627: Block scheduling period changes when bookings exist.
+      // Only block when dates ACTUALLY differ from current values
+      // (the planner client may always send startDate/endDate even for non-date edits).
+      if (activePayments > 0) {
+        const startChanged =
+          startDateString !== undefined &&
+          startDateString !== null &&
+          classToUpdate.schedulingPeriodStartsAt?.toISOString()?.slice(0, 10) !==
+            new Date(startDateString).toISOString().slice(0, 10);
+        const endChanged =
+          endDateString !== undefined &&
+          endDateString !== null &&
+          classToUpdate.schedulingPeriodEndsAt?.toISOString()?.slice(0, 10) !==
+            new Date(endDateString).toISOString().slice(0, 10);
+
+        if (startChanged || endChanged) {
+          return NextResponse.json(
+            {
+              error:
+                "Cannot modify class schedule with enrolled participants. Use the reschedule workflow instead.",
+            },
+            { status: 400 },
+          );
+        }
+      }
+
+      // FIX #628: Block lowering maxParticipants below current enrollment.
+      // Use shared countUniqueParticipants helper for consistent counting.
+      // Include ALL slots (not just non-tentative) because during reschedule
+      // all slots become tentative but participants are still enrolled.
+      if (maxParticipants !== undefined) {
+        const classAppointments = await prisma.appointment.findMany({
+          where: { classId: classToUpdate.id },
+          include: {
+            slotsOfAppointment: { include: { user: { select: { id: true } } } },
+          },
+        });
+        const consultantUserId = existingPlan.consultantProfile?.userId;
+        const enrolledCount = countUniqueParticipants(
+          classAppointments,
+          consultantUserId ? [consultantUserId] : [],
+        );
+        if (maxParticipants < enrolledCount) {
+          return NextResponse.json(
+            {
+              error: `Cannot set max participants to ${maxParticipants}. There are ${enrolledCount} enrolled participants.`,
+            },
+            { status: 400 },
+          );
+        }
+      }
     }
 
     // Update class plan and related data in a transaction

@@ -49,7 +49,10 @@ async function clearTentativeOnSuccessfulPayments(): Promise<{
   console.log("🔍 Finding tentative slots with successful payments...");
 
   try {
-    // Find slots marked tentative but payment succeeded
+    // FIX #623: Find tentative slots with successful payments, but EXCLUDE
+    // slots that are tentative due to an in-progress reschedule.
+    // The reschedule workflow sets consultation/subscription status back to PENDING
+    // while new slots are being selected. We must not clear those prematurely.
     const slotsToFix = await prisma.slotOfAppointment.findMany({
       where: {
         isTentative: true,
@@ -58,6 +61,25 @@ async function clearTentativeOnSuccessfulPayments(): Promise<{
             some: {
               paymentStatus: PaymentStatus.SUCCEEDED,
             },
+          },
+          // FIX #623: Only clear tentative on consultation/subscription appointments
+          // where tentative = "payment succeeded but flag wasn't cleared".
+          // Webinar/class are intentionally excluded because:
+          // 1. Their reschedule marks ALL slots tentative with no status signal
+          //    to distinguish "stale payment" from "reschedule-in-progress"
+          // 2. Without a reliable discriminator, clearing would break reschedules
+          // Trade-off: stale webinar/class tentative slots won't auto-heal here,
+          // but that's safer than breaking active reschedules. A future
+          // `tentativeReason` column would let us reconcile all event types.
+          OR: [
+            { consultationId: { not: null } },
+            { subscriptionId: { not: null } },
+          ],
+          NOT: {
+            OR: [
+              { consultation: { requestStatus: "PENDING" } },
+              { subscription: { requestStatus: "PENDING" } },
+            ],
           },
         },
       },
@@ -84,17 +106,11 @@ async function clearTentativeOnSuccessfulPayments(): Promise<{
     }
 
     if (slotsToFix.length > 0) {
-      // Bulk update to clear tentative flag
+      // Bulk update to clear tentative flag — use exact IDs from the filtered query
+      // to ensure we don't accidentally clear reschedule-in-progress slots.
       const result = await prisma.slotOfAppointment.updateMany({
         where: {
-          isTentative: true,
-          appointment: {
-            payment: {
-              some: {
-                paymentStatus: PaymentStatus.SUCCEEDED,
-              },
-            },
-          },
+          id: { in: slotsToFix.map((s) => s.id) },
         },
         data: { isTentative: false },
       });
@@ -126,7 +142,11 @@ async function detectDoubleBookings(): Promise<{
   console.log("\n🔍 Detecting double-booked slots...");
 
   try {
-    // Get all confirmed (non-tentative) future slots grouped by consultant
+    // Get all confirmed (non-tentative) future slots grouped by consultant.
+    // TODO: The canonical occupancy policy (buildOccupiedAppointmentFilter) also treats
+    // unpaid-but-active states (PENDING, APPROVED, APPROVED_PENDING_PAYMENT) as occupied.
+    // This detection is limited to SUCCEEDED payments, so overlaps involving those states
+    // will be missed. A future improvement could use buildOccupiedAppointmentFilter here.
     const confirmedSlots = await prisma.slotOfAppointment.findMany({
       where: {
         isTentative: false,
@@ -139,6 +159,10 @@ async function detectDoubleBookings(): Promise<{
           },
         },
       },
+      // FIX #625: Include all 5 appointment types (not just consultation/subscription)
+      // so webinar and class overlaps are also detected. Note: trial sessions
+      // typically lack SUCCEEDED payments, so they won't match this query's
+      // payment filter — their inclusion here is for consultant resolution only.
       include: {
         appointment: {
           include: {
@@ -168,6 +192,41 @@ async function detectDoubleBookings(): Promise<{
                 },
               },
             },
+            webinar: {
+              include: {
+                webinarPlan: {
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: { select: { id: true, name: true, email: true } },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            class: {
+              include: {
+                classPlan: {
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: { select: { id: true, name: true, email: true } },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            trialSession: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: { select: { id: true, name: true, email: true } },
+                  },
+                },
+              },
+            },
           },
         },
       },
@@ -187,12 +246,16 @@ async function detectDoubleBookings(): Promise<{
     >();
 
     for (const slot of confirmedSlots) {
-      const consultation = slot.appointment.consultation;
-      const subscription = slot.appointment.subscription;
+      // FIX #625: Resolve consultant from all 5 appointment types
+      const { consultation, subscription, webinar, class: classEvent, trialSession } =
+        slot.appointment;
 
       const consultantProfile =
         consultation?.consultationPlan.consultantProfile ||
-        subscription?.subscriptionPlan.consultantProfile;
+        subscription?.subscriptionPlan.consultantProfile ||
+        webinar?.webinarPlan.consultantProfile ||
+        classEvent?.classPlan.consultantProfile ||
+        trialSession?.consultantProfile;
 
       if (!consultantProfile) continue;
 

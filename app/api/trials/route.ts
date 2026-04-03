@@ -5,6 +5,7 @@ import { logTrialRequested } from "@/lib/activity/log-activity";
 import { notifyTrialSessionRequested } from "@/lib/novu";
 import { CreateTrialSchema } from "@/schemas/trials";
 import { getSession } from "@/lib/auth-server";
+import { trialRequestLimiter, applyRateLimit } from "@/lib/rate-limit";
 
 /**
  * GET /api/trials
@@ -73,27 +74,6 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
     }
-
-    // Auto-complete scheduled trials whose end time has passed
-    const now = new Date();
-    await prisma.trialSession.updateMany({
-      where: {
-        status: TrialSessionStatus.SCHEDULED,
-        appointment: {
-          slotsOfAppointment: {
-            some: {
-              endsAt: {
-                lt: now,
-              },
-            },
-          },
-        },
-      },
-      data: {
-        status: TrialSessionStatus.COMPLETED,
-        completedAt: now,
-      },
-    });
 
     const whereClause: Prisma.TrialSessionWhereInput = {};
 
@@ -238,6 +218,10 @@ export async function POST(request: NextRequest) {
       ) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
+
+      // Rate limit: 3 trial requests per 24 hours per consultee (prevents inbox flooding)
+      const rl = await applyRateLimit(trialRequestLimiter, session.user.id);
+      if (rl) return rl;
     }
 
     // Check if a trial already exists for this consultee-consultant pair

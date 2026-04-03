@@ -1,14 +1,18 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
-import {
-  formatCurrencyAmount,
-  formatCurrencyFromMajorUnit,
-} from "@/utils/formatting";
+import { useCurrency } from "@/hooks/useCurrency";
 import { cn } from "@/utils/tailwind";
-import { CreditCard, Gift, Download, FileText } from "lucide-react";
+import {
+  CreditCard,
+  Gift,
+  Download,
+  FileText,
+  Tag,
+  ArrowUpDown,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -16,6 +20,13 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface PaymentItem {
   id: string;
@@ -199,6 +210,8 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
+  const { formatPrice } = useCurrency();
+
   // Build a map from paymentId → invoice for quick lookup
   const invoiceByPaymentId = useMemo(() => {
     if (!data) return new Map<string, InvoiceItem>();
@@ -211,12 +224,35 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
     return map;
   }, [data]);
 
+  // TODO: currently sums all currencies as INR — add multi-currency support later
   const totalSpent = useMemo(() => {
     if (!data) return 0;
     return data.payments
       .filter((p) => p.status === "SUCCEEDED")
       .reduce((sum, p) => sum + p.amount, 0);
   }, [data]);
+
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
+
+  const filteredPayments = useMemo(() => {
+    let result = data?.payments ?? [];
+    if (statusFilter !== "all") {
+      result = result.filter((p) => getDisplayStatus(p) === statusFilter);
+    }
+    if (typeFilter !== "all") {
+      result = result.filter(
+        (p) => p.appointmentType?.toUpperCase() === typeFilter,
+      );
+    }
+    result = [...result].sort((a, b) => {
+      const diff =
+        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      return sortDir === "asc" ? diff : -diff;
+    });
+    return result;
+  }, [data, statusFilter, typeFilter, sortDir]);
 
   if (!data) return null;
 
@@ -234,28 +270,43 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
       {/* Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         <div className="bg-white rounded-xl border border-zinc-200 p-4">
-          <p className="text-sm text-zinc-500">Total Spent</p>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <p className="text-sm text-zinc-500 cursor-help w-fit">
+                  Total Spent{" "}
+                  <span className="text-zinc-400">&#9432;</span>
+                </p>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Only includes successful payments</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
           <p className="text-2xl font-bold text-zinc-900">
-            {formatCurrencyFromMajorUnit(totalSpent, "INR")}
+            {formatPrice(totalSpent)}
           </p>
           <p className="text-xs text-zinc-400 mt-1">
-            {data.payments.filter((p) => p.status === "SUCCEEDED").length}{" "}
-            transactions
+            {(() => {
+              const count = data.payments.filter((p) => p.status === "SUCCEEDED").length;
+              return `${count} successful ${count === 1 ? "transaction" : "transactions"} `;
+            })()}
+            &middot; {data.payments.length} total
           </p>
         </div>
         <div className="bg-white rounded-xl border border-zinc-200 p-4">
           <p className="text-sm text-zinc-500">Credits Earned</p>
           <p className="text-2xl font-bold text-zinc-900">
-            {formatCurrencyAmount(data.creditSummary.total, "INR")}
+            {formatPrice(data.creditSummary.total)}
           </p>
           <p className="text-xs text-zinc-400 mt-1">
-            {formatCurrencyAmount(data.creditSummary.used, "INR")} used
+            {formatPrice(data.creditSummary.used)} used
           </p>
         </div>
         <div className="bg-white rounded-xl border border-zinc-200 p-4">
           <p className="text-sm text-zinc-500">Credit Balance</p>
           <p className="text-2xl font-bold text-emerald-600">
-            {formatCurrencyAmount(data.creditSummary.remaining, "INR")}
+            {formatPrice(data.creditSummary.remaining)}
           </p>
           <p className="text-xs text-zinc-400 mt-1">Available to use</p>
         </div>
@@ -278,6 +329,51 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
           {data.payments.length === 0 ? (
             <EmptyState message="No payments yet" />
           ) : (
+            <div className="space-y-3">
+              {/* Filter / Sort bar */}
+              <div className="flex flex-wrap items-center gap-3">
+                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <SelectTrigger className="w-[150px]">
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All statuses</SelectItem>
+                    <SelectItem value="SUCCEEDED">Succeeded</SelectItem>
+                    <SelectItem value="PENDING">Pending</SelectItem>
+                    <SelectItem value="FAILED">Failed</SelectItem>
+                    <SelectItem value="EXPIRED">Expired</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                <Select value={typeFilter} onValueChange={setTypeFilter}>
+                  <SelectTrigger className="w-[170px]">
+                    <SelectValue placeholder="Type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All types</SelectItem>
+                    <SelectItem value="CONSULTATION">Consultation</SelectItem>
+                    <SelectItem value="SUBSCRIPTION">Subscription</SelectItem>
+                    <SelectItem value="WEBINAR">Webinar</SelectItem>
+                    <SelectItem value="CLASS">Class</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    setSortDir((d) => (d === "desc" ? "asc" : "desc"))
+                  }
+                  className="gap-1.5"
+                >
+                  <ArrowUpDown className="w-3.5 h-3.5" />
+                  {sortDir === "desc" ? "Newest first" : "Oldest first"}
+                </Button>
+              </div>
+
+              {filteredPayments.length === 0 ? (
+                <EmptyState message="No transactions match the selected filters" />
+              ) : (
             <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -313,7 +409,7 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-50">
-                    {data.payments.map((payment) => {
+                    {filteredPayments.map((payment) => {
                       const invoice = invoiceByPaymentId.get(payment.id);
                       const displayStatus = getDisplayStatus(payment);
                       return (
@@ -334,25 +430,34 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                           </td>
                           <td className="px-4 py-3 text-right whitespace-nowrap">
                             <span className="font-medium text-zinc-900">
-                              {formatCurrencyFromMajorUnit(
-                                payment.amount,
-                                payment.currency,
-                              )}
+                              {formatPrice(payment.amount)}
                             </span>
                             {payment.taxAmount && payment.taxAmount > 0 && (
                               <span className="block text-xs text-zinc-400">
                                 incl.{" "}
-                                {formatCurrencyFromMajorUnit(
-                                  payment.taxAmount,
-                                  payment.currency,
-                                )}{" "}
+                                {formatPrice(payment.taxAmount ?? 0)}{" "}
                                 GST
                               </span>
                             )}
                             {payment.discount && (
-                              <span className="block text-xs text-emerald-600">
-                                {payment.discount.code} applied
-                              </span>
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className="inline-flex items-center text-emerald-600 ml-1 cursor-help">
+                                      <Tag className="w-3 h-3" />
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p>
+                                      &ldquo;{payment.discount.code}&rdquo;
+                                      {" \u2014 "}
+                                      {payment.discount.type === "PERCENTAGE"
+                                        ? `${payment.discount.value}% off`
+                                        : `${formatPrice(payment.discount.value)} off`}
+                                    </p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
                             )}
                           </td>
                           <td className="px-4 py-3 text-zinc-600 whitespace-nowrap text-xs">
@@ -433,6 +538,8 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                 </table>
               </div>
             </div>
+              )}
+            </div>
           )}
         </TabsContent>
 
@@ -441,7 +548,13 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
           <div className="space-y-6">
             {/* Credits list */}
             {data.credits.length === 0 ? (
-              <EmptyState message="No credits yet. Refer friends to earn credits!" />
+              <div className="flex flex-col items-center justify-center py-12 bg-white rounded-xl border border-zinc-200">
+                <Gift className="w-8 h-8 text-zinc-300 mb-3" />
+                <p className="text-zinc-500">No credits yet</p>
+                <p className="text-sm text-zinc-400 mt-1">
+                  Refer friends to earn credits you can use on future bookings.
+                </p>
+              </div>
             ) : (
               <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
                 <div className="overflow-x-auto">
@@ -475,13 +588,10 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                             {credit.source.toLowerCase().replace(/_/g, " ")}
                           </td>
                           <td className="px-4 py-3 text-right font-medium text-zinc-900">
-                            {formatCurrencyAmount(credit.amount, "INR")}
+                            {formatPrice(credit.amount)}
                           </td>
                           <td className="px-4 py-3 text-right font-medium text-emerald-600">
-                            {formatCurrencyAmount(
-                              credit.remainingAmount,
-                              "INR",
-                            )}
+                            {formatPrice(credit.remainingAmount)}
                           </td>
                           <td className="px-4 py-3 text-zinc-500">
                             {credit.expiresAt
@@ -530,7 +640,7 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                                 .replace(/_/g, " ")}
                             </td>
                             <td className="px-4 py-3 text-right font-medium text-red-600">
-                              -{formatCurrencyAmount(usage.amount, "INR")}
+                              -{formatPrice(usage.amount)}
                             </td>
                           </tr>
                         ))}

@@ -325,6 +325,18 @@ const urgentDisputes = await prisma.dispute.count({
 
 ---
 
+## Lost Dispute Handling (Mar 2026)
+
+When a dispute is resolved in the customer's favor (status: `LOST`), the `handle-lost-disputes` cron job now uses the canonical `refundEarnings(paymentId, { forceRefund: true })` path instead of manual inline logic. This ensures:
+
+1. **TDS reversal records** are correctly created for already-paid earnings
+2. **`totalRevenue`** is decremented on the consultant profile for PAID earnings
+3. **Consistent behavior** with the refund flow (proportional reversal, `refundedShareAmount` tracking)
+
+Previously, lost-dispute handling used manual logic that could miss TDS reversals and leave `totalRevenue` stale.
+
+---
+
 ## Best Practices
 
 1. **Respond Quickly**: Don't wait until the deadline
