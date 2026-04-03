@@ -54,7 +54,8 @@ const NAV_SECTIONS: NavSection[] = [
     title: "Finance",
     items: [
       { name: "Earnings", path: "earnings", icon: "wallet" },
-      { name: "Analytics", path: "analytics", icon: "analytics" },
+      // TODO: Unhide when Analytics page is implemented
+      // { name: "Analytics", path: "analytics", icon: "analytics" },
       { name: "Referrals", path: "referrals", icon: "gift" },
     ],
   },
