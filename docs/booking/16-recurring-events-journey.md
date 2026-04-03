@@ -277,7 +277,7 @@ Subscription (id: "sub_123", requestStatus: SCHEDULED)
   ... (8 appointments total, each with 2 slots)
 ```
 
-For a class with 3 enrolled consultees, each appointment's `SlotOfAppointment` records are shared -- the `user` M2M relation connects all participants (consultant + all consultees) to each slot.
+For a class, the same appointment structure is created during allocation (1 appointment per session). When new consultees enroll via checkout, `handleClassCheckout()` links them to ALL existing `SlotOfAppointment` records via the M2M `user` relation -- no new Appointments are created per enrollee. All participants (consultant + all consultees) share the same slots.
 
 ---
 
@@ -405,15 +405,18 @@ Payment Rs 1,000 for a class with:
   - Co-instructor A (25% share)
   - Co-instructor B (15% share)
 
-Platform fee: 20% of each party's gross share independently
+Step 1: Platform fee calculated ONCE on total gross
+  grossAmount = Rs 1,000
+  platformFee = Rs 1,000 x 20% = Rs 200
+  totalConsultantPool = Rs 1,000 - Rs 200 = Rs 800
 
-Owner:    gross Rs 600 -> fee Rs 120 -> net Rs 480
-Collab A: gross Rs 250 -> fee Rs 50  -> net Rs 200
-Collab B: gross Rs 150 -> fee Rs 30  -> net Rs 120
-Platform total: Rs 200
+Step 2: Pool split among participants by share percentage
+  Owner (60%):  consultantShare = Rs 480
+  Collab A (25%): consultantShare = Rs 200
+  Collab B (15%): consultantShare = Rs 120
 ```
 
-Each party gets their own `ConsultantEarnings` record with `role = OWNER` or `COLLABORATOR` and `sharePercentage` set accordingly.
+Each party gets their own `ConsultantEarnings` record with `role = OWNER` or `COLLABORATOR` and `sharePercentage` set accordingly. **Important implementation detail:** only the owner's record carries the `grossAmount` and `platformFee` values; collaborator records have `grossAmount = 0` and `platformFee = 0`, with only `consultantShare` populated (see `earnings-service.ts:124-125`).
 
 ### 7c. Access & Permissions
 
@@ -475,8 +478,8 @@ All cron jobs are triggered via GitHub Actions workflows in `.github/workflows/`
 |--------|-------------|-------|
 | **Prisma models** | `SubscriptionPlan` -> `Subscription` -> `Appointment[]` | `ClassPlan` -> `Class` -> `Appointment[]` |
 | **Participant count** | Always 1:1 | 1:many (up to `maxParticipants`) |
-| **Appointments** | 1 Appointment per session, each has N slots | 1 Appointment per enrolled consultee per session |
-| **Slot sharing** | Slots connected to consultant + 1 consultee | Slots connected to consultant + ALL enrolled consultees |
+| **Appointments** | 1 Appointment per session, each has N slots | 1 Appointment per session (shared by all participants via M2M user relation on slots) |
+| **Slot sharing** | Slots connected to consultant + 1 consultee | New enrollees are linked to ALL existing slots of ALL appointments (`handleClassCheckout` line 1510-1524) |
 | **Collaborators** | Not supported | `ClassCollaborator[]` with revenue shares |
 | **Free trial** | Yes (`TrialSession` model) | No |
 | **Recording** | No | Optional |
