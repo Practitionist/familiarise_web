@@ -194,7 +194,7 @@ function QuickStatsPanel({
               <div className="h-8 w-8 rounded-lg bg-emerald-50 flex items-center justify-center">
                 <DollarSign className="h-4 w-4 text-emerald-600" />
               </div>
-              <span className="text-sm text-zinc-600">Total Revenue</span>
+              <span className="text-sm text-zinc-600">Net Earnings</span>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Info className="h-3.5 w-3.5 text-zinc-400 cursor-help" />
@@ -229,7 +229,9 @@ function QuickStatsPanel({
                   <p className="text-xs text-zinc-400">
                     {earningsData.eligibility.isEligible
                       ? "Ready"
-                      : `Min ${formatCurrency(earningsData.eligibility.minimumAmount)}`}
+                      : earningsData.eligibility.readyAmount > 0
+                        ? `${formatCurrency(earningsData.eligibility.readyAmount)} / ${formatCurrency(earningsData.eligibility.minimumAmount)}`
+                        : "No ready earnings yet"}
                   </p>
                   {!earningsData.eligibility.isEligible && (
                     <Tooltip>
