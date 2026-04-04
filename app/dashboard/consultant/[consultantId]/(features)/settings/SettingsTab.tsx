@@ -1342,8 +1342,8 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
               </Label>
               <RadioGroupItem id="WEEKLY" value={ScheduleType.WEEKLY} />
             </div>
-            {scheduleType === ScheduleType.WEEKLY && (
-              <div className="space-y-4">
+            {(
+              <div className={`space-y-4 transition-opacity ${scheduleType !== ScheduleType.WEEKLY ? "opacity-40 pointer-events-none" : ""}`}>
                 {DAYS_OF_WEEK.map((day) => (
                   <div key={day} className="space-y-2">
                     <div className="flex justify-between items-center">
@@ -1425,8 +1425,8 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
               </Label>
               <RadioGroupItem id="CUSTOM" value={ScheduleType.CUSTOM} />
             </div>
-            {scheduleType === ScheduleType.CUSTOM && (
-              <div className="space-y-4">
+            {(
+              <div className={`space-y-4 transition-opacity ${scheduleType !== ScheduleType.CUSTOM ? "opacity-40 pointer-events-none" : ""}`}>
                 <div className="calendar-container bg-white border p-4 rounded-lg">
                 <div className="flex justify-between items-center mb-4">
                   <button
