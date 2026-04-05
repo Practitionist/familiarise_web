@@ -39,7 +39,7 @@ This is NOT code — it's CA/accountant work. Our code provides the data.
 
 ### Is GST Registration Mandatory?
 
-**YES.** Under **Section 24(ix) of the CGST Act**, every e-commerce operator (ECO) must register under GST irrespective of turnover. The normal Rs 20 lakh threshold does NOT apply.
+**YES.** Under **Section 24(x) of the CGST Act**, every e-commerce operator (ECO) must register under GST irrespective of turnover. The normal Rs 20 lakh threshold does NOT apply. (Note: Section 24(ix) applies to suppliers selling *through* an ECO; Section 24(x) applies to the ECO itself.)
 
 The definition in **Section 2(45)** is broad: "any person who owns, operates or manages digital or electronic facility or platform for electronic commerce." Familiarise qualifies.
 
@@ -136,7 +136,7 @@ Late filing penalty: Rs 200/day (capped at total TDS amount).
 
 - All cross-border transactions must comply with **FEMA (Foreign Exchange Management Act), 1999**
 - Must use RBI-authorized banks or payment aggregators (Razorpay qualifies)
-- Export proceeds must be realized and repatriated within **9 months** from date of invoice
+- Export proceeds must be realized and repatriated within **15 months** from date of invoice for foreign currency invoices, or **18 months** for INR-invoiced exports (updated per RBI Notification FEMA 23(R)/(7)/2025-RB dated November 13, 2025; previously 9 months)
 - Records must be kept for **5 years** (invoices, FIRA, contracts, bank advices)
 
 ### Export of Services — GST
@@ -289,6 +289,68 @@ PA license requirements (for reference): Rs 15 crore net worth at application, R
 - Currency conversion — Razorpay handles forex, we always deal in INR
 - FEMA compliance — handled by using an RBI-licensed gateway (Razorpay)
 - PA license — not needed since we use Razorpay as PA
+- PF (Provident Fund) — only when 20+ employees
+- ESI (Employee State Insurance) — only when 10+ employees
+- Gratuity — only when 10+ employees AND someone completes 5 years
+- ROC filing — only for companies/LLPs, not Sole Proprietorship
+- Angel tax — abolished from FY 2025-26
+- ISO/SOC certifications — only for enterprise B2B
+- Pvt Ltd conversion — only when seeking VC funding
+
+---
+
+## Employment Obligations (PF/ESI/Gratuity — Not Applicable)
+
+These are **employment** obligations, not platform obligations. They have nothing to do with your SaaS code.
+
+| Obligation | What It Is | When Mandatory | Applies to Consultants? |
+|------------|-----------|----------------|------------------------|
+| **PF (EPF)** | Retirement savings — employer pays 12% of basic salary | 20+ employees | No — independent contractors |
+| **ESI** | Health insurance for employees earning < Rs 21,000/month — employer pays 3.25% | 10+ employees | No — independent contractors |
+| **Gratuity** | Bonus after 5 years continuous service — 15 days salary per year of service | 10+ employees | No — independent contractors |
+
+### Why Consultants Are Not Employees
+
+Platform consultants are independent contractors because they:
+- Set their own prices
+- Set their own schedules
+- Use their own expertise
+- Are not under platform supervision for how they deliver service
+- Can work on multiple platforms simultaneously
+- Are not on the platform payroll
+
+### Internal Team
+
+- **Shubham** (Rs 10K base + Rs 5K bonus): Could be employee or contractor, but with 2 people none of PF/ESI/Gratuity applies
+- **Shelu** (pure commission, Rs 200–300/conversion): Clearly a contractor — no fixed hours, no base pay
+
+**Bottom line:** Forget about PF/ESI/Gratuity until you hire 10+ people. This is an HR/payroll problem for the future, not a code problem.
+
+> **Warning about misclassification:** If someone works fixed hours, uses your tools, is under your day-to-day supervision, and works exclusively for you — calling them a "contractor" does not make them one. Labor courts look at the substance of the relationship, not the label.
+
+---
+
+## CA / Legal Action Items (Non-Code)
+
+These items are for your CA or legal advisor, not engineering.
+
+### Before Launch (Priority)
+
+| # | Action | Impact | Estimated Cost |
+|---|--------|--------|---------------|
+| 1 | CA opinion: "Are we an e-commerce operator under Section 2(45)?" | Determines GST registration, TCS, GSTR-8 obligations | Rs 5–10K one-time |
+| 2 | CA opinion: "Which TDS section — 194J or 194-O or both?" | Different rates and thresholds | Part of same consultation |
+| 3 | CA opinion: "Does 44AD apply to marketplace commission income?" | Determines if Sole Prop tax advantage holds | Part of same consultation |
+| 4 | GST registration (if CA advises) | Must be done before first payment | Rs 2–5K |
+| 5 | LUT filing for export zero-rating | Must be done before first international transaction | Free (online filing) |
+| 6 | Monthly CA retainer for GST filing | GSTR-1, GSTR-3B, GSTR-8 (if applicable) | Rs 2–5K/month |
+
+### Immediate Non-Code Tasks
+
+1. Run Prisma migration (`npx prisma migrate deploy`) — 1 minute
+2. Set `PAN_ENCRYPTION_KEY` in environment (`openssl rand -hex 32`) — 1 minute
+3. Get IEC (Import Export Code) — Rs 500, DGFT website, 3–5 days
+4. Open business bank account (free)
 
 ---
 
