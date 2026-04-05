@@ -27,8 +27,6 @@ import {
 import {
   AppointmentsTabProps,
   ScheduledTrial,
-  UnscheduledClass,
-  UnscheduledWebinar,
   getBadgeStyle,
 } from "../../types";
 import {
@@ -68,7 +66,7 @@ import { getJoinableSlot } from "../../utils/joinState";
 
 export function AppointmentsTab({
   appointments,
-  badgeStyles,
+  badgeStyles: _badgeStyles,
   scheduledTrials = [],
   consultantId,
   unscheduledClasses = [],

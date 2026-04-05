@@ -28,7 +28,7 @@ interface PaginatedAppointmentsProps {
 
 export function PaginatedAppointments({
   appointments,
-  badgeStyles,
+  badgeStyles: _badgeStyles,
   onManageTimings,
   onJoinMeeting,
 }: PaginatedAppointmentsProps) {

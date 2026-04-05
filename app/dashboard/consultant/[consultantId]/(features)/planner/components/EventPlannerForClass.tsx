@@ -215,7 +215,7 @@ export function EventPlannerForClass({
   const canAddMoreTopics = currentTopicCount < maxTopics;
 
   const handleFormSubmit = form.handleSubmit(
-    async (values) => {
+    async (_values) => {
       // Validate scheduling start date/time is required
       if (!schedulingStartDate) {
         toast({

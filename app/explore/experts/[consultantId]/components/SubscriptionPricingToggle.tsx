@@ -26,9 +26,35 @@ import { addMonths, differenceInDays, format } from "date-fns";
 import { useCurrency } from "@/hooks/useCurrency";
 import { TrialBookingModal } from "./TrialBookingModal";
 
+interface SubscriptionContentItem {
+  id?: string;
+  title: string;
+  description?: string | null;
+  order?: number;
+  hoursAllotted?: number | null;
+  contentType?: string | null;
+}
+
+interface SubscriptionPlanDetails {
+  id: string;
+  title: string;
+  durationInMonths: number;
+  freeTrialEnabled?: boolean;
+  freeTrialDurationMinutes?: number | null;
+  subscriptionContents?: SubscriptionContentItem[] | null;
+}
+
+interface ConsultantDetailsForSubscription {
+  id: string;
+  subscriptionPlans?: SubscriptionPlanDetails[];
+  user?: {
+    name?: string | null;
+  };
+}
+
 interface SubscriptionPricingToggleProps {
   subscriptionOptions: PricingOption[];
-  consultantDetails: any;
+  consultantDetails: ConsultantDetailsForSubscription;
   handleSubscriptionBooking: (
     option: PricingOption,
     schedulingPeriod: { startDate: Date; endDate: Date },
@@ -81,7 +107,7 @@ export default function SubscriptionPricingToggle({
   const selectedPlanDetails = useMemo(() => {
     if (!selectedOption?.durationInMonths) return null;
     const plan = consultantDetails?.subscriptionPlans?.find(
-      (p: any) => p.durationInMonths === selectedOption.durationInMonths,
+      (p: SubscriptionPlanDetails) => p.durationInMonths === selectedOption.durationInMonths,
     );
     return plan;
   }, [selectedOption, consultantDetails]);
@@ -159,7 +185,7 @@ export default function SubscriptionPricingToggle({
       setSelectedTrialPlan({
         id: selectedPlanDetails.id,
         title: selectedPlanDetails.title,
-        freeTrialDurationMinutes: selectedPlanDetails.freeTrialDurationMinutes,
+        freeTrialDurationMinutes: selectedPlanDetails.freeTrialDurationMinutes ?? 0,
       });
       setIsTrialModalOpen(true);
     }
@@ -382,7 +408,7 @@ export default function SubscriptionPricingToggle({
                       id: selectedPlanDetails.id,
                       title: selectedPlanDetails.title,
                       freeTrialDurationMinutes:
-                        selectedPlanDetails.freeTrialDurationMinutes,
+                        selectedPlanDetails.freeTrialDurationMinutes ?? 0,
                     });
                     setIsTrialModalOpen(true);
                   }}
@@ -391,13 +417,13 @@ export default function SubscriptionPricingToggle({
                   {trialEligibility.isLoading
                     ? "Checking eligibility..."
                     : trialEligibility.isEligible
-                      ? `Book Free Trial (${selectedPlanDetails.freeTrialDurationMinutes} min)`
+                      ? `Book Free Trial (${selectedPlanDetails.freeTrialDurationMinutes ?? 0} min)`
                       : "Trial Already Requested"}
                 </Button>
               )}
 
               {/* View Roadmap Button */}
-              {selectedPlanDetails?.subscriptionContents?.length > 0 && (
+              {(selectedPlanDetails?.subscriptionContents?.length ?? 0) > 0 && (
                 <Button
                   variant="outline"
                   className="w-full bg-white/[0.05] border border-white/[0.12] text-zinc-200 hover:bg-white/[0.10] hover:text-white font-medium rounded-xl h-11 text-sm transition-all duration-200"
@@ -568,14 +594,14 @@ export default function SubscriptionPricingToggle({
           </DialogHeader>
 
           <div className="flex-1 overflow-y-auto p-6 min-h-0 scrollbar-hide">
-            {selectedPlanDetails?.subscriptionContents?.length > 0 ? (
+            {(selectedPlanDetails?.subscriptionContents?.length ?? 0) > 0 ? (
               <div className="relative">
                 {/* Timeline line */}
                 <div className="absolute left-[19px] top-8 bottom-8 w-0.5 bg-gradient-to-b from-zinc-700 via-zinc-600 to-zinc-700" />
 
                 <div className="space-y-6">
-                  {selectedPlanDetails.subscriptionContents.map(
-                    (content: any, index: number) => (
+                  {selectedPlanDetails?.subscriptionContents?.map(
+                    (content: SubscriptionContentItem, index: number) => (
                       <motion.div
                         key={content.id || index}
                         initial={{ opacity: 0, x: -20 }}
@@ -633,17 +659,17 @@ export default function SubscriptionPricingToggle({
           </div>
 
           {/* Summary footer */}
-          {selectedPlanDetails?.subscriptionContents?.length > 0 && (
+          {(selectedPlanDetails?.subscriptionContents?.length ?? 0) > 0 && (
             <div className="p-4 border-t border-zinc-800/50 bg-zinc-900/50 flex-shrink-0">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-zinc-400">
-                  {selectedPlanDetails.subscriptionContents.length} week
-                  {selectedPlanDetails.subscriptionContents.length > 1
+                  {selectedPlanDetails!.subscriptionContents!.length} week
+                  {selectedPlanDetails!.subscriptionContents!.length > 1
                     ? "s"
                     : ""}{" "}
                   •{" "}
-                  {selectedPlanDetails.subscriptionContents.reduce(
-                    (acc: number, c: any) => acc + (c.hoursAllotted || 0),
+                  {selectedPlanDetails!.subscriptionContents!.reduce(
+                    (acc: number, c: SubscriptionContentItem) => acc + (c.hoursAllotted || 0),
                     0,
                   )}
                   h total

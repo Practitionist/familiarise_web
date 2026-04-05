@@ -9,7 +9,6 @@ import {
   PaymentError,
   RefundError,
   DisputeError,
-  CURRENCY_MULTIPLIERS,
 } from "./types";
 import { RefundStatus, DisputeStatus } from "@prisma/client";
 import { getAppUrl } from "@/lib/url";
@@ -180,7 +179,7 @@ export async function createStripeRefund({
     // Fetch the payment intent to get the currency
     const paymentIntent =
       await stripeClient.paymentIntents.retrieve(paymentIntentId);
-    const currency = paymentIntent.currency;
+    const _currency = paymentIntent.currency;
 
     const refund = await stripeClient.refunds.create({
       payment_intent: paymentIntentId,

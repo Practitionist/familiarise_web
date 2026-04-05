@@ -15,7 +15,6 @@ import { useToast } from "@/hooks/use-toast";
 import { WhatsAppIcon } from "@/components/icons/WhatsAppIcon";
 import {
   QUALIFICATION_WINDOW_DAYS,
-  CREDIT_EXPIRY_MONTHS,
 } from "@/lib/referrals/constants";
 
 interface ReferralCode {

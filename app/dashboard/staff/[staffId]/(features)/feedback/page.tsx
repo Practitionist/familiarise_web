@@ -46,11 +46,9 @@ import {
   Loader2,
   Eye,
   Mail,
-  Phone,
-  Calendar,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import type { Feedback, FeedbackUser, FeedbackCounts } from "@/types/feedback";
+import type { Feedback, FeedbackCounts } from "@/types/feedback";
 import { FeedbackStatus } from "@prisma/client";
 
 const STATUS_OPTIONS: { value: FeedbackStatus | "all"; label: string }[] = [

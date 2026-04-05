@@ -51,7 +51,7 @@ export const InitializeUserChannelsButton = ({
 
     try {
       // console.log(`Initializing channels for user via action: ${userId}`);
-      const result = await syncUserEventChannels(userId, force);
+      const _result = await syncUserEventChannels(userId, force);
 
       toast({
         title: "Success",

@@ -1313,8 +1313,8 @@ async function sendPaymentSuccessNotification(
     }
 
     let consultantName = "Consultant";
-    let amount = payment.amount;
-    let currency = payment.currency;
+    const amount = payment.amount;
+    const currency = payment.currency;
 
     // Get consultant name based on appointment type
     if (appointment.consultation?.consultationPlan?.consultantProfile?.user) {

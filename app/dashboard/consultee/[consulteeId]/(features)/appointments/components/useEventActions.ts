@@ -23,7 +23,7 @@ export function useEventActions({
   appointment,
   rawSlots,
   title,
-  consultant,
+  consultant: _consultant,
   type,
 }: UseEventActionsOptions) {
   const { toast } = useToast();

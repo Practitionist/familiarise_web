@@ -15,12 +15,9 @@ import { useToast } from "@/components/ui/use-toast";
 import { useState, useEffect } from "react";
 import {
   Loader2,
-  Wifi,
   WifiOff,
   Video,
   MessageSquare,
-  Users,
-  Clock,
   RefreshCw,
   AlertTriangle,
   CheckCircle,
@@ -28,6 +25,7 @@ import {
 } from "lucide-react";
 import { useStreamConnection } from "@/providers/StreamProvider";
 import { useChatContext } from "stream-chat-react";
+import type { Event } from "stream-chat";
 
 interface DebugDialogProps {
   userId: string;
@@ -35,12 +33,25 @@ interface DebugDialogProps {
   className?: string;
 }
 
+interface DebugUser {
+  id: string;
+  role: string;
+  name?: string;
+  [key: string]: unknown;
+}
+
+interface DebugChannel {
+  id: string;
+  type: string;
+  [key: string]: unknown;
+}
+
 interface DebugData {
   success: boolean;
-  user: any;
+  user: DebugUser;
   stream: {
     channelCount: number;
-    channels: any[];
+    channels: DebugChannel[];
   };
   database: {
     consultations: number;
@@ -134,7 +145,7 @@ export const DebugDialog = ({
   useEffect(() => {
     if (!chatClient) return;
 
-    const handleEvent = (event: any) => {
+    const handleEvent = (event: Event) => {
       if (event.type === "message.new") {
         setConnectionStats((prev) => ({
           ...prev,
@@ -233,7 +244,7 @@ export const DebugDialog = ({
     </div>
   );
 
-  const DebugSection = ({ title, data }: { title: string; data: any }) => (
+  const DebugSection = ({ title, data }: { title: string; data: unknown }) => (
     <div className="space-y-2">
       <h4 className="font-semibold text-gray-900 dark:text-gray-100">
         {title}

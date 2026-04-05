@@ -75,7 +75,7 @@ export default function SubscriptionCheckoutPage({
   const [planData, setPlanData] = useState<SubscriptionResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [reviews, setReviews] = useState<ConsultantReview[]>([]);
+  const [_reviews, setReviews] = useState<ConsultantReview[]>([]);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
   const isProcessingRef = useRef(false);
   const [processingGateway, setProcessingGateway] = useState<string | null>(
@@ -140,7 +140,7 @@ export default function SubscriptionCheckoutPage({
       } else {
         setDiscountError(data.message || "Invalid discount code");
       }
-    } catch (error) {
+    } catch (_error) {
       setDiscountError("Failed to validate discount code");
     } finally {
       setIsApplyingDiscount(false);

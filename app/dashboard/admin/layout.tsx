@@ -215,7 +215,7 @@ function DashboardSkeleton() {
 
 // Main layout
 export default function AdminLayout({ children }: Readonly<PageProps>) {
-  const pathname = usePathname();
+  const _pathname = usePathname();
   const { data: session, isPending: isSessionLoading } = useSession();
   const router = useRouter();
 

@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
 
     // Get event details for email
     let eventTitle = "Event";
-    let eventType: "webinar" | "class" = webinarId ? "webinar" : "class";
+    const eventType: "webinar" | "class" = webinarId ? "webinar" : "class";
 
     if (webinarId) {
       const webinar = await prisma.webinar.findUnique({

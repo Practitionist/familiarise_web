@@ -3,7 +3,7 @@
 import { usePagination } from "@/hooks/usePagination";
 import { CompactPagination } from "@/components/Pagination";
 import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
 interface Approval {
   id: string;

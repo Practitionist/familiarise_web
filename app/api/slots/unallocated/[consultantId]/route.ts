@@ -28,7 +28,7 @@ export async function GET(
       if (isNaN(start.getTime()) || isNaN(end.getTime())) {
         throw new Error("Invalid date format");
       }
-    } catch (error) {
+    } catch (_error) {
       return NextResponse.json(
         { error: "Dates must be in UTC ISO format" },
         { status: 400 },

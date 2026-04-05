@@ -14,7 +14,7 @@ export const fetchUserDetails = async (
     const err = new Error(
       `Failed to fetch user details: ${response.statusText}`,
     );
-    (err as any).status = response.status;
+    (err as Error & { status?: number }).status = response.status;
     throw err;
   }
   const userData: { data: TUserWithProfessionalBackground } =

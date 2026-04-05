@@ -8,7 +8,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { AppointmentsType } from "@prisma/client";
-import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
+import { AlertTriangle, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AllocationService } from "../../shared/utils/allocationService";
 import { TimeSlot } from "../../shared/utils/calendarUtils";
@@ -134,7 +134,7 @@ export function RequestedSlotsDialog({
   const conflicts = validationResult?.conflicts || [];
   const outsideAvailability = validationResult?.outsideAvailability || [];
   const outsidePeriod = validationResult?.outsidePeriod || [];
-  const validSlots = validationResult?.validSlots || [];
+  const _validSlots = validationResult?.validSlots || [];
   const hasConflicts = conflicts.length > 0;
   const hasOutsideSlots = outsideAvailability.length > 0;
   const hasOutsidePeriod = outsidePeriod.length > 0;

@@ -22,6 +22,22 @@ interface WebinarWithAppointment {
   } | null;
 }
 
+export interface ClassSlot extends Record<string, unknown> {
+  user?: SlotUser[];
+}
+
+export interface ClassAppointment {
+  slotsOfAppointment: ClassSlot[];
+  [key: string]: unknown;
+}
+
+export interface ClassInstance {
+  id: string;
+  schedulingPeriodStartsAt?: string | Date | null;
+  appointments?: ClassAppointment[];
+  [key: string]: unknown;
+}
+
 export type ProgramConsultantProfile = {
   rating?: number;
   headline?: string | null;
@@ -37,7 +53,7 @@ export type ProgramCollaborator = {
 };
 
 export type ClassPlanProgram = PrismaClassPlan & {
-  classes: any[];
+  classes: ClassInstance[];
   type: "class";
   imageUrl: string;
   isRegistered?: boolean;

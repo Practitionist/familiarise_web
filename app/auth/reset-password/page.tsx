@@ -86,9 +86,9 @@ function ResetPasswordContent() {
         toast({ title: "Success", description: successMessage });
         setTimeout(() => router.push("/auth/signin"), 3000);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Reset password error:", err);
-      const errorMessage = err?.message || "An unexpected error occurred.";
+      const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred.";
       setError(errorMessage);
       toast({
         title: "Error Resetting Password",

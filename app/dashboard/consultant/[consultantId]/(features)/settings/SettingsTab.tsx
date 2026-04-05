@@ -299,13 +299,13 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   const handleVerificationSubmit = async (data: {
     verificationLinkedinUrl?: string;
     verificationNotes?: string;
-    verificationDocuments?: any[];
+    verificationDocuments?: Array<{ id?: string; status: string }>;
   }) => {
     setIsResubmitting(true);
     try {
       const documentIds =
         data.verificationDocuments
-          ?.filter((doc) => doc.status === "completed")
+          ?.filter((doc): doc is { id: string; status: string } => doc.status === "completed" && !!doc.id)
           .map((doc) => doc.id) || [];
 
       const payload = {

@@ -381,7 +381,7 @@ export default function ConsultantLayout({
   const pathname = usePathname();
   const { data: session, isPending: isSessionLoading } = useSession();
   const router = useRouter();
-  const queryClient = useQueryClient();
+  const _queryClient = useQueryClient();
 
   const userId = getEffectiveUserId(session);
 

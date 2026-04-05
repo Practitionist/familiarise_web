@@ -161,7 +161,7 @@ export default function WebinarCheckoutPage({
       } else {
         setDiscountError(data.message || "Invalid discount code");
       }
-    } catch (error) {
+    } catch (_error) {
       setDiscountError("Failed to validate discount code");
     } finally {
       setIsApplyingDiscount(false);

@@ -48,17 +48,49 @@ export interface TimeSlot {
   isBooked: boolean;
 }
 
+/** Minimal plan info shape for event types used in appointment title/status extraction */
+interface EventPlanInfo {
+  title?: string;
+}
+
+interface AppointmentConsultation {
+  requestStatus?: string;
+  consultationPlan?: EventPlanInfo;
+  requestedBy?: { user?: { name?: string } };
+}
+
+interface AppointmentSubscription {
+  id?: string;
+  requestStatus?: string;
+  subscriptionPlan?: EventPlanInfo;
+  requestedBy?: { user?: { name?: string } };
+}
+
+interface AppointmentWebinar {
+  status?: string;
+  webinarPlan?: EventPlanInfo;
+}
+
+interface AppointmentClass {
+  status?: string;
+  classPlan?: EventPlanInfo;
+}
+
+export interface AppointmentSlotRaw {
+  startsAt: string;
+  endsAt: string;
+  isTentative?: boolean;
+  user?: Array<{ name?: string }>;
+}
+
 export interface Appointment {
   id: string;
   appointmentType: string;
-  slotsOfAppointment?: {
-    startsAt: string;
-    endsAt: string;
-  }[];
-  consultation?: any;
-  subscription?: any;
-  webinar?: any;
-  class?: any;
+  slotsOfAppointment?: AppointmentSlotRaw[];
+  consultation?: AppointmentConsultation;
+  subscription?: AppointmentSubscription;
+  webinar?: AppointmentWebinar;
+  class?: AppointmentClass;
 }
 
 export interface ConsultantData {
@@ -248,7 +280,7 @@ export function useCalendarData(
       // Defensive: Ensure arrays exist and are valid
       const validatedData = {
         weekly: Array.isArray(data.weekly)
-          ? data.weekly.filter((slot: any) => {
+          ? data.weekly.filter((slot: RawSlotData) => {
               if (!slot || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
                 console.warn(
                   "⚠️ fetchAvailabilitySlots: Filtering out invalid weekly slot",
@@ -259,7 +291,7 @@ export function useCalendarData(
             })
           : [],
         custom: Array.isArray(data.custom)
-          ? data.custom.filter((slot: any) => {
+          ? data.custom.filter((slot: RawSlotData) => {
               if (!slot || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
                 console.warn(
                   "⚠️ fetchAvailabilitySlots: Filtering out invalid custom slot",
@@ -316,7 +348,7 @@ export function useCalendarData(
       }
 
       // Defensive: Filter out invalid appointments
-      const validatedAppointments = data.filter((appt: any) => {
+      const validatedAppointments = data.filter((appt: Appointment) => {
         if (!appt || !appt.id) {
           console.warn(
             "⚠️ fetchExistingAppointments: Filtering out appointment without id",
@@ -327,7 +359,7 @@ export function useCalendarData(
         // If appointment has slots, validate them
         if (appt.slotsOfAppointment && Array.isArray(appt.slotsOfAppointment)) {
           appt.slotsOfAppointment = appt.slotsOfAppointment.filter(
-            (slot: any) => {
+            (slot: AppointmentSlotRaw) => {
               if (!slot || !slot.startsAt || !slot.endsAt) {
                 console.warn(
                   `⚠️ fetchExistingAppointments: Filtering out invalid slot in appointment ${appt.id}`,
@@ -344,7 +376,7 @@ export function useCalendarData(
       });
 
       // Filter out cancelled/rejected/expired appointments so they don't show as "Booked"
-      const activeAppointments = validatedAppointments.filter((appt: any) => {
+      const activeAppointments = validatedAppointments.filter((appt: Appointment) => {
         const inactiveRequestStatuses = ["REJECTED", "CANCELLED", "EXPIRED"];
         // Check consultation status
         if (appt.consultation?.requestStatus) {
@@ -395,7 +427,7 @@ export function useCalendarData(
 
       if (data && Array.isArray(data) && data.length > 0) {
         // Filter out cancelled/rejected appointments from event slots
-        const activeData = data.filter((appt: any) => {
+        const activeData = data.filter((appt: Appointment) => {
           if (appt.consultation?.requestStatus) {
             if (
               ["REJECTED", "CANCELLED", "EXPIRED"].includes(
@@ -423,10 +455,10 @@ export function useCalendarData(
         // slots being replaced. They should NOT show as "This Event" on the calendar
         // because the auto-allocate will delete them. Showing them as "This Event"
         // misleads the consultant into thinking they're confirmed bookings.
-        const slots: TimeSlot[] = activeData.flatMap((appointment: any) =>
+        const slots: TimeSlot[] = activeData.flatMap((appointment: Appointment) =>
           (appointment.slotsOfAppointment || [])
-            .filter((slot: any) => !slot.isTentative)
-            .flatMap((slot: any): TimeSlot[] => {
+            .filter((slot: AppointmentSlotRaw) => !slot.isTentative)
+            .flatMap((slot: AppointmentSlotRaw): TimeSlot[] => {
               const start = new Date(slot.startsAt);
               const end = new Date(slot.endsAt);
               const durationMinutes =
@@ -464,7 +496,7 @@ export function useCalendarData(
   /**
    * Helper function to extract appointment plan title
    */
-  const extractAppointmentTitle = (appointment: any): string => {
+  const extractAppointmentTitle = (appointment: Appointment): string => {
     if (!appointment) return "Unknown";
 
     switch (appointment.appointmentType) {
@@ -488,7 +520,7 @@ export function useCalendarData(
   /**
    * Helper function to extract appointment participant name
    */
-  const extractAppointmentParticipant = (appointment: any): string => {
+  const extractAppointmentParticipant = (appointment: Appointment): string => {
     if (!appointment) return "";
 
     switch (appointment.appointmentType) {
@@ -543,7 +575,7 @@ export function useCalendarData(
 
   const parsedAppointmentSlots = useMemo(() => {
     return existingAppointments.flatMap((appointment) =>
-      (appointment.slotsOfAppointment || []).map((slt: any) => ({
+      (appointment.slotsOfAppointment || []).map((slt: AppointmentSlotRaw) => ({
         start: new Date(slt.startsAt).getTime(),
         end: new Date(slt.endsAt).getTime(),
         appointmentId: appointment.id,

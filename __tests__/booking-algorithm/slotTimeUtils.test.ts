@@ -14,14 +14,10 @@ import "./setup";
 import {
   minutesToTimeString,
   timeStringToMinutes,
-  minuteUtcToDate,
-  dateToMinuteUtc,
-  isNextDayOfWeek,
   validateWeeklySlotTimeOrder,
   slotsOverlap,
   isMinuteWithinWeeklySlot,
   getTimezoneOffsetMinutes,
-  DAY_OF_WEEK_TO_INDEX,
 } from "@/utils/slotAllocation/slotTimeUtils";
 import { DayOfWeek } from "@prisma/client";
 

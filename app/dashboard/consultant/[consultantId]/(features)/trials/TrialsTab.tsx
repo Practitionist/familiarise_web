@@ -46,7 +46,7 @@ import Link from "next/link";
 import { cn } from "@/utils/tailwind";
 import { useRouter } from "next/navigation";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
-import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
+import { getOrCreateAppointmentMeeting, type MeetingSlot } from "@/lib/meeting";
 import type { TAppointment } from "@/types/appointment";
 import {
   TrialScheduleCalendar,
@@ -453,7 +453,7 @@ export function TrialsTab() {
       const meetingId = await getOrCreateAppointmentMeeting(
         client,
         appointmentForMeeting,
-        slot as any,
+        slot as MeetingSlot,
       );
 
       toast({

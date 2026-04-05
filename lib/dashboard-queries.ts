@@ -398,7 +398,7 @@ export function getPrefetchDelay(priority: PrefetchPriority): number {
  * Batch prefetch with priority scheduling
  */
 export async function batchPrefetch(
-  queryClient: any,
+  queryClient: { prefetchQuery: (query: QueryConfig) => Promise<unknown> },
   queries: QueryConfig[],
   priority: PrefetchPriority = "medium",
 ): Promise<void> {

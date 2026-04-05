@@ -425,7 +425,7 @@ export async function getWaitlistStats(consultantProfileId: string) {
 /**
  * Get the total number of WAITING entries for the same event as a given entry
  */
-async function getTotalWaitingCount(entry: {
+async function _getTotalWaitingCount(entry: {
   webinarId: string | null;
   classId: string | null;
 }): Promise<number> {

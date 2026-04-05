@@ -21,7 +21,6 @@ import {
   Eye,
   Download,
   Trash2,
-  GripVertical,
   Loader2,
 } from "lucide-react";
 import { formatFileSize } from "@/app/dashboard/shared/utils/document-utils";

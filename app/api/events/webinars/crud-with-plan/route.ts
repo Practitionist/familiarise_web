@@ -2,7 +2,7 @@ import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { WebinarPlanSchema } from "@/schemas/plans";
-import { WebinarStatus } from "@prisma/client";
+import { Prisma, WebinarStatus } from "@prisma/client";
 import { findOrCreateTopics, transformNestedPlanTopics } from "@/lib/topics";
 import { handleSlotOpening } from "@/lib/waitlist/slot-handler";
 import { checkConsultantVerification } from "@/lib/verification";
@@ -585,7 +585,7 @@ export async function PATCH(request: NextRequest) {
         );
 
         // Prepare base update data using validated fields (excluding topics for now)
-        const updateData: any = {};
+        const updateData: Prisma.WebinarPlanUpdateInput = {};
         if (title !== undefined) updateData.title = title;
         if (description !== undefined) updateData.description = description;
         if (durationInHours !== undefined)
@@ -656,7 +656,7 @@ export async function PATCH(request: NextRequest) {
         // Update the webinar instance status if provided in the validated data
         let updatedWebinar = webinarToUpdate;
         if (updatedWebinar) {
-          const webinarUpdateData: any = {};
+          const webinarUpdateData: Prisma.WebinarUpdateInput = {};
 
           // Only update status if it was present in validatedData
           if (status !== undefined) {

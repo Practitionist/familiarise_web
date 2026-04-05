@@ -152,13 +152,13 @@ export default function DocumentsPage({
 
                   {/* Technical details for debugging (only show in development) */}
                   {process.env.NODE_ENV === "development" &&
-                    (error as any).technicalMessage && (
+                    (error as Error & { technicalMessage?: string }).technicalMessage && (
                       <details className="mt-3 text-xs opacity-75">
                         <summary className="cursor-pointer">
                           Technical Details
                         </summary>
                         <pre className="mt-2 whitespace-pre-wrap">
-                          {(error as any).technicalMessage}
+                          {(error as Error & { technicalMessage?: string }).technicalMessage}
                         </pre>
                       </details>
                     )}

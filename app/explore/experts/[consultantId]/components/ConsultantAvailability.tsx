@@ -91,7 +91,7 @@ export function ConsultantAvailability({
     };
 
     if (consultantDetails.scheduleType === "WEEKLY") {
-      Object.entries(availabilityData).forEach(([dateStr, slots]) => {
+      Object.entries(availabilityData).forEach(([_dateStr, slots]) => {
         slots
           .filter((slot) => slot.type === "WEEKLY")
           .forEach((slot) => {

@@ -3,8 +3,6 @@
 import { useState, useEffect } from "react";
 import {
   useCall,
-  useCallStateHooks,
-  CallingState,
 } from "@stream-io/video-react-sdk";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";

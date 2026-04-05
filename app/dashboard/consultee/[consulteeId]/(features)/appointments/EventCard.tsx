@@ -283,7 +283,7 @@ export function EventCard({
     ).length;
   }, [groupedSessions, selectedSlotIds]);
 
-  const showSessionDetails =
+  const _showSessionDetails =
     (type === "Subscription" || type === "Class") &&
     groupedSessions &&
     groupedSessions.length >= 1;

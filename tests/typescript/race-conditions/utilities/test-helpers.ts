@@ -13,7 +13,6 @@ import type {
   TestReport,
   TestConfig,
   SummaryReport,
-  CategoryReport,
 } from "./types";
 
 /**

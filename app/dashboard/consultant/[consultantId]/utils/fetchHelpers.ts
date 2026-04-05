@@ -6,6 +6,13 @@ import {
 import { TConsultantProfile } from "@/types/consultant";
 import { ApiResponse, IActivity, IApproval, IDocument } from "../types";
 
+/** Enhanced error with additional diagnostic fields for the document fetch system */
+interface DocumentFetchError extends Error {
+  technicalMessage?: string;
+  status?: number;
+  originalError?: Error;
+}
+
 // Data fetching functions using relative URLs
 // These work in both client and server components
 
@@ -178,7 +185,7 @@ export async function fetchDocuments(
 
         errorMessage =
           errorData.error || `HTTP ${response.status}: ${response.statusText}`;
-      } catch (parseError) {
+      } catch (_parseError) {
         // If we can't parse the error response, provide helpful messages based on status codes
         switch (response.status) {
           case 401:
@@ -207,10 +214,10 @@ export async function fetchDocuments(
       }
 
       // Create an enhanced error with both technical and user-friendly messages
-      const enhancedError = new Error(userFriendlyMessage);
+      const enhancedError = new Error(userFriendlyMessage) as DocumentFetchError;
       enhancedError.name = "DocumentFetchError";
-      (enhancedError as any).technicalMessage = errorMessage;
-      (enhancedError as any).status = response.status;
+      enhancedError.technicalMessage = errorMessage;
+      enhancedError.status = response.status;
 
       throw enhancedError;
     }
@@ -254,10 +261,10 @@ export async function fetchDocuments(
           "An unexpected error occurred while loading documents. Please try again.";
       }
 
-      const enhancedError = new Error(userFriendlyMessage);
+      const enhancedError = new Error(userFriendlyMessage) as DocumentFetchError;
       enhancedError.name = "DocumentFetchError";
-      (enhancedError as any).technicalMessage = error.message;
-      (enhancedError as any).originalError = error;
+      enhancedError.technicalMessage = error.message;
+      enhancedError.originalError = error;
 
       console.error("Enhanced error fetching documents:", {
         userMessage: userFriendlyMessage,
@@ -271,9 +278,9 @@ export async function fetchDocuments(
     // Handle non-Error objects (shouldn't happen, but just in case)
     const fallbackError = new Error(
       "An unknown error occurred while loading documents. Please try again.",
-    );
+    ) as DocumentFetchError;
     fallbackError.name = "DocumentFetchError";
-    (fallbackError as any).technicalMessage = String(error);
+    fallbackError.technicalMessage = String(error);
 
     console.error("Unknown error fetching documents:", error);
     throw fallbackError;

@@ -40,13 +40,13 @@ export async function GET() {
         tokenLength: process.env.UPSTASH_REDIS_REST_TOKEN?.length,
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Redis test error:", error);
     return NextResponse.json(
       {
         success: false,
-        error: error.message,
-        stack: error.stack,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
       },
       { status: 500 },
     );

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import prisma from "@/lib/prisma";
-import { PaymentStatus, RequestStatus } from "@prisma/client";
+import { Prisma, PaymentStatus, RequestStatus } from "@prisma/client";
 import { isDbHealthy } from "@/app/api/webhooks/utils";
 
 export async function POST(req: NextRequest) {
@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
 
     // Handle different event types
     switch (event.meta?.event_name) {
-      case "order_created":
+      case "order_created": {
         const order = event.data;
         console.log("🍋 Order created:", {
           id: order.id,
@@ -72,8 +72,9 @@ export async function POST(req: NextRequest) {
           );
         }
         break;
+      }
 
-      case "subscription_created":
+      case "subscription_created": {
         const subscription = event.data;
         console.log("🍋 Subscription created:", {
           id: subscription.id,
@@ -89,8 +90,9 @@ export async function POST(req: NextRequest) {
           );
         }
         break;
+      }
 
-      case "subscription_payment_success":
+      case "subscription_payment_success": {
         const successfulPayment = event.data;
         console.log("🍋 Subscription payment successful:", {
           id: successfulPayment.id,
@@ -103,8 +105,9 @@ export async function POST(req: NextRequest) {
           successfulPayment.attributes.user_email,
         );
         break;
+      }
 
-      case "subscription_payment_failed":
+      case "subscription_payment_failed": {
         const failedPayment = event.data;
         console.log("🍋 Subscription payment failed:", {
           id: failedPayment.id,
@@ -116,8 +119,9 @@ export async function POST(req: NextRequest) {
           failedPayment.attributes.subscription_id.toString(),
         );
         break;
+      }
 
-      case "subscription_cancelled":
+      case "subscription_cancelled": {
         const cancelledSub = event.data;
         console.log("🍋 Subscription cancelled:", {
           id: cancelledSub.id,
@@ -125,6 +129,7 @@ export async function POST(req: NextRequest) {
         });
         // Handle subscription cancellation if needed
         break;
+      }
 
       default:
         console.log(
@@ -232,7 +237,7 @@ async function handleLemonSqueezyPaymentFailure(paymentIdentifier: string) {
 }
 
 // Helper function to create appointment from payment record
-async function createAppointmentFromPayment(tx: any, payment: any) {
+async function createAppointmentFromPayment(_tx: Prisma.TransactionClient, _payment: unknown) {
   // For Lemon Squeezy, like Razorpay, we need to store appointment metadata
   // in the payment record or use custom_data from the webhook
   console.log(
@@ -249,7 +254,7 @@ async function createAppointmentFromPayment(tx: any, payment: any) {
 }
 
 // Helper function to confirm existing appointment
-async function confirmExistingAppointment(tx: any, appointmentId: string) {
+async function confirmExistingAppointment(tx: Prisma.TransactionClient, appointmentId: string) {
   // Make slots non-tentative
   await tx.slotOfAppointment.updateMany({
     where: { appointmentId },
@@ -297,7 +302,7 @@ async function confirmExistingAppointment(tx: any, appointmentId: string) {
 }
 
 // Helper function to cleanup failed payment appointments
-async function cleanupFailedPaymentAppointment(tx: any, appointmentId: string) {
+async function cleanupFailedPaymentAppointment(tx: Prisma.TransactionClient, appointmentId: string) {
   const appointment = await tx.appointment.findUnique({
     where: { id: appointmentId },
     include: {

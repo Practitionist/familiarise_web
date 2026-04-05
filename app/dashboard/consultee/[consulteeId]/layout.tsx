@@ -345,7 +345,7 @@ export default function ConsulteeLayout({
 
   // Fetch consultee profile with placeholderData to prevent loading flashes
   const {
-    data: profileDetails,
+    data: _profileDetails,
     error: profileError,
     isLoading: isLoadingProfile,
   } = useQuery({

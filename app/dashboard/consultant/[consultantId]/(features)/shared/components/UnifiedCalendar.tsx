@@ -42,6 +42,7 @@ import {
 } from "../utils/calendarUtils";
 import { useCalendarData } from "../hooks/useCalendarData";
 import { useEventSlotAllocation } from "../hooks/useSlotAllocation";
+import type { AllocationResponse } from "../utils/allocationService";
 // Note: remove unused imports to keep the component lean
 import { useToast } from "@/hooks/use-toast";
 
@@ -133,8 +134,21 @@ function areSlotsEqual(slots1: TimeSlot[], slots2: TimeSlot[]): boolean {
  * Counts completed calls (appointments with a full slot block) for a given
  * subscription inside a specific week window.
  */
+interface CalendarAppointmentSlot {
+  startsAt: string;
+  endsAt: string;
+  isTentative?: boolean;
+}
+
+interface CalendarAppointment {
+  id: string;
+  appointmentType: string;
+  subscription?: { id?: string };
+  slotsOfAppointment?: CalendarAppointmentSlot[];
+}
+
 function countCompletedCallsForWeek(
-  existingAppointments: any[],
+  existingAppointments: CalendarAppointment[],
   subscriptionId: string,
   slotsPerCall: number,
   weekStart: Date,
@@ -142,14 +156,14 @@ function countCompletedCallsForWeek(
 ): number {
   if (!Array.isArray(existingAppointments)) return 0;
 
-  return existingAppointments.filter((appt: any) => {
+  return existingAppointments.filter((appt: CalendarAppointment) => {
     if (appt.appointmentType !== "SUBSCRIPTION") return false;
     if (!appt.subscription || appt.subscription.id !== subscriptionId)
       return false;
     const slots = appt.slotsOfAppointment || [];
     // Skip tentative appointments — during rescheduling, tentative slots are the
     // OLD slots being replaced and should not count toward the weekly limit.
-    if (slots.some((s: any) => s.isTentative)) return false;
+    if (slots.some((s: CalendarAppointmentSlot) => s.isTentative)) return false;
     // A completed call is an appointment that has exactly the per-call slot count
     if (slots.length !== slotsPerCall) return false;
     const start = new Date(slots[0].startsAt);
@@ -330,7 +344,7 @@ export interface UnifiedCalendarProps {
   sessionDurationInHours?: number; // For subscriptions/classes - individual session duration
   mode: "view" | "select" | "allocate";
   onSlotsSelected?: (slots: TimeSlot[]) => void;
-  onAllocationComplete?: (result: any) => void;
+  onAllocationComplete?: (result: AllocationResponse) => void;
   onClose?: () => void;
   showAllocationButtons?: boolean;
   preSelectedSlots?: TimeSlot[];
@@ -399,7 +413,7 @@ export function UnifiedCalendar({
 
   // Wrap onAllocationComplete to refetch data before calling parent callback
   const handleAllocationSuccess = useCallback(
-    async (result: any) => {
+    async (result: AllocationResponse) => {
       try {
         // Refetch event slots and appointments so newly allocated slots appear correctly
         await Promise.all([refetchEventSlots(), refetchAppointments()]);
@@ -530,7 +544,7 @@ export function UnifiedCalendar({
       if (!targetSize || targetSize <= 1) return [clickedSlot];
 
       const clickedLocalStart = new Date(clickedSlot.startTime);
-      const clickedDayString = clickedDate.toDateString();
+      const _clickedDayString = clickedDate.toDateString();
 
       // Check if a candidate slot at a given offset is eligible for auto-expansion
       const getEligibleSlot = (offsetSteps: number): TimeSlot | null => {
@@ -639,7 +653,7 @@ export function UnifiedCalendar({
       if (allowedStart || allowedEnd) {
         const intervalStart = new Date(status.intervalStartUTCString);
         if (isOutsideAllowedRange(intervalStart, allowedStart, allowedEnd)) {
-          const label =
+          const _label =
             eventType === "subscription"
               ? "subscription"
               : eventType === "class"

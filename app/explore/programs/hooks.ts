@@ -12,6 +12,7 @@ import {
   type Program,
   type ClassPlanProgram,
   type WebinarPlanProgram,
+  type ClassInstance,
   type TopicWithCount,
 } from "./utils";
 
@@ -33,14 +34,20 @@ function buildFilterParams(filters: ProgramFilters): string {
   return str ? `&${str}` : "";
 }
 
-const fetchJson = (url: string) => fetch(url).then((res) => res.json());
-
-interface AppointmentWithSlots {
-  slotsOfAppointment: { user?: { id: string }[] }[];
+interface ApiMeta {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
 }
 
-interface ClassWithAppointments {
-  appointments: AppointmentWithSlots[];
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const fetchJson = (url: string): Promise<{ data?: any[]; meta?: ApiMeta }> => fetch(url).then((res) => res.json());
+
+interface WebinarWithAppointment {
+  appointment?: {
+    slotsOfAppointment?: { user?: { id: string }[] }[];
+  } | null;
 }
 
 interface UseProgramsOptions {
@@ -95,10 +102,10 @@ export function usePrograms(
         classMeta = classResponse.meta;
         if (classResponse.data) {
           const formattedClasses = classResponse.data.map(
-            (plan: any): ClassPlanProgram => {
-              const classes = plan.classes || [];
+            (plan: Record<string, unknown> & { id: string; classes?: ClassInstance[]; imageUrl?: string | null }): ClassPlanProgram => {
+              const classes = (plan.classes || []) as ClassInstance[];
               const appointments = classes.flatMap(
-                (c: ClassWithAppointments) => c.appointments ?? [],
+                (c) => c.appointments ?? [],
               );
               const isRegistered =
                 userId && appointments.length > 0
@@ -116,7 +123,7 @@ export function usePrograms(
                   plan.imageUrl,
                 ),
                 isRegistered,
-              };
+              } as ClassPlanProgram;
             },
           );
           combinedPrograms = [...combinedPrograms, ...formattedClasses];
@@ -130,8 +137,8 @@ export function usePrograms(
           webinarMeta = webinarResponse.meta;
           if (webinarResponse.data) {
             const formattedWebinars = webinarResponse.data.map(
-              (plan: any): WebinarPlanProgram => {
-                const webinars = plan.webinars || [];
+              (plan: Record<string, unknown> & { id: string; webinars?: WebinarWithAppointment[]; imageUrl?: string | null }): WebinarPlanProgram => {
+                const webinars = (plan.webinars || []) as WebinarWithAppointment[];
                 const isRegistered =
                   userId && webinars.length > 0
                     ? isUserRegisteredForWebinar(webinars, userId)
@@ -148,7 +155,7 @@ export function usePrograms(
                     plan.imageUrl,
                   ),
                   isRegistered,
-                };
+                } as WebinarPlanProgram;
               },
             );
             combinedPrograms = [...combinedPrograms, ...formattedWebinars];
@@ -225,7 +232,8 @@ export function useCuratedPrograms(
   const { data, isLoading } = useQuery({
     queryKey: ["curated-programs", programType, sort, limit],
     queryFn: async () => {
-      const requests: Promise<any>[] = [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const requests: Promise<{ data?: any[]; meta?: ApiMeta }>[] = [];
 
       if (programType === "all" || programType === "class") {
         requests.push(
@@ -249,9 +257,9 @@ export function useCuratedPrograms(
       ) {
         programs.push(
           ...responses[0].data.map(
-            (plan: any): ClassPlanProgram => ({
+            (plan: Record<string, unknown> & { id: string; classes?: ClassInstance[]; imageUrl?: string | null }): ClassPlanProgram => ({
               ...plan,
-              classes: plan.classes || [],
+              classes: (plan.classes || []) as ClassInstance[],
               type: "class",
               imageUrl: generateProgramImageUrl(
                 plan.id,
@@ -259,7 +267,7 @@ export function useCuratedPrograms(
                 400,
                 plan.imageUrl,
               ),
-            }),
+            } as ClassPlanProgram),
           ),
         );
       }
@@ -271,9 +279,9 @@ export function useCuratedPrograms(
       ) {
         programs.push(
           ...responses[webIdx].data.map(
-            (plan: any): WebinarPlanProgram => ({
+            (plan: Record<string, unknown> & { id: string; webinars?: WebinarWithAppointment[]; imageUrl?: string | null }): WebinarPlanProgram => ({
               ...plan,
-              webinars: plan.webinars || [],
+              webinars: (plan.webinars || []) as WebinarWithAppointment[],
               type: "webinar",
               imageUrl: generateProgramImageUrl(
                 plan.id,
@@ -281,7 +289,7 @@ export function useCuratedPrograms(
                 400,
                 plan.imageUrl,
               ),
-            }),
+            } as WebinarPlanProgram),
           ),
         );
       }

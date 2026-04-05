@@ -47,7 +47,7 @@ export function RequestSlotAllocationTabMini() {
         if (consultationsRes.ok) {
           const data = await consultationsRes.json();
           requests.push(
-            ...data.data.map((c: any) => ({
+            ...data.data.map((c: { id: string; consultationPlan?: { title?: string }; requestedBy: { user: { name: string } }; requestedAt: string; requestStatus: string }) => ({
               id: c.id,
               type: AppointmentsType.CONSULTATION,
               title: c.consultationPlan?.title || "Untitled Plan",
@@ -61,7 +61,7 @@ export function RequestSlotAllocationTabMini() {
         if (subscriptionsRes.ok) {
           const data = await subscriptionsRes.json();
           requests.push(
-            ...data.data.map((s: any) => ({
+            ...data.data.map((s: { id: string; subscriptionPlan?: { title?: string }; requestedBy: { user: { name: string } }; requestedAt: string; requestStatus: string }) => ({
               id: s.id,
               type: AppointmentsType.SUBSCRIPTION,
               title: s.subscriptionPlan?.title || "Untitled Plan",

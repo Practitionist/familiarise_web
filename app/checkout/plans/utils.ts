@@ -16,10 +16,16 @@ export function loadScript(src: string): Promise<boolean> {
 }
 
 // Common error handling logic for checkout pages
+interface CheckoutApiError {
+  error?: string;
+  errorType?: string;
+  message?: string;
+}
+
 export function createHandleApiError(
   toast: ReturnType<typeof useToast>["toast"],
 ) {
-  return (errorData: any) => {
+  return (errorData: CheckoutApiError) => {
     const errorMessage = errorData.error || "Operation failed";
     const errorType = errorData.errorType || "UNKNOWN_ERROR";
 
@@ -53,7 +59,7 @@ export function createHandleCheckoutSuccess(
   appointmentType: "CONSULTATION" | "WEBINAR" | "CLASS" | "SUBSCRIPTION",
 ) {
   return (
-    data: any,
+    data: { skipPayment?: boolean; [key: string]: unknown },
     isDevMode: boolean = false,
     isMockPayment: boolean = false,
   ) => {
@@ -117,9 +123,9 @@ export function createHandleCheckoutSuccess(
 export async function handleUnifiedCheckout(
   checkoutData: CheckoutInput,
   gateway: PaymentGateway,
-  handleApiError: (errorData: any) => void,
+  handleApiError: (errorData: CheckoutApiError) => void,
   handleCheckoutSuccess: (
-    data: any,
+    data: { skipPayment?: boolean; [key: string]: unknown },
     isDevMode?: boolean,
     isMockPayment?: boolean,
   ) => void,
@@ -173,7 +179,7 @@ export function createStripeCheckoutHandlers(
   toast: ReturnType<typeof useToast>["toast"],
 ) {
   return {
-    onPaymentSuccess: (response: any) => {
+    onPaymentSuccess: (_response: { message: string }) => {
       toast({
         title: "Payment Successful",
         description:
@@ -181,7 +187,7 @@ export function createStripeCheckoutHandlers(
       });
       window.location.href = "/checkout/checkout-success";
     },
-    onPaymentError: (error: any) => {
+    onPaymentError: (error: { message?: string; code?: string; errorType?: string; error?: string }) => {
       const errorMessage =
         error.message || error.code || "An unexpected error occurred";
       const userFriendlyMessage =
@@ -209,17 +215,18 @@ export function createRazorpayCheckoutHandlers(
   toast: ReturnType<typeof useToast>["toast"],
 ) {
   return {
-    onPaymentSuccess: (response: { razorpay_payment_id: string }) => {
+    onPaymentSuccess: (response: { razorpay_payment_id?: string; message?: string; [key: string]: string | undefined }) => {
       toast({
         title: "Payment Successful",
-        description: `Your payment has been confirmed! Payment ID: ${response.razorpay_payment_id}. Redirecting to your dashboard...`,
+        description: `Your payment has been confirmed! Payment ID: ${response.razorpay_payment_id ?? "N/A"}. Redirecting to your dashboard...`,
       });
       window.location.href = "/dashboard";
     },
     onPaymentError: (error: {
-      description: string;
+      description?: string;
       code?: string;
       reason?: string;
+      message?: string;
     }) => {
       const errorDescription =
         error.description || error.reason || "An unexpected error occurred";

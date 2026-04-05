@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
-import { WebinarStatus } from "@prisma/client";
+import { Prisma, WebinarStatus } from "@prisma/client";
 import { transformNestedPlanTopics } from "@/lib/topics";
 import {
   requireApiAuth,
@@ -166,7 +166,7 @@ export async function GET(request: NextRequest) {
         },
       });
     } else if (consultantProfileId) {
-      const whereClause: any = {
+      const whereClause: Prisma.WebinarWhereInput = {
         webinarPlan: {
           consultantProfileId,
         },

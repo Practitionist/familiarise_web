@@ -246,7 +246,7 @@ interface UpdateAppointmentRequest {
   classId?: string;
 }
 
-type AppointmentInclude = Prisma.AppointmentGetPayload<{
+type _AppointmentInclude = Prisma.AppointmentGetPayload<{
   include: {
     slotsOfAppointment: {
       include: {

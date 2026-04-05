@@ -87,7 +87,7 @@ export default [
       "no-case-declarations": "warn",
 
       // Warn when React props are missing type definitions
-      "react/prop-types": "warn",
+      "react/prop-types": "off",
 
       // These rules are turned off since React 17+ doesn't require importing React
       // when using JSX, as the new JSX transform handles this automatically
@@ -113,6 +113,7 @@ export default [
         {
           varsIgnorePattern: "^_", // Ignore variables starting with _
           argsIgnorePattern: "^_", // Ignore parameters starting with _
+          caughtErrorsIgnorePattern: "^_", // Ignore catch clause errors starting with _
           ignoreRestSiblings: true,
         },
       ],

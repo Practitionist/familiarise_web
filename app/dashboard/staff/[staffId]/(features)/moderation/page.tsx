@@ -4,21 +4,13 @@ import { useState, useEffect } from "react";
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+
+
 import {
   Dialog,
   DialogContent,
@@ -237,7 +229,7 @@ export default function ContentModerationPage() {
       setModerationNote("");
       fetchReports();
       fetchStats();
-    } catch (error) {
+    } catch (_error) {
       toast({
         title: "Error",
         description: "Failed to process action",
@@ -291,7 +283,7 @@ export default function ContentModerationPage() {
       setModerationNote("");
       fetchProfiles();
       fetchStats();
-    } catch (error) {
+    } catch (_error) {
       toast({
         title: "Error",
         description: "Failed to update profile verification",
@@ -321,7 +313,7 @@ export default function ContentModerationPage() {
 
       fetchReviews();
       fetchStats();
-    } catch (error) {
+    } catch (_error) {
       toast({
         title: "Error",
         description: "Failed to delete review",

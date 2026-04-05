@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { UserRole, RefundStatus, PaymentGateway } from "@prisma/client";
+import { Prisma, UserRole, RefundStatus, PaymentGateway } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
 export async function GET(req: NextRequest) {
@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
     const search = searchParams.get("search");
 
     // Build where clause
-    const where: any = {};
+    const where: Prisma.RefundWhereInput = {};
 
     if (status) {
       where.status = status;

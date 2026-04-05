@@ -6,7 +6,6 @@ import { useCallback, useEffect, useRef } from "react";
 import {
   createConsulteeQueries,
   createUserQueries,
-  batchPrefetch,
   schedulePrefetch,
 } from "@/lib/dashboard-queries";
 

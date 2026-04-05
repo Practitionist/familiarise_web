@@ -56,7 +56,6 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import type {
   Payment,
-  Refund,
   PaymentListResponse,
   RefundListResponse,
 } from "@/types/payments";
@@ -102,7 +101,7 @@ const formatDate = (dateString: string) => {
 };
 
 export default function PaymentsAssistancePage() {
-  const { toast } = useToast();
+  const { toast: _toast } = useToast();
   const [activeTab, setActiveTab] = useState("payments");
 
   // Payments state

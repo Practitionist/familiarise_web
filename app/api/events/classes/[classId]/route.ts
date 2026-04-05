@@ -4,7 +4,6 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   requireApiAuth,
   isPrivileged,
-  forbiddenResponse,
   authorizeEventAccess,
 } from "@/lib/auth-helpers";
 

@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
     // --- Password Hashing ---
     // IMPORTANT: Never store raw passwords. Hash them securely.
     // Add proper salt rounds and error handling for production
-    const hashedPassword = await hash(password, 10);
+    const _hashedPassword = await hash(password, 10);
     // -----------------------
 
     // Check if user already exists
@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
 }
 
 // GET /api/user/staff - Get all staff members (ADMIN/STAFF only)
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   try {
     // Require authentication
     const authResult = await requireApiAuth();

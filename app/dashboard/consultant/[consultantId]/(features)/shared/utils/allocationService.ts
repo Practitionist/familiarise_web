@@ -1,6 +1,18 @@
 import { TimeSlot } from "./calendarUtils";
 import type { SlotConflictResult } from "@/utils/slotAllocation/types";
 
+/** Shape of a raw availability slot returned from the availability-with-allocation API */
+interface RawAvailabilityApiSlot {
+  slotId: string;
+  slotStartTimeInUTC: string;
+  slotEndTimeInUTC: string;
+  bookingStatus: "available" | "partially-booked" | "fully-booked";
+  type: "WEEKLY" | "CUSTOM";
+  dayOfWeek?: string;
+  localStartTime?: string;
+  localEndTime?: string;
+}
+
 export interface AllocationRequest {
   isAuto: boolean;
   slots?: string[];
@@ -9,7 +21,7 @@ export interface AllocationRequest {
 
 export interface AllocationResponse {
   success: boolean;
-  data?: any;
+  data?: Record<string, unknown>;
   error?: string;
 }
 
@@ -529,7 +541,7 @@ export class AllocationService {
       const { data: slotsByDate } = result;
 
       // Flatten the grouped-by-date slots into a single array
-      const allSlots: any[] = Object.values(slotsByDate).flat();
+      const allSlots: RawAvailabilityApiSlot[] = (Object.values(slotsByDate) as RawAvailabilityApiSlot[][]).flat();
 
       return {
         weekly: allSlots.filter((s) => s.type === "WEEKLY"),

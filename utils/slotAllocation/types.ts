@@ -5,7 +5,7 @@
  * consistency and reduce duplication.
  */
 
-import { AppointmentsType, Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 
 /**
  * Allocation modes supported by the system

@@ -301,7 +301,7 @@ export function HomeTab({
         relevantSlot,
       );
       router.push(`/meetings/${meetingId}`);
-    } catch (error) {
+    } catch (_error) {
       toast({
         title: "Error",
         description: "Failed to join meeting.",

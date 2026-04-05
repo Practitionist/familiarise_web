@@ -72,10 +72,10 @@ export default function ConsultationCheckoutPage({
   const { formatPrice, currency } = useCurrency();
   const checkoutTaxContext = useCheckoutTaxContext();
   const [eventData, setEventData] = useState<ConsultationResponse | null>(null);
-  const [slotData, setSlotData] = useState<any>(null);
+  const [_slotData, setSlotData] = useState<Record<string, unknown> | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [reviews, setReviews] = useState<ConsultantReview[]>([]);
+  const [_reviews, setReviews] = useState<ConsultantReview[]>([]);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
   const isProcessingRef = useRef(false);
   const [processingGateway, setProcessingGateway] = useState<string | null>(
@@ -140,7 +140,7 @@ export default function ConsultationCheckoutPage({
       } else {
         setDiscountError(data.message || "Invalid discount code");
       }
-    } catch (error) {
+    } catch (_error) {
       setDiscountError("Failed to validate discount code");
     } finally {
       setIsApplyingDiscount(false);
@@ -211,7 +211,7 @@ export default function ConsultationCheckoutPage({
   }, [resolvedSearchParams]);
 
   // Common error handling logic
-  const handleApiError = (errorData: any) => {
+  const handleApiError = (errorData: { error?: string; errorType?: string }) => {
     const errorMessage = errorData.error || "Operation failed";
     const errorType = errorData.errorType || "UNKNOWN_ERROR";
 
@@ -841,16 +841,18 @@ export default function ConsultationCheckoutPage({
                             useReferralCredits,
                           })}
                           onPaymentSuccess={(response: {
-                            razorpay_payment_id: string;
+                            razorpay_payment_id?: string;
+                            message?: string;
+                            [key: string]: string | undefined;
                           }) => {
                             toast({
                               title: "Payment Successful",
-                              description: `Payment ID: ${response.razorpay_payment_id}`,
+                              description: `Payment ID: ${response.razorpay_payment_id ?? "N/A"}`,
                             });
                             window.location.href = "/dashboard";
                           }}
                           disabled={isMaintenanceBlocked}
-                          onPaymentError={(error: { description: string }) => {
+                          onPaymentError={(error: { description?: string; code?: string; reason?: string; message?: string }) => {
                             toast({
                               title: "Payment Failed",
                               description:

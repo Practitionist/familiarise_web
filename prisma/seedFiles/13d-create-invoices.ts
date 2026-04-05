@@ -1,4 +1,3 @@
-import { faker } from "@faker-js/faker";
 import { PaymentStatus, Prisma } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import {

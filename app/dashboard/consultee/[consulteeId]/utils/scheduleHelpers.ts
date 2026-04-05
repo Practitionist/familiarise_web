@@ -104,7 +104,7 @@ export function getActualUpcomingSlots(events: EventWithType[]): Array<{
         endsAt: prismaSlot.endsAt ? new Date(prismaSlot.endsAt) : null,
         isTentative: prismaSlot.isTentative,
         appointmentId: prismaSlot.appointmentId,
-        user: (prismaSlot as any).user || [],
+        user: (prismaSlot as unknown as { user?: unknown[] }).user || [],
       } as TSlotOfAppointment;
 
       // 2. Construct TAppointment-compatible appointment
@@ -119,7 +119,7 @@ export function getActualUpcomingSlots(events: EventWithType[]): Array<{
               id: event.appointment?.id ?? event.id,
               appointmentType: upperCaseEventType,
               // WARNING: Unsafe cast due to structural mismatch (consultantProfile)
-              consultation: event as any,
+              consultation: event as unknown as TAppointment["consultation"],
             };
           } else return; // Use return to exit forEach iteration
           break;
@@ -129,7 +129,7 @@ export function getActualUpcomingSlots(events: EventWithType[]): Array<{
               id: event.id,
               appointmentType: upperCaseEventType,
               // WARNING: Unsafe cast due to structural mismatch (consultantProfile)
-              subscription: event as any,
+              subscription: event as unknown as TAppointment["subscription"],
             };
           } else return;
           break;
@@ -139,7 +139,7 @@ export function getActualUpcomingSlots(events: EventWithType[]): Array<{
               id: event.appointment?.id ?? event.id,
               appointmentType: upperCaseEventType,
               // WARNING: Unsafe cast due to structural mismatch (consultantProfile)
-              webinar: event as any,
+              webinar: event as unknown as TAppointment["webinar"],
             };
           } else return;
           break;
@@ -149,7 +149,7 @@ export function getActualUpcomingSlots(events: EventWithType[]): Array<{
               id: event.id,
               appointmentType: upperCaseEventType,
               // WARNING: Unsafe cast due to structural mismatch (consultantProfile)
-              class: event as any,
+              class: event as unknown as TAppointment["class"],
             };
           } else return;
           break;

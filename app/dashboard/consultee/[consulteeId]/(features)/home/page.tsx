@@ -25,7 +25,7 @@ export default function HomePage({ params }: Readonly<PageProps>) {
     staleTime: 0,
     refetchOnWindowFocus: false,
   };
-  const { data: eventsData, isLoading, error, isStale } = useQuery(eventsQuery);
+  const { data: eventsData, isLoading, error } = useQuery(eventsQuery);
 
   // Show skeleton only for initial load when no data exists
   if (isLoading && !eventsData) {

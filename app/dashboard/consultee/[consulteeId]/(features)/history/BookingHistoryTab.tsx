@@ -33,10 +33,10 @@ type EventWithType =
 
 // Updated to receive data as props instead of fetching internally
 interface BookingHistoryTabProps {
-  consultations: any[];
-  subscriptions: any[];
-  webinars: any[];
-  classes: any[];
+  consultations: TConsultationWithPlan[];
+  subscriptions: TSubscriptionWithPlan[];
+  webinars: TWebinarWithPlan[];
+  classes: TClassWithPlan[];
 }
 
 export function BookingHistoryTab({

@@ -14,7 +14,7 @@
  * Schedule: Runs weekly on Mondays at 2:30 AM IST (9:00 PM UTC Sunday)
  */
 
-import { PayoutStatus, PaymentGateway, EarningStatus } from "@prisma/client";
+import { PayoutStatus, PaymentGateway } from "@prisma/client";
 import prisma from "@/lib/prisma";
 
 /**

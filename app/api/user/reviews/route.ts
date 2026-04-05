@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 import { notifyNewReview } from "@/lib/novu";
 import { CreateReviewSchema } from "@/schemas/feedbacks";
 import { apiError } from "@/lib/errors";
@@ -14,7 +15,7 @@ export async function GET(req: NextRequest) {
     const consulteeId = searchParams.get("consulteeId");
     const searchTerm = searchParams.get("search");
 
-    let whereClause: any = {};
+    const whereClause: Prisma.ConsultantReviewWhereInput = {};
 
     if (rating) {
       whereClause.rating = {
