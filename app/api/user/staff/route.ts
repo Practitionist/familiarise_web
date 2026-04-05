@@ -1,5 +1,4 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { hash } from "bcryptjs";
 import prisma from "@/lib/prisma";
 import { UserRole } from "@prisma/client";
 import {
@@ -40,11 +39,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // --- Password Hashing ---
-    // IMPORTANT: Never store raw passwords. Hash them securely.
-    // Add proper salt rounds and error handling for production
-    const _hashedPassword = await hash(password, 10);
-    // -----------------------
+    // NOTE: Password hashing is handled by BetterAuth (lib/auth.ts).
+    // The staff user.create below does not store a password directly.
 
     // Check if user already exists
     const existingUser = await prisma.user.findUnique({ where: { email } });

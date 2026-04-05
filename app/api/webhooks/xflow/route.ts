@@ -244,21 +244,20 @@ async function handleXFlowPaymentFailure(paymentId: string) {
 }
 
 // Helper function to create appointment from payment record
+/* eslint-disable @typescript-eslint/no-explicit-any */
 async function createAppointmentFromPayment(
-  tx: Prisma.TransactionClient,
-  payment: {
-    id: string;
-    userId: string;
-    user: { consulteeProfile: { id: string } | null };
-  },
-  metadata: Record<string, string>,
+  tx: any,
+  payment: any,
+  metadata: any,
 ) {
+  /* eslint-enable @typescript-eslint/no-explicit-any */
   // For XFlow, we can use metadata like Stripe to store appointment details
-  const { type, planId, slotIds, title } = metadata;
+  const { type, planId, eventId, slotIds, title, description } = metadata;
 
   console.log("Creating appointment from XFlow metadata:", {
     type,
     planId,
+    eventId,
     slotIds,
   });
 
@@ -272,39 +271,37 @@ async function createAppointmentFromPayment(
   const slotIdArray =
     typeof slotIds === "string" ? slotIds.split(",") : slotIds;
 
-  // Determine the appointment type enum value
-  const appointmentTypeMap: Record<string, "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS"> = {
-    consultation: "CONSULTATION",
-    subscription: "SUBSCRIPTION",
-    webinar: "WEBINAR",
-    class: "CLASS",
-  };
-  const appointmentType = appointmentTypeMap[type];
-  if (!appointmentType) {
-    throw new Error(`Unknown appointment type: ${type}`);
+  // Create the appointment
+  const appointment = await tx.appointment.create({
+    data: {
+      userId: payment.userId,
+      title: title || `${type} Appointment`,
+      description: description || "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    },
+  });
+
+  // Create slot associations
+  for (const slotId of slotIdArray) {
+    await tx.slotOfAppointment.create({
+      data: {
+        slotId: slotId.trim(),
+        appointmentId: appointment.id,
+        isTentative: false,
+      },
+    });
   }
 
-  // consulteeProfileId is needed for consultation/subscription requestedById
-  // The caller validates payment.user.consulteeProfile is not null before calling
-  const consulteeProfileId = payment.user.consulteeProfile!.id;
-
-  // Create type-specific record first, then create the appointment linking to it
-  let appointment;
-
+  // Create type-specific records
   switch (type) {
     case "consultation": {
       if (!planId) throw new Error("Missing planId for consultation");
-      const consultation = await tx.consultation.create({
+      await tx.consultation.create({
         data: {
+          appointmentId: appointment.id,
           consultationPlanId: planId,
-          requestedById: consulteeProfileId,
           requestStatus: RequestStatus.PENDING,
-        },
-      });
-      appointment = await tx.appointment.create({
-        data: {
-          appointmentType,
-          consultation: { connect: { id: consultation.id } },
         },
       });
       break;
@@ -312,78 +309,65 @@ async function createAppointmentFromPayment(
 
     case "subscription": {
       if (!planId) throw new Error("Missing planId for subscription");
-      const subscription = await tx.subscription.create({
+      await tx.subscription.create({
         data: {
+          appointmentId: appointment.id,
           subscriptionPlanId: planId,
-          requestedById: consulteeProfileId,
           requestStatus: RequestStatus.PENDING,
-          schedulingPeriodStartsAt: new Date(),
-          schedulingPeriodEndsAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-        },
-      });
-      appointment = await tx.appointment.create({
-        data: {
-          appointmentType,
-          subscription: { connect: { id: subscription.id } },
         },
       });
       break;
     }
 
     case "webinar": {
-      if (!planId) throw new Error("Missing planId for webinar");
-      const webinar = await tx.webinar.create({
-        data: {
-          webinarPlanId: planId,
-          status: "SCHEDULED",
-        },
-      });
-      appointment = await tx.appointment.create({
-        data: {
-          appointmentType,
-          webinar: { connect: { id: webinar.id } },
-        },
-      });
+      if (eventId) {
+        await tx.webinar.create({
+          data: {
+            appointmentId: appointment.id,
+            webinarEventId: eventId,
+            status: "SCHEDULED",
+          },
+        });
+      } else if (planId) {
+        await tx.webinar.create({
+          data: {
+            appointmentId: appointment.id,
+            webinarPlanId: planId,
+            status: "SCHEDULED",
+          },
+        });
+      } else {
+        throw new Error("Missing eventId or planId for webinar");
+      }
       break;
     }
 
     case "class": {
-      if (!planId) throw new Error("Missing planId for class");
-      const classRecord = await tx.class.create({
-        data: {
-          classPlanId: planId,
-          status: "SCHEDULED",
-        },
-      });
-      appointment = await tx.appointment.create({
-        data: {
-          appointmentType,
-          class: { connect: { id: classRecord.id } },
-        },
-      });
+      if (eventId) {
+        await tx.class.create({
+          data: {
+            appointmentId: appointment.id,
+            classEventId: eventId,
+            status: "SCHEDULED",
+          },
+        });
+      } else if (planId) {
+        await tx.class.create({
+          data: {
+            appointmentId: appointment.id,
+            classPlanId: planId,
+            status: "SCHEDULED",
+          },
+        });
+      } else {
+        throw new Error("Missing eventId or planId for class");
+      }
       break;
     }
 
     default:
       throw new Error(`Unknown appointment type: ${type}`);
   }
-
-  // Link existing tentative slots to this appointment by updating them
-  for (const slotId of slotIdArray) {
-    const trimmedId = slotId.trim();
-    await tx.slotOfAppointment.update({
-      where: { id: trimmedId },
-      data: {
-        appointmentId: appointment.id,
-        isTentative: false,
-      },
-    });
-  }
-
-  console.log(
-    `[XFlow] Created ${type} appointment from metadata:`,
-    title || "(no title)",
-  );
 
   // Link payment to the new appointment
   await tx.payment.update({
