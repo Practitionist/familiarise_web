@@ -96,7 +96,7 @@ export function DashboardShell({
         </AnimatePresence>
 
         {/* Main Content */}
-        <main className="flex-1 lg:ml-64 min-h-screen bg-zinc-100 overflow-x-hidden">
+        <main className="flex-1 lg:ml-64 min-h-screen bg-zinc-100 overflow-x-clip">
           {/* Mobile Header Bar */}
           <div className="sticky top-maintenance z-50 overflow-visible flex items-center gap-3 px-4 py-3 bg-white border-b border-zinc-200 lg:hidden">
             <Button
