@@ -3,6 +3,10 @@ import redisClient from "../lib/redis";
 import crypto from "crypto";
 import { SlotLockError } from "./errors/SlotLockError";
 
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 // ============================================================================
 // Type Definitions
 // ============================================================================
@@ -130,13 +134,13 @@ async function acquireLockWithRetry(
         );
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error(
         JSON.stringify({
           event: "lock_error",
           key,
           attempt: attempt + 1,
-          error: error.message,
+          error: getErrorMessage(error),
           timestamp: new Date().toISOString(),
         }),
       );
@@ -198,13 +202,13 @@ async function releaseLock(lock: ApprovalLock): Promise<void> {
         }),
       );
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     // Never throw in unlock - log only
     console.error(
       JSON.stringify({
         event: "lock_release_error",
         key: lock.key,
-        error: error.message,
+        error: getErrorMessage(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -260,12 +264,12 @@ export async function extendLock(
       }),
     );
     return false;
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error(
       JSON.stringify({
         event: "lock_extension_error",
         key: lock.key,
-        error: error.message,
+        error: getErrorMessage(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -475,13 +479,13 @@ export async function acquireEventSlot(
     );
 
     return { reservationId, slotNumber, eventType, eventId };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error(
       JSON.stringify({
         event: "event_slot_acquisition_error",
         eventType,
         eventId,
-        error: error.message,
+        error: getErrorMessage(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -538,7 +542,7 @@ export async function releaseEventSlot(
         }),
       );
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     // Log but don't throw - cleanup should be best-effort
     console.error(
       JSON.stringify({
@@ -546,7 +550,7 @@ export async function releaseEventSlot(
         eventType: reservation.eventType,
         eventId: reservation.eventId,
         reservationId: reservation.reservationId,
-        error: error.message,
+        error: getErrorMessage(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -578,7 +582,7 @@ export async function confirmEventSlot(
         timestamp: new Date().toISOString(),
       }),
     );
-  } catch (error: any) {
+  } catch (error: unknown) {
     // Log but don't throw - confirmation should proceed
     console.error(
       JSON.stringify({
@@ -586,7 +590,7 @@ export async function confirmEventSlot(
         eventType: reservation.eventType,
         eventId: reservation.eventId,
         reservationId: reservation.reservationId,
-        error: error.message,
+        error: getErrorMessage(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -611,13 +615,13 @@ export async function getEventSlotCount(
   try {
     const count = await client.get(counterKey);
     return count ? parseInt(count as string, 10) : 0;
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error(
       JSON.stringify({
         event: "event_slot_count_error",
         eventType,
         eventId,
-        error: error.message,
+        error: getErrorMessage(error),
         timestamp: new Date().toISOString(),
       }),
     );

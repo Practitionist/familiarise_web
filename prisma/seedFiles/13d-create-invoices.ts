@@ -192,7 +192,7 @@ export async function createInvoices(): Promise<void> {
           amount: payment.amount,
           currency: payment.currency,
           status,
-          items: items as unknown as Prisma.InputJsonValue,
+          items: JSON.parse(JSON.stringify(items)) as Prisma.InputJsonValue,
           pdfUrl: generatePdfUrl(invoiceNumber),
           dueDate: payment.createdAt, // Due immediately for paid invoices
           paidAt: payment.createdAt, // Paid at payment time

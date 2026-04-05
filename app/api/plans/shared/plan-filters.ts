@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 
 export interface PlanFilterParams {
   consultantId: string | null;
@@ -47,13 +48,27 @@ export function parsePlanFilters(
 }
 
 /**
+ * Shared plan WHERE clause — structurally compatible with both
+ * Prisma.WebinarPlanWhereInput and Prisma.ClassPlanWhereInput.
+ */
+export interface PlanWhereClause {
+  consultantProfileId?: string;
+  language?: string;
+  price?: { gte?: number; lte?: number };
+  title?: { contains: string; mode: "insensitive" };
+  topics?: { some: { id: { in: string[] } } };
+  consultantProfile?: { domainId: string };
+}
+
+/**
  * Build a Prisma where clause from parsed plan filters.
- * Returns a plain object that can be cast to ClassPlanWhereInput or WebinarPlanWhereInput.
+ * The returned object is structurally compatible with both
+ * Prisma.WebinarPlanWhereInput and Prisma.ClassPlanWhereInput.
  */
 export function buildPlanWhereClause(
   filters: PlanFilterParams,
-): Record<string, unknown> {
-  const where: Record<string, unknown> = {};
+): PlanWhereClause {
+  const where: PlanWhereClause = {};
 
   if (filters.consultantId) {
     where.consultantProfileId = filters.consultantId;
@@ -62,7 +77,7 @@ export function buildPlanWhereClause(
     where.language = filters.language;
   }
   if (filters.minPrice !== undefined || filters.maxPrice !== undefined) {
-    const price: Record<string, number> = {};
+    const price: { gte?: number; lte?: number } = {};
     if (filters.minPrice !== undefined) price.gte = filters.minPrice;
     if (filters.maxPrice !== undefined) price.lte = filters.maxPrice;
     where.price = price;
@@ -84,11 +99,21 @@ export function buildPlanWhereClause(
 }
 
 /**
+ * Shared plan ORDER BY clause — structurally compatible with both
+ * Prisma.WebinarPlanOrderByWithRelationInput and Prisma.ClassPlanOrderByWithRelationInput.
+ */
+export interface PlanOrderByClause {
+  createdAt?: Prisma.SortOrder;
+  price?: Prisma.SortOrder;
+  title?: Prisma.SortOrder;
+}
+
+/**
  * Build a Prisma orderBy object from a sort string.
  */
 export function buildPlanOrderBy(
   sort: string | null,
-): Record<string, unknown> | undefined {
+): PlanOrderByClause | undefined {
   if (sort === "newest") return { createdAt: "desc" };
   if (sort === "price-asc") return { price: "asc" };
   if (sort === "price-desc") return { price: "desc" };

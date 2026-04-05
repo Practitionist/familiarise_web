@@ -15,7 +15,6 @@ interface XFlowCheckoutProps {
 interface XFlowCallbackResponse {
   status: string;
   message?: string;
-  [key: string]: unknown;
 }
 
 declare global {

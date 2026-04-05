@@ -6,7 +6,7 @@
  */
 
 import prisma from "@/lib/prisma";
-import { RequestStatus, ScheduleType } from "@prisma/client";
+import { PrismaClient, Prisma, RequestStatus, ScheduleType } from "@prisma/client";
 import {
   EventType,
   ValidationResult,
@@ -677,7 +677,7 @@ export class SlotValidationService {
     }
 
     const validationService = new SubscriptionValidationService(
-      this.prismaClient as any,
+      this.prismaClient as PrismaClient | Prisma.TransactionClient,
     );
 
     // Exclude tentative appointments from weekly call count.

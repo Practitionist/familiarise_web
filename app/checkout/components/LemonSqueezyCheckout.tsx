@@ -14,7 +14,6 @@ interface LemonSqueezyCheckoutProps {
 // Lemon Squeezy checkout configuration
 interface LemonSqueezyEventData {
   message?: string;
-  [key: string]: unknown;
 }
 
 declare global {

@@ -8,6 +8,7 @@ import { EarningRole, EarningStatus, Payment, Prisma } from "@prisma/client";
 import { PAYOUT_CONSTANTS, AppointmentType } from "./constants";
 import { calculateRevenueSplit } from "@/lib/collaborators/service";
 import { getIndianFYQuarter } from "@/lib/payments/tax/tds-service";
+import type { RevenueSplit } from "@/types/collaborators";
 
 // ============================================
 // Types
@@ -88,8 +89,7 @@ export async function createEarningsFromPayment({
   }
 
   // Calculate collaborator splits if applicable
-  let splits: { consultantProfileId: string; share: number; role: string }[] =
-    [];
+  let splits: RevenueSplit[] = [];
   if (planType && planId) {
     splits = await calculateRevenueSplit(planType, planId, totalConsultantPool);
   }

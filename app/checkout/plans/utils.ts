@@ -215,7 +215,7 @@ export function createRazorpayCheckoutHandlers(
   toast: ReturnType<typeof useToast>["toast"],
 ) {
   return {
-    onPaymentSuccess: (response: { razorpay_payment_id?: string; message?: string; [key: string]: string | undefined }) => {
+    onPaymentSuccess: (response: { razorpay_payment_id?: string; message?: string }) => {
       toast({
         title: "Payment Successful",
         description: `Your payment has been confirmed! Payment ID: ${response.razorpay_payment_id ?? "N/A"}. Redirecting to your dashboard...`,

@@ -846,7 +846,6 @@ export default function ConsultationCheckoutPage({
                           onPaymentSuccess={(response: {
                             razorpay_payment_id?: string;
                             message?: string;
-                            [key: string]: string | undefined;
                           }) => {
                             toast({
                               title: "Payment Successful",

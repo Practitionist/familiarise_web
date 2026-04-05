@@ -23,12 +23,13 @@ export const useAppointments = (consulteeId: string) => {
         }
         const data = await response.json();
         setAppointments(data);
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error("Error fetching appointments:", err);
-        setError(err);
+        const error = err instanceof Error ? err : new Error(String(err));
+        setError(error);
         toast({
           title: "Error fetching appointments",
-          description: err.message,
+          description: error.message,
           variant: "destructive",
         });
       } finally {

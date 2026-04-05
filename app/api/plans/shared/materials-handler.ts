@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 import {
   uploadPlanMaterial,
@@ -16,6 +17,18 @@ export interface PlanMaterialsConfig {
     | "subscriptionPlan"
     | "webinarPlan"
     | "classPlan";
+}
+
+/** Shape of the ownership-check query passed to Prisma findFirst. */
+interface PlanOwnershipQuery {
+  where: {
+    id: string;
+    consultantProfile: {
+      user: {
+        id: string;
+      };
+    };
+  };
 }
 
 // Development mode check
@@ -36,7 +49,7 @@ async function verifyPlanOwnership(
   }
 
   try {
-    const planQuery: Record<string, unknown> = {
+    const planQuery: PlanOwnershipQuery = {
       where: {
         id: planId,
         consultantProfile: {
@@ -124,8 +137,9 @@ export async function handleGetMaterials(
     }
 
     // Fetch materials
-    const whereClause: Record<string, string> = {};
-    whereClause[config.planIdField] = planId;
+    const whereClause: Prisma.PlanMaterialWhereInput = {
+      [config.planIdField]: planId,
+    };
 
     const materials = await prisma.planMaterial.findMany({
       where: whereClause,
@@ -222,8 +236,9 @@ export async function handleUploadMaterial(
     }
 
     // Get the current max order for this plan
-    const whereClause: Record<string, string> = {};
-    whereClause[config.planIdField] = planId;
+    const whereClause: Prisma.PlanMaterialWhereInput = {
+      [config.planIdField]: planId,
+    };
 
     const maxOrderResult = await prisma.planMaterial.aggregate({
       where: whereClause,
@@ -232,7 +247,7 @@ export async function handleUploadMaterial(
     const nextOrder = (maxOrderResult._max.order ?? -1) + 1;
 
     // Create database record
-    const createData: Record<string, unknown> = {
+    const createData: Prisma.PlanMaterialCreateInput = {
       fileName: uploadResult.fileName!,
       originalName: file.name,
       fileSize: uploadResult.fileSize!,
@@ -242,12 +257,12 @@ export async function handleUploadMaterial(
       description: description || null,
       order: nextOrder,
     };
-    createData[config.planIdField] = planId;
 
     const material = await prisma.planMaterial.create({
-      data: createData as Parameters<
-        typeof prisma.planMaterial.create
-      >[0]["data"],
+      data: {
+        ...createData,
+        [config.planIdField]: planId,
+      } as Prisma.PlanMaterialUncheckedCreateInput,
     });
 
     return NextResponse.json({ data: material }, { status: 201 });
@@ -455,9 +470,12 @@ export async function handleUpdateMaterial(
     }
 
     const body = await request.json();
-    const { order, description } = body;
+    const { order, description } = body as {
+      order?: number;
+      description?: string;
+    };
 
-    const updateData: Record<string, unknown> = {};
+    const updateData: Prisma.PlanMaterialUpdateInput = {};
     if (typeof order === "number") {
       updateData.order = order;
     }
