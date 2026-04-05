@@ -526,7 +526,7 @@ All of the following must be retained for **8 years**:
 - GST returns (filed copies)
 - Payment gateway records
 - Consultant payment records
-- Contracts/agreements: duration + 3 years
+- Contracts/agreements
 
 ---
 
