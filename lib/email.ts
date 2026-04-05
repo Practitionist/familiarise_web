@@ -190,7 +190,7 @@ export async function sendPaymentLinkEmail({
   email: string;
   name: string;
   consultantName: string;
-  appointmentType: "consultation" | "subscription";
+  appointmentType: "consultation" | "subscription" | "webinar" | "class";
   amount: number;
   currency: string;
   paymentUrl: string;
@@ -264,7 +264,7 @@ export async function sendPaymentSuccessEmail({
   email: string;
   name: string;
   consultantName: string;
-  appointmentType: "consultation" | "subscription";
+  appointmentType: "consultation" | "subscription" | "webinar" | "class";
   amount: number;
   currency: string;
   receiptUrl?: string;
@@ -339,7 +339,7 @@ export async function sendPaymentFailedEmail({
   email: string;
   name: string;
   consultantName: string;
-  appointmentType: "consultation" | "subscription";
+  appointmentType: "consultation" | "subscription" | "webinar" | "class";
   amount: number;
   currency: string;
   retryUrl: string;

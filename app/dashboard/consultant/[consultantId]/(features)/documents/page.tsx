@@ -206,7 +206,9 @@ export default function DocumentsPage({
 
   return (
     <DashboardErrorBoundary>
-      <DocumentsTab documents={documents || []} onRefresh={refetch} />
+      <div className="min-w-0 overflow-x-hidden">
+        <DocumentsTab documents={documents || []} onRefresh={refetch} />
+      </div>
     </DashboardErrorBoundary>
   );
 }

@@ -186,6 +186,48 @@ export async function addUserToEventChannel(
 }
 
 /**
+ * Remove a user from an event channel.
+ * Used when a collaborator is removed from a webinar/class plan.
+ */
+export async function removeUserFromEventChannel(
+  eventType: EventType,
+  eventId: string,
+  userId: string,
+): Promise<{ success: boolean }> {
+  eventTypeSchema.parse(eventType);
+  eventIdSchema.parse(eventId);
+  userIdSchema.parse(userId);
+
+  const channelId = getChannelId(eventType, eventId);
+  const channelType = getChannelType(eventType);
+
+  const client = getStreamChatClient();
+
+  try {
+    const channel = client.channel(channelType, channelId);
+    await channel.removeMembers([userId]);
+    markMembership(channelId, userId, false);
+    streamLogger.info("Removed user from event channel", {
+      channelId,
+      userId,
+    });
+    return { success: true };
+  } catch (error) {
+    // Clear membership cache regardless — if removal failed, we don't want
+    // stale "is member" cache entries preventing future add/remove operations.
+    markMembership(channelId, userId, false);
+    // Channel may not exist — that's fine, user has no access anyway
+    streamLogger.warn("Failed to remove user from event channel", {
+      eventType,
+      eventId,
+      userId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { success: false };
+  }
+}
+
+/**
  * Get event data for channel creation
  */
 async function getEventData(eventType: EventType, eventId: string) {
@@ -201,7 +243,10 @@ async function getEventData(eventType: EventType, eventId: string) {
               },
             },
           },
-          waitlist: { select: { userId: true } },
+          waitlist: {
+            where: { status: "BOOKED" },
+            select: { userId: true },
+          },
           appointment: {
             include: {
               slotsOfAppointment: {
@@ -237,7 +282,10 @@ async function getEventData(eventType: EventType, eventId: string) {
               },
             },
           },
-          waitlist: { select: { userId: true } },
+          waitlist: {
+            where: { status: "BOOKED" },
+            select: { userId: true },
+          },
           appointments: {
             include: {
               slotsOfAppointment: {
@@ -707,7 +755,8 @@ async function addUserToDmChannel(
 }
 
 /**
- * Get webinar IDs for a user
+ * Get webinar IDs for a user (both hosted and enrolled).
+ * Handles dual-role users who are both consultant and consultee.
  */
 async function getWebinarIdsForUser(
   userId: string,
@@ -716,21 +765,24 @@ async function getWebinarIdsForUser(
     consulteeProfileId: string | null;
   },
 ): Promise<string[]> {
+  const queries: Promise<{ id: string }[]>[] = [];
+
+  // Consultant: get webinars they host
   if (user.consultantProfileId) {
-    // Consultant: get webinars they host
-    const webinars = await prisma.webinar.findMany({
-      where: {
-        webinarPlan: { consultantProfileId: user.consultantProfileId },
-      },
-      select: { id: true },
-    });
-    return webinars.map((w) => w.id);
+    queries.push(
+      prisma.webinar.findMany({
+        where: {
+          webinarPlan: { consultantProfileId: user.consultantProfileId },
+        },
+        select: { id: true },
+      }),
+    );
   }
 
-  // Consultee: get webinars from waitlist or appointments
-  const [waitlistWebinars, appointmentWebinars] = await Promise.all([
+  // Consultee: get webinars from booked waitlist or appointments
+  queries.push(
     prisma.webinar.findMany({
-      where: { waitlist: { some: { userId } } },
+      where: { waitlist: { some: { userId, status: "BOOKED" } } },
       select: { id: true },
     }),
     prisma.webinar.findMany({
@@ -741,18 +793,15 @@ async function getWebinarIdsForUser(
       },
       select: { id: true },
     }),
-  ]);
-
-  return Array.from(
-    new Set([
-      ...waitlistWebinars.map((w) => w.id),
-      ...appointmentWebinars.map((w) => w.id),
-    ]),
   );
+
+  const results = await Promise.all(queries);
+  return Array.from(new Set(results.flatMap((r) => r.map((w) => w.id))));
 }
 
 /**
- * Get class IDs for a user
+ * Get class IDs for a user (both hosted and enrolled).
+ * Handles dual-role users who are both consultant and consultee.
  */
 async function getClassIdsForUser(
   userId: string,
@@ -761,21 +810,24 @@ async function getClassIdsForUser(
     consulteeProfileId: string | null;
   },
 ): Promise<string[]> {
+  const queries: Promise<{ id: string }[]>[] = [];
+
+  // Consultant: get classes they host
   if (user.consultantProfileId) {
-    // Consultant: get classes they host
-    const classes = await prisma.class.findMany({
-      where: {
-        classPlan: { consultantProfileId: user.consultantProfileId },
-      },
-      select: { id: true },
-    });
-    return classes.map((c) => c.id);
+    queries.push(
+      prisma.class.findMany({
+        where: {
+          classPlan: { consultantProfileId: user.consultantProfileId },
+        },
+        select: { id: true },
+      }),
+    );
   }
 
-  // Consultee: get classes from waitlist or appointments
-  const [waitlistClasses, appointmentClasses] = await Promise.all([
+  // Consultee: get classes from booked waitlist or appointments
+  queries.push(
     prisma.class.findMany({
-      where: { waitlist: { some: { userId } } },
+      where: { waitlist: { some: { userId, status: "BOOKED" } } },
       select: { id: true },
     }),
     prisma.class.findMany({
@@ -788,12 +840,8 @@ async function getClassIdsForUser(
       },
       select: { id: true },
     }),
-  ]);
-
-  return Array.from(
-    new Set([
-      ...waitlistClasses.map((c) => c.id),
-      ...appointmentClasses.map((c) => c.id),
-    ]),
   );
+
+  const results = await Promise.all(queries);
+  return Array.from(new Set(results.flatMap((r) => r.map((c) => c.id))));
 }

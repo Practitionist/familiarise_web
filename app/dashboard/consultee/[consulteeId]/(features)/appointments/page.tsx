@@ -103,8 +103,9 @@ export default function AppointmentsPage({ params }: Readonly<PageProps>) {
       <Tabs defaultValue="upcoming" className="space-y-6">
         <TabsList>
           <TabsTrigger value="upcoming">Upcoming</TabsTrigger>
-          <TabsTrigger value="calendar">Calendar</TabsTrigger>
           <TabsTrigger value="past">Past</TabsTrigger>
+          <TabsTrigger value="calendar">Calendar</TabsTrigger>
+          <TabsTrigger value="history">History</TabsTrigger>
         </TabsList>
 
         <TabsContent value="upcoming">
@@ -114,6 +115,18 @@ export default function AppointmentsPage({ params }: Readonly<PageProps>) {
             webinars={webinars}
             classes={classes}
             trials={trials}
+            mode="upcoming"
+          />
+        </TabsContent>
+
+        <TabsContent value="past">
+          <Overview
+            consultations={consultations}
+            subscriptions={subscriptions}
+            webinars={webinars}
+            classes={classes}
+            trials={trials}
+            mode="past"
           />
         </TabsContent>
 
@@ -127,7 +140,7 @@ export default function AppointmentsPage({ params }: Readonly<PageProps>) {
           />
         </TabsContent>
 
-        <TabsContent value="past">
+        <TabsContent value="history">
           <BookingHistoryTab
             consultations={consultations}
             subscriptions={subscriptions}

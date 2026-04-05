@@ -78,7 +78,7 @@ export function DashboardShell({
                 animate={{ x: 0 }}
                 exit={{ x: "-100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                className="fixed left-0 top-maintenance h-screen-maintenance z-50 w-72 lg:hidden"
+                className="fixed left-0 top-0 h-screen z-[60] w-72 lg:hidden"
               >
                 {/* Close button */}
                 <Button
@@ -96,7 +96,7 @@ export function DashboardShell({
         </AnimatePresence>
 
         {/* Main Content */}
-        <main className="flex-1 lg:ml-64 min-h-screen bg-zinc-100">
+        <main className="flex-1 lg:ml-64 min-h-screen bg-zinc-100 overflow-x-clip">
           {/* Mobile Header Bar */}
           <div className="sticky top-maintenance z-50 overflow-visible flex items-center gap-3 px-4 py-3 bg-white border-b border-zinc-200 lg:hidden">
             <Button
@@ -127,7 +127,7 @@ export function DashboardShell({
               {navbar}
             </div>
           ) : headerActions ? (
-            <div className="hidden lg:flex items-center justify-end gap-2 px-6 py-2 border-b border-zinc-200/50 bg-white/80 backdrop-blur-xl relative z-50 overflow-visible">
+            <div className="hidden lg:flex items-center justify-end gap-2 px-6 py-2 border-b border-zinc-200 bg-white relative z-50 overflow-visible">
               {headerActions}
             </div>
           ) : null}
@@ -180,7 +180,7 @@ export function DashboardHeader({
   breadcrumbs,
 }: DashboardHeaderProps) {
   return (
-    <div className="sticky top-maintenance z-20 bg-white/80 backdrop-blur-xl border-b border-zinc-200/50">
+    <div className="bg-white/80 backdrop-blur-xl border-b border-zinc-200/50">
       <div className="px-4 sm:px-6 py-3 sm:py-4 lg:px-8">
         {breadcrumbs && breadcrumbs.length > 0 && (
           <nav className="flex items-center gap-2 text-sm text-zinc-500 mb-2">

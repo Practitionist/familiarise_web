@@ -51,8 +51,8 @@ export async function logActivity({
       },
     });
   } catch (error) {
-    // Log but don't throw - activity logging should not break main flows
-    console.error("Failed to log activity:", error);
+    // Non-fatal — activity logging should not break main flows
+    console.warn("Failed to log activity:", error);
     return null;
   }
 }

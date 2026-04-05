@@ -1,8 +1,14 @@
 "use client";
 
 import { cn } from "@/utils/tailwind";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { motion } from "framer-motion";
-import { LucideIcon } from "lucide-react";
+import { HelpCircle, LucideIcon } from "lucide-react";
 import { ReactNode } from "react";
 
 interface StatCardProps {
@@ -14,6 +20,7 @@ interface StatCardProps {
     value: number;
     isPositive: boolean;
   };
+  tooltip?: string;
   variant?: "default" | "success" | "warning" | "danger" | "info";
   className?: string;
   onClick?: () => void;
@@ -25,6 +32,7 @@ export function StatCard({
   subtitle,
   icon: Icon,
   trend,
+  tooltip,
   variant = "default",
   className,
   onClick,
@@ -78,7 +86,21 @@ export function StatCard({
     >
       <div className="flex items-start justify-between">
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-zinc-500 truncate">{title}</p>
+          <p className="flex items-center gap-1 text-sm font-medium text-zinc-500 truncate">
+            {title}
+            {tooltip && (
+              <TooltipProvider delayDuration={300}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <HelpCircle className="h-3.5 w-3.5 shrink-0 text-zinc-400 cursor-help" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-xs text-xs">
+                    {tooltip}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+          </p>
           <p
             className={cn(
               "mt-2 text-2xl font-bold tracking-tight",

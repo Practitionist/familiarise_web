@@ -14,7 +14,6 @@ import { streamLogger } from "@/lib/stream-logger";
 
 import { getSession } from "@/lib/auth-server";
 const startRecordingSchema = z.object({
-  streamCallId: z.string().min(1, "Stream call ID is required"),
   meetingSessionId: z.string().min(1, "Meeting session ID is required"),
 });
 
@@ -36,7 +35,7 @@ export async function POST(req: NextRequest) {
 
     // Parse and validate request body
     const body = await req.json();
-    const { streamCallId, meetingSessionId } = startRecordingSchema.parse(body);
+    const { meetingSessionId } = startRecordingSchema.parse(body);
 
     // Verify the meeting session exists and belongs to consultant's appointment
     const meetingSession = await prisma.meetingSession.findUnique({
@@ -124,9 +123,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Start recording via Stream API
+    // Start recording via Stream API (use DB-stored call ID, never trust client)
     const result = await RecordingService.startRecording(
-      streamCallId,
+      meetingSession.streamCallId,
       session.user.id,
     );
 

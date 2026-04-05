@@ -140,7 +140,6 @@ const RecordingControls = ({
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          streamCallId: call.id,
           meetingSessionId,
         }),
       });
@@ -176,7 +175,6 @@ const RecordingControls = ({
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          streamCallId: call.id,
           meetingSessionId,
         }),
       });

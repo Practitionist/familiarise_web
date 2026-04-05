@@ -115,10 +115,10 @@ graph LR
 
 | Function                    | Purpose                                 | Trigger                  |
 | --------------------------- | --------------------------------------- | ------------------------ |
-| `createEarningsFromPayment` | Create earnings record with hold period | Webhook: payment.success |
+| `createEarningsFromPayment` | Create earnings record(s) with hold period. For WEBINAR/CLASS with collaborators, creates multi-party earnings via `calculateRevenueSplit()`. | Webhook: payment.success |
 | `releaseEarningsFromHold`   | PENDING → READY after hold period       | Cron: hourly             |
 | `getConsultantEarnings`     | Fetch earnings for dashboard            | API request              |
-| `refundEarnings`            | Mark as REFUNDED on payment refund      | Webhook: refund          |
+| `refundEarnings`            | Proportional or full reversal of earnings. Accepts `refundAmount`/`paymentAmount` for partial refunds. Tracks cumulative reversals via `refundedShareAmount`. Supports `forceRefund: true` for PAID earnings (lost disputes). | Webhook: refund, Cron: lost disputes |
 | `holdEarnings`              | READY → HELD on dispute                 | Webhook: dispute         |
 | `releaseHeldEarnings`       | HELD → READY when dispute resolved      | Admin action             |
 
@@ -159,7 +159,7 @@ graph LR
 | `approvePayout`          | Admin approves pending payout          | Admin action   |
 | `rejectPayout`           | Admin rejects with reason              | Admin action   |
 | `processApprovedPayouts` | Send to payment provider               | Cron: weekly   |
-| `handlePayoutWebhook`    | Update status from provider            | Webhook event  |
+| `handlePayoutWebhook`    | Update status from provider. Uses atomic `updateMany` with `status: { notIn: [COMPLETED, CANCELLED] }` guard for idempotency. | Webhook event  |
 
 ---
 
@@ -182,6 +182,8 @@ graph LR
     A --> IN[(Invoice)]
     IN --> C & D & E
 ```
+
+> **Invoice PDF Fix (Mar 2026):** Credit/discount calculations in generated PDFs now use `originalAmount` (immutable, set at payment creation) instead of `amount` (mutable, can change after partial refunds). This prevents discount values from drifting when partial refunds modify the payment's `amount` field.
 
 ---
 
@@ -207,6 +209,7 @@ erDiagram
         int grossAmount
         int platformFee
         int consultantShare
+        int refundedShareAmount
         enum status
         datetime holdUntil
         datetime paidAt

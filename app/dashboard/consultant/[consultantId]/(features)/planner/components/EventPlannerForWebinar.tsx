@@ -178,7 +178,7 @@ export function EventPlannerForWebinar({
       scheduledAt: getInitialScheduledAt(),
       consultantProfileId: consultantId,
     },
-    mode: "onChange",
+    mode: "onSubmit",
   });
 
   useEffect(() => {

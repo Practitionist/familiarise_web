@@ -1,8 +1,9 @@
 "use client";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { formatDistanceToNow } from "date-fns";
 import { RefreshCwIcon } from "lucide-react";
-import { useEffect, useState, useCallback, memo, startTransition } from "react";
+import { useEffect, useState, useCallback, useRef, memo, startTransition } from "react";
 import type { Channel, Event } from "stream-chat";
 import { useChatContext } from "stream-chat-react";
 import { ChannelSearch } from "./ChannelSearch";
@@ -10,6 +11,12 @@ import { CreateChannelDialog } from "./CreateChannelDialog";
 import { InitializeUserChannelsButton } from "./InitializeUserChannelsButton";
 import { DebugDialog } from "./DebugDialog";
 import { Button } from "../ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "../ui/tooltip";
 import { getChannelDisplayInfo } from "./utils/channelUtils";
 
 // Custom channel item component for the sidebar - memoized for performance
@@ -47,59 +54,89 @@ const ChannelItem = memo(
     const unreadCount = channel.countUnread();
     const hasUnread = unreadCount > 0;
 
+    // Last message preview and timestamp
+    const messages = channel.state.messages;
+    const lastMessage =
+      messages.length > 0 ? messages[messages.length - 1] : null;
+    const lastMessageText = lastMessage?.text
+      ? lastMessage.text.length > 30
+        ? lastMessage.text.substring(0, 30) + "..."
+        : lastMessage.text
+      : lastMessage
+        ? "Sent an attachment"
+        : null;
+    const lastMessageTime = lastMessage?.created_at
+      ? formatDistanceToNow(new Date(lastMessage.created_at), {
+          addSuffix: false,
+        })
+      : null;
+
     return (
       <button
         onClick={onClick}
         className={`w-full text-left px-4 py-2 hover:bg-blue-700 transition-colors ${isActive ? "bg-blue-700" : ""}`}
         title={displayName}
       >
-        <div className="flex items-center justify-between">
-          <div className="flex items-center min-w-0">
-            {isTeamChannel ? (
-              <div className="flex items-center min-w-0">
-                <span className="text-blue-200 mr-2">#</span>
-                <span
-                  className={`font-medium truncate ${hasUnread ? "font-bold" : ""}`}
-                >
-                  {displayName}
-                </span>
-              </div>
-            ) : (
-              <div className="flex items-center min-w-0">
-                <div className="relative mr-2 flex-shrink-0">
-                  <Avatar className="w-6 h-6">
-                    <AvatarImage
-                      src={displayImage || "/placeholder-user.jpg"}
-                    />
-                    <AvatarFallback>{displayName.charAt(0)}</AvatarFallback>
-                  </Avatar>
-                  {isGroupDM && (
-                    <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-blue-500 rounded-full border border-blue-600 flex items-center justify-center">
-                      <span className="text-[8px] text-white font-bold">G</span>
-                    </div>
-                  )}
+        <div className="flex items-center min-w-0">
+          {/* Avatar / channel icon */}
+          {isTeamChannel ? (
+            <span className="text-blue-200 mr-2 flex-shrink-0">#</span>
+          ) : (
+            <div className="relative mr-2 flex-shrink-0">
+              <Avatar className="w-6 h-6">
+                <AvatarImage
+                  src={displayImage || "/placeholder-user.jpg"}
+                />
+                <AvatarFallback>{displayName.charAt(0)}</AvatarFallback>
+              </Avatar>
+              {isGroupDM && (
+                <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-blue-500 rounded-full border border-blue-600 flex items-center justify-center">
+                  <span className="text-[8px] text-white font-bold">G</span>
                 </div>
-                <span
-                  className={`font-medium truncate ${hasUnread ? "font-bold" : ""}`}
-                  title={
-                    isGroupDM
-                      ? displayInfo.fullGroupName ||
-                        `Group chat with ${memberCount} members`
-                      : displayName
-                  }
-                >
-                  {displayName}
-                </span>
-              </div>
-            )}
-          </div>
-
-          {/* Unread indicator */}
-          {hasUnread && (
-            <div className="bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center ml-2 flex-shrink-0">
-              {unreadCount > 9 ? "9+" : unreadCount}
+              )}
             </div>
           )}
+
+          {/* Two-row content area */}
+          <div className="flex-1 min-w-0">
+            {/* Row 1: channel name + timestamp */}
+            <div className="flex items-center justify-between">
+              <span
+                className={`font-medium truncate ${hasUnread ? "font-bold" : ""}`}
+                title={
+                  isGroupDM
+                    ? displayInfo.fullGroupName ||
+                      `Group chat with ${memberCount} members`
+                    : displayName
+                }
+              >
+                {displayName}
+              </span>
+              {lastMessageTime && (
+                <span className="text-[10px] text-blue-200 ml-2 flex-shrink-0">
+                  {lastMessageTime}
+                </span>
+              )}
+            </div>
+
+            {/* Row 2: last message preview + unread badge */}
+            <div className="flex items-center justify-between">
+              {lastMessageText ? (
+                <span className="text-xs text-blue-200 truncate">
+                  {lastMessageText}
+                </span>
+              ) : (
+                <span className="text-xs text-blue-300 italic truncate">
+                  No messages yet
+                </span>
+              )}
+              {hasUnread && (
+                <div className="bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center ml-2 flex-shrink-0">
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </button>
     );
@@ -110,11 +147,13 @@ ChannelItem.displayName = "ChannelItem";
 
 export const ChatSidebar = () => {
   const { client, setActiveChannel } = useChatContext();
+  const userRole = client?.user?.role as string | undefined;
   const [teamChannels, setTeamChannels] = useState<Channel[]>([]);
   const [directMessages, setDirectMessages] = useState<Channel[]>([]);
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const initialSelectionDoneRef = useRef(false);
 
   // Pagination state
   const [hasMoreTeamChannels, setHasMoreTeamChannels] = useState(true);
@@ -193,6 +232,30 @@ export const ChatSidebar = () => {
       // Update pagination state
       setHasMoreTeamChannels(teamResponse.length === options.limit);
       setHasMoreDMChannels(dmResponse.length === options.limit);
+
+      // Auto-select the most recent channel on initial load
+      if (!initialSelectionDoneRef.current) {
+        initialSelectionDoneRef.current = true;
+        const mostRecentTeam = teamResponse[0];
+        const mostRecentDM = dmResponse[0];
+        let channelToSelect = null;
+        if (mostRecentTeam && mostRecentDM) {
+          const teamTime = new Date(
+            (mostRecentTeam.data?.last_message_at as string) || 0,
+          ).getTime();
+          const dmTime = new Date(
+            (mostRecentDM.data?.last_message_at as string) || 0,
+          ).getTime();
+          channelToSelect =
+            dmTime >= teamTime ? mostRecentDM : mostRecentTeam;
+        } else {
+          channelToSelect = mostRecentTeam || mostRecentDM || null;
+        }
+        if (channelToSelect) {
+          setActiveChannel(channelToSelect);
+          setActiveChannelId(channelToSelect.cid || null);
+        }
+      }
     } catch (err) {
       console.error("Error fetching channels:", err);
       console.error("Error details:", {
@@ -498,18 +561,26 @@ export const ChatSidebar = () => {
       {/* Header with Title and Refresh */}
       <div className="p-4 border-b border-blue-700 flex justify-between items-center">
         <h1 className="text-xl font-bold">Familiarise</h1>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={handleRefresh}
-          disabled={isLoading}
-          className="text-white hover:bg-blue-700 disabled:opacity-50"
-          title="Refresh Channels"
-        >
-          <RefreshCwIcon
-            className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`}
-          />
-        </Button>
+        <TooltipProvider delayDuration={200}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleRefresh}
+                disabled={isLoading}
+                className="text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                <RefreshCwIcon
+                  className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`}
+                />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Refresh channels</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       </div>
 
       {/* Search Bar */}
@@ -563,7 +634,9 @@ export const ChatSidebar = () => {
                   disabled={isLoadingMore}
                   className="w-full text-blue-200 hover:bg-blue-700 text-sm"
                 >
-                  {isLoadingMore ? "Loading..." : `Load More Channels`}
+                  {isLoadingMore
+                    ? "Loading..."
+                    : `Showing ${teamChannels.length} channels — Load more`}
                 </Button>
               </div>
             )}
@@ -610,31 +683,37 @@ export const ChatSidebar = () => {
                   disabled={isLoadingMore}
                   className="w-full text-blue-200 hover:bg-blue-700 text-sm"
                 >
-                  {isLoadingMore ? "Loading..." : `Load More Messages`}
+                  {isLoadingMore
+                    ? "Loading..."
+                    : `Showing ${directMessages.length} conversations — Load more`}
                 </Button>
               </div>
             )}
           </div>
         ) : (
           <div className="p-4 text-center text-blue-200 text-sm">
-            No conversations yet. Book a consultation to start chatting.
+            {userRole === "consultant"
+              ? "No conversations yet. Conversations will appear here once clients book sessions."
+              : "No conversations yet. Book a consultation to start chatting."}
           </div>
         )}
       </div>
 
-      {/* Footer Section */}
-      <div className="p-4 border-t border-blue-700 mt-auto space-y-2">
-        <InitializeUserChannelsButton
-          userId={client?.userID || ""}
-          className="w-full"
-          onSuccess={handleRefresh}
-        />
-        <DebugDialog
-          userId={client?.userID || ""}
-          variant="ghost"
-          className="w-full text-blue-200 hover:bg-blue-700 hover:text-white"
-        />
-      </div>
+      {/* Footer Section — Debug tools, hidden in production */}
+      {process.env.NODE_ENV === "development" && (
+        <div className="p-4 border-t border-blue-700 mt-auto space-y-2">
+          <InitializeUserChannelsButton
+            userId={client?.userID || ""}
+            className="w-full"
+            onSuccess={handleRefresh}
+          />
+          <DebugDialog
+            userId={client?.userID || ""}
+            variant="ghost"
+            className="w-full text-blue-200 hover:bg-blue-700 hover:text-white"
+          />
+        </div>
+      )}
     </div>
   );
 };

@@ -92,7 +92,6 @@ export async function createPayments(users: UserWithProfiles[]) {
           case DiscountType.FIXED_AMOUNT:
             finalAmount = Math.max(0, amount - discountCode.discountValue);
             break;
-          // FREE_SHIPPING doesn't affect the amount in this context
         }
       }
 

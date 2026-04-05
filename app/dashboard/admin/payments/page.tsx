@@ -19,7 +19,7 @@ import {
   PaymentStatus,
   AppointmentsType,
 } from "@prisma/client";
-import { formatCurrencyFromMajorUnit } from "@/utils/formatting";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import type { PaymentListResponse, Payment } from "@/types/payments";
 
 // Fetch payments with filters
@@ -251,7 +251,7 @@ export default function AdminPaymentsPage() {
                           {payment.paymentIntent?.substring(0, 20)}...
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-900">
-                          {formatCurrencyFromMajorUnit(
+                          {formatCurrencyAmount(
                             payment.amount,
                             payment.currency,
                           )}

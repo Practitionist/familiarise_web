@@ -1,6 +1,7 @@
 "use client";
 
 import { ChatLayout } from "@/components/chat/ChatLayout";
+import { DashboardHeader } from "@/components/dashboard/DashboardShell";
 
 interface ChatsTabProps {
   userId: string;
@@ -9,11 +10,14 @@ interface ChatsTabProps {
 
 export function ChatsTab({ userId }: Readonly<ChatsTabProps>) {
   return (
-    <div
-      className="w-full bg-white rounded-xl border border-zinc-200 shadow-sm overflow-hidden"
-      style={{ height: "calc(100vh - 100px)" }}
-    >
-      <ChatLayout />
-    </div>
+    <>
+      <DashboardHeader title="Chats" subtitle="Messages and conversations" />
+      <div
+        className="mt-4 w-full bg-white rounded-lg border border-zinc-200 shadow-sm overflow-hidden"
+        style={{ height: "calc(100vh - 220px)", minHeight: "400px" }}
+      >
+        <ChatLayout />
+      </div>
+    </>
   );
 }

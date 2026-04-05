@@ -5,8 +5,9 @@
 
 import { getStreamVideoClient } from "@/lib/stream-client";
 import prisma from "@/lib/prisma";
-import { Recording, RecordingStatus } from "@prisma/client";
+import { Prisma, Recording, RecordingStatus } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
+import { generateRecordingTitle } from "@/lib/stream/recording-utils";
 import type {
   ConsultantRecordingWithDetails,
   ConsulteeRecordingWithDetails,
@@ -246,27 +247,48 @@ export class RecordingService {
   /**
    * Get all recordings for a consultant
    * @param consultantProfileId The consultant profile ID
-   * @param filters Optional filters for type and status
+   * @param filters Optional filters for type, status, search, and pagination
    */
   static async getConsultantRecordings(
     consultantProfileId: string,
     filters?: {
       type?: "webinar" | "class";
       status?: RecordingStatus;
+      search?: string;
+      page?: number;
+      limit?: number;
     },
-  ): Promise<ConsultantRecordingWithDetails[]> {
+  ): Promise<{ recordings: ConsultantRecordingWithDetails[]; total: number }> {
     try {
+      const page = filters?.page ?? 1;
+      const limit = filters?.limit ?? 12;
+
       // Build type-specific conditions based on filter
-      const typeConditions = [];
+      const typeConditions: Prisma.RecordingWhereInput[] = [];
 
       if (!filters?.type || filters.type === "webinar") {
+        // Owner's webinar recordings
+        typeConditions.push({
+          meetingSession: {
+            slotOfAppointment: {
+              appointment: {
+                webinar: {
+                  webinarPlan: { consultantProfileId },
+                },
+              },
+            },
+          },
+        });
+        // Collaborator's webinar recordings
         typeConditions.push({
           meetingSession: {
             slotOfAppointment: {
               appointment: {
                 webinar: {
                   webinarPlan: {
-                    consultantProfileId,
+                    collaborators: {
+                      some: { consultantProfileId, status: "ACCEPTED" },
+                    },
                   },
                 },
               },
@@ -276,13 +298,28 @@ export class RecordingService {
       }
 
       if (!filters?.type || filters.type === "class") {
+        // Owner's class recordings
+        typeConditions.push({
+          meetingSession: {
+            slotOfAppointment: {
+              appointment: {
+                class: {
+                  classPlan: { consultantProfileId },
+                },
+              },
+            },
+          },
+        });
+        // Collaborator's class recordings
         typeConditions.push({
           meetingSession: {
             slotOfAppointment: {
               appointment: {
                 class: {
                   classPlan: {
-                    consultantProfileId,
+                    collaborators: {
+                      some: { consultantProfileId, status: "ACCEPTED" },
+                    },
                   },
                 },
               },
@@ -296,23 +333,36 @@ export class RecordingService {
         ? { status: filters.status }
         : { status: { notIn: ["FAILED", "EXPIRED"] as RecordingStatus[] } };
 
-      const recordings = await prisma.recording.findMany({
-        where: {
-          OR: typeConditions,
-          ...statusFilter,
-        },
-        include: consultantRecordingInclude,
-        orderBy: {
-          recordedAt: "desc",
-        },
-      });
+      // Build search filter
+      const searchFilter = filters?.search
+        ? { title: { contains: filters.search, mode: "insensitive" as const } }
+        : {};
 
-      return recordings;
+      const where = {
+        OR: typeConditions,
+        ...statusFilter,
+        ...searchFilter,
+      };
+
+      const [recordings, total] = await Promise.all([
+        prisma.recording.findMany({
+          where,
+          include: consultantRecordingInclude,
+          orderBy: {
+            recordedAt: "desc",
+          },
+          skip: (page - 1) * limit,
+          take: limit,
+        }),
+        prisma.recording.count({ where }),
+      ]);
+
+      return { recordings, total };
     } catch (error) {
       streamLogger.error("Failed to get consultant recordings", error, {
         consultantProfileId,
       });
-      return [];
+      return { recordings: [], total: 0 };
     }
   }
 
@@ -668,24 +718,42 @@ export class RecordingService {
         },
       } as const;
 
-      // Get all MeetingSessions for consultant's webinars and classes with streamCallId
+      // Get all MeetingSessions for consultant's webinars and classes (owned or collaborated)
       const meetingSessions = await prisma.meetingSession.findMany({
         where: {
           streamCallId: { not: "" },
           slotOfAppointment: {
             appointment: {
               OR: [
+                // Owned webinars
+                {
+                  webinar: {
+                    webinarPlan: { consultantProfileId },
+                  },
+                },
+                // Collaborated webinars
                 {
                   webinar: {
                     webinarPlan: {
-                      consultantProfileId,
+                      collaborators: {
+                        some: { consultantProfileId, status: "ACCEPTED" },
+                      },
                     },
                   },
                 },
+                // Owned classes
+                {
+                  class: {
+                    classPlan: { consultantProfileId },
+                  },
+                },
+                // Collaborated classes
                 {
                   class: {
                     classPlan: {
-                      consultantProfileId,
+                      collaborators: {
+                        some: { consultantProfileId, status: "ACCEPTED" },
+                      },
                     },
                   },
                 },
@@ -736,25 +804,7 @@ export class RecordingService {
 
             // Generate title from appointment info (same logic as handleRecordingReady)
             const appointment = session.slotOfAppointment.appointment;
-            let title = "Recording";
-
-            if (appointment?.webinar?.webinarPlan?.title) {
-              title = `Webinar: ${appointment.webinar.webinarPlan.title}`;
-            } else if (appointment?.class?.classPlan?.title) {
-              title = `Class: ${appointment.class.classPlan.title}`;
-            } else if (appointment?.consultation?.consultationPlan?.title) {
-              title = `Consultation: ${appointment.consultation.consultationPlan.title}`;
-            } else if (appointment?.subscription?.subscriptionPlan?.title) {
-              title = `Subscription: ${appointment.subscription.subscriptionPlan.title}`;
-            }
-
-            // Add date to title
-            const dateStr = startDate.toLocaleDateString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-            });
-            title = `${title} - ${dateStr}`;
+            const title = generateRecordingTitle(appointment, startDate);
 
             // Calculate Stream URL expiration (2 weeks from now)
             const streamUrlExpiresAt = new Date();
@@ -958,25 +1008,7 @@ export class RecordingService {
 
             // Generate title from appointment info (same logic as handleRecordingReady)
             const appointment = session.slotOfAppointment.appointment;
-            let title = "Recording";
-
-            if (appointment?.webinar?.webinarPlan?.title) {
-              title = `Webinar: ${appointment.webinar.webinarPlan.title}`;
-            } else if (appointment?.class?.classPlan?.title) {
-              title = `Class: ${appointment.class.classPlan.title}`;
-            } else if (appointment?.consultation?.consultationPlan?.title) {
-              title = `Consultation: ${appointment.consultation.consultationPlan.title}`;
-            } else if (appointment?.subscription?.subscriptionPlan?.title) {
-              title = `Subscription: ${appointment.subscription.subscriptionPlan.title}`;
-            }
-
-            // Add date to title
-            const dateStr = startDate.toLocaleDateString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-            });
-            title = `${title} - ${dateStr}`;
+            const title = generateRecordingTitle(appointment, startDate);
 
             // Calculate Stream URL expiration (2 weeks from now)
             const streamUrlExpiresAt = new Date();

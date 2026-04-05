@@ -8,10 +8,15 @@ import {
   DashboardGrid,
 } from "@/components/dashboard/DashboardShell";
 import { StatCard } from "@/components/dashboard/StatCard";
-import { Users, Gift, IndianRupee, Copy, Check } from "lucide-react";
+import { Users, Gift, IndianRupee, Copy, Check, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
+import { WhatsAppIcon } from "@/components/icons/WhatsAppIcon";
+import {
+  QUALIFICATION_WINDOW_DAYS,
+  CREDIT_EXPIRY_MONTHS,
+} from "@/lib/referrals/constants";
+import { useCurrency } from "@/hooks/useCurrency";
 
 interface ReferralCode {
   id: string;
@@ -23,6 +28,7 @@ interface ReferralCode {
   successfulReferrals: number;
   totalEarned: number;
   isActive: boolean;
+  maxReferrals: number;
 }
 
 interface Referral {
@@ -54,6 +60,7 @@ export default function ConsulteeReferralsPage({
 }) {
   use(params);
   const { toast } = useToast();
+  const { formatPrice } = useCurrency();
   const [copied, setCopied] = useState(false);
 
   const { data: codeData } = useQuery<{ data: ReferralCode }>({
@@ -93,6 +100,16 @@ export default function ConsulteeReferralsPage({
     ? `${window.location.origin}/r/${code.customCode || code.code}`
     : "";
 
+  const shareMessage = referralLink
+    ? `Hey! I've been using Familiarise and it's been great. Use my referral link to get ${formatPrice(code?.refereeReward ?? 0)} off your first booking: ${referralLink}`
+    : "";
+  const whatsappUrl = referralLink
+    ? `https://wa.me/?text=${encodeURIComponent(shareMessage)}`
+    : "";
+  const emailUrl = referralLink
+    ? `mailto:?subject=${encodeURIComponent(`Get ${formatPrice(code?.refereeReward ?? 0)} off your first booking on Familiarise`)}&body=${encodeURIComponent(shareMessage)}`
+    : "";
+
   const handleCopy = () => {
     navigator.clipboard.writeText(referralLink);
     setCopied(true);
@@ -100,11 +117,7 @@ export default function ConsulteeReferralsPage({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const formatAmount = (paise: number) =>
-    new Intl.NumberFormat("en-IN", {
-      style: "currency",
-      currency: "INR",
-    }).format(paise / 100);
+  // formatPrice from useCurrency handles paise→display conversion with currency preference
 
   return (
     <>
@@ -124,12 +137,14 @@ export default function ConsulteeReferralsPage({
             value={code?.successfulReferrals ?? 0}
             icon={Gift}
             variant="success"
+            tooltip={`Friends who signed up and completed their first paid booking within ${QUALIFICATION_WINDOW_DAYS} days`}
           />
           <StatCard
             title="Credit Balance"
-            value={formatAmount(credits?.totalAvailable ?? 0)}
+            value={formatPrice(credits?.totalAvailable ?? 0)}
             icon={IndianRupee}
             variant="info"
+            tooltip="Credits earned from referrals. Applied at checkout."
           />
         </DashboardGrid>
 
@@ -138,17 +153,84 @@ export default function ConsulteeReferralsPage({
           <h3 className="text-sm font-medium text-zinc-900 mb-3">
             Your Referral Link
           </h3>
+          {code && (
+            <div className="mb-3 rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800">
+              Earn {formatPrice(code.referrerReward)} for each friend who
+              books. Your friend gets {formatPrice(code.refereeReward)} off
+              their first booking!
+            </div>
+          )}
           <div className="flex gap-2">
-            <Input value={referralLink} readOnly className="flex-1" />
-            <Button variant="outline" onClick={handleCopy}>
+            <div className="flex-1 flex items-center rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 font-mono text-sm text-zinc-800 select-all truncate">
+              {referralLink || (
+                <span className="text-zinc-400 italic font-sans">
+                  Generating link...
+                </span>
+              )}
+            </div>
+            <Button variant="outline" size="icon" onClick={handleCopy}>
               {copied ? (
                 <Check className="h-4 w-4" />
               ) : (
                 <Copy className="h-4 w-4" />
               )}
             </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              asChild
+              disabled={!referralLink}
+            >
+              <a
+                href={whatsappUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Share on WhatsApp"
+              >
+                <WhatsAppIcon className="h-4 w-4" />
+              </a>
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              asChild
+              disabled={!referralLink}
+            >
+              <a
+                href={emailUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Share via email"
+              >
+                <Mail className="h-4 w-4" />
+              </a>
+            </Button>
           </div>
         </div>
+
+        {/* TODO: Program Details - hidden for now
+        <div className="mt-6 bg-white rounded-xl border border-zinc-200 p-6">
+          <h3 className="text-sm font-medium text-zinc-900 mb-3">
+            Program Details
+          </h3>
+          <div className="grid grid-cols-3 gap-4 text-sm">
+            <div className="rounded-lg bg-zinc-50 px-4 py-3">
+              <p className="text-zinc-500">Qualification Window</p>
+              <p className="mt-1 font-medium text-zinc-900">{QUALIFICATION_WINDOW_DAYS} days</p>
+            </div>
+            <div className="rounded-lg bg-zinc-50 px-4 py-3">
+              <p className="text-zinc-500">Credit Expiry</p>
+              <p className="mt-1 font-medium text-zinc-900">{CREDIT_EXPIRY_MONTHS} months</p>
+            </div>
+            <div className="rounded-lg bg-zinc-50 px-4 py-3">
+              <p className="text-zinc-500">Max Referrals</p>
+              <p className="mt-1 font-medium text-zinc-900">
+                {code?.maxReferrals ?? 50}
+              </p>
+            </div>
+          </div>
+        </div>
+        */}
 
         {/* Referrals List */}
         <div className="mt-6 bg-white rounded-xl border border-zinc-200 overflow-hidden">
@@ -196,7 +278,7 @@ export default function ConsulteeReferralsPage({
                     </td>
                     <td className="px-6 py-3 text-right">
                       {ref.status === "REWARDED"
-                        ? formatAmount(ref.referrerRewardAmount)
+                        ? formatPrice(ref.referrerRewardAmount)
                         : "-"}
                     </td>
                   </tr>
@@ -232,9 +314,9 @@ export default function ConsulteeReferralsPage({
                     <td className="px-6 py-3">
                       {credit.source.replace(/_/g, " ")}
                     </td>
-                    <td className="px-6 py-3">{formatAmount(credit.amount)}</td>
+                    <td className="px-6 py-3">{formatPrice(credit.amount)}</td>
                     <td className="px-6 py-3">
-                      {formatAmount(credit.remainingAmount)}
+                      {formatPrice(credit.remainingAmount)}
                     </td>
                     <td className="px-6 py-3 text-zinc-500">
                       {credit.expiresAt

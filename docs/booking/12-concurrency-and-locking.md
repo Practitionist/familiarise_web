@@ -325,3 +325,4 @@ try {
 | Lock released by wrong client                        | Safe release Lua script      | `GET` + `DEL` atomic with value verification                                       |
 | Slot passes validation but conflicts at commit       | Prisma transaction isolation | Transaction rollback on constraint violation                                       |
 | Payment abandoned mid-checkout (events)              | Semaphore TTL expiry         | 5 min TTL auto-frees the reserved slot                                             |
+| Cancelled/rejected slots blocking new bookings       | `buildOccupiedAppointmentFilter()` | Conflict check excludes appointments with terminal statuses (CANCELLED, REJECTED, EXPIRED) |

@@ -8,10 +8,15 @@ import {
   DashboardGrid,
 } from "@/components/dashboard/DashboardShell";
 import { StatCard } from "@/components/dashboard/StatCard";
-import { Users, Gift, IndianRupee, Copy, Check } from "lucide-react";
+import { Users, Gift, IndianRupee, Copy, Check, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
+import { WhatsAppIcon } from "@/components/icons/WhatsAppIcon";
+import {
+  QUALIFICATION_WINDOW_DAYS,
+  CREDIT_EXPIRY_MONTHS,
+} from "@/lib/referrals/constants";
 
 interface ReferralCode {
   id: string;
@@ -23,6 +28,7 @@ interface ReferralCode {
   successfulReferrals: number;
   totalEarned: number;
   isActive: boolean;
+  maxReferrals: number;
 }
 
 interface Referral {
@@ -91,8 +97,20 @@ export default function ConsultantReferralsPage({
   const code = codeData?.data;
   const referrals = referralsData?.data ?? [];
   const credits = creditsData?.data;
+  const totalReferred = referrals.length;
+  const qualified = referrals.filter((r) => r.status === "REWARDED").length;
   const referralLink = code
     ? `${window.location.origin}/r/${code.customCode || code.code}`
+    : "";
+
+  const shareMessage = referralLink
+    ? `Hey! I've been using Familiarise and it's been great. Use my referral link to get ${formatAmount(code?.refereeReward ?? 0)} off your first booking: ${referralLink}`
+    : "";
+  const whatsappUrl = referralLink
+    ? `https://wa.me/?text=${encodeURIComponent(shareMessage)}`
+    : "";
+  const emailUrl = referralLink
+    ? `mailto:?subject=${encodeURIComponent(`Get ${formatAmount(code?.refereeReward ?? 0)} off your first booking on Familiarise`)}&body=${encodeURIComponent(shareMessage)}`
     : "";
 
   const handleCopy = () => {
@@ -118,11 +136,41 @@ export default function ConsultantReferralsPage({
     }
   };
 
-  const formatAmount = (paise: number) =>
-    new Intl.NumberFormat("en-IN", {
+  const referralStatusConfig: Record<
+    string,
+    { label: string; className: string }
+  > = {
+    SIGNED_UP: {
+      label: "Signed Up",
+      className: "bg-yellow-100 text-yellow-700",
+    },
+    REWARDED: {
+      label: "Qualified",
+      className: "bg-green-100 text-green-700",
+    },
+    EXPIRED: { label: "Expired", className: "bg-zinc-100 text-zinc-600" },
+  };
+
+  const creditSourceLabels: Record<string, string> = {
+    REFERRAL_BONUS: "Referral Bonus",
+    REFEREE_BONUS: "Referee Bonus",
+    MANUAL_ADJUSTMENT: "Manual Adjustment",
+  };
+
+  function formatDate(dateStr: string): string {
+    return new Date(dateStr).toLocaleDateString("en-IN", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  }
+
+  function formatAmount(paise: number) {
+    return new Intl.NumberFormat("en-IN", {
       style: "currency",
       currency: "INR",
     }).format(paise / 100);
+  }
 
   return (
     <>
@@ -134,14 +182,15 @@ export default function ConsultantReferralsPage({
         <DashboardGrid columns={4}>
           <StatCard
             title="Total Referred"
-            value={code?.totalReferrals ?? 0}
+            value={totalReferred}
             icon={Users}
           />
           <StatCard
             title="Qualified"
-            value={code?.successfulReferrals ?? 0}
+            value={qualified}
             icon={Gift}
             variant="success"
+            tooltip={`Friends who signed up and completed their first paid booking within ${QUALIFICATION_WINDOW_DAYS} days`}
           />
           <StatCard
             title="Total Earned"
@@ -153,6 +202,7 @@ export default function ConsultantReferralsPage({
             value={formatAmount(credits?.totalAvailable ?? 0)}
             icon={IndianRupee}
             variant="info"
+            tooltip="Credits earned from referrals. Applied at checkout."
           />
         </DashboardGrid>
 
@@ -161,14 +211,65 @@ export default function ConsultantReferralsPage({
           <h3 className="text-sm font-medium text-zinc-900 mb-3">
             Your Referral Link
           </h3>
+          {code && (
+            <>
+              <div className="mb-3 rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800">
+                Earn {formatAmount(code.referrerReward)} for each friend who
+                books. Your friend gets {formatAmount(code.refereeReward)} off
+                their first booking!
+              </div>
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-sm text-zinc-500">Your code:</span>
+                <span className="font-mono font-semibold text-zinc-900 bg-zinc-100 px-3 py-1 rounded-md">
+                  {code.customCode || code.code}
+                </span>
+              </div>
+            </>
+          )}
           <div className="flex gap-2">
-            <Input value={referralLink} readOnly className="flex-1" />
-            <Button variant="outline" onClick={handleCopy}>
+            <div className="flex-1 flex items-center rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 font-mono text-sm text-zinc-800 select-all truncate">
+              {referralLink || (
+                <span className="text-zinc-400 italic font-sans">
+                  Generating link...
+                </span>
+              )}
+            </div>
+            <Button variant="outline" size="icon" onClick={handleCopy}>
               {copied ? (
                 <Check className="h-4 w-4" />
               ) : (
                 <Copy className="h-4 w-4" />
               )}
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              asChild
+              disabled={!referralLink}
+            >
+              <a
+                href={whatsappUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Share on WhatsApp"
+              >
+                <WhatsAppIcon className="h-4 w-4" />
+              </a>
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              asChild
+              disabled={!referralLink}
+            >
+              <a
+                href={emailUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Share via email"
+              >
+                <Mail className="h-4 w-4" />
+              </a>
             </Button>
           </div>
           <div className="flex gap-2 mt-3">
@@ -183,6 +284,34 @@ export default function ConsultantReferralsPage({
             </Button>
           </div>
         </div>
+
+        {/* TODO: Program Details - uncomment when ready to show
+        <div className="mt-6 bg-white rounded-xl border border-zinc-200 p-6">
+          <h3 className="text-sm font-medium text-zinc-900 mb-3">
+            Program Details
+          </h3>
+          <div className="grid grid-cols-3 gap-4 text-sm">
+            <div className="rounded-lg bg-zinc-50 px-4 py-3">
+              <p className="text-zinc-500">Qualification Window</p>
+              <p className="mt-1 font-medium text-zinc-900">
+                {QUALIFICATION_WINDOW_DAYS} days
+              </p>
+            </div>
+            <div className="rounded-lg bg-zinc-50 px-4 py-3">
+              <p className="text-zinc-500">Credit Expiry</p>
+              <p className="mt-1 font-medium text-zinc-900">
+                {CREDIT_EXPIRY_MONTHS} months
+              </p>
+            </div>
+            <div className="rounded-lg bg-zinc-50 px-4 py-3">
+              <p className="text-zinc-500">Max Referrals</p>
+              <p className="mt-1 font-medium text-zinc-900">
+                {code?.maxReferrals ?? 50}
+              </p>
+            </div>
+          </div>
+        </div>
+        */}
 
         {/* Referrals List */}
         <div className="mt-6 bg-white rounded-xl border border-zinc-200 overflow-hidden">
@@ -215,18 +344,15 @@ export default function ConsultantReferralsPage({
                     <td className="px-6 py-3">
                       <span
                         className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
-                          ref.status === "REWARDED"
-                            ? "bg-green-100 text-green-700"
-                            : ref.status === "SIGNED_UP"
-                              ? "bg-yellow-100 text-yellow-700"
-                              : "bg-zinc-100 text-zinc-600"
+                          referralStatusConfig[ref.status]?.className ??
+                          "bg-zinc-100 text-zinc-600"
                         }`}
                       >
-                        {ref.status}
+                        {referralStatusConfig[ref.status]?.label ?? ref.status}
                       </span>
                     </td>
                     <td className="px-6 py-3 text-zinc-500">
-                      {new Date(ref.signedUpAt).toLocaleDateString()}
+                      {formatDate(ref.signedUpAt)}
                     </td>
                     <td className="px-6 py-3 text-right">
                       {ref.status === "REWARDED"
@@ -264,7 +390,8 @@ export default function ConsultantReferralsPage({
                     className="border-b border-zinc-50 last:border-0"
                   >
                     <td className="px-6 py-3">
-                      {credit.source.replace(/_/g, " ")}
+                      {creditSourceLabels[credit.source] ??
+                        credit.source.replace(/_/g, " ")}
                     </td>
                     <td className="px-6 py-3">{formatAmount(credit.amount)}</td>
                     <td className="px-6 py-3">
@@ -272,7 +399,7 @@ export default function ConsultantReferralsPage({
                     </td>
                     <td className="px-6 py-3 text-zinc-500">
                       {credit.expiresAt
-                        ? new Date(credit.expiresAt).toLocaleDateString()
+                        ? formatDate(credit.expiresAt)
                         : "Never"}
                     </td>
                   </tr>

@@ -4,7 +4,7 @@
  * Thin wrapper around scripts/stream/stream-sync.ts
  * Adds GitHub Actions-specific outputs and error handling.
  *
- * Runs weekly via scheduled workflow (Sunday 3 AM UTC).
+ * Runs daily via scheduled workflow (03:30 UTC / 9:00 AM IST).
  */
 
 import {

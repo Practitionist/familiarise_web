@@ -132,10 +132,20 @@ export function generateStorageFileName(mimeType: string): string {
   return `${globalThis.crypto.randomUUID()}.${ext}`;
 }
 
+interface BucketOptions {
+  public?: boolean;
+  allowedMimeTypes?: string[];
+  fileSizeLimit?: number;
+}
+
 /**
- * Ensure a storage bucket exists, create it if it doesn't
+ * Ensure a storage bucket exists, create it if it doesn't.
+ * Pass options to customize bucket settings per use case.
  */
-const ensureBucketExists = async (bucketName: string): Promise<boolean> => {
+const ensureBucketExists = async (
+  bucketName: string,
+  options?: BucketOptions,
+): Promise<boolean> => {
   try {
     // First check if bucket exists by trying to list files
     const { data: _files, error: listError } = await supabase.storage
@@ -165,8 +175,8 @@ const ensureBucketExists = async (bucketName: string): Promise<boolean> => {
 
       const { data: _createData, error: createError } =
         await clientToUse.storage.createBucket(bucketName, {
-          public: true,
-          allowedMimeTypes: [
+          public: options?.public ?? true,
+          allowedMimeTypes: options?.allowedMimeTypes ?? [
             "application/pdf",
             "application/msword",
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -175,7 +185,7 @@ const ensureBucketExists = async (bucketName: string): Promise<boolean> => {
             "image/gif",
             "text/plain",
           ],
-          fileSizeLimit: 10485760, // 10MB
+          fileSizeLimit: options?.fileSizeLimit ?? 10485760, // 10MB
         });
 
       if (createError) {
@@ -318,12 +328,12 @@ const uploadAppointmentDocument = async (
     }
 
     // Ensure the documents bucket exists (create if it doesn't)
-    const bucketReady = await ensureBucketExists("documents");
+    const bucketReady = await ensureBucketExists("documents", { public: false });
     if (!bucketReady) {
       return {
         success: false,
         error:
-          "Document storage bucket not found. Please create a 'documents' bucket in your Supabase dashboard with public access enabled, or add SUPABASE_SERVICE_ROLE_KEY to your environment variables for automatic bucket creation.",
+          "Document storage bucket not found. Please create a 'documents' bucket in your Supabase dashboard (private), or add SUPABASE_SERVICE_ROLE_KEY to your environment variables for automatic bucket creation.",
       };
     }
 
@@ -347,14 +357,21 @@ const uploadAppointmentDocument = async (
       return { success: false, error: uploadError.message };
     }
 
-    // Get public URL
-    const { data: urlData } = supabase.storage
-      .from("documents")
-      .getPublicUrl(storagePath);
+    // Generate a signed URL (1 hour expiry) for private bucket — use admin client
+    const signingClient = supabaseAdmin || supabase;
+    const { data: signedUrlData, error: signedUrlError } =
+      await signingClient.storage
+        .from("documents")
+        .createSignedUrl(storagePath, 3600);
+
+    if (signedUrlError || !signedUrlData?.signedUrl) {
+      console.error("Failed to create signed URL:", signedUrlError);
+      return { success: false, error: "Failed to generate document URL" };
+    }
 
     return {
       success: true,
-      fileUrl: urlData.publicUrl,
+      fileUrl: signedUrlData.signedUrl,
       storagePath,
       fileName,
       fileSize: file.size,
@@ -489,7 +506,7 @@ const uploadPlanMaterial = async (
     }
 
     // Ensure the documents bucket exists
-    const bucketReady = await ensureBucketExists("documents");
+    const bucketReady = await ensureBucketExists("documents", { public: false });
     if (!bucketReady) {
       return {
         success: false,
@@ -518,14 +535,20 @@ const uploadPlanMaterial = async (
       return { success: false, error: uploadError.message };
     }
 
-    // Get public URL
-    const { data: urlData } = supabase.storage
-      .from("documents")
-      .getPublicUrl(storagePath);
+    // Generate a signed URL for private bucket access (1 hour expiry)
+    const { data: signedUrlData, error: signedUrlError } =
+      await supabase.storage
+        .from("documents")
+        .createSignedUrl(storagePath, 3600);
+
+    if (signedUrlError || !signedUrlData?.signedUrl) {
+      console.error("Failed to create signed URL:", signedUrlError);
+      return { success: false, error: "Failed to generate document URL" };
+    }
 
     return {
       success: true,
-      fileUrl: urlData.publicUrl,
+      fileUrl: signedUrlData.signedUrl,
       storagePath,
       fileName,
       fileSize: file.size,
@@ -620,7 +643,7 @@ const uploadConsultantDocument = async (
     }
 
     // Ensure the documents bucket exists
-    const bucketReady = await ensureBucketExists("documents");
+    const bucketReady = await ensureBucketExists("documents", { public: false });
     if (!bucketReady) {
       return {
         success: false,
@@ -649,14 +672,20 @@ const uploadConsultantDocument = async (
       return { success: false, error: uploadError.message };
     }
 
-    // Get public URL
-    const { data: urlData } = supabase.storage
-      .from("documents")
-      .getPublicUrl(storagePath);
+    // Generate a signed URL for private bucket access (1 hour expiry)
+    const { data: signedUrlData, error: signedUrlError } =
+      await supabase.storage
+        .from("documents")
+        .createSignedUrl(storagePath, 3600);
+
+    if (signedUrlError || !signedUrlData?.signedUrl) {
+      console.error("Failed to create signed URL:", signedUrlError);
+      return { success: false, error: "Failed to generate document URL" };
+    }
 
     return {
       success: true,
-      fileUrl: urlData.publicUrl,
+      fileUrl: signedUrlData.signedUrl,
       storagePath,
       fileName,
       fileSize: file.size,
@@ -1428,8 +1457,12 @@ const uploadToSupabase = async (
   bucketName: string = "documents",
 ): Promise<{ url: string | null; error: string | null }> => {
   try {
-    // Ensure bucket exists
-    const bucketReady = await ensureBucketExists(bucketName);
+    // Ensure bucket exists — documents bucket is private
+    const isPrivateBucket = bucketName === "documents";
+    const bucketReady = await ensureBucketExists(
+      bucketName,
+      isPrivateBucket ? { public: false } : undefined,
+    );
     if (!bucketReady) {
       return {
         url: null,
@@ -1451,7 +1484,23 @@ const uploadToSupabase = async (
       return { url: null, error: uploadError.message };
     }
 
-    // Get public URL
+    // Private buckets: generate a signed URL via admin client
+    // Public buckets: use getPublicUrl for permanent, CDN-friendly links
+    if (isPrivateBucket) {
+      const signingClient = supabaseAdmin || supabase;
+      const { data: signedUrlData, error: signedUrlError } =
+        await signingClient.storage
+          .from(bucketName)
+          .createSignedUrl(storagePath, 3600);
+
+      if (signedUrlError || !signedUrlData?.signedUrl) {
+        console.error("Failed to create signed URL:", signedUrlError);
+        return { url: null, error: "Failed to generate document URL" };
+      }
+
+      return { url: signedUrlData.signedUrl, error: null };
+    }
+
     const { data: urlData } = supabase.storage
       .from(bucketName)
       .getPublicUrl(storagePath);

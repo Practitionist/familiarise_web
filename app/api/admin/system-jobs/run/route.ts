@@ -41,9 +41,12 @@ import { expireStaleRequests } from "@/scripts/appointments/expire-stale-request
 import { cleanupTentativeSlots } from "@/scripts/appointments/cleanup-tentative-slots";
 import { reconcileSlotAvailability } from "@/scripts/appointments/reconcile-slot-availability";
 
-// Payouts
-import { createPayoutBatch } from "@/scripts/payouts/create-payout-batch";
-import { processApprovedPayouts } from "@/scripts/payouts/process-payouts";
+// Payouts — FIX #620: Use canonical service for batch/process (has distributed locking).
+// Keep handleStuckPayouts and reconcilePayoutStatus from scripts (no canonical lib equivalent yet).
+import {
+  createPayoutBatch as createPayoutBatchService,
+  processApprovedPayouts as processApprovedPayoutsService,
+} from "@/lib/payments/payouts";
 import { handleStuckPayouts } from "@/scripts/payouts/handle-stuck-payouts";
 import { reconcilePayoutStatus } from "@/scripts/payouts/reconcile-payout-status";
 
@@ -171,25 +174,21 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
     };
   },
   "create-payout-batch": async () => {
-    const result = await createPayoutBatch();
+    const batchId = await createPayoutBatchService();
     return {
-      success: result.success,
-      batchId: result.batchId,
-      createdCount: result.payoutsCreated,
-      totalAmount: result.totalAmount,
-      autoApproved: result.autoApproved,
-      pendingApproval: result.pendingApproval,
-      errorCount: result.errors.length,
+      success: true,
+      batchId,
     };
   },
   "process-payouts": async () => {
-    const result = await processApprovedPayouts();
+    const results = await processApprovedPayoutsService();
+    const succeeded = results.filter((r) => r.success).length;
+    const failed = results.filter((r) => !r.success).length;
     return {
-      success: result.success,
-      totalProcessed: result.processed,
-      succeededCount: result.succeeded,
-      failedCount: result.failed,
-      errorCount: result.failed,
+      success: failed === 0,
+      totalProcessed: results.length,
+      succeededCount: succeeded,
+      failedCount: failed,
     };
   },
   // New jobs

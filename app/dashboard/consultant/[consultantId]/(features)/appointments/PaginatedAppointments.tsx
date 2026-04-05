@@ -3,7 +3,7 @@
 import { usePagination } from "@/hooks/usePagination";
 import { Pagination } from "@/components/Pagination";
 import { BADGE_STYLES, getBadgeStyle } from "../../types";
-import { TAppointment } from "@/types/appointment";
+import { TAppointment, TSlotOfAppointment } from "@/types/appointment";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -17,17 +17,20 @@ import {
   getStartTime,
 } from "../../utils/appointmentHelpers";
 import { canManageAppointmentTimings } from "./utils/appointmentTimingHelpers";
+import { getJoinableSlot } from "../../utils/joinState";
 
 interface PaginatedAppointmentsProps {
   appointments: TAppointment[];
   badgeStyles: typeof BADGE_STYLES;
   onManageTimings?: (appointment: TAppointment) => void;
+  onJoinMeeting?: (appointment: TAppointment, slot?: TSlotOfAppointment) => void;
 }
 
 export function PaginatedAppointments({
   appointments,
   badgeStyles,
   onManageTimings,
+  onJoinMeeting,
 }: PaginatedAppointmentsProps) {
   const expandedAppointments = appointments;
 
@@ -67,7 +70,11 @@ export function PaginatedAppointments({
         {paginatedData.map((appointment) => {
           const userName = getConsumeeName(appointment);
           const status = getAppointmentStatus(appointment);
-          const isJoinable = status === "Meeting in 5 min";
+          const joinableSlot = getJoinableSlot(
+            appointment.slotsOfAppointment ?? [],
+          );
+          const isJoinable = joinableSlot !== null;
+          const isDev = process.env.NODE_ENV !== "production";
 
           return (
             <div
@@ -128,13 +135,23 @@ export function PaginatedAppointments({
                       variant="default"
                       size="sm"
                       className={
-                        isJoinable
+                        isDev || isJoinable
                           ? "bg-blue-600 text-white hover:bg-blue-700"
                           : "bg-gray-400 text-white cursor-not-allowed"
                       }
-                      disabled={!isJoinable}
+                      disabled={isDev ? false : !isJoinable}
+                      onClick={() =>
+                        onJoinMeeting?.(
+                          appointment,
+                          joinableSlot ?? undefined,
+                        )
+                      }
                     >
-                      {isJoinable ? "Join" : "Chat"}
+                      {isDev
+                        ? "Join (Dev)"
+                        : isJoinable
+                          ? "Join Meeting"
+                          : "Not available"}
                     </Button>
                   </div>
                 </div>

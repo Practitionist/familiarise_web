@@ -17,7 +17,14 @@ import {
   ChevronUp,
   AlertTriangle,
 } from "lucide-react";
+import Link from "next/link";
 import { useToast } from "@/hooks/use-toast";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { formatCurrencyFromMajorUnit } from "@/utils/formatting";
 
 // ─── Shared schedule types ───────────────────────────────────────────────────
@@ -50,6 +57,7 @@ interface ClassEventSchedule {
 // ─── Collaborator perspective types ──────────────────────────────────────────
 
 interface PlanOwner {
+  id: string;
   user: { name: string | null; image: string | null };
 }
 
@@ -183,6 +191,18 @@ function formatRole(role: string): string {
   return labels[role] || role.replace(/_/g, " ");
 }
 
+const ROLE_DESCRIPTIONS: Record<string, string> = {
+  CO_HOST: "Co-hosts can manage the session alongside the owner",
+  MODERATOR: "Moderators manage participants and Q&A during sessions",
+  GUEST_SPEAKER: "Guest speakers present during specific session segments",
+  TECHNICAL_SUPPORT:
+    "Technical support handles session setup and troubleshooting",
+  CO_INSTRUCTOR: "Co-instructors teach alongside the primary instructor",
+  TEACHING_ASSISTANT: "TAs assist with student questions and grading",
+  GUEST_LECTURER: "Guest lecturers present on specific topics",
+  CONTENT_CREATOR: "Content creators prepare materials and resources",
+};
+
 // ─── Schedule summary components (shared) ────────────────────────────────────
 
 interface WebinarPlanSchedule {
@@ -205,7 +225,9 @@ function WebinarScheduleSummary({ plan }: { plan: WebinarPlanSchedule }) {
 
   if (!webinar) {
     return (
-      <p className="text-xs text-zinc-400 italic">No events scheduled yet</p>
+      <p className="text-xs text-zinc-400 italic">
+        No events scheduled yet — only the event owner can add scheduling
+      </p>
     );
   }
 
@@ -325,7 +347,9 @@ function WebinarEventList({ plan }: { plan: WebinarPlanSchedule }) {
 function ClassScheduleSummary({ plan }: { plan: ClassPlanSchedule }) {
   if (plan.classes.length === 0) {
     return (
-      <p className="text-xs text-zinc-400 italic">No classes scheduled yet</p>
+      <p className="text-xs text-zinc-400 italic">
+        No classes scheduled yet — only the event owner can add scheduling
+      </p>
     );
   }
 
@@ -599,9 +623,18 @@ function ActiveCollaborationCard({
     <div className="bg-white border border-zinc-200 rounded-lg overflow-hidden">
       {/* Role banner */}
       <div className="bg-purple-600 px-3 py-1.5 flex items-center justify-between">
-        <span className="text-xs font-semibold text-white tracking-wide uppercase">
-          {formatRole(collab.role)}
-        </span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="text-xs font-semibold text-white tracking-wide uppercase cursor-help">
+              {formatRole(collab.role)}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>
+              {ROLE_DESCRIPTIONS[collab.role] ?? formatRole(collab.role)}
+            </p>
+          </TooltipContent>
+        </Tooltip>
         <Badge
           variant="secondary"
           className="text-[10px] bg-purple-500 text-purple-100 border-purple-400"
@@ -614,9 +647,18 @@ function ActiveCollaborationCard({
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="min-w-0">
-            <p className="text-sm font-medium text-zinc-800 truncate">
-              {collab.planTitle}
-            </p>
+            {owner?.id ? (
+              <Link
+                href={`/dashboard/consultant/${owner.id}/planner`}
+                className="text-sm font-medium text-zinc-800 truncate hover:underline block"
+              >
+                {collab.planTitle}
+              </Link>
+            ) : (
+              <p className="text-sm font-medium text-zinc-800 truncate">
+                {collab.planTitle}
+              </p>
+            )}
             <p className="text-xs text-zinc-500">
               by {owner?.user.name ?? "Unknown"}
             </p>
@@ -646,10 +688,10 @@ function ActiveCollaborationCard({
           </div>
         </div>
 
-        {/* Team — host + other collaborators (excludes self) */}
+        {/* Team — host + self + other collaborators */}
         <div className="border-t border-zinc-100 mt-3 pt-3">
           <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider mb-2">
-            Team ({1 + otherCollaborators.length})
+            Team ({2 + otherCollaborators.length})
           </p>
           <div className="space-y-2">
             {/* Host (plan owner) */}
@@ -1085,129 +1127,156 @@ export function InvitationsPanel() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* ── Host section: My Plans with Collaborators ── */}
-      {hostedPlans.length > 0 && (
-        <div>
-          <h3 className="text-base font-semibold text-zinc-700 mb-3">
-            My Plans with Collaborators ({hostedPlans.length})
-          </h3>
-          <div className="space-y-2">
-            {hostedPlans.map((plan) => (
-              <HostedPlanCard
-                key={`${plan.planType}-${plan.webinarPlan?.id ?? plan.classPlan?.id}`}
-                plan={plan}
-                hostUser={data?.hostUser}
-              />
-            ))}
+    <TooltipProvider>
+      <div className="space-y-6">
+        {/* ── Host section: My Plans with Collaborators ── */}
+        {hostedPlans.length > 0 && (
+          <div>
+            <h2 className="text-base font-semibold text-zinc-700 mb-3">
+              My Plans with Collaborators ({hostedPlans.length})
+            </h2>
+            <div className="space-y-2">
+              {hostedPlans.map((plan) => (
+                <HostedPlanCard
+                  key={`${plan.planType}-${plan.webinarPlan?.id ?? plan.classPlan?.id}`}
+                  plan={plan}
+                  hostUser={data?.hostUser}
+                />
+              ))}
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* ── Collaborator section: Pending Invitations ── */}
-      {pending.length > 0 && (
+        {/* ── Collaborator section: Pending Invitations ── */}
         <div>
-          <h3 className="text-base font-semibold text-zinc-700 mb-3">
+          <h2 className="text-base font-semibold text-zinc-700 mb-3">
             Pending Invitations ({pending.length})
-          </h3>
-          <div className="space-y-3">
-            {pending.map((collab) => (
-              <div
-                key={collab.id}
-                className="p-4 bg-amber-50 border border-amber-200 rounded-lg"
-              >
-                <div className="flex items-start justify-between">
-                  <div>
-                    <p className="font-medium text-zinc-800">
-                      {collab.planTitle}
-                    </p>
-                    <p className="text-sm text-zinc-600 mt-0.5">
-                      Invited by{" "}
-                      <span className="font-medium">
-                        {collab.invitedBy.user.name ?? "Unknown"}
-                      </span>
-                    </p>
-                    <div className="flex items-center gap-2 mt-2">
-                      <Badge variant="secondary" className="text-xs">
-                        {collab.planType === "webinar" ? "Webinar" : "Class"}
-                      </Badge>
-                      <Badge variant="outline" className="text-xs">
-                        {formatRole(collab.role)}
-                      </Badge>
-                      <span className="text-xs text-zinc-500">
-                        {collab.revenueSharePercentage}% revenue share
-                      </span>
-                      {collab.planPrice > 0 && (
-                        <span className="text-xs text-zinc-500">
-                          &middot; Plan price{" "}
-                          {formatCurrencyFromMajorUnit(collab.planPrice, "INR")}
+          </h2>
+          {pending.length === 0 ? (
+            <div className="text-center py-8 text-zinc-500 border border-dashed border-zinc-200 rounded-lg">
+              <Inbox className="w-8 h-8 mx-auto mb-2 text-zinc-300" />
+              <p className="text-sm font-medium">No pending invitations</p>
+              <p className="text-xs mt-1 max-w-xs mx-auto">
+                When another consultant invites you to co-host a webinar or
+                class, the invitation will appear here.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {pending.map((collab) => (
+                <div
+                  key={collab.id}
+                  className="p-4 bg-amber-50 border border-amber-200 rounded-lg"
+                >
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="font-medium text-zinc-800">
+                        {collab.planTitle}
+                      </p>
+                      <p className="text-sm text-zinc-600 mt-0.5">
+                        Invited by{" "}
+                        <span className="font-medium">
+                          {collab.invitedBy.user.name ?? "Unknown"}
                         </span>
-                      )}
+                      </p>
+                      <div className="flex items-center gap-2 mt-2">
+                        <Badge variant="secondary" className="text-xs">
+                          {collab.planType === "webinar" ? "Webinar" : "Class"}
+                        </Badge>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge
+                              variant="outline"
+                              className="text-xs cursor-help"
+                            >
+                              {formatRole(collab.role)}
+                            </Badge>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>
+                              {ROLE_DESCRIPTIONS[collab.role] ??
+                                formatRole(collab.role)}
+                            </p>
+                          </TooltipContent>
+                        </Tooltip>
+                        <span className="text-xs text-zinc-500">
+                          {collab.revenueSharePercentage}% revenue share
+                        </span>
+                        {collab.planPrice > 0 && (
+                          <span className="text-xs text-zinc-500">
+                            &middot; Plan price{" "}
+                            {formatCurrencyFromMajorUnit(
+                              collab.planPrice,
+                              "INR",
+                            )}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5 mt-2 text-xs text-amber-700">
+                        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                        <span>
+                          You won&apos;t earn from purchases made before you
+                          accept the collaborations request.
+                        </span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1.5 mt-2 text-xs text-amber-700">
-                      <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                      <span>
-                        You won&apos;t earn from purchases made before you
-                        accept the collaborations request.
-                      </span>
+                    <div className="flex gap-2 ml-4">
+                      <Button
+                        size="sm"
+                        variant="default"
+                        onClick={() =>
+                          respondMutation.mutate({
+                            id: collab.id,
+                            planType: collab.planType,
+                            response: "ACCEPTED",
+                          })
+                        }
+                        disabled={respondMutation.isPending}
+                      >
+                        <Check className="w-3.5 h-3.5 mr-1" />
+                        Accept
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          respondMutation.mutate({
+                            id: collab.id,
+                            planType: collab.planType,
+                            response: "DECLINED",
+                          })
+                        }
+                        disabled={respondMutation.isPending}
+                      >
+                        <X className="w-3.5 h-3.5 mr-1" />
+                        Decline
+                      </Button>
                     </div>
-                  </div>
-                  <div className="flex gap-2 ml-4">
-                    <Button
-                      size="sm"
-                      variant="default"
-                      onClick={() =>
-                        respondMutation.mutate({
-                          id: collab.id,
-                          planType: collab.planType,
-                          response: "ACCEPTED",
-                        })
-                      }
-                      disabled={respondMutation.isPending}
-                    >
-                      <Check className="w-3.5 h-3.5 mr-1" />
-                      Accept
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() =>
-                        respondMutation.mutate({
-                          id: collab.id,
-                          planType: collab.planType,
-                          response: "DECLINED",
-                        })
-                      }
-                      disabled={respondMutation.isPending}
-                    >
-                      <X className="w-3.5 h-3.5 mr-1" />
-                      Decline
-                    </Button>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
-      )}
 
-      {/* ── Collaborator section: Active Collaborations ── */}
-      {accepted.length > 0 && (
-        <div>
-          <h3 className="text-base font-semibold text-zinc-700 mb-3">
-            Active Collaborations ({accepted.length})
-          </h3>
-          <div className="space-y-2">
-            {accepted.map((collab) => (
-              <ActiveCollaborationCard
-                key={collab.id}
-                collab={collab}
-                currentUser={data?.hostUser}
-              />
-            ))}
+        {/* ── Collaborator section: Active Collaborations ── */}
+        {accepted.length > 0 && (
+          <div>
+            <h2 className="text-base font-semibold text-zinc-700 mb-3">
+              Active Collaborations ({accepted.length})
+            </h2>
+            <div className="space-y-2">
+              {accepted.map((collab) => (
+                <ActiveCollaborationCard
+                  key={collab.id}
+                  collab={collab}
+                  currentUser={data?.hostUser}
+                />
+              ))}
+            </div>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+    </TooltipProvider>
   );
 }

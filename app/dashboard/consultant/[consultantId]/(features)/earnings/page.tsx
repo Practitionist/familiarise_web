@@ -201,10 +201,11 @@ export default function EarningsPage({
         {/* Summary Cards */}
         <DashboardGrid columns={4}>
           <StatCard
-            title="Total Earnings"
+            title="Net Earnings"
             value={formatSummaryAmount(summary?.totalEarnings ?? 0)}
             icon={IndianRupee}
             variant="default"
+            tooltip="Total of all cleared earnings (pending + ready + paid + held). Excludes refunded amounts."
           />
           <StatCard
             title="Ready for Payout"
@@ -214,7 +215,7 @@ export default function EarningsPage({
             subtitle={
               eligibility?.isEligible
                 ? "Eligible for payout"
-                : (eligibility?.reason ?? undefined)
+                : `${formatSummaryAmount(eligibility?.readyAmount ?? 0)} / ${formatSummaryAmount(eligibility?.minimumAmount ?? 50000)} minimum`
             }
           />
           <StatCard
@@ -223,6 +224,7 @@ export default function EarningsPage({
             icon={Clock}
             variant="warning"
             subtitle="Released after hold period"
+            tooltip="Earnings in hold period (24h–7 days depending on service type). Automatically released when hold expires."
           />
           <StatCard
             title="Already Paid Out"
@@ -427,16 +429,39 @@ export default function EarningsPage({
           <div className="mt-4 p-4 bg-zinc-50 rounded-lg border border-zinc-200">
             <div className="flex items-start gap-3">
               <ArrowUpRight className="w-5 h-5 text-zinc-400 mt-0.5" />
-              <div>
+              <div className="flex-1">
                 <p className="text-sm font-medium text-zinc-700">
                   Payout Information
                 </p>
-                <p className="text-xs text-zinc-500 mt-1">
-                  {eligibility.isEligible
-                    ? `You have ${formatSummaryAmount(eligibility.readyAmount)} ready for payout. Payouts are processed weekly.`
-                    : (eligibility.reason ??
-                      `Minimum payout threshold is ${formatSummaryAmount(eligibility.minimumAmount)}.`)}
-                </p>
+                {eligibility.isEligible ? (
+                  <p className="text-xs text-zinc-500 mt-1">
+                    {formatSummaryAmount(eligibility.readyAmount)} ready — payouts are processed weekly
+                  </p>
+                ) : (
+                  <div className="mt-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="text-xs text-zinc-500">
+                        {formatSummaryAmount(eligibility.readyAmount)} of {formatSummaryAmount(eligibility.minimumAmount)} minimum reached
+                      </p>
+                      <p className="text-xs font-medium text-zinc-600">
+                        {Math.min(
+                          100,
+                          Math.round(
+                            (eligibility.readyAmount / eligibility.minimumAmount) * 100,
+                          ),
+                        )}%
+                      </p>
+                    </div>
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-200">
+                      <div
+                        className="h-full rounded-full bg-emerald-500 transition-all"
+                        style={{
+                          width: `${Math.min(100, (eligibility.readyAmount / eligibility.minimumAmount) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>

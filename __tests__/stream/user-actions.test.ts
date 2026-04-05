@@ -556,15 +556,15 @@ describe("User Actions", () => {
         },
       ];
 
-      mockPrisma.user.findMany.mockResolvedValueOnce(mockUsers);
-      // Mock checkUserRelationship calls
       mockPrisma.user.findUnique.mockResolvedValue({
         consultantProfileId: "cp-current",
         consulteeProfileId: null,
       });
-      mockPrisma.consultation.findFirst.mockResolvedValue(null);
-      mockPrisma.subscription.findFirst.mockResolvedValue(null);
-      mockPrisma.slotOfAppointment.findFirst.mockResolvedValue(null);
+      mockPrisma.user.findMany.mockResolvedValueOnce(mockUsers);
+      // Mock batched relationship queries (findMany + .then())
+      mockPrisma.consultation.findMany.mockResolvedValue([]);
+      mockPrisma.subscription.findMany.mockResolvedValue([]);
+      mockPrisma.slotOfAppointment.findMany.mockResolvedValue([]);
 
       const { searchUsersWithRelationships } =
         await import("../../actions/stream/chat/user.action");
@@ -617,18 +617,21 @@ describe("User Actions", () => {
         },
       ];
 
-      mockPrisma.user.findMany.mockResolvedValueOnce(mockUsers);
-      // user-no-rel has no relationship
       mockPrisma.user.findUnique.mockResolvedValue({
         consultantProfileId: "cp-current",
         consulteeProfileId: "ce-current",
       });
-      // First call for user-no-rel returns no relationship
-      mockPrisma.consultation.findFirst
-        .mockResolvedValueOnce(null) // For user-no-rel
-        .mockResolvedValueOnce({ id: "c-1" }); // For user-with-rel
-      mockPrisma.subscription.findFirst.mockResolvedValue(null);
-      mockPrisma.slotOfAppointment.findFirst.mockResolvedValue(null);
+      mockPrisma.user.findMany.mockResolvedValueOnce(mockUsers);
+      // Batched consultation query returns a match for user-with-rel (consultant cp-1)
+      mockPrisma.consultation.findMany.mockResolvedValue([
+        {
+          consultationPlan: {
+            consultantProfile: { user: { id: "user-with-rel" } },
+          },
+        },
+      ]);
+      mockPrisma.subscription.findMany.mockResolvedValue([]);
+      mockPrisma.slotOfAppointment.findMany.mockResolvedValue([]);
 
       const { searchUsersWithRelationships } =
         await import("../../actions/stream/chat/user.action");

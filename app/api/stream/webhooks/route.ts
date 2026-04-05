@@ -187,10 +187,12 @@ async function verifyStreamSignature(
       .digest("hex");
 
     // Constant-time comparison to prevent timing attacks
-    return crypto.timingSafeEqual(
-      Buffer.from(signature),
-      Buffer.from(expectedSignature),
-    );
+    const sigBuffer = Buffer.from(signature);
+    const expectedBuffer = Buffer.from(expectedSignature);
+    if (sigBuffer.byteLength !== expectedBuffer.byteLength) {
+      return false;
+    }
+    return crypto.timingSafeEqual(sigBuffer, expectedBuffer);
   } catch (error) {
     streamLogger.error("Error verifying Stream webhook signature", error);
     return false;

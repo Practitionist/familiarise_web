@@ -2,7 +2,7 @@
 
 Documentation for the Familiarise refund and dispute handling system.
 
-**Last Updated**: 2025-12-11
+**Last Updated**: 2026-03-31
 
 ---
 
@@ -45,6 +45,10 @@ Phase 1 (Transaction): Create PENDING refund → Claims the amount
 Phase 2 (No TX):       Call payment gateway → Process refund
 Phase 3 (No TX):       Update status → SUCCEEDED or FAILED
 ```
+
+### Partial Refund Earnings (Mar 2026)
+
+`refundEarnings()` now supports proportional reversal via `refundAmount`/`paymentAmount` parameters. A new `refundedShareAmount` field tracks cumulative partial refunds on `ConsultantEarnings`. Earnings auto-transition to REFUNDED when fully exhausted.
 
 ### Dispute Lifecycle
 
