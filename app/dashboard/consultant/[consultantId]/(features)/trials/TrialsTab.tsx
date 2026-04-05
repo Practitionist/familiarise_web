@@ -47,8 +47,11 @@ import Link from "next/link";
 import { cn } from "@/utils/tailwind";
 import { useRouter } from "next/navigation";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
-import { getOrCreateAppointmentMeeting, type MeetingSlot } from "@/lib/meeting";
-import type { TAppointment } from "@/types/appointment";
+import {
+  getOrCreateAppointmentMeeting,
+  type MeetingAppointment,
+  type MeetingSlot,
+} from "@/lib/meeting";
 import {
   TrialScheduleCalendar,
   SelectedSlot,
@@ -445,11 +448,11 @@ export function TrialsTab() {
     try {
       const slot = trial.appointment.slotsOfAppointment[0];
       // Create a minimal appointment object for the meeting helper
-      const appointmentForMeeting = {
+      const appointmentForMeeting: MeetingAppointment = {
         id: trial.appointment.id,
-        appointmentType: "TRIAL" as const,
+        appointmentType: "TRIAL",
         slotsOfAppointment: trial.appointment.slotsOfAppointment,
-      } as unknown as TAppointment;
+      };
 
       const meetingId = await getOrCreateAppointmentMeeting(
         client,

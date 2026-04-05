@@ -25,3 +25,23 @@ export type TConsulteeProfile = Prisma.ConsulteeProfileGetPayload<{
 // exactly matches what Prisma will return when querying a ConsulteeProfile
 // with these specific relations included. This helps prevent type mismatches
 // and provides better autocomplete and type checking in our application.
+
+/**
+ * Extended consultee profile returned by the GET /api/user/consultees/[id] endpoint.
+ * Includes the user's education and work experience relations that the base
+ * TConsulteeProfile omits.
+ */
+export type TConsulteeProfileWithBackground = Prisma.ConsulteeProfileGetPayload<{
+  include: {
+    user: {
+      include: {
+        workExperiences: true;
+        education: true;
+      };
+    };
+    consultationRequests: true;
+    subscriptionRequests: true;
+    slotsOfAppointment: true;
+    consultantReviews: true;
+  };
+}>;

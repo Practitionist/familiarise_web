@@ -14,7 +14,10 @@ import type { TConsultantDashboardResponse } from "@/types/consultant-events";
 import type { TAppointment } from "@/types/appointment";
 import type { TConsultantProfile } from "@/types/consultant";
 import type { TConsulteeEventsResponse } from "@/types/consultee-events";
-import type { TConsulteeProfile } from "@/types/consultee";
+import type {
+  TConsulteeProfile,
+  TConsulteeProfileWithBackground,
+} from "@/types/consultee";
 import type {
   PlannerWebinarEvent,
   PlannerClassEvent,
@@ -113,6 +116,13 @@ export const consulteeFetchers = {
 
   profile: (consulteeId: string) =>
     fetchWithErrorHandling<TConsulteeProfile>(
+      `/api/user/consultees/${consulteeId}`,
+      "Profile fetch failed",
+    ),
+
+  /** Same endpoint as profile but typed with education + workExperiences includes. */
+  profileWithBackground: (consulteeId: string) =>
+    fetchWithErrorHandling<TConsulteeProfileWithBackground>(
       `/api/user/consultees/${consulteeId}`,
       "Profile fetch failed",
     ),
@@ -292,10 +302,10 @@ export function createConsulteeQueries(consulteeId: string) {
       retry: 2,
     },
 
-    // Settings (uses same endpoint as profile)
+    // Settings (uses same endpoint as profile, typed with education/work includes)
     settings: {
       queryKey: ["consultee-settings", consulteeId] as const,
-      queryFn: () => consulteeFetchers.profile(consulteeId),
+      queryFn: () => consulteeFetchers.profileWithBackground(consulteeId),
       staleTime: STALE_TIMES.LONG,
       gcTime: GC_TIME,
       retry: 2,

@@ -2,12 +2,11 @@
 
 import { Button } from "@/components/ui/button";
 import {
-  TClassWithPlan,
   TConsultationWithPlan,
   TSubscriptionWithPlan,
-  TWebinarWithPlan,
   TTrialWithPlan,
 } from "@/hooks/useEvents";
+import type { TConsulteeWebinar, TConsulteeClass } from "@/types/consultee-events";
 import { getActualSlots, getAllSlots } from "../../utils/scheduleHelpers";
 import { OneOffEventCard } from "./components/OneOffEventCard";
 import { MultiSessionEventCard } from "./components/MultiSessionEventCard";
@@ -34,8 +33,8 @@ type OverviewMode = "upcoming" | "past";
 interface OverviewProps {
   consultations: TConsultationWithPlan[];
   subscriptions: TSubscriptionWithPlan[];
-  webinars: TWebinarWithPlan[];
-  classes: TClassWithPlan[];
+  webinars: TConsulteeWebinar[];
+  classes: TConsulteeClass[];
   trials: TTrialWithPlan[];
   mode?: OverviewMode;
 }
@@ -55,22 +54,27 @@ interface DashboardCardProps {
   emptySubtext?: string;
 }
 
+/** Shape of plan objects that may carry collaborator data. */
+interface PlanWithCollaborators {
+  collaborators?: Array<{
+    consultantProfile: {
+      user: { id: string; name: string; image: string | null };
+    } | null;
+    role: string;
+  }>;
+}
+
 // Extract collaborators from a webinar or class plan
 function extractCollaborators(
-  plan: Record<string, unknown>,
+  plan: PlanWithCollaborators,
 ): CollaboratorInfo[] {
   const collaborators = plan?.collaborators;
   if (!Array.isArray(collaborators)) return [];
-  return collaborators.map(
-    (c: {
-      consultantProfile?: { user?: { name?: string; image?: string | null } };
-      role: string;
-    }) => ({
-      name: c.consultantProfile?.user?.name ?? "Collaborator",
-      image: c.consultantProfile?.user?.image ?? null,
-      role: c.role ?? "",
-    }),
-  );
+  return collaborators.map((c) => ({
+    name: c.consultantProfile?.user?.name ?? "Collaborator",
+    image: c.consultantProfile?.user?.image ?? null,
+    role: c.role ?? "",
+  }));
 }
 
 // For multi-session events, find the next upcoming slot time (not the first historical one)
@@ -423,9 +427,7 @@ export function Overview({
               }
             }
 
-            const collaborators = extractCollaborators(
-              webinar.webinarPlan as unknown as Record<string, unknown>,
-            );
+            const collaborators = extractCollaborators(webinar.webinarPlan);
 
             return (
               <div
@@ -494,9 +496,7 @@ export function Overview({
               }
             }
 
-            const collaborators = extractCollaborators(
-              classItem.classPlan as unknown as Record<string, unknown>,
-            );
+            const collaborators = extractCollaborators(classItem.classPlan);
 
             return (
               <div

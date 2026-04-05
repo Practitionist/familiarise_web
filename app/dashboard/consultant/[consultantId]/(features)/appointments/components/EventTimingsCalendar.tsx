@@ -11,7 +11,11 @@ import {
 import { useParams } from "next/navigation";
 import { SafeUnifiedCalendar } from "../../shared/components/SafeUnifiedCalendar";
 import { TAppointment } from "@/types/appointment";
+import type { SyntheticAppointment } from "../utils/syntheticAppointments";
 import { getClassPlanDefaults, type ClassPlanType } from "@/utils/classPlans";
+
+/** Union of real and synthetic appointment objects accepted by this calendar. */
+type CalendarAppointment = TAppointment | SyntheticAppointment;
 
 interface EventDetails {
   eventType: "consultation" | "subscription" | "webinar" | "class";
@@ -29,7 +33,7 @@ interface EventDetails {
 interface EventTimingsCalendarProps {
   isOpen: boolean;
   onClose: () => void;
-  appointment: TAppointment;
+  appointment: CalendarAppointment;
   completedSessions?: number;
   groupTotalSessions?: number;
 }
@@ -44,7 +48,7 @@ export function EventTimingsCalendar({
   const params = useParams();
 
   const consultantId = params.consultantId?.toString() || "";
-  const getEventDetails = (appointment: TAppointment): EventDetails => {
+  const getEventDetails = (appointment: CalendarAppointment): EventDetails => {
     switch (appointment.appointmentType) {
       case "CONSULTATION":
         return {
