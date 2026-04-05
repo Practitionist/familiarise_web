@@ -1,5 +1,14 @@
 import { Prisma } from "@prisma/client";
 
+/** Reusable collaborator include with consultant profile + user */
+const collaboratorInclude = {
+  include: {
+    consultantProfile: {
+      include: { user: true },
+    },
+  },
+} as const;
+
 // Custom type for Consultation with specific nesting depth
 export type TConsultation = Prisma.ConsultationGetPayload<{
   include: {
@@ -77,6 +86,7 @@ export type TWebinar = Prisma.WebinarGetPayload<{
           };
         };
         topics: true;
+        collaborators: typeof collaboratorInclude;
       };
     };
     appointment: {
@@ -108,6 +118,7 @@ export type TClass = Prisma.ClassGetPayload<{
           };
         };
         topics: true;
+        collaborators: typeof collaboratorInclude;
         classContents: {
           orderBy: {
             order: "asc";
@@ -181,6 +192,7 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
                 user: true;
               };
             };
+            collaborators: typeof collaboratorInclude;
             title: true;
           };
         };
@@ -195,6 +207,7 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
                 user: true;
               };
             };
+            collaborators: typeof collaboratorInclude;
           };
         };
       };

@@ -2,20 +2,6 @@ import { format } from "date-fns";
 import { TAppointment } from "@/types/appointment";
 
 // =============================================================================
-// Collaborator Types
-// =============================================================================
-
-interface PlanCollaborator {
-  consultantProfileId: string;
-  role: string;
-  status?: string;
-}
-
-interface PlanWithCollaborators {
-  collaborators?: PlanCollaborator[];
-}
-
-// =============================================================================
 // Collaborator Role Helpers
 // =============================================================================
 
@@ -30,37 +16,28 @@ export function getCollaboratorRole(
   if (appointment.appointmentType === "WEBINAR" && appointment.webinar) {
     const plan = appointment.webinar.webinarPlan;
     if (plan?.consultantProfileId === consultantId) {
-      // Only show "Host" badge if there are collaborators
-      const collaborators = (plan as PlanWithCollaborators).collaborators;
-      if (Array.isArray(collaborators) && collaborators.length > 0) {
+      if (plan.collaborators.length > 0) {
         return "HOST";
       }
       return null; // Solo event
     }
-    const collaborators = (plan as PlanWithCollaborators).collaborators;
-    if (Array.isArray(collaborators)) {
-      const collab = collaborators.find(
-        (c: PlanCollaborator) => c.consultantProfileId === consultantId,
-      );
-      if (collab) return collab.role;
-    }
+    const collab = plan?.collaborators.find(
+      (c) => c.consultantProfileId === consultantId,
+    );
+    if (collab) return collab.role;
   }
   if (appointment.appointmentType === "CLASS" && appointment.class) {
     const plan = appointment.class.classPlan;
     if (plan?.consultantProfileId === consultantId) {
-      const collaborators = (plan as PlanWithCollaborators).collaborators;
-      if (Array.isArray(collaborators) && collaborators.length > 0) {
+      if (plan.collaborators.length > 0) {
         return "HOST";
       }
       return null;
     }
-    const collaborators = (plan as PlanWithCollaborators).collaborators;
-    if (Array.isArray(collaborators)) {
-      const collab = collaborators.find(
-        (c: PlanCollaborator) => c.consultantProfileId === consultantId,
-      );
-      if (collab) return collab.role;
-    }
+    const collab = plan?.collaborators.find(
+      (c) => c.consultantProfileId === consultantId,
+    );
+    if (collab) return collab.role;
   }
   return null;
 }
