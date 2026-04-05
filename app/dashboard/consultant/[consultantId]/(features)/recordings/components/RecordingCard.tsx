@@ -12,6 +12,7 @@ import {
   Loader2,
   Download,
   ExternalLink,
+  Users,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -35,12 +36,23 @@ export interface RecordingData {
   playbackUrl: string | null;
   thumbnailUrl: string | null;
   resolution: string | null;
+  fileSize: number | null;
   streamUrlExpiresAt: string | null;
   transferredAt: string | null;
   planType: "webinar" | "class" | null;
   planId: string | null;
   planTitle: string | null;
+  participantNames: string[];
+  participantCount: number;
+  appointmentDate: string | null;
   createdAt: string;
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  if (bytes < 1024 * 1024 * 1024)
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
 interface RecordingCardProps {
@@ -145,7 +157,6 @@ export function RecordingCard({ recording, onTransfer }: RecordingCardProps) {
             </CardTitle>
             {recording.planTitle && (
               <p className="text-sm text-muted-foreground mt-1">
-                {recording.planType === "webinar" ? "Webinar" : "Class"}:{" "}
                 {recording.planTitle}
               </p>
             )}
@@ -175,9 +186,19 @@ export function RecordingCard({ recording, onTransfer }: RecordingCardProps) {
 
         {/* Metadata */}
         <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm text-muted-foreground">
+          {recording.participantCount > 0 && (
+            <div className="flex items-center gap-1 basis-full">
+              <Users className="w-4 h-4 flex-shrink-0" />
+              <span>
+                {recording.participantNames.join(", ")}
+                {recording.participantCount > 3 &&
+                  ` +${recording.participantCount - 3} more`}
+              </span>
+            </div>
+          )}
           <div className="flex items-center gap-1">
             <Calendar className="w-4 h-4" />
-            <span>{format(new Date(recording.recordedAt), "MMM d, yyyy")}</span>
+            <span>{format(new Date(recording.appointmentDate ?? recording.recordedAt), "MMM d, yyyy")}</span>
           </div>
           <div className="flex items-center gap-1">
             <Clock className="w-4 h-4" />
@@ -186,6 +207,11 @@ export function RecordingCard({ recording, onTransfer }: RecordingCardProps) {
           {recording.resolution && (
             <span className="text-xs bg-muted px-2 py-0.5 rounded">
               {recording.resolution}
+            </span>
+          )}
+          {recording.fileSize && (
+            <span className="text-xs bg-muted px-2 py-0.5 rounded">
+              {formatFileSize(recording.fileSize)}
             </span>
           )}
         </div>
@@ -275,6 +301,7 @@ export function RecordingCard({ recording, onTransfer }: RecordingCardProps) {
               </Tooltip>
             </TooltipProvider>
           )}
+
         </div>
       </CardContent>
     </Card>

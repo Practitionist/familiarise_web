@@ -9,8 +9,8 @@ export interface TimeSlot {
 }
 
 export interface AppointmentSlot {
-  slotStartTimeInUTC: string | Date;
-  slotEndTimeInUTC: string | Date;
+  startsAt: string | Date;
+  endsAt: string | Date;
 }
 
 export interface Appointment {

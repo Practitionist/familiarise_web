@@ -73,16 +73,6 @@ export function getRoleBadgeStyle(role: string): string {
   return "bg-purple-100 text-purple-800";
 }
 
-/**
- * Type for appointment slot that supports both API response formats
- * - startsAt: Standard Prisma field from direct queries
- * - slotStartTimeInUTC: Legacy field from transformed dashboard API responses
- */
-type AppointmentSlot = {
-  startsAt?: string | Date;
-  slotStartTimeInUTC?: string | Date;
-};
-
 // Get the relevant name based on appointment type
 // For consultations/subscriptions: returns the consultee (requester) name
 // For webinars/classes: returns the consultant (host) name
@@ -187,20 +177,8 @@ export const getSlotTimes = (appointment: TAppointment): Date[] => {
   }
 
   return appointment.slotsOfAppointment
-    .map((slot: AppointmentSlot) => {
-      // Support both field names: startsAt (from API) and slotStartTimeInUTC (from dashboard API transformation)
-      const time = slot.startsAt || slot.slotStartTimeInUTC;
-      // Handle both Date objects and string timestamps
-      if (time instanceof Date) {
-        return time;
-      }
-      if (typeof time === "string" || typeof time === "number") {
-        const date = new Date(time);
-        return isNaN(date.getTime()) ? null : date;
-      }
-      return null;
-    })
-    .filter((date): date is Date => date !== null);
+    .map((slot) => new Date(slot.startsAt))
+    .filter((date) => !isNaN(date.getTime()));
 };
 
 /**
@@ -250,6 +228,17 @@ export const getStartTime = (appointment: TAppointment): Date | null => {
 export const hasUpcomingSlots = (appointment: TAppointment): boolean => {
   const now = new Date();
   return getSlotTimes(appointment).some((time) => new Date(time) > now);
+};
+
+// Get the next upcoming slot time (first future slot), falling back to the earliest slot
+export const getNextUpcomingSlotTime = (
+  appointment: TAppointment,
+): Date | null => {
+  const now = new Date();
+  const sortedTimes = getSlotTimes(appointment).sort(
+    (a, b) => a.getTime() - b.getTime(),
+  );
+  return sortedTimes.find((time) => time > now) ?? sortedTimes[0] ?? null;
 };
 
 // Check if appointment has any slots today
@@ -306,14 +295,34 @@ export const getAppointmentStatus = (appointment: TAppointment): string => {
     return "Completed";
   }
 
+  // Check if a slot is currently in progress (not ended early)
+  const currentSlot = appointment?.slotsOfAppointment?.find((slot) => {
+    if (slot.isTentative) return false;
+    if (
+      slot.completionStatus === "CANCELLED" ||
+      slot.completionStatus === "RESCHEDULED"
+    )
+      return false;
+    if (slot.meetingSession?.endedAt) return false;
+    const start = new Date(slot.startsAt).getTime();
+    const end = slot.endsAt
+      ? new Date(slot.endsAt).getTime()
+      : start + 60 * 60 * 1000;
+    return start <= now.getTime() && now.getTime() <= end;
+  });
+  if (currentSlot) return "In Progress";
+
   // Check if all slots are in the past
   const slotTimes = getSlotTimes(appointment);
   if (slotTimes.length > 0 && slotTimes.every((time) => new Date(time) < now)) {
     return "Completed";
   }
 
+  // For appointments with both past and future slots, use the next upcoming slot
+  const effectiveTime = getNextUpcomingSlotTime(appointment) ?? startTime;
+
   // Calculate time differences using local time
-  const diffMs = startTime.getTime() - now.getTime();
+  const diffMs = effectiveTime.getTime() - now.getTime();
   const diffMinutes = Math.floor(diffMs / (1000 * 60));
 
   // Use calendar-based day comparison for accurate "Today"/"Tomorrow" labels
@@ -329,10 +338,11 @@ export const getAppointmentStatus = (appointment: TAppointment): string => {
     now.getDate() + 2,
   );
 
-  const appointmentDate = new Date(startTime);
+  const appointmentDate = new Date(effectiveTime);
 
   // Upcoming appointments with more precise timing
   if (diffMinutes <= 5 && diffMinutes > 0) return "Meeting in 5 min";
+  if (diffMinutes <= 15 && diffMinutes > 5) return "Starting soon";
 
   // Check if appointment is today (same calendar day)
   if (appointmentDate >= todayStart && appointmentDate < tomorrowStart) {

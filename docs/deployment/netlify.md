@@ -716,6 +716,75 @@ and provisions SSL. Do not manually create DNS records for branch subdomains
 
 ---
 
+### 9. `NODE_ENV=production` breaks the build — missing devDependencies
+
+**Problem:** After fixing `NODE_ENV` from `test` to `production` on Netlify,
+ALL deploy previews started failing with:
+
+```
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@next/bundle-analyzer'
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module 'autoprefixer'
+```
+
+**Root cause:** When `NODE_ENV=production`, npm's `install` command skips
+`devDependencies`. Build-critical packages like `autoprefixer`, `postcss`,
+`tailwindcss`, `typescript`, and `@next/bundle-analyzer` were all in
+`devDependencies`. With `NODE_ENV=test` (the previous value), npm installed
+everything — so the build worked by accident.
+
+**Why it worked before:** `NODE_ENV` was set to `test` on Netlify, which
+is not a special npm lifecycle value, so npm treated it as development
+and installed all dependencies including devDependencies.
+
+**Two fixes applied:**
+
+1. **`NPM_FLAGS=--include=dev`** — Set as a Netlify env var. This tells
+   npm to install devDependencies even when `NODE_ENV=production`. This
+   is the standard fix for Next.js on Netlify since the build step needs
+   TypeScript, PostCSS, Tailwind, etc.
+
+   ```bash
+   netlify env:set NPM_FLAGS "--include=dev"
+   ```
+
+2. **Guarded `@next/bundle-analyzer` import** — Changed `next.config.mjs`
+   from an unconditional top-level `import` to a conditional dynamic
+   `await import()` that only loads when `ANALYZE=true`:
+
+   ```javascript
+   // BEFORE (breaks when package not installed)
+   import bundleAnalyzer from "@next/bundle-analyzer";
+   const withBundleAnalyzer = process.env.ANALYZE === "true"
+     ? bundleAnalyzer({ enabled: true })
+     : (config) => config;
+
+   // AFTER (safe — never loads unless ANALYZE=true)
+   const withBundleAnalyzer = process.env.ANALYZE === "true"
+     ? (await import("@next/bundle-analyzer")).default({ enabled: true })
+     : (config) => config;
+   ```
+
+**Key lesson:** When setting `NODE_ENV=production` on any hosting platform,
+always ensure build tools in `devDependencies` are still installed. Either:
+- Set `NPM_FLAGS=--include=dev` (recommended for Next.js)
+- Or move build-critical packages to `dependencies` (not recommended —
+  conflates runtime and build concerns)
+
+**Packages that MUST be available at build time (currently in devDependencies):**
+
+| Package | Why it's needed at build time |
+|---------|------------------------------|
+| `typescript` | Next.js compiles TypeScript during `next build` |
+| `autoprefixer` | PostCSS plugin loaded by Tailwind CSS |
+| `postcss` | CSS processing during build |
+| `tailwindcss` | Utility CSS generation |
+| `@types/node` | TypeScript type definitions |
+| `@types/react` | TypeScript type definitions |
+| `@types/react-dom` | TypeScript type definitions |
+| `@next/bundle-analyzer` | Optional — only if `ANALYZE=true` (now guarded) |
+
+---
+
 ## Checklist for New Environments
 
 If you ever need to set up a new deployment environment (e.g. `staging.familiarisenow.com`),
@@ -729,6 +798,7 @@ follow this checklist:
 - [ ] Run `netlify env:set NEXT_PUBLIC_APP_URL "https://staging.familiarisenow.com" --context branch-deploy`
 - [ ] Update GCP OAuth credentials to add the new origin and redirect URI
 - [ ] Verify env vars: `netlify env:list --json | grep -i auth`
+- [ ] Ensure `NPM_FLAGS=--include=dev` is set (required for Next.js builds with `NODE_ENV=production`)
 - [ ] Push a commit to the branch and confirm the Netlify deploy succeeds
 - [ ] Visit the new URL and confirm sign-in works end-to-end
 

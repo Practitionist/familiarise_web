@@ -579,10 +579,12 @@ export class AllocationService {
   static async fetchEventSlots(
     eventType: "consultation" | "subscription" | "webinar" | "class",
     eventId: string,
+    consultantProfileId: string,
   ) {
     try {
       const params = new URLSearchParams({
         type: eventType.toUpperCase(),
+        consultantProfileId,
       });
 
       // Add the appropriate ID parameter based on event type

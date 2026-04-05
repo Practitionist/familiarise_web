@@ -95,43 +95,110 @@ npm run dev
 
 ## Environment Variables
 
-Create a `.env` file based on `.env.sample`. Required variables:
+Create a `.env` file based on `.env.sample`. Never commit `.env` or secrets to the repository.
 
-| Variable                        | Description                         |
-| ------------------------------- | ----------------------------------- |
-| `DATABASE_URL`                  | Supabase connection string (pooled) |
-| `DIRECT_URL`                    | Supabase direct connection          |
-| `NEXTAUTH_URL`                  | App URL (http://localhost:3000)     |
-| `NEXTAUTH_SECRET`               | Random secret for NextAuth          |
-| `NEXT_PUBLIC_SUPABASE_URL`      | Supabase project URL                |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key                   |
+### Required Variables
+
+| Variable                        | Description                          | Local Value              | Production Value               |
+| ------------------------------- | ------------------------------------ | ------------------------ | ------------------------------ |
+| `DATABASE_URL`                  | Supabase pooled connection string    | From Supabase dashboard  | Same (or prod project)         |
+| `DIRECT_URL`                    | Supabase direct connection (migrations) | From Supabase dashboard | Same (or prod project)        |
+| `BETTER_AUTH_SECRET`            | Auth signing secret                  | Random 32+ char string   | Different secret for prod      |
+| `BETTER_AUTH_URL`               | App base URL for auth callbacks      | `http://localhost:3000`  | `https://familiarisenow.com`   |
+| `BETTER_AUTH_TRUSTED_ORIGINS`   | Allowed origins for auth             | `http://localhost:3000`  | `https://familiarisenow.com`   |
+| `NEXT_PUBLIC_APP_URL`           | Public-facing app URL                | `http://localhost:3000`  | `https://familiarisenow.com`   |
+| `NODE_ENV`                      | Runtime environment                  | `development`            | `production`                   |
+| `NEXT_PUBLIC_SUPABASE_URL`      | Supabase project URL                 | From Supabase dashboard  | Same                           |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key                    | From Supabase dashboard  | Same                           |
 
 <details>
 <summary>All Environment Variables</summary>
 
 ### Authentication
 
-- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` - Google OAuth
-- `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` - GitHub OAuth
-- `FACEBOOK_CLIENT_ID`, `FACEBOOK_CLIENT_SECRET` - Facebook OAuth
-- `JWT_SECRET` - JWT signing key
+| Variable | Description | Notes |
+|----------|-------------|-------|
+| `BETTER_AUTH_SECRET` | Auth signing secret | Must be unique per environment |
+| `BETTER_AUTH_URL` | Auth callback base URL | `localhost` for dev, production domain for prod |
+| `BETTER_AUTH_TRUSTED_ORIGINS` | CORS origins for auth | Must match `BETTER_AUTH_URL` |
+| `JWT_SECRET` | JWT signing key | Can match `BETTER_AUTH_SECRET` |
+| `GOOGLE_CLIENT_ID` | Google OAuth client ID | From Google Cloud Console |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret | From Google Cloud Console |
+| `GITHUB_CLIENT_ID` | GitHub OAuth client ID | Optional |
+| `GITHUB_CLIENT_SECRET` | GitHub OAuth client secret | Optional |
+| `FACEBOOK_CLIENT_ID` | Facebook OAuth client ID | Optional |
+| `FACEBOOK_CLIENT_SECRET` | Facebook OAuth client secret | Optional |
+
+### Database & Cache
+
+| Variable | Description | Notes |
+|----------|-------------|-------|
+| `DATABASE_URL` | Supabase pooled connection | Use `?pgbouncer=true` suffix |
+| `DIRECT_URL` | Supabase direct connection | For migrations only |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase admin key | Server-side only, never expose |
+| `SUPABASE_ACCESS_TOKEN` | Supabase management API | For CLI/admin operations |
+| `UPSTASH_REDIS_REST_URL` | Upstash Redis URL | Used for rate limiting and caching |
+| `UPSTASH_REDIS_REST_TOKEN` | Upstash Redis auth token | Required for Redis access |
+
+> **Note:** Do NOT set `REDIS_URL=redis://localhost:6379` on Netlify. The platform uses Upstash Redis via REST API (`UPSTASH_REDIS_REST_URL`), not a TCP Redis connection.
 
 ### Payments
 
-- `STRIPE_API_KEY`, `STRIPE_WEBHOOK_SECRET` - Stripe
-- `RAZORPAY_KEY_ID`, `RAZORPAY_SECRET` - Razorpay
+| Variable | Description | Notes |
+|----------|-------------|-------|
+| `NEXT_PUBLIC_STRIPE_KEY` | Stripe publishable key | `pk_test_` for dev, `pk_live_` for prod |
+| `STRIPE_SECRET_KEY` | Stripe secret key | `sk_test_` for dev, `sk_live_` for prod |
+| `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret | Different per environment |
+| `NEXT_PUBLIC_RAZORPAY_KEY_ID` | Razorpay key ID | `rzp_test_` for dev, `rzp_live_` for prod |
+| `RAZORPAY_KEY_ID` | Razorpay key ID (server) | Same as public key |
+| `RAZORPAY_SECRET` | Razorpay secret | Different per environment |
 
-### Real-time Features
+### Stream.io (Video & Chat)
 
-- `NEXT_PUBLIC_STREAM_API_KEY`, `STREAM_API_SECRET` - Stream.io
+| Variable | Description | Notes |
+|----------|-------------|-------|
+| `NEXT_PUBLIC_STREAM_API_KEY` | Stream public API key | Same for dev/prod (shared project) |
+| `STREAM_API_SECRET` | Stream server secret | Never expose client-side |
+| `STREAM_SYNC_SECRET` | Stream sync webhook secret | Usually same as `STREAM_API_SECRET` |
 
-### Other Services
+### Notifications & Email
 
-- `RESEND_API_KEY` - Email service
-- `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` - Redis/caching
-- `NEXT_PUBLIC_SENTRY_DSN` - Error monitoring
+| Variable | Description | Notes |
+|----------|-------------|-------|
+| `NOVU_SECRET_KEY` | Novu notification API key | From Novu dashboard |
+| `NEXT_PUBLIC_NOVU_APP_ID` | Novu application ID | Public, safe to expose |
+| `RESEND_API_KEY` | Resend email API key | For transactional emails |
+
+### Monitoring & Observability
+
+| Variable | Description | Notes |
+|----------|-------------|-------|
+| `NEXT_PUBLIC_SENTRY_DSN` | Sentry error tracking DSN | Public, safe to expose |
+| `SENTRY_AUTH_TOKEN` | Sentry release/sourcemap token | Build-time only |
+| `SENTRY_DSN` | Sentry server-side DSN | Same as public DSN |
+| `BETTERSTACK_API_KEY` | BetterStack uptime monitoring | For status page/alerts |
+| `NEXT_PUBLIC_LOGO_DEV_TOKEN` | Logo.dev API token | For company logo rendering |
+
+### Dev/Test Only (DO NOT set on production)
+
+| Variable | Description | Notes |
+|----------|-------------|-------|
+| `SEED_PASSWORD` | Password for seeded test users | Local dev only |
+| `NEXT_PUBLIC_TEST_USERID` | Test user ID for dev tools | Local dev only |
 
 </details>
+
+### Production vs Local Checklist
+
+When deploying to production (Netlify), ensure:
+
+- [ ] All `localhost:3000` URLs replaced with `https://familiarisenow.com`
+- [ ] `NODE_ENV` set to `production`
+- [ ] `SEED_PASSWORD` and `NEXT_PUBLIC_TEST_USERID` removed
+- [ ] `REDIS_URL` removed (use `UPSTASH_REDIS_REST_URL` instead)
+- [ ] Payment keys switched from `test` to `live` when going live
+- [ ] `BETTER_AUTH_SECRET` is a unique production secret
+- [ ] No credentials committed to the repository
 
 ## Docker Commands
 

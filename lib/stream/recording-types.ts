@@ -16,6 +16,9 @@ export const consultantRecordingInclude =
       include: {
         slotOfAppointment: {
           include: {
+            user: {
+              select: { name: true },
+            },
             appointment: {
               include: {
                 webinar: {

@@ -35,6 +35,8 @@ import {
   RefreshCw,
   Clock,
   Shield,
+  Calendar,
+  CalendarDays,
 } from "lucide-react";
 import React, { useCallback, useEffect, useState } from "react";
 import { TConsultantProfile } from "types/consultant";
@@ -546,7 +548,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         <button
           key={`day-${i}`}
           type="button"
-          className={`p-2 rounded-full hover:bg-gray-200
+          className={`p-2 rounded-full hover:bg-zinc-200
         ${isSelected ? "bg-black text-white" : ""}`}
           onClick={() => {
             React.startTransition(() => {
@@ -681,8 +683,8 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="text-center">
-          <div className="w-8 h-8 border-4 border-t-black border-r-black border-b-gray-200 border-l-gray-200 rounded-full animate-spin mb-4"></div>
-          <p className="text-gray-500">
+          <div className="w-8 h-8 border-4 border-t-black border-r-black border-b-zinc-200 border-l-zinc-200 rounded-full animate-spin mb-4"></div>
+          <p className="text-zinc-500">
             {timezoneLoading ? "Detecting timezone..." : "Loading settings..."}
           </p>
         </div>
@@ -974,20 +976,20 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
       {/* Professional Profile */}
       <div>
         <h2 className="text-2xl font-bold mb-3">Professional Profile</h2>
-        <p className="text-sm text-gray-600 mb-8">
+        <p className="text-sm text-zinc-600 mb-8">
           Showcase your expertise and professional background
         </p>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Left Column - Core Info */}
           <div className="space-y-6">
-            <div className="bg-gray-50 p-6 rounded-lg">
+            <div className="bg-zinc-50 p-6 rounded-lg">
               <Label className="text-lg font-semibold mb-4 block">
                 Domain Expertise
               </Label>
               <div className="space-y-4">
                 <div>
-                  <Label className="text-sm text-gray-600">
+                  <Label className="text-sm text-zinc-600">
                     Primary Domain
                   </Label>
                   <Select
@@ -1010,7 +1012,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                 </div>
 
                 <div>
-                  <Label className="text-sm text-gray-600">Sub Domains</Label>
+                  <Label className="text-sm text-zinc-600">Sub Domains</Label>
                   <div className="mt-1">
                     <MultiSelect
                       options={subDomainOptions}
@@ -1022,7 +1024,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                 </div>
 
                 <div>
-                  <Label className="text-sm text-gray-600">
+                  <Label className="text-sm text-zinc-600">
                     Expertise Tags
                   </Label>
                   <div className="mt-1">
@@ -1037,13 +1039,13 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
               </div>
             </div>
 
-            <div className="bg-gray-50 p-6 rounded-lg">
+            <div className="bg-zinc-50 p-6 rounded-lg">
               <Label className="text-lg font-semibold mb-4 block">
                 Professional Background
               </Label>
               <div className="space-y-4">
                 <div>
-                  <Label className="text-sm text-gray-600">
+                  <Label className="text-sm text-zinc-600">
                     Years of Experience
                   </Label>
                   <Input
@@ -1063,11 +1065,11 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
           </div>
 
           {/* Right Column - Description */}
-          <div className="bg-gray-50 p-6 rounded-lg h-full">
+          <div className="bg-zinc-50 p-6 rounded-lg h-full">
             <Label className="text-lg font-semibold mb-4 block">
               Professional Summary
             </Label>
-            <p className="text-sm text-gray-600 mb-3">
+            <p className="text-sm text-zinc-600 mb-3">
               Write a compelling description of your expertise and what makes
               you unique
             </p>
@@ -1087,20 +1089,20 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
       {/* Enhanced Profile Section */}
       <div>
         <h2 className="text-2xl font-bold mb-3">Enhanced Profile</h2>
-        <p className="text-sm text-gray-600 mb-8">
+        <p className="text-sm text-zinc-600 mb-8">
           Add more details to help mentees find and connect with you
         </p>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Left Column - Headlines and Bio */}
           <div className="space-y-6">
-            <div className="bg-gray-50 p-6 rounded-lg">
+            <div className="bg-zinc-50 p-6 rounded-lg">
               <Label className="text-lg font-semibold mb-4 block">
                 Profile Highlights
               </Label>
               <div className="space-y-4">
                 <div>
-                  <Label className="text-sm text-gray-600">
+                  <Label className="text-sm text-zinc-600">
                     Professional Headline
                   </Label>
                   <Input
@@ -1111,13 +1113,13 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                     className="mt-1"
                     maxLength={120}
                   />
-                  <p className="text-xs text-gray-400 mt-1">
+                  <p className="text-xs text-zinc-400 mt-1">
                     {formData.headline?.length || 0}/120 characters
                   </p>
                 </div>
 
                 <div>
-                  <Label className="text-sm text-gray-600">
+                  <Label className="text-sm text-zinc-600">
                     Mentoring Style
                   </Label>
                   <Textarea
@@ -1130,7 +1132,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                 </div>
 
                 <div>
-                  <Label className="text-sm text-gray-600">
+                  <Label className="text-sm text-zinc-600">
                     Video Introduction URL
                   </Label>
                   <Input
@@ -1145,11 +1147,11 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
               </div>
             </div>
 
-            <div className="bg-gray-50 p-6 rounded-lg">
+            <div className="bg-zinc-50 p-6 rounded-lg">
               <Label className="text-lg font-semibold mb-4 block">
                 Session Types
               </Label>
-              <p className="text-sm text-gray-600 mb-4">
+              <p className="text-sm text-zinc-600 mb-4">
                 Select the types of sessions you offer
               </p>
               <div className="space-y-3">
@@ -1186,13 +1188,13 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
 
           {/* Right Column - Social Links and Skills */}
           <div className="space-y-6">
-            <div className="bg-gray-50 p-6 rounded-lg">
+            <div className="bg-zinc-50 p-6 rounded-lg">
               <Label className="text-lg font-semibold mb-4 block">
                 Social & Professional Links
               </Label>
               <div className="space-y-4">
                 <div>
-                  <Label className="text-sm text-gray-600">Website</Label>
+                  <Label className="text-sm text-zinc-600">Website</Label>
                   <Input
                     name="websiteUrl"
                     value={formData.websiteUrl}
@@ -1204,7 +1206,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                 </div>
 
                 <div>
-                  <Label className="text-sm text-gray-600">GitHub</Label>
+                  <Label className="text-sm text-zinc-600">GitHub</Label>
                   <Input
                     name="githubUrl"
                     value={formData.githubUrl}
@@ -1216,7 +1218,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                 </div>
 
                 <div>
-                  <Label className="text-sm text-gray-600">Twitter/X</Label>
+                  <Label className="text-sm text-zinc-600">Twitter/X</Label>
                   <Input
                     name="twitterUrl"
                     value={formData.twitterUrl}
@@ -1228,7 +1230,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                 </div>
 
                 <div>
-                  <Label className="text-sm text-gray-600">LinkedIn</Label>
+                  <Label className="text-sm text-zinc-600">LinkedIn</Label>
                   <Input
                     name="linkedinUrl"
                     value={formData.linkedinUrl}
@@ -1241,13 +1243,13 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
               </div>
             </div>
 
-            <div className="bg-gray-50 p-6 rounded-lg">
+            <div className="bg-zinc-50 p-6 rounded-lg">
               <Label className="text-lg font-semibold mb-4 block">
                 Skills & Languages
               </Label>
               <div className="space-y-4">
                 <div>
-                  <Label className="text-sm text-gray-600">
+                  <Label className="text-sm text-zinc-600">
                     Languages Spoken
                   </Label>
                   <Input
@@ -1265,7 +1267,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                 </div>
 
                 <div>
-                  <Label className="text-sm text-gray-600">
+                  <Label className="text-sm text-zinc-600">
                     Tools & Technologies
                   </Label>
                   <Input
@@ -1294,14 +1296,15 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
 
       {/* Availability Settings */}
       <div>
-        <h2 className="text-xl font-semibold mb-2">Availability Settings</h2>
-        <p className="text-sm text-gray-500 mb-6">
+        <h2 className="text-2xl font-bold mb-3">Availability Settings</h2>
+        <p className="text-sm text-zinc-600 mb-8">
           Configure your availability and scheduling preferences
         </p>
 
         <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-          <h3 className="font-medium text-blue-900 mb-2">
-            📅 Schedule Type Filtering
+          <h3 className="font-medium text-blue-900 mb-2 flex items-center">
+            <Calendar className="w-4 h-4 inline mr-1" />
+            Schedule Type Filtering
           </h3>
           <p className="text-sm text-blue-700">
             <strong>Important:</strong> Consultees will only see slots from your
@@ -1331,105 +1334,104 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
           <div className="flex-1">
             <div className="flex items-center justify-between mb-4">
               <Label htmlFor="WEEKLY" className="font-medium flex items-center">
-                <span className="mr-2">📅</span>
+                <Calendar className="w-4 h-4 mr-1" />
                 Weekly Recurring
-                <span className="ml-2 text-xs text-gray-500">
+                <span className="ml-2 text-xs text-zinc-500">
                   (Shows recurring slots)
                 </span>
               </Label>
               <RadioGroupItem id="WEEKLY" value={ScheduleType.WEEKLY} />
             </div>
-            <div
-              className={`space-y-4 ${scheduleType !== ScheduleType.WEEKLY ? "opacity-50 pointer-events-none" : ""}`}
-            >
-              {DAYS_OF_WEEK.map((day) => (
-                <div key={day} className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <Label>{formatDayDisplay(day)}</Label>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleAddSlot(day.toLowerCase())}
-                    >
-                      Add Slot
-                    </Button>
-                  </div>
-                  {weeklySlots[day.toLowerCase()]?.map((slot, slotIndex) => (
-                    <div key={`${day}-${slotIndex}`} className="space-y-2">
-                      <div className="grid grid-cols-7 gap-2 items-center">
-                        <Input
-                          type="time"
-                          value={slot.startTime}
-                          onChange={(e) =>
-                            handleUpdateSlot(
-                              day.toLowerCase(),
-                              slotIndex,
-                              "startTime",
-                              e.target.value,
-                            )
-                          }
-                          className={`col-span-3 ${!slot.isValid ? "border-red-500" : ""}`}
-                          step="900"
-                        />
-                        <span className="text-center">to</span>
-                        <Input
-                          type="time"
-                          value={slot.endTime}
-                          onChange={(e) =>
-                            handleUpdateSlot(
-                              day.toLowerCase(),
-                              slotIndex,
-                              "endTime",
-                              e.target.value,
-                            )
-                          }
-                          className={`col-span-2 ${!slot.isValid ? "border-red-500" : ""}`}
-                          step="900"
-                        />
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleDeleteSlot(day.toLowerCase(), slotIndex)
-                          }
-                          className="p-1 hover:bg-gray-100 rounded"
-                          aria-label={`Delete slot ${slotIndex + 1} for ${day}`}
-                        >
-                          <TrashIcon className="w-5 h-5" />
-                        </button>
-                      </div>
-                      {!slot.isValid && slot.errorMessage && (
-                        <p className="text-red-500 text-sm">
-                          {slot.errorMessage}
-                        </p>
-                      )}
+            {(
+              <div className={`space-y-4 transition-opacity ${scheduleType !== ScheduleType.WEEKLY ? "opacity-40 pointer-events-none" : ""}`}>
+                {DAYS_OF_WEEK.map((day) => (
+                  <div key={day} className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <Label>{formatDayDisplay(day)}</Label>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleAddSlot(day.toLowerCase())}
+                      >
+                        Add Slot
+                      </Button>
                     </div>
-                  ))}
-                </div>
-              ))}
-            </div>
+                    {weeklySlots[day.toLowerCase()]?.map((slot, slotIndex) => (
+                      <div key={`${day}-${slotIndex}`} className="space-y-2">
+                        <div className="grid grid-cols-7 gap-2 items-center">
+                          <Input
+                            type="time"
+                            value={slot.startTime}
+                            onChange={(e) =>
+                              handleUpdateSlot(
+                                day.toLowerCase(),
+                                slotIndex,
+                                "startTime",
+                                e.target.value,
+                              )
+                            }
+                            className={`col-span-3 ${!slot.isValid ? "border-red-500" : ""}`}
+                            step="900"
+                          />
+                          <span className="text-center">to</span>
+                          <Input
+                            type="time"
+                            value={slot.endTime}
+                            onChange={(e) =>
+                              handleUpdateSlot(
+                                day.toLowerCase(),
+                                slotIndex,
+                                "endTime",
+                                e.target.value,
+                              )
+                            }
+                            className={`col-span-2 ${!slot.isValid ? "border-red-500" : ""}`}
+                            step="900"
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleDeleteSlot(day.toLowerCase(), slotIndex)
+                            }
+                            className="p-1 hover:bg-zinc-100 rounded"
+                            aria-label={`Delete slot ${slotIndex + 1} for ${day}`}
+                          >
+                            <TrashIcon className="w-5 h-5" />
+                          </button>
+                        </div>
+                        {!slot.isValid && slot.errorMessage && (
+                          <p className="text-red-500 text-sm">
+                            {slot.errorMessage}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Custom Schedule */}
           <div className="flex-1">
             <div className="flex items-center justify-between mb-4">
               <Label htmlFor="CUSTOM" className="font-medium flex items-center">
-                <span className="mr-2">🎯</span>
+                <CalendarDays className="w-4 h-4 mr-1" />
                 Custom Schedule
-                <span className="ml-2 text-xs text-gray-500">
+                <span className="ml-2 text-xs text-zinc-500">
                   (Shows specific date slots)
                 </span>
               </Label>
               <RadioGroupItem id="CUSTOM" value={ScheduleType.CUSTOM} />
             </div>
-            <div
-              className={`space-y-4 ${scheduleType !== ScheduleType.CUSTOM ? "opacity-50 pointer-events-none" : ""}`}
-            >
-              <div className="calendar-container bg-white border p-4 rounded-lg">
+            {(
+              <div className={`space-y-4 transition-opacity ${scheduleType !== ScheduleType.CUSTOM ? "opacity-40 pointer-events-none" : ""}`}>
+                <div className="calendar-container bg-white border p-4 rounded-lg">
                 <div className="flex justify-between items-center mb-4">
                   <button
                     type="button"
-                    className="text-black hover:bg-gray-100 p-2 rounded-full"
+                    className="text-black hover:bg-zinc-100 p-2 rounded-full"
                     onClick={handlePrevMonth}
                     aria-label="Previous month"
                   >
@@ -1440,7 +1442,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                   </span>
                   <button
                     type="button"
-                    className="text-black hover:bg-gray-100 p-2 rounded-full"
+                    className="text-black hover:bg-zinc-100 p-2 rounded-full"
                     onClick={handleNextMonth}
                     aria-label="Next month"
                   >
@@ -1520,7 +1522,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                               onClick={() =>
                                 handleDeleteSlot(dateString, slotIndex)
                               }
-                              className="p-1 hover:bg-gray-100 rounded"
+                              className="p-1 hover:bg-zinc-100 rounded"
                               aria-label={`Delete slot ${slotIndex + 1} for ${dateString}`}
                             >
                               <TrashIcon className="w-5 h-5" />
@@ -1536,7 +1538,8 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                     </div>
                   );
                 })}
-            </div>
+              </div>
+            )}
           </div>
         </RadioGroup>
       </div>
@@ -1571,7 +1574,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
           }}
           disabled={isLoading}
         >
-          Cancel
+          Reset
         </Button>
         <Button
           type="submit"
