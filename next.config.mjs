@@ -25,6 +25,11 @@ const securityHeaders = [
 ];
 
 const nextConfig = {
+  // Reduce Webpack memory usage during builds (Next.js 15+, low-risk experimental)
+  experimental: {
+    webpackMemoryOptimizations: true,
+  },
+
   // This tells Next.js to explicitly process these packages during the build, which should resolve the module format conflict.
   transpilePackages: ["react-day-picker", "date-fns"],
 
