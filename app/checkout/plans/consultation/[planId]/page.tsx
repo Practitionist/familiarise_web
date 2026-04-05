@@ -208,10 +208,10 @@ export default function ConsultationCheckoutPage({
     ) {
       fetchSlotData();
     }
-  }, [resolvedSearchParams]);
+  }, [resolvedSearchParams, toast]);
 
   // Common error handling logic
-  const handleApiError = (errorData: { error?: string; errorType?: string }) => {
+  const handleApiError = useCallback((errorData: { error?: string; errorType?: string }) => {
     const errorMessage = errorData.error || "Operation failed";
     const errorType = errorData.errorType || "UNKNOWN_ERROR";
 
@@ -251,12 +251,12 @@ export default function ConsultationCheckoutPage({
       description: error.description,
       variant: "destructive",
     });
-  };
+  }, [toast]);
 
   // Common API request logic
-  const makeCheckoutRequest = async (
+  const makeCheckoutRequest = useCallback(async (
     checkoutData: CheckoutInput,
-    gateway: string,
+    _gateway: string,
     isMockPayment: boolean = false,
   ) => {
     return fetch("/api/checkout", {
@@ -266,7 +266,7 @@ export default function ConsultationCheckoutPage({
       },
       body: JSON.stringify({ ...checkoutData, isMockPayment }),
     });
-  };
+  }, []);
 
   const handleCheckout = useCallback(
     async (gateway: PaymentGateway, isMockPayment: boolean = false) => {
@@ -371,13 +371,16 @@ export default function ConsultationCheckoutPage({
     },
     [
       resolvedParams,
-      resolvedSearchParams,
       toast,
       isCheckoutProcessing,
       isMaintenanceBlocked,
       maintenanceBlockReason,
       appliedDiscount,
       useReferralCredits,
+      validatedSearchParams,
+      currency,
+      handleApiError,
+      makeCheckoutRequest,
     ],
   );
 
@@ -432,7 +435,7 @@ export default function ConsultationCheckoutPage({
     }
 
     fetchEventData();
-  }, [resolvedParams.planId, resolvedSearchParams]);
+  }, [resolvedParams.planId, resolvedSearchParams, validatedSearchParams]);
 
   // Calculate pricing using the proper math functions
   // NOTE: This must be before early returns to maintain consistent hook order

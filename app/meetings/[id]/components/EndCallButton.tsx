@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   useCall,
 } from "@stream-io/video-react-sdk";
@@ -17,39 +17,8 @@ const EndCallButton = () => {
   const [progress, setProgress] = useState(0);
   const [isEnding, setIsEnding] = useState(false);
 
-  useEffect(() => {
-    let interval: number;
-    if (isPressed) {
-      interval = window.setInterval(() => {
-        setProgress((prev) => {
-          if (prev >= 100) {
-            clearInterval(interval);
-            endCall();
-            return 100;
-          }
-          return prev + 100 / (5000 / 50); // 5 second duration with 50ms intervals
-        });
-      }, 50);
-    }
-    return () => {
-      if (interval) clearInterval(interval);
-      if (!isPressed) setProgress(0);
-    };
-  }, [isPressed]);
-
-  if (!call)
-    throw new Error(
-      "useStreamCall must be used within a StreamCall component.",
-    );
-
-  // Only consultants (hosts) should be able to end the call for everyone
-  // Use session role instead of Stream's createdBy, as consultee might join first
-  const isConsultant = session?.user?.role === "CONSULTANT";
-
-  if (!isConsultant) return null;
-
   // Get proper dashboard URL based on user role and profile
-  const getDashboardUrl = () => {
+  const getDashboardUrl = useCallback(() => {
     if (!session?.user) return "/";
 
     const { role, consultantProfileId, consulteeProfileId, staffProfileId } =
@@ -66,10 +35,10 @@ const EndCallButton = () => {
     }
 
     return "/"; // Fallback to home page
-  };
+  }, [session]);
 
   // Cleanup media streams and WebRTC connections
-  const cleanupMediaStreams = async () => {
+  const cleanupMediaStreams = useCallback(async () => {
     try {
       // Stop camera and microphone
       await call?.camera.disable();
@@ -84,9 +53,9 @@ const EndCallButton = () => {
     } catch (error) {
       console.warn("Error cleaning up media streams:", error);
     }
-  };
+  }, [call]);
 
-  const endCall = async () => {
+  const endCall = useCallback(async () => {
     if (isEnding) return; // Prevent multiple calls
 
     setIsEnding(true);
@@ -95,7 +64,7 @@ const EndCallButton = () => {
       console.log("Starting call cleanup process...");
 
       // 1. End the call for everyone
-      await call.endCall();
+      await call?.endCall();
       console.log("Call ended successfully");
 
       // 2. Clean up media streams
@@ -117,7 +86,38 @@ const EndCallButton = () => {
     } finally {
       setIsEnding(false);
     }
-  };
+  }, [call, isEnding, cleanupMediaStreams, getDashboardUrl, router]);
+
+  useEffect(() => {
+    let interval: number;
+    if (isPressed) {
+      interval = window.setInterval(() => {
+        setProgress((prev) => {
+          if (prev >= 100) {
+            clearInterval(interval);
+            endCall();
+            return 100;
+          }
+          return prev + 100 / (5000 / 50); // 5 second duration with 50ms intervals
+        });
+      }, 50);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+      if (!isPressed) setProgress(0);
+    };
+  }, [isPressed, endCall]);
+
+  if (!call)
+    throw new Error(
+      "useStreamCall must be used within a StreamCall component.",
+    );
+
+  // Only consultants (hosts) should be able to end the call for everyone
+  // Use session role instead of Stream's createdBy, as consultee might join first
+  const isConsultant = session?.user?.role === "CONSULTANT";
+
+  if (!isConsultant) return null;
 
   return (
     <Button

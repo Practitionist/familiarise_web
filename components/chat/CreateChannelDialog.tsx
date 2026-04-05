@@ -20,7 +20,7 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import { useEventsByUser } from "@/hooks/useEvents";
 import { PlusIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useChatContext } from "stream-chat-react";
 
 interface CreateChannelDialogProps {
@@ -45,7 +45,7 @@ export const CreateChannelDialog = ({
   } = useEventsByUser(client?.userID || "");
 
   // Prepare events for dropdown
-  const events = [
+  const events = useMemo(() => [
     ...webinars.map((webinar) => ({
       id: `webinar-${webinar.id}`,
       name: webinar.webinarPlan.title,
@@ -56,7 +56,7 @@ export const CreateChannelDialog = ({
       name: classItem.classPlan.title,
       type: "class",
     })),
-  ];
+  ], [webinars, classes]);
 
   // Update channel name when event is selected
   useEffect(() => {

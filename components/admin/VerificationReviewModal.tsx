@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import {
   Dialog,
   DialogContent,
@@ -281,9 +282,11 @@ export function VerificationReviewModal({
                   rel="noopener noreferrer"
                   className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700 hover:underline mt-0.5"
                 >
-                  <img
+                  <Image
                     src="https://upload.wikimedia.org/wikipedia/commons/c/ca/LinkedIn_logo_initials.png"
                     alt="LinkedIn"
+                    width={12}
+                    height={12}
                     className="w-3 h-3"
                   />
                   LinkedIn Profile
@@ -294,7 +297,7 @@ export function VerificationReviewModal({
                 {consultant.domain && (
                   <Badge variant="secondary">{consultant.domain}</Badge>
                 )}
-                {consultant.experience != null && (
+                {consultant.experience !== null && (
                   <span className="text-xs text-zinc-500">
                     {consultant.experience} years exp.
                   </span>

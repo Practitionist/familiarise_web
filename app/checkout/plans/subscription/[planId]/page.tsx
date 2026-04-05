@@ -168,12 +168,12 @@ export default function SubscriptionCheckoutPage({
   }, []);
 
   // Create utility functions using the toast instance
-  const handleApiError = createHandleApiError(toast);
+  const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);
   const stripeHandlers = createStripeCheckoutHandlers(toast);
   const razorpayHandlers = createRazorpayCheckoutHandlers(toast);
 
   // Common API request logic
-  const makeCheckoutRequest = async (
+  const makeCheckoutRequest = useCallback(async (
     checkoutData: CheckoutInput,
     isMockPayment: boolean = false,
   ) => {
@@ -184,7 +184,7 @@ export default function SubscriptionCheckoutPage({
       },
       body: JSON.stringify({ ...checkoutData, isMockPayment }),
     });
-  };
+  }, []);
 
   const handleCheckout = useCallback(
     async (gateway: PaymentGateway, isMockPayment: boolean = false) => {
@@ -310,11 +310,14 @@ export default function SubscriptionCheckoutPage({
       isCheckoutProcessing,
       isMaintenanceBlocked,
       maintenanceBlockReason,
-      resolvedSearchParams,
       planData?.data?.id,
       toast,
       appliedDiscount,
       useReferralCredits,
+      validatedSearchParams,
+      currency,
+      handleApiError,
+      makeCheckoutRequest,
     ],
   );
 

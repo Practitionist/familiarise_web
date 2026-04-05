@@ -47,10 +47,15 @@ export function TopicsMultiSelect({
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
 
+  // Serialize complex deps to stable strings for dependency tracking
+  const initialTopicsSerialized = JSON.stringify(initialTopics);
+  const topicsSerialized = JSON.stringify(topics);
+  const availableTopicsSerialized = JSON.stringify(availableTopics);
+
   // Initialize with initial topics only once on mount or when initialTopics reference changes
   useEffect(() => {
     setTopics(initialTopics);
-  }, [JSON.stringify(initialTopics)]);
+  }, [initialTopicsSerialized, initialTopics]);
 
   // Handle outside clicks to close suggestions dropdown
   useEffect(() => {
@@ -78,7 +83,7 @@ export function TopicsMultiSelect({
     }, 0);
 
     return () => clearTimeout(handler);
-  }, [JSON.stringify(topics), onTopicsChange]);
+  }, [topicsSerialized, onTopicsChange, topics]);
 
   // Update suggestions when input changes
   useEffect(() => {
@@ -98,7 +103,7 @@ export function TopicsMultiSelect({
       .slice(0, 5); // Limit to 5 suggestions
 
     setSuggestions(filteredSuggestions);
-  }, [inputValue, JSON.stringify(availableTopics), JSON.stringify(topics)]);
+  }, [inputValue, availableTopicsSerialized, topicsSerialized, availableTopics, topics]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;

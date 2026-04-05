@@ -189,8 +189,8 @@ export default function WebinarCheckoutPage({
   }, []);
 
   // Create utility functions using the toast instance
-  const handleApiError = createHandleApiError(toast);
-  const handleCheckoutSuccess = createHandleCheckoutSuccess(toast, "WEBINAR");
+  const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);
+  const handleCheckoutSuccess = useMemo(() => createHandleCheckoutSuccess(toast, "WEBINAR"), [toast]);
   const stripeHandlers = createStripeCheckoutHandlers(toast);
   const razorpayHandlers = createRazorpayCheckoutHandlers(toast);
 
@@ -309,11 +309,14 @@ export default function WebinarCheckoutPage({
       maintenanceBlockReason,
       resolvedSearchParams,
       planData?.data?.id,
+      planData?.data?.webinars,
       handleApiError,
       handleCheckoutSuccess,
       toast,
       appliedDiscount,
       useReferralCredits,
+      validatedSearchParams,
+      currency,
     ],
   );
 

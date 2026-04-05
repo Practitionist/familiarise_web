@@ -358,12 +358,14 @@ export async function refundEarnings(
   // If refundAmount < paymentAmount, only reverse a proportional share of earnings.
   // Handle edge case: refundAmount=0 means no reversal (ratio=0).
   const isPartialRefund =
-    options?.refundAmount != null &&
-    options?.paymentAmount != null &&
+    options?.refundAmount !== null &&
+    options?.refundAmount !== undefined &&
+    options?.paymentAmount !== null &&
+    options?.paymentAmount !== undefined &&
     options.paymentAmount > 0 &&
     options.refundAmount < options.paymentAmount;
   const refundRatio = isPartialRefund
-    ? options.refundAmount! / options.paymentAmount!
+    ? options!.refundAmount! / options!.paymentAmount!
     : options?.refundAmount === 0
       ? 0
       : 1;

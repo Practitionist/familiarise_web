@@ -186,7 +186,6 @@ export function useCalendarData(
     view,
     currentDate,
     mode,
-    allowedStart,
     allowedEnd,
   } = options;
   const { toast } = useToast();
@@ -315,7 +314,7 @@ export function useCalendarData(
         description: errorMessage,
       });
     }
-  }, [consultantId, toast, view, currentDate, mode, allowedStart, allowedEnd]);
+  }, [consultantId, toast, view, currentDate, mode, allowedEnd]);
 
   // FIXED: Proper date range filtering for appointments to prevent "stray slots"
   const fetchExistingAppointments = useCallback(async (): Promise<void> => {
@@ -411,7 +410,7 @@ export function useCalendarData(
         description: errorMessage,
       });
     }
-  }, [consultantId, toast, view, currentDate, mode, allowedStart, allowedEnd]);
+  }, [consultantId, toast, view, currentDate, mode, allowedEnd]);
 
   const fetchEventSlots = useCallback(async (): Promise<void> => {
     // Fetch event slots for ALL event types (subscription, consultation, webinar, class)
@@ -491,7 +490,7 @@ export function useCalendarData(
       console.error("Error fetching event slots:", error);
       setEventSlots([]);
     }
-  }, [eventType, eventId]);
+  }, [eventType, eventId, consultantId]);
 
   /**
    * Helper function to extract appointment plan title
@@ -798,11 +797,12 @@ export function useCalendarData(
   }, [autoLoad, consultantId, fetchConsultantDetails, fetchEventSlots]);
 
   // Effect 2 — Date-dependent: runs on dialog open + week/month navigation
+  const weeklySlotCount = rawAvailabilitySlots.weekly.length;
   useEffect(() => {
     if (autoLoad && consultantId) {
       // Only show loading spinner on initial load, not on background refetches
       const isInitialLoad =
-        !consultantDetails && rawAvailabilitySlots.weekly.length === 0;
+        !consultantDetails && weeklySlotCount === 0;
       if (isInitialLoad) {
         setLoading(true);
       }
@@ -824,6 +824,8 @@ export function useCalendarData(
   }, [
     autoLoad,
     consultantId,
+    consultantDetails,
+    weeklySlotCount,
     fetchAvailabilitySlots,
     fetchExistingAppointments,
   ]);

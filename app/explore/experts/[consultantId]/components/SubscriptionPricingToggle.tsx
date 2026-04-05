@@ -19,7 +19,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { PricingOption } from "../defaults";
 import { useToast } from "@/hooks/use-toast";
 import { addMonths, differenceInDays, format } from "date-fns";
@@ -200,7 +200,7 @@ export default function SubscriptionPricingToggle({
     return { start, end };
   }, [selectedOption]);
 
-  const validatePeriod = (
+  const validatePeriod = useCallback((
     start: Date | null,
     end: Date | null,
   ): { valid: boolean; message?: string } => {
@@ -234,11 +234,11 @@ export default function SubscriptionPricingToggle({
     }
 
     return { valid: true };
-  };
+  }, [selectedOption]);
 
   const validation = useMemo(() => {
     return validatePeriod(schedulingStartDate, schedulingEndDate);
-  }, [schedulingStartDate, schedulingEndDate]);
+  }, [schedulingStartDate, schedulingEndDate, validatePeriod]);
 
   const handleChoosePlan = () => {
     setSchedulingStartDate(suggestedDates.start);

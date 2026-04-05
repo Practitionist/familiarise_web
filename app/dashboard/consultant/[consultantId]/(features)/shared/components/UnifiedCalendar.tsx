@@ -495,15 +495,14 @@ export function UnifiedCalendar({
     ) {
       setSelectedSlots(preSelectedSlots);
     }
-  }, [preSelectedSlots]);
+  }, [preSelectedSlots, selectedSlots, setSelectedSlots]);
 
   // Call onSlotsSelected when selection changes
-  // Note: onSlotsSelected intentionally not in deps to avoid infinite loops from parent re-renders
   useEffect(() => {
     if (mode === "select" && onSlotsSelected) {
       onSlotsSelected(selectedSlots);
     }
-  }, [selectedSlots, mode]);
+  }, [selectedSlots, mode, onSlotsSelected]);
 
   // Set warning banner if duration configuration is missing
   useEffect(() => {
@@ -988,10 +987,6 @@ export function UnifiedCalendar({
       getSlotStatusForInterval,
       isSlotSelected,
       handleSlotClick,
-      availableSlots,
-      consultantDetails,
-      loading,
-      error,
       mode,
       allowedStart,
       allowedEnd,

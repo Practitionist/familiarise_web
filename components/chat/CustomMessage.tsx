@@ -114,7 +114,7 @@ export const CustomMessage = () => {
     !!message.attachments && message.attachments.length > 0;
 
   // Check if message is deleted
-  const isDeleted = message.deleted_at != null;
+  const isDeleted = message.deleted_at !== null;
 
   // Check if this message is a reply to another message
   const hasQuotedMessage = !!message.quoted_message;

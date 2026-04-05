@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Card,
   CardContent,
@@ -129,7 +129,7 @@ export default function ContentModerationPage() {
   };
 
   // Fetch moderation reports
-  const fetchReports = async () => {
+  const fetchReports = useCallback(async () => {
     try {
       setLoadingReports(true);
       const response = await fetch(
@@ -148,10 +148,10 @@ export default function ContentModerationPage() {
     } finally {
       setLoadingReports(false);
     }
-  };
+  }, [toast]);
 
   // Fetch profile verifications
-  const fetchProfiles = async () => {
+  const fetchProfiles = useCallback(async () => {
     try {
       setLoadingProfiles(true);
       const response = await fetch(
@@ -170,10 +170,10 @@ export default function ContentModerationPage() {
     } finally {
       setLoadingProfiles(false);
     }
-  };
+  }, [toast]);
 
   // Fetch reviews
-  const fetchReviews = async () => {
+  const fetchReviews = useCallback(async () => {
     try {
       setLoadingReviews(true);
       const response = await fetch("/api/staff/moderation/reviews?limit=10");
@@ -190,14 +190,14 @@ export default function ContentModerationPage() {
     } finally {
       setLoadingReviews(false);
     }
-  };
+  }, [toast]);
 
   useEffect(() => {
     fetchStats();
     fetchReports();
     fetchProfiles();
     fetchReviews();
-  }, []);
+  }, [fetchReports, fetchProfiles, fetchReviews]);
 
   // Handle report action (dismiss or take action)
   const handleReportAction = async (

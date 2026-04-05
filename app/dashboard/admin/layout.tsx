@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { DashboardShell } from "@/components/dashboard/DashboardShell";
@@ -154,12 +155,12 @@ function AccessDenied({ title, message }: { title: string; message: string }) {
         </div>
         <h2 className="text-xl font-bold text-zinc-900 mb-2">{title}</h2>
         <p className="text-zinc-600">{message}</p>
-        <a
+        <Link
           href="/"
           className="inline-block mt-6 px-6 py-2.5 bg-zinc-900 text-white rounded-lg font-medium hover:bg-zinc-800 transition-colors"
         >
           Go Home
-        </a>
+        </Link>
       </motion.div>
     </div>
   );

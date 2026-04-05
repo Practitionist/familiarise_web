@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { cn } from "@/utils/tailwind";
 import { motion } from "framer-motion";
 import { LucideIcon, ChevronRight } from "lucide-react";
@@ -134,7 +135,7 @@ export function ActivityItem({
     >
       <div className="h-9 w-9 rounded-full bg-zinc-100 flex items-center justify-center overflow-hidden shrink-0">
         {avatar ? (
-          <img src={avatar} alt={name} className="h-full w-full object-cover" />
+          <Image src={avatar} alt={name} width={36} height={36} className="h-full w-full object-cover" />
         ) : (
           <span className="text-xs font-medium text-zinc-600">{initials}</span>
         )}

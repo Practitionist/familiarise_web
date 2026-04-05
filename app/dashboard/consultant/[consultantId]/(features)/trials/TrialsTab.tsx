@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Image from "next/image";
 import { useParams } from "next/navigation";
 import {
   Card,
@@ -692,9 +693,11 @@ export function TrialsTab() {
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-3">
                     {trial.consulteeProfile.user.image ? (
-                      <img
+                      <Image
                         src={trial.consulteeProfile.user.image}
                         alt={trial.consulteeProfile.user.name}
+                        width={40}
+                        height={40}
                         className="h-10 w-10 rounded-full"
                       />
                     ) : (

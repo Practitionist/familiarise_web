@@ -50,7 +50,7 @@ export default function Dashboard() {
     return () => {
       if (progressInterval) clearInterval(progressInterval);
     };
-  }, [isLoading, isUserDataLoading]);
+  }, [isLoading, isUserDataLoading, progress]);
 
   useEffect(() => {
     if (!!session && !isUserDataLoading) {

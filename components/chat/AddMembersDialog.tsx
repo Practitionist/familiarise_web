@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Image from "next/image";
 import {
   Dialog,
   DialogContent,
@@ -47,17 +48,6 @@ export const AddMembersDialog = ({
     }
   }, [open]);
 
-  // Debounced search
-  useEffect(() => {
-    if (!open) return;
-
-    const timeoutId = setTimeout(() => {
-      searchConsultees();
-    }, 300);
-
-    return () => clearTimeout(timeoutId);
-  }, [searchTerm, open]);
-
   const searchConsultees = useCallback(async () => {
     setIsSearching(true);
     setHasSearched(true);
@@ -85,6 +75,17 @@ export const AddMembersDialog = ({
       setIsSearching(false);
     }
   }, [searchTerm, existingMemberIds, toast]);
+
+  // Debounced search
+  useEffect(() => {
+    if (!open) return;
+
+    const timeoutId = setTimeout(() => {
+      searchConsultees();
+    }, 300);
+
+    return () => clearTimeout(timeoutId);
+  }, [searchTerm, open, searchConsultees]);
 
   const toggleSelection = (userId: string) => {
     setSelectedIds((prev) => {
@@ -223,9 +224,11 @@ export const AddMembersDialog = ({
                     {/* Avatar */}
                     <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center overflow-hidden flex-shrink-0">
                       {consultee.image ? (
-                        <img
+                        <Image
                           src={consultee.image}
                           alt={consultee.name || ""}
+                          width={32}
+                          height={32}
                           className="w-full h-full object-cover"
                         />
                       ) : (

@@ -94,7 +94,7 @@ export const getInitialWeeklySlots = (
   try {
     consultant.slotsOfAvailabilityWeekly.forEach((slot) => {
       try {
-        if (!slot || slot.startTimeUtc == null || slot.endTimeUtc == null) {
+        if (!slot || slot.startTimeUtc === null || slot.endTimeUtc === null) {
           console.warn("Invalid weekly slot data:", slot);
           return;
         }

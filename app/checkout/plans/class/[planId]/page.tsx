@@ -190,8 +190,8 @@ export default function ClassCheckoutPage({
     fetchCredits();
   }, []);
 
-  const handleApiError = createHandleApiError(toast);
-  const handleCheckoutSuccess = createHandleCheckoutSuccess(toast, "CLASS");
+  const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);
+  const handleCheckoutSuccess = useMemo(() => createHandleCheckoutSuccess(toast, "CLASS"), [toast]);
   const stripeHandlers = createStripeCheckoutHandlers(toast);
   const razorpayHandlers = createRazorpayCheckoutHandlers(toast);
 
@@ -298,12 +298,14 @@ export default function ClassCheckoutPage({
       maintenanceBlockReason,
       resolvedSearchParams,
       planData?.data?.id,
-      resolvedParams.planId,
       handleApiError,
       handleCheckoutSuccess,
       toast,
       appliedDiscount,
       useReferralCredits,
+      validatedSearchParams,
+      currency,
+      availableClassId,
     ],
   );
 

@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -516,15 +517,20 @@ export default function Profile() {
                   <div className="flex flex-col items-center gap-4 py-6">
                     <div className="h-32 w-32 rounded-full bg-zinc-100 flex items-center justify-center overflow-hidden">
                       {previewUrl ? (
-                        <img
+                        <Image
                           src={previewUrl}
                           alt="Preview"
+                          width={128}
+                          height={128}
                           className="h-full w-full object-cover"
+                          unoptimized
                         />
                       ) : session?.user?.image ? (
-                        <img
+                        <Image
                           src={session.user.image}
                           alt="Current"
+                          width={128}
+                          height={128}
                           className="h-full w-full object-cover"
                         />
                       ) : (

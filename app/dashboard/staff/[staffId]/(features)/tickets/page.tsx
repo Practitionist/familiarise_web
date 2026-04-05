@@ -191,7 +191,7 @@ export default function SupportTicketsPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, statusFilter, priorityFilter, searchQuery]);
+  }, [page, statusFilter, priorityFilter, searchQuery, toast]);
 
   useEffect(() => {
     fetchTickets();

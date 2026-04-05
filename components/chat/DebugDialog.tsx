@@ -12,7 +12,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/use-toast";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Loader2,
   WifiOff,
@@ -85,7 +85,7 @@ export const DebugDialog = ({
     lastActivity: new Date(),
   });
 
-  const handleDebug = async () => {
+  const handleDebug = useCallback(async () => {
     setIsLoading(true);
     const startTime = Date.now();
 
@@ -126,7 +126,7 @@ export const DebugDialog = ({
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [userId, toast]);
 
   // Auto-refresh effect
   useEffect(() => {
@@ -139,7 +139,7 @@ export const DebugDialog = ({
     }, 5000); // Refresh every 5 seconds
 
     return () => clearInterval(interval);
-  }, [autoRefresh, isOpen, isLoading]);
+  }, [autoRefresh, isOpen, isLoading, handleDebug]);
 
   // Monitor chat client events for real-time stats
   useEffect(() => {

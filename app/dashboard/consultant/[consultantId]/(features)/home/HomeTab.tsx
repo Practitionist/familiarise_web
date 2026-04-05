@@ -310,7 +310,7 @@ export function HomeTab({
     }
   };
 
-  const expandedAppointments = appointments || [];
+  const expandedAppointments = useMemo(() => appointments || [], [appointments]);
 
   const todayRemainingAppointments = useMemo(
     () =>

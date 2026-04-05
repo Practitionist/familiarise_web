@@ -81,7 +81,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       // Extract participant info from slot users
       const allNames = slot.user
         .map((u) => u.name)
-        .filter((n): n is string => n != null);
+        .filter((n): n is string => n !== null);
       const participantNames = allNames.slice(0, 3);
       const participantCount = allNames.length;
 

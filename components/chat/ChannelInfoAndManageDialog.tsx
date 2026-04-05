@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -115,7 +116,7 @@ export const ChannelInfoAndManageDialog = ({
     try {
       const loadedMembers = Object.values(channel.state.members || {})
         .map((member) => member.user)
-        .filter((user): user is ChannelMember => user != null);
+        .filter((user): user is ChannelMember => user !== null);
       setMembers(loadedMembers);
     } catch (error) {
       console.error("Error loading members:", error);
@@ -580,9 +581,11 @@ export const ChannelInfoAndManageDialog = ({
                       <div className="flex items-center">
                         <div className="w-8 h-8 rounded-full bg-gray-200 mr-3 flex items-center justify-center">
                           {member.image ? (
-                            <img
-                              src={member.image}
-                              alt={member.name}
+                            <Image
+                              src={member.image ?? ""}
+                              alt={member.name ?? ""}
+                              width={32}
+                              height={32}
                               className="w-8 h-8 rounded-full"
                             />
                           ) : (

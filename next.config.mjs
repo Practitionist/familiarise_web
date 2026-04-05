@@ -64,6 +64,12 @@ const nextConfig = {
       {
         hostname: "cdn.jsdelivr.net",
       },
+      {
+        hostname: "upload.wikimedia.org",
+      },
+      {
+        hostname: "img.logo.dev",
+      },
     ],
   },
 

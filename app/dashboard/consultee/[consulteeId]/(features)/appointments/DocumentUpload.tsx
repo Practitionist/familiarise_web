@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -127,14 +127,7 @@ export function DocumentUpload({
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Load existing documents when component mounts or dialog opens
-  React.useEffect(() => {
-    if (isOpen) {
-      fetchDocuments();
-    }
-  }, [isOpen, appointmentId]);
-
-  const fetchDocuments = async () => {
+  const fetchDocuments = useCallback(async () => {
     setIsLoading(true);
     setError(null);
 
@@ -212,7 +205,14 @@ export function DocumentUpload({
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [appointmentId, toast]);
+
+  // Load existing documents when component mounts or dialog opens
+  React.useEffect(() => {
+    if (isOpen) {
+      fetchDocuments();
+    }
+  }, [isOpen, appointmentId, fetchDocuments]);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
