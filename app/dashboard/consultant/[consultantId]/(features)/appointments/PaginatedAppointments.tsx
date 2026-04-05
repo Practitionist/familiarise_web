@@ -3,7 +3,7 @@
 import { usePagination } from "@/hooks/usePagination";
 import { Pagination } from "@/components/Pagination";
 import { BADGE_STYLES, getBadgeStyle } from "../../types";
-import { TAppointment } from "@/types/appointment";
+import { TAppointment, TSlotOfAppointment } from "@/types/appointment";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -23,12 +23,14 @@ interface PaginatedAppointmentsProps {
   appointments: TAppointment[];
   badgeStyles: typeof BADGE_STYLES;
   onManageTimings?: (appointment: TAppointment) => void;
+  onJoinMeeting?: (appointment: TAppointment, slot?: TSlotOfAppointment) => void;
 }
 
 export function PaginatedAppointments({
   appointments,
   badgeStyles,
   onManageTimings,
+  onJoinMeeting,
 }: PaginatedAppointmentsProps) {
   const expandedAppointments = appointments;
 
@@ -138,6 +140,12 @@ export function PaginatedAppointments({
                           : "bg-gray-400 text-white cursor-not-allowed"
                       }
                       disabled={isDev ? false : !isJoinable}
+                      onClick={() =>
+                        onJoinMeeting?.(
+                          appointment,
+                          joinableSlot ?? undefined,
+                        )
+                      }
                     >
                       {isDev
                         ? "Join (Dev)"

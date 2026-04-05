@@ -295,7 +295,7 @@ export const getAppointmentStatus = (appointment: TAppointment): string => {
     return "Completed";
   }
 
-  // Check if a slot is currently in progress
+  // Check if a slot is currently in progress (not ended early)
   const currentSlot = appointment?.slotsOfAppointment?.find((slot) => {
     if (slot.isTentative) return false;
     if (
@@ -303,8 +303,11 @@ export const getAppointmentStatus = (appointment: TAppointment): string => {
       slot.completionStatus === "RESCHEDULED"
     )
       return false;
+    if (slot.meetingSession?.endedAt) return false;
     const start = new Date(slot.startsAt).getTime();
-    const end = new Date(slot.endsAt).getTime();
+    const end = slot.endsAt
+      ? new Date(slot.endsAt).getTime()
+      : start + 60 * 60 * 1000;
     return start <= now.getTime() && now.getTime() <= end;
   });
   if (currentSlot) return "In Progress";

@@ -18,6 +18,7 @@ const userSelectFields = {
 
 const appointmentInclude = {
   slotsOfAppointment: {
+    orderBy: { startsAt: "asc" as const },
     include: {
       user: {
         select: userSelectFields,
