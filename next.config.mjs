@@ -1,9 +1,7 @@
 /** @type {import('next').NextConfig} */
-import bundleAnalyzer from "@next/bundle-analyzer";
-
 const withBundleAnalyzer =
   process.env.ANALYZE === "true"
-    ? bundleAnalyzer({
+    ? (await import("@next/bundle-analyzer")).default({
         enabled: true,
         openAnalyzer: true,
       })
