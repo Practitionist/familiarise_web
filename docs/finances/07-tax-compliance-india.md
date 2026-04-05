@@ -457,23 +457,79 @@ model TDSRecord {
 
 ### Monthly
 
-- [ ] Deposit TDS by 7th of next month
-- [ ] Track consultant payment totals
+- [ ] **7th:** Deposit TDS to government via Challan 281 (if any consultant crossed threshold)
+- [ ] **10th:** File GSTR-8 (if classified as e-commerce operator)
+- [ ] **11th:** File GSTR-1 (outward supplies)
+- [ ] **20th:** File GSTR-3B (summary return)
+- [ ] Track cumulative payments per consultant for TDS thresholds
+- [ ] Reconcile bank statements with payment gateway records
 - [ ] Generate GST invoices
 
 ### Quarterly
 
 - [ ] File TDS return (Form 26Q)
-- [ ] File GSTR-1 (Outward supplies)
-- [ ] File GSTR-3B (Summary return)
+- [ ] Review ITC claims
+- [ ] Reconcile TCS collected vs reported
 - [ ] Reconcile TDS deposits with records
 
 ### Annually
 
-- [ ] Issue Form 16A to all consultants (by June 15)
-- [ ] File annual GST return (GSTR-9)
+- [ ] File GSTR-9 annual GST return (by December 31)
+- [ ] Issue Form 16A to all consultants — TDS certificates (by June 15)
+- [ ] File income tax return (ITR-4 if 44AD, ITR-3 otherwise)
+- [ ] Renew LUT for export zero-rating (if applicable)
 - [ ] Reconcile all tax credits
 - [ ] Audit if turnover > ₹2 crore
+- [ ] Review entity structure (Sole Prop vs Pvt Ltd)
+
+### Section 44AD Advantage
+
+As a Sole Proprietorship with presumptive taxation, the government assumes profit is **6–8% of revenue** (6% if 95%+ payments are digital):
+
+| Revenue | Deemed Profit (6%) | Income Tax |
+|---------|-------------------|------------|
+| Rs 5 lakh | Rs 30K | Rs 0 |
+| Rs 10 lakh | Rs 60K | Rs 0 |
+| Rs 25 lakh | Rs 1.5L | Rs 0 |
+| Rs 50 lakh | Rs 3L | Rs 0 |
+| Rs 1 crore | Rs 6L | Rs 10K–31K |
+
+A Pvt Ltd at Rs 50 lakh revenue would pay ~Rs 10.8 lakh in tax. A Sole Prop with 44AD pays Rs 0. Stay as Sole Prop until you need VC funding or cross Rs 2–3 crore revenue.
+
+### Penalties for Non-Compliance
+
+| Violation | Penalty |
+|-----------|---------|
+| Not registering for GST (when required) | Rs 10,000 or tax due, whichever is higher |
+| Late GST filing | Rs 100/day (CGST + SGST), capped at Rs 5,000 per return |
+| **Not deducting TDS** | **Interest at 1% per month from due date — NO CAP** |
+| **Late TDS deposit** | **Interest at 1.5% per month — NO CAP** |
+| Late TDS return filing | Rs 200/day until filed, plus possible prosecution |
+| Incorrect TDS return | Rs 10,000–Rs 1,00,000 per incorrect statement |
+
+> **The scariest penalties are for TDS.** Interest accumulates monthly with no upper cap.
+
+### What Can Be Automated vs Needs a CA?
+
+| Category | Items |
+|----------|-------|
+| **Automated (in code)** | GST calculation, TDS calculation and tracking, invoice generation |
+| **Semi-automated (accounting software)** | GSTR-1 filing, GSTR-3B filing, GSTR-8 filing, ITC reconciliation |
+| **CA handles** | TDS return (Form 26Q), annual GST return (GSTR-9), income tax return, e-commerce operator classification (one-time) |
+
+**Estimated CA cost:** Rs 2,000–5,000/month for GST filing + Rs 4,000–11,000/year for ITR and compliance = **~Rs 30,000–70,000/year total**.
+
+### Record Retention Requirements
+
+All of the following must be retained for **8 years**:
+
+- Bank statements
+- Invoices (issued and received)
+- TDS certificates
+- GST returns (filed copies)
+- Payment gateway records
+- Consultant payment records
+- Contracts/agreements: duration + 3 years
 
 ---
 

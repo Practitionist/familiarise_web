@@ -225,6 +225,16 @@ CFO-level business documentation. See [finances/README.md](./finances/README.md)
 - [05-saas-metrics-monthly.md](./finances/05-saas-metrics-monthly.md) - SaaS metrics
 - [06-saas-expenditures.md](./finances/06-saas-expenditures.md) - Expenditures
 - [07-tax-compliance-india.md](./finances/07-tax-compliance-india.md) - Tax compliance
+- [08-tax-compliance-marketplace-obligations.md](./finances/08-tax-compliance-marketplace-obligations.md) - Marketplace obligations
+- [09-tax-essentials-simplified.md](./finances/09-tax-essentials-simplified.md) - Simplified tax guide
+
+---
+
+### Team
+
+Internal team documentation — onboarding, testing guides, and contributor resources.
+
+- [platform-testing-playbook.md](./team/platform-testing-playbook.md) - Comprehensive platform feature walkthrough and testing checklists
 
 ---
 
