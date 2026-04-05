@@ -6,7 +6,7 @@ import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { TableSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { fetchDocuments } from "../../utils/fetchHelpers";
+import { fetchDocuments, type DocumentFetchError } from "../../utils/fetchHelpers";
 import { DocumentsTab } from "./DocumentsTab";
 import {
   RefreshCw,
@@ -152,13 +152,13 @@ export default function DocumentsPage({
 
                   {/* Technical details for debugging (only show in development) */}
                   {process.env.NODE_ENV === "development" &&
-                    (error as Error & { technicalMessage?: string }).technicalMessage && (
+                    (error as DocumentFetchError).technicalMessage && (
                       <details className="mt-3 text-xs opacity-75">
                         <summary className="cursor-pointer">
                           Technical Details
                         </summary>
                         <pre className="mt-2 whitespace-pre-wrap">
-                          {(error as Error & { technicalMessage?: string }).technicalMessage}
+                          {(error as DocumentFetchError).technicalMessage}
                         </pre>
                       </details>
                     )}

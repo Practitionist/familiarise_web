@@ -29,14 +29,12 @@ interface ClassPlanApiItem {
   id: string;
   classes?: ClassInstance[];
   imageUrl?: string | null;
-  [key: string]: unknown;
 }
 
 interface WebinarPlanApiItem {
   id: string;
   webinars?: WebinarWithAppointment[];
   imageUrl?: string | null;
-  [key: string]: unknown;
 }
 
 type PlanApiItem = ClassPlanApiItem | WebinarPlanApiItem;

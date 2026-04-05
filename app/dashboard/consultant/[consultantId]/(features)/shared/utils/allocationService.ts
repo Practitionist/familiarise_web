@@ -21,7 +21,7 @@ export interface AllocationRequest {
 
 export interface AllocationResponse {
   success: boolean;
-  data?: Record<string, unknown>;
+  data?: Record<string, RawAvailabilityApiSlot[]>;
   error?: string;
 }
 

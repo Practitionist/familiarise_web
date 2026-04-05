@@ -28,14 +28,12 @@ export interface ClassSlot extends Record<string, unknown> {
 
 export interface ClassAppointment {
   slotsOfAppointment: ClassSlot[];
-  [key: string]: unknown;
 }
 
 export interface ClassInstance {
   id: string;
   schedulingPeriodStartsAt?: string | Date | null;
   appointments?: ClassAppointment[];
-  [key: string]: unknown;
 }
 
 export type ProgramConsultantProfile = {

@@ -7,7 +7,7 @@ import { TConsultantProfile } from "@/types/consultant";
 import { ApiResponse, IActivity, IApproval, IDocument } from "../types";
 
 /** Enhanced error with additional diagnostic fields for the document fetch system */
-interface DocumentFetchError extends Error {
+export interface DocumentFetchError extends Error {
   technicalMessage?: string;
   status?: number;
   originalError?: Error;
