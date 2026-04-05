@@ -96,6 +96,17 @@ interface VerificationDetails {
   documents: DocumentFeedback[];
 }
 
+interface VerificationDocument {
+  id?: string;
+  status: string;
+}
+
+interface VerificationSubmitData {
+  verificationLinkedinUrl?: string;
+  verificationNotes?: string;
+  verificationDocuments?: VerificationDocument[];
+}
+
 export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   const { toast } = useToast();
   const { timezone, isLoading: timezoneLoading } = useTimezone();
@@ -296,16 +307,12 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   /* New Verification Modal Logic */
   const [isVerificationModalOpen, setIsVerificationModalOpen] = useState(false);
 
-  const handleVerificationSubmit = async (data: {
-    verificationLinkedinUrl?: string;
-    verificationNotes?: string;
-    verificationDocuments?: Array<{ id?: string; status: string }>;
-  }) => {
+  const handleVerificationSubmit = async (data: VerificationSubmitData) => {
     setIsResubmitting(true);
     try {
       const documentIds =
         data.verificationDocuments
-          ?.filter((doc): doc is { id: string; status: string } => doc.status === "completed" && !!doc.id)
+          ?.filter((doc): doc is Required<VerificationDocument> => doc.status === "completed" && !!doc.id)
           .map((doc) => doc.id) || [];
 
       const payload = {
