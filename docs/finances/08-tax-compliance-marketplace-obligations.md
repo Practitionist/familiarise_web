@@ -39,7 +39,7 @@ This is NOT code — it's CA/accountant work. Our code provides the data.
 
 ### Is GST Registration Mandatory?
 
-**YES.** Under **Section 24(ix) of the CGST Act**, every e-commerce operator (ECO) must register under GST irrespective of turnover. The normal Rs 20 lakh threshold does NOT apply.
+**YES.** Under **Section 24(x) of the CGST Act**, every e-commerce operator (ECO) must register under GST irrespective of turnover. The normal Rs 20 lakh threshold does NOT apply. (Note: Section 24(ix) applies to suppliers selling *through* an ECO; Section 24(x) applies to the ECO itself.)
 
 The definition in **Section 2(45)** is broad: "any person who owns, operates or manages digital or electronic facility or platform for electronic commerce." Familiarise qualifies.
 
@@ -136,7 +136,7 @@ Late filing penalty: Rs 200/day (capped at total TDS amount).
 
 - All cross-border transactions must comply with **FEMA (Foreign Exchange Management Act), 1999**
 - Must use RBI-authorized banks or payment aggregators (Razorpay qualifies)
-- Export proceeds must be realized and repatriated within **9 months** from date of invoice
+- Export proceeds must be realized and repatriated within **15 months** from date of invoice for foreign currency invoices, or **18 months** for INR-invoiced exports (updated per RBI Notification FEMA 23(R)/(7)/2025-RB dated November 13, 2025; previously 9 months)
 - Records must be kept for **5 years** (invoices, FIRA, contracts, bank advices)
 
 ### Export of Services — GST

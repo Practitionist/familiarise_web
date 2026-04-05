@@ -138,7 +138,7 @@ Think of it like this: the government doesn't trust everyone to pay their taxes,
 | Section | Rate | Threshold | Description |
 |---------|------|-----------|-------------|
 | **194J** | 10% (with PAN) / 20% (without PAN) | Rs 50,000/year per consultant | Payments for professional/technical services — **this is what our code implements** |
-| **194-O** | 1% | Rs 5 lakh/year per participant | E-commerce operator paying participants — **may also apply** |
+| **194-O** | 0.1% (with PAN) / 5% (without PAN) | Rs 5 lakh/year per participant | E-commerce operator paying participants — **may also apply** |
 
 **Your CA needs to confirm** which section (or both) applies.
 
@@ -183,7 +183,7 @@ The code handles it gracefully: below threshold, `calculateTDS()` returns `tdsAm
 | October 31 | Q2 return (Jul–Sep) | Form 26Q |
 | January 31 | Q3 return (Oct–Dec) | Form 26Q |
 | May 31 | Q4 return (Jan–Mar) | Form 26Q |
-| June 15 | Issue TDS certificates to consultants | Form 16A |
+| Quarterly | Issue TDS certificates to consultants — within 15 days of quarterly return due date (Aug 15, Nov 15, Feb 15, Jun 15) | Form 16A |
 
 Your CA handles all of this. Your code provides the data via `GET /api/admin/tds?view=form26q` (decrypts PAN, shows all records).
 

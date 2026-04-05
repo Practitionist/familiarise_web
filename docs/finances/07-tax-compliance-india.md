@@ -25,18 +25,19 @@ Section 44AD allows eligible businesses to declare income at a **presumptive rat
 | **Advance tax**        | Single installment by March 15                                |
 | **Tax audit**          | NOT required (unless opting out of 44AD)                      |
 
-### Tax Impact at Different Revenue Levels
+### Tax Impact at Different Revenue Levels (FY 2025-26)
 
-| Annual Platform Revenue | Deemed Profit (8%) | Income Tax (New Regime)     | Effective Tax Rate |
-| ----------------------- | ------------------ | --------------------------- | ------------------ |
-| ₹5L                     | ₹40,000            | ₹0 (below ₹4L exemption)    | **0%**             |
-| ₹10L                    | ₹80,000            | ₹0 (below ₹4L exemption)    | **0%**             |
-| ₹25L                    | ₹2,00,000          | ₹0 (below ₹4L exemption)    | **0%**             |
-| ₹50L                    | ₹4,00,000          | ₹0 (at ₹4L exemption limit) | **0%**             |
-| ₹1Cr                    | ₹8,00,000          | ~₹31,200                    | **0.03%**          |
-| ₹2Cr                    | ₹16,00,000         | ~₹62,400 + cess             | **0.03%**          |
+| Annual Platform Revenue | Deemed Profit (8%) | Income Tax (New Regime FY 2025-26) | Effective Tax Rate |
+| ----------------------- | ------------------ | ---------------------------------- | ------------------ |
+| ₹5L                     | ₹40,000            | ₹0 (87A rebate, income < ₹12L)     | **0%**             |
+| ₹10L                    | ₹80,000            | ₹0 (87A rebate, income < ₹12L)     | **0%**             |
+| ₹25L                    | ₹2,00,000          | ₹0 (87A rebate, income < ₹12L)     | **0%**             |
+| ₹50L                    | ₹4,00,000          | ₹0 (87A rebate, income < ₹12L)     | **0%**             |
+| ₹1Cr                    | ₹8,00,000          | ₹0 (87A rebate, income < ₹12L)     | **0%**             |
+| ₹1.5Cr                  | ₹12,00,000         | ₹0 (87A rebate, income = ₹12L)     | **0%**             |
+| ₹2Cr                    | ₹16,00,000         | ~₹1,24,800 (₹1,20,000 + 4% cess)  | **0.06%**          |
 
-> **Key insight:** At ₹50L revenue, a Sole Prop pays ₹0 income tax. A Pvt Ltd would pay ~₹10.8L (22% + cess). **Section 44AD saves ₹10+ lakh/year.**
+> **Key insight:** With Budget 2025's enhanced Section 87A rebate (income up to ₹12L = zero tax under new regime), a Sole Prop pays ₹0 income tax all the way up to ₹1.5Cr revenue. A Pvt Ltd at ₹50L revenue would pay ~₹10.8L (22% + cess). **Section 44AD saves ₹10+ lakh/year.**
 
 ### Comparison: Sole Prop vs Pvt Ltd vs LLP
 
@@ -136,15 +137,11 @@ The `math.ts` checkout utilities calculate tax for **display and invoicing purpo
 > and 999294 for educational services in invoice generation. The SAC codes above (998313, 998314)
 > apply to platform commission invoicing. Consult a CA to confirm the correct classification.
 
-### GST 2.0 Changes (September 2025)
+### GST Rate Rationalization (Proposed)
 
-The 56th GST Council meeting introduced a simplified two-rate framework:
+> **⚠️ Unverified — confirm with CA.** The GST Council has discussed rate rationalization (merging the current 5-slab structure into fewer slabs). Some reports reference a simplified framework with merit (5%), standard (18%), and demerit/luxury rates, but the specific rates and implementation status are unconfirmed as of April 2026. The 40% demerit rate cited in earlier drafts of this document has not been independently verified.
 
-| Old Structure         | New Structure (GST 2.0, effective Sep 2025)                        |
-| --------------------- | ------------------------------------------------------------------ |
-| 0%, 5%, 12%, 18%, 28% | 5% (merit, no ITC), 18% (standard, with ITC), 40% (demerit/luxury) |
-
-**Impact**: Most platform services remain at 18% with Input Tax Credit (ITC) available.
+**Impact**: Platform services are expected to remain at 18% with Input Tax Credit (ITC) available regardless of any restructuring.
 
 ### Reverse Charge Mechanism (RCM) on Foreign SaaS
 
@@ -239,7 +236,7 @@ flowchart TD
 | 31st October      | Q2 return      | 26Q         |
 | 31st January      | Q3 return      | 26Q         |
 | 31st May          | Q4 return      | 26Q         |
-| 15th June         | Form 16A issue | 16A         |
+| Quarterly (15th of month after return due) | Form 16A issue (Aug 15, Nov 15, Feb 15, Jun 15) | 16A |
 
 ### TDS Calculation Example
 
@@ -286,7 +283,7 @@ Platform deposits: ₹10,000 to government
 Invoice to Consultant:
 - Platform Name, GSTIN
 - Consultant Name, GSTIN (if registered)
-- SAC Code: 998313
+- SAC Code: 998313 (or 9962 — confirm correct classification with CA)
 - Commission Amount
 - GST @ 18% (CGST 9% + SGST 9% or IGST 18%)
 - Total Amount
@@ -475,7 +472,7 @@ model TDSRecord {
 ### Annually
 
 - [ ] File GSTR-9 annual GST return (by December 31)
-- [ ] Issue Form 16A to all consultants — TDS certificates (by June 15)
+- [ ] Issue Form 16A TDS certificates to consultants — quarterly, within 15 days of return due date (Aug 15, Nov 15, Feb 15, Jun 15)
 - [ ] File income tax return (ITR-4 if 44AD, ITR-3 otherwise)
 - [ ] Renew LUT for export zero-rating (if applicable)
 - [ ] Reconcile all tax credits
@@ -501,10 +498,10 @@ A Pvt Ltd at Rs 50 lakh revenue would pay ~Rs 10.8 lakh in tax. A Sole Prop with
 | Violation | Penalty |
 |-----------|---------|
 | Not registering for GST (when required) | Rs 10,000 or tax due, whichever is higher |
-| Late GST filing | Rs 100/day (CGST + SGST), capped at Rs 5,000 per return |
+| Late GST filing | Rs 100/day statutory max (Rs 50 CGST + Rs 50 SGST), capped at Rs 5,000 per Act = **Rs 10,000 total** per return. Practical rates lower: Rs 50/day for GSTR-3B with tax, Rs 20/day for nil returns |
 | **Not deducting TDS** | **Interest at 1% per month from due date — NO CAP** |
 | **Late TDS deposit** | **Interest at 1.5% per month — NO CAP** |
-| Late TDS return filing | Rs 200/day until filed, plus possible prosecution |
+| Late TDS return filing | Rs 200/day until filed, **capped at total TDS deductible amount** (Section 234E), plus possible prosecution |
 | Incorrect TDS return | Rs 10,000–Rs 1,00,000 per incorrect statement |
 
 > **The scariest penalties are for TDS.** Interest accumulates monthly with no upper cap.
