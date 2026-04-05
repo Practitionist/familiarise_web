@@ -10,10 +10,14 @@ import { AppointmentsType, RequestStatus } from "@prisma/client";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
+interface RequestUser {
+  user: { name: string };
+}
+
 interface ConsultationRequestItem {
   id: string;
   consultationPlan?: { title?: string };
-  requestedBy: { user: { name: string } };
+  requestedBy: RequestUser;
   requestedAt: string;
   requestStatus: string;
 }
@@ -21,7 +25,7 @@ interface ConsultationRequestItem {
 interface SubscriptionRequestItem {
   id: string;
   subscriptionPlan?: { title?: string };
-  requestedBy: { user: { name: string } };
+  requestedBy: RequestUser;
   requestedAt: string;
   requestStatus: string;
 }
@@ -30,11 +34,7 @@ interface Request {
   id: string;
   type: AppointmentsType;
   title: string;
-  requestedBy: {
-    user: {
-      name: string;
-    };
-  };
+  requestedBy: RequestUser;
   requestedAt: string;
   status: RequestStatus;
 }
