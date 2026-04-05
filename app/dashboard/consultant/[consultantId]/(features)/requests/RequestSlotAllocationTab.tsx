@@ -446,7 +446,7 @@ export function RequestSlotAllocationTab({
     return (
       <Card className="border-0 shadow-none rounded-none">
         <CardHeader>
-          <CardTitle>Slot Allocation</CardTitle>
+          <CardTitle className="text-xl font-bold">Requests</CardTitle>
           <CardDescription>
             Loading requests and availability...
           </CardDescription>
@@ -477,12 +477,26 @@ export function RequestSlotAllocationTab({
   return (
     <Card className="border-0 shadow-none rounded-none">
       <CardHeader>
-        <CardTitle>Slot Allocation</CardTitle>
+        <CardTitle className="text-xl font-bold">Requests</CardTitle>
         <CardDescription>
-          Allocate slots for subscription and class requests
+          Review and allocate slots for incoming session requests
         </CardDescription>
       </CardHeader>
       <CardContent className="p-0 sm:p-6">
+        {requests.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-zinc-100">
+              <AlertTriangle className="h-8 w-8 text-zinc-400" />
+            </div>
+            <h4 className="text-lg font-semibold text-zinc-900">
+              No pending requests
+            </h4>
+            <p className="mt-2 max-w-sm text-sm text-zinc-500">
+              When consultees request sessions through your profile, they will
+              appear here for slot allocation.
+            </p>
+          </div>
+        ) : (
         <div className="overflow-x-auto w-full">
           <Table className="w-full min-w-[820px]">
             <TableHeader>
@@ -502,11 +516,14 @@ export function RequestSlotAllocationTab({
             <TableBody>
               {requests.map((request) => (
                 <TableRow key={request.id}>
-                  <TableCell>{request.type}</TableCell>
+                  <TableCell>{getRequestTypeLabel(request.type)}</TableCell>
                   <TableCell>{request.title}</TableCell>
                   <TableCell>{request.requestedBy.user.name}</TableCell>
                   <TableCell>
-                    {new Date(request.requestedAt).toLocaleString()}
+                    {new Date(request.requestedAt).toLocaleString(undefined, {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    })}
                   </TableCell>
                   <TableCell>
                     {/* Reschedule indicator */}
@@ -566,7 +583,10 @@ export function RequestSlotAllocationTab({
                                 )}
                                 <span>
                                   {isValidDate
-                                    ? date.toLocaleString()
+                                    ? date.toLocaleString(undefined, {
+                                        dateStyle: "medium",
+                                        timeStyle: "short",
+                                      })
                                     : "Invalid date"}
                                 </span>
                                 {slot.isTentative && (
@@ -601,7 +621,10 @@ export function RequestSlotAllocationTab({
                                 className="text-sm"
                               >
                                 {isValidDate
-                                  ? date.toLocaleString()
+                                  ? date.toLocaleString(undefined, {
+                                      dateStyle: "medium",
+                                      timeStyle: "short",
+                                    })
                                   : "Invalid date"}
                               </div>
                             );
@@ -640,7 +663,7 @@ export function RequestSlotAllocationTab({
                       <Badge
                         variant={getRequestStatusBadgeVariant(request.status)}
                       >
-                        {request.status}
+                        {getRequestStatusLabel(request.status)}
                       </Badge>
                       {request.status ===
                         RequestStatus.APPROVED_PENDING_PAYMENT && (
@@ -696,6 +719,7 @@ export function RequestSlotAllocationTab({
             </TableBody>
           </Table>
         </div>
+        )}
 
         {/* Single Allocation Dialog - moved outside map loop to prevent multiple dialogs */}
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -821,17 +845,59 @@ export function RequestSlotAllocationTab({
 // Helper function for badge variant
 function getRequestStatusBadgeVariant(
   status: RequestStatus,
-): "outline" | "default" | "destructive" {
+): "outline" | "default" | "destructive" | "secondary" {
   switch (status) {
     case RequestStatus.PENDING:
+    case RequestStatus.APPROVED_PENDING_PAYMENT:
       return "outline";
     case RequestStatus.APPROVED:
+    case RequestStatus.SCHEDULED:
       return "default";
+    case RequestStatus.COMPLETED:
+      return "secondary";
     case RequestStatus.REJECTED:
     case RequestStatus.CANCELLED:
     case RequestStatus.EXPIRED:
       return "destructive";
     default:
-      return "outline"; // Default case
+      return "outline";
+  }
+}
+
+function getRequestStatusLabel(status: RequestStatus): string {
+  switch (status) {
+    case RequestStatus.PENDING:
+      return "Pending";
+    case RequestStatus.APPROVED:
+      return "Approved";
+    case RequestStatus.APPROVED_PENDING_PAYMENT:
+      return "Awaiting Payment";
+    case RequestStatus.SCHEDULED:
+      return "Scheduled";
+    case RequestStatus.COMPLETED:
+      return "Completed";
+    case RequestStatus.REJECTED:
+      return "Rejected";
+    case RequestStatus.CANCELLED:
+      return "Cancelled";
+    case RequestStatus.EXPIRED:
+      return "Expired";
+    default:
+      return status;
+  }
+}
+
+function getRequestTypeLabel(type: AppointmentsType): string {
+  switch (type) {
+    case AppointmentsType.CONSULTATION:
+      return "Consultation";
+    case AppointmentsType.SUBSCRIPTION:
+      return "Subscription";
+    case AppointmentsType.WEBINAR:
+      return "Webinar";
+    case AppointmentsType.CLASS:
+      return "Class";
+    default:
+      return type;
   }
 }

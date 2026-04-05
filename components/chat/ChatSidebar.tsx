@@ -11,6 +11,12 @@ import { CreateChannelDialog } from "./CreateChannelDialog";
 import { InitializeUserChannelsButton } from "./InitializeUserChannelsButton";
 import { DebugDialog } from "./DebugDialog";
 import { Button } from "../ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "../ui/tooltip";
 import { getChannelDisplayInfo } from "./utils/channelUtils";
 
 // Custom channel item component for the sidebar - memoized for performance
@@ -141,6 +147,7 @@ ChannelItem.displayName = "ChannelItem";
 
 export const ChatSidebar = () => {
   const { client, setActiveChannel } = useChatContext();
+  const userRole = client?.user?.role as string | undefined;
   const [teamChannels, setTeamChannels] = useState<Channel[]>([]);
   const [directMessages, setDirectMessages] = useState<Channel[]>([]);
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
@@ -554,18 +561,26 @@ export const ChatSidebar = () => {
       {/* Header with Title and Refresh */}
       <div className="p-4 border-b border-blue-700 flex justify-between items-center">
         <h1 className="text-xl font-bold">Familiarise</h1>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={handleRefresh}
-          disabled={isLoading}
-          className="text-white hover:bg-blue-700 disabled:opacity-50"
-          title="Refresh Channels"
-        >
-          <RefreshCwIcon
-            className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`}
-          />
-        </Button>
+        <TooltipProvider delayDuration={200}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleRefresh}
+                disabled={isLoading}
+                className="text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                <RefreshCwIcon
+                  className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`}
+                />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Refresh channels</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       </div>
 
       {/* Search Bar */}
@@ -677,7 +692,9 @@ export const ChatSidebar = () => {
           </div>
         ) : (
           <div className="p-4 text-center text-blue-200 text-sm">
-            No conversations yet. Book a consultation to start chatting.
+            {userRole === "consultant"
+              ? "No conversations yet. Conversations will appear here once clients book sessions."
+              : "No conversations yet. Book a consultation to start chatting."}
           </div>
         )}
       </div>

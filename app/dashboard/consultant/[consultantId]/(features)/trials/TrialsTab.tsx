@@ -36,6 +36,13 @@ import {
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import Link from "next/link";
 import { cn } from "@/utils/tailwind";
 import { useRouter } from "next/navigation";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
@@ -74,12 +81,28 @@ interface TrialSession {
       endsAt: string;
     }>;
   } | null;
+  convertedToSubscription?: {
+    id: string;
+    subscriptionPlan?: { title: string };
+  } | null;
 }
 
 interface SubscriptionPlan {
   id: string;
   title: string;
   freeTrialEnabled: boolean;
+}
+
+function formatStatus(status: string): string {
+  if (status === "REJECTED") return "Declined";
+  return status.charAt(0) + status.slice(1).toLowerCase();
+}
+
+function maskEmail(email: string): string {
+  const [local, domain] = email.split("@");
+  if (!domain) return email;
+  const visible = local.slice(0, 2);
+  return `${visible}***@${domain}`;
 }
 
 const statusColors: Record<string, string> = {
@@ -122,6 +145,7 @@ export function TrialsTab() {
   const [showScheduleDialog, setShowScheduleDialog] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isJoining, setIsJoining] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Search, filter, sort state
   const [search, setSearch] = useState("");
@@ -450,9 +474,10 @@ export function TrialsTab() {
     }
   };
 
-  const handleRefresh = () => {
-    fetchTrials();
-    fetchStats();
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    await Promise.all([fetchTrials(), fetchStats()]);
+    setIsRefreshing(false);
   };
 
   const handleStatusFilterChange = (value: string) => {
@@ -482,6 +507,7 @@ export function TrialsTab() {
   ];
 
   return (
+    <TooltipProvider>
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -493,9 +519,9 @@ export function TrialsTab() {
             Manage trial session requests from potential subscribers
           </p>
         </div>
-        <Button variant="outline" onClick={handleRefresh} disabled={loading}>
+        <Button variant="outline" onClick={handleRefresh} disabled={isRefreshing}>
           <RefreshCw
-            className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+            className={`h-4 w-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`}
           />
           Refresh
         </Button>
@@ -681,14 +707,14 @@ export function TrialsTab() {
                         {trial.consulteeProfile.user.name}
                       </CardTitle>
                       <CardDescription>
-                        {trial.consulteeProfile.user.email}
+                        {maskEmail(trial.consulteeProfile.user.email)}
                       </CardDescription>
                     </div>
                   </div>
                   <Badge
                     className={statusColors[trial.status] || "bg-gray-100"}
                   >
-                    {trial.status}
+                    {formatStatus(trial.status)}
                   </Badge>
                 </div>
               </CardHeader>
@@ -768,34 +794,71 @@ export function TrialsTab() {
                       >
                         Cancel
                       </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleJoinMeeting(trial)}
-                        disabled={
-                          isProcessing ||
-                          isJoining === trial.id ||
-                          !isTrialJoinable(trial)
-                        }
-                        className={
-                          isTrialJoinable(trial)
-                            ? "bg-blue-50 text-blue-700 hover:bg-blue-100 border-blue-200"
-                            : ""
-                        }
-                      >
-                        {isJoining === trial.id ? (
-                          <>
-                            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                            Joining...
-                          </>
-                        ) : (
-                          <>
-                            <Video className="h-4 w-4 mr-1" />
-                            Join Meeting
-                          </>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span tabIndex={0}>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleJoinMeeting(trial)}
+                              disabled={
+                                isProcessing ||
+                                isJoining === trial.id ||
+                                !isTrialJoinable(trial)
+                              }
+                              className={
+                                isTrialJoinable(trial)
+                                  ? "bg-blue-50 text-blue-700 hover:bg-blue-100 border-blue-200"
+                                  : ""
+                              }
+                            >
+                              {isJoining === trial.id ? (
+                                <>
+                                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                  Joining...
+                                </>
+                              ) : (
+                                <>
+                                  <Video className="h-4 w-4 mr-1" />
+                                  Join Meeting
+                                </>
+                              )}
+                            </Button>
+                          </span>
+                        </TooltipTrigger>
+                        {!isTrialJoinable(trial) && (
+                          <TooltipContent>
+                            <p>Available 10 minutes before the scheduled time</p>
+                          </TooltipContent>
                         )}
-                      </Button>
+                      </Tooltip>
                     </>
+                  )}
+                  {trial.status === "CONVERTED" && trial.convertedToSubscription && (
+                    <Link
+                      href={`/dashboard/consultant/${consultantId}/appointments`}
+                      className="text-sm text-emerald-700 hover:underline flex items-center gap-1"
+                    >
+                      <Gift className="h-4 w-4" />
+                      View Subscription
+                    </Link>
+                  )}
+                  {trial.status === "COMPLETED" && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        const planUrl = `${window.location.origin}/explore/experts/${consultantId}`;
+                        navigator.clipboard.writeText(planUrl);
+                        toast({
+                          title: "Link copied",
+                          description: "Share this link with the client to invite them to subscribe.",
+                        });
+                      }}
+                    >
+                      <Gift className="h-4 w-4 mr-1" />
+                      Copy Plan Link
+                    </Button>
                   )}
                 </div>
               </CardContent>
@@ -858,5 +921,6 @@ export function TrialsTab() {
         </DialogContent>
       </Dialog>
     </div>
+    </TooltipProvider>
   );
 }

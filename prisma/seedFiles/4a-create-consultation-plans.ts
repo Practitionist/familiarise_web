@@ -18,24 +18,19 @@ export async function createConsultationPlans(consultants: UserWithProfiles[]) {
           {
             consultantProfileId: consultant.consultantProfile.id,
             title: "Basic Consultation",
-            description: faker.lorem.paragraph(),
+            description:
+              "A focused one-hour session designed to address your immediate questions and provide actionable guidance. Ideal for first-time clients looking for expert advice on a specific topic.",
             durationInHours: 1,
             price: faker.number.int({ min: 200000, max: 500000 }), // ₹2000-₹5000 in paise
             priceCurrency: "INR",
-            language: faker.helpers.arrayElement([
-              "English",
-              "Spanish",
-              "French",
-              "German",
-              "Chinese",
-            ]),
+            language: "English",
             level: faker.helpers.arrayElement([
               "Beginner",
               "Intermediate",
               "Advanced",
             ]),
-            prerequisites: faker.lorem.sentence(),
-            materialProvided: faker.lorem.sentence(),
+            prerequisites: "No prior experience required",
+            materialProvided: "Session summary and recommended resources",
             learningOutcomes: faker.helpers.arrayElements(
               [
                 "Understand basic concepts",
@@ -48,24 +43,19 @@ export async function createConsultationPlans(consultants: UserWithProfiles[]) {
           {
             consultantProfileId: consultant.consultantProfile.id,
             title: "Extended Consultation",
-            description: faker.lorem.paragraph(),
+            description:
+              "An in-depth two-hour session for clients who need a thorough review of their goals and a detailed action plan. Includes follow-up notes and personalised recommendations.",
             durationInHours: 2,
             price: faker.number.int({ min: 400000, max: 1000000 }), // ₹4000-₹10000 in paise
             priceCurrency: "INR",
-            language: faker.helpers.arrayElement([
-              "English",
-              "Spanish",
-              "French",
-              "German",
-              "Chinese",
-            ]),
+            language: "English",
             level: faker.helpers.arrayElement([
               "Beginner",
               "Intermediate",
               "Advanced",
             ]),
-            prerequisites: faker.lorem.sentence(),
-            materialProvided: faker.lorem.sentence(),
+            prerequisites: "Basic familiarity with the subject area",
+            materialProvided: "Detailed action plan, session recording, and curated reading list",
             learningOutcomes: faker.helpers.arrayElements(
               [
                 "Master advanced techniques",
@@ -78,20 +68,15 @@ export async function createConsultationPlans(consultants: UserWithProfiles[]) {
           {
             consultantProfileId: consultant.consultantProfile.id,
             title: "Comprehensive Consultation",
-            description: faker.lorem.paragraph(),
+            description:
+              "A half-day deep-dive session covering strategy, implementation, and review. Best suited for clients ready to commit to significant progress and needing hands-on expert guidance.",
             durationInHours: 4,
             price: faker.number.int({ min: 750000, max: 2000000 }), // ₹7500-₹20000 in paise
             priceCurrency: "INR",
-            language: faker.helpers.arrayElement([
-              "English",
-              "Spanish",
-              "French",
-              "German",
-              "Chinese",
-            ]),
+            language: "English",
             level: faker.helpers.arrayElement(["Intermediate", "Advanced"]),
-            prerequisites: faker.lorem.sentence(),
-            materialProvided: faker.lorem.sentence(),
+            prerequisites: "Prior consultation or intermediate-level knowledge recommended",
+            materialProvided: "Comprehensive strategy document, session recording, templates, and 7-day email follow-up",
             learningOutcomes: faker.helpers.arrayElements(
               [
                 "Develop expertise in the field",

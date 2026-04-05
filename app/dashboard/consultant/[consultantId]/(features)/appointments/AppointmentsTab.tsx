@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import {
   getOrCreateAppointmentMeeting,
@@ -21,6 +22,7 @@ import {
   Gift,
   Video,
   Loader2,
+  Search,
 } from "lucide-react";
 import {
   AppointmentsTabProps,
@@ -44,6 +46,7 @@ import {
   getConsumeeName,
   getGroupStatus,
   getGroupTitle,
+  getNextUpcomingSlotTime,
   getStartTime,
   groupRecurringAppointments,
   groupAppointmentsByType,
@@ -85,6 +88,10 @@ export function AppointmentsTab({
     Map<string, { currentPage: number; showAll: boolean }>
   >(new Map());
   const [highlightedGroup, setHighlightedGroup] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<
+    "ALL" | "UPCOMING" | "PAST"
+  >("ALL");
   const groupRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   const PAGE_SIZE = 5; // Show 5 items per page
@@ -277,8 +284,37 @@ export function AppointmentsTab({
     });
   };
 
-  // Group appointments by type (CONSULTATION, SUBSCRIPTION, WEBINAR, CLASS)
-  const appointmentsByType = groupAppointmentsByType(appointments || []);
+  // Apply search and status filters
+  const filteredAppointments = useMemo(() => {
+    return (appointments || []).filter((apt) => {
+      // Status filter
+      if (statusFilter !== "ALL") {
+        const s = getAppointmentStatus(apt);
+        if (statusFilter === "UPCOMING") {
+          // Upcoming = has future sessions (exclude completed, cancelled, not scheduled)
+          if (s === "Completed" || s === "Cancelled" || s === "Not Scheduled")
+            return false;
+        }
+        if (statusFilter === "PAST") {
+          // Past = all sessions are done (completed or cancelled)
+          if (s !== "Completed" && s !== "Cancelled") return false;
+        }
+      }
+      // Name/plan search
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        if (
+          !getConsumeeName(apt).toLowerCase().includes(q) &&
+          !getAppointmentTypeAndPlan(apt).toLowerCase().includes(q)
+        )
+          return false;
+      }
+      return true;
+    });
+  }, [appointments, statusFilter, searchQuery]);
+
+  // Group filtered appointments by type
+  const appointmentsByType = groupAppointmentsByType(filteredAppointments);
 
   // Further group recurring appointments (subscriptions/classes) within each type
   const groupedAppointments = Object.entries(appointmentsByType).reduce(
@@ -306,13 +342,52 @@ export function AppointmentsTab({
     {} as { [key: string]: TAppointment[] },
   );
 
-  // Sort groups by appointment type order
+  // Sort groups: by type order first, then within each type —
+  // upcoming groups first (nearest future first), past groups after (most recent first)
   const typeOrder = ["CONSULTATION", "SUBSCRIPTION", "WEBINAR", "CLASS"];
+  const now = new Date();
+
+  const getGroupSortTime = (groupAppts: TAppointment[]): Date | null => {
+    if (groupAppts.length === 0) return null;
+    // For recurring groups, use the next upcoming slot across all appointments
+    const times = groupAppts
+      .map((apt) => getNextUpcomingSlotTime(apt))
+      .filter((t): t is Date => t !== null);
+    if (times.length === 0) return null;
+    // Return the earliest time in the group
+    return times.reduce((a, b) => (a < b ? a : b));
+  };
+
   const sortedGroupedAppointments = Object.entries(groupedAppointments).sort(
-    ([keyA], [keyB]) => {
+    ([keyA, apptsA], [keyB, apptsB]) => {
       const typeA = keyA.split("-")[0];
       const typeB = keyB.split("-")[0];
-      return typeOrder.indexOf(typeA) - typeOrder.indexOf(typeB);
+      // First sort by type
+      const typeCompare =
+        typeOrder.indexOf(typeA) - typeOrder.indexOf(typeB);
+      if (typeCompare !== 0) return typeCompare;
+
+      // Within same type: upcoming before past, empty groups last
+      const timeA = getGroupSortTime(apptsA);
+      const timeB = getGroupSortTime(apptsB);
+      if (!timeA && !timeB) return 0;
+      if (!timeA) return 1;
+      if (!timeB) return -1;
+
+      const aIsUpcoming = timeA >= now;
+      const bIsUpcoming = timeB >= now;
+
+      // Upcoming groups come before past groups
+      if (aIsUpcoming && !bIsUpcoming) return -1;
+      if (!aIsUpcoming && bIsUpcoming) return 1;
+
+      // Both upcoming: nearest future first (ascending)
+      if (aIsUpcoming && bIsUpcoming) {
+        return timeA.getTime() - timeB.getTime();
+      }
+
+      // Both past: most recent first (descending)
+      return timeB.getTime() - timeA.getTime();
     },
   );
 
@@ -321,6 +396,38 @@ export function AppointmentsTab({
       <h2 className="text-xl font-semibold mb-4 text-gray-800">
         All Appointments
       </h2>
+      <div className="space-y-3 mb-4">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <Input
+            placeholder="Search by name or plan..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10 h-10"
+          />
+        </div>
+        <div className="flex items-center gap-2 border-b border-zinc-200 overflow-x-auto">
+          {(
+            [
+              { label: "All", value: "ALL" },
+              { label: "Upcoming", value: "UPCOMING" },
+              { label: "Past", value: "PAST" },
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.value}
+              onClick={() => setStatusFilter(tab.value)}
+              className={`px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
+                statusFilter === tab.value
+                  ? "border-zinc-900 text-zinc-900"
+                  : "border-transparent text-zinc-500 hover:text-zinc-700 hover:border-zinc-300"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="space-y-6">
         {(() => {
           let currentType: string | null = null;
@@ -356,16 +463,28 @@ export function AppointmentsTab({
                     <div className="mb-4 pt-6 first:pt-0">
                       <h3 className="text-lg font-semibold text-gray-900 border-b-2 border-gray-300 pb-2">
                         {getAppointmentTypeDisplayName(groupType)}
+                        <span className="text-sm font-normal text-gray-500 ml-2">
+                          ({(appointmentsByType[groupType]?.length ?? 0) +
+                            (statusFilter === "ALL"
+                              ? (groupType === "CLASS"
+                                  ? unscheduledClasses.length
+                                  : 0) +
+                                (groupType === "WEBINAR"
+                                  ? unscheduledWebinars.length
+                                  : 0)
+                              : 0)})
+                        </span>
                       </h3>
                     </div>
                   )}
 
-                  {/* Free Trials Sub-section (only for SUBSCRIPTION type) */}
+                  {/* Free Trials Sub-section (only for SUBSCRIPTION type, only in "All" view) */}
                   {isNewTypeSection &&
+                    statusFilter === "ALL" &&
                     groupType === "SUBSCRIPTION" &&
                     scheduledTrials.length > 0 && (
-                      <div className="mb-6">
-                        <h4 className="text-sm font-medium text-purple-700 mb-3 flex items-center gap-2">
+                      <div className="mb-6 bg-purple-50/50 border border-purple-200 rounded-lg p-4">
+                        <h4 className="text-sm font-semibold text-purple-700 mb-3 flex items-center gap-2">
                           <Gift className="h-4 w-4" />
                           Free Trial Sessions ({scheduledTrials.length})
                         </h4>
@@ -455,59 +574,74 @@ export function AppointmentsTab({
                       </div>
                     )}
 
-                  {/* Unscheduled events — rendered once per section, before any scheduled groups */}
+                  {/* Unscheduled events — only in "All" view (they're neither upcoming nor past) */}
                   {isNewTypeSection &&
+                    statusFilter === "ALL" &&
                     groupType === "CLASS" &&
                     unscheduledClasses.length > 0 && (
-                      <div className="mb-4 space-y-3">
-                        {unscheduledClasses.map((classEvent) => (
-                          <UnscheduledEventCard
-                            key={classEvent.id}
-                            title={classEvent.classPlan.title}
-                            subtitle={`${classEvent.classPlan.meetingsPerWeek} meeting${classEvent.classPlan.meetingsPerWeek !== 1 ? "s" : ""}/week · ${classEvent.classPlan.totalSessions} sessions · ${classEvent.classPlan.sessionDurationInHours}h each`}
-                            onSetSchedule={() => {
-                              setSelectedAppointment(
-                                buildSyntheticClassAppointment(classEvent),
-                              );
-                              setSelectedGroupProgress(null);
-                            }}
-                          />
-                        ))}
+                      <div className="mb-4">
+                        <h4 className="text-sm font-semibold text-orange-700 mb-3 flex items-center gap-2">
+                          <Clock className="h-4 w-4" />
+                          Unscheduled Classes ({unscheduledClasses.length})
+                        </h4>
+                        <div className="space-y-3">
+                          {unscheduledClasses.map((classEvent) => (
+                            <UnscheduledEventCard
+                              key={classEvent.id}
+                              title={classEvent.classPlan.title}
+                              subtitle={`${classEvent.classPlan.meetingsPerWeek} meeting${classEvent.classPlan.meetingsPerWeek !== 1 ? "s" : ""}/week · ${classEvent.classPlan.totalSessions} sessions · ${classEvent.classPlan.sessionDurationInHours}h each`}
+                              onSetSchedule={() => {
+                                setSelectedAppointment(
+                                  buildSyntheticClassAppointment(classEvent),
+                                );
+                                setSelectedGroupProgress(null);
+                              }}
+                            />
+                          ))}
+                        </div>
                       </div>
                     )}
                   {isNewTypeSection &&
+                    statusFilter === "ALL" &&
                     groupType === "WEBINAR" &&
                     unscheduledWebinars.length > 0 && (
-                      <div className="mb-4 space-y-3">
-                        {unscheduledWebinars.map((webinarEvent) => (
-                          <UnscheduledEventCard
-                            key={webinarEvent.id}
-                            title={webinarEvent.webinarPlan.title}
-                            subtitle={`Single session · ${webinarEvent.webinarPlan.durationInHours}h`}
-                            onSetSchedule={() => {
-                              setSelectedAppointment(
-                                buildSyntheticWebinarAppointment(webinarEvent),
-                              );
-                              setSelectedGroupProgress(null);
-                            }}
-                          />
-                        ))}
+                      <div className="mb-4">
+                        <h4 className="text-sm font-semibold text-orange-700 mb-3 flex items-center gap-2">
+                          <Clock className="h-4 w-4" />
+                          Unscheduled Webinars ({unscheduledWebinars.length})
+                        </h4>
+                        <div className="space-y-3">
+                          {unscheduledWebinars.map((webinarEvent) => (
+                            <UnscheduledEventCard
+                              key={webinarEvent.id}
+                              title={webinarEvent.webinarPlan.title}
+                              subtitle={`Single session · ${webinarEvent.webinarPlan.durationInHours}h`}
+                              onSetSchedule={() => {
+                                setSelectedAppointment(
+                                  buildSyntheticWebinarAppointment(webinarEvent),
+                                );
+                                setSelectedGroupProgress(null);
+                              }}
+                            />
+                          ))}
+                        </div>
                       </div>
                     )}
 
                   {/* Empty state — only shown when section has no scheduled appointments
                       AND no unscheduled items were already rendered above */}
                   {groupAppointments.length === 0 ? (
-                    (groupType === "CLASS" && unscheduledClasses.length > 0) ||
-                    (groupType === "WEBINAR" &&
-                      unscheduledWebinars.length > 0) ? null : (
+                    (statusFilter === "ALL" &&
+                      ((groupType === "CLASS" && unscheduledClasses.length > 0) ||
+                        (groupType === "WEBINAR" &&
+                          unscheduledWebinars.length > 0))) ? null : (
                       <div className="border rounded-lg p-8 bg-gray-50 text-center">
                         <p className="text-gray-500 text-sm">
-                          No{" "}
-                          {getAppointmentTypeDisplayName(
-                            groupType,
-                          ).toLowerCase()}{" "}
-                          scheduled
+                          {statusFilter === "UPCOMING"
+                            ? `No upcoming ${getAppointmentTypeDisplayName(groupType).toLowerCase()}`
+                            : statusFilter === "PAST"
+                              ? `No past ${getAppointmentTypeDisplayName(groupType).toLowerCase()}`
+                              : `No ${getAppointmentTypeDisplayName(groupType).toLowerCase()} scheduled`}
                         </p>
                       </div>
                     )
@@ -651,9 +785,6 @@ export function AppointmentsTab({
                               />
                             </div>
 
-                            <div className="text-xs text-center text-gray-500 font-medium">
-                              {completedSessions} of {totalSessions} sessions
-                            </div>
                           </div>
                         </div>
                       )}
@@ -829,36 +960,30 @@ export function AppointmentsTab({
 
                                       {/* Right side: Status and Join button */}
                                       <div className="flex items-center gap-3 flex-shrink-0">
-                                        <Badge
-                                          variant="secondary"
-                                          className={getStyleFromBadgeData(
-                                            status,
-                                          )}
-                                        >
-                                          {status}
-                                        </Badge>
+                                        {status !== "Not Scheduled" && (
+                                          <Badge
+                                            variant="secondary"
+                                            className={getStyleFromBadgeData(
+                                              status,
+                                            )}
+                                          >
+                                            {status}
+                                          </Badge>
+                                        )}
                                         {status !== "Completed" &&
                                           status !== "Not Scheduled" && (
                                             <Button
                                               variant="default"
                                               size="sm"
                                               className={`${joinButtonStyle} h-8 px-4 text-xs`}
-                                              disabled={
-                                                process.env.NODE_ENV ===
-                                                "production"
-                                                  ? !isJoinable
-                                                  : false
-                                              }
+                                              disabled={!isJoinable}
                                               onClick={() =>
                                                 handleJoinMeeting(appointment)
                                               }
                                             >
-                                              {process.env.NODE_ENV ===
-                                              "production"
-                                                ? isJoinable
-                                                  ? "Join meet"
-                                                  : "Not available"
-                                                : "Join (Dev)"}
+                                              {isJoinable
+                                                ? "Join meet"
+                                                : "Not available"}
                                             </Button>
                                           )}
                                       </div>
@@ -952,10 +1077,18 @@ export function AppointmentsTab({
               </svg>
             </div>
             <h3 className="text-xl font-semibold text-gray-900 mb-2">
-              No Appointments Found
+              {statusFilter === "UPCOMING"
+                ? "No Upcoming Appointments"
+                : statusFilter === "PAST"
+                  ? "No Past Appointments"
+                  : "No Appointments Found"}
             </h3>
             <p className="text-gray-500 text-center">
-              You don't have any appointments scheduled at the moment.
+              {statusFilter === "UPCOMING"
+                ? "You don't have any upcoming appointments."
+                : statusFilter === "PAST"
+                  ? "You don't have any past appointments."
+                  : "You don't have any appointments scheduled at the moment."}
             </p>
           </div>
         )}

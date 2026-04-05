@@ -19,6 +19,12 @@ import {
   CreditCard,
   ChevronRight,
   MessageCircleQuestion,
+  Wallet,
+  Share2,
+  FileText,
+  Users,
+  Gift,
+  CirclePlay,
 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import { type FAQ } from "./questions";
@@ -57,6 +63,36 @@ const categoryConfig: Record<
     color: "text-rose-600",
     bgColor: "bg-rose-50",
   },
+  "Earnings & Payouts": {
+    icon: Wallet,
+    color: "text-green-600",
+    bgColor: "bg-green-50",
+  },
+  Referrals: {
+    icon: Share2,
+    color: "text-indigo-600",
+    bgColor: "bg-indigo-50",
+  },
+  Recordings: {
+    icon: CirclePlay,
+    color: "text-amber-600",
+    bgColor: "bg-amber-50",
+  },
+  Documents: {
+    icon: FileText,
+    color: "text-slate-600",
+    bgColor: "bg-slate-50",
+  },
+  Collaborations: {
+    icon: Users,
+    color: "text-teal-600",
+    bgColor: "bg-teal-50",
+  },
+  "Free Trials": {
+    icon: Gift,
+    color: "text-pink-600",
+    bgColor: "bg-pink-50",
+  },
 };
 
 // Animation variants
@@ -90,6 +126,15 @@ export function HelpTab({ faqs: initialFaqs }: Readonly<HelpTabProps>) {
   const categories = useMemo(() => {
     const categorySet = new Set(initialFaqs.map((faq) => faq.category));
     return Array.from(categorySet);
+  }, [initialFaqs]);
+
+  // Count FAQs per category (stable counts based on initial data)
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    initialFaqs.forEach((faq) => {
+      counts[faq.category] = (counts[faq.category] || 0) + 1;
+    });
+    return counts;
   }, [initialFaqs]);
 
   // Filter FAQs based on search and category
@@ -171,7 +216,7 @@ export function HelpTab({ faqs: initialFaqs }: Readonly<HelpTabProps>) {
                   : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200",
               )}
             >
-              All Topics
+              All Topics ({initialFaqs.length})
             </button>
             {categories.map((category) => {
               const config = categoryConfig[category] || {
@@ -196,7 +241,7 @@ export function HelpTab({ faqs: initialFaqs }: Readonly<HelpTabProps>) {
                   )}
                 >
                   <Icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                  {category}
+                  {category} ({categoryCounts[category]})
                 </button>
               );
             })}
@@ -337,7 +382,8 @@ export function HelpTab({ faqs: initialFaqs }: Readonly<HelpTabProps>) {
               className="text-zinc-900 font-medium hover:underline"
             >
               Contact our support team
-            </a>
+            </a>{" "}
+            — we typically respond within 24 hours.
           </p>
         </motion.div>
       </div>

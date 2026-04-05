@@ -4,8 +4,6 @@ import { cn } from "@/utils/tailwind";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { signOut } from "@/lib/auth-client";
-import { disconnectStreamClients } from "@/providers/StreamProvider";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
@@ -17,8 +15,6 @@ import {
   FileText,
   HelpCircle,
   Settings,
-  LogOut,
-  ArrowLeft,
   ChevronRight,
   LayoutDashboard,
   CreditCard,
@@ -117,23 +113,14 @@ export function DashboardSidebar({
   navItems = [],
   navSections = [],
   isLoading = false,
-  bottomNavItems = [],
-  hideBottomActions = false,
+  bottomNavItems: _bottomNavItems = [],
+  hideBottomActions: _hideBottomActions = false,
 }: DashboardSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
 
   // Get current path relative to basePath for matching
   const relativePath = pathname.replace(basePath + "/", "");
-
-  const handleSignOut = async () => {
-    try {
-      await disconnectStreamClients();
-    } catch {
-      // Don't block sign-out if disconnect fails
-    }
-    signOut();
-  };
 
   const getRoleColor = () => {
     switch (userRole) {
@@ -329,63 +316,7 @@ export function DashboardSidebar({
         )}
       </nav>
 
-      {/* Bottom Section */}
-      {!hideBottomActions && (
-        <div className="border-t border-zinc-800/50 p-3 space-y-1">
-          <Link
-            href="/"
-            className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-100 transition-all"
-          >
-            <span className="flex h-8 w-8 items-center justify-center rounded-md bg-zinc-800/50 text-zinc-500">
-              <ArrowLeft className="w-5 h-5" />
-            </span>
-            <span>Back to Home</span>
-          </Link>
-
-          {bottomNavItems.map((item) => {
-            const isActive =
-              relativePath === item.path ||
-              relativePath.startsWith(item.path + "/");
-
-            return (
-              <Link
-                key={item.path}
-                href={`${basePath}/${item.path}`}
-                className={cn(
-                  "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all",
-                  isActive
-                    ? "bg-zinc-800 text-white"
-                    : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-100",
-                )}
-                prefetch={true}
-                onMouseEnter={() => handleNavHover(item.path)}
-              >
-                <span
-                  className={cn(
-                    "flex h-8 w-8 items-center justify-center rounded-md",
-                    isActive
-                      ? "bg-zinc-700 text-white"
-                      : "bg-zinc-800/50 text-zinc-500",
-                  )}
-                >
-                  {renderIcon(item.path)}
-                </span>
-                <span>{item.name}</span>
-              </Link>
-            );
-          })}
-
-          <button
-            onClick={handleSignOut}
-            className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-all"
-          >
-            <span className="flex h-8 w-8 items-center justify-center rounded-md bg-red-500/10 text-red-500">
-              <LogOut className="w-5 h-5" />
-            </span>
-            <span>Sign Out</span>
-          </button>
-        </div>
-      )}
+      {/* Bottom Section removed: Back to Home, Settings, Help, Sign Out */}
     </div>
   );
 }

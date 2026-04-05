@@ -399,7 +399,7 @@ export function useCalendarData(
     }
 
     try {
-      const data = await AllocationService.fetchEventSlots(eventType, eventId);
+      const data = await AllocationService.fetchEventSlots(eventType, eventId, consultantId);
 
       if (data && Array.isArray(data) && data.length > 0) {
         // Filter out cancelled/rejected appointments from event slots
