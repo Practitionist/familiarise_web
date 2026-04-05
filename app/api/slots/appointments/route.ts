@@ -336,8 +336,12 @@ async function getAppointments(
     where: whereClause,
     include: {
       slotsOfAppointment: {
+        orderBy: { startsAt: "asc" },
         include: {
           user: true,
+          meetingSession: {
+            select: { id: true, endedAt: true },
+          },
         },
       },
       consultation: {
