@@ -152,8 +152,7 @@ function countCompletedCallsForWeek(
     if (slots.some((s: any) => s.isTentative)) return false;
     // A completed call is an appointment that has exactly the per-call slot count
     if (slots.length !== slotsPerCall) return false;
-    // FIX: Use correct field names from API (startsAt, not slotStartTimeInUTC)
-    const start = new Date(slots[0].startsAt || slots[0].slotStartTimeInUTC);
+    const start = new Date(slots[0].startsAt);
     return start >= weekStart && start <= weekEnd;
   }).length;
 }

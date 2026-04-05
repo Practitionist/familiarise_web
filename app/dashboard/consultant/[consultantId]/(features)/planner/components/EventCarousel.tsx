@@ -369,7 +369,7 @@ export function EventCarousel({
         isOpen={showDeleteDialog}
         onConfirm={handleDeleteConfirm}
         onCancel={handleDeleteCancel}
-        title={`Delete ${eventType}?`}
+        title={`Delete ${eventType === "consultation" || eventType === "subscription" ? `${eventType} plan` : eventType}?`}
         description={`Are you sure you want to delete "${eventToDelete ? getEventTitle(eventToDelete) : ""}"? This action cannot be undone.`}
         isLoading={isDeleting}
         confirmText="Delete"

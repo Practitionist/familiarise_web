@@ -639,7 +639,10 @@ export async function getMyCollaborations(consultantProfileId: string) {
             language: true,
             level: true,
             consultantProfile: {
-              select: { user: { select: { name: true, image: true } } },
+              select: {
+                id: true,
+                user: { select: { name: true, image: true } },
+              },
             },
             collaborators: {
               where: { status: { in: ["PENDING", "ACCEPTED"] } },
@@ -701,7 +704,10 @@ export async function getMyCollaborations(consultantProfileId: string) {
             durationInMonths: true,
             totalSessions: true,
             consultantProfile: {
-              select: { user: { select: { name: true, image: true } } },
+              select: {
+                id: true,
+                user: { select: { name: true, image: true } },
+              },
             },
             collaborators: {
               where: { status: { in: ["PENDING", "ACCEPTED"] } },

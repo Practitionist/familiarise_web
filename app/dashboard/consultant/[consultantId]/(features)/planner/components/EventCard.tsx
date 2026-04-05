@@ -282,6 +282,8 @@ export function EventCard({
             variant="ghost"
             size="icon"
             className="h-8 w-8 sm:h-9 sm:w-9 bg-white/90 backdrop-blur-sm shadow-sm hover:bg-white border border-zinc-200/60"
+            aria-label={`Edit ${title}`}
+            title={`Edit ${title}`}
             onClick={(e) => {
               e.stopPropagation();
               onEdit();
@@ -293,6 +295,8 @@ export function EventCard({
             variant="ghost"
             size="icon"
             className="h-8 w-8 sm:h-9 sm:w-9 bg-white/90 backdrop-blur-sm shadow-sm hover:bg-red-50 border border-zinc-200/60"
+            aria-label={`Delete ${title}`}
+            title={`Delete ${title}`}
             onClick={(e) => {
               e.stopPropagation();
               onDelete();
@@ -393,13 +397,15 @@ export function EventCard({
         </div>
       )}
 
-      {/* Participants row */}
-      <div className="mt-3 flex items-center gap-1.5 text-xs sm:text-sm text-zinc-500">
-        <Users className="h-4 w-4" />
-        <span>
-          {participantCount}/{maxParticipants} participants
-        </span>
-      </div>
+      {/* Participants row - only for multi-participant event types */}
+      {(eventType === "webinar" || eventType === "class") && (
+        <div className="mt-3 flex items-center gap-1.5 text-xs sm:text-sm text-zinc-500">
+          <Users className="h-4 w-4" />
+          <span>
+            {participantCount}/{maxParticipants} participants
+          </span>
+        </div>
+      )}
 
       {/* Free Trial Button (subscription plans with trial enabled) */}
       {hasFreeTrialEnabled && onTrialsClick && (

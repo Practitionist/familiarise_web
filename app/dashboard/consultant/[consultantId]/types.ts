@@ -198,6 +198,8 @@ export type BadgeStyleMap = { [key: string]: string };
 export const BADGE_STYLES: BadgeStyleMap = {
   Completed: "bg-gray-400 text-white",
   Cancelled: "bg-stone-400 text-white",
+  "In Progress": "bg-emerald-600 text-white",
+  "Starting soon": "bg-amber-500 text-white",
   "Meeting in 5 min": "bg-red-500 text-white",
   Today: "bg-blue-600 text-white",
   Tomorrow: "bg-purple-500 text-white",

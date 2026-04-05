@@ -43,20 +43,26 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     const { searchParams } = new URL(req.url);
     const type = searchParams.get("type") as "webinar" | "class" | null;
     const status = searchParams.get("status") as RecordingStatus | null;
+    const search = searchParams.get("search") || undefined;
+    const page = parseInt(searchParams.get("page") || "1");
+    const limit = parseInt(searchParams.get("limit") || "12");
 
     // Get recordings with database-level filtering
-    const recordings = await RecordingService.getConsultantRecordings(
+    const { recordings, total } = await RecordingService.getConsultantRecordings(
       consultantId,
       {
         type: type || undefined,
         status: status || undefined,
+        search,
+        page,
+        limit,
       },
     );
 
     // Map recordings to response format with best URLs (async — presigned URLs)
     const formattedRecordings = await Promise.all(recordings.map(async (recording) => {
-      const appointment =
-        recording.meetingSession.slotOfAppointment.appointment;
+      const slot = recording.meetingSession.slotOfAppointment;
+      const appointment = slot.appointment;
 
       let planType: "webinar" | "class" | null = null;
       let planId: string | null = null;
@@ -72,6 +78,13 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         planTitle = appointment.class.classPlan.title;
       }
 
+      // Extract participant info from slot users
+      const allNames = slot.user
+        .map((u) => u.name)
+        .filter((n): n is string => n != null);
+      const participantNames = allNames.slice(0, 3);
+      const participantCount = allNames.length;
+
       return {
         id: recording.id,
         title: recording.title,
@@ -82,18 +95,25 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         playbackUrl: await RecordingTransferService.getBestRecordingUrl(recording),
         thumbnailUrl: recording.thumbnailUrl,
         resolution: recording.resolution,
+        fileSize: recording.fileSize ? Number(recording.fileSize) : null,
         streamUrlExpiresAt: recording.streamUrlExpiresAt,
         transferredAt: recording.transferredAt,
         planType,
         planId,
         planTitle,
+        participantNames,
+        participantCount,
+        appointmentDate: slot.startsAt,
         createdAt: recording.createdAt,
       };
     }));
 
     return NextResponse.json({
       recordings: formattedRecordings,
-      total: formattedRecordings.length,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
     });
   } catch (error) {
     console.error("Error getting consultant recordings:", error);

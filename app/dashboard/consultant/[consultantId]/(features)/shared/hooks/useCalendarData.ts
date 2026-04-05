@@ -54,9 +54,6 @@ export interface Appointment {
   slotsOfAppointment?: {
     startsAt: string;
     endsAt: string;
-    // Legacy field names for backwards compatibility
-    slotStartTimeInUTC?: string;
-    slotEndTimeInUTC?: string;
   }[];
   consultation?: any;
   subscription?: any;
@@ -331,12 +328,7 @@ export function useCalendarData(
         if (appt.slotsOfAppointment && Array.isArray(appt.slotsOfAppointment)) {
           appt.slotsOfAppointment = appt.slotsOfAppointment.filter(
             (slot: any) => {
-              // FIX: Check for BOTH new field names (startsAt/endsAt) AND old field names (slotStartTimeInUTC/slotEndTimeInUTC)
-              const hasNewFields = slot && slot.startsAt && slot.endsAt;
-              const hasOldFields =
-                slot && slot.slotStartTimeInUTC && slot.slotEndTimeInUTC;
-
-              if (!hasNewFields && !hasOldFields) {
+              if (!slot || !slot.startsAt || !slot.endsAt) {
                 console.warn(
                   `⚠️ fetchExistingAppointments: Filtering out invalid slot in appointment ${appt.id}`,
                   { slot },
@@ -399,7 +391,7 @@ export function useCalendarData(
     }
 
     try {
-      const data = await AllocationService.fetchEventSlots(eventType, eventId);
+      const data = await AllocationService.fetchEventSlots(eventType, eventId, consultantId);
 
       if (data && Array.isArray(data) && data.length > 0) {
         // Filter out cancelled/rejected appointments from event slots
@@ -435,9 +427,8 @@ export function useCalendarData(
           (appointment.slotsOfAppointment || [])
             .filter((slot: any) => !slot.isTentative)
             .flatMap((slot: any): TimeSlot[] => {
-              // FIX: Use correct field names from API (startsAt/endsAt)
-              const start = new Date(slot.startsAt || slot.slotStartTimeInUTC);
-              const end = new Date(slot.endsAt || slot.slotEndTimeInUTC);
+              const start = new Date(slot.startsAt);
+              const end = new Date(slot.endsAt);
               const durationMinutes =
                 (end.getTime() - start.getTime()) / (1000 * 60);
               const numIntervals = Math.round(durationMinutes / 30);
@@ -553,8 +544,8 @@ export function useCalendarData(
   const parsedAppointmentSlots = useMemo(() => {
     return existingAppointments.flatMap((appointment) =>
       (appointment.slotsOfAppointment || []).map((slt: any) => ({
-        start: new Date(slt.startsAt || slt.slotStartTimeInUTC).getTime(),
-        end: new Date(slt.endsAt || slt.slotEndTimeInUTC).getTime(),
+        start: new Date(slt.startsAt).getTime(),
+        end: new Date(slt.endsAt).getTime(),
         appointmentId: appointment.id,
         appointmentType: appointment.appointmentType,
         title: extractAppointmentTitle(appointment),

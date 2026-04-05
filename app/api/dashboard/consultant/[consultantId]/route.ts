@@ -18,9 +18,13 @@ const userSelectFields = {
 
 const appointmentInclude = {
   slotsOfAppointment: {
+    orderBy: { startsAt: "asc" as const },
     include: {
       user: {
         select: userSelectFields,
+      },
+      meetingSession: {
+        select: { id: true, endedAt: true },
       },
     },
   },
@@ -435,9 +439,11 @@ export async function GET(
         appointmentType: appointment.appointmentType,
         slotsOfAppointment: appointment.slotsOfAppointment.map((slot) => ({
           id: slot.id,
-          slotStartTimeInUTC: new Date(slot.startsAt),
-          slotEndTimeInUTC: slot.endsAt ? new Date(slot.endsAt) : null,
+          startsAt: slot.startsAt,
+          endsAt: slot.endsAt,
           isTentative: slot.isTentative,
+          completionStatus: slot.completionStatus,
+          meetingSession: slot.meetingSession ?? null,
           user: Array.isArray(slot.user)
             ? slot.user.map((u) => ({
                 id: u.id,
