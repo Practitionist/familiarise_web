@@ -316,7 +316,7 @@ export default function WaitlistsPage() {
                           position={entry.position}
                           variant="extended"
                         />
-                        {entry.totalWaiting !== null && (
+                        {entry.totalWaiting !== undefined && (
                           <span className="text-xs text-gray-400">
                             of {entry.totalWaiting}
                           </span>

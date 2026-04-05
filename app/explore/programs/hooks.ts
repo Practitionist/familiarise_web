@@ -17,6 +17,39 @@ import {
   type TopicWithCount,
 } from "./utils";
 
+// --- API response types ---
+
+interface WebinarWithAppointment {
+  appointment?: {
+    slotsOfAppointment?: { user?: { id: string }[] }[];
+  } | null;
+}
+
+interface ClassPlanApiItem {
+  id: string;
+  classes?: ClassInstance[];
+  imageUrl?: string | null;
+  [key: string]: unknown;
+}
+
+interface WebinarPlanApiItem {
+  id: string;
+  webinars?: WebinarWithAppointment[];
+  imageUrl?: string | null;
+  [key: string]: unknown;
+}
+
+type PlanApiItem = ClassPlanApiItem | WebinarPlanApiItem;
+
+interface PlanApiResponse {
+  data?: PlanApiItem[];
+  meta?: ApiMeta;
+}
+
+interface TopicsApiResponse {
+  data?: TopicWithCount[];
+}
+
 // Build query string from filter params
 function buildFilterParams(filters: ProgramFilters): string {
   const params = new URLSearchParams();
@@ -35,15 +68,11 @@ function buildFilterParams(filters: ProgramFilters): string {
   return str ? `&${str}` : "";
 }
 
-type FetchJsonResponse = { data?: Array<Record<string, unknown>>; meta?: ApiMeta };
+const fetchPlans = (url: string): Promise<PlanApiResponse> =>
+  fetch(url).then((res) => res.json());
 
-const fetchJson = (url: string): Promise<FetchJsonResponse> => fetch(url).then((res) => res.json());
-
-interface WebinarWithAppointment {
-  appointment?: {
-    slotsOfAppointment?: { user?: { id: string }[] }[];
-  } | null;
-}
+const fetchTopics = (url: string): Promise<TopicsApiResponse> =>
+  fetch(url).then((res) => res.json());
 
 interface UseProgramsOptions {
   userId?: string | null;
@@ -86,7 +115,7 @@ export function usePrograms(
       }
 
       const responses = await Promise.all(
-        requests.map((url) => fetchJson(url)),
+        requests.map((url) => fetchPlans(url)),
       );
 
       let combinedPrograms: Program[] = [];
@@ -98,8 +127,8 @@ export function usePrograms(
         if (classResponse.data) {
           const formattedClasses = classResponse.data.map(
             (plan): ClassPlanProgram => {
-              const typedPlan = plan as Record<string, unknown> & { id: string; classes?: ClassInstance[]; imageUrl?: string | null };
-              const classes = (typedPlan.classes || []) as ClassInstance[];
+              const typedPlan = plan as ClassPlanApiItem;
+              const classes = typedPlan.classes || [];
               const appointments = classes.flatMap(
                 (c) => c.appointments ?? [],
               );
@@ -134,8 +163,8 @@ export function usePrograms(
           if (webinarResponse.data) {
             const formattedWebinars = webinarResponse.data.map(
               (plan): WebinarPlanProgram => {
-                const typedPlan = plan as Record<string, unknown> & { id: string; webinars?: WebinarWithAppointment[]; imageUrl?: string | null };
-                const webinars = (typedPlan.webinars || []) as WebinarWithAppointment[];
+                const typedPlan = plan as WebinarPlanApiItem;
+                const webinars = typedPlan.webinars || [];
                 const isRegistered =
                   userId && webinars.length > 0
                     ? isUserRegisteredForWebinar(webinars, userId)
@@ -229,18 +258,18 @@ export function useCuratedPrograms(
   const { data, isLoading } = useQuery({
     queryKey: ["curated-programs", programType, sort, limit],
     queryFn: async () => {
-      const requests: Promise<FetchJsonResponse>[] = [];
+      const requests: Promise<PlanApiResponse>[] = [];
 
       if (programType === "all" || programType === "class") {
         requests.push(
-          fetchJson(
+          fetchPlans(
             `/api/plans/classes?page=1&limit=${limit}&include=classes&sort=${sort}`,
           ),
         );
       }
       if (programType === "all" || programType === "webinar") {
         requests.push(
-          fetchJson(`/api/plans/webinars?page=1&limit=${limit}&sort=${sort}`),
+          fetchPlans(`/api/plans/webinars?page=1&limit=${limit}&sort=${sort}`),
         );
       }
 
@@ -254,10 +283,10 @@ export function useCuratedPrograms(
         programs.push(
           ...responses[0].data.map(
             (plan): ClassPlanProgram => {
-              const typedPlan = plan as Record<string, unknown> & { id: string; classes?: ClassInstance[]; imageUrl?: string | null };
+              const typedPlan = plan as ClassPlanApiItem;
               return {
                 ...typedPlan,
-                classes: (typedPlan.classes || []) as ClassInstance[],
+                classes: typedPlan.classes || [],
                 type: "class",
                 imageUrl: generateProgramImageUrl(
                   typedPlan.id,
@@ -279,10 +308,10 @@ export function useCuratedPrograms(
         programs.push(
           ...responses[webIdx].data.map(
             (plan): WebinarPlanProgram => {
-              const typedPlan = plan as Record<string, unknown> & { id: string; webinars?: WebinarWithAppointment[]; imageUrl?: string | null };
+              const typedPlan = plan as WebinarPlanApiItem;
               return {
                 ...typedPlan,
-                webinars: (typedPlan.webinars || []) as WebinarWithAppointment[],
+                webinars: typedPlan.webinars || [],
                 type: "webinar",
                 imageUrl: generateProgramImageUrl(
                   typedPlan.id,
@@ -318,10 +347,10 @@ export function useTopicsWithCount(planType: ProgramType = "all") {
   const { data, isLoading } = useQuery({
     queryKey: ["topics-with-count", planType],
     queryFn: async () => {
-      const res = await fetchJson(
+      const res = await fetchTopics(
         `/api/topics?withProgramCount=true&planType=${planType}`,
       );
-      return (res.data || []) as unknown as TopicWithCount[];
+      return res.data || [];
     },
     staleTime: 10 * 60 * 1000,
     gcTime: 30 * 60 * 1000,

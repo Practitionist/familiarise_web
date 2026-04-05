@@ -10,6 +10,22 @@ import { AppointmentsType, RequestStatus } from "@prisma/client";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
+interface ConsultationRequestItem {
+  id: string;
+  consultationPlan?: { title?: string };
+  requestedBy: { user: { name: string } };
+  requestedAt: string;
+  requestStatus: string;
+}
+
+interface SubscriptionRequestItem {
+  id: string;
+  subscriptionPlan?: { title?: string };
+  requestedBy: { user: { name: string } };
+  requestedAt: string;
+  requestStatus: string;
+}
+
 interface Request {
   id: string;
   type: AppointmentsType;
@@ -47,7 +63,7 @@ export function RequestSlotAllocationTabMini() {
         if (consultationsRes.ok) {
           const data = await consultationsRes.json();
           requests.push(
-            ...data.data.map((c: { id: string; consultationPlan?: { title?: string }; requestedBy: { user: { name: string } }; requestedAt: string; requestStatus: string }) => ({
+            ...data.data.map((c: ConsultationRequestItem) => ({
               id: c.id,
               type: AppointmentsType.CONSULTATION,
               title: c.consultationPlan?.title || "Untitled Plan",
@@ -61,7 +77,7 @@ export function RequestSlotAllocationTabMini() {
         if (subscriptionsRes.ok) {
           const data = await subscriptionsRes.json();
           requests.push(
-            ...data.data.map((s: { id: string; subscriptionPlan?: { title?: string }; requestedBy: { user: { name: string } }; requestedAt: string; requestStatus: string }) => ({
+            ...data.data.map((s: SubscriptionRequestItem) => ({
               id: s.id,
               type: AppointmentsType.SUBSCRIPTION,
               title: s.subscriptionPlan?.title || "Untitled Plan",

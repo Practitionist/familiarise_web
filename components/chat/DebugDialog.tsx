@@ -61,6 +61,11 @@ interface DebugData {
   };
 }
 
+interface DebugSectionProps {
+  title: string;
+  data: unknown;
+}
+
 export const DebugDialog = ({
   userId,
   variant = "outline",
@@ -244,7 +249,7 @@ export const DebugDialog = ({
     </div>
   );
 
-  const DebugSection = ({ title, data }: { title: string; data: unknown }) => (
+  const DebugSection = ({ title, data }: DebugSectionProps) => (
     <div className="space-y-2">
       <h4 className="font-semibold text-gray-900 dark:text-gray-100">
         {title}

@@ -169,7 +169,7 @@ export default function ConsultationPricingToggle({
         consultationPlanId: activePlan.id,
       };
 
-      if ((selectedSlot as TSlotTiming & { type?: string }).type === "WEEKLY") {
+      if (selectedSlot.type === "WEEKLY") {
         requestBody.slotOfAvailabilityWeeklyId =
           selectedSlot.slotOfAvailabilityId;
       } else {
