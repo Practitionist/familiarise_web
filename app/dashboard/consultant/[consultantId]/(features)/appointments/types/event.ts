@@ -6,8 +6,8 @@ export interface User {
 
 export interface SlotOfAppointment {
   id: string;
-  slotStartTimeInUTC: Date;
-  slotEndTimeInUTC: Date;
+  startsAt: Date;
+  endsAt: Date;
   user: User[];
 }
 

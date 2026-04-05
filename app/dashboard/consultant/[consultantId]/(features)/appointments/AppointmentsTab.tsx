@@ -64,6 +64,7 @@ import {
   getParticipantManagementUrl,
   supportsParticipantManagement,
 } from "./utils/participantHelpers";
+import { getJoinableSlot } from "../../utils/joinState";
 
 export function AppointmentsTab({
   appointments,
@@ -164,7 +165,10 @@ export function AppointmentsTab({
     return getBadgeStyle(status);
   };
 
-  const handleJoinMeeting = async (appointment: TAppointment) => {
+  const handleJoinMeeting = async (
+    appointment: TAppointment,
+    joinableSlot?: TAppointment["slotsOfAppointment"][number],
+  ) => {
     if (!client) {
       console.warn("Stream client not ready");
       toast({
@@ -175,7 +179,8 @@ export function AppointmentsTab({
       });
       return;
     }
-    const relevantSlot = appointment.slotsOfAppointment?.[0];
+    const relevantSlot =
+      joinableSlot ?? appointment.slotsOfAppointment?.[0];
     if (!relevantSlot) {
       toast({
         title: "Error",
@@ -815,11 +820,16 @@ export function AppointmentsTab({
                               {visibleAppointments.map((appointment) => {
                                 const status =
                                   getAppointmentStatus(appointment);
-                                const isJoinable =
-                                  status === "Meeting in 5 min";
-                                const joinButtonStyle = isJoinable
-                                  ? "bg-black text-white hover:bg-gray-800"
-                                  : "bg-gray-400 text-white cursor-not-allowed";
+                                const joinableSlot = getJoinableSlot(
+                                  appointment.slotsOfAppointment ?? [],
+                                );
+                                const isJoinable = joinableSlot !== null;
+                                const isDev =
+                                  process.env.NODE_ENV !== "production";
+                                const joinButtonStyle =
+                                  isDev || isJoinable
+                                    ? "bg-black text-white hover:bg-gray-800"
+                                    : "bg-gray-400 text-white cursor-not-allowed";
 
                                 // Check if this is a one-off event (consultation or webinar)
                                 const isOneOffEvent =
@@ -976,14 +986,21 @@ export function AppointmentsTab({
                                               variant="default"
                                               size="sm"
                                               className={`${joinButtonStyle} h-8 px-4 text-xs`}
-                                              disabled={!isJoinable}
+                                              disabled={
+                                                isDev ? false : !isJoinable
+                                              }
                                               onClick={() =>
-                                                handleJoinMeeting(appointment)
+                                                handleJoinMeeting(
+                                                  appointment,
+                                                  joinableSlot ?? undefined,
+                                                )
                                               }
                                             >
-                                              {isJoinable
-                                                ? "Join meet"
-                                                : "Not available"}
+                                              {isDev
+                                                ? "Join (Dev)"
+                                                : isJoinable
+                                                  ? "Join Meeting"
+                                                  : "Not available"}
                                             </Button>
                                           )}
                                       </div>

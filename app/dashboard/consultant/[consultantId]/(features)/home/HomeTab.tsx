@@ -58,6 +58,7 @@ import {
 
 import { getBadgeStyle } from "../../types";
 import { TAppointment } from "@/types/appointment";
+import { getJoinableSlot } from "../../utils/joinState";
 import { getInitials, formatCurrencyAmount } from "@/utils/formatting";
 import { RequestSlotAllocationTabMini } from "../requests/RequestSlotAllocationTabMini";
 
@@ -275,12 +276,16 @@ export function HomeTab({
   const client = useStreamVideoClient();
   const { toast } = useToast();
 
-  const handleJoinMeeting = async (appointment: TAppointment) => {
+  const handleJoinMeeting = async (
+    appointment: TAppointment,
+    joinableSlot?: TAppointment["slotsOfAppointment"][number],
+  ) => {
     if (!client) {
       toast({ title: "Error", description: "Meeting client not ready." });
       return;
     }
-    const relevantSlot = appointment.slotsOfAppointment?.[0];
+    const relevantSlot =
+      joinableSlot ?? appointment.slotsOfAppointment?.[0];
     if (!relevantSlot) {
       toast({
         title: "Error",
@@ -451,7 +456,12 @@ export function HomeTab({
                       const userName = getConsumeeName(appointment);
                       const status = getAppointmentStatus(appointment);
                       const startTime = getStartTime(appointment);
-                      const isJoinable = status === "Meeting in 5 min";
+                      const joinableSlot = getJoinableSlot(
+                        appointment.slotsOfAppointment ?? [],
+                      );
+                      const isJoinable = joinableSlot !== null;
+                      const isDev =
+                        process.env.NODE_ENV !== "production";
 
                       return (
                         <div
@@ -507,17 +517,25 @@ export function HomeTab({
                             {status}
                           </Badge>
 
-                          {isJoinable && (
+                          {(isDev || isJoinable) && (
                             <TooltipProvider>
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <Button
-                                    onClick={() => handleJoinMeeting(appointment)}
+                                    onClick={() =>
+                                      handleJoinMeeting(
+                                        appointment,
+                                        joinableSlot ?? undefined,
+                                      )
+                                    }
                                     className="flex-shrink-0 bg-zinc-900 hover:bg-zinc-800 text-white gap-1.5"
                                     size="sm"
+                                    disabled={isDev ? false : !isJoinable}
                                   >
                                     <Video className="h-3.5 w-3.5" />
-                                    Join
+                                    {isDev
+                                      ? "Join (Dev)"
+                                      : "Join"}
                                   </Button>
                                 </TooltipTrigger>
                                 <TooltipContent>

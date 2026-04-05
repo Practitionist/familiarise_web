@@ -338,6 +338,9 @@ async function getAppointments(
       slotsOfAppointment: {
         include: {
           user: true,
+          meetingSession: {
+            select: { id: true, endedAt: true },
+          },
         },
       },
       consultation: {

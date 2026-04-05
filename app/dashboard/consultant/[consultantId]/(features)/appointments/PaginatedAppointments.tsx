@@ -17,6 +17,7 @@ import {
   getStartTime,
 } from "../../utils/appointmentHelpers";
 import { canManageAppointmentTimings } from "./utils/appointmentTimingHelpers";
+import { getJoinableSlot } from "../../utils/joinState";
 
 interface PaginatedAppointmentsProps {
   appointments: TAppointment[];
@@ -67,7 +68,11 @@ export function PaginatedAppointments({
         {paginatedData.map((appointment) => {
           const userName = getConsumeeName(appointment);
           const status = getAppointmentStatus(appointment);
-          const isJoinable = status === "Meeting in 5 min";
+          const joinableSlot = getJoinableSlot(
+            appointment.slotsOfAppointment ?? [],
+          );
+          const isJoinable = joinableSlot !== null;
+          const isDev = process.env.NODE_ENV !== "production";
 
           return (
             <div
@@ -128,13 +133,17 @@ export function PaginatedAppointments({
                       variant="default"
                       size="sm"
                       className={
-                        isJoinable
+                        isDev || isJoinable
                           ? "bg-blue-600 text-white hover:bg-blue-700"
                           : "bg-gray-400 text-white cursor-not-allowed"
                       }
-                      disabled={!isJoinable}
+                      disabled={isDev ? false : !isJoinable}
                     >
-                      {isJoinable ? "Join" : "Chat"}
+                      {isDev
+                        ? "Join (Dev)"
+                        : isJoinable
+                          ? "Join Meeting"
+                          : "Not available"}
                     </Button>
                   </div>
                 </div>
