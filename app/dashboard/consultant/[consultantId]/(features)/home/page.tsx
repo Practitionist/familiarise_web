@@ -90,6 +90,7 @@ export default function HomePage({
         consultantName={consultantName}
         pendingRequestsCount={dashboardData.approvals?.length ?? 0}
         performanceSnapshot={dashboardData.performanceSnapshot}
+        financialSummary={dashboardData.financialSummary}
       />
     </DashboardErrorBoundary>
   );

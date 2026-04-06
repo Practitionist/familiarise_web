@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
+import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
 
 // =============================================================================
 // Prisma Query Types - Derived from actual query shape for type safety
@@ -330,6 +331,8 @@ export async function GET(
       ratingAgg,
       slotCounts,
       trialCounts,
+      netEarningsAgg,
+      readyEarningsAgg,
     ] = await Promise.all([
       // Fetch approved appointments for consultations, subscriptions, webinars, and classes
       prisma.appointment.findMany({
@@ -475,6 +478,23 @@ export async function GET(
         by: ["status"],
         _count: true,
         where: { consultantProfileId },
+      }),
+      // --- Financial Summary Queries ---
+      // 5. Net earnings (all-time, excluding refunded)
+      prisma.consultantEarnings.aggregate({
+        _sum: { consultantShare: true },
+        where: {
+          consultantProfileId,
+          status: { not: "REFUNDED" },
+        },
+      }),
+      // 6. Ready earnings (eligible for next payout)
+      prisma.consultantEarnings.aggregate({
+        _sum: { consultantShare: true },
+        where: {
+          consultantProfileId,
+          status: "READY",
+        },
       }),
     ]);
 
@@ -677,6 +697,49 @@ export async function GET(
         ? Math.round((convertedTrials / trialDenom) * 100)
         : 0;
 
+    // --- Financial Summary derived values ---
+    const netEarningsVal = netEarningsAgg._sum.consultantShare ?? 0;
+    const readyEarningsVal = readyEarningsAgg._sum.consultantShare ?? 0;
+    const payoutMinimum = PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT;
+    const payoutEligible = readyEarningsVal >= payoutMinimum;
+
+    // Active clients: unique consultees with ongoing (non-completed, non-cancelled) appointments
+    const activeClientIds = new Set<string>();
+    for (const apt of sortedAppointments) {
+      const isCompleted = apt.slotsOfAppointment.every(
+        (s) => s.completionStatus === "COMPLETED" || s.completionStatus === "CANCELLED",
+      );
+      if (isCompleted) continue;
+      const consulteeId =
+        apt.consultation?.requestedBy?.id ??
+        apt.subscription?.requestedBy?.id;
+      if (consulteeId) activeClientIds.add(consulteeId);
+    }
+
+    // Active programs: unique ongoing subscriptions + classes
+    const activeSubIds = new Set<string>();
+    const activeClassIds = new Set<string>();
+    for (const apt of sortedAppointments) {
+      const isCompleted = apt.slotsOfAppointment.every(
+        (s) => s.completionStatus === "COMPLETED" || s.completionStatus === "CANCELLED",
+      );
+      if (isCompleted) continue;
+      if (apt.subscription?.id) activeSubIds.add(apt.subscription.id);
+      if (apt.class?.id) activeClassIds.add(apt.class.id);
+    }
+
+    const financialSummary = {
+      netEarnings: netEarningsVal,
+      nextPayout: readyEarningsVal,
+      payoutStatus: payoutEligible
+        ? "Ready"
+        : readyEarningsVal > 0
+          ? `${readyEarningsVal} / ${payoutMinimum} paise`
+          : "No ready earnings yet",
+      activeClients: activeClientIds.size,
+      activePrograms: activeSubIds.size + activeClassIds.size,
+    };
+
     // Return consolidated response
     return NextResponse.json({
       success: true,
@@ -693,6 +756,7 @@ export async function GET(
           totalReviews: ratingAgg._count.rating,
           trialConversionRate,
         },
+        financialSummary,
       },
     });
   } catch (error) {

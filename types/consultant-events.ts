@@ -41,12 +41,22 @@ export interface TPerformanceSnapshot {
   trialConversionRate: number;
 }
 
+// Financial summary for consultant dashboard home
+export interface TFinancialSummary {
+  netEarnings: number;
+  nextPayout: number;
+  payoutStatus: string;
+  activeClients: number;
+  activePrograms: number;
+}
+
 // Full API response type for consultant dashboard
 export interface TConsultantDashboardResponse {
   appointments: TAppointment[];
   activities: TConsultantActivity[];
   approvals: TConsultantApproval[];
   performanceSnapshot: TPerformanceSnapshot;
+  financialSummary: TFinancialSummary;
 }
 
 // API wrapper response
