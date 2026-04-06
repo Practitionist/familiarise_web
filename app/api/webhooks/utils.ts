@@ -3,12 +3,7 @@ import { Prisma, PaymentGateway } from "@prisma/client";
 import crypto from "crypto";
 import { stripeClient } from "@/lib/payments/core/stripe";
 import { razorpayClient } from "@/lib/payments/core/razorpay";
-import {
-  handlePayoutWebhook,
-  refundEarnings,
-  holdEarnings,
-  releaseHeldEarnings,
-} from "@/lib/payments/payouts";
+import { handlePayoutWebhook, refundEarnings } from "@/lib/payments/payouts";
 import {
   notifyRefundProcessed,
   notifyDisputeCreated,
@@ -72,6 +67,10 @@ export async function verifyWebhookSignature(
         .update(body)
         .digest("hex");
       // H1 FIX: Use timing-safe comparison to prevent timing attacks on HMAC
+      // Validate hex length before Buffer.from (odd-length strings get truncated)
+      if (signature.length !== 64) {
+        return { isValid: false, body };
+      }
       const sigBuf = Buffer.from(signature, "hex");
       const expectedBuf = Buffer.from(expectedSignature, "hex");
       if (sigBuf.length !== expectedBuf.length) {
@@ -344,24 +343,16 @@ export async function handleDisputeCreated(
     console.log(`✅ Dispute ${disputeId} created for payment ${payment.id}`);
 
     // M1 FIX: Hold consultant earnings to prevent payout of disputed funds
-    const earningsToHold = await tx.consultantEarnings.findMany({
+    const heldResult = await tx.consultantEarnings.updateMany({
       where: {
         paymentId: payment.id,
         status: { in: ["PENDING", "READY"] },
       },
-      select: { id: true },
+      data: { status: "HELD" },
     });
-    // holdEarnings runs outside the transaction (uses global prisma)
-    // so we collect IDs here and hold after the transaction commits.
-    // For now, hold inline — the function is fast (single update per earning).
-    for (const earning of earningsToHold) {
-      // Update directly inside the transaction for atomicity
-      await tx.consultantEarnings.update({
-        where: { id: earning.id },
-        data: { status: "HELD" },
-      });
+    if (heldResult.count > 0) {
       console.log(
-        `🔒 Earnings ${earning.id} held due to dispute ${disputeId}`,
+        `🔒 ${heldResult.count} earnings held due to dispute ${disputeId}`,
       );
     }
 
@@ -395,51 +386,64 @@ export async function handleDisputeUpdated(
       return;
     }
 
+    const mappedStatus = mapDisputeStatus(status);
+
     await tx.dispute.update({
       where: { disputeId },
       data: {
-        status: mapDisputeStatus(status),
+        status: mappedStatus,
         ...(evidence && { evidence: evidence as Prisma.InputJsonValue }),
         updatedAt: new Date(),
       },
     });
 
-    console.log(`✅ Dispute ${disputeId} updated to status ${status}`);
+    console.log(`✅ Dispute ${disputeId} updated to status ${mappedStatus}`);
 
     // M1 FIX: Release or refund earnings based on dispute resolution
-    const mappedStatus = mapDisputeStatus(status);
     if (mappedStatus === "WON" || mappedStatus === "WARNING_CLOSED") {
       // Dispute resolved in platform's favor — release held earnings back to READY
-      const heldEarnings = await tx.consultantEarnings.findMany({
+      const released = await tx.consultantEarnings.updateMany({
         where: { paymentId: dispute.paymentId, status: "HELD" },
-        select: { id: true },
+        data: { status: "READY" },
       });
-      for (const earning of heldEarnings) {
-        await tx.consultantEarnings.update({
-          where: { id: earning.id },
-          data: { status: "READY" },
-        });
-        console.log(`🔓 Earnings ${earning.id} released — dispute ${disputeId} won`);
+      if (released.count > 0) {
+        console.log(`🔓 ${released.count} earnings released — dispute ${disputeId} won`);
       }
     } else if (mappedStatus === "LOST" || mappedStatus === "CHARGE_REFUNDED") {
-      // Dispute lost — mark held earnings as REFUNDED
+      // Dispute lost — mark held earnings as REFUNDED, accounting for partial refunds
       const heldEarnings = await tx.consultantEarnings.findMany({
         where: { paymentId: dispute.paymentId, status: "HELD" },
-        select: { id: true, consultantShare: true, consultantProfileId: true },
+        select: {
+          id: true,
+          consultantShare: true,
+          refundedShareAmount: true,
+          consultantProfileId: true,
+        },
       });
       for (const earning of heldEarnings) {
+        const alreadyRefunded = earning.refundedShareAmount ?? 0;
+        const remainingRefundable = Math.max(
+          earning.consultantShare - alreadyRefunded,
+          0,
+        );
+
         await tx.consultantEarnings.update({
           where: { id: earning.id },
           data: {
             status: "REFUNDED",
-            refundedShareAmount: earning.consultantShare,
+            ...(remainingRefundable > 0
+              ? { refundedShareAmount: { increment: remainingRefundable } }
+              : {}),
           },
         });
-        await tx.consultantProfile.update({
-          where: { id: earning.consultantProfileId },
-          data: { pendingRevenue: { decrement: earning.consultantShare } },
-        });
-        console.log(`💸 Earnings ${earning.id} refunded — dispute ${disputeId} lost`);
+
+        if (remainingRefundable > 0) {
+          await tx.consultantProfile.update({
+            where: { id: earning.consultantProfileId },
+            data: { pendingRevenue: { decrement: remainingRefundable } },
+          });
+        }
+        console.log(`💸 Earnings ${earning.id} refunded (${remainingRefundable} paise) — dispute ${disputeId} lost`);
       }
     }
 
@@ -558,7 +562,28 @@ export async function logWebhookEvent(
         return { isNew: true, eventRecordId: existing.id };
       }
 
-      // Currently being processed (processed=false, no error) — skip
+      // Currently being processed (processed=false, no error).
+      // Add staleness check: if the event has been "in progress" for > 5 minutes,
+      // treat it as abandoned (e.g., after() callback didn't run due to crash)
+      // and allow reprocessing.
+      const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+      const age = Date.now() - new Date(existing.receivedAt).getTime();
+      if (age > STALE_THRESHOLD_MS) {
+        console.log(
+          `🔄 Webhook event ${eventId} stale (in-progress for ${Math.round(age / 1000)}s), allowing retry`,
+        );
+        await prisma.webhookEvent.update({
+          where: { eventId },
+          data: {
+            processed: false,
+            processedAt: null,
+            error: null,
+            payload: payload as Prisma.InputJsonValue,
+          },
+        });
+        return { isNew: true, eventRecordId: existing.id };
+      }
+
       console.log(
         `⚠️ Webhook event ${eventId} currently being processed, skipping`,
       );

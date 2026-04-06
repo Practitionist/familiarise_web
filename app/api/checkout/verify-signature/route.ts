@@ -14,9 +14,9 @@ import { getSession } from "@/lib/auth-server";
 import { z } from "zod";
 
 const verifySignatureSchema = z.object({
-  razorpay_order_id: z.string().min(1),
-  razorpay_payment_id: z.string().min(1),
-  razorpay_signature: z.string().min(1),
+  razorpay_order_id: z.string().startsWith("order_"),
+  razorpay_payment_id: z.string().startsWith("pay_"),
+  razorpay_signature: z.string().length(64).regex(/^[0-9a-fA-F]+$/),
 });
 
 export async function POST(req: NextRequest) {
@@ -77,16 +77,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // If payment is still PENDING, mark as SUCCEEDED (webhook will be idempotent)
-    if (payment.paymentStatus === "PENDING") {
-      await prisma.payment.update({
-        where: { id: payment.id },
-        data: {
-          paymentStatus: "SUCCEEDED",
-          paymentMethod: "razorpay",
-          description: `Verified via signature (payment: ${razorpay_payment_id})`,
-        },
-      });
+    // Atomically update only if still PENDING (prevents race with webhook handler)
+    const updated = await prisma.payment.updateMany({
+      where: {
+        id: payment.id,
+        paymentStatus: "PENDING",
+      },
+      data: {
+        paymentStatus: "SUCCEEDED",
+        paymentMethod: "razorpay",
+        description: `Verified via signature (payment: ${razorpay_payment_id})`,
+      },
+    });
+
+    if (updated.count > 0) {
       console.log(
         `✅ Payment ${payment.id} marked SUCCEEDED via signature verification (before webhook)`,
       );

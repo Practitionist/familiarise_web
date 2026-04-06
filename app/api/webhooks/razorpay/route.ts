@@ -42,9 +42,24 @@ export async function POST(req: NextRequest) {
   );
 
   if (!isValid) {
-    // If a separate RazorpayX secret is configured, try re-verifying.
-    // We still have the raw body from the failed attempt and the signature header.
-    if (razorpayXSecret && razorpayXSecret !== secret) {
+    // M2 FIX: Only allow RazorpayX secret fallback for payout.* events.
+    // Parse the body to check event type before re-verifying — this prevents
+    // non-payout events from being accepted with the RazorpayX secret.
+    let isPossiblyPayoutEvent = false;
+    try {
+      const parsed = JSON.parse(body);
+      isPossiblyPayoutEvent =
+        typeof parsed.event === "string" &&
+        parsed.event.startsWith("payout.");
+    } catch {
+      // Can't parse — not a valid webhook, reject
+    }
+
+    if (
+      isPossiblyPayoutEvent &&
+      razorpayXSecret &&
+      razorpayXSecret !== secret
+    ) {
       const signature = req.headers.get("x-razorpay-signature");
       if (signature) {
         const crypto = await import("crypto");
@@ -64,7 +79,7 @@ export async function POST(req: NextRequest) {
             { status: 400 },
           );
         }
-        // RazorpayX signature valid — continue processing
+        // RazorpayX signature valid for payout event — continue processing
       } else {
         return NextResponse.json(
           { error: "Invalid signature" },

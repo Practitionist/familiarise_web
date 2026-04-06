@@ -162,9 +162,15 @@ export default function RazorpayCheckout({
             if (!verifyRes.ok) {
               const err = await verifyRes.json();
               console.error("Payment signature verification failed:", err);
-              // Still call success — webhook is authoritative; log the failure
+              onPaymentError({
+                description:
+                  "Payment verification failed. Our team will review this transaction.",
+                code: "VERIFICATION_FAILED",
+              });
+              return;
             }
           } catch (verifyErr) {
+            // Network failure — don't block; webhook is the ultimate authority
             console.error("Signature verification request failed:", verifyErr);
           }
           onPaymentSuccess(response);

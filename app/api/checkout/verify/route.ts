@@ -24,31 +24,6 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // If sync requested and this is a Razorpay order, fetch latest status
-    if (shouldSync && paymentIntent.startsWith("order_") && razorpayClient) {
-      try {
-        const rzpOrder = await razorpayClient.orders.fetch(paymentIntent);
-        if (rzpOrder.status === "paid") {
-          // Update our DB if still PENDING
-          await prisma.payment.updateMany({
-            where: {
-              paymentIntent,
-              paymentStatus: "PENDING",
-            },
-            data: {
-              paymentStatus: "SUCCEEDED",
-              description: "Synced from Razorpay API (on-demand)",
-            },
-          });
-        }
-      } catch (syncError) {
-        console.warn(
-          `Failed to sync payment status from Razorpay for ${paymentIntent}:`,
-          syncError,
-        );
-      }
-    }
-
     // Find payment record with appointment details
     const payment = await prisma.payment.findUnique({
       where: { paymentIntent },
@@ -94,6 +69,40 @@ export async function GET(req: NextRequest) {
         { error: "Unauthorized access to payment" },
         { status: 403 },
       );
+    }
+
+    // L4 FIX: On-demand sync — fetch latest status from Razorpay API
+    // Placed AFTER ownership check to prevent unauthorized status updates
+    if (
+      shouldSync &&
+      payment.paymentStatus === "PENDING" &&
+      paymentIntent.startsWith("order_") &&
+      razorpayClient
+    ) {
+      try {
+        const rzpOrder = await razorpayClient.orders.fetch(paymentIntent);
+        if (rzpOrder.status === "paid") {
+          await prisma.payment.updateMany({
+            where: { paymentIntent, paymentStatus: "PENDING" },
+            data: {
+              paymentStatus: "SUCCEEDED",
+              description: "Synced from Razorpay API (on-demand)",
+            },
+          });
+          // Re-read payment to reflect updated status
+          const updated = await prisma.payment.findUnique({
+            where: { paymentIntent },
+          });
+          if (updated) {
+            (payment as typeof updated).paymentStatus = updated.paymentStatus;
+          }
+        }
+      } catch (syncError) {
+        console.warn(
+          `Failed to sync payment status from Razorpay for ${paymentIntent}:`,
+          syncError,
+        );
+      }
     }
 
     // Check payment status
