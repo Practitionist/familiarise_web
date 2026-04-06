@@ -32,7 +32,7 @@ import {
 import {
   buildSyntheticClassAppointment,
   buildSyntheticWebinarAppointment,
-  SyntheticAppointment,
+  PartialAppointment,
 } from "./utils/syntheticAppointments";
 import { UnscheduledEventCard } from "./components/UnscheduledEventCard";
 import { TAppointment } from "@/types/appointment";
@@ -79,7 +79,7 @@ export function AppointmentsTab({
   const [joiningTrialId, setJoiningTrialId] = useState<string | null>(null);
   const searchParams = useSearchParams();
   const [selectedAppointment, setSelectedAppointment] =
-    useState<TAppointment | SyntheticAppointment | null>(null);
+    useState<TAppointment | PartialAppointment | null>(null);
   const [selectedGroupProgress, setSelectedGroupProgress] = useState<{
     completedSessions: number;
     totalSessions: number;
