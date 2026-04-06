@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 
 import {
   classifyError,
-  logClassifiedError,
 } from "@/lib/errors/classification/payment-error-classification";
 
 interface IApiErrorOptions {

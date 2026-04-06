@@ -120,7 +120,7 @@ export async function PUT(
         classContents: body.classContents
           ? {
               deleteMany: {},
-              create: body.classContents.map((content: any) => ({
+              create: body.classContents.map((content: Prisma.ClassContentCreateWithoutClassPlanInput) => ({
                 title: content.title,
                 description: content.description,
                 contentType: content.contentType,

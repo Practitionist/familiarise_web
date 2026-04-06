@@ -12,15 +12,12 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/use-toast";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Loader2,
-  Wifi,
   WifiOff,
   Video,
   MessageSquare,
-  Users,
-  Clock,
   RefreshCw,
   AlertTriangle,
   CheckCircle,
@@ -28,6 +25,7 @@ import {
 } from "lucide-react";
 import { useStreamConnection } from "@/providers/StreamProvider";
 import { useChatContext } from "stream-chat-react";
+import type { Event } from "stream-chat";
 
 interface DebugDialogProps {
   userId: string;
@@ -35,12 +33,25 @@ interface DebugDialogProps {
   className?: string;
 }
 
+interface DebugUser {
+  id: string;
+  role: string;
+  name?: string;
+  [key: string]: unknown;
+}
+
+interface DebugChannel {
+  id: string;
+  type: string;
+  [key: string]: unknown;
+}
+
 interface DebugData {
   success: boolean;
-  user: any;
+  user: DebugUser;
   stream: {
     channelCount: number;
-    channels: any[];
+    channels: DebugChannel[];
   };
   database: {
     consultations: number;
@@ -48,6 +59,11 @@ interface DebugData {
     webinars: number;
     classes: number;
   };
+}
+
+interface DebugSectionProps {
+  title: string;
+  data: unknown;
 }
 
 export const DebugDialog = ({
@@ -74,7 +90,7 @@ export const DebugDialog = ({
     lastActivity: new Date(),
   });
 
-  const handleDebug = async () => {
+  const handleDebug = useCallback(async () => {
     setIsLoading(true);
     const startTime = Date.now();
 
@@ -115,7 +131,7 @@ export const DebugDialog = ({
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [userId, toast]);
 
   // Auto-refresh effect
   useEffect(() => {
@@ -128,13 +144,13 @@ export const DebugDialog = ({
     }, 5000); // Refresh every 5 seconds
 
     return () => clearInterval(interval);
-  }, [autoRefresh, isOpen, isLoading]);
+  }, [autoRefresh, isOpen, isLoading, handleDebug]);
 
   // Monitor chat client events for real-time stats
   useEffect(() => {
     if (!chatClient) return;
 
-    const handleEvent = (event: any) => {
+    const handleEvent = (event: Event) => {
       if (event.type === "message.new") {
         setConnectionStats((prev) => ({
           ...prev,
@@ -233,7 +249,7 @@ export const DebugDialog = ({
     </div>
   );
 
-  const DebugSection = ({ title, data }: { title: string; data: any }) => (
+  const DebugSection = ({ title, data }: DebugSectionProps) => (
     <div className="space-y-2">
       <h4 className="font-semibold text-gray-900 dark:text-gray-100">
         {title}

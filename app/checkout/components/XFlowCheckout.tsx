@@ -12,6 +12,11 @@ interface XFlowCheckoutProps {
 }
 
 // XFlow payment gateway configuration for African markets
+interface XFlowCallbackResponse {
+  status: string;
+  message?: string;
+}
+
 declare global {
   interface Window {
     XFlow?: {
@@ -20,7 +25,7 @@ declare global {
         amount: number;
         currency: string;
         email: string;
-        callback: (response: any) => void;
+        callback: (response: XFlowCallbackResponse) => void;
         onClose: () => void;
       }) => void;
     };

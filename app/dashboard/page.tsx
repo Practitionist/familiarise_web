@@ -28,22 +28,18 @@ export default function Dashboard() {
     }
   }, [isPending, session, router]);
 
-  // Handle progress animation
+  // Handle progress animation — use functional update to avoid progress as a dependency
   useEffect(() => {
     let progressInterval: ReturnType<typeof setInterval>;
 
     if (isLoading || isUserDataLoading) {
-      // Start from current progress or 0
-      let currentProgress = progress;
-
       progressInterval = setInterval(() => {
-        // Increment progress but slow down as it gets higher
-        const increment = Math.max(1, (100 - currentProgress) / 20);
-        currentProgress = Math.min(90, currentProgress + increment);
-        setProgress(currentProgress);
+        setProgress((prev) => {
+          const increment = Math.max(1, (100 - prev) / 20);
+          return Math.min(90, prev + increment);
+        });
       }, 100);
     } else {
-      // When loading is complete, quickly fill to 100%
       setProgress(100);
     }
 

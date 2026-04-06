@@ -5,7 +5,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
-import { Calendar, Clock, Video, Users, ArrowRight } from "lucide-react";
+import { Calendar, Video, Users, ArrowRight } from "lucide-react";
 
 interface AppointmentCardProps {
   userName: string;

@@ -31,7 +31,7 @@ export default function HomePage({
     data: dashboardData,
     isLoading,
     error,
-    isStale,
+    isStale: _isStale,
   } = useQuery<TConsultantDashboardResponse>(dashboardQuery);
 
   // Show skeleton only for initial load when no data exists

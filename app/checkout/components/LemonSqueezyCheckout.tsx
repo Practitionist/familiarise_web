@@ -12,11 +12,15 @@ interface LemonSqueezyCheckoutProps {
 }
 
 // Lemon Squeezy checkout configuration
+interface LemonSqueezyEventData {
+  message?: string;
+}
+
 declare global {
   interface Window {
     createLemonSqueezy: () => {
       Setup: (options: {
-        eventHandler: (event: { event: string; data?: any }) => void;
+        eventHandler: (event: { event: string; data?: LemonSqueezyEventData }) => void;
       }) => void;
       Url: {
         Open: (checkoutUrl: string) => void;

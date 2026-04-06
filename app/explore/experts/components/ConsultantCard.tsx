@@ -2,7 +2,6 @@
 
 import { memo } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import Image from "next/image";
@@ -48,11 +47,19 @@ const ConsultantInfo = ({
   </div>
 );
 
+interface SubscriptionPlanCardData {
+  price: number;
+  durationInMonths: number;
+  callsPerWeek: number | null;
+  emailSupport: string | null;
+  totalSessions: number | null;
+}
+
 const SubscriptionPlanCard = ({
   plan,
   formatPrice,
 }: {
-  plan: any;
+  plan: SubscriptionPlanCardData;
   formatPrice: (amountINR: number) => string;
 }) => {
   const formatDuration = (months: number) => {
@@ -88,7 +95,7 @@ const SubscriptionPlanCard = ({
         <div className="flex items-center gap-2 text-sm">
           <CheckCircle2 className="w-4 h-4 text-emerald-500" />
           <span className="text-zinc-600 capitalize">
-            {plan.emailSupport.toLowerCase()} email support
+            {(plan.emailSupport ?? "no").toLowerCase()} email support
           </span>
         </div>
         <div className="flex items-center gap-2 text-sm">
@@ -104,7 +111,7 @@ const SubscriptionPlanCard = ({
 
 export const ConsultantCard = memo(function ConsultantCard({
   consultant,
-  metadata,
+  metadata: _metadata,
 }: ConsultantCardProps) {
   const router = useRouter();
   const { formatPrice } = useCurrency();

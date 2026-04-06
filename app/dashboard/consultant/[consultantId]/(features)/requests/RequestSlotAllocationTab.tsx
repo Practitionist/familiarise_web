@@ -326,7 +326,7 @@ export function RequestSlotAllocationTab({
         setLoading(false);
       }
     }
-  }, [consultantId, type]);
+  }, [consultantId, type, error]);
 
   useEffect(() => {
     fetchData();

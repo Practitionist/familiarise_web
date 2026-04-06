@@ -1,5 +1,5 @@
 import "server-only";
-import { DayOfWeek, Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { UserRole, ScheduleType } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { isValidTimeRange } from "@/utils/timeSlotValidation";

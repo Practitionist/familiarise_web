@@ -1,24 +1,16 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+
+
 import {
   Dialog,
   DialogContent,
@@ -137,7 +129,7 @@ export default function ContentModerationPage() {
   };
 
   // Fetch moderation reports
-  const fetchReports = async () => {
+  const fetchReports = useCallback(async () => {
     try {
       setLoadingReports(true);
       const response = await fetch(
@@ -156,10 +148,10 @@ export default function ContentModerationPage() {
     } finally {
       setLoadingReports(false);
     }
-  };
+  }, [toast]);
 
   // Fetch profile verifications
-  const fetchProfiles = async () => {
+  const fetchProfiles = useCallback(async () => {
     try {
       setLoadingProfiles(true);
       const response = await fetch(
@@ -178,10 +170,10 @@ export default function ContentModerationPage() {
     } finally {
       setLoadingProfiles(false);
     }
-  };
+  }, [toast]);
 
   // Fetch reviews
-  const fetchReviews = async () => {
+  const fetchReviews = useCallback(async () => {
     try {
       setLoadingReviews(true);
       const response = await fetch("/api/staff/moderation/reviews?limit=10");
@@ -198,14 +190,14 @@ export default function ContentModerationPage() {
     } finally {
       setLoadingReviews(false);
     }
-  };
+  }, [toast]);
 
   useEffect(() => {
     fetchStats();
     fetchReports();
     fetchProfiles();
     fetchReviews();
-  }, []);
+  }, [fetchReports, fetchProfiles, fetchReviews]);
 
   // Handle report action (dismiss or take action)
   const handleReportAction = async (
@@ -237,7 +229,7 @@ export default function ContentModerationPage() {
       setModerationNote("");
       fetchReports();
       fetchStats();
-    } catch (error) {
+    } catch (_error) {
       toast({
         title: "Error",
         description: "Failed to process action",
@@ -291,7 +283,7 @@ export default function ContentModerationPage() {
       setModerationNote("");
       fetchProfiles();
       fetchStats();
-    } catch (error) {
+    } catch (_error) {
       toast({
         title: "Error",
         description: "Failed to update profile verification",
@@ -321,7 +313,7 @@ export default function ContentModerationPage() {
 
       fetchReviews();
       fetchStats();
-    } catch (error) {
+    } catch (_error) {
       toast({
         title: "Error",
         description: "Failed to delete review",

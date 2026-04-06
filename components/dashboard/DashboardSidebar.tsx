@@ -2,11 +2,9 @@
 
 import { cn } from "@/utils/tailwind";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { motion } from "framer-motion";
 import {
   Home,
   MessageSquare,
@@ -40,7 +38,6 @@ import {
   Gift,
   Wrench,
 } from "lucide-react";
-import { ReactNode } from "react";
 
 // Icon mapping for dynamic icon rendering
 const iconMap: Record<string, typeof Home> = {

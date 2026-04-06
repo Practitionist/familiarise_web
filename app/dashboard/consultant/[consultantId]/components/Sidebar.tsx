@@ -1,4 +1,5 @@
 import React from "react";
+import Image from "next/image";
 import { DashboardSection, SidebarProps } from "../types";
 import {
   LayoutDashboard,
@@ -57,9 +58,11 @@ export function Sidebar({
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-3">
             {consultant?.user?.image ? (
-              <img
+              <Image
                 src={consultant.user.image}
                 alt={consultant.user.name ?? ""}
+                width={40}
+                height={40}
                 className="w-10 h-10 rounded-full"
               />
             ) : (

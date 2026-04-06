@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { Prisma, DocumentReviewStatus } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
 // GET - Get all documents for review by consultant
@@ -46,7 +47,7 @@ export async function GET(
         process.env.NODE_ENV === "development" &&
         process.env.DEV_BYPASS_AUTH === "true";
 
-      const consultantWhereClause: any = {
+      const consultantWhereClause: Prisma.ConsultantProfileWhereInput = {
         id: consultantId,
       };
 
@@ -99,7 +100,7 @@ export async function GET(
     }
 
     // Build where clause
-    const where: any = {
+    const where: Prisma.AppointmentDocumentWhereInput = {
       appointment: {
         OR: [
           // Consultation appointments
@@ -132,7 +133,7 @@ export async function GET(
         "NEEDS_REVISION",
       ];
       if (validStatuses.includes(status)) {
-        where.reviewStatus = status;
+        where.reviewStatus = status as DocumentReviewStatus;
       } else {
         return NextResponse.json(
           {
@@ -159,12 +160,14 @@ export async function GET(
         );
       }
 
-      if (appointmentType === "Consultation") {
-        where.appointment.consultation = { isNot: null };
-        where.appointment.subscription = null;
-      } else if (appointmentType === "Subscription") {
-        where.appointment.subscription = { isNot: null };
-        where.appointment.consultation = null;
+      const appointmentFilter =
+        where.appointment as Prisma.AppointmentWhereInput;
+      if (appointmentType === "Consultation" && appointmentFilter) {
+        appointmentFilter.consultation = { isNot: null };
+        appointmentFilter.subscription = null;
+      } else if (appointmentType === "Subscription" && appointmentFilter) {
+        appointmentFilter.subscription = { isNot: null };
+        appointmentFilter.consultation = null;
       }
     }
 

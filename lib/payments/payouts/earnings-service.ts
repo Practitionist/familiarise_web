@@ -8,6 +8,7 @@ import { EarningRole, EarningStatus, Payment, Prisma } from "@prisma/client";
 import { PAYOUT_CONSTANTS, AppointmentType } from "./constants";
 import { calculateRevenueSplit } from "@/lib/collaborators/service";
 import { getIndianFYQuarter } from "@/lib/payments/tax/tds-service";
+import type { RevenueSplit } from "@/types/collaborators";
 
 // ============================================
 // Types
@@ -88,8 +89,7 @@ export async function createEarningsFromPayment({
   }
 
   // Calculate collaborator splits if applicable
-  let splits: { consultantProfileId: string; share: number; role: string }[] =
-    [];
+  let splits: RevenueSplit[] = [];
   if (planType && planId) {
     splits = await calculateRevenueSplit(planType, planId, totalConsultantPool);
   }
@@ -358,12 +358,14 @@ export async function refundEarnings(
   // If refundAmount < paymentAmount, only reverse a proportional share of earnings.
   // Handle edge case: refundAmount=0 means no reversal (ratio=0).
   const isPartialRefund =
-    options?.refundAmount != null &&
-    options?.paymentAmount != null &&
+    options?.refundAmount !== null &&
+    options?.refundAmount !== undefined &&
+    options?.paymentAmount !== null &&
+    options?.paymentAmount !== undefined &&
     options.paymentAmount > 0 &&
     options.refundAmount < options.paymentAmount;
   const refundRatio = isPartialRefund
-    ? options.refundAmount! / options.paymentAmount!
+    ? options!.refundAmount! / options!.paymentAmount!
     : options?.refundAmount === 0
       ? 0
       : 1;

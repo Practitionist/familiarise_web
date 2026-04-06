@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
+import Image from "next/image";
 import { useChatContext } from "stream-chat-react";
 import { SearchIcon, UserIcon, VideoIcon, BookOpenIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -196,9 +197,11 @@ export const ChannelSearch = () => {
                   <div className="flex items-center gap-3">
                     {/* Consultant Image */}
                     {consultant.consultantImage ? (
-                      <img
+                      <Image
                         src={consultant.consultantImage}
                         alt={consultant.consultantName}
+                        width={40}
+                        height={40}
                         className="w-10 h-10 rounded-full flex-shrink-0"
                       />
                     ) : (
@@ -256,9 +259,11 @@ export const ChannelSearch = () => {
                     <div className="flex items-start gap-3">
                       {/* Consultant Image */}
                       {event.consultantImage ? (
-                        <img
+                        <Image
                           src={event.consultantImage}
                           alt={event.consultantName}
+                          width={40}
+                          height={40}
                           className="w-10 h-10 rounded-full flex-shrink-0"
                         />
                       ) : (

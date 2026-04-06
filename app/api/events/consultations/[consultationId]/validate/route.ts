@@ -10,7 +10,6 @@
  */
 
 import prisma from "@/lib/prisma";
-import { RequestStatus, ScheduleType } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { SlotValidationService } from "@/utils/slotAllocation/SlotValidationService";
 import {
@@ -79,7 +78,7 @@ export async function POST(
         );
       }
 
-      const { consultationPlan, requestedBy } = consultation;
+      const { consultationPlan, requestedBy: _requestedBy } = consultation;
       const { consultantProfile } = consultationPlan;
 
       if (!consultantProfile) {

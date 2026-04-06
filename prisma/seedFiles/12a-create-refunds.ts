@@ -110,7 +110,7 @@ export async function createRefunds(): Promise<void> {
       const refundId = generateRefundId(payment.paymentGateway);
 
       // Metadata based on status
-      let metadata: Record<string, Prisma.JsonValue> = {
+      const metadata: Record<string, Prisma.JsonValue> = {
         initiatedBy: "customer",
         requestDate: faker.date.recent({ days: 30 }).toISOString(),
       };

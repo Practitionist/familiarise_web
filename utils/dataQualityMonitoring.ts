@@ -14,6 +14,29 @@
 import { DayOfWeek } from "@prisma/client";
 
 // ============================================================================
+// VALIDATABLE INTERFACES
+// ============================================================================
+
+interface ValidatableSlot {
+  id?: string;
+  slotStartTimeInUTC?: string | Date;
+  slotEndTimeInUTC?: string | Date;
+  dayOfWeekforStartTimeInUTC?: string;
+}
+
+interface ValidatableAppointment {
+  id?: string;
+  appointmentType?: string;
+  slotsOfAppointment?: ValidatableSlot[];
+}
+
+interface ValidatableSubscription {
+  id?: string;
+  startDate?: string | Date;
+  endDate?: string | Date;
+}
+
+// ============================================================================
 // VALIDATION THRESHOLDS
 // ============================================================================
 
@@ -46,7 +69,7 @@ export interface SlotValidationResult extends ValidationResult {
  * Validates a single slot's basic structure and date fields
  */
 export function validateSlot(
-  slot: any,
+  slot: ValidatableSlot | null | undefined,
   slotType: "weekly" | "custom" | "appointment",
 ): SlotValidationResult {
   const errors: string[] = [];
@@ -75,9 +98,9 @@ export function validateSlot(
     return { isValid: false, errors, warnings, slotId: slot.id };
   }
 
-  // Validate dates are valid
-  const startDate = new Date(slot.slotStartTimeInUTC);
-  const endDate = new Date(slot.slotEndTimeInUTC);
+  // Validate dates are valid — fields guaranteed non-null by the errors.length early return above
+  const startDate = new Date(slot.slotStartTimeInUTC!);
+  const endDate = new Date(slot.slotEndTimeInUTC!);
 
   if (isNaN(startDate.getTime())) {
     errors.push("slotStartTimeInUTC is not a valid date");
@@ -150,7 +173,7 @@ export function validateSlot(
 /**
  * Validates an appointment and its slots
  */
-export function validateAppointment(appointment: any): ValidationResult {
+export function validateAppointment(appointment: ValidatableAppointment | null | undefined): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
 
@@ -172,7 +195,7 @@ export function validateAppointment(appointment: any): ValidationResult {
     if (!Array.isArray(appointment.slotsOfAppointment)) {
       errors.push("slotsOfAppointment is not an array");
     } else {
-      appointment.slotsOfAppointment.forEach((slot: any, index: number) => {
+      appointment.slotsOfAppointment.forEach((slot: ValidatableSlot, index: number) => {
         const slotValidation = validateSlot(slot, "appointment");
         if (!slotValidation.isValid) {
           errors.push(
@@ -195,7 +218,7 @@ export function validateAppointment(appointment: any): ValidationResult {
 /**
  * Validates a subscription and its date boundaries
  */
-export function validateSubscription(subscription: any): ValidationResult {
+export function validateSubscription(subscription: ValidatableSubscription | null | undefined): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
 
@@ -220,9 +243,9 @@ export function validateSubscription(subscription: any): ValidationResult {
     return { isValid: false, errors, warnings };
   }
 
-  // Validate dates
-  const startDate = new Date(subscription.startDate);
-  const endDate = new Date(subscription.endDate);
+  // Validate dates — fields guaranteed non-null by the errors.length early return above
+  const startDate = new Date(subscription.startDate!);
+  const endDate = new Date(subscription.endDate!);
 
   if (isNaN(startDate.getTime())) {
     errors.push("startDate is not a valid date");
@@ -264,7 +287,7 @@ export function validateSubscription(subscription: any): ValidationResult {
  * Detects if appointments are scheduled on days consultant doesn't work
  */
 export function validateAppointmentAgainstAvailability(
-  appointment: any,
+  appointment: ValidatableAppointment | null | undefined,
   consultantWeeklySlots: Array<{ dayOfWeekforStartTimeInUTC: DayOfWeek }>,
 ): ValidationResult {
   const errors: string[] = [];
@@ -297,7 +320,8 @@ export function validateAppointmentAgainstAvailability(
   };
 
   // Check each appointment slot
-  appointment.slotsOfAppointment.forEach((slot: any) => {
+  appointment.slotsOfAppointment.forEach((slot: ValidatableSlot) => {
+    if (!slot.slotStartTimeInUTC) return;
     const slotDate = new Date(slot.slotStartTimeInUTC);
     const dayOfWeek = dayMap[slotDate.getUTCDay()];
 
@@ -316,8 +340,8 @@ export function validateAppointmentAgainstAvailability(
  * Validates appointment slots are within subscription boundaries
  */
 export function validateAppointmentWithinSubscription(
-  appointment: any,
-  subscription: any,
+  appointment: ValidatableAppointment | null | undefined,
+  subscription: ValidatableSubscription | null | undefined,
 ): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -330,10 +354,15 @@ export function validateAppointmentWithinSubscription(
     return { isValid: true, errors, warnings };
   }
 
+  if (!subscription.startDate || !subscription.endDate) {
+    return { isValid: true, errors, warnings };
+  }
+
   const subStart = new Date(subscription.startDate);
   const subEnd = new Date(subscription.endDate);
 
-  appointment.slotsOfAppointment.forEach((slot: any, index: number) => {
+  appointment.slotsOfAppointment.forEach((slot: ValidatableSlot, index: number) => {
+    if (!slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) return;
     const slotStart = new Date(slot.slotStartTimeInUTC);
     const slotEnd = new Date(slot.slotEndTimeInUTC);
 
@@ -356,7 +385,7 @@ export function validateAppointmentWithinSubscription(
  * Validates multiple slots and returns summary
  */
 export function validateSlots(
-  slots: any[],
+  slots: Array<ValidatableSlot | null | undefined>,
   slotType: "weekly" | "custom" | "appointment",
 ): {
   valid: number;

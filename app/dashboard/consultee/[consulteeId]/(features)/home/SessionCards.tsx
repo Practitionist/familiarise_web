@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback } from "react";
+import { memo } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { isDevelopmentEnvironment } from "@/utils/env";
 import type { SlotOfAppointment } from "@prisma/client";

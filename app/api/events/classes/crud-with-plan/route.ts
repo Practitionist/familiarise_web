@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma";
 import { ClassPlanSchema, ClassContentSchema } from "@/schemas/plans";
-import { ClassStatus } from "@prisma/client";
+import { ClassStatus, Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { addMonthsSafely } from "@/utils/dateUtils";
@@ -567,7 +567,7 @@ export async function PATCH(request: NextRequest) {
         }
 
         // Prepare the main update data, only including fields present in validatedData
-        const updateData: any = {};
+        const updateData: Prisma.ClassPlanUpdateInput = {};
         if (title !== undefined) updateData.title = title;
         if (description !== undefined) updateData.description = description;
         if (durationInMonths !== undefined)

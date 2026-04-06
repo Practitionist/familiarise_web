@@ -161,7 +161,7 @@ export async function PUT(
     }
 
     // Update staff profile
-    const updatedStaffProfile = await prisma.staffProfile.update({
+    await prisma.staffProfile.update({
       where: { id: id },
       data: {
         department: body.department,

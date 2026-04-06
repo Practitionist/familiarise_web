@@ -17,6 +17,8 @@ CFO-level business documentation covering revenue strategy, pricing, metrics, an
 | 05  | [SaaS Metrics](./05-saas-metrics-monthly.md)             | MRR, ARR, churn, LTV:CAC, monthly tracking framework       |
 | 06  | [SaaS Expenditures](./06-saas-expenditures.md)           | Infrastructure costs, SaaS spend, burn rate                |
 | 07  | [Tax Compliance (India)](./07-tax-compliance-india.md)   | GST, TDS, Section 44AD, entity structure                   |
+| 08  | [Marketplace Obligations](./08-tax-compliance-marketplace-obligations.md) | E-commerce operator, TCS, cross-border, PF/ESI/Gratuity  |
+| 09  | [Tax Essentials — Simplified](./09-tax-essentials-simplified.md) | Beginner-friendly GST and TDS guide for technical founders |
 
 ## Private Documents
 

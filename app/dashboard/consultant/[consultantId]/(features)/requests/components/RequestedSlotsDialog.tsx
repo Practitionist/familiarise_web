@@ -8,8 +8,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { AppointmentsType } from "@prisma/client";
-import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
-import { useEffect, useState } from "react";
+import { AlertTriangle, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import { AllocationService } from "../../shared/utils/allocationService";
 import { TimeSlot } from "../../shared/utils/calendarUtils";
 import type { SlotConflictResult } from "@/utils/slotAllocation/types";
@@ -61,7 +61,7 @@ export function RequestedSlotsDialog({
   const [error, setError] = useState<string | null>(null);
 
   // Validate slots when dialog opens
-  const validateSlots = async () => {
+  const validateSlots = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -121,20 +121,20 @@ export function RequestedSlotsDialog({
     } finally {
       setLoading(false);
     }
-  };
+  }, [requestType, requestedSlots, requestId, schedulingPeriod]);
 
   // Validate on open
   useEffect(() => {
     if (open) {
       validateSlots();
     }
-  }, [open, requestId, requestedSlots]);
+  }, [open, requestId, requestedSlots, validateSlots]);
 
   // Safe access to validation result arrays
   const conflicts = validationResult?.conflicts || [];
   const outsideAvailability = validationResult?.outsideAvailability || [];
   const outsidePeriod = validationResult?.outsidePeriod || [];
-  const validSlots = validationResult?.validSlots || [];
+  const _validSlots = validationResult?.validSlots || [];
   const hasConflicts = conflicts.length > 0;
   const hasOutsideSlots = outsideAvailability.length > 0;
   const hasOutsidePeriod = outsidePeriod.length > 0;

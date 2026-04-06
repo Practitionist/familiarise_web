@@ -1,12 +1,11 @@
 "use client";
 
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type FetchQueryOptions } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef } from "react";
 
 import {
   createConsultantQueries,
   createConsulteeQueries,
-  batchPrefetch,
   schedulePrefetch,
 } from "@/lib/dashboard-queries";
 
@@ -44,7 +43,7 @@ export function usePrefetchDashboard({
 
   // Utility function to safely prefetch queries
   const safePrefetch = useCallback(
-    async (queries: any[], priority: "high" | "medium" | "low" = "medium") => {
+    async (queries: FetchQueryOptions[], priority: "high" | "medium" | "low" = "medium") => {
       const delay =
         priority === "high" ? 0 : priority === "medium" ? 500 : 1000;
 

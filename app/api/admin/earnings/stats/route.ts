@@ -12,7 +12,7 @@ import { getSession } from "@/lib/auth-server";
  * GET /api/admin/earnings/stats
  * Get earnings statistics
  */
-export async function GET(req: NextRequest) {
+export async function GET(_req: NextRequest) {
   try {
     const session = await getSession();
     if (!session?.user?.id) {

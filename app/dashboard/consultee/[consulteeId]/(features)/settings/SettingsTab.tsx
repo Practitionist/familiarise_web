@@ -36,33 +36,6 @@ interface ProfileFormData {
   goals: string | null;
 }
 
-/** Shape of the user relation returned by the consultee GET endpoint */
-interface ConsulteeUserRelation {
-  id: string;
-  education?: Array<{
-    id: string;
-    institution: string;
-    institutionDomain?: string | null;
-    degree: string;
-    fieldOfStudy?: string | null;
-    startYear?: number | null;
-    endYear?: number | null;
-    grade?: string | null;
-    activities?: string | null;
-    description?: string | null;
-  }>;
-  workExperiences?: Array<{
-    id: string;
-    company: string;
-    companyDomain?: string | null;
-    title: string;
-    location?: string | null;
-    startDate: string | Date;
-    endDate?: string | Date | null;
-    isCurrent: boolean;
-    description?: string | null;
-  }>;
-}
 
 export default function SettingsTab({ consulteeId }: SettingsTabProps) {
   const { toast } = useToast();
@@ -116,11 +89,9 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
       });
 
       // Load user-level education and work experiences
-      // The API includes user.education and user.workExperiences via nested include,
-      // but the react-query type doesn't reflect that — cast to our known shape.
-      const user = consulteeData.user as unknown as
-        | ConsulteeUserRelation
-        | undefined;
+      // The settings query now uses TConsulteeProfileWithBackground,
+      // so user.education and user.workExperiences are properly typed.
+      const { user } = consulteeData;
       if (user?.education) {
         setEducationList(
           user.education.map((edu) => ({

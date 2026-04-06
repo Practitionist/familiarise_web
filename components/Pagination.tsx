@@ -24,7 +24,7 @@ export function Pagination({
   currentPage,
   totalPages,
   totalItems,
-  pageSize,
+  pageSize: _pageSize,
   hasNextPage,
   hasPreviousPage,
   startIndex,

@@ -76,7 +76,7 @@ export function getLocalDay(date: Date, timezone?: string | null): number {
       date.toLocaleString("en-US", { timeZone: timezone }),
     );
     return localDate.getDay();
-  } catch (_) {
+  } catch (_error) {
     console.warn("Invalid timezone, using UTC day");
     return date.getUTCDay();
   }

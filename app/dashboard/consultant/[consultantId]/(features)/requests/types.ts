@@ -60,7 +60,7 @@ export interface SubscriptionApiResponse {
   schedulingPeriodEndsAt?: string;
 }
 
-export interface AvailabilityApiResponse extends AppointmentSlot {}
+export type AvailabilityApiResponse = AppointmentSlot;
 
 export interface ConsultantApiResponse {
   scheduleType?: ScheduleType;

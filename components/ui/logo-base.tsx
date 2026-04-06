@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { Building2 } from "lucide-react";
 
 const LOGO_DEV_TOKEN = process.env.NEXT_PUBLIC_LOGO_DEV_TOKEN;
@@ -46,14 +47,13 @@ export function LogoBase({
         className={`flex-shrink-0 rounded-lg overflow-hidden bg-white border ${className}`}
         style={{ width: size, height: size }}
       >
-        <img
+        <Image
           src={`https://img.logo.dev/${domain}?token=${LOGO_DEV_TOKEN}&size=${size * 2}&format=png`}
           alt={`${name} logo`}
           width={size}
           height={size}
           className="object-contain w-full h-full"
           onError={() => setImgError(true)}
-          loading="lazy"
         />
       </div>
     );

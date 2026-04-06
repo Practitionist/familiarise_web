@@ -198,7 +198,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
         return updatedSlots;
       });
     },
-    [scheduleType],
+    [],
   );
 
   const handleDeleteSlot = useCallback(

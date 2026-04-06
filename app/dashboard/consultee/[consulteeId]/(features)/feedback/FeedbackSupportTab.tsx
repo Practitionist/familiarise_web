@@ -20,7 +20,7 @@ import {
   SupportTicketStatus,
   SupportIssueType,
 } from "@prisma/client";
-import { useFeedbackSupport } from "./useFeedbackSupport";
+import { useFeedbackSupport, type SupportTicketWithResponses } from "./useFeedbackSupport";
 import {
   MessageSquare,
   HelpCircle,
@@ -551,7 +551,7 @@ export default function FeedbackSupportTab({
                         <p className="text-xs font-medium text-zinc-500 uppercase tracking-wide">
                           Responses
                         </p>
-                        {ticket.responses.map((response: any) => (
+                        {ticket.responses.map((response: SupportTicketWithResponses["responses"][number]) => (
                           <div
                             key={response.id}
                             className="p-3 rounded-lg bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700"

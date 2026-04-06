@@ -2,12 +2,33 @@ import { format } from "date-fns";
 import { TAppointment } from "@/types/appointment";
 
 // =============================================================================
+// Collaborator Types
+// =============================================================================
+
+/**
+ * Collaborator shape from Prisma when included with consultantProfile.user.
+ * Not all queries include collaborators, so access requires a runtime guard.
+ */
+interface PlanCollaborator {
+  consultantProfileId: string;
+  role: string;
+  status?: string;
+}
+
+interface PlanWithCollaborators {
+  collaborators?: PlanCollaborator[];
+}
+
+// =============================================================================
 // Collaborator Role Helpers
 // =============================================================================
 
 /**
  * Determine the collaborator role for the current consultant on a webinar/class appointment.
  * Returns null for consultations/subscriptions (no collaborators) or solo events without collaborators.
+ *
+ * Uses PlanWithCollaborators cast + Array.isArray guard because not all Prisma
+ * queries that produce TAppointment include the collaborators relation.
  */
 export function getCollaboratorRole(
   appointment: TAppointment,
@@ -15,37 +36,34 @@ export function getCollaboratorRole(
 ): string | null {
   if (appointment.appointmentType === "WEBINAR" && appointment.webinar) {
     const plan = appointment.webinar.webinarPlan;
+    const collaborators = (plan as PlanWithCollaborators).collaborators;
     if (plan?.consultantProfileId === consultantId) {
-      // Only show "Host" badge if there are collaborators
-      const collaborators = (plan as Record<string, unknown>).collaborators;
       if (Array.isArray(collaborators) && collaborators.length > 0) {
         return "HOST";
       }
       return null; // Solo event
     }
-    const collaborators = (plan as Record<string, unknown>).collaborators;
     if (Array.isArray(collaborators)) {
       const collab = collaborators.find(
-        (c: Record<string, unknown>) => c.consultantProfileId === consultantId,
+        (c) => c.consultantProfileId === consultantId,
       );
-      if (collab) return (collab as Record<string, unknown>).role as string;
+      if (collab) return collab.role;
     }
   }
   if (appointment.appointmentType === "CLASS" && appointment.class) {
     const plan = appointment.class.classPlan;
+    const collaborators = (plan as PlanWithCollaborators).collaborators;
     if (plan?.consultantProfileId === consultantId) {
-      const collaborators = (plan as Record<string, unknown>).collaborators;
       if (Array.isArray(collaborators) && collaborators.length > 0) {
         return "HOST";
       }
       return null;
     }
-    const collaborators = (plan as Record<string, unknown>).collaborators;
     if (Array.isArray(collaborators)) {
       const collab = collaborators.find(
-        (c: Record<string, unknown>) => c.consultantProfileId === consultantId,
+        (c) => c.consultantProfileId === consultantId,
       );
-      if (collab) return (collab as Record<string, unknown>).role as string;
+      if (collab) return collab.role;
     }
   }
   return null;

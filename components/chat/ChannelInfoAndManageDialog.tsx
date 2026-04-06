@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -42,6 +43,14 @@ import { getChannelDisplayInfo } from "./utils/channelUtils";
 import { AddMembersDialog } from "./AddMembersDialog";
 import { isEventChannel } from "@/lib/stream-channel-ids";
 
+interface ChannelMember {
+  id: string;
+  name?: string;
+  image?: string;
+  online?: boolean;
+  [key: string]: unknown;
+}
+
 interface ChannelInfoAndManageDialogProps {
   channel: Channel;
 }
@@ -57,7 +66,7 @@ export const ChannelInfoAndManageDialog = ({
   const [showAddMembers, setShowAddMembers] = useState(false);
   const { client, setActiveChannel } = useChatContext();
   const { toast } = useToast();
-  const [members, setMembers] = useState<any[]>([]);
+  const [members, setMembers] = useState<ChannelMember[]>([]);
 
   const isTeamChannel = channel.type === "team";
   const isDirectMessage = channel.type === "messaging";
@@ -105,10 +114,10 @@ export const ChannelInfoAndManageDialog = ({
   const loadMembers = async () => {
     setIsLoading(true);
     try {
-      const members = Object.values(channel.state.members || {}).map(
-        (member) => member.user,
-      );
-      setMembers(members);
+      const loadedMembers = Object.values(channel.state.members || {})
+        .map((member) => member.user)
+        .filter((user): user is ChannelMember => user !== null);
+      setMembers(loadedMembers);
     } catch (error) {
       console.error("Error loading members:", error);
       toast({
@@ -572,9 +581,11 @@ export const ChannelInfoAndManageDialog = ({
                       <div className="flex items-center">
                         <div className="w-8 h-8 rounded-full bg-gray-200 mr-3 flex items-center justify-center">
                           {member.image ? (
-                            <img
-                              src={member.image}
-                              alt={member.name}
+                            <Image
+                              src={member.image ?? ""}
+                              alt={member.name ?? ""}
+                              width={32}
+                              height={32}
                               className="w-8 h-8 rounded-full"
                             />
                           ) : (

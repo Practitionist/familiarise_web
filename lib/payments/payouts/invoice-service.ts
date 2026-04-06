@@ -7,6 +7,11 @@ import prisma from "@/lib/prisma";
 import { PaymentStatus, Prisma } from "@prisma/client";
 import { TAX_CONSTANTS } from "./constants";
 
+/** Type-safe cast for JSON-serializable invoice items to Prisma's JSON input type. */
+function toJsonValue(items: InvoiceItem[]): Prisma.InputJsonValue {
+  return items as unknown as Prisma.InputJsonValue;
+}
+
 // ============================================
 // Types
 // ============================================
@@ -185,7 +190,7 @@ export async function createInvoice(
     amount: total,
     currency: payment.currency,
     status: payment.paymentStatus,
-    items: items as unknown as Prisma.InputJsonValue,
+    items: toJsonValue(items),
     taxAmount,
     taxRate,
     hsnCode,
@@ -299,7 +304,7 @@ export async function createInvoiceFromPayment(
       amount: totalAmount,
       currency: payment.currency,
       status: payment.paymentStatus,
-      items: items as unknown as Prisma.InputJsonValue,
+      items: toJsonValue(items),
       taxAmount,
       taxRate,
       hsnCode,

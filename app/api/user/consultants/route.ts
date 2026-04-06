@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 import { consultantListInclude } from "@/lib/data/explore-experts";
 import { apiError } from "@/lib/errors";
 
@@ -35,24 +36,22 @@ export async function GET(request: NextRequest) {
     // Check if this is an admin/staff request (can see all) or public (only verified)
     const includeUnverified = searchParams.get("includeUnverified") === "true";
 
-    // Build where clause
-    const where: any = {
-      AND: [],
-    };
+    // Build where clause using an explicit conditions array
+    const conditions: Prisma.ConsultantProfileWhereInput[] = [];
 
     // Only show verified consultants in public listings
     if (!includeUnverified) {
-      where.AND.push({ verificationStatus: "VERIFIED" });
+      conditions.push({ verificationStatus: "VERIFIED" });
     }
 
     // Domain filter
     if (domain) {
-      where.AND.push({ domainId: domain });
+      conditions.push({ domainId: domain });
     }
 
     // Subdomain filter
     if (subdomain) {
-      where.AND.push({
+      conditions.push({
         subDomains: {
           some: {
             id: subdomain,
@@ -63,7 +62,7 @@ export async function GET(request: NextRequest) {
 
     // Tags filter
     if (tags && tags.length > 0) {
-      where.AND.push({
+      conditions.push({
         tags: {
           some: {
             name: {
@@ -76,7 +75,7 @@ export async function GET(request: NextRequest) {
 
     // Experience filter
     if (experience > 0) {
-      where.AND.push({
+      conditions.push({
         experience: {
           gte: experience,
         },
@@ -85,24 +84,24 @@ export async function GET(request: NextRequest) {
 
     // Price filter (via subscription plans)
     if (minPrice !== undefined && !isNaN(minPrice)) {
-      where.AND.push({
+      conditions.push({
         subscriptionPlans: { some: { price: { gte: minPrice } } },
       });
     }
     if (maxPrice !== undefined && !isNaN(maxPrice)) {
-      where.AND.push({
+      conditions.push({
         subscriptionPlans: { some: { price: { lte: maxPrice } } },
       });
     }
 
     // Rating filter
     if (minRating !== undefined && !isNaN(minRating)) {
-      where.AND.push({ rating: { gte: minRating } });
+      conditions.push({ rating: { gte: minRating } });
     }
 
     // Company filter (multi-select — values come from pre-fetched list, exact match)
     if (companies && companies.length > 0) {
-      where.AND.push({
+      conditions.push({
         user: {
           workExperiences: {
             some: { company: { in: companies } },
@@ -113,12 +112,12 @@ export async function GET(request: NextRequest) {
 
     // Language filter
     if (language) {
-      where.AND.push({ languages: { has: language } });
+      conditions.push({ languages: { has: language } });
     }
 
     // Search filter
     if (search) {
-      where.AND.push({
+      conditions.push({
         OR: [
           { user: { name: { contains: search, mode: "insensitive" } } },
           { user: { email: { contains: search, mode: "insensitive" } } },
@@ -137,13 +136,12 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // If no filters are applied, remove the AND array
-    if (where.AND.length === 0) {
-      delete where.AND;
-    }
+    // Build final where clause — only add AND if there are conditions
+    const where: Prisma.ConsultantProfileWhereInput =
+      conditions.length > 0 ? { AND: conditions } : {};
 
     // Build orderBy clause
-    let orderBy: any = {};
+    let orderBy: Prisma.ConsultantProfileOrderByWithRelationInput = {};
     switch (sort) {
       case "nameAsc":
         orderBy = { user: { name: "asc" } };

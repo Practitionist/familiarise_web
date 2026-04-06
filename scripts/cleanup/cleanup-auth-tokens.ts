@@ -36,7 +36,7 @@ export async function cleanupAuthTokens(): Promise<AuthTokenCleanupResult> {
   const errors: string[] = [];
   let verificationTokensDeleted = 0;
   let sessionsDeleted = 0;
-  let passwordResetTokensCleared = 0;
+  const passwordResetTokensCleared = 0;
 
   const now = new Date();
 

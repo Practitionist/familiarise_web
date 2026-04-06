@@ -54,12 +54,28 @@ function getEventEndpoint(eventType: string, eventId: string): string {
 /**
  * Extracts session duration from plan data
  */
-function extractSessionDuration(eventType: string, response: any): number {
+/** Shape of the API response for event plan data */
+interface EventPlanResponse {
+  data?: EventPlanData;
+  consultationPlan?: { durationInHours?: number };
+  subscriptionPlan?: { sessionDurationInHours?: number };
+  webinarPlan?: { durationInHours?: number };
+  classPlan?: { classContents?: Array<{ hoursAllotted?: number }> };
+}
+
+interface EventPlanData {
+  consultationPlan?: { durationInHours?: number };
+  subscriptionPlan?: { sessionDurationInHours?: number };
+  webinarPlan?: { durationInHours?: number };
+  classPlan?: { classContents?: Array<{ hoursAllotted?: number }> };
+}
+
+function extractSessionDuration(eventType: string, response: EventPlanResponse): number {
   // Handle API response wrapper - extract actual data
   const data = response.data || response;
 
   switch (eventType) {
-    case "consultation":
+    case "consultation": {
       const consultationDuration = data.consultationPlan?.durationInHours;
       if (!consultationDuration || consultationDuration <= 0) {
         throw new Error(
@@ -67,8 +83,9 @@ function extractSessionDuration(eventType: string, response: any): number {
         );
       }
       return consultationDuration;
+    }
 
-    case "subscription":
+    case "subscription": {
       const subscriptionDuration =
         data.subscriptionPlan?.sessionDurationInHours;
       if (!subscriptionDuration || subscriptionDuration <= 0) {
@@ -77,8 +94,9 @@ function extractSessionDuration(eventType: string, response: any): number {
         );
       }
       return subscriptionDuration;
+    }
 
-    case "webinar":
+    case "webinar": {
       const webinarDuration = data.webinarPlan?.durationInHours;
       if (!webinarDuration || webinarDuration <= 0) {
         throw new Error(
@@ -86,8 +104,9 @@ function extractSessionDuration(eventType: string, response: any): number {
         );
       }
       return webinarDuration;
+    }
 
-    case "class":
+    case "class": {
       // For classes, calculate average from class contents
       const classContents = data.classPlan?.classContents || [];
       if (classContents.length === 0) {
@@ -96,7 +115,7 @@ function extractSessionDuration(eventType: string, response: any): number {
         );
       }
 
-      const totalHours = classContents.reduce((sum: number, content: any) => {
+      const totalHours = classContents.reduce((sum: number, content: { hoursAllotted?: number }) => {
         if (!content.hoursAllotted || content.hoursAllotted <= 0) {
           throw new Error("Class content is missing required hoursAllotted");
         }
@@ -104,6 +123,7 @@ function extractSessionDuration(eventType: string, response: any): number {
       }, 0);
 
       return totalHours / classContents.length;
+    }
 
     default:
       throw new Error(`Invalid event type: ${eventType}`);

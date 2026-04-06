@@ -2,6 +2,74 @@ import { EventWithType } from "./getMetadata";
 import type { TAppointment, TSlotOfAppointment } from "@/types/appointment";
 import type { SlotOfAppointment } from "@prisma/client";
 
+/**
+ * Converts a Prisma SlotOfAppointment (without relations) into a
+ * TSlotOfAppointment-compatible object.  The Prisma base type lacks the
+ * `user` and `meetingSession` relations that TSlotOfAppointment expects,
+ * so we supply safe defaults (empty array / undefined) for the missing
+ * fields and only fall back to a narrowly-scoped cast for the remainder.
+ */
+function toTSlot(prismaSlot: SlotOfAppointment): TSlotOfAppointment {
+  const slotWithRelations = prismaSlot as SlotOfAppointment & {
+    user?: TSlotOfAppointment["user"];
+    meetingSession?: TSlotOfAppointment["meetingSession"];
+  };
+  return {
+    ...slotWithRelations,
+    startsAt: new Date(prismaSlot.startsAt),
+    endsAt: new Date(prismaSlot.endsAt),
+    user: slotWithRelations.user ?? [],
+    meetingSession: slotWithRelations.meetingSession ?? null,
+  };
+}
+
+/**
+ * Builds a partial TAppointment for a given EventWithType.
+ *
+ * The event types (TConsultationWithPlan, etc.) overlap heavily with the
+ * corresponding TAppointment relation fields (consultation, subscription,
+ * webinar, class) but differ in the depth of `consultantProfile` includes.
+ * Rather than scattering `as unknown as` casts at every call-site we
+ * centralise the conversion here so the rest of the module stays cast-free.
+ */
+function toPartialAppointment(
+  event: EventWithType,
+): Partial<TAppointment> | null {
+  const upperType = event.type.toUpperCase() as TAppointment["appointmentType"];
+
+  switch (event.type) {
+    case "Consultation":
+      return {
+        id: event.appointment?.id ?? event.id,
+        appointmentType: upperType,
+        consultation: event as unknown as TAppointment["consultation"],
+      };
+    case "Subscription":
+      return {
+        id: event.id,
+        appointmentType: upperType,
+        subscription: event as unknown as TAppointment["subscription"],
+      };
+    case "Webinar":
+      return {
+        id: event.appointment?.id ?? event.id,
+        appointmentType: upperType,
+        webinar: event as unknown as TAppointment["webinar"],
+      };
+    case "Class":
+      return {
+        id: event.id,
+        appointmentType: upperType,
+        class: event as unknown as TAppointment["class"],
+      };
+    default: {
+      const _exhaustive: never = event;
+      console.warn(`Unknown event type encountered: ${(_exhaustive as EventWithType).type}`);
+      return null;
+    }
+  }
+}
+
 // Revert getActualSlots to return simple SlotOfAppointment[]
 export function getActualSlots(event: EventWithType): SlotOfAppointment[] {
   let appointmentSlots: SlotOfAppointment[] = [];
@@ -96,69 +164,11 @@ export function getActualUpcomingSlots(events: EventWithType[]): Array<{
     );
 
     futureSlots.forEach((prismaSlot) => {
-      // 1. Construct TSlotOfAppointment-compatible slot
-      // Note: We cast to TSlotOfAppointment since we're constructing from event data
-      const tSlot = {
-        id: prismaSlot.id,
-        startsAt: new Date(prismaSlot.startsAt),
-        endsAt: prismaSlot.endsAt ? new Date(prismaSlot.endsAt) : null,
-        isTentative: prismaSlot.isTentative,
-        appointmentId: prismaSlot.appointmentId,
-        user: (prismaSlot as any).user || [],
-      } as TSlotOfAppointment;
+      const tSlot = toTSlot(prismaSlot);
 
-      // 2. Construct TAppointment-compatible appointment
-      let baseAppointment: Partial<TAppointment>;
-      const upperCaseEventType =
-        event.type.toUpperCase() as TAppointment["appointmentType"];
+      const baseAppointment = toPartialAppointment(event);
+      if (!baseAppointment) return;
 
-      switch (upperCaseEventType) {
-        case "CONSULTATION":
-          if (event.type === "Consultation") {
-            baseAppointment = {
-              id: event.appointment?.id ?? event.id,
-              appointmentType: upperCaseEventType,
-              // WARNING: Unsafe cast due to structural mismatch (consultantProfile)
-              consultation: event as any,
-            };
-          } else return; // Use return to exit forEach iteration
-          break;
-        case "SUBSCRIPTION":
-          if (event.type === "Subscription") {
-            baseAppointment = {
-              id: event.id,
-              appointmentType: upperCaseEventType,
-              // WARNING: Unsafe cast due to structural mismatch (consultantProfile)
-              subscription: event as any,
-            };
-          } else return;
-          break;
-        case "WEBINAR":
-          if (event.type === "Webinar") {
-            baseAppointment = {
-              id: event.appointment?.id ?? event.id,
-              appointmentType: upperCaseEventType,
-              // WARNING: Unsafe cast due to structural mismatch (consultantProfile)
-              webinar: event as any,
-            };
-          } else return;
-          break;
-        case "CLASS":
-          if (event.type === "Class") {
-            baseAppointment = {
-              id: event.id,
-              appointmentType: upperCaseEventType,
-              // WARNING: Unsafe cast due to structural mismatch (consultantProfile)
-              class: event as any,
-            };
-          } else return;
-          break;
-        default:
-          console.warn(`Unknown event type encountered: ${event.type}`);
-          return; // Use return to exit forEach iteration
-      }
-
-      // baseAppointment is guaranteed to be assigned if we reach here
       const tAppointment = {
         ...baseAppointment,
         slotsOfAppointment: [tSlot],

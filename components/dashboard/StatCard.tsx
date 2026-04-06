@@ -9,7 +9,6 @@ import {
 } from "@/components/ui/tooltip";
 import { motion } from "framer-motion";
 import { HelpCircle, LucideIcon } from "lucide-react";
-import { ReactNode } from "react";
 
 interface StatCardProps {
   title: string;

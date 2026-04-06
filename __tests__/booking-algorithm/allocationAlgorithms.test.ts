@@ -18,7 +18,6 @@ import "./setup";
 import {
   AllocationAlgorithms,
   type AllocationOptions,
-  type AutoAllocationPreferences,
 } from "@/app/dashboard/consultant/[consultantId]/(features)/shared/utils/allocationAlgorithms";
 import { AllocationService } from "@/app/dashboard/consultant/[consultantId]/(features)/shared/utils/allocationService";
 import {

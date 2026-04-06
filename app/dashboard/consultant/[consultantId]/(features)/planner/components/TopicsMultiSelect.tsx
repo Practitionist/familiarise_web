@@ -2,7 +2,7 @@
 
 import type React from "react";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { X, Plus, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,10 +47,15 @@ export function TopicsMultiSelect({
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
 
-  // Initialize with initial topics only once on mount or when initialTopics reference changes
+  // Memoize stable references for complex deps to avoid unnecessary re-renders
+  const initialTopicsKey = useMemo(() => JSON.stringify(initialTopics), [initialTopics]);
+  const topicsKey = useMemo(() => JSON.stringify(topics), [topics]);
+  const availableTopicsKey = useMemo(() => JSON.stringify(availableTopics), [availableTopics]);
+
+  // Initialize with initial topics only once on mount or when initialTopics changes
   useEffect(() => {
     setTopics(initialTopics);
-  }, [JSON.stringify(initialTopics)]);
+  }, [initialTopicsKey, initialTopics]);
 
   // Handle outside clicks to close suggestions dropdown
   useEffect(() => {
@@ -72,13 +77,12 @@ export function TopicsMultiSelect({
 
   // Update parent component when topics change - but avoid the loop
   useEffect(() => {
-    // Skip the initial render to avoid loops
     const handler = setTimeout(() => {
       onTopicsChange?.(topics);
     }, 0);
 
     return () => clearTimeout(handler);
-  }, [JSON.stringify(topics), onTopicsChange]);
+  }, [topicsKey, onTopicsChange, topics]);
 
   // Update suggestions when input changes
   useEffect(() => {
@@ -87,18 +91,16 @@ export function TopicsMultiSelect({
       return;
     }
 
-    // Filter topics that include the input (case insensitive)
-    // and are not already in the selected topics
     const filteredSuggestions = availableTopics
       .filter(
         (topic) =>
           topic.name.toLowerCase().includes(inputValue.toLowerCase()) &&
           !topics.includes(topic.name),
       )
-      .slice(0, 5); // Limit to 5 suggestions
+      .slice(0, 5);
 
     setSuggestions(filteredSuggestions);
-  }, [inputValue, JSON.stringify(availableTopics), JSON.stringify(topics)]);
+  }, [inputValue, availableTopicsKey, topicsKey, availableTopics, topics]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;

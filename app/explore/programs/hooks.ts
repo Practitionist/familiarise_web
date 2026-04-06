@@ -7,13 +7,46 @@ import {
 import {
   ITEMS_PER_PAGE,
   generateProgramImageUrl,
+  type ApiMeta,
   type ProgramType,
   type ProgramFilters,
   type Program,
   type ClassPlanProgram,
   type WebinarPlanProgram,
+  type ClassInstance,
   type TopicWithCount,
 } from "./utils";
+
+// --- API response types ---
+
+interface WebinarWithAppointment {
+  appointment?: {
+    slotsOfAppointment?: { user?: { id: string }[] }[];
+  } | null;
+}
+
+interface ClassPlanApiItem {
+  id: string;
+  classes?: ClassInstance[];
+  imageUrl?: string | null;
+}
+
+interface WebinarPlanApiItem {
+  id: string;
+  webinars?: WebinarWithAppointment[];
+  imageUrl?: string | null;
+}
+
+type PlanApiItem = ClassPlanApiItem | WebinarPlanApiItem;
+
+interface PlanApiResponse {
+  data?: PlanApiItem[];
+  meta?: ApiMeta;
+}
+
+interface TopicsApiResponse {
+  data?: TopicWithCount[];
+}
 
 // Build query string from filter params
 function buildFilterParams(filters: ProgramFilters): string {
@@ -33,15 +66,11 @@ function buildFilterParams(filters: ProgramFilters): string {
   return str ? `&${str}` : "";
 }
 
-const fetchJson = (url: string) => fetch(url).then((res) => res.json());
+const fetchPlans = (url: string): Promise<PlanApiResponse> =>
+  fetch(url).then((res) => res.json());
 
-interface AppointmentWithSlots {
-  slotsOfAppointment: { user?: { id: string }[] }[];
-}
-
-interface ClassWithAppointments {
-  appointments: AppointmentWithSlots[];
-}
+const fetchTopics = (url: string): Promise<TopicsApiResponse> =>
+  fetch(url).then((res) => res.json());
 
 interface UseProgramsOptions {
   userId?: string | null;
@@ -84,7 +113,7 @@ export function usePrograms(
       }
 
       const responses = await Promise.all(
-        requests.map((url) => fetchJson(url)),
+        requests.map((url) => fetchPlans(url)),
       );
 
       let combinedPrograms: Program[] = [];
@@ -95,10 +124,11 @@ export function usePrograms(
         classMeta = classResponse.meta;
         if (classResponse.data) {
           const formattedClasses = classResponse.data.map(
-            (plan: any): ClassPlanProgram => {
-              const classes = plan.classes || [];
+            (plan): ClassPlanProgram => {
+              const typedPlan = plan as ClassPlanApiItem;
+              const classes = typedPlan.classes || [];
               const appointments = classes.flatMap(
-                (c: ClassWithAppointments) => c.appointments ?? [],
+                (c) => c.appointments ?? [],
               );
               const isRegistered =
                 userId && appointments.length > 0
@@ -106,17 +136,17 @@ export function usePrograms(
                   : false;
 
               return {
-                ...plan,
+                ...typedPlan,
                 classes,
                 type: "class",
                 imageUrl: generateProgramImageUrl(
-                  plan.id,
+                  typedPlan.id,
                   600,
                   400,
-                  plan.imageUrl,
+                  typedPlan.imageUrl,
                 ),
                 isRegistered,
-              };
+              } as ClassPlanProgram;
             },
           );
           combinedPrograms = [...combinedPrograms, ...formattedClasses];
@@ -130,25 +160,26 @@ export function usePrograms(
           webinarMeta = webinarResponse.meta;
           if (webinarResponse.data) {
             const formattedWebinars = webinarResponse.data.map(
-              (plan: any): WebinarPlanProgram => {
-                const webinars = plan.webinars || [];
+              (plan): WebinarPlanProgram => {
+                const typedPlan = plan as WebinarPlanApiItem;
+                const webinars = typedPlan.webinars || [];
                 const isRegistered =
                   userId && webinars.length > 0
                     ? isUserRegisteredForWebinar(webinars, userId)
                     : false;
 
                 return {
-                  ...plan,
+                  ...typedPlan,
                   webinars,
                   type: "webinar",
                   imageUrl: generateProgramImageUrl(
-                    plan.id,
+                    typedPlan.id,
                     600,
                     400,
-                    plan.imageUrl,
+                    typedPlan.imageUrl,
                   ),
                   isRegistered,
-                };
+                } as WebinarPlanProgram;
               },
             );
             combinedPrograms = [...combinedPrograms, ...formattedWebinars];
@@ -225,18 +256,18 @@ export function useCuratedPrograms(
   const { data, isLoading } = useQuery({
     queryKey: ["curated-programs", programType, sort, limit],
     queryFn: async () => {
-      const requests: Promise<any>[] = [];
+      const requests: Promise<PlanApiResponse>[] = [];
 
       if (programType === "all" || programType === "class") {
         requests.push(
-          fetchJson(
+          fetchPlans(
             `/api/plans/classes?page=1&limit=${limit}&include=classes&sort=${sort}`,
           ),
         );
       }
       if (programType === "all" || programType === "webinar") {
         requests.push(
-          fetchJson(`/api/plans/webinars?page=1&limit=${limit}&sort=${sort}`),
+          fetchPlans(`/api/plans/webinars?page=1&limit=${limit}&sort=${sort}`),
         );
       }
 
@@ -249,17 +280,20 @@ export function useCuratedPrograms(
       ) {
         programs.push(
           ...responses[0].data.map(
-            (plan: any): ClassPlanProgram => ({
-              ...plan,
-              classes: plan.classes || [],
-              type: "class",
-              imageUrl: generateProgramImageUrl(
-                plan.id,
-                600,
-                400,
-                plan.imageUrl,
-              ),
-            }),
+            (plan): ClassPlanProgram => {
+              const typedPlan = plan as ClassPlanApiItem;
+              return {
+                ...typedPlan,
+                classes: typedPlan.classes || [],
+                type: "class",
+                imageUrl: generateProgramImageUrl(
+                  typedPlan.id,
+                  600,
+                  400,
+                  typedPlan.imageUrl,
+                ),
+              } as ClassPlanProgram;
+            },
           ),
         );
       }
@@ -271,17 +305,20 @@ export function useCuratedPrograms(
       ) {
         programs.push(
           ...responses[webIdx].data.map(
-            (plan: any): WebinarPlanProgram => ({
-              ...plan,
-              webinars: plan.webinars || [],
-              type: "webinar",
-              imageUrl: generateProgramImageUrl(
-                plan.id,
-                600,
-                400,
-                plan.imageUrl,
-              ),
-            }),
+            (plan): WebinarPlanProgram => {
+              const typedPlan = plan as WebinarPlanApiItem;
+              return {
+                ...typedPlan,
+                webinars: typedPlan.webinars || [],
+                type: "webinar",
+                imageUrl: generateProgramImageUrl(
+                  typedPlan.id,
+                  600,
+                  400,
+                  typedPlan.imageUrl,
+                ),
+              } as WebinarPlanProgram;
+            },
           ),
         );
       }
@@ -308,10 +345,10 @@ export function useTopicsWithCount(planType: ProgramType = "all") {
   const { data, isLoading } = useQuery({
     queryKey: ["topics-with-count", planType],
     queryFn: async () => {
-      const res = await fetchJson(
+      const res = await fetchTopics(
         `/api/topics?withProgramCount=true&planType=${planType}`,
       );
-      return (res.data || []) as TopicWithCount[];
+      return res.data || [];
     },
     staleTime: 10 * 60 * 1000,
     gcTime: 30 * 60 * 1000,

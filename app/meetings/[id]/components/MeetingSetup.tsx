@@ -16,7 +16,6 @@ import {
   Settings,
   Loader2,
   Volume2,
-  MonitorSpeaker,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { cn } from "@/utils/tailwind";

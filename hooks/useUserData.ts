@@ -65,14 +65,15 @@ export const useUserData = (userId: string) => {
             // Handle other roles or no role
             break;
         }
-      } catch (err: any) {
-        setError(err);
+      } catch (err: unknown) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        setError(error);
         // 401 is expected after sign-out (session cleared before component unmounts)
-        if (err?.status === 401) return;
+        if (err != null && typeof err === "object" && "status" in err && (err as { status: number }).status === 401) return;
         console.error("Error fetching user details:", err);
         toast({
           title: "Error fetching user details",
-          description: err.message,
+          description: error.message,
           variant: "destructive",
         });
       } finally {

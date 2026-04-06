@@ -128,7 +128,7 @@ export default function AdminSettingsPage() {
       });
 
       queryClient.invalidateQueries({ queryKey: ["admin-settings", userId] });
-    } catch (error) {
+    } catch (_error) {
       toast({
         title: "Error",
         description: "Failed to save settings. Please try again.",

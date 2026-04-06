@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useDebouncedCallback } from "use-debounce";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -42,8 +42,6 @@ import {
   XCircle,
   MoreHorizontal,
   RefreshCw,
-  DollarSign,
-  Calendar,
   Send,
   Loader2,
   CreditCard,
