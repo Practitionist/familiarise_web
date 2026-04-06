@@ -61,12 +61,15 @@ import { TAppointment } from "@/types/appointment";
 import { getJoinableSlot } from "../../utils/joinState";
 import { getInitials, formatCurrencyAmount } from "@/utils/formatting";
 import { RequestSlotAllocationTabMini } from "../requests/RequestSlotAllocationTabMini";
+import { PerformanceSnapshot } from "./PerformanceSnapshot";
+import type { TPerformanceSnapshot } from "@/types/consultant-events";
 
 interface HomeTabProps {
   appointments: TAppointment[];
   consultantId: string;
   consultantName?: string;
   pendingRequestsCount?: number;
+  performanceSnapshot?: TPerformanceSnapshot;
 }
 
 const staggerChildren = {
@@ -271,6 +274,7 @@ export function HomeTab({
   consultantId,
   consultantName,
   pendingRequestsCount = 0,
+  performanceSnapshot,
 }: Readonly<HomeTabProps>) {
   const router = useRouter();
   const client = useStreamVideoClient();
@@ -403,6 +407,13 @@ export function HomeTab({
           animate="visible"
           className="space-y-6"
         >
+          {/* Performance Snapshot */}
+          {performanceSnapshot && (
+            <motion.div variants={fadeInUp}>
+              <PerformanceSnapshot {...performanceSnapshot} />
+            </motion.div>
+          )}
+
           {/* Stats Grid */}
           <motion.div variants={fadeInUp}>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

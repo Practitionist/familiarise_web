@@ -30,11 +30,23 @@ export interface TConsultantApproval {
   time: string;
 }
 
+// Performance snapshot for consultant dashboard KPIs
+export interface TPerformanceSnapshot {
+  earningsThisMonth: number;
+  earningsLastMonth: number;
+  earningsTrend: number;
+  completionRate: number;
+  averageRating: number;
+  totalReviews: number;
+  trialConversionRate: number;
+}
+
 // Full API response type for consultant dashboard
 export interface TConsultantDashboardResponse {
   appointments: TAppointment[];
   activities: TConsultantActivity[];
   approvals: TConsultantApproval[];
+  performanceSnapshot: TPerformanceSnapshot;
 }
 
 // API wrapper response

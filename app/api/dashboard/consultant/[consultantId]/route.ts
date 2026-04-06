@@ -312,6 +312,12 @@ export async function GET(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    // --- Performance Snapshot date boundaries ---
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
     // PERFORMANCE FIX #364: Use direct Prisma queries instead of internal HTTP fetches
     // This eliminates network overhead and reduces response time significantly
     const [
@@ -319,6 +325,11 @@ export async function GET(
       pendingConsultations,
       pendingSubscriptions,
       recentActivities,
+      earningsThisMonth,
+      earningsLastMonth,
+      ratingAgg,
+      slotCounts,
+      trialCounts,
     ] = await Promise.all([
       // Fetch approved appointments for consultations, subscriptions, webinars, and classes
       prisma.appointment.findMany({
@@ -417,6 +428,53 @@ export async function GET(
           createdAt: "desc",
         },
         take: 10,
+      }),
+      // --- Performance Snapshot Queries ---
+      // 1a. Earnings this month (consultant share from ConsultantEarnings, excluding refunded)
+      prisma.consultantEarnings.aggregate({
+        _sum: { consultantShare: true },
+        where: {
+          consultantProfileId,
+          status: { not: "REFUNDED" },
+          createdAt: { gte: startOfMonth },
+        },
+      }),
+      // 1b. Earnings last month
+      prisma.consultantEarnings.aggregate({
+        _sum: { consultantShare: true },
+        where: {
+          consultantProfileId,
+          status: { not: "REFUNDED" },
+          createdAt: { gte: startOfLastMonth, lt: startOfMonth },
+        },
+      }),
+      // 2. Average rating
+      prisma.consultantReview.aggregate({
+        _avg: { rating: true },
+        _count: { rating: true },
+        where: { consultantProfileId },
+      }),
+      // 3. Session completion rate (last 30 days)
+      prisma.slotOfAppointment.groupBy({
+        by: ["completionStatus"],
+        _count: true,
+        where: {
+          appointment: {
+            OR: [
+              { consultation: { consultationPlan: { consultantProfileId } } },
+              { subscription: { subscriptionPlan: { consultantProfileId } } },
+              { webinar: { webinarPlan: { consultantProfileId } } },
+              { class: { classPlan: { consultantProfileId } } },
+            ],
+          },
+          startsAt: { gte: thirtyDaysAgo },
+        },
+      }),
+      // 4. Trial conversion rate
+      prisma.trialSession.groupBy({
+        by: ["status"],
+        _count: true,
+        where: { consultantProfileId },
       }),
     ]);
 
@@ -578,6 +636,47 @@ export async function GET(
       timeAgo: getRelativeTime(activity.createdAt),
     }));
 
+    // --- Compute Performance Snapshot derived values ---
+    const earningsThisMonthVal = earningsThisMonth._sum.consultantShare ?? 0;
+    const earningsLastMonthVal = earningsLastMonth._sum.consultantShare ?? 0;
+
+    // Earnings trend: percentage change (guard against division by zero)
+    const earningsTrend =
+      earningsLastMonthVal > 0
+        ? Math.round(
+            ((earningsThisMonthVal - earningsLastMonthVal) /
+              earningsLastMonthVal) *
+              100,
+          )
+        : earningsThisMonthVal > 0
+          ? 100
+          : 0;
+
+    // Session completion rate from slot counts
+    const slotCountMap = new Map(
+      slotCounts.map((s) => [s.completionStatus, s._count]),
+    );
+    const completedSlots = slotCountMap.get("COMPLETED") ?? 0;
+    const cancelledSlots = slotCountMap.get("CANCELLED") ?? 0;
+    const unverifiedSlots = slotCountMap.get("UNVERIFIED") ?? 0;
+    const completionDenom = completedSlots + cancelledSlots + unverifiedSlots;
+    const completionRate =
+      completionDenom > 0
+        ? Math.round((completedSlots / completionDenom) * 100)
+        : 0;
+
+    // Trial conversion rate
+    const trialCountMap = new Map(
+      trialCounts.map((t) => [t.status, t._count]),
+    );
+    const completedTrials = trialCountMap.get("COMPLETED") ?? 0;
+    const convertedTrials = trialCountMap.get("CONVERTED") ?? 0;
+    const trialDenom = completedTrials + convertedTrials;
+    const trialConversionRate =
+      trialDenom > 0
+        ? Math.round((convertedTrials / trialDenom) * 100)
+        : 0;
+
     // Return consolidated response
     return NextResponse.json({
       success: true,
@@ -585,6 +684,15 @@ export async function GET(
         appointments: transformedAppointments,
         activities,
         approvals,
+        performanceSnapshot: {
+          earningsThisMonth: earningsThisMonthVal,
+          earningsLastMonth: earningsLastMonthVal,
+          earningsTrend,
+          completionRate,
+          averageRating: ratingAgg._avg.rating ?? 0,
+          totalReviews: ratingAgg._count.rating,
+          trialConversionRate,
+        },
       },
     });
   } catch (error) {
