@@ -30,10 +30,10 @@ import {
   getBadgeStyle,
 } from "../../types";
 import {
-  buildSyntheticClassAppointment,
-  buildSyntheticWebinarAppointment,
-  PartialAppointment,
-} from "./utils/syntheticAppointments";
+  buildUnscheduledClassAppointment,
+  buildUnscheduledWebinarAppointment,
+  UnscheduledAppointment,
+} from "./utils/unscheduledAppointments";
 import { UnscheduledEventCard } from "./components/UnscheduledEventCard";
 import { TAppointment } from "@/types/appointment";
 import {
@@ -79,7 +79,7 @@ export function AppointmentsTab({
   const [joiningTrialId, setJoiningTrialId] = useState<string | null>(null);
   const searchParams = useSearchParams();
   const [selectedAppointment, setSelectedAppointment] =
-    useState<TAppointment | PartialAppointment | null>(null);
+    useState<TAppointment | UnscheduledAppointment | null>(null);
   const [selectedGroupProgress, setSelectedGroupProgress] = useState<{
     completedSessions: number;
     totalSessions: number;
@@ -596,7 +596,7 @@ export function AppointmentsTab({
                               subtitle={`${classEvent.classPlan.meetingsPerWeek} meeting${classEvent.classPlan.meetingsPerWeek !== 1 ? "s" : ""}/week · ${classEvent.classPlan.totalSessions} sessions · ${classEvent.classPlan.sessionDurationInHours}h each`}
                               onSetSchedule={() => {
                                 setSelectedAppointment(
-                                  buildSyntheticClassAppointment(classEvent),
+                                  buildUnscheduledClassAppointment(classEvent),
                                 );
                                 setSelectedGroupProgress(null);
                               }}
@@ -622,7 +622,7 @@ export function AppointmentsTab({
                               subtitle={`Single session · ${webinarEvent.webinarPlan.durationInHours}h`}
                               onSetSchedule={() => {
                                 setSelectedAppointment(
-                                  buildSyntheticWebinarAppointment(webinarEvent),
+                                  buildUnscheduledWebinarAppointment(webinarEvent),
                                 );
                                 setSelectedGroupProgress(null);
                               }}

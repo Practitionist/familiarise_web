@@ -11,14 +11,14 @@ import type { TAppointment } from "@/types/appointment";
 import { UnscheduledClass, UnscheduledWebinar } from "../../../types";
 
 /** Minimum required fields for EventTimingsCalendar */
-export type PartialAppointment = Partial<TAppointment> &
+export type UnscheduledAppointment = Partial<TAppointment> &
   Pick<TAppointment, "id" | "appointmentType">;
 
-export function buildSyntheticClassAppointment(
+export function buildUnscheduledClassAppointment(
   classEvent: UnscheduledClass,
-): PartialAppointment {
+): UnscheduledAppointment {
   return {
-    id: `synthetic-class-${classEvent.id}`,
+    id: `unscheduled-class-${classEvent.id}`,
     appointmentType: "CLASS",
     class: {
       id: classEvent.id,
@@ -35,11 +35,11 @@ export function buildSyntheticClassAppointment(
   };
 }
 
-export function buildSyntheticWebinarAppointment(
+export function buildUnscheduledWebinarAppointment(
   webinarEvent: UnscheduledWebinar,
-): PartialAppointment {
+): UnscheduledAppointment {
   return {
-    id: `synthetic-webinar-${webinarEvent.id}`,
+    id: `unscheduled-webinar-${webinarEvent.id}`,
     appointmentType: "WEBINAR",
     webinar: {
       id: webinarEvent.id,
