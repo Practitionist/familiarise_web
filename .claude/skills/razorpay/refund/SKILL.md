@@ -11,12 +11,7 @@ Three patterns: **full refund** (return entire payment), **partial refund** (ret
 
 ```typescript
 // app/api/billing/refund/route.ts
-import Razorpay from "razorpay";
-
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID!,
-  key_secret: process.env.RAZORPAY_KEY_SECRET!,
-});
+import { razorpay } from "@/lib/razorpay"; // Use the shared singleton client
 
 export async function POST(request: Request) {
   const user = await getAuthenticatedUser(request);

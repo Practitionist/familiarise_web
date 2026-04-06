@@ -17,7 +17,7 @@ Follow these steps in order. Be thorough at each stage before moving to the next
 - **Includes lastEventId column** — webhook idempotency is mandatory
 - **Includes gracePeriodEnd column** — for dunning/failed payment recovery
 - **Adds indexes on userId and razorpaySubscriptionId** — webhook lookups must be fast
-- **Uses UUID primary keys by default** — matches modern conventions
+- **Uses auto-incrementing integer primary keys in examples** — adapt to the project's convention (UUIDs, CUIDs, etc.) when detected
 - **Creates both subscriptions and invoices tables** — invoices are required for Indian businesses (GST)
 - **Multiple subscriptions per user are normal** — when users change plans, both old and new subscriptions coexist in Razorpay until the old one is explicitly cancelled. Never assume one-to-one between users and subscriptions. Access checks should look for ANY active subscription.
 - **Invoices table stores Razorpay Invoice API IDs** — the `razorpay_invoice_id` links to invoices created via `razorpay.invoices.create()`, which is a separate API entity from subscriptions. Subscription payments do NOT auto-generate invoices.
@@ -297,11 +297,11 @@ Based on the detected ORM:
 
 ## Step 8: Run migration and report
 
-After creating all schema definitions, **automatically run the migration** without asking:
+After creating all schema definitions, **instruct the user** to run the migration themselves:
 
-- **Drizzle**: Run `npx drizzle-kit push` (development) or `npx drizzle-kit generate && npx drizzle-kit migrate` (if the project uses migration files).
-- **Prisma**: Run `npx prisma db push` for development.
-- **Raw SQL**: Execute the SQL file against the database if connection details are available.
+- **Drizzle**: Tell the user to run `npx drizzle-kit push` (development) or `npx drizzle-kit generate && npx drizzle-kit migrate` (if the project uses migration files).
+- **Prisma**: Tell the user to run `npx prisma migrate dev --name add_billing_tables`. Do NOT run `prisma db push` (it can cause data loss).
+- **Raw SQL**: Show the user the SQL file to execute against the database.
 
 If the migration **succeeds**, output a summary of tables created with their columns and indexes.
 

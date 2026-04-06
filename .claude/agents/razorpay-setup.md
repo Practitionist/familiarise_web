@@ -88,11 +88,7 @@ yarn add razorpay         # if yarn
 bun add razorpay          # if bun
 ```
 
-Then check if TypeScript type definitions are needed:
-
-- Read `package.json` to see if the project uses TypeScript (check for `typescript` in devDependencies or a `tsconfig.json`).
-- If TypeScript is used, check if `razorpay` ships its own types by looking at `node_modules/razorpay/package.json` for a `types` or `typings` field.
-- If the package does not include types, install `@types/razorpay` as a dev dependency. First check if the package exists by running the install — if it fails, that is fine, the types may be bundled.
+Note: The `razorpay` npm package includes its own TypeScript definitions. Do NOT install `@types/razorpay` — it is deprecated and may cause type conflicts.
 
 ---
 
@@ -200,7 +196,7 @@ The file should define two tables:
 - `id` — primary key
 - `subscriptionId` — foreign key to subscriptions
 - `razorpayInvoiceId` — string, unique
-- `razorpayPaymentId` — string (nullable)
+- `razorpayPaymentId` — string, unique, non-nullable (a GST invoice is always tied to a payment)
 - `amountPaise` — integer (total amount in paise)
 - `gstPaise` — integer (GST portion in paise)
 - `status` — string
@@ -426,29 +422,7 @@ If the migration command fails, show the error and suggest fixes.
 
 ## Step 11: Report and offer next steps
 
-Output a summary of everything that was done, then ASK the user what they want to build next:
-
-```
-Setup complete! Here's what was created:
-  [list files]
-
-Your Razorpay integration is ready. What do you want to build next?
-
-1. Subscription checkout flow (hosted checkout + popup fallback)
-2. Webhook handler (signature verification + all events)
-3. One-time payment (order + JS SDK)
-4. All of the above
-
-Just tell me and I'll build it.
-```
-
-Do NOT dump a list of manual steps. Either do it automatically or ask the user if they want you to do it.
-
----
-
-## Chaining: Auto-proceed to next agents
-
-After setup is complete, DO NOT stop and list next steps. Instead, ASK the user ONE question:
+Output a summary of everything that was done, then ASK the user ONE question:
 
 "Setup done. Do you want me to build the full billing flow? This will create:
 - Subscription checkout page

@@ -171,6 +171,7 @@ export async function createInvoice({
   razorpayPaymentId,
   razorpaySubscriptionId,
   razorpayOrderId,
+  razorpayCustomerId,
   totalAmountPaise,
   description,
   billingPeriodStart,
@@ -194,7 +195,7 @@ export async function createInvoice({
   try {
     const invoice = await razorpay.invoices.create({
       type: "invoice",
-      customer_id: customerId, // Pass the Razorpay customer ID
+      customer_id: razorpayCustomerId,
       line_items: [
         {
           name: description || "Subscription - Base Amount",

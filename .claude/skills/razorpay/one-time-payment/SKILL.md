@@ -116,10 +116,15 @@ export async function POST(request: Request) {
     .update(`${razorpay_order_id}|${razorpay_payment_id}`)
     .digest("hex");
 
-  const isValid = crypto.timingSafeEqual(
-    Buffer.from(expectedSignature, "hex"),
-    Buffer.from(razorpay_signature, "hex")
-  );
+  const expectedBuf = Buffer.from(expectedSignature, "hex");
+  const receivedBuf = Buffer.from(razorpay_signature, "hex");
+
+  // Length check required — timingSafeEqual throws on mismatched lengths
+  if (receivedBuf.length !== expectedBuf.length) {
+    return Response.json({ error: "Invalid signature" }, { status: 400 });
+  }
+
+  const isValid = crypto.timingSafeEqual(expectedBuf, receivedBuf);
 
   if (!isValid) {
     return Response.json({ error: "Invalid signature" }, { status: 400 });

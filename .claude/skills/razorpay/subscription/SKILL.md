@@ -39,11 +39,23 @@ export async function POST(request: Request) {
 
       if (isPending && isRecent) {
         // Return existing checkout URL — user may have abandoned and returned
-        return Response.json({
-          shortUrl: null, // Cannot retrieve short_url after creation
-          subscriptionId: existing.razorpaySubscriptionId,
-          error: "Subscription already pending. Complete existing checkout or wait 1 hour.",
-        }, { status: 409 });
+        // Fetch the subscription from Razorpay to get the short_url
+        let shortUrl: string | null = null;
+        try {
+          const rzpSub = await razorpay.subscriptions.fetch(existing.razorpaySubscriptionId);
+          shortUrl = rzpSub.short_url || null;
+        } catch {
+          // If fetch fails, allow creating a fresh subscription below
+        }
+
+        if (shortUrl) {
+          return Response.json({
+            shortUrl,
+            subscriptionId: existing.razorpaySubscriptionId,
+            message: "Subscription already pending. Resuming checkout.",
+          }, { status: 200 });
+        }
+        // If no short_url available, fall through to create a new subscription
       }
 
       if (isPending && !isRecent) {
@@ -69,6 +81,7 @@ export async function POST(request: Request) {
     const planId = planIdFor(planKey);
     const subscription = await razorpay.subscriptions.create({
       plan_id: planId,
+      customer_id: customer.id,
       total_count: totalCountFor(planKey),
       quantity: 1,
       customer_notify: 1,

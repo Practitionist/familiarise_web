@@ -378,7 +378,7 @@ async function createGstInvoice(subscriptionId: string, paymentEntity?: any): Pr
   // Create invoice via Razorpay Invoice API — subscriptions don't auto-generate GST invoices
   const invoice = await razorpay.invoices.create({
     type: "invoice",
-    customer_id: paymentEntity.customer_id,
+    customer_id: subscription.customer_id,
     line_items: [
       {
         name: "Subscription - Base Amount",

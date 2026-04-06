@@ -114,8 +114,8 @@ export async function POST(request: Request) {
     }
   } catch (error) {
     console.error("Webhook processing error:", error);
-    // Still return 200 to prevent retries on app errors
-    // Log for manual investigation
+    // Return 5xx for transient failures so Razorpay retries
+    return new Response("Webhook processing failed", { status: 500 });
   }
 
   return new Response("OK", { status: 200 });
@@ -172,7 +172,10 @@ async function handleEvent(
       // THIS is the real event. Money has been charged. Grant access NOW.
       await activateSubscription(subscription, entity, eventId);
       if (payment) {
-        await createGstInvoice(payment, subscription); // Non-blocking — calls Razorpay Invoice API
+        // Fire-and-forget — don't block the webhook response
+        void createGstInvoice(payment, subscription).catch((err) =>
+          console.error("Failed to create GST invoice:", err),
+        );
       }
       break;
     }
@@ -181,7 +184,11 @@ async function handleEvent(
     case "subscription.charged": {
       // This is a renewal payment — mark active, create GST invoice
       await updateSubscriptionStatus(subscription, "active", entity, eventId);
-      if (payment) await createGstInvoice(payment, subscription);
+      if (payment) {
+        void createGstInvoice(payment, subscription).catch((err) =>
+          console.error("Failed to create GST invoice:", err),
+        );
+      }
       break;
     }
 

@@ -338,7 +338,7 @@ If the database schema is missing, note what columns are needed but do NOT prese
 ## Important Rules
 
 1. **Never create a second Razorpay instance.** Always import from the existing singleton. If none exists, create exactly one and import it everywhere.
-2. **Always use `fail_existing: 0 as 0 | 1`** when creating customers. Without the cast, TypeScript will reject the Razorpay SDK call.
+2. **Always use `fail_existing: 0`** when creating customers. In TypeScript projects, add the cast `0 as 0 | 1` to satisfy the SDK type checker. In JavaScript projects, omit the cast.
 3. **Never send empty strings to Razorpay.** Check that phone, email, and notify fields have real values before including them. Use `undefined` instead of `""`.
 4. **Always validate planKey server-side.** Never pass user input directly as a Razorpay plan ID.
 5. **Always dedup pending subscriptions.** Creating a new Razorpay subscription for every button click wastes resources and confuses users.

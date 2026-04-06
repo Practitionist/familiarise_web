@@ -167,7 +167,7 @@ export WEBHOOK_SECRET="your_webhook_secret"
 export PAYLOAD='{"event":"subscription.activated","payload":{"subscription":{"entity":{"id":"sub_test123","plan_id":"plan_test456","status":"active","notes":{"userId":"user_1","planKey":"pro_monthly"}}}}}'
 
 # Generate signature
-SIGNATURE=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | awk '{print $2}')
+SIGNATURE=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | awk '{print $NF}')
 
 # Send test webhook
 curl -X POST http://localhost:3000/api/billing/webhook \
