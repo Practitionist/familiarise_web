@@ -3,7 +3,12 @@ import { Prisma, PaymentGateway } from "@prisma/client";
 import crypto from "crypto";
 import { stripeClient } from "@/lib/payments/core/stripe";
 import { razorpayClient } from "@/lib/payments/core/razorpay";
-import { handlePayoutWebhook, refundEarnings } from "@/lib/payments/payouts";
+import {
+  handlePayoutWebhook,
+  refundEarnings,
+  holdEarnings,
+  releaseHeldEarnings,
+} from "@/lib/payments/payouts";
 import {
   notifyRefundProcessed,
   notifyDisputeCreated,
@@ -66,7 +71,13 @@ export async function verifyWebhookSignature(
         .createHmac("sha256", secret)
         .update(body)
         .digest("hex");
-      return { isValid: signature === expectedSignature, body };
+      // H1 FIX: Use timing-safe comparison to prevent timing attacks on HMAC
+      const sigBuf = Buffer.from(signature, "hex");
+      const expectedBuf = Buffer.from(expectedSignature, "hex");
+      if (sigBuf.length !== expectedBuf.length) {
+        return { isValid: false, body };
+      }
+      return { isValid: crypto.timingSafeEqual(sigBuf, expectedBuf), body };
     }
   } catch (error) {
     console.error(
@@ -332,6 +343,28 @@ export async function handleDisputeCreated(
 
     console.log(`✅ Dispute ${disputeId} created for payment ${payment.id}`);
 
+    // M1 FIX: Hold consultant earnings to prevent payout of disputed funds
+    const earningsToHold = await tx.consultantEarnings.findMany({
+      where: {
+        paymentId: payment.id,
+        status: { in: ["PENDING", "READY"] },
+      },
+      select: { id: true },
+    });
+    // holdEarnings runs outside the transaction (uses global prisma)
+    // so we collect IDs here and hold after the transaction commits.
+    // For now, hold inline — the function is fast (single update per earning).
+    for (const earning of earningsToHold) {
+      // Update directly inside the transaction for atomicity
+      await tx.consultantEarnings.update({
+        where: { id: earning.id },
+        data: { status: "HELD" },
+      });
+      console.log(
+        `🔒 Earnings ${earning.id} held due to dispute ${disputeId}`,
+      );
+    }
+
     // --- Novu notification (fire-and-forget) ---
     void notifyDisputeCreated([payment.userId], {
       disputeId,
@@ -373,6 +406,43 @@ export async function handleDisputeUpdated(
 
     console.log(`✅ Dispute ${disputeId} updated to status ${status}`);
 
+    // M1 FIX: Release or refund earnings based on dispute resolution
+    const mappedStatus = mapDisputeStatus(status);
+    if (mappedStatus === "WON" || mappedStatus === "WARNING_CLOSED") {
+      // Dispute resolved in platform's favor — release held earnings back to READY
+      const heldEarnings = await tx.consultantEarnings.findMany({
+        where: { paymentId: dispute.paymentId, status: "HELD" },
+        select: { id: true },
+      });
+      for (const earning of heldEarnings) {
+        await tx.consultantEarnings.update({
+          where: { id: earning.id },
+          data: { status: "READY" },
+        });
+        console.log(`🔓 Earnings ${earning.id} released — dispute ${disputeId} won`);
+      }
+    } else if (mappedStatus === "LOST" || mappedStatus === "CHARGE_REFUNDED") {
+      // Dispute lost — mark held earnings as REFUNDED
+      const heldEarnings = await tx.consultantEarnings.findMany({
+        where: { paymentId: dispute.paymentId, status: "HELD" },
+        select: { id: true, consultantShare: true, consultantProfileId: true },
+      });
+      for (const earning of heldEarnings) {
+        await tx.consultantEarnings.update({
+          where: { id: earning.id },
+          data: {
+            status: "REFUNDED",
+            refundedShareAmount: earning.consultantShare,
+          },
+        });
+        await tx.consultantProfile.update({
+          where: { id: earning.consultantProfileId },
+          data: { pendingRevenue: { decrement: earning.consultantShare } },
+        });
+        console.log(`💸 Earnings ${earning.id} refunded — dispute ${disputeId} lost`);
+      }
+    }
+
     // --- Novu notification for resolved disputes (fire-and-forget) ---
     const resolvedStatuses = [
       "WON",
@@ -380,7 +450,7 @@ export async function handleDisputeUpdated(
       "CHARGE_REFUNDED",
       "WARNING_CLOSED",
     ];
-    if (resolvedStatuses.includes(mapDisputeStatus(status))) {
+    if (resolvedStatuses.includes(mappedStatus)) {
       const disputePayment = await tx.payment.findUnique({
         where: { id: dispute.paymentId },
       });
@@ -391,7 +461,7 @@ export async function handleDisputeUpdated(
           amount: dispute.amount,
           currency: dispute.currency,
           reason: dispute.reason || undefined,
-          status: mapDisputeStatus(status),
+          status: mappedStatus,
           dashboardUrl: `${getAppUrl()}/dashboard`,
         });
       }

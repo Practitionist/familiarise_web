@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
+import { razorpayClient } from "@/lib/payments/core/razorpay";
+
 export async function GET(req: NextRequest) {
   try {
     // Check authentication
@@ -12,12 +14,39 @@ export async function GET(req: NextRequest) {
     // Get payment intent from query parameters
     const { searchParams } = new URL(req.url);
     const paymentIntent = searchParams.get("payment_intent");
+    // L4 FIX: Optional sync=true to fetch latest status from Razorpay
+    const shouldSync = searchParams.get("sync") === "true";
 
     if (!paymentIntent) {
       return NextResponse.json(
         { error: "Payment intent ID is required" },
         { status: 400 },
       );
+    }
+
+    // If sync requested and this is a Razorpay order, fetch latest status
+    if (shouldSync && paymentIntent.startsWith("order_") && razorpayClient) {
+      try {
+        const rzpOrder = await razorpayClient.orders.fetch(paymentIntent);
+        if (rzpOrder.status === "paid") {
+          // Update our DB if still PENDING
+          await prisma.payment.updateMany({
+            where: {
+              paymentIntent,
+              paymentStatus: "PENDING",
+            },
+            data: {
+              paymentStatus: "SUCCEEDED",
+              description: "Synced from Razorpay API (on-demand)",
+            },
+          });
+        }
+      } catch (syncError) {
+        console.warn(
+          `Failed to sync payment status from Razorpay for ${paymentIntent}:`,
+          syncError,
+        );
+      }
     }
 
     // Find payment record with appointment details

@@ -440,8 +440,9 @@ export class RazorpayPayoutsService {
   /**
    * Generate idempotency key for payout
    */
+  // M4 FIX: Deterministic key so retries hit the same RazorpayX idempotency slot
   generateIdempotencyKey(payoutId: string): string {
-    return `payout_${payoutId}_${Date.now()}`;
+    return `payout_${payoutId}`;
   }
 
   /**
