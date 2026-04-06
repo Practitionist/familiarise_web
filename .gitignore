@@ -91,3 +91,4 @@ docs/finances/private/
 node-payment-main/
 # Local Netlify folder
 .netlify
+*.png
