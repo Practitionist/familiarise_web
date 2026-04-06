@@ -323,7 +323,6 @@ export function EventPlannerForClass({
             }),
           ),
           imageUrl: initialData?.classPlan?.imageUrl ?? null,
-          collaborators: initialData?.classPlan?.collaborators ?? [],
           createdAt: initialData?.classPlan?.createdAt ?? now,
           updatedAt: now,
         },

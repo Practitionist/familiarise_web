@@ -292,7 +292,6 @@ export function EventPlannerForWebinar({
           consultantProfileId: consultantId,
           consultantProfile: null,
           imageUrl: initialData?.webinarPlan?.imageUrl ?? null,
-          collaborators: initialData?.webinarPlan?.collaborators ?? [],
           createdAt: initialData?.webinarPlan?.createdAt ?? now,
           updatedAt: now,
         },
