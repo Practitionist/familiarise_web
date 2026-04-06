@@ -3,6 +3,7 @@
 import { DataCard } from "@/components/dashboard/DataCard";
 import { DollarSign, Wallet, Users, Layers } from "lucide-react";
 import type { TFinancialSummary } from "@/types/consultant-events";
+import { formatCurrencyAmount } from "@/utils/formatting";
 
 type FinancialSummaryProps = TFinancialSummary;
 
@@ -13,8 +14,7 @@ export function FinancialSummary({
   activeClients,
   activePrograms,
 }: FinancialSummaryProps) {
-  const formatCurrency = (paise: number) =>
-    `\u20B9${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
+  const formatCurrency = (paise: number) => formatCurrencyAmount(paise, "INR");
 
   const items = [
     {

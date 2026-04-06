@@ -318,6 +318,7 @@ export async function GET(
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
 
     // PERFORMANCE FIX #364: Use direct Prisma queries instead of internal HTTP fetches
     // This eliminates network overhead and reduces response time significantly
@@ -433,9 +434,9 @@ export async function GET(
         take: 10,
       }),
       // --- Performance Snapshot Queries ---
-      // 1a. Earnings this month (consultant share from ConsultantEarnings, excluding refunded)
+      // 1a. Earnings this month (consultant share from ConsultantEarnings, excluding refunded, minus partial refunds)
       prisma.consultantEarnings.aggregate({
-        _sum: { consultantShare: true },
+        _sum: { consultantShare: true, refundedShareAmount: true },
         where: {
           consultantProfileId,
           status: { not: "REFUNDED" },
@@ -444,7 +445,7 @@ export async function GET(
       }),
       // 1b. Earnings last month
       prisma.consultantEarnings.aggregate({
-        _sum: { consultantShare: true },
+        _sum: { consultantShare: true, refundedShareAmount: true },
         where: {
           consultantProfileId,
           status: { not: "REFUNDED" },
@@ -470,30 +471,31 @@ export async function GET(
               { class: { classPlan: { consultantProfileId } } },
             ],
           },
-          startsAt: { gte: thirtyDaysAgo },
+          startsAt: { gte: thirtyDaysAgo, lt: now },
         },
       }),
-      // 4. Trial conversion rate
+      // 4. Trial conversion rate (90-day window)
       prisma.trialSession.groupBy({
         by: ["status"],
         _count: true,
-        where: { consultantProfileId },
+        where: { consultantProfileId, createdAt: { gte: ninetyDaysAgo } },
       }),
       // --- Financial Summary Queries ---
-      // 5. Net earnings (all-time, excluding refunded)
+      // 5. Net earnings (all-time, excluding refunded, minus partial refunds)
       prisma.consultantEarnings.aggregate({
-        _sum: { consultantShare: true },
+        _sum: { consultantShare: true, refundedShareAmount: true },
         where: {
           consultantProfileId,
           status: { not: "REFUNDED" },
         },
       }),
-      // 6. Ready earnings (eligible for next payout)
+      // 6. Ready earnings (eligible for next payout — not yet assigned to a payout)
       prisma.consultantEarnings.aggregate({
-        _sum: { consultantShare: true },
+        _sum: { consultantShare: true, refundedShareAmount: true },
         where: {
           consultantProfileId,
           status: "READY",
+          payoutId: null,
         },
       }),
     ]);
@@ -657,8 +659,12 @@ export async function GET(
     }));
 
     // --- Compute Performance Snapshot derived values ---
-    const earningsThisMonthVal = earningsThisMonth._sum.consultantShare ?? 0;
-    const earningsLastMonthVal = earningsLastMonth._sum.consultantShare ?? 0;
+    const earningsThisMonthVal =
+      (earningsThisMonth._sum.consultantShare ?? 0) -
+      (earningsThisMonth._sum.refundedShareAmount ?? 0);
+    const earningsLastMonthVal =
+      (earningsLastMonth._sum.consultantShare ?? 0) -
+      (earningsLastMonth._sum.refundedShareAmount ?? 0);
 
     // Earnings trend: percentage change (guard against division by zero)
     const earningsTrend =
@@ -683,7 +689,7 @@ export async function GET(
     const completionRate =
       completionDenom > 0
         ? Math.round((completedSlots / completionDenom) * 100)
-        : 0;
+        : null;
 
     // Trial conversion rate
     const trialCountMap = new Map(
@@ -695,16 +701,22 @@ export async function GET(
     const trialConversionRate =
       trialDenom > 0
         ? Math.round((convertedTrials / trialDenom) * 100)
-        : 0;
+        : null;
 
     // --- Financial Summary derived values ---
-    const netEarningsVal = netEarningsAgg._sum.consultantShare ?? 0;
-    const readyEarningsVal = readyEarningsAgg._sum.consultantShare ?? 0;
+    const netEarningsVal =
+      (netEarningsAgg._sum.consultantShare ?? 0) -
+      (netEarningsAgg._sum.refundedShareAmount ?? 0);
+    const readyEarningsVal =
+      (readyEarningsAgg._sum.consultantShare ?? 0) -
+      (readyEarningsAgg._sum.refundedShareAmount ?? 0);
     const payoutMinimum = PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT;
     const payoutEligible = readyEarningsVal >= payoutMinimum;
 
-    // Active clients: unique consultees with ongoing (non-completed, non-cancelled) appointments
+    // Active clients + programs: single pass over sorted appointments
     const activeClientIds = new Set<string>();
+    const activeSubIds = new Set<string>();
+    const activeClassIds = new Set<string>();
     for (const apt of sortedAppointments) {
       const isCompleted = apt.slotsOfAppointment.every(
         (s) => s.completionStatus === "COMPLETED" || s.completionStatus === "CANCELLED",
@@ -714,16 +726,6 @@ export async function GET(
         apt.consultation?.requestedBy?.id ??
         apt.subscription?.requestedBy?.id;
       if (consulteeId) activeClientIds.add(consulteeId);
-    }
-
-    // Active programs: unique ongoing subscriptions + classes
-    const activeSubIds = new Set<string>();
-    const activeClassIds = new Set<string>();
-    for (const apt of sortedAppointments) {
-      const isCompleted = apt.slotsOfAppointment.every(
-        (s) => s.completionStatus === "COMPLETED" || s.completionStatus === "CANCELLED",
-      );
-      if (isCompleted) continue;
       if (apt.subscription?.id) activeSubIds.add(apt.subscription.id);
       if (apt.class?.id) activeClassIds.add(apt.class.id);
     }
@@ -734,7 +736,7 @@ export async function GET(
       payoutStatus: payoutEligible
         ? "Ready"
         : readyEarningsVal > 0
-          ? `${readyEarningsVal} / ${payoutMinimum} paise`
+          ? `₹${(readyEarningsVal / 100).toLocaleString("en-IN")} / ₹${(PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT / 100).toLocaleString("en-IN")}`
           : "No ready earnings yet",
       activeClients: activeClientIds.size,
       activePrograms: activeSubIds.size + activeClassIds.size,

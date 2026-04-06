@@ -128,12 +128,19 @@ export function HomeTab({
 
   const expandedAppointments = useMemo(() => appointments || [], [appointments]);
 
-  const todayAppointments = useMemo(
+  const APPOINTMENT_DISPLAY_LIMIT = 8;
+
+  const allTodayAppointments = useMemo(
     () =>
       getTodayAppointments(expandedAppointments).filter(
         (appointment) => getAppointmentStatus(appointment) !== "Completed",
       ),
     [expandedAppointments],
+  );
+
+  const todayAppointments = useMemo(
+    () => allTodayAppointments.slice(0, APPOINTMENT_DISPLAY_LIMIT),
+    [allTodayAppointments],
   );
 
   const allUpcomingAppointments = useMemo(
@@ -296,6 +303,16 @@ export function HomeTab({
                         </div>
                       );
                     })}
+                    {allTodayAppointments.length > APPOINTMENT_DISPLAY_LIMIT && (
+                      <div className="pt-3 text-center">
+                        <Link
+                          href={`/dashboard/consultant/${consultantId}/appointments`}
+                          className="text-sm text-zinc-500 hover:text-zinc-700 transition-colors"
+                        >
+                          View all {allTodayAppointments.length} appointments
+                        </Link>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <EmptyState

@@ -32,14 +32,16 @@ export function PerformanceSnapshot({
       />
       <StatCard
         title="Completion Rate"
-        value={`${completionRate}%`}
+        value={completionRate !== null ? `${completionRate}%` : "N/A"}
         icon={CheckCircle}
         variant={
-          completionRate >= 90
-            ? "success"
-            : completionRate >= 70
-              ? "warning"
-              : "danger"
+          completionRate === null
+            ? "default"
+            : completionRate >= 90
+              ? "success"
+              : completionRate >= 70
+                ? "warning"
+                : "danger"
         }
         tooltip="Sessions completed vs cancelled (last 30 days)"
       />
@@ -62,14 +64,16 @@ export function PerformanceSnapshot({
       />
       <StatCard
         title="Trial Conversions"
-        value={`${trialConversionRate}%`}
+        value={trialConversionRate !== null ? `${trialConversionRate}%` : "N/A"}
         icon={TrendingUp}
         variant={
-          trialConversionRate >= 50
-            ? "success"
-            : trialConversionRate >= 25
-              ? "warning"
-              : "default"
+          trialConversionRate === null
+            ? "default"
+            : trialConversionRate >= 50
+              ? "success"
+              : trialConversionRate >= 25
+                ? "warning"
+                : "default"
         }
         tooltip="Trials that converted to paid subscriptions"
       />

@@ -32,18 +32,24 @@ export interface TConsultantApproval {
 
 // Performance snapshot for consultant dashboard KPIs
 export interface TPerformanceSnapshot {
+  /** Earnings this month in paise (divide by 100 for INR) */
   earningsThisMonth: number;
+  /** Earnings last month in paise (divide by 100 for INR) */
   earningsLastMonth: number;
   earningsTrend: number;
-  completionRate: number;
+  /** Session completion rate (last 30 days). null when no data. */
+  completionRate: number | null;
   averageRating: number;
   totalReviews: number;
-  trialConversionRate: number;
+  /** Trial conversion rate (last 90 days). null when no data. */
+  trialConversionRate: number | null;
 }
 
 // Financial summary for consultant dashboard home
 export interface TFinancialSummary {
+  /** Net earnings in paise (divide by 100 for INR) */
   netEarnings: number;
+  /** Next payout amount in paise (divide by 100 for INR) */
   nextPayout: number;
   payoutStatus: string;
   activeClients: number;
