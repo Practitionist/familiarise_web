@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { formatDistanceToNow, format } from "date-fns";
 import {
   Play,
@@ -168,9 +169,10 @@ export function RecordingCard({ recording, onTransfer }: RecordingCardProps) {
         {/* Thumbnail or placeholder */}
         <div className="relative aspect-video bg-muted rounded-lg overflow-hidden">
           {recording.thumbnailUrl ? (
-            <img
+            <Image
               src={recording.thumbnailUrl}
               alt={recording.title}
+              fill
               className="w-full h-full object-cover"
             />
           ) : (

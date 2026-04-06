@@ -6,6 +6,8 @@
 [build.environment]
   # Node version
   NODE_VERSION = "22"
+  # Increase heap size to prevent OOM during lint/type-check step
+  NODE_OPTIONS = "--max-old-space-size=4096"
 
 # Skip builds for Dependabot PRs
 [context.deploy-preview]

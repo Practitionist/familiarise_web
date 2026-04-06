@@ -84,7 +84,7 @@ export default function StaffDashboardLayout({
   const {
     data: userDetails,
     isLoading: isLoadingUser,
-    error: userError,
+    error: _userError,
   } = useQuery({
     queryKey: ["user-details", userId],
     queryFn: () => fetchUserDetails(userId!),

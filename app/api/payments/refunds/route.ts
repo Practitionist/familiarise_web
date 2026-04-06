@@ -28,7 +28,7 @@ const createRefundSchema = z.object({
   forceRefund: z.boolean().optional().default(false),
 });
 
-const getRefundsSchema = z.object({
+const _getRefundsSchema = z.object({
   paymentId: z.string().optional(),
   limit: z.number().int().min(1).max(100).default(10),
 });

@@ -8,7 +8,7 @@ interface ChatsTabProps {
   userRole: string | null;
 }
 
-export function ChatsTab({ userId }: Readonly<ChatsTabProps>) {
+export function ChatsTab({ userId: _userId }: Readonly<ChatsTabProps>) {
   return (
     <>
       <DashboardHeader title="Chats" subtitle="Messages and conversations" />

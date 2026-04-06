@@ -7,6 +7,7 @@ import {
   AllocationResult,
 } from "../utils/allocationAlgorithms";
 import { AllocationService } from "../utils/allocationService";
+import type { RawSlotData } from "./useCalendarData";
 import { isRecurringEventType } from "@/utils/slotAllocation/types";
 
 /**
@@ -892,7 +893,7 @@ function validateDailyHours(slots: TimeSlot[], maxHours: number): boolean {
  * Validate session distribution per day (for classes)
  * A session is a group of consecutive slots
  */
-function validateSessionDistribution(
+function _validateSessionDistribution(
   slots: TimeSlot[],
   maxSessions: number,
 ): boolean {
@@ -944,7 +945,7 @@ function validateSessionDistribution(
 /**
  * Validate daily calls limit (for subscriptions)
  */
-function validateDailyCalls(slots: TimeSlot[], maxCalls: number): boolean {
+function _validateDailyCalls(slots: TimeSlot[], maxCalls: number): boolean {
   const dailyCalls = new Map<string, number>();
 
   slots.forEach((slot) => {
@@ -958,7 +959,7 @@ function validateDailyCalls(slots: TimeSlot[], maxCalls: number): boolean {
 /**
  * Validate total calls limit (for subscriptions)
  */
-function validateTotalCalls(slots: TimeSlot[], maxCalls?: number): boolean {
+function _validateTotalCalls(slots: TimeSlot[], maxCalls?: number): boolean {
   if (!maxCalls) return true;
   return slots.length <= maxCalls;
 }
@@ -1323,20 +1324,18 @@ export function useEventSlotAllocation(
   // ==========================================
 
   // Notify parent of validation changes
-  // NOTE: onValidationChange intentionally not in deps to avoid infinite loops from parent re-renders
   useEffect(() => {
     if (onValidationChange) {
       onValidationChange(isValid, validationResult);
     }
-  }, [isValid, validationResult]);
+  }, [isValid, validationResult, onValidationChange]);
 
   // Notify parent of slot changes
-  // NOTE: onSlotsChange intentionally not in deps to avoid infinite loops from parent re-renders
   useEffect(() => {
     if (onSlotsChange) {
       onSlotsChange(selectedSlots);
     }
-  }, [selectedSlots]);
+  }, [selectedSlots, onSlotsChange]);
 
   // Clear allocation error when slots change
   useEffect(() => {
@@ -1774,8 +1773,6 @@ export function useEventSlotAllocation(
       eventConstraints,
       slotLimits,
       options,
-      requiredSlots,
-      toast,
       setPendingToast,
     ],
   );
@@ -1979,7 +1976,7 @@ export function useEventSlotAllocation(
             ...(fullPeriodData.weekly || []),
             ...(fullPeriodData.custom || []),
           ];
-          slotsForAllocation = allRawSlots.map((slot: any) => ({
+          slotsForAllocation = allRawSlots.map((slot: RawSlotData) => ({
             startTime: new Date(slot.slotStartTimeInUTC),
             endTime: new Date(slot.slotEndTimeInUTC),
             isAvailable:
@@ -2165,7 +2162,7 @@ export function useEventSlotAllocation(
    * Get suggestions for optimal slot selection
    */
   const getSlotSuggestions = useCallback(
-    (availableSlots: TimeSlot[]) => {
+    (_availableSlots: TimeSlot[]) => {
       // This would implement intelligent slot suggestion logic
       // For now, return simple suggestions based on event type
       const suggestions: TimeSlot[] = [];
@@ -2175,7 +2172,7 @@ export function useEventSlotAllocation(
 
       return suggestions;
     },
-    [eventType, eventConstraints],
+    [],
   );
 
   // ==========================================

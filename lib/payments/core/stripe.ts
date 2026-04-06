@@ -9,10 +9,19 @@ import {
   PaymentError,
   RefundError,
   DisputeError,
-  CURRENCY_MULTIPLIERS,
 } from "./types";
 import { RefundStatus, DisputeStatus } from "@prisma/client";
 import { getAppUrl } from "@/lib/url";
+
+/**
+ * Convert Stripe's complex Evidence object to a plain record.
+ * Avoids repeating `as unknown as Record<string, unknown>` at every call site.
+ */
+function toEvidenceRecord(
+  evidence: Stripe.Dispute.Evidence,
+): Record<string, unknown> {
+  return evidence as unknown as Record<string, unknown>;
+}
 
 // ============================================================================
 // Stripe Client Initialization
@@ -180,7 +189,7 @@ export async function createStripeRefund({
     // Fetch the payment intent to get the currency
     const paymentIntent =
       await stripeClient.paymentIntents.retrieve(paymentIntentId);
-    const currency = paymentIntent.currency;
+    const _currency = paymentIntent.currency;
 
     const refund = await stripeClient.refunds.create({
       payment_intent: paymentIntentId,
@@ -288,7 +297,7 @@ export async function getStripeDispute(
     return {
       disputeId: dispute.id,
       status: mapStripeDisputeStatus(dispute.status),
-      evidence: dispute.evidence as unknown as Record<string, unknown>,
+      evidence: toEvidenceRecord(dispute.evidence),
       isChargeRefundable: dispute.is_charge_refundable,
       dueBy: dispute.evidence_details?.due_by
         ? new Date(dispute.evidence_details.due_by * 1000)
@@ -348,7 +357,7 @@ export async function submitStripeDisputeEvidence({
     return {
       disputeId: dispute.id,
       status: mapStripeDisputeStatus(dispute.status),
-      evidence: dispute.evidence as unknown as Record<string, unknown>,
+      evidence: toEvidenceRecord(dispute.evidence),
       isChargeRefundable: dispute.is_charge_refundable,
       dueBy: dispute.evidence_details?.due_by
         ? new Date(dispute.evidence_details.due_by * 1000)
@@ -380,7 +389,7 @@ export async function listStripeDisputes(
     return disputes.data.map((dispute) => ({
       disputeId: dispute.id,
       status: mapStripeDisputeStatus(dispute.status),
-      evidence: dispute.evidence as unknown as Record<string, unknown>,
+      evidence: toEvidenceRecord(dispute.evidence),
       isChargeRefundable: dispute.is_charge_refundable,
       dueBy: dispute.evidence_details?.due_by
         ? new Date(dispute.evidence_details.due_by * 1000)

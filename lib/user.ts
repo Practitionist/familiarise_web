@@ -11,10 +11,10 @@ export const fetchUserDetails = async (
 ): Promise<TUserWithProfessionalBackground> => {
   const response = await fetch(`/api/user/${userId}`);
   if (!response.ok) {
-    const err = new Error(
+    const err: Error & { status?: number } = new Error(
       `Failed to fetch user details: ${response.statusText}`,
     );
-    (err as any).status = response.status;
+    err.status = response.status;
     throw err;
   }
   const userData: { data: TUserWithProfessionalBackground } =

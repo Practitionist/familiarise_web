@@ -1,4 +1,4 @@
-import { PrismaClient, Prisma, RequestStatus } from "@prisma/client";
+import { PrismaClient, Prisma } from "@prisma/client";
 import { addWeeks, endOfWeek, isWithinInterval } from "date-fns";
 import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
 import { OCCUPIED_REQUEST_STATUSES } from "@/utils/slotAllocation/occupancyPolicy";

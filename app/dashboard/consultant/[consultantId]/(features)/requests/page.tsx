@@ -16,7 +16,7 @@ export default function RequestsPage({
 
   // Use the centralized query configuration
   const requestsQuery = createConsultantQueries(consultantId).requests;
-  const { data: requestsData, isLoading, error } = useQuery(requestsQuery);
+  const { data: _requestsData, isLoading, error } = useQuery(requestsQuery);
 
   if (isLoading) {
     return <RequestsSkeleton />;

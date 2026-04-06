@@ -42,7 +42,6 @@ import {
   Video,
   GraduationCap,
 } from "lucide-react";
-import { cn } from "@/utils/tailwind";
 
 interface PlannerData {
   webinars: PlannerWebinarEvent[];
@@ -75,7 +74,7 @@ export function EventManagementDashboard({
   const [editingEvent, setEditingEvent] = useState<Event | null>(null);
   const [isLoading, setIsLoading] = useState(!initialData);
   const [error, setError] = useState<string | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
+  const [_isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
 
   // React Query hooks for consultation and subscription plans
@@ -558,7 +557,7 @@ export function EventManagementDashboard({
     deleteSubscriptionPlan.mutate(planId);
   };
 
-  const handleMonthChange = (direction: "prev" | "next") => {
+  const _handleMonthChange = (direction: "prev" | "next") => {
     setCurrentDate((prevDate) =>
       addMonths(prevDate, direction === "prev" ? -1 : 1),
     );

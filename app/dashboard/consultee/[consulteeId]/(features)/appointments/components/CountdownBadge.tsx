@@ -48,8 +48,8 @@ export function CountdownBadge({
   const target = new Date(targetDate).getTime();
   const end = sessionEndDate ? new Date(sessionEndDate).getTime() : null;
   const diffMs = target - now;
-  const isOngoing = diffMs <= 0 && end != null && now <= end;
-  const isEnded = end != null && now > end;
+  const isOngoing = diffMs <= 0 && end !== null && now <= end;
+  const isEnded = end !== null && now > end;
 
   useEffect(() => {
     if (isEnded) return;

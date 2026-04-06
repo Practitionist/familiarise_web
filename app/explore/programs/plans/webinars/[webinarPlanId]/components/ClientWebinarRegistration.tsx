@@ -38,7 +38,7 @@ export function ClientWebinarRegistration({
   webinarPlanId,
   webinarId,
   price,
-  currency,
+  currency: _currency,
   nextSessionDate,
   sessionStatus,
   appointment,

@@ -5,7 +5,6 @@ import {
   Gender,
   CareerStage,
   AdminLevel,
-  BudgetPreference,
   SessionType,
   AchievementType,
 } from "@prisma/client";

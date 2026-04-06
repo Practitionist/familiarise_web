@@ -38,7 +38,6 @@ import {
   processQualifyingAction,
   processConsultantBookingReferral,
 } from "@/lib/referrals/service";
-import { TAX_CONSTANTS } from "@/lib/payments/payouts/constants";
 import {
   createEarningsFromPayment,
   type AppointmentType,

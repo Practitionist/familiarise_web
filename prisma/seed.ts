@@ -1,6 +1,6 @@
 import "dotenv/config";
 import prisma from "../lib/prisma";
-import { printConfigSummary, getSeedMode } from "./seedFiles/config";
+import { printConfigSummary } from "./seedFiles/config";
 
 // Phase 1: Core entities
 import { createUsers } from "./seedFiles/1a-create-users";

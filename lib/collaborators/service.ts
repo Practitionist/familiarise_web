@@ -11,6 +11,7 @@ import type {
 } from "@prisma/client";
 import { removeUserFromEventChannel } from "@/actions/stream/chat/event-channel.action";
 import { getStreamChatClient } from "@/lib/stream-client";
+import type { RevenueSplit } from "@/types/collaborators";
 import {
   notifyCollaboratorInvited,
   notifyCollaboratorAccepted,
@@ -930,7 +931,7 @@ export async function calculateRevenueSplit(
   planType: PlanType,
   planId: string,
   totalAmount: number,
-): Promise<{ consultantProfileId: string; share: number; role: string }[]> {
+): Promise<RevenueSplit[]> {
   const collabs = await getCollaborators(planType, planId);
   const acceptedCollabs = collabs.filter((c) => c.status === "ACCEPTED");
 
@@ -938,8 +939,7 @@ export async function calculateRevenueSplit(
     return []; // No collaborators - regular single-owner flow
   }
 
-  const splits: { consultantProfileId: string; share: number; role: string }[] =
-    [];
+  const splits: RevenueSplit[] = [];
 
   let collaboratorTotal = 0;
   for (const collab of acceptedCollabs) {

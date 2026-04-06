@@ -8,7 +8,7 @@ type PageProps = {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 };
 
-export default function MessagesPage({ params }: Readonly<PageProps>) {
+export default function MessagesPage({ params: _params }: Readonly<PageProps>) {
   return (
     <DashboardErrorBoundary>
       <MessagesTab />

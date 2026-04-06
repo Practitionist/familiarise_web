@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -143,7 +143,7 @@ export function EventPlannerForWebinar({
     }
   }, [isOpen, toast]);
 
-  const getInitialScheduledAt = (): string => {
+  const getInitialScheduledAt = useCallback((): string => {
     if (
       initialData?.appointment &&
       initialData.appointment.slotsOfAppointment &&
@@ -153,7 +153,7 @@ export function EventPlannerForWebinar({
       return formatDateTimeForInput(slot.startsAt);
     }
     return formatDateTimeForInput();
-  };
+  }, [initialData]);
 
   const form = useForm<WebinarFormValues>({
     resolver: zodResolver(WebinarFormSchema),
@@ -205,7 +205,7 @@ export function EventPlannerForWebinar({
         consultantProfileId: consultantId,
       });
     }
-  }, [initialData, form, consultantId]);
+  }, [initialData, form, consultantId, getInitialScheduledAt]);
 
   const handleFormSubmit = form.handleSubmit(
     async () => {

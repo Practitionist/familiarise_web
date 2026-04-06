@@ -96,11 +96,20 @@ export interface DisputeResult {
 // Helper Types
 // ============================================================================
 
-export interface CurrencyMultiplier {
-  [key: string]: number;
-}
+/** Supported currency codes for payment gateway amount conversion. */
+export type SupportedCurrency =
+  | "USD"
+  | "EUR"
+  | "GBP"
+  | "JPY"
+  | "INR"
+  | "AUD"
+  | "CAD"
+  | "SGD"
+  | "AED"
+  | "NGN";
 
-export const CURRENCY_MULTIPLIERS: CurrencyMultiplier = {
+export const CURRENCY_MULTIPLIERS: Record<SupportedCurrency, number> = {
   USD: 100, // cents
   EUR: 100, // cents
   GBP: 100, // pence

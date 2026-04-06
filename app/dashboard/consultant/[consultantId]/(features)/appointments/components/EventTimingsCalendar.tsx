@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { useParams } from "next/navigation";
 import { SafeUnifiedCalendar } from "../../shared/components/SafeUnifiedCalendar";
-import { TAppointment } from "@/types/appointment";
+import type { UnscheduledAppointment } from "../utils/unscheduledAppointments";
 import { getClassPlanDefaults, type ClassPlanType } from "@/utils/classPlans";
 
 interface EventDetails {
@@ -29,7 +29,7 @@ interface EventDetails {
 interface EventTimingsCalendarProps {
   isOpen: boolean;
   onClose: () => void;
-  appointment: TAppointment;
+  appointment: UnscheduledAppointment;
   completedSessions?: number;
   groupTotalSessions?: number;
 }
@@ -44,7 +44,7 @@ export function EventTimingsCalendar({
   const params = useParams();
 
   const consultantId = params.consultantId?.toString() || "";
-  const getEventDetails = (appointment: TAppointment): EventDetails => {
+  const getEventDetails = (appointment: UnscheduledAppointment): EventDetails => {
     switch (appointment.appointmentType) {
       case "CONSULTATION":
         return {

@@ -283,7 +283,7 @@ export async function GET(req: NextRequest) {
     if (groupBy === "event") {
       groupedData = {};
       for (const entry of transformedWaitlists) {
-        const key = `${entry.eventType}:${entry.eventId}`;
+        const _key = `${entry.eventType}:${entry.eventId}`;
         const label = entry.eventTitle;
         if (!groupedData[label]) {
           groupedData[label] = [];

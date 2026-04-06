@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
 /**
@@ -39,7 +40,7 @@ export async function GET(req: NextRequest) {
     const soonThreshold = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days from now
 
     // Build subscription date filter based on status
-    let subscriptionDateFilter: any = {};
+    let subscriptionDateFilter: Prisma.SubscriptionWhereInput = {};
     if (status === "active") {
       // Active = ends more than 7 days from now (includes expiring_soon for "active" filter)
       subscriptionDateFilter = {
@@ -58,7 +59,7 @@ export async function GET(req: NextRequest) {
     }
 
     // Build where clause with status filter in the database query
-    let where: any = {
+    const where: Prisma.PaymentWhereInput = {
       appointment: {
         appointmentType: "SUBSCRIPTION",
         subscription:

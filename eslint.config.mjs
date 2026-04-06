@@ -2,6 +2,8 @@ import globals from "globals";
 import pluginJs from "@eslint/js";
 import tseslint from "typescript-eslint";
 import pluginReact from "eslint-plugin-react";
+import pluginReactHooks from "eslint-plugin-react-hooks";
+import pluginNext from "@next/eslint-plugin-next";
 import pluginJest from "eslint-plugin-jest";
 import pluginUnusedImports from "eslint-plugin-unused-imports";
 
@@ -44,17 +46,6 @@ export default [
       globals: {
         ...globals.browser,
         ...globals.node,
-        // Common Node.js globals
-        require: true,
-        module: true,
-        exports: true,
-        __dirname: true,
-        __filename: true,
-        process: true,
-        Buffer: true,
-        // React globals
-        React: true,
-        JSX: true,
       },
     },
     plugins: {
@@ -76,6 +67,11 @@ export default [
         version: "detect",
       },
     },
+    plugins: {
+      ...pluginReact.configs.flat.recommended.plugins,
+      "react-hooks": pluginReactHooks,
+      "@next/next": pluginNext,
+    },
     rules: {
       // Warns when let is used where const could be used instead
       "prefer-const": "warn",
@@ -83,16 +79,25 @@ export default [
       // Warns when var is used instead of let or const
       "no-var": "warn",
 
-      // Warn when using == and != instead of === and !==
+      // Warn about lexical declarations in case blocks without braces
       "no-case-declarations": "warn",
 
-      // Warn when React props are missing type definitions
-      "react/prop-types": "warn",
+      // Enforce === and !== over == and !=
+      eqeqeq: "warn",
 
-      // These rules are turned off since React 17+ doesn't require importing React
-      // when using JSX, as the new JSX transform handles this automatically
+      // React hooks rules
+      "react-hooks/rules-of-hooks": "error",
+      "react-hooks/exhaustive-deps": "warn",
+
+      // Disabled — TypeScript handles prop validation
+      "react/prop-types": "off",
+
+      // Disabled — React 17+ JSX transform doesn't require importing React
       "react/jsx-uses-react": "off",
       "react/react-in-jsx-scope": "off",
+
+      // Next.js specific rules
+      ...pluginNext.configs.recommended.rules,
 
       // Warn when empty object types are used (e.g. 'type Foo = {}')
       "@typescript-eslint/no-empty-object-type": "warn",
@@ -113,13 +118,10 @@ export default [
         {
           varsIgnorePattern: "^_", // Ignore variables starting with _
           argsIgnorePattern: "^_", // Ignore parameters starting with _
+          caughtErrorsIgnorePattern: "^_", // Ignore catch clause errors starting with _
           ignoreRestSiblings: true,
         },
       ],
-
-      // Error on references to undefined variables
-      // typeof check ensures typeof checks don't trigger the error
-      "no-undef": ["error", { typeof: true }],
     },
   },
 

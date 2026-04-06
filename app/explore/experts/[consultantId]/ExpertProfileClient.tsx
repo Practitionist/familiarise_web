@@ -1,6 +1,5 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import type { TConsultantDetailData } from "@/types/consultant";
 import { TSlotTiming } from "@/types/slots";

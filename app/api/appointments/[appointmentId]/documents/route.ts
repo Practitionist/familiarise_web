@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 import {
   uploadAppointmentDocument,
@@ -44,7 +45,7 @@ export async function GET(
       process.env.DEV_BYPASS_AUTH === "true";
 
     // Build access control conditions - bypass in development
-    const whereClause: any = {
+    const whereClause: Prisma.AppointmentWhereInput = {
       id: appointmentId,
     };
 
@@ -299,7 +300,7 @@ export async function POST(
     let formData;
     try {
       formData = await request.formData();
-    } catch (parseError) {
+    } catch (_parseError) {
       return NextResponse.json(
         {
           error: "Invalid file upload",
@@ -368,7 +369,7 @@ export async function POST(
       process.env.DEV_BYPASS_AUTH === "true";
 
     // Build access control conditions - bypass in development
-    const uploadWhereClause: any = {
+    const uploadWhereClause: Prisma.AppointmentWhereInput = {
       id: appointmentId,
     };
 

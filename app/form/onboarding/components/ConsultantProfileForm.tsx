@@ -14,7 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ConsultantProfile, PersonalInfoAndRole } from "@/schemas/user";
+import { PersonalInfoAndRole } from "@/schemas/user";
 import { Domain, SubDomain, Tag } from "@/schemas/plans";
 import {
   ConsultantProfileFormSchema,
@@ -37,7 +37,7 @@ const ConsultantProfileForm: React.FC<Props> = ({
   onNext,
   onBack,
   initialData,
-  personalInfo,
+  personalInfo: _personalInfo,
 }) => {
   const [domains, setDomains] = useState<Domain[]>([]);
   const [subDomains, setSubDomains] = useState<SubDomain[]>([]);

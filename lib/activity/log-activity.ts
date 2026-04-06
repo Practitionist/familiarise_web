@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
 import { ActivityType, Prisma } from "@prisma/client";
+import type { ActivityActor } from "@/types/activity";
 
 interface LogActivityParams {
   activityType: ActivityType;
@@ -63,7 +64,7 @@ export async function logActivity({
 export async function logConsultationBooked(
   consultantProfileId: string,
   consultationId: string,
-  actor: { id: string; name: string; image?: string | null },
+  actor: ActivityActor,
   planTitle: string,
 ) {
   return logActivity({
@@ -84,7 +85,7 @@ export async function logConsultationBooked(
 export async function logConsultationCompleted(
   consultantProfileId: string,
   consultationId: string,
-  actor: { id: string; name: string; image?: string | null },
+  actor: ActivityActor,
   planTitle: string,
 ) {
   return logActivity({
@@ -105,7 +106,7 @@ export async function logConsultationCompleted(
 export async function logConsultationCancelled(
   consultantProfileId: string,
   consultationId: string,
-  actor: { id: string; name: string; image?: string | null },
+  actor: ActivityActor,
   planTitle: string,
   cancelledBy: "consultant" | "consultee",
 ) {
@@ -127,7 +128,7 @@ export async function logConsultationCancelled(
 export async function logSubscriptionRequested(
   consultantProfileId: string,
   subscriptionId: string,
-  actor: { id: string; name: string; image?: string | null },
+  actor: ActivityActor,
   planTitle: string,
 ) {
   return logActivity({
@@ -148,7 +149,7 @@ export async function logSubscriptionRequested(
 export async function logSubscriptionApproved(
   consultantProfileId: string,
   subscriptionId: string,
-  actor: { id: string; name: string; image?: string | null },
+  actor: ActivityActor,
   planTitle: string,
 ) {
   return logActivity({
@@ -169,7 +170,7 @@ export async function logSubscriptionApproved(
 export async function logSubscriptionCancelled(
   consultantProfileId: string,
   subscriptionId: string,
-  actor: { id: string; name: string; image?: string | null },
+  actor: ActivityActor,
   planTitle: string,
   cancelledBy: "consultant" | "consultee",
 ) {
@@ -191,7 +192,7 @@ export async function logSubscriptionCancelled(
 export async function logWebinarRegistered(
   consultantProfileId: string,
   webinarId: string,
-  actor: { id: string; name: string; image?: string | null },
+  actor: ActivityActor,
   webinarTitle: string,
 ) {
   return logActivity({
@@ -212,7 +213,7 @@ export async function logWebinarRegistered(
 export async function logClassEnrolled(
   consultantProfileId: string,
   classId: string,
-  actor: { id: string; name: string; image?: string | null },
+  actor: ActivityActor,
   classTitle: string,
 ) {
   return logActivity({
@@ -233,7 +234,7 @@ export async function logClassEnrolled(
 export async function logTrialRequested(
   consultantProfileId: string,
   trialSessionId: string,
-  actor: { id: string; name: string; image?: string | null },
+  actor: ActivityActor,
   planTitle: string,
 ) {
   return logActivity({
@@ -254,7 +255,7 @@ export async function logTrialRequested(
 export async function logTrialScheduled(
   consultantProfileId: string,
   trialSessionId: string,
-  actor: { id: string; name: string; image?: string | null },
+  actor: ActivityActor,
   planTitle: string,
   scheduledTime: Date,
 ) {
@@ -276,7 +277,7 @@ export async function logTrialScheduled(
 export async function logTrialCompleted(
   consultantProfileId: string,
   trialSessionId: string,
-  actor: { id: string; name: string; image?: string | null },
+  actor: ActivityActor,
   planTitle: string,
 ) {
   return logActivity({
@@ -298,7 +299,7 @@ export async function logTrialConverted(
   consultantProfileId: string,
   trialSessionId: string,
   subscriptionId: string,
-  actor: { id: string; name: string; image?: string | null },
+  actor: ActivityActor,
   planTitle: string,
 ) {
   return logActivity({
@@ -319,7 +320,7 @@ export async function logTrialConverted(
  */
 export async function logReviewSubmitted(
   consultantProfileId: string,
-  actor: { id: string; name: string; image?: string | null },
+  actor: ActivityActor,
   rating: number,
 ) {
   return logActivity({

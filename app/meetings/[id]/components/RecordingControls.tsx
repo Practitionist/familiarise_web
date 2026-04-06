@@ -16,7 +16,7 @@ interface RecordingControlsProps {
 
 const RecordingControls = ({
   meetingSessionId,
-  recordingEnabled,
+  recordingEnabled: _recordingEnabled,
   showOnlyButton = false,
   showOnlyIndicator = false,
 }: RecordingControlsProps) => {

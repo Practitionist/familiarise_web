@@ -6,7 +6,6 @@ import {
   RefundResult,
   PaymentError,
   RefundError,
-  CURRENCY_MULTIPLIERS,
 } from "./types";
 import { RefundStatus } from "@prisma/client";
 

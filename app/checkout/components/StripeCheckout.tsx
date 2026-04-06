@@ -11,10 +11,21 @@ const stripeKey = process.env.NEXT_PUBLIC_STRIPE_KEY;
 console.log("Stripe key exists:", !!stripeKey);
 const stripePromise = stripeKey ? loadStripe(stripeKey) : null;
 
+interface StripePaymentSuccess {
+  message: string;
+}
+
+interface StripePaymentError {
+  message?: string;
+  code?: string;
+  errorType?: string;
+  error?: string;
+}
+
 interface StripeCheckoutProps {
   checkoutData: CheckoutInput;
-  onPaymentSuccess: (response: any) => void;
-  onPaymentError: (error: any) => void;
+  onPaymentSuccess: (response: StripePaymentSuccess) => void;
+  onPaymentError: (error: StripePaymentError) => void;
   disabled?: boolean;
 }
 

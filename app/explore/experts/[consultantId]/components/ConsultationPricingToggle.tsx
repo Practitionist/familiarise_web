@@ -22,9 +22,18 @@ import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrency } from "@/hooks/useCurrency";
 
+interface ConsultantDetailsForBooking {
+  id: string;
+  scheduleType?: string;
+  consultationPlans: Array<{
+    id: string;
+    durationInHours: number;
+  }>;
+}
+
 interface ConsultationPricingToggleProps {
   consultationOptions: PricingOption[];
-  consultantDetails: any;
+  consultantDetails: ConsultantDetailsForBooking;
   handleConsultationBooking: () => void;
   selectedDate: Date | null;
   setSelectedDate: (date: Date | null) => void;
@@ -135,7 +144,7 @@ export default function ConsultationPricingToggle({
       (endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60);
 
     const activePlan = consultantDetails.consultationPlans.find(
-      (plan: any) => plan.durationInHours === durationInHours,
+      (plan: { id: string; durationInHours: number }) => plan.durationInHours === durationInHours,
     );
 
     if (!activePlan) {
@@ -160,7 +169,7 @@ export default function ConsultationPricingToggle({
         consultationPlanId: activePlan.id,
       };
 
-      if ((selectedSlot as any).type === "WEEKLY") {
+      if (selectedSlot.type === "WEEKLY") {
         requestBody.slotOfAvailabilityWeeklyId =
           selectedSlot.slotOfAvailabilityId;
       } else {

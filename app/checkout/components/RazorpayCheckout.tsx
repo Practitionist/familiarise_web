@@ -6,16 +6,56 @@ import { loadScript } from "../plans/utils";
 import { CheckoutInput } from "@/schemas/checkout";
 import { useState } from "react";
 
+interface RazorpayPaymentResponse {
+  razorpay_payment_id: string;
+  razorpay_order_id: string;
+  razorpay_signature: string;
+}
+
+interface RazorpayPaymentError {
+  description?: string;
+  code?: string;
+  reason?: string;
+  message?: string;
+}
+
+interface RazorpayFailedResponse {
+  error: RazorpayPaymentError;
+}
+
+interface RazorpayOptions {
+  key: string | undefined;
+  amount: number;
+  currency: string;
+  name: string;
+  description: string;
+  order_id: string;
+  handler: (response: RazorpayPaymentResponse) => void;
+  prefill?: {
+    name?: string;
+    email?: string;
+    contact?: string;
+  };
+  theme?: {
+    color: string;
+  };
+}
+
+interface RazorpayInstance {
+  on: (event: string, handler: (response: RazorpayFailedResponse) => void) => void;
+  open: () => void;
+}
+
 declare global {
   interface Window {
-    Razorpay: any;
+    Razorpay: new (options: RazorpayOptions) => RazorpayInstance;
   }
 }
 
 interface RazorpayCheckoutProps {
   checkoutData: CheckoutInput;
-  onPaymentSuccess: (response: any) => void;
-  onPaymentError: (error: any) => void;
+  onPaymentSuccess: (response: RazorpayPaymentResponse | { message: string }) => void;
+  onPaymentError: (error: RazorpayPaymentError) => void;
   disabled?: boolean;
   userName?: string;
   userEmail?: string;
@@ -107,7 +147,7 @@ export default function RazorpayCheckout({
         name: "Familiarise",
         description: description || "Service Payment",
         order_id: data.paymentIntent.id,
-        handler: function (response: any) {
+        handler: function (response: RazorpayPaymentResponse) {
           onPaymentSuccess(response);
         },
         ...(userName || userEmail || userPhone
@@ -125,7 +165,7 @@ export default function RazorpayCheckout({
       };
 
       const rzp = new window.Razorpay(options);
-      rzp.on("payment.failed", function (response: any) {
+      rzp.on("payment.failed", function (response: RazorpayFailedResponse) {
         onPaymentError(response.error);
       });
       rzp.open();

@@ -38,7 +38,7 @@ export class SlotCalculationService {
 
     // Count number of Sundays from startSunday to endSunday inclusive
     let weeks = 1;
-    let cursor = new Date(startSunday);
+    const cursor = new Date(startSunday);
     while (cursor < endSunday) {
       cursor.setUTCDate(cursor.getUTCDate() + 7);
       weeks += 1;

@@ -72,10 +72,10 @@ export default function ConsultationCheckoutPage({
   const { formatPrice, currency } = useCurrency();
   const checkoutTaxContext = useCheckoutTaxContext();
   const [eventData, setEventData] = useState<ConsultationResponse | null>(null);
-  const [slotData, setSlotData] = useState<any>(null);
+  const [_slotData, setSlotData] = useState<Record<string, unknown> | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [reviews, setReviews] = useState<ConsultantReview[]>([]);
+  const [_reviews, setReviews] = useState<ConsultantReview[]>([]);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
   const isProcessingRef = useRef(false);
   const [processingGateway, setProcessingGateway] = useState<string | null>(
@@ -140,7 +140,7 @@ export default function ConsultationCheckoutPage({
       } else {
         setDiscountError(data.message || "Invalid discount code");
       }
-    } catch (error) {
+    } catch (_error) {
       setDiscountError("Failed to validate discount code");
     } finally {
       setIsApplyingDiscount(false);
@@ -208,10 +208,10 @@ export default function ConsultationCheckoutPage({
     ) {
       fetchSlotData();
     }
-  }, [resolvedSearchParams]);
+  }, [resolvedSearchParams, toast]);
 
   // Common error handling logic
-  const handleApiError = (errorData: any) => {
+  const handleApiError = useCallback((errorData: { error?: string; errorType?: string }) => {
     const errorMessage = errorData.error || "Operation failed";
     const errorType = errorData.errorType || "UNKNOWN_ERROR";
 
@@ -251,12 +251,12 @@ export default function ConsultationCheckoutPage({
       description: error.description,
       variant: "destructive",
     });
-  };
+  }, [toast]);
 
   // Common API request logic
-  const makeCheckoutRequest = async (
+  const makeCheckoutRequest = useCallback(async (
     checkoutData: CheckoutInput,
-    gateway: string,
+    _gateway: string,
     isMockPayment: boolean = false,
   ) => {
     return fetch("/api/checkout", {
@@ -266,7 +266,7 @@ export default function ConsultationCheckoutPage({
       },
       body: JSON.stringify({ ...checkoutData, isMockPayment }),
     });
-  };
+  }, []);
 
   const handleCheckout = useCallback(
     async (gateway: PaymentGateway, isMockPayment: boolean = false) => {
@@ -371,13 +371,16 @@ export default function ConsultationCheckoutPage({
     },
     [
       resolvedParams,
-      resolvedSearchParams,
       toast,
       isCheckoutProcessing,
       isMaintenanceBlocked,
       maintenanceBlockReason,
       appliedDiscount,
       useReferralCredits,
+      validatedSearchParams,
+      currency,
+      handleApiError,
+      makeCheckoutRequest,
     ],
   );
 
@@ -432,7 +435,7 @@ export default function ConsultationCheckoutPage({
     }
 
     fetchEventData();
-  }, [resolvedParams.planId, resolvedSearchParams]);
+  }, [resolvedParams.planId, resolvedSearchParams, validatedSearchParams]);
 
   // Calculate pricing using the proper math functions
   // NOTE: This must be before early returns to maintain consistent hook order
@@ -841,16 +844,17 @@ export default function ConsultationCheckoutPage({
                             useReferralCredits,
                           })}
                           onPaymentSuccess={(response: {
-                            razorpay_payment_id: string;
+                            razorpay_payment_id?: string;
+                            message?: string;
                           }) => {
                             toast({
                               title: "Payment Successful",
-                              description: `Payment ID: ${response.razorpay_payment_id}`,
+                              description: `Payment ID: ${response.razorpay_payment_id ?? "N/A"}`,
                             });
                             window.location.href = "/dashboard";
                           }}
                           disabled={isMaintenanceBlocked}
-                          onPaymentError={(error: { description: string }) => {
+                          onPaymentError={(error: { description?: string; code?: string; reason?: string; message?: string }) => {
                             toast({
                               title: "Payment Failed",
                               description:

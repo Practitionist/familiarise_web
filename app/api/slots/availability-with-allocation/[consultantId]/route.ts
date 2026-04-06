@@ -73,7 +73,7 @@ export async function GET(
       if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
         throw new Error("Invalid date format");
       }
-    } catch (error) {
+    } catch (_error) {
       return NextResponse.json(
         { error: "Dates must be in UTC ISO format" },
         { status: 400 },

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -44,7 +45,7 @@ export default function GlobalError({
             Try Again
           </Button>
           <Button variant="outline" asChild>
-            <a href="/">Return Home</a>
+            <Link href="/">Return Home</Link>
           </Button>
         </CardFooter>
       </Card>

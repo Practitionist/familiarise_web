@@ -253,7 +253,7 @@ export async function reconcileDocumentStorage(): Promise<DocumentReconciliation
   let orphanedFilesFound = 0;
   let orphanedFilesDeleted = 0;
   let missingFilesFound = 0;
-  let missingFilesMarked = 0;
+  const missingFilesMarked = 0;
 
   console.log("📂 Starting document storage reconciliation...");
   console.log(`   Buckets to check: ${BUCKETS_TO_CHECK.join(", ")}`);

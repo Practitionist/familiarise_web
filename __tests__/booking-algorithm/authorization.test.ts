@@ -50,9 +50,7 @@ import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import {
   authorizeEventAccess,
-  requireApiAuth,
   isPrivileged,
-  forbiddenResponse,
 } from "@/lib/auth-helpers";
 import { POST as rescheduleHandler } from "@/app/api/appointments/[appointmentId]/reschedule/route";
 import { POST as cancelHandler } from "@/app/api/appointments/[appointmentId]/cancel/route";

@@ -448,8 +448,10 @@ export async function reverseCreditsForPayment(
 
   // Determine if this is a partial refund
   const isPartialRefund =
-    refundAmount != null &&
-    originalPaymentAmount != null &&
+    refundAmount !== null &&
+    refundAmount !== undefined &&
+    originalPaymentAmount !== null &&
+    originalPaymentAmount !== undefined &&
     originalPaymentAmount > 0 &&
     refundAmount < originalPaymentAmount;
 
@@ -462,7 +464,7 @@ export async function reverseCreditsForPayment(
       where: { paymentId, status: "SUCCEEDED" },
       _sum: { amount: true },
     });
-    cumulativeRefunded = aggregate._sum.amount ?? refundAmount;
+    cumulativeRefunded = aggregate._sum.amount ?? refundAmount ?? 0;
   }
 
   let totalRestored = 0;

@@ -26,8 +26,6 @@ import {
   handleRecordingStopped,
   handleRecordingReady,
   handleRecordingFailed,
-  StreamRecordingStartedEvent,
-  StreamRecordingStoppedEvent,
   StreamRecordingReadyEvent,
   StreamRecordingFailedEvent,
 } from "@/lib/stream/recording-handlers";

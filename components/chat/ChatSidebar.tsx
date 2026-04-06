@@ -268,7 +268,7 @@ export const ChatSidebar = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [client]);
+  }, [client, setActiveChannel]);
 
   // Function to load more channels (pagination)
   const loadMoreChannels = useCallback(

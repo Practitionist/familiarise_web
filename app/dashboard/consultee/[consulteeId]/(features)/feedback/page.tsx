@@ -18,13 +18,13 @@ export default function FeedbackPage({ params }: Readonly<PageProps>) {
   // Use the centralized query configurations
   const consulteeQueries = createConsulteeQueries(consulteeId);
   const {
-    data: feedbacks,
+    data: _feedbacks,
     isLoading: feedbackLoading,
     error: feedbackError,
   } = useQuery(consulteeQueries.feedback);
 
   const {
-    data: tickets,
+    data: _tickets,
     isLoading: ticketsLoading,
     error: ticketsError,
   } = useQuery(consulteeQueries.supportTickets);

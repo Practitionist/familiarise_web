@@ -17,7 +17,6 @@ import {
   AlertTriangle,
   TrendingUp,
   ChevronRight,
-  Activity,
   Zap,
 } from "lucide-react";
 import { cn } from "@/utils/tailwind";

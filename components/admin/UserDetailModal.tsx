@@ -24,7 +24,6 @@ import {
   Clock,
   Shield,
   ExternalLink,
-  Loader2,
   AlertCircle,
   XCircle,
 } from "lucide-react";

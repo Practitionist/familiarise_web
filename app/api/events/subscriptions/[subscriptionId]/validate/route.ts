@@ -11,7 +11,6 @@
  */
 
 import prisma from "@/lib/prisma";
-import { RequestStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { SlotValidationService } from "@/utils/slotAllocation/SlotValidationService";
 import { SubscriptionValidationService } from "@/utils/subscriptionValidation";

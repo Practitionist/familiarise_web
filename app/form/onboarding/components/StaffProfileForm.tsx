@@ -31,7 +31,7 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
     control,
     handleSubmit,
     watch,
-    setValue,
+    setValue: _setValue,
     reset,
     formState: { errors },
   } = useForm<StaffProfile & PersonalInfoAndRole>({

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Image from "next/image";
 import { useParams } from "next/navigation";
 import {
   Card,
@@ -46,8 +47,11 @@ import Link from "next/link";
 import { cn } from "@/utils/tailwind";
 import { useRouter } from "next/navigation";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
-import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
-import type { TAppointment } from "@/types/appointment";
+import {
+  getOrCreateAppointmentMeeting,
+  type MeetingAppointment,
+  type MeetingSlot,
+} from "@/lib/meeting";
 import {
   TrialScheduleCalendar,
   SelectedSlot,
@@ -444,16 +448,16 @@ export function TrialsTab() {
     try {
       const slot = trial.appointment.slotsOfAppointment[0];
       // Create a minimal appointment object for the meeting helper
-      const appointmentForMeeting = {
+      const appointmentForMeeting: MeetingAppointment = {
         id: trial.appointment.id,
-        appointmentType: "TRIAL" as const,
+        appointmentType: "TRIAL",
         slotsOfAppointment: trial.appointment.slotsOfAppointment,
-      } as unknown as TAppointment;
+      };
 
       const meetingId = await getOrCreateAppointmentMeeting(
         client,
         appointmentForMeeting,
-        slot as any,
+        slot as MeetingSlot,
       );
 
       toast({
@@ -692,9 +696,11 @@ export function TrialsTab() {
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-3">
                     {trial.consulteeProfile.user.image ? (
-                      <img
+                      <Image
                         src={trial.consulteeProfile.user.image}
                         alt={trial.consulteeProfile.user.name}
+                        width={40}
+                        height={40}
                         className="h-10 w-10 rounded-full"
                       />
                     ) : (
