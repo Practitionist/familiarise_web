@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
+import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
 
 // =============================================================================
 // Prisma Query Types - Derived from actual query shape for type safety
@@ -312,6 +313,13 @@ export async function GET(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    // --- Performance Snapshot date boundaries ---
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+
     // PERFORMANCE FIX #364: Use direct Prisma queries instead of internal HTTP fetches
     // This eliminates network overhead and reduces response time significantly
     const [
@@ -319,6 +327,13 @@ export async function GET(
       pendingConsultations,
       pendingSubscriptions,
       recentActivities,
+      earningsThisMonth,
+      earningsLastMonth,
+      ratingAgg,
+      slotCounts,
+      trialCounts,
+      netEarningsAgg,
+      readyEarningsAgg,
     ] = await Promise.all([
       // Fetch approved appointments for consultations, subscriptions, webinars, and classes
       prisma.appointment.findMany({
@@ -417,6 +432,71 @@ export async function GET(
           createdAt: "desc",
         },
         take: 10,
+      }),
+      // --- Performance Snapshot Queries ---
+      // 1a. Earnings this month (consultant share from ConsultantEarnings, excluding refunded, minus partial refunds)
+      prisma.consultantEarnings.aggregate({
+        _sum: { consultantShare: true, refundedShareAmount: true },
+        where: {
+          consultantProfileId,
+          status: { not: "REFUNDED" },
+          createdAt: { gte: startOfMonth },
+        },
+      }),
+      // 1b. Earnings last month
+      prisma.consultantEarnings.aggregate({
+        _sum: { consultantShare: true, refundedShareAmount: true },
+        where: {
+          consultantProfileId,
+          status: { not: "REFUNDED" },
+          createdAt: { gte: startOfLastMonth, lt: startOfMonth },
+        },
+      }),
+      // 2. Average rating
+      prisma.consultantReview.aggregate({
+        _avg: { rating: true },
+        _count: { rating: true },
+        where: { consultantProfileId },
+      }),
+      // 3. Session completion rate (last 30 days)
+      prisma.slotOfAppointment.groupBy({
+        by: ["completionStatus"],
+        _count: true,
+        where: {
+          appointment: {
+            OR: [
+              { consultation: { consultationPlan: { consultantProfileId } } },
+              { subscription: { subscriptionPlan: { consultantProfileId } } },
+              { webinar: { webinarPlan: { consultantProfileId } } },
+              { class: { classPlan: { consultantProfileId } } },
+            ],
+          },
+          startsAt: { gte: thirtyDaysAgo, lt: now },
+        },
+      }),
+      // 4. Trial conversion rate (90-day window)
+      prisma.trialSession.groupBy({
+        by: ["status"],
+        _count: true,
+        where: { consultantProfileId, createdAt: { gte: ninetyDaysAgo } },
+      }),
+      // --- Financial Summary Queries ---
+      // 5. Net earnings (all-time, excluding refunded, minus partial refunds)
+      prisma.consultantEarnings.aggregate({
+        _sum: { consultantShare: true, refundedShareAmount: true },
+        where: {
+          consultantProfileId,
+          status: { not: "REFUNDED" },
+        },
+      }),
+      // 6. Ready earnings (eligible for next payout — not yet assigned to a payout)
+      prisma.consultantEarnings.aggregate({
+        _sum: { consultantShare: true, refundedShareAmount: true },
+        where: {
+          consultantProfileId,
+          status: "READY",
+          payoutId: null,
+        },
       }),
     ]);
 
@@ -578,6 +658,90 @@ export async function GET(
       timeAgo: getRelativeTime(activity.createdAt),
     }));
 
+    // --- Compute Performance Snapshot derived values ---
+    const earningsThisMonthVal =
+      (earningsThisMonth._sum.consultantShare ?? 0) -
+      (earningsThisMonth._sum.refundedShareAmount ?? 0);
+    const earningsLastMonthVal =
+      (earningsLastMonth._sum.consultantShare ?? 0) -
+      (earningsLastMonth._sum.refundedShareAmount ?? 0);
+
+    // Earnings trend: percentage change (guard against division by zero)
+    const earningsTrend =
+      earningsLastMonthVal > 0
+        ? Math.round(
+            ((earningsThisMonthVal - earningsLastMonthVal) /
+              earningsLastMonthVal) *
+              100,
+          )
+        : earningsThisMonthVal > 0
+          ? 100
+          : 0;
+
+    // Session completion rate from slot counts
+    const slotCountMap = new Map(
+      slotCounts.map((s) => [s.completionStatus, s._count]),
+    );
+    const completedSlots = slotCountMap.get("COMPLETED") ?? 0;
+    const cancelledSlots = slotCountMap.get("CANCELLED") ?? 0;
+    const unverifiedSlots = slotCountMap.get("UNVERIFIED") ?? 0;
+    const completionDenom = completedSlots + cancelledSlots + unverifiedSlots;
+    const completionRate =
+      completionDenom > 0
+        ? Math.round((completedSlots / completionDenom) * 100)
+        : null;
+
+    // Trial conversion rate
+    const trialCountMap = new Map(
+      trialCounts.map((t) => [t.status, t._count]),
+    );
+    const completedTrials = trialCountMap.get("COMPLETED") ?? 0;
+    const convertedTrials = trialCountMap.get("CONVERTED") ?? 0;
+    const trialDenom = completedTrials + convertedTrials;
+    const trialConversionRate =
+      trialDenom > 0
+        ? Math.round((convertedTrials / trialDenom) * 100)
+        : null;
+
+    // --- Financial Summary derived values ---
+    const netEarningsVal =
+      (netEarningsAgg._sum.consultantShare ?? 0) -
+      (netEarningsAgg._sum.refundedShareAmount ?? 0);
+    const readyEarningsVal =
+      (readyEarningsAgg._sum.consultantShare ?? 0) -
+      (readyEarningsAgg._sum.refundedShareAmount ?? 0);
+    const payoutMinimum = PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT;
+    const payoutEligible = readyEarningsVal >= payoutMinimum;
+
+    // Active clients + programs: single pass over sorted appointments
+    const activeClientIds = new Set<string>();
+    const activeSubIds = new Set<string>();
+    const activeClassIds = new Set<string>();
+    for (const apt of sortedAppointments) {
+      const isCompleted = apt.slotsOfAppointment.every(
+        (s) => s.completionStatus === "COMPLETED" || s.completionStatus === "CANCELLED",
+      );
+      if (isCompleted) continue;
+      const consulteeId =
+        apt.consultation?.requestedBy?.id ??
+        apt.subscription?.requestedBy?.id;
+      if (consulteeId) activeClientIds.add(consulteeId);
+      if (apt.subscription?.id) activeSubIds.add(apt.subscription.id);
+      if (apt.class?.id) activeClassIds.add(apt.class.id);
+    }
+
+    const financialSummary = {
+      netEarnings: netEarningsVal,
+      nextPayout: readyEarningsVal,
+      payoutStatus: payoutEligible
+        ? "Ready"
+        : readyEarningsVal > 0
+          ? `₹${(readyEarningsVal / 100).toLocaleString("en-IN")} / ₹${(PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT / 100).toLocaleString("en-IN")}`
+          : "No ready earnings yet",
+      activeClients: activeClientIds.size,
+      activePrograms: activeSubIds.size + activeClassIds.size,
+    };
+
     // Return consolidated response
     return NextResponse.json({
       success: true,
@@ -585,6 +749,16 @@ export async function GET(
         appointments: transformedAppointments,
         activities,
         approvals,
+        performanceSnapshot: {
+          earningsThisMonth: earningsThisMonthVal,
+          earningsLastMonth: earningsLastMonthVal,
+          earningsTrend,
+          completionRate,
+          averageRating: ratingAgg._avg.rating ?? 0,
+          totalReviews: ratingAgg._count.rating,
+          trialConversionRate,
+        },
+        financialSummary,
       },
     });
   } catch (error) {
