@@ -147,7 +147,32 @@ export default function RazorpayCheckout({
         name: "Familiarise",
         description: description || "Service Payment",
         order_id: data.paymentIntent.id,
-        handler: function (response: RazorpayPaymentResponse) {
+        handler: async function (response: RazorpayPaymentResponse) {
+          // H2 FIX: Verify Razorpay signature server-side before signaling success
+          try {
+            const verifyRes = await fetch("/api/checkout/verify-signature", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+              }),
+            });
+            if (!verifyRes.ok) {
+              const err = await verifyRes.json();
+              console.error("Payment signature verification failed:", err);
+              onPaymentError({
+                description:
+                  "Payment verification failed. Our team will review this transaction.",
+                code: "VERIFICATION_FAILED",
+              });
+              return;
+            }
+          } catch (verifyErr) {
+            // Network failure — don't block; webhook is the ultimate authority
+            console.error("Signature verification request failed:", verifyErr);
+          }
           onPaymentSuccess(response);
         },
         ...(userName || userEmail || userPhone
