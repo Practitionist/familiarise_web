@@ -1,3 +1,5 @@
+> **⚠️ SUPERSEDED on 2026-04-08.** Folded into the canonical enterprise design being written in PR2 as `/docs/enterprise/00-canonical-design.md`. Retained for historical context.
+
 # Enterprise Features
 
 > B2B enterprise tier for organizations — SSO, team management, recording library, org billing.

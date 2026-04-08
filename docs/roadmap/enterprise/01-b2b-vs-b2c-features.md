@@ -1,3 +1,5 @@
+> **⚠️ SUPERSEDED on 2026-04-08.** Folded into the canonical enterprise design being written in PR2 as `/docs/enterprise/00-canonical-design.md`. The feature comparison matrix here is still useful background. Retained for historical context.
+
 # Enterprise — B2B vs B2C Feature Comparison
 
 > What enterprise customers get extra or differently compared to regular B2C customers.

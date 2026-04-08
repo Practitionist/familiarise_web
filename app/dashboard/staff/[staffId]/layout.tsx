@@ -11,14 +11,12 @@ import {
   Wallet,
   Receipt,
   Star,
-  Play,
   RotateCcw,
   AlertTriangle,
   RefreshCw,
   BarChart3,
   Clock,
   Megaphone,
-  Wrench,
 } from "lucide-react";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
@@ -52,8 +50,6 @@ const sidebarItems: CollapsibleSidebarItem[] = [
   { name: "Disputes", icon: AlertTriangle, path: "disputes" },
   { name: "Subscriptions", icon: RefreshCw, path: "subscriptions" },
   { name: "Metrics", icon: BarChart3, path: "metrics" },
-  { name: "System Jobs", icon: Play, path: "system-jobs" },
-  { name: "Maintenance", icon: Wrench, path: "maintenance" },
   { name: "Settings", icon: Settings, path: "settings" },
 ];
 
