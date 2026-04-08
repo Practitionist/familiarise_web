@@ -3,6 +3,31 @@
  * Used by both the API route and the frontend page.
  */
 
+export interface VerificationWorkExperience {
+  id: string;
+  company: string;
+  title: string;
+  startDate: string;
+  endDate: string | null;
+  current: boolean;
+}
+
+export interface VerificationEducation {
+  id: string;
+  institution: string;
+  degree: string;
+  field: string;
+  startYear: number;
+  endYear: number | null;
+}
+
+export interface VerificationCertification {
+  id: string;
+  name: string;
+  issuer: string;
+  issueDate: string;
+}
+
 export interface VerificationConsultant {
   profileId: string;
   userId: string;
@@ -10,11 +35,17 @@ export interface VerificationConsultant {
   email: string;
   image: string | null;
   linkedinUrl: string | null;
+  bio: string | null;
   domain: string;
+  subDomains: { id: string; name: string }[];
   experience: number | null;
   headline: string | null;
+  description: string | null;
   isVerified: boolean;
   verificationStatus: string;
+  workExperiences: VerificationWorkExperience[];
+  education: VerificationEducation[];
+  certifications: VerificationCertification[];
 }
 
 export interface VerificationDocument {

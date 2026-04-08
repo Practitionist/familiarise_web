@@ -72,6 +72,40 @@ export async function getVerificationQueue(
                 image: true,
                 linkedinUrl: true,
                 bio: true,
+                // Extended consultant professional background — rendered by
+                // the admin/staff VerificationReviewModal. Keep aligned with
+                // the `ProfileVerification` type in `types/moderation.ts`.
+                workExperiences: {
+                  select: {
+                    id: true,
+                    company: true,
+                    title: true,
+                    startDate: true,
+                    endDate: true,
+                    isCurrent: true,
+                  },
+                  orderBy: { startDate: "desc" },
+                },
+                certifications: {
+                  select: {
+                    id: true,
+                    name: true,
+                    issuingOrganization: true,
+                    issueDate: true,
+                  },
+                  orderBy: { issueDate: "desc" },
+                },
+                education: {
+                  select: {
+                    id: true,
+                    institution: true,
+                    degree: true,
+                    fieldOfStudy: true,
+                    startYear: true,
+                    endYear: true,
+                  },
+                  orderBy: { startYear: "desc" },
+                },
               },
             },
             domain: { select: { id: true, name: true } },
@@ -116,11 +150,43 @@ export async function getVerificationQueue(
         email: v.consultantProfile.user.email,
         image: v.consultantProfile.user.image,
         linkedinUrl: v.consultantProfile.user.linkedinUrl,
+        bio: v.consultantProfile.user.bio ?? null,
         domain: v.consultantProfile.domain?.name ?? "",
+        subDomains: v.consultantProfile.subDomains.map((s) => ({
+          id: s.id,
+          name: s.name,
+        })),
         experience: v.consultantProfile.experience,
         headline: v.consultantProfile.headline,
+        description: v.consultantProfile.description ?? null,
         isVerified: v.status === "APPROVED",
         verificationStatus: v.status,
+        // Map Prisma field names onto the shape the
+        // `VerificationReviewModal` already consumes.
+        workExperiences: v.consultantProfile.user.workExperiences.map(
+          (w) => ({
+            id: w.id,
+            company: w.company,
+            title: w.title,
+            startDate: w.startDate.toISOString(),
+            endDate: w.endDate ? w.endDate.toISOString() : null,
+            current: w.isCurrent,
+          }),
+        ),
+        education: v.consultantProfile.user.education.map((e) => ({
+          id: e.id,
+          institution: e.institution,
+          degree: e.degree,
+          field: e.fieldOfStudy ?? "",
+          startYear: e.startYear ?? 0,
+          endYear: e.endYear ?? null,
+        })),
+        certifications: v.consultantProfile.user.certifications.map((c) => ({
+          id: c.id,
+          name: c.name,
+          issuer: c.issuingOrganization,
+          issueDate: c.issueDate.toISOString(),
+        })),
       },
       documents: v.documents.map((d) => ({
         id: d.id,
