@@ -89,6 +89,8 @@ export function CollapsibleSidebar({
             size="icon"
             onClick={() => setCollapsed(!collapsed)}
             className="h-8 w-8"
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-expanded={!collapsed}
           >
             {collapsed ? (
               <ChevronRight className="h-4 w-4" />
@@ -138,6 +140,8 @@ export function CollapsibleSidebar({
                   <TooltipTrigger asChild>
                     <Link
                       href={`${basePath}/${item.path}`}
+                      aria-label={collapsed ? item.name : undefined}
+                      aria-current={isActive(item.path) ? "page" : undefined}
                       className={cn(
                         "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
                         isActive(item.path)
@@ -146,7 +150,11 @@ export function CollapsibleSidebar({
                       )}
                     >
                       <item.icon className="h-5 w-5 flex-shrink-0" />
-                      {!collapsed && <span>{item.name}</span>}
+                      {collapsed ? (
+                        <span className="sr-only">{item.name}</span>
+                      ) : (
+                        <span>{item.name}</span>
+                      )}
                     </Link>
                   </TooltipTrigger>
                   {collapsed && (
