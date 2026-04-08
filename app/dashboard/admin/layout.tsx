@@ -3,77 +3,63 @@
 import Link from "next/link";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { DashboardShell } from "@/components/dashboard/DashboardShell";
 import NovuProvider from "@/providers/NovuProvider";
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
 import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
 import {
-  DashboardSidebar,
-  type NavSection,
-} from "@/components/dashboard/DashboardSidebar";
-import { DashboardNavbar } from "@/components/dashboard/DashboardNavbar";
-import { useSession } from "@/lib/auth-client";
+  CollapsibleSidebar,
+  type CollapsibleSidebarItem,
+} from "@/components/dashboard/CollapsibleSidebar";
+import { signOut, useSession } from "@/lib/auth-client";
+import { disconnectStreamClients } from "@/providers/StreamProvider";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { schedulePrefetch } from "@/lib/dashboard-queries";
 import { useEffect } from "react";
+import {
+  AlertTriangle,
+  BadgeCheck,
+  BarChart3,
+  CheckCircle2,
+  Clock,
+  CreditCard,
+  Hourglass,
+  Home,
+  ListChecks,
+  Megaphone,
+  Play,
+  Receipt,
+  RefreshCw,
+  RotateCcw,
+  Star,
+  Ticket,
+  Users,
+  Wallet,
+  Wrench,
+} from "lucide-react";
 
-// Navigation configuration for admin with sections
-const NAV_SECTIONS: NavSection[] = [
-  {
-    title: null,
-    items: [{ name: "Overview", path: "home" }],
-  },
-  {
-    title: null,
-    items: [{ name: "Announcements", path: "announcements" }],
-  },
-  {
-    title: "Support",
-    items: [
-      { name: "Support Tickets", path: "tickets" },
-      { name: "User Feedback", path: "feedback" },
-    ],
-  },
-  {
-    title: "Payments",
-    items: [
-      { name: "All Payments", path: "payments" },
-      { name: "Approval Payments", path: "approval-payments" },
-      { name: "Subscriptions", path: "subscriptions" },
-      { name: "Refunds", path: "refunds" },
-      { name: "Disputes", path: "disputes" },
-    ],
-  },
-  {
-    title: "Payouts",
-    items: [
-      { name: "Pending Approval", path: "payouts/pending" },
-      { name: "Processing", path: "payouts/processing" },
-      { name: "Completed", path: "payouts/completed" },
-      { name: "Consultant Earnings", path: "payouts/earnings" },
-    ],
-  },
-  {
-    title: null,
-    items: [
-      { name: "Invoices", path: "invoices" },
-      { name: "Analytics", path: "analytics" },
-      { name: "Users", path: "users" },
-    ],
-  },
-  {
-    title: null,
-    items: [{ name: "Waitlists", path: "waitlists" }],
-  },
-  {
-    title: "System",
-    items: [
-      { name: "System Jobs", path: "system-jobs" },
-      { name: "Maintenance", path: "maintenance" },
-    ],
-  },
+// Navigation configuration for admin (flat list, mirrors staff sidebar layout)
+const sidebarItems: CollapsibleSidebarItem[] = [
+  { name: "Overview", icon: Home, path: "home" },
+  { name: "Announcements", icon: Megaphone, path: "announcements" },
+  { name: "Support Tickets", icon: Ticket, path: "tickets" },
+  { name: "User Feedback", icon: Star, path: "feedback" },
+  { name: "All Payments", icon: CreditCard, path: "payments" },
+  { name: "Approval Payments", icon: BadgeCheck, path: "approval-payments" },
+  { name: "Subscriptions", icon: RefreshCw, path: "subscriptions" },
+  { name: "Refunds", icon: RotateCcw, path: "refunds" },
+  { name: "Disputes", icon: AlertTriangle, path: "disputes" },
+  { name: "Payouts: Pending", icon: Clock, path: "payouts/pending" },
+  { name: "Payouts: Processing", icon: Hourglass, path: "payouts/processing" },
+  { name: "Payouts: Completed", icon: CheckCircle2, path: "payouts/completed" },
+  { name: "Consultant Earnings", icon: Wallet, path: "payouts/earnings" },
+  { name: "Invoices", icon: Receipt, path: "invoices" },
+  { name: "Analytics", icon: BarChart3, path: "analytics" },
+  { name: "Users", icon: Users, path: "users" },
+  { name: "Waitlists", icon: ListChecks, path: "waitlists" },
+  { name: "System Jobs", icon: Play, path: "system-jobs" },
+  { name: "Maintenance", icon: Wrench, path: "maintenance" },
 ];
 
 interface PageProps {
@@ -216,7 +202,7 @@ function DashboardSkeleton() {
 
 // Main layout
 export default function AdminLayout({ children }: Readonly<PageProps>) {
-  const _pathname = usePathname();
+  const pathname = usePathname();
   const { data: session, isPending: isSessionLoading } = useSession();
   const router = useRouter();
 
@@ -224,6 +210,21 @@ export default function AdminLayout({ children }: Readonly<PageProps>) {
 
   // Sync user as Novu subscriber (once per session)
   useNovuSubscriberSync();
+
+  const handleSignOut = async () => {
+    try {
+      await disconnectStreamClients();
+    } catch {
+      // Don't block sign-out if disconnect fails
+    }
+    signOut({
+      fetchOptions: {
+        onSuccess: () => {
+          window.location.href = "/auth/signin";
+        },
+      },
+    });
+  };
 
   const {
     data: userData,
@@ -312,38 +313,32 @@ export default function AdminLayout({ children }: Readonly<PageProps>) {
     );
   }
 
-  // Build sidebar
-  const sidebar = (
-    <DashboardSidebar
-      userImage={userData?.image}
-      userName={userData?.name}
-      userRole="ADMIN"
-      basePath="/dashboard/admin"
-      navSections={NAV_SECTIONS}
-      hideBottomActions={true}
-      isLoading={isLoading}
-    />
-  );
-
-  // Build top navbar (matches consultant dashboard pattern)
-  const navbar = (
-    <DashboardNavbar
-      userName={userData?.name}
-      userImage={userData?.image}
-      userRole="ADMIN"
-      settingsPath="/dashboard/admin/settings"
-    />
-  );
-
   return (
     <NovuProvider>
-      <DashboardShell
-        sidebar={sidebar}
-        navbar={navbar}
-        headerActions={<NotificationInbox />}
-      >
-        <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
-      </DashboardShell>
+      <div className="flex h-screen-maintenance bg-zinc-50 dark:bg-zinc-950">
+        <CollapsibleSidebar
+          items={sidebarItems}
+          basePath="/dashboard/admin"
+          title="Admin Portal"
+          footerLabel="Familiarise Admin v1.0"
+          avatarFallback="A"
+          userName={userData?.name || "Admin"}
+          userEmail={session?.user?.email}
+          userImage={userData?.image}
+          pathname={pathname}
+          onSignOut={handleSignOut}
+        />
+
+        {/* Main Content */}
+        <main className="flex-1 overflow-y-auto">
+          <div className="sticky top-0 z-30 flex items-center justify-end gap-2 px-6 py-2 border-b border-zinc-200/50 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl">
+            <NotificationInbox />
+          </div>
+          <div className="p-6">
+            <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
+          </div>
+        </main>
+      </div>
     </NovuProvider>
   );
 }
