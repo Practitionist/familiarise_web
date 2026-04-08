@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { UserRole } from "@prisma/client";
-
-import { getSession } from "@/lib/auth-server";
+import { requireAdminAuth } from "@/lib/auth-helpers";
 import prisma from "@/lib/prisma";
 
 /**
@@ -12,19 +10,9 @@ import prisma from "@/lib/prisma";
  * decision before activating maintenance mode.
  */
 export async function GET() {
-  const session = await getSession();
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: { role: true },
-  });
-
-  if (user?.role !== UserRole.ADMIN && user?.role !== UserRole.STAFF) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const auth = await requireAdminAuth();
+  if (auth.error) return auth.error;
+  const session = auth.session;
 
   const now = new Date();
   const fourHoursFromNow = new Date(now.getTime() + 4 * 60 * 60 * 1000);

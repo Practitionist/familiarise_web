@@ -46,6 +46,8 @@ const ROUTE_PATTERNS = {
     "/api/dashboard/", // Private: dashboard data routes
     "/api/trials/", // Private: trial session routes (public sub-routes exempted below)
     "/api/slots/", // Private: appointment slot data and mutations
+    "/api/admin/", // Private: platform admin operations (handler-level auth still runs)
+    "/api/staff/", // Private: platform staff operations (handler-level auth still runs)
   ],
   // Note: /api/auth/ must remain public for BetterAuth to work
   // /api/user/consultants routes are public for explore page (verification filter enforced in API)
