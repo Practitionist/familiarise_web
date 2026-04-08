@@ -68,21 +68,29 @@ If granular permissions become necessary later, the right answer is a proper `Pe
 ### D2: Introduce shared auth helpers in `lib/auth-helpers.ts`
 
 ```ts
-// Strict ADMIN-only — for system jobs, maintenance, exchange rates, newsletter, payouts processing
+// Strict ADMIN only — rejects STAFF. For system jobs, maintenance, exchange
+// rates, newsletter, payouts processing.
 export async function requireAdminAuth(): Promise<
   { session: Session } | { error: NextResponse }
 >;
 
-// ADMIN + STAFF — for read endpoints, moderation queues, support ops
+// Strict STAFF only — rejects ADMIN. For (rare) routes where even an admin
+// should not have access. No current routes use this; it's here for the
+// future case of staff-specific views that admins shouldn't see.
 export async function requireStaffAuth(): Promise<
   { session: Session } | { error: NextResponse }
 >;
 
-// Alias for requireStaffAuth — use when the semantics are "any privileged operator"
-export const requirePrivilegedAuth = requireStaffAuth;
+// ADMIN or STAFF — the most common helper. For read endpoints, moderation
+// queues, support ops, and the shared admin/staff dashboard API surface.
+export async function requirePrivilegedAuth(): Promise<
+  { session: Session } | { error: NextResponse }
+>;
 ```
 
-These rely on the session's embedded `role` field (via BetterAuth's `customSession`) and do not re-query the database — one less round trip per admin request.
+Each helper enforces exactly one role predicate — the three are strict ADMIN, strict STAFF, and the union. Naming matches the predicate: `requireAdminAuth` is the strict admin gate, `requireStaffAuth` is the strict staff gate, `requirePrivilegedAuth` is the "either one" gate.
+
+All three rely on the session's embedded `role` field (via BetterAuth's `customSession`) and do not re-query the database — one less round trip per admin/staff request.
 
 ### D3: Refactor all ~46 admin/staff API routes to use the new helpers
 
@@ -94,6 +102,7 @@ Decision matrix:
 - `app/api/admin/newsletter/send/route.ts` — sends mass email
 - `app/api/admin/payouts/process/route.ts` — releases real money to consultants
 - `app/api/admin/exchange-rates/route.ts` (POST) — invalidates FX cache
+- `app/api/admin/tds/route.ts` (POST only) — files Form 26Q with the income tax department (permanent compliance record; the GET handler for `view=form26q` which exposes decrypted PAN is also gated to strict ADMIN inline)
 
 **`requirePrivilegedAuth` (ADMIN + STAFF):** everything else.
 

@@ -54,19 +54,24 @@ export async function requireAdminAuth(): Promise<
 }
 
 /**
- * Privileged operator auth — ADMIN or STAFF. Use for read endpoints,
- * moderation queues, and support operations where STAFF should have access
- * alongside ADMIN.
+ * Strict STAFF-only auth — rejects ADMIN.
+ *
+ * Use for routes that are specifically staff-scoped and where an ADMIN
+ * should NOT have access (e.g., "my support tickets" viewed by the staff
+ * member who owns them, separated from admin's own views). This is
+ * deliberately strict — most admin/staff routes want the PRIVILEGED
+ * flavor below. If you're refactoring a route that previously allowed
+ * both ADMIN and STAFF, use `requirePrivilegedAuth` instead.
  */
 export async function requireStaffAuth(): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
   const auth = await requireApiAuth();
   if (auth.error) return { error: auth.error };
-  if (!isPrivileged(auth.session.user.role)) {
+  if (auth.session.user.role !== "STAFF") {
     return {
       error: NextResponse.json(
-        { error: "Forbidden — staff or admin access required" },
+        { error: "Forbidden — staff access required" },
         { status: 403 },
       ),
     };
@@ -75,10 +80,28 @@ export async function requireStaffAuth(): Promise<
 }
 
 /**
- * Alias for {@link requireStaffAuth}. Use when the route's semantics are
- * "any privileged operator" rather than "specifically staff."
+ * Privileged operator auth — ADMIN or STAFF. Use for read endpoints,
+ * moderation queues, support operations, and the shared admin/staff
+ * dashboard API surface. This is the most common helper for
+ * `app/api/admin/**` and `app/api/staff/**` routes.
+ *
+ * @see docs/api/auth-helpers.md for the decision matrix.
  */
-export const requirePrivilegedAuth = requireStaffAuth;
+export async function requirePrivilegedAuth(): Promise<
+  { session: Session; error?: never } | { session?: never; error: NextResponse }
+> {
+  const auth = await requireApiAuth();
+  if (auth.error) return { error: auth.error };
+  if (!isPrivileged(auth.session.user.role)) {
+    return {
+      error: NextResponse.json(
+        { error: "Forbidden — admin or staff access required" },
+        { status: 403 },
+      ),
+    };
+  }
+  return { session: auth.session };
+}
 
 /**
  * Checks if the session user owns a resource based on their profile ID.

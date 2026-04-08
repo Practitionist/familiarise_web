@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireAdminAuth, requirePrivilegedAuth } from "@/lib/auth-helpers";
 import {
   getTDSSummary,
   getConsultantTDSBreakdown,
@@ -83,10 +83,15 @@ export async function GET(req: NextRequest) {
  * POST /api/admin/tds
  * Mark TDS records as filed in Form 26Q
  * Body: { financialYear: string, quarter: number, filingDate: string }
+ *
+ * Strict ADMIN only — filing Form 26Q is a sensitive financial mutation
+ * (creates a permanent compliance record with the income tax department).
+ * Matches the access-control semantics of `/api/admin/payouts/process`
+ * and the `view=form26q` GET above which both expose decrypted PAN data.
  */
 export async function POST(req: NextRequest) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireAdminAuth();
     if (auth.error) return auth.error;
     const session = auth.session;
 

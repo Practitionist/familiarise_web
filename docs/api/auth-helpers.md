@@ -40,11 +40,11 @@ export async function POST() {
 }
 ```
 
-## `requireStaffAuth()` / `requirePrivilegedAuth()`
+## `requirePrivilegedAuth()`
 
 > **ADMIN or STAFF.** Everyone else gets 403.
 
-These are aliases for each other. Use `requirePrivilegedAuth` when the semantics are "any privileged operator" (moderation, support, read-only dashboards). Use `requireStaffAuth` when the route lives under `/api/staff/**` and the name just makes more sense.
+Use this for the vast majority of `/api/admin/**` and `/api/staff/**` routes — anything that should be accessible to both admin and staff operators: moderation queues, support tools, dashboards, read endpoints, shared analytics, etc.
 
 **Routes that should use this:**
 - All `/api/staff/**` routes
@@ -57,6 +57,22 @@ export async function GET(req: NextRequest) {
   if (auth.error) return auth.error;
   const session = auth.session;
   // ... operator logic
+}
+```
+
+## `requireStaffAuth()`
+
+> **Strict STAFF only.** ADMIN gets 403.
+
+Use this for the (rare) routes that are specifically staff-scoped and where an ADMIN should NOT have access. Examples: a route returning "support tickets assigned to me as a staff member" where an admin wouldn't have that view. Most admin/staff routes want `requirePrivilegedAuth` instead.
+
+If you're about to reach for this helper, ask yourself: "does it make sense for an admin to call this?" If yes, use `requirePrivilegedAuth`. If no (truly staff-only), use `requireStaffAuth`. As of this ADR landing, **zero routes use `requireStaffAuth`** — it's here for when a future staff-only view appears.
+
+```ts
+export async function GET() {
+  const auth = await requireStaffAuth();
+  if (auth.error) return auth.error;
+  // ... staff-only logic (admins rejected)
 }
 ```
 
@@ -131,7 +147,8 @@ Is the route public (no login required)?
 ├─ YES → no helper needed. middleware.ts lets it through.
 └─ NO → does it require a specific role?
          ├─ Strict ADMIN only (mutates platform state) → requireAdminAuth
-         ├─ ADMIN or STAFF (read/moderation) → requirePrivilegedAuth
+         ├─ ADMIN or STAFF (read/moderation — most common) → requirePrivilegedAuth
+         ├─ Strict STAFF only (rare; reject admins too) → requireStaffAuth
          ├─ The resource owner OR a privileged operator → requireApiAuth + checkOwnership
          ├─ Event participants + operators (consult/subscription/webinar/class) → requireApiAuth + authorizeEventAccess
          └─ Any authenticated user → requireApiAuth
