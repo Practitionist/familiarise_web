@@ -53,13 +53,30 @@ export type OperatorInvoiceResult = {
  * `requirePrivilegedAuth()`. Do not re-implement these queries inside route
  * files.
  */
+/**
+ * Clamp and finite-check a pagination value. Guards against `NaN` from
+ * `parseInt("abc")` propagating into Prisma `take` / `skip`.
+ */
+function sanitizePagination(
+  value: number | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  if (value === undefined || !Number.isFinite(value)) return fallback;
+  const floored = Math.floor(value);
+  if (floored < min) return min;
+  if (floored > max) return max;
+  return floored;
+}
+
 export async function getOperatorInvoices(
   filters: OperatorInvoiceFilters = {},
 ): Promise<OperatorInvoiceResult> {
   const status = filters.status ?? null;
   const search = filters.search ?? null;
-  const limit = filters.limit ?? 20;
-  const offset = filters.offset ?? 0;
+  const limit = sanitizePagination(filters.limit, 20, 1, 200);
+  const offset = sanitizePagination(filters.offset, 0, 0, Number.MAX_SAFE_INTEGER);
 
   // Build where clause
   const where: Prisma.PaymentWhereInput = {};

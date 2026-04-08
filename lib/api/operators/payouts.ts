@@ -64,13 +64,30 @@ export type OperatorPayoutResult = {
  * both surfaces (admin always exposed it; staff did not but the query is
  * harmless when `search` is empty).
  */
+/**
+ * Clamp and finite-check a pagination value. Guards against `NaN` from
+ * `parseInt("abc")` propagating into Prisma `take` / `skip`.
+ */
+function sanitizePagination(
+  value: number | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  if (value === undefined || !Number.isFinite(value)) return fallback;
+  const floored = Math.floor(value);
+  if (floored < min) return min;
+  if (floored > max) return max;
+  return floored;
+}
+
 export async function getOperatorPayouts(
   filters: OperatorPayoutFilters = {},
 ): Promise<OperatorPayoutResult> {
   const status = filters.status ?? null;
   const search = filters.search ?? null;
-  const limit = filters.limit ?? 50;
-  const offset = filters.offset ?? 0;
+  const limit = sanitizePagination(filters.limit, 50, 1, 200);
+  const offset = sanitizePagination(filters.offset, 0, 0, Number.MAX_SAFE_INTEGER);
 
   const where: Prisma.PayoutWhereInput = {};
   if (status) {
