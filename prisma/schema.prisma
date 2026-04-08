@@ -603,9 +603,8 @@ model StaffProfile {
 }
 
 model AdminProfile {
-  id         String     @id @default(uuid())
-  adminLevel AdminLevel
-  notes      String?    @db.Text
+  id    String  @id @default(uuid())
+  notes String? @db.Text
 
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String @unique
@@ -614,7 +613,6 @@ model AdminProfile {
   updatedAt DateTime @updatedAt
 
   @@index([userId])
-  @@index([adminLevel])
 }
 
 //////////////////////////////////////////////////// PROFESSIONAL BACKGROUND MODELS ////////////////////////////////////////////////////
@@ -2137,12 +2135,6 @@ enum CareerStage {
   MID_CAREER // 3-10 years experience
   SENIOR // 10+ years experience
   EXECUTIVE // C-level or equivalent
-}
-
-enum AdminLevel {
-  SUPER_ADMIN // Full system access
-  ADMIN // High-level management
-  MODERATOR // Day-to-day operations
 }
 
 enum BudgetPreference {

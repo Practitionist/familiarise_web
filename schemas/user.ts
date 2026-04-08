@@ -20,8 +20,6 @@ export const CareerStageEnum = z.enum([
   "EXECUTIVE",
 ]);
 
-export const AdminLevelEnum = z.enum(["SUPER_ADMIN", "ADMIN", "MODERATOR"]);
-
 export const BudgetPreferenceEnum = z.enum([
   "BUDGET",
   "MODERATE",
@@ -283,7 +281,6 @@ export type StaffProfile = z.infer<typeof StaffProfileSchema>;
 // #region Admin Profile Schema
 
 export const AdminProfileSchema = z.object({
-  adminLevel: AdminLevelEnum,
   notes: z.string().optional(),
 });
 
