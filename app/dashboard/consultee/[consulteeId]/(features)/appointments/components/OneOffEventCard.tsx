@@ -101,7 +101,7 @@ export function OneOffEventCard({
 
   const isPendingPayment = status?.toUpperCase() === "APPROVED_PENDING_PAYMENT";
   const isApproved = status?.toUpperCase() === "APPROVED";
-  const isDev = process.env.NODE_ENV === "development";
+  const isDev = process.env.NEXT_PUBLIC_ENABLE_DEV_TOOLS === "true";
   const canDevJoin = isDev && rawSlots.length > 0 && !!appointment;
 
   const isConfirmed = ["APPROVED", "SCHEDULED", "IN_PROGRESS"].includes(

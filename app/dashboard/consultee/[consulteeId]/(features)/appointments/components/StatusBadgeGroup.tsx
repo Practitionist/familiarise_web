@@ -5,7 +5,10 @@ import {
   WaitlistStatusBadge,
   type BookingStatus,
 } from "@/components/ui/waitlist-status-badge";
-import { STATUS_CONFIG } from "../../../utils/statusConfig";
+import {
+  STATUS_CONFIG,
+  formatStatusLabel,
+} from "../../../utils/statusConfig";
 import { cn } from "@/utils/tailwind";
 
 interface StatusBadgeGroupProps {
@@ -66,7 +69,7 @@ export function StatusBadgeGroup({
           <span
             className={cn("h-1.5 w-1.5 rounded-full", displayStatusStyle.dot)}
           />
-          {displayStatusStyle.label || displayStatus?.replace(/_/g, " ")}
+          {formatStatusLabel(displayStatus ?? "")}
         </Badge>
       )}
     </div>
