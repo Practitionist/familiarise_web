@@ -16,7 +16,10 @@ import {
 } from "@/lib/errors/classification/payment-error-classification";
 import { PayoutStatus } from "@prisma/client";
 import { createPayoutBatch } from "@/lib/payments/payouts";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import {
+  requireAdminAuth,
+  requirePrivilegedAuth,
+} from "@/lib/auth-helpers";
 import { getOperatorPayouts } from "@/lib/api/operators";
 
 /**
@@ -50,11 +53,12 @@ export async function GET(req: NextRequest) {
  * POST /api/admin/payouts
  * Create a new payout batch for one or more consultants. Admin-only — staff
  * does not have a parallel endpoint, so this stays inline rather than being
- * extracted into the shared operator module.
+ * extracted into the shared operator module. Gated with `requireAdminAuth`
+ * because batch creation triggers real money movement; staff is read-only.
  */
 export async function POST(req: NextRequest) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireAdminAuth();
     if (auth.error) return auth.error;
 
     const body = await req.json();

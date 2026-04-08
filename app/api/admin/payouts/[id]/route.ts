@@ -6,7 +6,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { z } from "zod";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import {
+  requireAdminAuth,
+  requirePrivilegedAuth,
+} from "@/lib/auth-helpers";
 import {
   getPayoutById,
   approvePayout,
@@ -50,11 +53,13 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
 /**
  * POST /api/admin/payouts/[id]
- * Approve or reject a payout
+ * Approve or reject a payout. Admin-only — `approvePayout()` triggers real
+ * money movement, so staff is kept read-only even though the GET sibling
+ * above is privileged.
  */
 export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireAdminAuth();
     if (auth.error) return auth.error;
     const session = auth.session;
 

@@ -29,7 +29,10 @@ Use this for routes that mutate platform-level state irreversibly. These are thi
 - `/api/admin/maintenance/**` — site-wide maintenance mode toggle
 - `/api/admin/system-jobs/run` — manual cron triggers
 - `/api/admin/newsletter/send` — mass email
+- `/api/admin/payouts` (POST only) — batch payout creation (GET stays privileged)
+- `/api/admin/payouts/[id]` (POST only) — approve/reject payouts (GET stays privileged)
 - `/api/admin/payouts/process` — real money transfers
+- `/api/admin/tds` (POST only) — TDS filing (GET stays privileged)
 - `/api/admin/exchange-rates` (POST only) — FX cache invalidation
 
 ```ts
