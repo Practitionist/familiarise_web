@@ -64,13 +64,8 @@ export const STATUS_CONFIG_DARK: Record<string, StatusStyleDark> = {
 
 export function formatStatusLabel(status: string): string {
   const config = STATUS_CONFIG[status?.toUpperCase()];
-  if (config?.label) return config.label;
-  return (
-    status
-      ?.replace(/_/g, " ")
-      .toLowerCase()
-      .replace(/\b\w/g, (c) => c.toUpperCase()) ?? status
-  );
+  const raw = config?.label ?? status?.replace(/_/g, " ") ?? "";
+  return raw.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 export function getStatusStyle(
