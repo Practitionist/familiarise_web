@@ -5,30 +5,19 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { PayoutStatus, UserRole } from "@prisma/client";
+import { PayoutStatus } from "@prisma/client";
 import { getPayoutStats } from "@/lib/payments/payouts";
 
-import { getSession } from "@/lib/auth-server";
+import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 /**
  * GET /api/staff/payouts
  * Get payouts with optional status filter (staff access)
  */
 export async function GET(req: NextRequest) {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Check staff or admin role
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { role: true },
-    });
-
-    if (user?.role !== UserRole.STAFF && user?.role !== UserRole.ADMIN) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const auth = await requirePrivilegedAuth();
+    if (auth.error) return auth.error;
+    const session = auth.session;
 
     // Parse query parameters
     const { searchParams } = new URL(req.url);
