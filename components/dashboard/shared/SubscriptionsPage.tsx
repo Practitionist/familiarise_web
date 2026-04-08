@@ -80,16 +80,12 @@ const formatDate = (dateString: string | null) => {
 };
 
 export interface SubscriptionsPageProps {
-  /** Base URL for navigation links */
-  basePath: string;
   /** API endpoint for fetching subscriptions */
   apiEndpoint?: string;
   /** Page title */
   title?: string;
   /** Page description */
   description?: string;
-  /** Optional staffId; reserved for future relative-link semantics */
-  staffId?: string;
 }
 
 export function SubscriptionsPage({

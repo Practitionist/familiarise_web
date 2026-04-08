@@ -5,7 +5,6 @@ import { SubscriptionsPage } from "@/components/dashboard/shared/SubscriptionsPa
 export default function AdminSubscriptionsPage() {
   return (
     <SubscriptionsPage
-      basePath="/dashboard/admin"
       apiEndpoint="/api/admin/subscriptions"
       title="Subscriptions"
       description="Manage platform subscription appointments"

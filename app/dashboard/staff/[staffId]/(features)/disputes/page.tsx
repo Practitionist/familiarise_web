@@ -9,7 +9,6 @@ export default function StaffDisputesPage() {
   return (
     <DisputesPage
       basePath={`/dashboard/staff/${staffId}`}
-      staffId={staffId}
       apiEndpoint="/api/admin/disputes"
       title="Disputes"
       description="View and track payment disputes"

@@ -106,8 +106,6 @@ export interface DisputesPageProps {
   title?: string;
   /** Page description */
   description?: string;
-  /** Optional staffId for staff-context navigation */
-  staffId?: string;
 }
 
 export function DisputesPage({
