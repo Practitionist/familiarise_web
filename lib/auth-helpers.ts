@@ -21,10 +21,64 @@ export async function requireApiAuth(): Promise<
 
 /**
  * Checks if a user has privileged access (ADMIN or STAFF role).
+ *
+ * Prefer the typed helpers below in API handlers — this is here for
+ * places that just need a boolean branch (e.g., conditional DB queries).
  */
 export function isPrivileged(role: string | undefined | null): boolean {
   return role === "ADMIN" || role === "STAFF";
 }
+
+/**
+ * Strict ADMIN-only auth — for routes that mutate platform-level state
+ * irreversibly (system jobs, maintenance mode, exchange rates, newsletters,
+ * payouts processing). Replaces ad-hoc inline `requireAdmin()` helpers
+ * scattered across `app/api/admin/**`.
+ *
+ * @see docs/api/auth-helpers.md for the decision matrix.
+ */
+export async function requireAdminAuth(): Promise<
+  { session: Session; error?: never } | { session?: never; error: NextResponse }
+> {
+  const auth = await requireApiAuth();
+  if (auth.error) return { error: auth.error };
+  if (auth.session.user.role !== "ADMIN") {
+    return {
+      error: NextResponse.json(
+        { error: "Forbidden — admin access required" },
+        { status: 403 },
+      ),
+    };
+  }
+  return { session: auth.session };
+}
+
+/**
+ * Privileged operator auth — ADMIN or STAFF. Use for read endpoints,
+ * moderation queues, and support operations where STAFF should have access
+ * alongside ADMIN.
+ */
+export async function requireStaffAuth(): Promise<
+  { session: Session; error?: never } | { session?: never; error: NextResponse }
+> {
+  const auth = await requireApiAuth();
+  if (auth.error) return { error: auth.error };
+  if (!isPrivileged(auth.session.user.role)) {
+    return {
+      error: NextResponse.json(
+        { error: "Forbidden — staff or admin access required" },
+        { status: 403 },
+      ),
+    };
+  }
+  return { session: auth.session };
+}
+
+/**
+ * Alias for {@link requireStaffAuth}. Use when the route's semantics are
+ * "any privileged operator" rather than "specifically staff."
+ */
+export const requirePrivilegedAuth = requireStaffAuth;
 
 /**
  * Checks if the session user owns a resource based on their profile ID.
