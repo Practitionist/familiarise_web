@@ -1,107 +1,22 @@
 /**
  * Staff Dashboard Stats API
- * Returns homepage statistics for staff dashboard
+ * Returns homepage statistics for the staff dashboard.
+ *
+ * Thin shell — query/aggregation logic lives in
+ * `lib/api/operators/stats.ts` (`getStaffDashboardStats`).
  */
 
 import { NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-import { SupportTicketStatus } from "@prisma/client";
-
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { getStaffDashboardStats } from "@/lib/api/operators";
+
 export async function GET() {
   try {
     const auth = await requirePrivilegedAuth();
     if (auth.error) return auth.error;
-    const session = auth.session;
 
-    // Calculate date ranges
-    const now = new Date();
-    const todayStart = new Date(now);
-    todayStart.setHours(0, 0, 0, 0);
-
-    const weekStart = new Date(now);
-    weekStart.setDate(weekStart.getDate() - 7);
-
-    // Fetch all stats in parallel
-    const [
-      openTickets,
-      resolvedThisWeek,
-      pendingReviews,
-      resolvedToday,
-      recentTickets,
-    ] = await Promise.all([
-      // Open tickets count
-      prisma.supportTicket.count({
-        where: { status: SupportTicketStatus.OPEN },
-      }),
-
-      // Tickets resolved this week (users assisted)
-      prisma.supportTicket.count({
-        where: {
-          status: {
-            in: [SupportTicketStatus.RESOLVED, SupportTicketStatus.CLOSED],
-          },
-          updatedAt: { gte: weekStart },
-        },
-      }),
-
-      // Pending consultant reviews
-      prisma.consultantReview.count({
-        where: {
-          createdAt: { gte: weekStart },
-        },
-      }),
-
-      // Tickets resolved today
-      prisma.supportTicket.count({
-        where: {
-          status: {
-            in: [SupportTicketStatus.RESOLVED, SupportTicketStatus.CLOSED],
-          },
-          updatedAt: { gte: todayStart },
-        },
-      }),
-
-      // Recent open/in-progress tickets (last 4)
-      prisma.supportTicket.findMany({
-        where: {
-          status: {
-            in: [SupportTicketStatus.OPEN, SupportTicketStatus.IN_PROGRESS],
-          },
-        },
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              image: true,
-            },
-          },
-        },
-        orderBy: [{ priority: "desc" }, { createdAt: "desc" }],
-        take: 4,
-      }),
-    ]);
-
-    // Format recent tickets for frontend
-    const formattedRecentTickets = recentTickets.map((ticket) => ({
-      id: ticket.id,
-      subject: ticket.title,
-      user: ticket.user.name || ticket.user.email || "Unknown",
-      userImage: ticket.user.image,
-      status: ticket.status.toLowerCase(),
-      priority: ticket.priority.toLowerCase(),
-      createdAt: ticket.createdAt,
-    }));
-
-    return NextResponse.json({
-      openTickets,
-      usersAssisted: resolvedThisWeek,
-      pendingReviews,
-      resolvedToday,
-      recentTickets: formattedRecentTickets,
-    });
+    const stats = await getStaffDashboardStats();
+    return NextResponse.json(stats);
   } catch (error) {
     console.error("Error fetching staff stats:", error);
     return NextResponse.json(

@@ -15,7 +15,7 @@
  */
 
 import prisma from "@/lib/prisma";
-import { PaymentStatus } from "@prisma/client";
+import { PaymentStatus, SupportTicketStatus } from "@prisma/client";
 
 export type OperatorDashboardStats = {
   totalPayments: number;
@@ -137,5 +137,116 @@ export async function getOperatorDashboardStats(): Promise<OperatorDashboardStat
     recentPayments,
     recentRefunds,
     gatewayStats: formattedGatewayStats,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Staff dashboard stats
+// ---------------------------------------------------------------------------
+//
+// The staff dashboard home screen surfaces a different mix of numbers than
+// the admin dashboard — it focuses on support workload (open tickets,
+// resolved-this-week, recent open tickets) and consultant moderation
+// (pending reviews) rather than payments. Keeping the staff variant
+// separate avoids forcing one giant union type on either caller.
+
+export type StaffDashboardRecentTicket = {
+  id: string;
+  subject: string;
+  user: string;
+  userImage: string | null;
+  status: string;
+  priority: string;
+  createdAt: Date;
+};
+
+export type StaffDashboardStats = {
+  openTickets: number;
+  usersAssisted: number;
+  pendingReviews: number;
+  resolvedToday: number;
+  recentTickets: StaffDashboardRecentTicket[];
+};
+
+/**
+ * Fetch the staff dashboard stats payload.
+ *
+ * Single source of truth for the staff dashboard home screen — call from
+ * `/api/staff/stats` after running `requirePrivilegedAuth()`.
+ */
+export async function getStaffDashboardStats(): Promise<StaffDashboardStats> {
+  const now = new Date();
+  const todayStart = new Date(now);
+  todayStart.setHours(0, 0, 0, 0);
+
+  const weekStart = new Date(now);
+  weekStart.setDate(weekStart.getDate() - 7);
+
+  const [
+    openTickets,
+    resolvedThisWeek,
+    pendingReviews,
+    resolvedToday,
+    recentTickets,
+  ] = await Promise.all([
+    prisma.supportTicket.count({
+      where: { status: SupportTicketStatus.OPEN },
+    }),
+    prisma.supportTicket.count({
+      where: {
+        status: {
+          in: [SupportTicketStatus.RESOLVED, SupportTicketStatus.CLOSED],
+        },
+        updatedAt: { gte: weekStart },
+      },
+    }),
+    prisma.consultantReview.count({
+      where: {
+        createdAt: { gte: weekStart },
+      },
+    }),
+    prisma.supportTicket.count({
+      where: {
+        status: {
+          in: [SupportTicketStatus.RESOLVED, SupportTicketStatus.CLOSED],
+        },
+        updatedAt: { gte: todayStart },
+      },
+    }),
+    prisma.supportTicket.findMany({
+      where: {
+        status: {
+          in: [SupportTicketStatus.OPEN, SupportTicketStatus.IN_PROGRESS],
+        },
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            image: true,
+          },
+        },
+      },
+      orderBy: [{ priority: "desc" }, { createdAt: "desc" }],
+      take: 4,
+    }),
+  ]);
+
+  return {
+    openTickets,
+    usersAssisted: resolvedThisWeek,
+    pendingReviews,
+    resolvedToday,
+    recentTickets: recentTickets.map((ticket) => ({
+      id: ticket.id,
+      subject: ticket.title,
+      user: ticket.user.name || ticket.user.email || "Unknown",
+      userImage: ticket.user.image,
+      status: ticket.status.toLowerCase(),
+      priority: ticket.priority.toLowerCase(),
+      createdAt: ticket.createdAt,
+    })),
   };
 }

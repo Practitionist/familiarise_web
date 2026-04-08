@@ -1,6 +1,11 @@
 /**
  * Admin Payouts API
- * Manage consultant payouts (view, approve, reject)
+ * Manage consultant payouts (view, batch-create).
+ *
+ * GET is a thin shell — listing/aggregation logic lives in
+ * `lib/api/operators/payouts.ts` and is shared with `/api/staff/payouts`.
+ *
+ * POST (batch creation) stays inline because staff does not have it.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -9,93 +14,29 @@ import {
   classifyError,
   logClassifiedError,
 } from "@/lib/errors/classification/payment-error-classification";
-import { PayoutStatus, Prisma } from "@prisma/client";
-import { getPayoutStats, createPayoutBatch } from "@/lib/payments/payouts";
+import { PayoutStatus } from "@prisma/client";
+import { createPayoutBatch } from "@/lib/payments/payouts";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { getOperatorPayouts } from "@/lib/api/operators";
 
 /**
  * GET /api/admin/payouts
- * Get payouts with optional status filter
+ * Get payouts with optional status + search filters
  */
 export async function GET(req: NextRequest) {
   try {
     const auth = await requirePrivilegedAuth();
     if (auth.error) return auth.error;
 
-    // Parse query parameters
     const { searchParams } = new URL(req.url);
-    const status = searchParams.get("status") as PayoutStatus | null;
-    const search = searchParams.get("search");
-    const limit = parseInt(searchParams.get("limit") || "50");
-    const offset = parseInt(searchParams.get("offset") || "0");
-
-    // Build where clause with optional status and search filters
-    const where: Prisma.PayoutWhereInput = {};
-    if (status) {
-      where.status = status;
-    }
-    if (search) {
-      where.consultantProfile = {
-        user: {
-          OR: [
-            { name: { contains: search, mode: "insensitive" } },
-            { email: { contains: search, mode: "insensitive" } },
-          ],
-        },
-      };
-    }
-
-    // Get payouts
-    const [payouts, total] = await Promise.all([
-      prisma.payout.findMany({
-        where,
-        include: {
-          consultantProfile: {
-            include: {
-              user: { select: { name: true, email: true } },
-            },
-          },
-          earnings: {
-            select: { id: true },
-          },
-        },
-        orderBy: { createdAt: "desc" },
-        take: limit,
-        skip: offset,
-      }),
-      prisma.payout.count({ where }),
-    ]);
-
-    // Get stats
-    const stats = await getPayoutStats();
-
-    return NextResponse.json({
-      payouts: payouts.map((p) => ({
-        id: p.id,
-        consultantProfileId: p.consultantProfileId,
-        consultantName: p.consultantProfile.user.name || "Unknown",
-        consultantEmail: p.consultantProfile.user.email,
-        amount: p.amount,
-        currency: p.currency,
-        status: p.status,
-        method: p.method,
-        provider: p.provider,
-        batchId: p.batchId,
-        earningsCount: p.earnings.length,
-        approvedAt: p.approvedAt,
-        approvedBy: p.approvedBy,
-        processedAt: p.processedAt,
-        failureReason: p.failureReason,
-        createdAt: p.createdAt,
-      })),
-      stats,
-      pagination: {
-        total,
-        limit,
-        offset,
-        hasMore: offset + limit < total,
-      },
+    const result = await getOperatorPayouts({
+      status: searchParams.get("status") as PayoutStatus | null,
+      search: searchParams.get("search"),
+      limit: parseInt(searchParams.get("limit") || "50"),
+      offset: parseInt(searchParams.get("offset") || "0"),
     });
+
+    return NextResponse.json(result);
   } catch (error) {
     console.error("Error fetching payouts:", error);
     return NextResponse.json(
@@ -107,7 +48,9 @@ export async function GET(req: NextRequest) {
 
 /**
  * POST /api/admin/payouts
- * Create a new payout batch
+ * Create a new payout batch for one or more consultants. Admin-only — staff
+ * does not have a parallel endpoint, so this stays inline rather than being
+ * extracted into the shared operator module.
  */
 export async function POST(req: NextRequest) {
   try {

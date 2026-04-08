@@ -7,10 +7,12 @@
  * enterprise design doc's follow-up section for the full migration plan.
  *
  * Current migrations:
- *   - [x] getOperatorDashboardStats  ← used by /api/admin/stats, /api/staff/stats
+ *   - [x] getOperatorDashboardStats  ← used by /api/admin/stats
+ *   - [x] getStaffDashboardStats     ← used by /api/staff/stats
+ *   - [x] getOperatorInvoices        ← used by /api/admin/invoices, /api/staff/invoices
+ *   - [x] getOperatorPayouts         ← used by /api/admin/payouts, /api/staff/payouts
+ *   - [x] getVerificationQueue       ← used by /api/admin/verification, /api/staff/moderation/profiles
  *   - [ ] getOperatorPayments        ← TODO: unify /api/admin/payments, /api/staff/payments
- *   - [ ] getOperatorInvoices        ← TODO: unify /api/admin/invoices, /api/staff/invoices
- *   - [ ] getOperatorVerificationQueue ← TODO: /api/admin/verification, /api/staff/moderation/profiles
  *   - [ ] getOperatorDisputes        ← TODO
  *   - [ ] getOperatorFeedback        ← TODO
  *   - [ ] getOperatorSupportTickets  ← TODO
@@ -20,5 +22,30 @@
  * `requireAdminAuth`).
  */
 
-export { getOperatorDashboardStats } from "./stats";
-export type { OperatorDashboardStats } from "./stats";
+export { getOperatorDashboardStats, getStaffDashboardStats } from "./stats";
+export type {
+  OperatorDashboardStats,
+  StaffDashboardStats,
+  StaffDashboardRecentTicket,
+} from "./stats";
+
+export { getOperatorInvoices } from "./invoices";
+export type {
+  OperatorInvoiceFilters,
+  OperatorInvoice,
+  OperatorInvoiceResult,
+} from "./invoices";
+
+export { getOperatorPayouts } from "./payouts";
+export type {
+  OperatorPayoutFilters,
+  OperatorPayout,
+  OperatorPayoutResult,
+} from "./payouts";
+
+export { getVerificationQueue } from "./verification";
+export type {
+  OperatorVerificationFilters,
+  OperatorVerificationCounts,
+  OperatorVerificationResult,
+} from "./verification";
