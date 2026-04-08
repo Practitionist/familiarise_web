@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import NovuProvider from "@/providers/NovuProvider";
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
 import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
 import {
   CollapsibleSidebar,
+  CollapsibleSidebarSkeleton,
   type CollapsibleSidebarItem,
 } from "@/components/dashboard/CollapsibleSidebar";
 import { signOut, useSession } from "@/lib/auth-client";
@@ -152,54 +152,6 @@ function AccessDenied({ title, message }: { title: string; message: string }) {
   );
 }
 
-// Loading skeleton
-function DashboardSkeleton() {
-  return (
-    <div className="flex min-h-screen bg-zinc-100">
-      <aside className="fixed left-0 top-0 z-40 hidden h-screen w-64 bg-zinc-950 lg:block">
-        <div className="flex h-16 items-center gap-3 border-b border-zinc-800/50 px-6">
-          <Skeleton className="h-9 w-9 rounded-lg bg-zinc-800" />
-          <Skeleton className="h-5 w-24 bg-zinc-800" />
-        </div>
-        <div className="border-b border-zinc-800/50 p-4">
-          <div className="flex items-center gap-3">
-            <Skeleton className="h-12 w-12 rounded-full bg-zinc-800" />
-            <div className="space-y-2">
-              <Skeleton className="h-4 w-28 bg-zinc-800" />
-              <Skeleton className="h-3 w-20 bg-zinc-800" />
-            </div>
-          </div>
-        </div>
-        <div className="p-3 space-y-1">
-          {[1, 2, 3, 4, 5, 6, 7].map((i) => (
-            <Skeleton key={i} className="h-11 w-full rounded-lg bg-zinc-800" />
-          ))}
-        </div>
-      </aside>
-
-      <main className="flex-1 lg:ml-64 p-8">
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <div className="space-y-2">
-              <Skeleton className="h-8 w-48 bg-zinc-200" />
-              <Skeleton className="h-4 w-64 bg-zinc-200" />
-            </div>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {[1, 2, 3, 4].map((i) => (
-              <Skeleton key={i} className="h-32 rounded-xl bg-white" />
-            ))}
-          </div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Skeleton className="h-96 rounded-xl bg-white" />
-            <Skeleton className="h-96 rounded-xl bg-white" />
-          </div>
-        </div>
-      </main>
-    </div>
-  );
-}
-
 // Main layout
 export default function AdminLayout({ children }: Readonly<PageProps>) {
   const pathname = usePathname();
@@ -299,7 +251,7 @@ export default function AdminLayout({ children }: Readonly<PageProps>) {
 
   // Initial loading - only show if we don't have userData yet (still determining access)
   if ((isLoading || isSessionLoading) && !userData) {
-    return <DashboardSkeleton />;
+    return <CollapsibleSidebarSkeleton />;
   }
 
   // Error state

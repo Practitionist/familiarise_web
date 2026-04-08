@@ -12,6 +12,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export interface CollapsibleSidebarItem {
   name: string;
@@ -186,5 +187,34 @@ export function CollapsibleSidebar({
         )}
       </div>
     </aside>
+  );
+}
+
+/**
+ * Loading skeleton that matches {@link CollapsibleSidebar}'s visual footprint.
+ *
+ * Render this while user/session data is still loading so the layout doesn't
+ * flash between states. Used by both the admin and staff dashboard layouts —
+ * keep it DRY with the real sidebar's classes so the width and background
+ * stay aligned when the real component mounts.
+ */
+export function CollapsibleSidebarSkeleton() {
+  return (
+    <div className="flex h-screen-maintenance bg-zinc-50 dark:bg-zinc-950">
+      {/* Sidebar skeleton — mirrors the expanded w-64 layout */}
+      <aside className="w-64 border-r border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4">
+        <Skeleton className="h-8 w-32 mb-6" />
+        <div className="space-y-2">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <Skeleton key={i} className="h-10 w-full rounded-lg" />
+          ))}
+        </div>
+      </aside>
+      {/* Main content skeleton */}
+      <main className="flex-1 p-6">
+        <Skeleton className="h-8 w-64 mb-4" />
+        <Skeleton className="h-48 w-full rounded-xl" />
+      </main>
+    </div>
   );
 }
