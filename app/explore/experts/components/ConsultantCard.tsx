@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import type { IConsultantCardData } from "@/types/consultant";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import {
@@ -135,8 +135,8 @@ export const ConsultantCard = memo(function ConsultantCard({
   consultant,
   metadata: _metadata,
 }: ConsultantCardProps) {
-  const router = useRouter();
   const { formatPrice } = useCurrency();
+  const profileHref = `/explore/experts/${consultant.id}`;
 
   const sortedPlans =
     consultant.subscriptionPlans
@@ -166,11 +166,9 @@ export const ConsultantCard = memo(function ConsultantCard({
   return (
     <div className="bg-white rounded-2xl border border-zinc-200 hover:border-zinc-300 hover:shadow-xl transition-all duration-300 overflow-hidden group">
       <div className="p-6 md:p-8 lg:p-10 flex flex-col lg:flex-row gap-8 lg:gap-12">
-        {/* Left Section: Consultant Info */}
-        <div
-          className="flex-grow cursor-pointer"
-          onClick={() => router.push(`/explore/experts/${consultant.id}`)}
-        >
+        {/* Left Section: Consultant Info — real <Link> so right-click /
+            cmd-click / middle-click open in a new tab. */}
+        <Link href={profileHref} className="flex-grow block">
           {/* Header */}
           <div className="flex items-start gap-4 mb-6">
             <div className="relative h-20 w-20 flex-shrink-0">
@@ -302,7 +300,7 @@ export const ConsultantCard = memo(function ConsultantCard({
               ))}
             </div>
           )}
-        </div>
+        </Link>
 
         {/* Right Section: Subscription Plans & Actions */}
         <div className="flex-shrink-0 lg:w-[380px] xl:w-[420px] space-y-4">
@@ -339,37 +337,32 @@ export const ConsultantCard = memo(function ConsultantCard({
             )}
           </div>
 
-          {/* Action Buttons */}
+          {/* Action Buttons — wrapped in <Link> via Button asChild so the
+              browser context menu offers "Open in new tab" / "Copy link". */}
           <div className="flex flex-col gap-2">
             <Button
+              asChild
               className="w-full h-12 bg-zinc-900 hover:bg-zinc-800 text-white font-medium rounded-xl transition-all"
-              onClick={() => router.push(`/explore/experts/${consultant.id}`)}
             >
-              <span>View Profile</span>
-              <ArrowRight className="w-4 h-4 ml-2" />
+              <Link href={profileHref}>
+                <span>View Profile</span>
+                <ArrowRight className="w-4 h-4 ml-2" />
+              </Link>
             </Button>
             <div className="grid grid-cols-2 gap-2">
               <Button
+                asChild
                 variant="outline"
                 className="h-10 border-zinc-300 hover:bg-zinc-50 text-zinc-700 rounded-xl text-sm font-medium"
-                onClick={() =>
-                  router.push(
-                    `/explore/experts/${consultant.id}?action=trial`,
-                  )
-                }
               >
-                Free Trial
+                <Link href={`${profileHref}?action=trial`}>Free Trial</Link>
               </Button>
               <Button
+                asChild
                 variant="outline"
                 className="h-10 border-zinc-300 hover:bg-zinc-50 text-zinc-700 rounded-xl text-sm font-medium"
-                onClick={() =>
-                  router.push(
-                    `/explore/experts/${consultant.id}?action=book`,
-                  )
-                }
               >
-                Book Session
+                <Link href={`${profileHref}?action=book`}>Book Session</Link>
               </Button>
             </div>
           </div>

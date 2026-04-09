@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { memo, useRef } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Program } from "../utils";
 import ProgramCard, { ProgramBadge } from "./ProgramCard";
@@ -24,11 +24,7 @@ function SkeletonCard() {
   );
 }
 
-export default function ProgramRow({
-  programs,
-  badge,
-  isLoading,
-}: ProgramRowProps) {
+function ProgramRowImpl({ programs, badge, isLoading }: ProgramRowProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const scroll = (direction: "left" | "right") => {
@@ -88,3 +84,6 @@ export default function ProgramRow({
     </div>
   );
 }
+
+const ProgramRow = memo(ProgramRowImpl);
+export default ProgramRow;

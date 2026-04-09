@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { GraduationCap, Layers, Video } from "lucide-react";
 import { ProgramType } from "../utils";
 
@@ -26,10 +27,7 @@ const tabs: { value: ProgramType; label: string; icon: React.ReactNode }[] = [
   },
 ];
 
-export default function ProgramTabs({
-  activeTab,
-  onTabChange,
-}: ProgramTabsProps) {
+function ProgramTabsImpl({ activeTab, onTabChange }: ProgramTabsProps) {
   return (
     <div className="flex items-center gap-2 p-1.5 bg-zinc-100 rounded-xl w-fit">
       {tabs.map((tab) => {
@@ -52,3 +50,6 @@ export default function ProgramTabs({
     </div>
   );
 }
+
+const ProgramTabs = memo(ProgramTabsImpl);
+export default ProgramTabs;

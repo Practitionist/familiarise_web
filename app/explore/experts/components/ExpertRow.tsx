@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { memo, useRef } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { IConsultantCardData } from "@/types/consultant";
 import ExpertMiniCard from "./ExpertMiniCard";
@@ -31,11 +31,7 @@ function SkeletonCard() {
   );
 }
 
-export default function ExpertRow({
-  experts,
-  badge,
-  isLoading,
-}: ExpertRowProps) {
+function ExpertRowImpl({ experts, badge, isLoading }: ExpertRowProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const scroll = (direction: "left" | "right") => {
@@ -90,3 +86,6 @@ export default function ExpertRow({
     </div>
   );
 }
+
+const ExpertRow = memo(ExpertRowImpl);
+export default ExpertRow;
