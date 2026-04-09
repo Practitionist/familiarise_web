@@ -19,8 +19,9 @@ interface UseInfiniteScrollOptions {
  * tore down and rebuilt the observer on every render, which was both
  * over-eager and racy.
  *
- * Designed to be generic enough that the programs page (which currently
- * duplicates the same observer logic) can adopt it in a follow-up PR.
+ * Consumed by both
+ * `app/explore/experts/components/ExpertResults.tsx` and
+ * `app/explore/programs/components/ProgramResults.tsx`.
  */
 export function useInfiniteScroll({
   hasMore,
@@ -43,11 +44,18 @@ export function useInfiniteScroll({
     if (!node) return;
     if (!hasMore || isLoading) return;
 
+    // Per-observer guard so a single sentinel intersection only fires
+    // `onLoadMore` once. Without this, fast scrolling that flickers the
+    // sentinel in/out of view could trigger overlapping `fetchNextPage`
+    // calls before `isLoading` flips and the effect re-runs to disconnect.
+    let inFlight = false;
+
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0]?.isIntersecting) {
-          onLoadMoreRef.current();
-        }
+        if (!entries[0]?.isIntersecting) return;
+        if (inFlight) return;
+        inFlight = true;
+        onLoadMoreRef.current();
       },
       { rootMargin },
     );
