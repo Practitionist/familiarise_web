@@ -70,20 +70,24 @@ export function groupConsultantsByDomain(
   }, {} as IConsultantsByDomain);
 }
 
-/** Parse a positive non-negative number from a URL param, returning
- *  `undefined` for missing / invalid / negative values. Coerces `0` to
- *  `undefined` only when `treatZeroAsUnset` is true (used for prices,
- *  where `0` means "unset"). */
-function parseNumberParam(
-  raw: string | null,
-  { treatZeroAsUnset = false }: { treatZeroAsUnset?: boolean } = {},
-): number | undefined {
+/** Parse a non-negative finite number from a URL param. Returns
+ *  `undefined` for missing / blank / non-finite / negative values. */
+function parseNumberParam(raw: string | null): number | undefined {
   if (raw === null || raw === "") return undefined;
   const parsed = Number(raw);
   if (!Number.isFinite(parsed)) return undefined;
   if (parsed < 0) return undefined;
-  if (treatZeroAsUnset && parsed === 0) return undefined;
   return parsed;
+}
+
+/** Like `parseNumberParam` but floors the result to an integer. Used for
+ *  filter params the API also parses as integers (`parseInt`) so the UI
+ *  state and the filter we send to the API can't drift apart on
+ *  values like `?experience=1.5`. */
+function parseIntegerParam(raw: string | null): number | undefined {
+  const parsed = parseNumberParam(raw);
+  if (parsed === undefined) return undefined;
+  return Math.floor(parsed);
 }
 
 const VALID_SORT_OPTIONS: ReadonlySet<SortOption> = new Set<SortOption>([
@@ -109,15 +113,18 @@ export function filtersFromSearchParams(
     domain: params.get("domain"),
     subdomain: params.get("subdomain"),
     tags: params.get("tags")?.split(",").filter(Boolean) || [],
-    experience: parseNumberParam(params.get("experience")) ?? 0,
+    // API uses parseInt — keep both sides aligned so a hand-edited
+    // ?experience=1.5 doesn't make the UI show 1.5 while the API filters at 1.
+    experience: parseIntegerParam(params.get("experience")) ?? 0,
     search: params.get("search") || "",
     sort,
-    minPrice: parseNumberParam(params.get("minPrice"), {
-      treatZeroAsUnset: true,
-    }),
-    maxPrice: parseNumberParam(params.get("maxPrice"), {
-      treatZeroAsUnset: true,
-    }),
+    // Don't treat 0 as unset — the slider's "Free" state writes both
+    // minPrice=0 and maxPrice=0 and reloading that bookmarkable URL
+    // must round-trip to the same Free filter. The slider's isDefault
+    // check at write time already coerces the all-range default to
+    // undefined, so the read side doesn't need to.
+    minPrice: parseNumberParam(params.get("minPrice")),
+    maxPrice: parseNumberParam(params.get("maxPrice")),
     minRating: parseNumberParam(params.get("minRating")),
     companies: params.get("companies")?.split(",").filter(Boolean) || [],
     language: params.get("language") || undefined,
