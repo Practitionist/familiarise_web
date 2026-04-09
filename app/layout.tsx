@@ -4,6 +4,7 @@ import CookieConsentBanner from "@/components/CookieConsent";
 import Footer from "@/components/Footer";
 import HeaderSpacer from "@/components/HeaderSpacer";
 import Navbar from "@/components/Navbar";
+import NavigationProgress from "@/components/NavigationProgress";
 import { Toaster } from "@/components/ui/toaster";
 import { AnnouncementBarProvider } from "@/providers/AnnouncementBarProvider";
 import { MaintenanceProvider } from "@/providers/MaintenanceProvider";
@@ -76,6 +77,7 @@ export default async function RootLayout({
         <ReactQueryProvider>
           <MaintenanceProvider>
             <AnnouncementBarProvider>
+              <NavigationProgress />
               <Toaster />
               <MaintenanceBanner />
               <AnnouncementBar />
