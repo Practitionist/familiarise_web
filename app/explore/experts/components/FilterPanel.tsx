@@ -8,7 +8,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
-import { useState, useCallback, useRef, useEffect } from "react";
+import { memo, useState, useCallback, useRef, useEffect } from "react";
 import {
   X,
   Filter,
@@ -21,58 +21,46 @@ import {
   Globe,
 } from "lucide-react";
 import { useCurrency } from "@/hooks/useCurrency";
+import type { IExpertFilters, IExpertsMetaData } from "../utils";
 
-const MAX_PRICE_INR = 10000;
+// Slider operates in paise (smallest currency unit) end-to-end so it
+// matches both the API filter contract and `useCurrency().formatPrice`,
+// which divides by 100 internally. Previous value `10_000` actually meant
+// ₹100, which made the slider unable to filter to any realistic plan
+// price (real plans are ₹2k–₹30k+). 5,000,000 paise = ₹50,000 covers the
+// seed plan range with headroom; step is ₹500 so dragging feels snappy.
+const MAX_PRICE_PAISE = 5_000_000;
+const PRICE_STEP_PAISE = 50_000;
 
-interface FiltersSectionProps {
-  metadata: {
-    domains: { id: string; name: string }[];
-    subdomains: { id: string; name: string; domainId: string | null }[];
-    tags: { id: string; name: string; domainId: string | null }[];
-    availableLanguages?: string[];
-    availableCompanies?: string[];
-  } | null;
-  selectedDomain: string | null;
-  setSelectedDomain: (value: string | null) => void;
-  selectedSubdomain: string | null;
-  setSelectedSubdomain: (value: string | null) => void;
-  selectedTags: string[];
-  setSelectedTags: (tags: string[]) => void;
-  experienceYears: number;
-  setExperienceYears: (years: number) => void;
-  minPrice?: number;
-  onMinPriceChange?: (value: number | undefined) => void;
-  maxPrice?: number;
-  onMaxPriceChange?: (value: number | undefined) => void;
-  minRating?: number;
-  onMinRatingChange?: (value: number | undefined) => void;
-  selectedCompanies: string[];
-  setSelectedCompanies: (companies: string[]) => void;
-  language?: string;
-  onLanguageChange?: (value: string | undefined) => void;
+interface FilterPanelProps {
+  metadata: IExpertsMetaData | null;
+  filters: IExpertFilters;
+  updateFilters: (partial: Partial<IExpertFilters>) => void;
 }
 
-export function FiltersSection({
+/**
+ * Renamed from FiltersSection. Accepts a single `filters` object plus
+ * an `updateFilters(partial)` callback instead of 23 individual setters
+ * with inconsistent naming. Internal local state for slider drag and
+ * autocomplete dropdowns is unchanged.
+ */
+function FilterPanelImpl({
   metadata,
-  selectedDomain,
-  setSelectedDomain,
-  selectedSubdomain,
-  setSelectedSubdomain,
-  selectedTags,
-  setSelectedTags,
-  experienceYears,
-  setExperienceYears,
-  minPrice,
-  onMinPriceChange,
-  maxPrice,
-  onMaxPriceChange,
-  minRating,
-  onMinRatingChange,
-  selectedCompanies,
-  setSelectedCompanies,
-  language,
-  onLanguageChange,
-}: FiltersSectionProps) {
+  filters,
+  updateFilters,
+}: FilterPanelProps) {
+  const {
+    domain: selectedDomain,
+    subdomain: selectedSubdomain,
+    tags: selectedTags,
+    experience: experienceYears,
+    minPrice,
+    maxPrice,
+    minRating,
+    companies: selectedCompanies,
+    language,
+  } = filters;
+
   // Tag autocomplete state
   const [searchTerm, setSearchTerm] = useState("");
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -86,10 +74,16 @@ export function FiltersSection({
   // Close dropdowns on outside click
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (tagDropdownRef.current && !tagDropdownRef.current.contains(e.target as Node)) {
+      if (
+        tagDropdownRef.current &&
+        !tagDropdownRef.current.contains(e.target as Node)
+      ) {
         setIsDropdownOpen(false);
       }
-      if (companyDropdownRef.current && !companyDropdownRef.current.contains(e.target as Node)) {
+      if (
+        companyDropdownRef.current &&
+        !companyDropdownRef.current.contains(e.target as Node)
+      ) {
         setIsCompanyDropdownOpen(false);
       }
     };
@@ -102,7 +96,7 @@ export function FiltersSection({
   // Local slider state for smooth dragging without triggering API calls on every tick
   const [localRange, setLocalRange] = useState<[number, number]>([
     minPrice ?? 0,
-    maxPrice ?? MAX_PRICE_INR,
+    maxPrice ?? MAX_PRICE_PAISE,
   ]);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -112,7 +106,7 @@ export function FiltersSection({
 
   // Sync local state when external props change (e.g. filter chip removal)
   useEffect(() => {
-    setLocalRange([minPrice ?? 0, maxPrice ?? MAX_PRICE_INR]);
+    setLocalRange([minPrice ?? 0, maxPrice ?? MAX_PRICE_PAISE]);
   }, [minPrice, maxPrice]);
 
   useEffect(() => {
@@ -126,35 +120,39 @@ export function FiltersSection({
 
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => {
-        const isDefault = newMin === 0 && newMax === MAX_PRICE_INR;
-        onMinPriceChange?.(isDefault ? undefined : newMin);
-        onMaxPriceChange?.(isDefault ? undefined : newMax);
+        const isDefault = newMin === 0 && newMax === MAX_PRICE_PAISE;
+        updateFilters({
+          minPrice: isDefault ? undefined : newMin,
+          maxPrice: isDefault ? undefined : newMax,
+        });
       }, 300);
     },
-    [onMinPriceChange, onMaxPriceChange],
+    [updateFilters],
   );
 
   const handleDomainChange = (value: string) => {
-    setSelectedDomain(value === "all" ? null : value);
-    setSelectedSubdomain(null);
-    setSelectedTags([]);
+    updateFilters({
+      domain: value === "all" ? null : value,
+      subdomain: null,
+      tags: [],
+    });
     setSearchTerm("");
   };
 
   const handleSubdomainChange = (value: string) => {
-    setSelectedSubdomain(value === "all" ? null : value);
+    updateFilters({ subdomain: value === "all" ? null : value });
   };
 
   const handleTagSelect = (tag: string) => {
     if (!selectedTags.includes(tag)) {
-      setSelectedTags([...selectedTags, tag]);
+      updateFilters({ tags: [...selectedTags, tag] });
     }
     setIsDropdownOpen(false);
     setSearchTerm("");
   };
 
   const handleTagRemove = (tag: string) => {
-    setSelectedTags(selectedTags.filter((t) => t !== tag));
+    updateFilters({ tags: selectedTags.filter((t) => t !== tag) });
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -164,14 +162,16 @@ export function FiltersSection({
 
   const handleCompanySelect = (company: string) => {
     if (!selectedCompanies.includes(company)) {
-      setSelectedCompanies([...selectedCompanies, company]);
+      updateFilters({ companies: [...selectedCompanies, company] });
     }
     setIsCompanyDropdownOpen(false);
     setCompanySearchTerm("");
   };
 
   const handleCompanyRemove = (company: string) => {
-    setSelectedCompanies(selectedCompanies.filter((c) => c !== company));
+    updateFilters({
+      companies: selectedCompanies.filter((c) => c !== company),
+    });
   };
 
   const handleCompanyInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -182,7 +182,7 @@ export function FiltersSection({
   const RATING_OPTIONS = [4.5, 4.0, 3.5, 3.0] as const;
 
   const handleLanguageChange = (value: string) => {
-    onLanguageChange?.(value === "all" ? undefined : value);
+    updateFilters({ language: value === "all" ? undefined : value });
   };
 
   const filteredTags =
@@ -355,9 +355,10 @@ export function FiltersSection({
                 onChange={(e) => {
                   const val = Number(e.target.value);
                   setLocalExperience(val);
-                  if (expDebounceRef.current) clearTimeout(expDebounceRef.current);
+                  if (expDebounceRef.current)
+                    clearTimeout(expDebounceRef.current);
                   expDebounceRef.current = setTimeout(() => {
-                    setExperienceYears(val);
+                    updateFilters({ experience: val });
                   }, 300);
                 }}
                 className="w-full h-2 bg-zinc-200 rounded-full appearance-none cursor-pointer accent-zinc-900"
@@ -380,7 +381,9 @@ export function FiltersSection({
                   <button
                     key={rating}
                     onClick={() =>
-                      onMinRatingChange?.(minRating === rating ? undefined : rating)
+                      updateFilters({
+                        minRating: minRating === rating ? undefined : rating,
+                      })
                     }
                     className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                       minRating === rating
@@ -393,7 +396,7 @@ export function FiltersSection({
                   </button>
                 ))}
                 <button
-                  onClick={() => onMinRatingChange?.(undefined)}
+                  onClick={() => updateFilters({ minRating: undefined })}
                   className={`inline-flex items-center px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                     minRating === undefined
                       ? "bg-zinc-900 text-white"
@@ -419,23 +422,23 @@ export function FiltersSection({
             <div className="flex justify-between mb-3 text-sm font-medium text-zinc-700">
               <span>{formatPrice(localRange[0])}</span>
               <span>
-                {localRange[1] === MAX_PRICE_INR
-                  ? `${formatPrice(MAX_PRICE_INR)}+`
+                {localRange[1] === MAX_PRICE_PAISE
+                  ? `${formatPrice(MAX_PRICE_PAISE)}+`
                   : formatPrice(localRange[1])}
               </span>
             </div>
             <Slider
-              defaultValue={[0, MAX_PRICE_INR]}
+              defaultValue={[0, MAX_PRICE_PAISE]}
               value={localRange}
               min={0}
-              max={MAX_PRICE_INR}
-              step={100}
+              max={MAX_PRICE_PAISE}
+              step={PRICE_STEP_PAISE}
               onValueChange={handleSliderChange}
               className="my-2"
             />
             <div className="flex justify-between mt-2 text-xs text-zinc-400">
               <span>{formatPrice(0)}</span>
-              <span>{formatPrice(MAX_PRICE_INR)}+</span>
+              <span>{formatPrice(MAX_PRICE_PAISE)}+</span>
             </div>
             <p className="mt-3 text-[11px] text-zinc-400 leading-tight">
               Prices shown in {currency}. Final price may vary based on your
@@ -530,3 +533,5 @@ export function FiltersSection({
     </div>
   );
 }
+
+export const FilterPanel = memo(FilterPanelImpl);

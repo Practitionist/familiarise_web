@@ -30,7 +30,7 @@ const getSubscriptionDurationLabel = (durationInMonths: number): string => {
 interface ExpertPricingProps {
   userDetails: User;
   consultantDetails: TConsultantDetailData;
-  handleConsultationBooking: () => Promise<void>;
+  handleConsultationBooking: (consultationPlanId: string) => Promise<void>;
   handleSubscriptionBooking: (
     option: PricingOption,
     schedulingPeriod: { startDate: Date; endDate: Date },
@@ -73,9 +73,34 @@ export function ExpertPricing({
     plans: (ConsultationPlan | SubscriptionPlan)[],
     type: "consultation" | "subscription",
   ): PricingOption[] => {
+    // Count plans per duration so we can disambiguate titles when multiple
+    // plans share the same duration (e.g. two 1-hour consultations).
+    const durationCounts = new Map<number, number>();
+    for (const plan of plans) {
+      const key =
+        type === "consultation" && "durationInHours" in plan
+          ? plan.durationInHours
+          : type === "subscription" && "durationInMonths" in plan
+            ? plan.durationInMonths
+            : undefined;
+      if (key !== undefined) {
+        durationCounts.set(key, (durationCounts.get(key) || 0) + 1);
+      }
+    }
+    const seen = new Map<number, number>();
+    const disambiguate = (label: string, duration: number): string => {
+      if ((durationCounts.get(duration) || 0) <= 1) return label;
+      const next = (seen.get(duration) || 0) + 1;
+      seen.set(duration, next);
+      return `${label} (${next})`;
+    };
+
     return plans.map((plan) => {
       if (type === "consultation" && "durationInHours" in plan) {
-        const durationLabel = getDurationLabel(plan.durationInHours);
+        const durationLabel = disambiguate(
+          getDurationLabel(plan.durationInHours),
+          plan.durationInHours,
+        );
 
         let features: string[] = [];
         switch (plan.durationInHours) {
@@ -102,8 +127,12 @@ export function ExpertPricing({
         }
 
         return {
+          id: plan.id,
           title: durationLabel,
-          description: `${plan.durationInHours} hour consultation`,
+          // Surface the real plan title so duplicate-duration plans
+          // (e.g. "Career Strategy Session" vs "[ATEST] Career Strategy
+          // Session") stay distinguishable in the panel.
+          description: plan.title || `${plan.durationInHours} hour consultation`,
           price: plan.price,
           priceCurrency: plan.priceCurrency || "INR",
           duration: `${plan.durationInHours} hour${plan.durationInHours > 1 ? "s" : ""}`,
@@ -111,12 +140,14 @@ export function ExpertPricing({
           features: features,
         };
       } else if (type === "subscription" && "durationInMonths" in plan) {
-        const durationLabel = getSubscriptionDurationLabel(
+        const durationLabel = disambiguate(
+          getSubscriptionDurationLabel(plan.durationInMonths),
           plan.durationInMonths,
         );
         return {
+          id: plan.id,
           title: durationLabel,
-          description: `${plan.durationInMonths} month subscription`,
+          description: plan.title || `${plan.durationInMonths} month subscription`,
           price: plan.price,
           priceCurrency: plan.priceCurrency || "INR",
           duration: `${plan.durationInMonths}`,
@@ -134,13 +165,13 @@ export function ExpertPricing({
           ],
         };
       }
-      return {
-        title: "",
-        description: "",
-        price: 0,
-        priceCurrency: "INR",
-        duration: "",
-      };
+      // Both branches above cover every (type, plan-shape) combination
+      // we ever pass in. Throw rather than returning a dummy `id: ""`
+      // option — that empty id used to risk colliding with real plan ids
+      // as a tab key, even though the branch is unreachable in practice.
+      throw new Error(
+        `formatPricingOptions: unreachable plan shape (type=${type}, plan id=${"id" in plan ? plan.id : "?"})`,
+      );
     });
   };
 

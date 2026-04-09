@@ -12,7 +12,7 @@ import {
 import { Search, LayoutGrid, List, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TopicWithCount, ProgramFilters } from "../utils";
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 
 interface AdvancedFiltersProps {
   filters: ProgramFilters;
@@ -45,7 +45,7 @@ const SORT_OPTIONS = [
   { label: "Title: Z to A", value: "title-desc" },
 ];
 
-export default function AdvancedFilters({
+function AdvancedFiltersImpl({
   filters,
   onFiltersChange,
   localSearch,
@@ -323,3 +323,6 @@ export default function AdvancedFilters({
     </div>
   );
 }
+
+const AdvancedFilters = memo(AdvancedFiltersImpl);
+export default AdvancedFilters;

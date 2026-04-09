@@ -103,19 +103,15 @@ export function ExpertProfileClient({
     fetchSlots();
   }, [fetchSlots]);
 
-  const handleConsultationBooking = useCallback(async () => {
+  const handleConsultationBooking = useCallback(
+    async (consultationPlanId: string) => {
     if (!selectedSlot || !consultantDetails) {
       toast({ title: "Please select a slot", variant: "destructive" });
       return;
     }
 
-    const startTime = new Date(selectedSlot.slotStartTimeInUTC);
-    const endTime = new Date(selectedSlot.slotEndTimeInUTC);
-    const durationInHours =
-      (endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60);
-
     const activePlan = consultantDetails.consultationPlans.find(
-      (plan) => plan.durationInHours === durationInHours,
+      (plan) => plan.id === consultationPlanId,
     );
 
     if (!activePlan) {
@@ -151,6 +147,7 @@ export function ExpertProfileClient({
   const handleSubscriptionBooking = useCallback(
     async (
       option: {
+        id: string;
         title: string;
         price: number;
         duration: string;
@@ -166,8 +163,10 @@ export function ExpertProfileClient({
         return;
       }
 
+      // Resolve by id so plans with duplicate durations still route to the
+      // exact one the user selected in the tab.
       const activePlan = consultantDetails.subscriptionPlans.find(
-        (plan) => plan.durationInMonths === option.durationInMonths,
+        (plan) => plan.id === option.id,
       );
 
       if (!activePlan) {

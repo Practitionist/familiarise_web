@@ -34,7 +34,7 @@ interface ConsultantDetailsForBooking {
 interface ConsultationPricingToggleProps {
   consultationOptions: PricingOption[];
   consultantDetails: ConsultantDetailsForBooking;
-  handleConsultationBooking: () => void;
+  handleConsultationBooking: (consultationPlanId: string) => void;
   selectedDate: Date | null;
   setSelectedDate: (date: Date | null) => void;
   currentDate: Date;
@@ -71,21 +71,20 @@ export default function ConsultationPricingToggle({
   const { data: session } = useSession();
   const { toast } = useToast();
   const { formatPrice } = useCurrency();
-  const [activeConsultationOption, setActiveConsultationOption] = useState(
-    consultationOptions.length > 0
-      ? consultationOptions[0].title.toLowerCase().replace(" ", "-")
-      : "",
-  );
+  // Track the active plan by id so plans that share a duration (e.g. two
+  // 1-hour consultations) remain independently selectable and bookable.
+  const [activeConsultationOption, setActiveConsultationOption] =
+    useState<string>(consultationOptions[0]?.id ?? "");
   const [isRequestingApproval, setIsRequestingApproval] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const selectedDuration = useMemo(() => {
-    const option = consultationOptions.find(
-      (opt) =>
-        opt.title.toLowerCase().replace(" ", "-") === activeConsultationOption,
-    );
-    return option?.durationInHours ?? 1;
-  }, [activeConsultationOption, consultationOptions]);
+  const activePlanOption = useMemo(
+    () =>
+      consultationOptions.find((opt) => opt.id === activeConsultationOption),
+    [activeConsultationOption, consultationOptions],
+  );
+
+  const selectedDuration = activePlanOption?.durationInHours ?? 1;
 
   const availableSlots = useMemo((): SlotWithStatus[] => {
     if (
@@ -138,13 +137,11 @@ export default function ConsultationPricingToggle({
       return;
     }
 
-    const startTime = new Date(selectedSlot.slotStartTimeInUTC);
-    const endTime = new Date(selectedSlot.slotEndTimeInUTC);
-    const durationInHours =
-      (endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60);
-
+    // Look up the plan by the user's active tab selection (not by slot
+    // duration) so duplicate-duration plans resolve to the correct one.
     const activePlan = consultantDetails.consultationPlans.find(
-      (plan: { id: string; durationInHours: number }) => plan.durationInHours === durationInHours,
+      (plan: { id: string; durationInHours: number }) =>
+        plan.id === activeConsultationOption,
     );
 
     if (!activePlan) {
@@ -253,13 +250,11 @@ export default function ConsultationPricingToggle({
       {/* Segmented pill duration toggle */}
       <TabsList className="relative flex p-1 bg-white/[0.06] rounded-2xl border border-white/[0.08] backdrop-blur-sm h-auto">
         {consultationOptions.map((option) => {
-          const isActive =
-            activeConsultationOption ===
-            option.title.toLowerCase().replace(" ", "-");
+          const isActive = activeConsultationOption === option.id;
           return (
             <TabsTrigger
-              key={option.durationInHours}
-              value={option.title.toLowerCase().replace(" ", "-")}
+              key={option.id}
+              value={option.id}
               className="relative flex-1 py-2.5 text-xs sm:text-sm font-medium rounded-xl data-[state=active]:text-zinc-900 data-[state=active]:bg-transparent data-[state=active]:shadow-none text-zinc-400 transition-colors duration-300 z-10 h-auto whitespace-nowrap"
             >
               {isActive && (
@@ -276,25 +271,18 @@ export default function ConsultationPricingToggle({
       </TabsList>
 
       <div className="grid grid-cols-1 gap-4">
-        {consultationOptions.map((option) => (
+        {consultationOptions.map((option) => {
+          const isActive = activeConsultationOption === option.id;
+          return (
           <motion.div
-            key={option.durationInHours}
+            key={option.id}
             initial={{ opacity: 0, y: 10 }}
             animate={{
-              opacity:
-                activeConsultationOption ===
-                option.title.toLowerCase().replace(" ", "-")
-                  ? 1
-                  : 0,
+              opacity: isActive ? 1 : 0,
               y: 0,
             }}
             transition={{ duration: 0.2 }}
-            className={
-              activeConsultationOption ===
-              option.title.toLowerCase().replace(" ", "-")
-                ? "block"
-                : "hidden"
-            }
+            className={isActive ? "block" : "hidden"}
           >
             {/* Pricing content — no nested dark card, lives directly in glass parent */}
             <div className="space-y-1">
@@ -577,7 +565,7 @@ export default function ConsultationPricingToggle({
                     onClick={
                       selectedSlot?.isAllocated
                         ? handleRequestForApproval
-                        : handleConsultationBooking
+                        : () => handleConsultationBooking(option.id)
                     }
                     disabled={
                       !selectedSlot ||
@@ -596,7 +584,8 @@ export default function ConsultationPricingToggle({
               </DialogContent>
             </Dialog>
           </motion.div>
-        ))}
+          );
+        })}
       </div>
     </Tabs>
   );

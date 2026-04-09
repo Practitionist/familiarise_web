@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { useDebouncedCallback } from "use-debounce";
 import { Input } from "@/components/ui/input";
 import {
@@ -27,14 +27,40 @@ interface SearchBarProps {
   initialSearch?: string;
 }
 
-export function SearchBar({
+/**
+ * Controlled search input.
+ *
+ * - `localValue` is updated synchronously on every keystroke so typing
+ *   feels instant.
+ * - `onSearch` propagation to the parent is debounced by 300 ms so the
+ *   `filters.search` mutation (which becomes a React Query key change)
+ *   only fires once per typing burst. Without this debounce the
+ *   listing would refetch `/api/user/consultants` on every keystroke.
+ * - `localValue` re-syncs from `initialSearch` whenever the parent's
+ *   value changes (e.g. clearing the Search chip / clear-all) so the
+ *   input doesn't get stuck on stale text.
+ *
+ * The parent's `useExpertsFilters` hook still debounces the URL mirror
+ * separately; that's an independent concern (URL writes vs filter
+ * state mutations).
+ */
+function SearchBarImpl({
   onSearch,
   onSort,
   sortBy,
   initialSearch = "",
 }: SearchBarProps) {
   const [localValue, setLocalValue] = useState(initialSearch);
-  const debouncedSearch = useDebouncedCallback((value: string) => {
+
+  // Re-sync local input from parent state. Necessary so external
+  // mutations (filter chip removal, clear all, URL hydration) clear
+  // the input — without this useEffect, useState only initializes
+  // once and the input would stay stuck on the initial value.
+  useEffect(() => {
+    setLocalValue(initialSearch);
+  }, [initialSearch]);
+
+  const debouncedOnSearch = useDebouncedCallback((value: string) => {
     onSearch(value);
   }, 300);
 
@@ -52,7 +78,7 @@ export function SearchBar({
           value={localValue}
           onChange={(e) => {
             setLocalValue(e.target.value);
-            debouncedSearch(e.target.value);
+            debouncedOnSearch(e.target.value);
           }}
         />
       </div>
@@ -85,3 +111,5 @@ export function SearchBar({
     </div>
   );
 }
+
+export const SearchBar = memo(SearchBarImpl);

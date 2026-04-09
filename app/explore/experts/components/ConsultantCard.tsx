@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import type { IConsultantCardData } from "@/types/consultant";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import {
@@ -55,6 +55,19 @@ interface SubscriptionPlanCardData {
   totalSessions: number | null;
 }
 
+/**
+ * Returns true if `value` is a non-empty string that isn't one of the
+ * placeholder sentinels users/seeds sometimes leave behind ("none", "n/a", …).
+ */
+const isMeaningfulText = (
+  value: string | null | undefined,
+): value is string => {
+  if (!value) return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  return !/^(none|n\/?a|na|null|nil|tbd|-+|\.+)$/i.test(trimmed);
+};
+
 const SubscriptionPlanCard = ({
   plan,
   formatPrice,
@@ -88,22 +101,31 @@ const SubscriptionPlanCard = ({
         </div>
       </div>
       <div className="space-y-2.5">
-        <div className="flex items-center gap-2 text-sm">
-          <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-          <span className="text-zinc-600">{plan.callsPerWeek} calls/week</span>
-        </div>
-        <div className="flex items-center gap-2 text-sm">
-          <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-          <span className="text-zinc-600 capitalize">
-            {(plan.emailSupport ?? "no").toLowerCase()} email support
-          </span>
-        </div>
-        <div className="flex items-center gap-2 text-sm">
-          <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-          <span className="text-zinc-600">
-            {plan.totalSessions} sessions total
-          </span>
-        </div>
+        {plan.callsPerWeek != null && plan.callsPerWeek > 0 && (
+          <div className="flex items-center gap-2 text-sm">
+            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+            <span className="text-zinc-600">
+              {plan.callsPerWeek} {plan.callsPerWeek === 1 ? "call" : "calls"}/week
+            </span>
+          </div>
+        )}
+        {plan.emailSupport && (
+          <div className="flex items-center gap-2 text-sm">
+            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+            <span className="text-zinc-600 capitalize">
+              {plan.emailSupport.toLowerCase()} email support
+            </span>
+          </div>
+        )}
+        {plan.totalSessions != null && plan.totalSessions > 0 && (
+          <div className="flex items-center gap-2 text-sm">
+            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+            <span className="text-zinc-600">
+              {plan.totalSessions}{" "}
+              {plan.totalSessions === 1 ? "session" : "sessions"} total
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -113,22 +135,40 @@ export const ConsultantCard = memo(function ConsultantCard({
   consultant,
   metadata: _metadata,
 }: ConsultantCardProps) {
-  const router = useRouter();
   const { formatPrice } = useCurrency();
+  const profileHref = `/explore/experts/${consultant.id}`;
 
   const sortedPlans =
     consultant.subscriptionPlans
       ?.slice()
       .sort((a, b) => a.durationInMonths - b.durationInMonths) || [];
 
+  // Count how many plans share each duration so we can disambiguate labels
+  // when multiple plans have the same `durationInMonths`.
+  const durationCounts = sortedPlans.reduce<Record<number, number>>(
+    (acc, plan) => {
+      acc[plan.durationInMonths] = (acc[plan.durationInMonths] || 0) + 1;
+      return acc;
+    },
+    {},
+  );
+  const durationSeen: Record<number, number> = {};
+  const tabLabels = sortedPlans.map((plan) => {
+    const base = `${plan.durationInMonths} Mo`;
+    if (durationCounts[plan.durationInMonths] > 1) {
+      durationSeen[plan.durationInMonths] =
+        (durationSeen[plan.durationInMonths] || 0) + 1;
+      return `${base} (${durationSeen[plan.durationInMonths]})`;
+    }
+    return base;
+  });
+
   return (
     <div className="bg-white rounded-2xl border border-zinc-200 hover:border-zinc-300 hover:shadow-xl transition-all duration-300 overflow-hidden group">
       <div className="p-6 md:p-8 lg:p-10 flex flex-col lg:flex-row gap-8 lg:gap-12">
-        {/* Left Section: Consultant Info */}
-        <div
-          className="flex-grow cursor-pointer"
-          onClick={() => router.push(`/explore/experts/${consultant.id}`)}
-        >
+        {/* Left Section: Consultant Info — real <Link> so right-click /
+            cmd-click / middle-click open in a new tab. */}
+        <Link href={profileHref} className="flex-grow block">
           {/* Header */}
           <div className="flex items-start gap-4 mb-6">
             <div className="relative h-20 w-20 flex-shrink-0">
@@ -166,10 +206,12 @@ export const ConsultantCard = memo(function ConsultantCard({
             </div>
           </div>
 
-          {/* Description */}
-          <p className="text-zinc-600 leading-relaxed mb-6 line-clamp-2">
-            {consultant.description}
-          </p>
+          {/* Description — only render when it's meaningful free-form text */}
+          {isMeaningfulText(consultant.description) && (
+            <p className="text-zinc-600 leading-relaxed mb-6 line-clamp-2">
+              {consultant.description.trim()}
+            </p>
+          )}
 
           {/* Meta Info */}
           <div className="space-y-3 mb-6">
@@ -229,9 +271,11 @@ export const ConsultantCard = memo(function ConsultantCard({
 
           {/* Domain & Subdomains */}
           <div className="flex flex-wrap gap-2">
-            <Badge className="bg-zinc-900 text-white hover:bg-zinc-800 px-3 py-1">
-              {consultant.domain?.name}
-            </Badge>
+            {consultant.domain?.name && (
+              <Badge className="bg-zinc-900 text-white hover:bg-zinc-800 px-3 py-1">
+                {consultant.domain.name}
+              </Badge>
+            )}
             {consultant.subDomains.slice(0, 2).map((sd) => (
               <Badge
                 key={`${consultant.id}-subdomain-${sd.id}`}
@@ -256,32 +300,28 @@ export const ConsultantCard = memo(function ConsultantCard({
               ))}
             </div>
           )}
-        </div>
+        </Link>
 
         {/* Right Section: Subscription Plans & Actions */}
         <div className="flex-shrink-0 lg:w-[380px] xl:w-[420px] space-y-4">
           <div className="bg-zinc-50 rounded-xl p-4">
             {sortedPlans.length > 0 ? (
-              <Tabs
-                defaultValue={sortedPlans[0].durationInMonths.toString()}
-                className="w-full"
-              >
+              <Tabs defaultValue={sortedPlans[0].id} className="w-full">
                 <TabsList className="w-full mb-4 bg-white p-1 rounded-lg border border-zinc-200">
-                  {sortedPlans.map((plan) => (
+                  {sortedPlans.map((plan, index) => (
                     <TabsTrigger
                       key={`${consultant.id}-tab-trigger-${plan.id}`}
-                      value={plan.durationInMonths.toString()}
+                      value={plan.id}
                       className="flex-1 data-[state=active]:bg-zinc-900 data-[state=active]:text-white rounded-md text-sm font-medium transition-all duration-200"
                     >
-                      {plan.durationInMonths}{" "}
-                      {plan.durationInMonths === 1 ? "Mo" : "Mo"}
+                      {tabLabels[index]}
                     </TabsTrigger>
                   ))}
                 </TabsList>
                 {sortedPlans.map((plan) => (
                   <TabsContent
                     key={`${consultant.id}-tab-content-${plan.id}`}
-                    value={plan.durationInMonths.toString()}
+                    value={plan.id}
                   >
                     <SubscriptionPlanCard
                       plan={plan}
@@ -297,37 +337,32 @@ export const ConsultantCard = memo(function ConsultantCard({
             )}
           </div>
 
-          {/* Action Buttons */}
+          {/* Action Buttons — wrapped in <Link> via Button asChild so the
+              browser context menu offers "Open in new tab" / "Copy link". */}
           <div className="flex flex-col gap-2">
             <Button
+              asChild
               className="w-full h-12 bg-zinc-900 hover:bg-zinc-800 text-white font-medium rounded-xl transition-all"
-              onClick={() => router.push(`/explore/experts/${consultant.id}`)}
             >
-              <span>View Profile</span>
-              <ArrowRight className="w-4 h-4 ml-2" />
+              <Link href={profileHref}>
+                <span>View Profile</span>
+                <ArrowRight className="w-4 h-4 ml-2" />
+              </Link>
             </Button>
             <div className="grid grid-cols-2 gap-2">
               <Button
+                asChild
                 variant="outline"
                 className="h-10 border-zinc-300 hover:bg-zinc-50 text-zinc-700 rounded-xl text-sm font-medium"
-                onClick={() =>
-                  router.push(
-                    `/explore/experts/${consultant.id}?action=trial`,
-                  )
-                }
               >
-                Free Trial
+                <Link href={`${profileHref}?action=trial`}>Free Trial</Link>
               </Button>
               <Button
+                asChild
                 variant="outline"
                 className="h-10 border-zinc-300 hover:bg-zinc-50 text-zinc-700 rounded-xl text-sm font-medium"
-                onClick={() =>
-                  router.push(
-                    `/explore/experts/${consultant.id}?action=book`,
-                  )
-                }
               >
-                Book Session
+                <Link href={`${profileHref}?action=book`}>Book Session</Link>
               </Button>
             </div>
           </div>
