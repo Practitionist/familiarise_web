@@ -252,9 +252,14 @@ export function useCuratedPrograms(
   programType: ProgramType,
   sort: string,
   limit: number = 8,
+  /** Server-fetched initial data (RSC pre-warm). Pre-warming the cache
+   *  for the default `programType` lets the page paint instantly on
+   *  navigation; subsequent tab switches still trigger a normal fetch. */
+  initialData?: Program[],
 ) {
   const { data, isLoading } = useQuery({
     queryKey: ["curated-programs", programType, sort, limit],
+    initialData,
     queryFn: async () => {
       const requests: Promise<PlanApiResponse>[] = [];
 
@@ -341,9 +346,15 @@ export function useCuratedPrograms(
 }
 
 // Hook for fetching topics with program counts
-export function useTopicsWithCount(planType: ProgramType = "all") {
+export function useTopicsWithCount(
+  planType: ProgramType = "all",
+  /** Server-fetched initial data — same RSC pre-warm trick as
+   *  useCuratedPrograms above. */
+  initialData?: TopicWithCount[],
+) {
   const { data, isLoading } = useQuery({
     queryKey: ["topics-with-count", planType],
+    initialData,
     queryFn: async () => {
       const res = await fetchTopics(
         `/api/topics?withProgramCount=true&planType=${planType}`,
