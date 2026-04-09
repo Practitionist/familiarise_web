@@ -66,7 +66,9 @@ interface UseProgramFilterChipsArgs {
   topics: TopicWithCount[];
   selectedLevel: string;
   searchTerm: string;
-  formatPrice: (amountINR: number) => string;
+  /** `useCurrency().formatPrice` takes paise (smallest currency unit) —
+   *  it divides by 100 internally for display. */
+  formatPrice: (amountInPaise: number) => string;
   updateFilters: (partial: Partial<ProgramFilters>) => void;
   setSelectedLevel: (level: string) => void;
   /** Reset both the debounced searchTerm and the input-controlled value. */

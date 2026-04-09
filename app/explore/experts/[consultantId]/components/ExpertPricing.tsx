@@ -165,17 +165,13 @@ export function ExpertPricing({
           ],
         };
       }
-      // Defensive default — formatPricingOptions is only called with the two
-      // types above, so this fallback is unreachable but keeps the discriminated
-      // union exhaustive for the type checker.
-      return {
-        id: "",
-        title: "",
-        description: "",
-        price: 0,
-        priceCurrency: "INR",
-        duration: "",
-      };
+      // Both branches above cover every (type, plan-shape) combination
+      // we ever pass in. Throw rather than returning a dummy `id: ""`
+      // option — that empty id used to risk colliding with real plan ids
+      // as a tab key, even though the branch is unreachable in practice.
+      throw new Error(
+        `formatPricingOptions: unreachable plan shape (type=${type}, plan id=${"id" in plan ? plan.id : "?"})`,
+      );
     });
   };
 

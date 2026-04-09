@@ -91,7 +91,9 @@ export function useExpertFilterChips(
   metadata: IExpertsMetaData | null,
   updateFilters: (partial: Partial<IExpertFilters>) => void,
   clearFilters: () => void,
-  formatPrice: (amountINR: number) => string,
+  /** `useCurrency().formatPrice` takes paise (smallest currency unit) —
+   *  it divides by 100 internally for display. */
+  formatPrice: (amountInPaise: number) => string,
 ): UseExpertFilterChipsResult {
   const chips = useMemo<ActiveFilter[]>(() => {
     const out: ActiveFilter[] = [];
