@@ -76,9 +76,7 @@ export default function ExpertResults({
       {groupByDomainId ? (
         <>
           {metadata?.domains.map((domain) => {
-            // NOTE: keyed by domain.name today; switches to domain.id in
-            // the next commit when groupConsultantsByDomain is updated.
-            const domainConsultants = grouped[domain.name] || [];
+            const domainConsultants = grouped[domain.id] || [];
             if (domainConsultants.length === 0) return null;
 
             return (

@@ -50,41 +50,75 @@ export interface IExpertsMetaData {
 }
 
 export interface IConsultantsByDomain {
-  [domain: string]: IConsultantCardData[];
+  /** Keyed by `domain.id` (with the literal string `"other"` as the
+   *  fallback when a consultant has no domain). Renamed semantics from
+   *  the previous name-keyed shape so domain renames can't break the
+   *  grouped-by-domain layout. */
+  [domainId: string]: IConsultantCardData[];
 }
 
 export function groupConsultantsByDomain(
   consultants: IConsultantCardData[],
 ): IConsultantsByDomain {
   return consultants.reduce((acc, consultant) => {
-    const domainName = consultant.domain?.name || "Other";
-    if (!acc[domainName]) {
-      acc[domainName] = [];
+    const domainId = consultant.domain?.id || "other";
+    if (!acc[domainId]) {
+      acc[domainId] = [];
     }
-    acc[domainName].push(consultant);
+    acc[domainId].push(consultant);
     return acc;
   }, {} as IConsultantsByDomain);
 }
+
+/** Parse a positive non-negative number from a URL param, returning
+ *  `undefined` for missing / invalid / negative values. Coerces `0` to
+ *  `undefined` only when `treatZeroAsUnset` is true (used for prices,
+ *  where `0` means "unset"). */
+function parseNumberParam(
+  raw: string | null,
+  { treatZeroAsUnset = false }: { treatZeroAsUnset?: boolean } = {},
+): number | undefined {
+  if (raw === null || raw === "") return undefined;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return undefined;
+  if (parsed < 0) return undefined;
+  if (treatZeroAsUnset && parsed === 0) return undefined;
+  return parsed;
+}
+
+const VALID_SORT_OPTIONS: ReadonlySet<SortOption> = new Set<SortOption>([
+  "nameAsc",
+  "nameDesc",
+  "reviewCount",
+  "rating",
+  "trending",
+  "newest",
+]);
 
 // Parse IExpertFilters from URL search params
 export function filtersFromSearchParams(
   params: ReadonlyURLSearchParams,
 ): IExpertFilters {
-  const rawMinPrice = params.get("minPrice");
-  const rawMaxPrice = params.get("maxPrice");
-  const rawExperience = params.get("experience");
-  const rawMinRating = params.get("minRating");
+  const rawSort = params.get("sort");
+  const sort: SortOption =
+    rawSort && VALID_SORT_OPTIONS.has(rawSort as SortOption)
+      ? (rawSort as SortOption)
+      : "nameAsc";
 
   return {
     domain: params.get("domain"),
     subdomain: params.get("subdomain"),
     tags: params.get("tags")?.split(",").filter(Boolean) || [],
-    experience: rawExperience ? parseInt(rawExperience) || 0 : 0,
+    experience: parseNumberParam(params.get("experience")) ?? 0,
     search: params.get("search") || "",
-    sort: (params.get("sort") as SortOption) || "nameAsc",
-    minPrice: rawMinPrice ? parseFloat(rawMinPrice) || undefined : undefined,
-    maxPrice: rawMaxPrice ? parseFloat(rawMaxPrice) || undefined : undefined,
-    minRating: rawMinRating ? parseFloat(rawMinRating) || undefined : undefined,
+    sort,
+    minPrice: parseNumberParam(params.get("minPrice"), {
+      treatZeroAsUnset: true,
+    }),
+    maxPrice: parseNumberParam(params.get("maxPrice"), {
+      treatZeroAsUnset: true,
+    }),
+    minRating: parseNumberParam(params.get("minRating")),
     companies: params.get("companies")?.split(",").filter(Boolean) || [],
     language: params.get("language") || undefined,
   };
