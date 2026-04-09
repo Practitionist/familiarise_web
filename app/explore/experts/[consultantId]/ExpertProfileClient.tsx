@@ -147,7 +147,7 @@ export function ExpertProfileClient({
   const handleSubscriptionBooking = useCallback(
     async (
       option: {
-        id?: string;
+        id: string;
         title: string;
         price: number;
         duration: string;
@@ -165,13 +165,9 @@ export function ExpertProfileClient({
 
       // Resolve by id so plans with duplicate durations still route to the
       // exact one the user selected in the tab.
-      const activePlan = option.id
-        ? consultantDetails.subscriptionPlans.find(
-            (plan) => plan.id === option.id,
-          )
-        : consultantDetails.subscriptionPlans.find(
-            (plan) => plan.durationInMonths === option.durationInMonths,
-          );
+      const activePlan = consultantDetails.subscriptionPlans.find(
+        (plan) => plan.id === option.id,
+      );
 
       if (!activePlan) {
         toast({ title: "Subscription unavailable", variant: "destructive" });

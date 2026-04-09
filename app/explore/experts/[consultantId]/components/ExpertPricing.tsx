@@ -129,7 +129,10 @@ export function ExpertPricing({
         return {
           id: plan.id,
           title: durationLabel,
-          description: `${plan.durationInHours} hour consultation`,
+          // Surface the real plan title so duplicate-duration plans
+          // (e.g. "Career Strategy Session" vs "[ATEST] Career Strategy
+          // Session") stay distinguishable in the panel.
+          description: plan.title || `${plan.durationInHours} hour consultation`,
           price: plan.price,
           priceCurrency: plan.priceCurrency || "INR",
           duration: `${plan.durationInHours} hour${plan.durationInHours > 1 ? "s" : ""}`,
@@ -144,7 +147,7 @@ export function ExpertPricing({
         return {
           id: plan.id,
           title: durationLabel,
-          description: `${plan.durationInMonths} month subscription`,
+          description: plan.title || `${plan.durationInMonths} month subscription`,
           price: plan.price,
           priceCurrency: plan.priceCurrency || "INR",
           duration: `${plan.durationInMonths}`,
@@ -162,7 +165,11 @@ export function ExpertPricing({
           ],
         };
       }
+      // Defensive default — formatPricingOptions is only called with the two
+      // types above, so this fallback is unreachable but keeps the discriminated
+      // union exhaustive for the type checker.
       return {
+        id: "",
         title: "",
         description: "",
         price: 0,

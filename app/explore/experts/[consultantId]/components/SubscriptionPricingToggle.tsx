@@ -297,13 +297,12 @@ export default function SubscriptionPricingToggle({
     >
       {/* Segmented pill duration toggle */}
       <TabsList className="relative flex p-1 bg-white/[0.06] rounded-2xl border border-white/[0.08] backdrop-blur-sm h-auto">
-        {subscriptionOptions.map((option, index) => {
-          const optionId = option.id ?? "";
-          const isActive = activeSubscriptionOption === optionId;
+        {subscriptionOptions.map((option) => {
+          const isActive = activeSubscriptionOption === option.id;
           return (
             <TabsTrigger
-              key={optionId || `sub-tab-${index}`}
-              value={optionId}
+              key={option.id}
+              value={option.id}
               className="relative flex-1 py-2.5 text-xs sm:text-sm font-medium rounded-xl data-[state=active]:text-zinc-900 data-[state=active]:bg-transparent data-[state=active]:shadow-none text-zinc-400 transition-colors duration-300 z-10 h-auto whitespace-nowrap"
             >
               {isActive && (
@@ -320,12 +319,11 @@ export default function SubscriptionPricingToggle({
       </TabsList>
 
       <div className="grid grid-cols-1 gap-4">
-        {subscriptionOptions.map((option, index) => {
-          const optionId = option.id ?? "";
-          const isActive = activeSubscriptionOption === optionId;
+        {subscriptionOptions.map((option) => {
+          const isActive = activeSubscriptionOption === option.id;
           return (
           <motion.div
-            key={optionId || `sub-card-${index}`}
+            key={option.id}
             initial={{ opacity: 0, y: 10 }}
             animate={{
               opacity: isActive ? 1 : 0,
