@@ -1,44 +1,30 @@
 "use client";
 
-import {
-  GraduationCap,
-  Video,
-  Users,
-  Sparkles,
-  Search,
-  Flame,
-  Clock,
-  Hash,
-} from "lucide-react";
+import { useCallback, useMemo } from "react";
 import { motion } from "framer-motion";
+import { GraduationCap, Video, Users, Sparkles } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
-import { useSearchParams } from "next/navigation";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import { useDebouncedCallback } from "use-debounce";
 import { useCurrency } from "@/hooks/useCurrency";
-import { usePrograms, useCuratedPrograms, useTopicsWithCount } from "./hooks";
 import {
   filterAndSortPrograms,
   getUniqueLevels,
-  Program,
-  ProgramType,
-  ProgramFilters,
-  TopicWithCount,
+  type Program,
+  type TopicWithCount,
 } from "./utils";
-import ProgramCard from "./components/ProgramCard";
+import {
+  useCuratedPrograms,
+  useInfiniteScroll,
+  usePrograms,
+  useProgramFilterChips,
+  useProgramsFilters,
+  useTopicsWithCount,
+} from "./hooks";
 import ProgramTabs from "./components/ProgramTabs";
 import SectionHeader from "./components/SectionHeader";
-import FeaturedCarousel from "./components/FeaturedCarousel";
-import ProgramRow from "./components/ProgramRow";
-import CategoryGrid from "./components/CategoryGrid";
 import AdvancedFilters from "./components/AdvancedFilters";
-import FilterChips, { ActiveFilter } from "./components/FilterChips";
+import FilterChips from "./components/FilterChips";
+import StaticTopRows from "./components/StaticTopRows";
+import ProgramResults from "./components/ProgramResults";
 
 interface ProgramStats {
   classCount: number;
@@ -80,66 +66,36 @@ export default function ProgramsInteractiveContent({
   initialTopics,
   initialStats,
 }: ProgramsInteractiveContentProps) {
-  const searchParams = useSearchParams();
   const { data: session } = useSession();
   const userId = session?.user?.id;
   const { formatPrice } = useCurrency();
 
-  // Tab state from URL
-  const tabParam = searchParams.get("tab");
-  const [programType, setProgramType] = useState<ProgramType>(
-    (tabParam as ProgramType) || "all",
-  );
+  // All UI state lives in one hook so the orchestrator stays thin.
+  const {
+    programType,
+    handleTabChange,
+    filters,
+    updateFilters,
+    searchTerm,
+    localSearchValue,
+    onLocalSearchChange,
+    selectedLevel,
+    setSelectedLevel,
+    viewMode,
+    setViewMode,
+    clearAll: clearAllFilters,
+  } = useProgramsFilters();
 
-  // Filter state
-  const [searchTerm, setSearchTerm] = useState("");
-  const [localSearchValue, setLocalSearchValue] = useState("");
-  const [selectedLevel, setSelectedLevel] = useState("all");
-  const [viewMode, setViewMode] = useState<"list" | "grid">("grid");
-  const [filters, setFilters] = useState<ProgramFilters>({});
-  const observer = useRef<IntersectionObserver | null>(null);
-
-  // Stats: use server-fetched value if present, otherwise fall back to the
-  // hardcoded marketing numbers. No need for a useEffect fetch anymore — the
-  // RSC already paid that cost on the server.
+  // Stats: render server-fetched value if present, otherwise marketing
+  // fallbacks. No client useEffect — the RSC paid that cost.
   const stats = useMemo(
     () => (initialStats ? buildStatsFromData(initialStats) : FALLBACK_STATS),
     [initialStats],
   );
 
-  const debouncedSetSearch = useDebouncedCallback((value: string) => {
-    setSearchTerm(value);
-  }, 300);
-
-  // URL sync via window.history.replaceState — bypasses the Next router so
-  // we don't trigger the useSearchParams reactivity that caused scroll-to-
-  // top jumps on the experts listing (same fix already applied there).
-  const handleTabChange = useCallback(
-    (tab: ProgramType) => {
-      setProgramType(tab);
-      const params = new URLSearchParams(window.location.search);
-      if (tab === "all") {
-        params.delete("tab");
-      } else {
-        params.set("tab", tab);
-      }
-      const qs = params.toString();
-      const target = `/explore/programs${qs ? `?${qs}` : ""}`;
-      window.history.replaceState(window.history.state, "", target);
-    },
-    [],
-  );
-
-  const handleFiltersChange = useCallback(
-    (partial: Partial<ProgramFilters>) => {
-      setFilters((prev) => ({ ...prev, ...partial }));
-    },
-    [],
-  );
-
-  // Data hooks. The curated/topics queries get pre-warmed via initialData
-  // for the default `programType === "all"` query key, so the first paint
-  // doesn't wait on a client fetch. Tab switches still refetch normally.
+  // Data hooks. Curated and topics are pre-warmed via initialData for the
+  // default `programType === "all"` query keys; tab switches still trigger
+  // normal client fetches via the existing query-key plumbing.
   const { programs, isLoading, hasMore, loadMore } = usePrograms(programType, {
     userId,
     filters,
@@ -166,128 +122,50 @@ export default function ProgramsInteractiveContent({
       programType === "all" ? initialTopics : undefined,
     );
 
-  // Build active filter chips
-  const activeFilterChips = useMemo(() => {
-    const chips: ActiveFilter[] = [];
-    if (filters.topicIds && filters.topicIds.length > 0) {
-      filters.topicIds.forEach((id) => {
-        const topic = topicsWithCount.find((t) => t.id === id);
-        if (topic) {
-          chips.push({
-            key: `topic-${id}`,
-            label: "Topic",
-            value: topic.name,
-          });
-        }
-      });
-    }
-    if (filters.language) {
-      chips.push({
-        key: "language",
-        label: "Language",
-        value: filters.language,
-      });
-    }
-    if (filters.minPrice !== undefined || filters.maxPrice !== undefined) {
-      const min = filters.minPrice ?? 0;
-      const max = filters.maxPrice;
-      const label =
-        min === 0 && max === 0
-          ? "Free"
-          : max === undefined
-            ? `${formatPrice(min)}+`
-            : `${formatPrice(min)} - ${formatPrice(max)}`;
-      chips.push({ key: "price", label: "Price", value: label });
-    }
-    if (filters.sort) {
-      const sortLabels: Record<string, string> = {
-        trending: "Most Popular",
-        newest: "Newest",
-        "price-asc": "Price Low-High",
-        "price-desc": "Price High-Low",
-        "title-asc": "Title A-Z",
-        "title-desc": "Title Z-A",
-      };
-      chips.push({
-        key: "sort",
-        label: "Sort",
-        value: sortLabels[filters.sort] || filters.sort,
-      });
-    }
-    if (selectedLevel !== "all") {
-      chips.push({ key: "level", label: "Level", value: selectedLevel });
-    }
-    if (searchTerm) {
-      chips.push({ key: "search", label: "Search", value: searchTerm });
-    }
-    return chips;
-  }, [filters, topicsWithCount, selectedLevel, searchTerm, formatPrice]);
+  // Sentinel-driven infinite scroll. Hook owns the IntersectionObserver
+  // lifecycle, no per-render disconnect/reconnect.
+  const sentinelRef = useInfiniteScroll({
+    hasMore,
+    isLoading,
+    onLoadMore: loadMore,
+  });
 
-  const handleRemoveFilter = useCallback((key: string) => {
-    if (key.startsWith("topic-")) {
-      const topicId = key.replace("topic-", "");
-      setFilters((prev) => ({
-        ...prev,
-        topicIds: prev.topicIds?.filter((id) => id !== topicId),
-      }));
-    } else if (key === "language") {
-      setFilters((prev) => ({ ...prev, language: undefined }));
-    } else if (key === "price") {
-      setFilters((prev) => ({
-        ...prev,
-        minPrice: undefined,
-        maxPrice: undefined,
-      }));
-    } else if (key === "sort") {
-      setFilters((prev) => ({ ...prev, sort: undefined }));
-    } else if (key === "level") {
-      setSelectedLevel("all");
-    } else if (key === "search") {
-      setSearchTerm("");
-      setLocalSearchValue("");
-    }
-  }, []);
+  // Active filter chips with structured-key removal.
+  const clearSearch = useCallback(() => {
+    onLocalSearchChange("");
+  }, [onLocalSearchChange]);
 
-  const handleClearAll = useCallback(() => {
-    setFilters({});
-    setSelectedLevel("all");
-    setSearchTerm("");
-    setLocalSearchValue("");
-  }, []);
-
-  // Handle topic selection from category grid
-  const handleTopicSelect = useCallback((topicId: string) => {
-    setFilters((prev) => {
-      const current = prev.topicIds || [];
-      if (current.includes(topicId)) return prev;
-      return { ...prev, topicIds: [...current, topicId] };
-    });
-    document
-      .getElementById("all-programs")
-      ?.scrollIntoView({ behavior: "smooth" });
-  }, []);
+  const { chips, removeChip, clearAll: clearAllChips } = useProgramFilterChips({
+    filters,
+    topics: topicsWithCount,
+    selectedLevel,
+    searchTerm,
+    formatPrice,
+    updateFilters,
+    setSelectedLevel,
+    clearSearch,
+    clearAll: clearAllFilters,
+  });
 
   // Use trending programs as featured (proxy until admin-flagged feature exists)
-  const featuredPrograms = trendingPrograms.slice(0, 5);
-
-  const lastElementRef = useCallback(
-    (node: HTMLDivElement) => {
-      if (isLoading) return;
-      if (observer.current) observer.current.disconnect();
-      observer.current = new IntersectionObserver((entries) => {
-        if (entries[0].isIntersecting && hasMore) {
-          loadMore();
-        }
-      });
-      if (node) observer.current.observe(node);
-    },
-    [isLoading, hasMore, loadMore],
+  const featuredPrograms = useMemo(
+    () => trendingPrograms.slice(0, 5),
+    [trendingPrograms],
   );
 
-  // Tear down the observer on unmount so we don't leak it across pages.
-  useEffect(() => {
-    return () => observer.current?.disconnect();
-  }, []);
+  const handleTopicSelect = useCallback(
+    (topicId: string) => {
+      updateFilters({
+        topicIds: filters.topicIds?.includes(topicId)
+          ? filters.topicIds
+          : [...(filters.topicIds || []), topicId],
+      });
+      document
+        .getElementById("all-programs")
+        ?.scrollIntoView({ behavior: "smooth" });
+    },
+    [filters.topicIds, updateFilters],
+  );
 
   const filteredAndSortedPrograms = useMemo(
     () => filterAndSortPrograms(programs, searchTerm, selectedLevel),
@@ -363,58 +241,16 @@ export default function ProgramsInteractiveContent({
             />
           </div>
 
-          {/* Featured Carousel */}
-          <div className="mb-14">
-            <SectionHeader
-              title="Familiarise Featured"
-              icon={<Sparkles className="w-5 h-5 text-white" />}
-            />
-            <FeaturedCarousel
-              programs={featuredPrograms}
-              isLoading={trendingLoading}
-            />
-          </div>
-
-          {/* Trending Now */}
-          <div className="mb-14">
-            <SectionHeader
-              title="Trending Now"
-              icon={<Flame className="w-5 h-5 text-white" />}
-              seeAllHref="/explore/programs?sort=trending"
-            />
-            <ProgramRow
-              programs={trendingPrograms}
-              badge="trending"
-              isLoading={trendingLoading}
-            />
-          </div>
-
-          {/* Newly Added */}
-          <div className="mb-14">
-            <SectionHeader
-              title="Newly Added"
-              icon={<Clock className="w-5 h-5 text-white" />}
-              seeAllHref="/explore/programs?sort=newest"
-            />
-            <ProgramRow
-              programs={newPrograms}
-              badge="new"
-              isLoading={newLoading}
-            />
-          </div>
-
-          {/* Browse by Category */}
-          <div className="mb-14">
-            <SectionHeader
-              title="Browse by Category"
-              icon={<Hash className="w-5 h-5 text-white" />}
-            />
-            <CategoryGrid
-              topics={topicsWithCount}
-              isLoading={topicsLoading}
-              onTopicSelect={handleTopicSelect}
-            />
-          </div>
+          <StaticTopRows
+            featuredPrograms={featuredPrograms}
+            trendingPrograms={trendingPrograms}
+            newPrograms={newPrograms}
+            topics={topicsWithCount}
+            trendingLoading={trendingLoading}
+            newLoading={newLoading}
+            topicsLoading={topicsLoading}
+            onTopicSelect={handleTopicSelect}
+          />
 
           {/* All Programs Section */}
           <div id="all-programs">
@@ -430,12 +266,9 @@ export default function ProgramsInteractiveContent({
             >
               <AdvancedFilters
                 filters={filters}
-                onFiltersChange={handleFiltersChange}
+                onFiltersChange={updateFilters}
                 localSearch={localSearchValue}
-                onLocalSearchChange={(value) => {
-                  setLocalSearchValue(value);
-                  debouncedSetSearch(value);
-                }}
+                onLocalSearchChange={onLocalSearchChange}
                 selectedLevel={selectedLevel}
                 onLevelChange={setSelectedLevel}
                 uniqueLevels={uniqueLevels}
@@ -446,97 +279,22 @@ export default function ProgramsInteractiveContent({
             </motion.div>
 
             {/* Active Filter Chips */}
-            {activeFilterChips.length > 0 && (
+            {chips.length > 0 && (
               <div className="mb-6">
                 <FilterChips
-                  filters={activeFilterChips}
-                  onRemove={handleRemoveFilter}
-                  onClearAll={handleClearAll}
+                  filters={chips}
+                  onRemove={removeChip}
+                  onClearAll={clearAllChips}
                 />
               </div>
             )}
 
-            {/* Programs Grid/List */}
-            {viewMode === "grid" ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {filteredAndSortedPrograms.map(
-                  (item: Program, index: number) => (
-                    <motion.div
-                      key={item.id}
-                      ref={
-                        index === filteredAndSortedPrograms.length - 1
-                          ? lastElementRef
-                          : undefined
-                      }
-                      initial={{ opacity: 0, y: 20 }}
-                      whileInView={{ opacity: 1, y: 0 }}
-                      viewport={{ once: true }}
-                      transition={{
-                        duration: 0.4,
-                        delay: Math.min(index * 0.05, 0.6),
-                      }}
-                    >
-                      <ProgramCard program={item} variant="grid" />
-                    </motion.div>
-                  ),
-                )}
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {filteredAndSortedPrograms.map(
-                  (item: Program, index: number) => (
-                    <motion.div
-                      key={item.id}
-                      ref={
-                        index === filteredAndSortedPrograms.length - 1
-                          ? lastElementRef
-                          : undefined
-                      }
-                      initial={{ opacity: 0, y: 20 }}
-                      whileInView={{ opacity: 1, y: 0 }}
-                      viewport={{ once: true }}
-                      transition={{
-                        duration: 0.4,
-                        delay: Math.min(index * 0.05, 0.6),
-                      }}
-                    >
-                      <ProgramCard program={item} variant="list" />
-                    </motion.div>
-                  ),
-                )}
-              </div>
-            )}
-
-            {/* Empty State */}
-            {filteredAndSortedPrograms.length === 0 && !isLoading && (
-              <motion.div
-                className="text-center py-16"
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ duration: 0.3 }}
-              >
-                <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-zinc-100 flex items-center justify-center">
-                  <Search className="w-10 h-10 text-zinc-400" />
-                </div>
-                <h3 className="text-xl font-semibold text-zinc-900 mb-2">
-                  No programs found
-                </h3>
-                <p className="text-zinc-500 max-w-md mx-auto">
-                  Try adjusting your filters or search terms to discover more
-                  programs
-                </p>
-              </motion.div>
-            )}
-
-            {/* Loading State */}
-            {isLoading && (
-              <div className="flex items-center justify-center py-12">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 border-3 border-zinc-200 border-t-zinc-900 rounded-full animate-spin" />
-                  <span className="text-zinc-500">Loading programs...</span>
-                </div>
-              </div>
-            )}
+            <ProgramResults
+              programs={filteredAndSortedPrograms}
+              isLoading={isLoading}
+              viewMode={viewMode}
+              sentinelRef={sentinelRef}
+            />
           </div>
         </div>
       </section>
