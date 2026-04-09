@@ -1,7 +1,6 @@
 "use client";
 
-import { useState } from "react";
-import { useDebouncedCallback } from "use-debounce";
+import { memo, useState } from "react";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -27,16 +26,18 @@ interface SearchBarProps {
   initialSearch?: string;
 }
 
-export function SearchBar({
+/**
+ * Controlled search input. Forwards every keystroke to `onSearch` —
+ * the parent (`useExpertsFilters`) owns the single 300 ms debounce that
+ * coalesces filter mutations into one URL sync + React Query refetch.
+ */
+function SearchBarImpl({
   onSearch,
   onSort,
   sortBy,
   initialSearch = "",
 }: SearchBarProps) {
   const [localValue, setLocalValue] = useState(initialSearch);
-  const debouncedSearch = useDebouncedCallback((value: string) => {
-    onSearch(value);
-  }, 300);
 
   return (
     <div className="flex flex-col sm:flex-row gap-4">
@@ -52,7 +53,7 @@ export function SearchBar({
           value={localValue}
           onChange={(e) => {
             setLocalValue(e.target.value);
-            debouncedSearch(e.target.value);
+            onSearch(e.target.value);
           }}
         />
       </div>
@@ -85,3 +86,5 @@ export function SearchBar({
     </div>
   );
 }
+
+export const SearchBar = memo(SearchBarImpl);

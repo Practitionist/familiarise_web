@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { Briefcase, Clock, Flame } from "lucide-react";
 import type { IConsultantCardData } from "@/types/consultant";
 import SectionHeader from "@/app/explore/components/SectionHeader";
@@ -23,7 +24,7 @@ interface StaticTopRowsProps {
  * Receives only static props (data + stable callbacks) so the parent
  * memoizes this and filter state changes never re-render any of it.
  */
-export default function StaticTopRows({
+function StaticTopRowsImpl({
   metadata,
   trendingExperts,
   newestExperts,
@@ -73,3 +74,6 @@ export default function StaticTopRows({
     </>
   );
 }
+
+const StaticTopRows = memo(StaticTopRowsImpl);
+export default StaticTopRows;

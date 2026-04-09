@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 import { Search } from "lucide-react";
-import type { RefObject } from "react";
+import { memo, type RefObject } from "react";
 import type { IConsultantCardData } from "@/types/consultant";
 import { ConsultantCard } from "./ConsultantCard";
 import {
@@ -49,7 +49,7 @@ function EmptyState() {
  * sentinel `<div>` at the bottom that the parent's `useInfiniteScroll`
  * observes.
  */
-export default function ExpertResults({
+function ExpertResultsImpl({
   consultants,
   metadata,
   isLoading,
@@ -146,3 +146,6 @@ export default function ExpertResults({
     </div>
   );
 }
+
+const ExpertResults = memo(ExpertResultsImpl);
+export default ExpertResults;

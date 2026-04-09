@@ -8,7 +8,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
-import { useState, useCallback, useRef, useEffect } from "react";
+import { memo, useState, useCallback, useRef, useEffect } from "react";
 import {
   X,
   Filter,
@@ -37,7 +37,7 @@ interface FilterPanelProps {
  * with inconsistent naming. Internal local state for slider drag and
  * autocomplete dropdowns is unchanged.
  */
-export function FilterPanel({
+function FilterPanelImpl({
   metadata,
   filters,
   updateFilters,
@@ -526,3 +526,5 @@ export function FilterPanel({
     </div>
   );
 }
+
+export const FilterPanel = memo(FilterPanelImpl);
