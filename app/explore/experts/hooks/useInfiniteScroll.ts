@@ -28,7 +28,7 @@ export function useInfiniteScroll({
   onLoadMore,
   rootMargin = "0px",
 }: UseInfiniteScrollOptions) {
-  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   // Stable callback reference inside the observer so we don't have to put
   // `onLoadMore` in the effect deps (which would force the observer to

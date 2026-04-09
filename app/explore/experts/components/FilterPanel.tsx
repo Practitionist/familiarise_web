@@ -21,58 +21,39 @@ import {
   Globe,
 } from "lucide-react";
 import { useCurrency } from "@/hooks/useCurrency";
+import type { IExpertFilters, IExpertsMetaData } from "../utils";
 
 const MAX_PRICE_INR = 10000;
 
-interface FiltersSectionProps {
-  metadata: {
-    domains: { id: string; name: string }[];
-    subdomains: { id: string; name: string; domainId: string | null }[];
-    tags: { id: string; name: string; domainId: string | null }[];
-    availableLanguages?: string[];
-    availableCompanies?: string[];
-  } | null;
-  selectedDomain: string | null;
-  setSelectedDomain: (value: string | null) => void;
-  selectedSubdomain: string | null;
-  setSelectedSubdomain: (value: string | null) => void;
-  selectedTags: string[];
-  setSelectedTags: (tags: string[]) => void;
-  experienceYears: number;
-  setExperienceYears: (years: number) => void;
-  minPrice?: number;
-  onMinPriceChange?: (value: number | undefined) => void;
-  maxPrice?: number;
-  onMaxPriceChange?: (value: number | undefined) => void;
-  minRating?: number;
-  onMinRatingChange?: (value: number | undefined) => void;
-  selectedCompanies: string[];
-  setSelectedCompanies: (companies: string[]) => void;
-  language?: string;
-  onLanguageChange?: (value: string | undefined) => void;
+interface FilterPanelProps {
+  metadata: IExpertsMetaData | null;
+  filters: IExpertFilters;
+  updateFilters: (partial: Partial<IExpertFilters>) => void;
 }
 
-export function FiltersSection({
+/**
+ * Renamed from FiltersSection. Accepts a single `filters` object plus
+ * an `updateFilters(partial)` callback instead of 23 individual setters
+ * with inconsistent naming. Internal local state for slider drag and
+ * autocomplete dropdowns is unchanged.
+ */
+export function FilterPanel({
   metadata,
-  selectedDomain,
-  setSelectedDomain,
-  selectedSubdomain,
-  setSelectedSubdomain,
-  selectedTags,
-  setSelectedTags,
-  experienceYears,
-  setExperienceYears,
-  minPrice,
-  onMinPriceChange,
-  maxPrice,
-  onMaxPriceChange,
-  minRating,
-  onMinRatingChange,
-  selectedCompanies,
-  setSelectedCompanies,
-  language,
-  onLanguageChange,
-}: FiltersSectionProps) {
+  filters,
+  updateFilters,
+}: FilterPanelProps) {
+  const {
+    domain: selectedDomain,
+    subdomain: selectedSubdomain,
+    tags: selectedTags,
+    experience: experienceYears,
+    minPrice,
+    maxPrice,
+    minRating,
+    companies: selectedCompanies,
+    language,
+  } = filters;
+
   // Tag autocomplete state
   const [searchTerm, setSearchTerm] = useState("");
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -86,10 +67,16 @@ export function FiltersSection({
   // Close dropdowns on outside click
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (tagDropdownRef.current && !tagDropdownRef.current.contains(e.target as Node)) {
+      if (
+        tagDropdownRef.current &&
+        !tagDropdownRef.current.contains(e.target as Node)
+      ) {
         setIsDropdownOpen(false);
       }
-      if (companyDropdownRef.current && !companyDropdownRef.current.contains(e.target as Node)) {
+      if (
+        companyDropdownRef.current &&
+        !companyDropdownRef.current.contains(e.target as Node)
+      ) {
         setIsCompanyDropdownOpen(false);
       }
     };
@@ -127,34 +114,38 @@ export function FiltersSection({
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => {
         const isDefault = newMin === 0 && newMax === MAX_PRICE_INR;
-        onMinPriceChange?.(isDefault ? undefined : newMin);
-        onMaxPriceChange?.(isDefault ? undefined : newMax);
+        updateFilters({
+          minPrice: isDefault ? undefined : newMin,
+          maxPrice: isDefault ? undefined : newMax,
+        });
       }, 300);
     },
-    [onMinPriceChange, onMaxPriceChange],
+    [updateFilters],
   );
 
   const handleDomainChange = (value: string) => {
-    setSelectedDomain(value === "all" ? null : value);
-    setSelectedSubdomain(null);
-    setSelectedTags([]);
+    updateFilters({
+      domain: value === "all" ? null : value,
+      subdomain: null,
+      tags: [],
+    });
     setSearchTerm("");
   };
 
   const handleSubdomainChange = (value: string) => {
-    setSelectedSubdomain(value === "all" ? null : value);
+    updateFilters({ subdomain: value === "all" ? null : value });
   };
 
   const handleTagSelect = (tag: string) => {
     if (!selectedTags.includes(tag)) {
-      setSelectedTags([...selectedTags, tag]);
+      updateFilters({ tags: [...selectedTags, tag] });
     }
     setIsDropdownOpen(false);
     setSearchTerm("");
   };
 
   const handleTagRemove = (tag: string) => {
-    setSelectedTags(selectedTags.filter((t) => t !== tag));
+    updateFilters({ tags: selectedTags.filter((t) => t !== tag) });
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -164,14 +155,16 @@ export function FiltersSection({
 
   const handleCompanySelect = (company: string) => {
     if (!selectedCompanies.includes(company)) {
-      setSelectedCompanies([...selectedCompanies, company]);
+      updateFilters({ companies: [...selectedCompanies, company] });
     }
     setIsCompanyDropdownOpen(false);
     setCompanySearchTerm("");
   };
 
   const handleCompanyRemove = (company: string) => {
-    setSelectedCompanies(selectedCompanies.filter((c) => c !== company));
+    updateFilters({
+      companies: selectedCompanies.filter((c) => c !== company),
+    });
   };
 
   const handleCompanyInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -182,7 +175,7 @@ export function FiltersSection({
   const RATING_OPTIONS = [4.5, 4.0, 3.5, 3.0] as const;
 
   const handleLanguageChange = (value: string) => {
-    onLanguageChange?.(value === "all" ? undefined : value);
+    updateFilters({ language: value === "all" ? undefined : value });
   };
 
   const filteredTags =
@@ -355,9 +348,10 @@ export function FiltersSection({
                 onChange={(e) => {
                   const val = Number(e.target.value);
                   setLocalExperience(val);
-                  if (expDebounceRef.current) clearTimeout(expDebounceRef.current);
+                  if (expDebounceRef.current)
+                    clearTimeout(expDebounceRef.current);
                   expDebounceRef.current = setTimeout(() => {
-                    setExperienceYears(val);
+                    updateFilters({ experience: val });
                   }, 300);
                 }}
                 className="w-full h-2 bg-zinc-200 rounded-full appearance-none cursor-pointer accent-zinc-900"
@@ -380,7 +374,9 @@ export function FiltersSection({
                   <button
                     key={rating}
                     onClick={() =>
-                      onMinRatingChange?.(minRating === rating ? undefined : rating)
+                      updateFilters({
+                        minRating: minRating === rating ? undefined : rating,
+                      })
                     }
                     className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                       minRating === rating
@@ -393,7 +389,7 @@ export function FiltersSection({
                   </button>
                 ))}
                 <button
-                  onClick={() => onMinRatingChange?.(undefined)}
+                  onClick={() => updateFilters({ minRating: undefined })}
                   className={`inline-flex items-center px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                     minRating === undefined
                       ? "bg-zinc-900 text-white"
