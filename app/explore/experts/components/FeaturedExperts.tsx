@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
@@ -13,7 +14,7 @@ interface FeaturedExpertsProps {
   isLoading: boolean;
 }
 
-export function FeaturedExperts({ experts, isLoading }: FeaturedExpertsProps) {
+function FeaturedExpertsImpl({ experts, isLoading }: FeaturedExpertsProps) {
   const renderRating = (rating: number) => {
     const fullStars = Math.floor(rating);
     const hasHalfStar = rating % 1 >= 0.5;
@@ -204,3 +205,5 @@ export function FeaturedExperts({ experts, isLoading }: FeaturedExpertsProps) {
     </section>
   );
 }
+
+export const FeaturedExperts = memo(FeaturedExpertsImpl);

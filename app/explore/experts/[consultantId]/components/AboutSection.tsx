@@ -9,6 +9,19 @@ interface AboutSectionProps {
   consultantDetails: TConsultantDetailData;
 }
 
+/**
+ * Returns true if `value` is a non-empty string that isn't one of the
+ * placeholder sentinels users/seeds sometimes leave behind ("none", "n/a", …).
+ */
+const isRealDescription = (
+  value: string | null | undefined,
+): value is string => {
+  if (!value) return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  return !/^(none|n\/?a|na|null|nil|tbd|-+|\.+)$/i.test(trimmed);
+};
+
 export function AboutSection({
   userDetails,
   consultantDetails,
@@ -24,7 +37,9 @@ export function AboutSection({
           <h3 className="text-lg font-semibold text-zinc-900">About</h3>
         </div>
         <p className="text-zinc-600 leading-relaxed">
-          {consultantDetails.description || (
+          {isRealDescription(consultantDetails.description) ? (
+            consultantDetails.description.trim()
+          ) : (
             <>
               {userDetails.name} is a seasoned{" "}
               {consultantDetails.headline || consultantDetails.domain.name}{" "}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { ArrowRight, Sparkles } from "lucide-react";
 import Image from "next/image";
@@ -31,7 +31,7 @@ function SkeletonSlide() {
   );
 }
 
-export default function FeaturedCarousel({
+function FeaturedCarouselImpl({
   programs,
   isLoading,
 }: FeaturedCarouselProps) {
@@ -204,3 +204,6 @@ export default function FeaturedCarousel({
     </div>
   );
 }
+
+const FeaturedCarousel = memo(FeaturedCarouselImpl);
+export default FeaturedCarousel;

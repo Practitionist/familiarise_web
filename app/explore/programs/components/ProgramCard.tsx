@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { RegistrationBadge } from "@/components/ui/registration-badge";
 import { Button } from "@/components/ui/button";
 import { ArrowRight, Flame, Sparkles, Star } from "lucide-react";
@@ -437,7 +438,7 @@ function CarouselCard({
   );
 }
 
-export default function ProgramCard({
+function ProgramCardImpl({
   program,
   variant = "grid",
   badge,
@@ -451,3 +452,6 @@ export default function ProgramCard({
       return <GridCard program={program} badge={badge} />;
   }
 }
+
+const ProgramCard = memo(ProgramCardImpl);
+export default ProgramCard;

@@ -1,12 +1,9 @@
-import { useQuery, useInfiniteQuery, keepPreviousData } from "@tanstack/react-query";
-import type { IConsultantCardData } from "@/types/consultant";
-import { SortOption } from "./components/SearchBar";
+"use client";
+
+import { useInfiniteQuery, keepPreviousData } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
-import {
-  CONSULTANTS_PER_PAGE,
-  type IExpertFilters,
-  type IExpertsMetaData,
-} from "./utils";
+import type { IConsultantCardData } from "@/types/consultant";
+import { CONSULTANTS_PER_PAGE, type IExpertFilters } from "../utils";
 
 // Enhanced React Query fetcher function with error handling for consultants
 const fetchConsultantsData = async (url: string) => {
@@ -26,40 +23,6 @@ const fetchConsultantsData = async (url: string) => {
 
   return res.json();
 };
-
-export function useConsultantsMetadata() {
-  const { data, error, isLoading, refetch } = useQuery<{
-    data: IExpertsMetaData;
-  }>({
-    queryKey: ["consultants-metadata"],
-    queryFn: () => fetchConsultantsData("/api/user/consultants/meta"),
-    staleTime: 5 * 60 * 1000,
-    gcTime: 10 * 60 * 1000,
-    retry: 3,
-    retryDelay: 5000,
-  });
-
-  return {
-    metadata: data?.data || null,
-    isLoading,
-    error,
-    refresh: refetch,
-  };
-}
-
-// Hook for fetching a curated set of experts (for trending/newest rows)
-export function useCuratedExperts(sort: SortOption, limit: number = 8) {
-  const { data, isLoading } = useQuery<{ data: IConsultantCardData[] }>({
-    queryKey: ["curated-experts", sort, limit],
-    queryFn: () =>
-      fetchConsultantsData(`/api/user/consultants?sort=${sort}&limit=${limit}`),
-    staleTime: 5 * 60 * 1000,
-    gcTime: 15 * 60 * 1000,
-    retry: 2,
-  });
-
-  return { experts: data?.data || [], isLoading };
-}
 
 export function useConsultants(filters: IExpertFilters) {
   const {
@@ -155,16 +118,13 @@ export function useConsultants(filters: IExpertFilters) {
     [data],
   );
 
-  const hasMore = hasNextPage;
-  const isLoadingMore = isFetchingNextPage;
-
   return {
     consultants,
     error,
     isLoading,
-    isLoadingMore,
+    isLoadingMore: isFetchingNextPage,
     isRefetching: isFetching && !isLoading && !isFetchingNextPage,
-    hasMore,
+    hasMore: hasNextPage ?? false,
     loadMore: () => fetchNextPage(),
     refresh: refetch,
     firstPageKey: getKey(0),

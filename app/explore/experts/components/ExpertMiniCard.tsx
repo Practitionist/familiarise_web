@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
@@ -12,7 +13,7 @@ interface ExpertMiniCardProps {
   badge?: "trending" | "new";
 }
 
-export default function ExpertMiniCard({ expert, badge }: ExpertMiniCardProps) {
+function ExpertMiniCardImpl({ expert, badge }: ExpertMiniCardProps) {
   return (
     <Link
       href={`/explore/experts/${expert.id}`}
@@ -128,3 +129,6 @@ export default function ExpertMiniCard({ expert, badge }: ExpertMiniCardProps) {
     </Link>
   );
 }
+
+const ExpertMiniCard = memo(ExpertMiniCardImpl);
+export default ExpertMiniCard;

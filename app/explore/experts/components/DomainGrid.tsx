@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import { Briefcase, ChevronDown, ChevronUp } from "lucide-react";
 
 interface DomainWithCount {
@@ -27,7 +27,7 @@ function SkeletonCard() {
   );
 }
 
-export default function DomainGrid({
+function DomainGridImpl({
   domains,
   isLoading,
   onDomainSelect,
@@ -93,3 +93,6 @@ export default function DomainGrid({
     </div>
   );
 }
+
+const DomainGrid = memo(DomainGridImpl);
+export default DomainGrid;
