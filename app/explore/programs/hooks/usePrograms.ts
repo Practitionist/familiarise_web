@@ -1,5 +1,7 @@
+"use client";
+
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import {
   isUserEnrolled,
   isUserRegisteredForWebinar,
@@ -7,76 +9,29 @@ import {
 import {
   ITEMS_PER_PAGE,
   generateProgramImageUrl,
-  type ApiMeta,
+  type Program,
   type ProgramType,
   type ProgramFilters,
-  type Program,
   type ClassPlanProgram,
   type WebinarPlanProgram,
-  type ClassInstance,
-  type TopicWithCount,
-} from "./utils";
-
-// --- API response types ---
-
-interface WebinarWithAppointment {
-  appointment?: {
-    slotsOfAppointment?: { user?: { id: string }[] }[];
-  } | null;
-}
-
-interface ClassPlanApiItem {
-  id: string;
-  classes?: ClassInstance[];
-  imageUrl?: string | null;
-}
-
-interface WebinarPlanApiItem {
-  id: string;
-  webinars?: WebinarWithAppointment[];
-  imageUrl?: string | null;
-}
-
-type PlanApiItem = ClassPlanApiItem | WebinarPlanApiItem;
-
-interface PlanApiResponse {
-  data?: PlanApiItem[];
-  meta?: ApiMeta;
-}
-
-interface TopicsApiResponse {
-  data?: TopicWithCount[];
-}
-
-// Build query string from filter params
-function buildFilterParams(filters: ProgramFilters): string {
-  const params = new URLSearchParams();
-  if (filters.topicIds && filters.topicIds.length > 0) {
-    params.set("topicIds", filters.topicIds.join(","));
-  }
-  if (filters.language) params.set("language", filters.language);
-  if (filters.domainId) params.set("domainId", filters.domainId);
-  if (filters.sort) params.set("sort", filters.sort);
-  if (filters.minPrice !== undefined)
-    params.set("minPrice", String(filters.minPrice));
-  if (filters.maxPrice !== undefined)
-    params.set("maxPrice", String(filters.maxPrice));
-  if (filters.search) params.set("search", filters.search);
-  const str = params.toString();
-  return str ? `&${str}` : "";
-}
-
-const fetchPlans = (url: string): Promise<PlanApiResponse> =>
-  fetch(url).then((res) => res.json());
-
-const fetchTopics = (url: string): Promise<TopicsApiResponse> =>
-  fetch(url).then((res) => res.json());
+} from "../utils";
+import {
+  buildFilterParams,
+  fetchPlans,
+  type ClassPlanApiItem,
+  type WebinarPlanApiItem,
+} from "./_helpers";
 
 interface UseProgramsOptions {
   userId?: string | null;
   filters?: ProgramFilters;
 }
 
+/**
+ * Infinite query for the main "All Programs" listing on the explore
+ * programs page. Combines class plans and webinar plans into a single
+ * `Program[]` and tracks pagination metadata across both endpoints.
+ */
 export function usePrograms(
   programType: ProgramType,
   options: UseProgramsOptions = {},
@@ -236,134 +191,12 @@ export function usePrograms(
     () => (data ? data.pages.map((d) => d.programs).flat() : []),
     [data],
   );
-  const hasMore = hasNextPage;
 
   return {
     programs,
     error,
     isLoading: isLoading || isFetchingNextPage,
-    hasMore,
+    hasMore: hasNextPage ?? false,
     loadMore: () => fetchNextPage(),
   };
-}
-
-// Hook for fetching a limited set of programs (for curated sections)
-export function useCuratedPrograms(
-  programType: ProgramType,
-  sort: string,
-  limit: number = 8,
-  /** Server-fetched initial data (RSC pre-warm). Pre-warming the cache
-   *  for the default `programType` lets the page paint instantly on
-   *  navigation; subsequent tab switches still trigger a normal fetch. */
-  initialData?: Program[],
-) {
-  const { data, isLoading } = useQuery({
-    queryKey: ["curated-programs", programType, sort, limit],
-    initialData,
-    queryFn: async () => {
-      const requests: Promise<PlanApiResponse>[] = [];
-
-      if (programType === "all" || programType === "class") {
-        requests.push(
-          fetchPlans(
-            `/api/plans/classes?page=1&limit=${limit}&include=classes&sort=${sort}`,
-          ),
-        );
-      }
-      if (programType === "all" || programType === "webinar") {
-        requests.push(
-          fetchPlans(`/api/plans/webinars?page=1&limit=${limit}&sort=${sort}`),
-        );
-      }
-
-      const responses = await Promise.all(requests);
-      const programs: Program[] = [];
-
-      if (
-        (programType === "all" || programType === "class") &&
-        responses[0]?.data
-      ) {
-        programs.push(
-          ...responses[0].data.map(
-            (plan): ClassPlanProgram => {
-              const typedPlan = plan as ClassPlanApiItem;
-              return {
-                ...typedPlan,
-                classes: typedPlan.classes || [],
-                type: "class",
-                imageUrl: generateProgramImageUrl(
-                  typedPlan.id,
-                  600,
-                  400,
-                  typedPlan.imageUrl,
-                ),
-              } as ClassPlanProgram;
-            },
-          ),
-        );
-      }
-
-      const webIdx = programType === "all" ? 1 : 0;
-      if (
-        (programType === "all" || programType === "webinar") &&
-        responses[webIdx]?.data
-      ) {
-        programs.push(
-          ...responses[webIdx].data.map(
-            (plan): WebinarPlanProgram => {
-              const typedPlan = plan as WebinarPlanApiItem;
-              return {
-                ...typedPlan,
-                webinars: typedPlan.webinars || [],
-                type: "webinar",
-                imageUrl: generateProgramImageUrl(
-                  typedPlan.id,
-                  600,
-                  400,
-                  typedPlan.imageUrl,
-                ),
-              } as WebinarPlanProgram;
-            },
-          ),
-        );
-      }
-
-      // For trending, re-sort combined results; for newest, sort by createdAt
-      if (sort === "newest") {
-        programs.sort(
-          (a, b) =>
-            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-        );
-      }
-
-      return programs.slice(0, limit);
-    },
-    staleTime: 5 * 60 * 1000,
-    gcTime: 15 * 60 * 1000,
-  });
-
-  return { programs: data || [], isLoading };
-}
-
-// Hook for fetching topics with program counts
-export function useTopicsWithCount(
-  planType: ProgramType = "all",
-  /** Server-fetched initial data — same RSC pre-warm trick as
-   *  useCuratedPrograms above. */
-  initialData?: TopicWithCount[],
-) {
-  const { data, isLoading } = useQuery({
-    queryKey: ["topics-with-count", planType],
-    initialData,
-    queryFn: async () => {
-      const res = await fetchTopics(
-        `/api/topics?withProgramCount=true&planType=${planType}`,
-      );
-      return res.data || [];
-    },
-    staleTime: 10 * 60 * 1000,
-    gcTime: 30 * 60 * 1000,
-  });
-
-  return { topics: data || [], isLoading };
 }
