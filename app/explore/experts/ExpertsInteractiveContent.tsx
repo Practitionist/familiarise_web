@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { motion } from "framer-motion";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { Search, Flame, Clock, Briefcase } from "lucide-react";
 import type { IConsultantCardData } from "@/types/consultant";
 import { useCurrency } from "@/hooks/useCurrency";
@@ -58,7 +58,6 @@ export default function ExpertsInteractiveContent({
   trendingExperts,
   newestExperts,
 }: ExpertsInteractiveContentProps) {
-  const router = useRouter();
   const searchParams = useSearchParams();
 
   const [filters, setFilters] = useState<IExpertFilters>(() =>
@@ -79,7 +78,14 @@ export default function ExpertsInteractiveContent({
     loadMore,
   } = useConsultants(filters);
 
-  // Sync filters to URL (debounced to avoid excessive history entries during rapid changes)
+  // Sync filters to URL (debounced to avoid excessive history entries during
+  // rapid changes). We bypass `router.replace` and call
+  // `window.history.replaceState` directly because Next.js 15 App Router's
+  // `router.replace(..., { scroll: false })` still triggers a re-render via
+  // `useSearchParams()` reactivity, which causes the page to scroll back to
+  // the top mid-typing. The URL here is a one-way mirror of `filters`
+  // (source of truth lives in React state) so we don't need Next's router
+  // to know about the change at all.
   const urlSyncRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (urlSyncRef.current) clearTimeout(urlSyncRef.current);
@@ -88,13 +94,13 @@ export default function ExpertsInteractiveContent({
       const target = `/explore/experts${qs ? `?${qs}` : ""}`;
       const current = window.location.pathname + window.location.search;
       if (target !== current) {
-        router.replace(target, { scroll: false });
+        window.history.replaceState(window.history.state, "", target);
       }
     }, 300);
     return () => {
       if (urlSyncRef.current) clearTimeout(urlSyncRef.current);
     };
-  }, [filters, router]);
+  }, [filters]);
 
   const updateFilters = useCallback((partial: Partial<IExpertFilters>) => {
     setFilters((prev) => ({ ...prev, ...partial }));
