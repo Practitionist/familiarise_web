@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import { Hash, ChevronDown, ChevronUp } from "lucide-react";
 import { TopicWithCount } from "../utils";
 
@@ -22,7 +22,7 @@ function SkeletonCard() {
   );
 }
 
-export default function CategoryGrid({
+function CategoryGridImpl({
   topics,
   isLoading,
   onTopicSelect,
@@ -88,3 +88,6 @@ export default function CategoryGrid({
     </div>
   );
 }
+
+const CategoryGrid = memo(CategoryGridImpl);
+export default CategoryGrid;
