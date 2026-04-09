@@ -73,11 +73,10 @@ export default function SubscriptionPricingToggle({
   const { data: session } = useSession();
   const { toast } = useToast();
   const { formatPrice } = useCurrency();
-  const [activeSubscriptionOption, setActiveSubscriptionOption] = useState(
-    subscriptionOptions.length > 0
-      ? subscriptionOptions[0].title.toLowerCase().replace(" ", "-")
-      : "",
-  );
+  // Track the active plan by id so plans that share a duration (e.g. two
+  // 3-month subscriptions) remain independently selectable and bookable.
+  const [activeSubscriptionOption, setActiveSubscriptionOption] =
+    useState<string>(subscriptionOptions[0]?.id ?? "");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [schedulingStartDate, setSchedulingStartDate] = useState<Date | null>(
     null,
@@ -97,19 +96,16 @@ export default function SubscriptionPricingToggle({
   }>({ isEligible: true, isLoading: false });
 
   const selectedOption = useMemo(() => {
-    return subscriptionOptions.find(
-      (opt) =>
-        opt.title.toLowerCase().replace(" ", "-") === activeSubscriptionOption,
-    );
+    return subscriptionOptions.find((opt) => opt.id === activeSubscriptionOption);
   }, [activeSubscriptionOption, subscriptionOptions]);
 
-  // Find the subscription plan with free trial enabled for the current selection
+  // Find the subscription plan for the current selection by id (not duration)
+  // so duplicate-duration plans resolve to the exact one the user selected.
   const selectedPlanDetails = useMemo(() => {
-    if (!selectedOption?.durationInMonths) return null;
-    const plan = consultantDetails?.subscriptionPlans?.find(
-      (p: SubscriptionPlanDetails) => p.durationInMonths === selectedOption.durationInMonths,
+    if (!selectedOption?.id) return null;
+    return consultantDetails?.subscriptionPlans?.find(
+      (p: SubscriptionPlanDetails) => p.id === selectedOption.id,
     );
-    return plan;
   }, [selectedOption, consultantDetails]);
 
   // Check trial eligibility when plan changes
@@ -302,13 +298,12 @@ export default function SubscriptionPricingToggle({
       {/* Segmented pill duration toggle */}
       <TabsList className="relative flex p-1 bg-white/[0.06] rounded-2xl border border-white/[0.08] backdrop-blur-sm h-auto">
         {subscriptionOptions.map((option, index) => {
-          const isActive =
-            activeSubscriptionOption ===
-            option.title.toLowerCase().replace(" ", "-");
+          const optionId = option.id ?? "";
+          const isActive = activeSubscriptionOption === optionId;
           return (
             <TabsTrigger
-              key={`sub-tab-${index}`}
-              value={option.title.toLowerCase().replace(" ", "-")}
+              key={optionId || `sub-tab-${index}`}
+              value={optionId}
               className="relative flex-1 py-2.5 text-xs sm:text-sm font-medium rounded-xl data-[state=active]:text-zinc-900 data-[state=active]:bg-transparent data-[state=active]:shadow-none text-zinc-400 transition-colors duration-300 z-10 h-auto whitespace-nowrap"
             >
               {isActive && (
@@ -325,25 +320,19 @@ export default function SubscriptionPricingToggle({
       </TabsList>
 
       <div className="grid grid-cols-1 gap-4">
-        {subscriptionOptions.map((option, index) => (
+        {subscriptionOptions.map((option, index) => {
+          const optionId = option.id ?? "";
+          const isActive = activeSubscriptionOption === optionId;
+          return (
           <motion.div
-            key={`sub-card-${index}`}
+            key={optionId || `sub-card-${index}`}
             initial={{ opacity: 0, y: 10 }}
             animate={{
-              opacity:
-                activeSubscriptionOption ===
-                option.title.toLowerCase().replace(" ", "-")
-                  ? 1
-                  : 0,
+              opacity: isActive ? 1 : 0,
               y: 0,
             }}
             transition={{ duration: 0.2 }}
-            className={
-              activeSubscriptionOption ===
-              option.title.toLowerCase().replace(" ", "-")
-                ? "block"
-                : "hidden"
-            }
+            className={isActive ? "block" : "hidden"}
           >
             {/* Pricing content — lives directly in glass parent */}
             <div className="space-y-1">
@@ -443,7 +432,8 @@ export default function SubscriptionPricingToggle({
               </Button>
             </div>
           </motion.div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Scheduling Period Dialog */}

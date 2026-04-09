@@ -1,4 +1,12 @@
 export interface PricingOption {
+  /**
+   * Backing plan id. Required for runtime options built from real
+   * ConsultationPlan / SubscriptionPlan rows so tabs stay uniquely keyed and
+   * the booking handlers can book the exact plan the user picked. The static
+   * defaults below omit it — that's OK since they're only used as pure display
+   * placeholders before real data loads.
+   */
+  id?: string;
   title: string;
   description: string;
   price: number;
