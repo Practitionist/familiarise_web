@@ -9,6 +9,7 @@ import {
   type SlotWithMeetingSession,
   type SessionStatus,
 } from "../types";
+import { CountdownBadge } from "./CountdownBadge";
 
 interface SessionTimelineProps {
   slots: SlotWithMeetingSession[];
@@ -117,6 +118,18 @@ export function SessionTimeline({
       ),
     [sessions],
   );
+
+  // First strictly-upcoming session (not joinable) — gets a relative countdown
+  // badge so users can scan "2d / 3h / 30m" at a glance. Joinable rows already
+  // have a prominent JOIN button so they don't need the badge.
+  const nextUpcomingId = useMemo(() => {
+    for (const session of sessions) {
+      if (sessionStatuses.get(session.appointmentId) === "upcoming") {
+        return session.appointmentId;
+      }
+    }
+    return null;
+  }, [sessions, sessionStatuses]);
 
   // When collapsed and > COLLAPSED_LIMIT: show dot summary + next upcoming/joinable sessions
   const visibleSessions =
@@ -234,6 +247,12 @@ export function SessionTimeline({
                 )}
                 JOIN
               </button>
+            ) : session.appointmentId === nextUpcomingId &&
+              status === "upcoming" ? (
+              <CountdownBadge
+                targetDate={session.startTime}
+                sessionEndDate={session.endTime}
+              />
             ) : (
               <span
                 className={cn(

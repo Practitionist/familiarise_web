@@ -13,13 +13,11 @@ import { RefundStatus } from "@prisma/client";
 // Razorpay Client Initialization
 // ============================================================================
 
+// L2 FIX: Removed module-load console.warn — per-call errors are more actionable
 const initializeRazorpayClient = () => {
   const keyId = process.env.RAZORPAY_KEY_ID;
   const keySecret = process.env.RAZORPAY_SECRET;
   if (!keyId || !keySecret) {
-    console.warn(
-      "RAZORPAY_KEY_ID or RAZORPAY_SECRET not found in environment variables",
-    );
     return null;
   }
   return new Razorpay({

@@ -146,7 +146,7 @@ export async function createRefund(
     return {
       refundId: mockRefund.refundId,
       amount: mockRefund.amount,
-      currency: "USD",
+      currency: "INR", // L3 FIX: Platform operates in INR
       status: "SUCCEEDED",
     };
   }

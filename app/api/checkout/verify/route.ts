@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
+import { razorpayClient } from "@/lib/payments/core/razorpay";
+
 export async function GET(req: NextRequest) {
   try {
     // Check authentication
@@ -12,6 +14,8 @@ export async function GET(req: NextRequest) {
     // Get payment intent from query parameters
     const { searchParams } = new URL(req.url);
     const paymentIntent = searchParams.get("payment_intent");
+    // L4 FIX: Optional sync=true to fetch latest status from Razorpay
+    const shouldSync = searchParams.get("sync") === "true";
 
     if (!paymentIntent) {
       return NextResponse.json(
@@ -65,6 +69,40 @@ export async function GET(req: NextRequest) {
         { error: "Unauthorized access to payment" },
         { status: 403 },
       );
+    }
+
+    // L4 FIX: On-demand sync — fetch latest status from Razorpay API
+    // Placed AFTER ownership check to prevent unauthorized status updates
+    if (
+      shouldSync &&
+      payment.paymentStatus === "PENDING" &&
+      paymentIntent.startsWith("order_") &&
+      razorpayClient
+    ) {
+      try {
+        const rzpOrder = await razorpayClient.orders.fetch(paymentIntent);
+        if (rzpOrder.status === "paid") {
+          await prisma.payment.updateMany({
+            where: { paymentIntent, paymentStatus: "PENDING" },
+            data: {
+              paymentStatus: "SUCCEEDED",
+              description: "Synced from Razorpay API (on-demand)",
+            },
+          });
+          // Re-read payment to reflect updated status
+          const updated = await prisma.payment.findUnique({
+            where: { paymentIntent },
+          });
+          if (updated) {
+            (payment as typeof updated).paymentStatus = updated.paymentStatus;
+          }
+        }
+      } catch (syncError) {
+        console.warn(
+          `Failed to sync payment status from Razorpay for ${paymentIntent}:`,
+          syncError,
+        );
+      }
     }
 
     // Check payment status

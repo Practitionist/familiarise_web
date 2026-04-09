@@ -10,27 +10,17 @@ import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { useQuery } from "@tanstack/react-query";
 import {
   DashboardHeader,
   DashboardContent,
 } from "@/components/dashboard/DashboardShell";
-import { StatCard } from "@/components/dashboard/StatCard";
 import { DataCard, EmptyState } from "@/components/dashboard/DataCard";
 import {
   Calendar,
   Clock,
-  Users,
   Video,
-  TrendingUp,
   ChevronRight,
   FileText,
-  Bell,
-  BarChart3,
-  DollarSign,
-  CheckCircle2,
-  Wallet,
-  Info,
 } from "lucide-react";
 import {
   Tooltip,
@@ -59,14 +49,22 @@ import {
 import { getBadgeStyle } from "../../types";
 import { TAppointment } from "@/types/appointment";
 import { getJoinableSlot } from "../../utils/joinState";
-import { getInitials, formatCurrencyAmount } from "@/utils/formatting";
+import { getInitials } from "@/utils/formatting";
 import { RequestSlotAllocationTabMini } from "../requests/RequestSlotAllocationTabMini";
+import { PerformanceSnapshot } from "./PerformanceSnapshot";
+import { FinancialSummary } from "./FinancialSummary";
+import type {
+  TPerformanceSnapshot,
+  TFinancialSummary,
+} from "@/types/consultant-events";
 
 interface HomeTabProps {
   appointments: TAppointment[];
   consultantId: string;
   consultantName?: string;
   pendingRequestsCount?: number;
+  performanceSnapshot?: TPerformanceSnapshot;
+  financialSummary?: TFinancialSummary;
 }
 
 const staggerChildren = {
@@ -82,195 +80,13 @@ const fadeInUp = {
   visible: { opacity: 1, y: 0, transition: { duration: 0.4 } },
 };
 
-interface EarningsResponse {
-  summary: {
-    totalEarnings: number;
-    pendingEarnings: number;
-    readyEarnings: number;
-    paidEarnings: number;
-    heldEarnings: number;
-  };
-  eligibility: {
-    isEligible: boolean;
-    readyAmount: number;
-    minimumAmount: number;
-  };
-}
-
-function QuickStatsPanel({
-  appointments,
-  consultantId,
-}: {
-  appointments: TAppointment[];
-  consultantId: string;
-}) {
-  const activeClients = useMemo(() => {
-    const consulteeIds = new Set<string>();
-    for (const apt of appointments) {
-      const status = getAppointmentStatus(apt);
-      if (status !== "Completed" && status !== "Cancelled") {
-        const id =
-          apt.consultation?.requestedBy?.id ??
-          apt.subscription?.requestedBy?.id;
-        if (id) consulteeIds.add(id);
-      }
-    }
-    return consulteeIds.size;
-  }, [appointments]);
-
-  const completedThisMonth = useMemo(() => {
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    return (appointments || []).filter((apt) => {
-      const status = getAppointmentStatus(apt);
-      if (status !== "Completed") return false;
-      const startTime = getStartTime(apt);
-      if (!startTime) return false;
-      return startTime >= startOfMonth && startTime <= now;
-    }).length;
-  }, [appointments]);
-
-  const activePrograms = useMemo(() => {
-    const subscriptionIds = new Set<string>();
-    const classIds = new Set<string>();
-    for (const apt of appointments) {
-      const status = getAppointmentStatus(apt);
-      if (status === "Completed" || status === "Cancelled") continue;
-      if (apt.subscription?.id) subscriptionIds.add(apt.subscription.id);
-      if (apt.class?.id) classIds.add(apt.class.id);
-    }
-    return subscriptionIds.size + classIds.size;
-  }, [appointments]);
-
-  const { data: earningsData } = useQuery<EarningsResponse>({
-    queryKey: ["consultant-earnings-summary", consultantId],
-    queryFn: async () => {
-      const res = await fetch("/api/consultant/earnings?limit=0");
-      if (!res.ok) throw new Error(`Earnings fetch failed: ${res.status}`);
-      return res.json();
-    },
-    staleTime: 60_000,
-  });
-
-  const formatCurrency = (amount: number) => formatCurrencyAmount(amount, "INR");
-
-  return (
-    <DataCard title="Business Overview" icon={BarChart3}>
-      <TooltipProvider>
-        <div className="divide-y divide-zinc-100">
-          <div className="flex items-center justify-between py-3 first:pt-0">
-            <div className="flex items-center gap-2.5">
-              <div className="h-8 w-8 rounded-lg bg-blue-50 flex items-center justify-center">
-                <Users className="h-4 w-4 text-blue-600" />
-              </div>
-              <span className="text-sm text-zinc-600">Active Clients</span>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Info className="h-3.5 w-3.5 text-zinc-400 cursor-help" />
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Unique clients with ongoing appointments (excludes completed and cancelled)</p>
-                </TooltipContent>
-              </Tooltip>
-            </div>
-            <span className="text-lg font-semibold text-zinc-900">
-              {activeClients}
-            </span>
-          </div>
-
-          <div className="flex items-center justify-between py-3">
-            <div className="flex items-center gap-2.5">
-              <div className="h-8 w-8 rounded-lg bg-indigo-50 flex items-center justify-center">
-                <Calendar className="h-4 w-4 text-indigo-600" />
-              </div>
-              <span className="text-sm text-zinc-600">Active Programs</span>
-            </div>
-            <span className="text-lg font-semibold text-zinc-900">
-              {activePrograms}
-            </span>
-          </div>
-
-          <div className="flex items-center justify-between py-3">
-            <div className="flex items-center gap-2.5">
-              <div className="h-8 w-8 rounded-lg bg-emerald-50 flex items-center justify-center">
-                <DollarSign className="h-4 w-4 text-emerald-600" />
-              </div>
-              <span className="text-sm text-zinc-600">Net Earnings</span>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Info className="h-3.5 w-3.5 text-zinc-400 cursor-help" />
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Total earnings excluding refunded amounts</p>
-                </TooltipContent>
-              </Tooltip>
-            </div>
-            <span className="text-lg font-semibold text-zinc-900">
-              {earningsData?.summary
-                ? formatCurrency(earningsData.summary.totalEarnings)
-                : "—"}
-            </span>
-          </div>
-
-          <div className="flex items-center justify-between py-3">
-            <div className="flex items-center gap-2.5">
-              <div className="h-8 w-8 rounded-lg bg-amber-50 flex items-center justify-center">
-                <Wallet className="h-4 w-4 text-amber-600" />
-              </div>
-              <span className="text-sm text-zinc-600">Next Payout</span>
-            </div>
-            <div className="text-right">
-              <span className="text-lg font-semibold text-zinc-900">
-                {earningsData?.eligibility
-                  ? formatCurrency(earningsData.eligibility.readyAmount)
-                  : "—"}
-              </span>
-              {earningsData?.eligibility && (
-                <div className="flex items-center justify-end gap-1">
-                  <p className="text-xs text-zinc-400">
-                    {earningsData.eligibility.isEligible
-                      ? "Ready"
-                      : earningsData.eligibility.readyAmount > 0
-                        ? `${formatCurrency(earningsData.eligibility.readyAmount)} / ${formatCurrency(earningsData.eligibility.minimumAmount)}`
-                        : "No ready earnings yet"}
-                  </p>
-                  {!earningsData.eligibility.isEligible && (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Info className="h-3 w-3 text-zinc-400 cursor-help" />
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Minimum payout threshold. Your ready balance must reach this amount before a payout can be initiated.</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between py-3 last:pb-0">
-            <div className="flex items-center gap-2.5">
-              <div className="h-8 w-8 rounded-lg bg-violet-50 flex items-center justify-center">
-                <CheckCircle2 className="h-4 w-4 text-violet-600" />
-              </div>
-              <span className="text-sm text-zinc-600">Completed This Month</span>
-            </div>
-            <span className="text-lg font-semibold text-zinc-900">
-              {completedThisMonth}
-            </span>
-          </div>
-        </div>
-      </TooltipProvider>
-    </DataCard>
-  );
-}
-
 export function HomeTab({
   appointments,
   consultantId,
   consultantName,
   pendingRequestsCount = 0,
+  performanceSnapshot,
+  financialSummary,
 }: Readonly<HomeTabProps>) {
   const router = useRouter();
   const client = useStreamVideoClient();
@@ -312,7 +128,9 @@ export function HomeTab({
 
   const expandedAppointments = useMemo(() => appointments || [], [appointments]);
 
-  const todayRemainingAppointments = useMemo(
+  const APPOINTMENT_DISPLAY_LIMIT = 8;
+
+  const allTodayAppointments = useMemo(
     () =>
       getTodayAppointments(expandedAppointments).filter(
         (appointment) => getAppointmentStatus(appointment) !== "Completed",
@@ -320,10 +138,9 @@ export function HomeTab({
     [expandedAppointments],
   );
 
-  // Limit display to 6 items, but keep the full count for stats
   const todayAppointments = useMemo(
-    () => todayRemainingAppointments.slice(0, 6),
-    [todayRemainingAppointments],
+    () => allTodayAppointments.slice(0, APPOINTMENT_DISPLAY_LIMIT),
+    [allTodayAppointments],
   );
 
   const allUpcomingAppointments = useMemo(
@@ -356,37 +173,6 @@ export function HomeTab({
       .slice(0, 5);
   }, [allUpcomingAppointments]);
 
-  // Calculate stats from real data
-  const totalToday = useMemo(
-    () => getTodayAppointments(expandedAppointments).length,
-    [expandedAppointments],
-  );
-  const totalUpcoming = allUpcomingAppointments.length;
-
-  // Calculate completed this month
-  const completedThisMonth = useMemo(() => {
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-
-    return expandedAppointments.filter((appointment) => {
-      const status = getAppointmentStatus(appointment);
-      if (status !== "Completed") return false;
-
-      const startTime = getStartTime(appointment);
-      if (!startTime) return false;
-
-      return startTime >= startOfMonth && startTime <= now;
-    }).length;
-  }, [expandedAppointments]);
-
-  const totalCompleted = useMemo(
-    () =>
-      expandedAppointments.filter(
-        (apt) => getAppointmentStatus(apt) === "Completed",
-      ).length,
-    [expandedAppointments],
-  );
-
   const firstName = consultantName?.split(" ")[0];
 
   return (
@@ -403,47 +189,17 @@ export function HomeTab({
           animate="visible"
           className="space-y-6"
         >
-          {/* Stats Grid */}
-          <motion.div variants={fadeInUp}>
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <StatCard
-                title="Today's Sessions"
-                value={totalToday}
-                subtitle={`${todayRemainingAppointments.length} remaining`}
-                icon={Calendar}
-                variant="info"
-              />
-              <StatCard
-                title="Upcoming"
-                value={totalUpcoming}
-                subtitle="All scheduled"
-                icon={Clock}
-                variant="default"
-              />
-              <StatCard
-                title="Pending Requests"
-                value={pendingRequestsCount}
-                subtitle="Awaiting response"
-                icon={Bell}
-                variant="warning"
-                onClick={() =>
-                  router.push(`/dashboard/consultant/${consultantId}/requests`)
-                }
-              />
-              <StatCard
-                title="Completed"
-                value={totalCompleted}
-                subtitle={`${completedThisMonth} this month`}
-                icon={TrendingUp}
-                variant="success"
-              />
-            </div>
-          </motion.div>
+          {/* Performance Snapshot */}
+          {performanceSnapshot && (
+            <motion.div variants={fadeInUp}>
+              <PerformanceSnapshot {...performanceSnapshot} />
+            </motion.div>
+          )}
 
-          {/* Main Content Grid - Appointments + Quick Stats */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Left Column - Today's + Upcoming */}
-            <motion.div variants={fadeInUp} className="lg:col-span-2 space-y-6">
+          {/* Main Content Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+            {/* Left Column - Today's Appointments + Upcoming Sessions */}
+            <motion.div variants={fadeInUp} className="lg:col-span-3 space-y-6">
               {/* Today's Appointments */}
               <DataCard
                 title="Today's Appointments"
@@ -547,6 +303,16 @@ export function HomeTab({
                         </div>
                       );
                     })}
+                    {allTodayAppointments.length > APPOINTMENT_DISPLAY_LIMIT && (
+                      <div className="pt-3 text-center">
+                        <Link
+                          href={`/dashboard/consultant/${consultantId}/appointments`}
+                          className="text-sm text-zinc-500 hover:text-zinc-700 transition-colors"
+                        >
+                          View all {allTodayAppointments.length} appointments
+                        </Link>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <EmptyState
@@ -683,17 +449,19 @@ export function HomeTab({
               </DataCard>
             </motion.div>
 
-            {/* Right Column - Quick Stats & Pending Requests */}
-            <motion.div variants={fadeInUp} className="space-y-6">
-              <QuickStatsPanel
-                appointments={expandedAppointments}
-                consultantId={consultantId}
-              />
-
+            {/* Right Column - Pending Requests + Financial Summary */}
+            <motion.div variants={fadeInUp} className="lg:col-span-2 space-y-6">
               {/* Pending Requests */}
               <DataCard
                 title="Pending Requests"
                 icon={FileText}
+                headerAction={
+                  pendingRequestsCount > 0 ? (
+                    <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100">
+                      {pendingRequestsCount}
+                    </Badge>
+                  ) : undefined
+                }
                 viewAllLink={`/dashboard/consultant/${consultantId}/requests`}
                 viewAllText="View all requests"
               >
@@ -701,6 +469,11 @@ export function HomeTab({
                   <RequestSlotAllocationTabMini />
                 </div>
               </DataCard>
+
+              {/* Financial Summary */}
+              {financialSummary && (
+                <FinancialSummary {...financialSummary} />
+              )}
             </motion.div>
           </div>
         </motion.div>
