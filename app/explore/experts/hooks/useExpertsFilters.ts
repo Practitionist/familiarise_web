@@ -25,9 +25,16 @@ interface UseExpertsFiltersResult {
  * - All filter mutations go through `updateFilters` (partial merge) or
  *   `clearFilters`. The returned callbacks are stable across renders so
  *   memoized children don't re-render unnecessarily.
- * - The URL is a one-way mirror of `filters` (React state is the source
- *   of truth). We debounce URL syncs by 300 ms to coalesce rapid
- *   keystrokes / slider drags into a single history entry.
+ * - **`updateFilters` is synchronous.** It does not debounce — every
+ *   call mutates `filters` immediately, which means consumers like
+ *   `useConsultants` (whose React Query key derives from `filters`)
+ *   refetch immediately too. Components that fire rapid mutations
+ *   (search input typing, slider drags) are responsible for
+ *   debouncing their own propagation. `SearchBar` uses
+ *   `useDebouncedCallback` for this; `FilterPanel` does the same for
+ *   the price slider.
+ * - The URL mirror is debounced separately by 300 ms inside this hook
+ *   so rapid filter changes coalesce into a single history entry.
  * - URL writes go through `window.history.replaceState` rather than
  *   `router.replace`. Next.js 15's App Router still re-renders the
  *   whole tree via `useSearchParams` reactivity even with
