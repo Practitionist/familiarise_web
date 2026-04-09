@@ -23,7 +23,14 @@ import {
 import { useCurrency } from "@/hooks/useCurrency";
 import type { IExpertFilters, IExpertsMetaData } from "../utils";
 
-const MAX_PRICE_INR = 10000;
+// Slider operates in paise (smallest currency unit) end-to-end so it
+// matches both the API filter contract and `useCurrency().formatPrice`,
+// which divides by 100 internally. Previous value `10_000` actually meant
+// ₹100, which made the slider unable to filter to any realistic plan
+// price (real plans are ₹2k–₹30k+). 5,000,000 paise = ₹50,000 covers the
+// seed plan range with headroom; step is ₹500 so dragging feels snappy.
+const MAX_PRICE_PAISE = 5_000_000;
+const PRICE_STEP_PAISE = 50_000;
 
 interface FilterPanelProps {
   metadata: IExpertsMetaData | null;
@@ -89,7 +96,7 @@ function FilterPanelImpl({
   // Local slider state for smooth dragging without triggering API calls on every tick
   const [localRange, setLocalRange] = useState<[number, number]>([
     minPrice ?? 0,
-    maxPrice ?? MAX_PRICE_INR,
+    maxPrice ?? MAX_PRICE_PAISE,
   ]);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -99,7 +106,7 @@ function FilterPanelImpl({
 
   // Sync local state when external props change (e.g. filter chip removal)
   useEffect(() => {
-    setLocalRange([minPrice ?? 0, maxPrice ?? MAX_PRICE_INR]);
+    setLocalRange([minPrice ?? 0, maxPrice ?? MAX_PRICE_PAISE]);
   }, [minPrice, maxPrice]);
 
   useEffect(() => {
@@ -113,7 +120,7 @@ function FilterPanelImpl({
 
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => {
-        const isDefault = newMin === 0 && newMax === MAX_PRICE_INR;
+        const isDefault = newMin === 0 && newMax === MAX_PRICE_PAISE;
         updateFilters({
           minPrice: isDefault ? undefined : newMin,
           maxPrice: isDefault ? undefined : newMax,
@@ -415,23 +422,23 @@ function FilterPanelImpl({
             <div className="flex justify-between mb-3 text-sm font-medium text-zinc-700">
               <span>{formatPrice(localRange[0])}</span>
               <span>
-                {localRange[1] === MAX_PRICE_INR
-                  ? `${formatPrice(MAX_PRICE_INR)}+`
+                {localRange[1] === MAX_PRICE_PAISE
+                  ? `${formatPrice(MAX_PRICE_PAISE)}+`
                   : formatPrice(localRange[1])}
               </span>
             </div>
             <Slider
-              defaultValue={[0, MAX_PRICE_INR]}
+              defaultValue={[0, MAX_PRICE_PAISE]}
               value={localRange}
               min={0}
-              max={MAX_PRICE_INR}
-              step={100}
+              max={MAX_PRICE_PAISE}
+              step={PRICE_STEP_PAISE}
               onValueChange={handleSliderChange}
               className="my-2"
             />
             <div className="flex justify-between mt-2 text-xs text-zinc-400">
               <span>{formatPrice(0)}</span>
-              <span>{formatPrice(MAX_PRICE_INR)}+</span>
+              <span>{formatPrice(MAX_PRICE_PAISE)}+</span>
             </div>
             <p className="mt-3 text-[11px] text-zinc-400 leading-tight">
               Prices shown in {currency}. Final price may vary based on your
