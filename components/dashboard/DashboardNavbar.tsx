@@ -8,6 +8,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
+import { OrganizationSwitcher } from "./OrganizationSwitcher";
 import { UserDropdown } from "./UserDropdown";
 import { HelpCircle } from "lucide-react";
 import Link from "next/link";
@@ -57,6 +58,8 @@ export function DashboardNavbar({
               <TooltipContent>Help & FAQ</TooltipContent>
             </Tooltip>
           )}
+
+          <OrganizationSwitcher />
 
           <NotificationInbox />
 
