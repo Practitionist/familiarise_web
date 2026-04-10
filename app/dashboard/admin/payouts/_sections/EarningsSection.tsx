@@ -61,7 +61,7 @@ async function fetchEarnings(
   return response.json() as Promise<EarningsListResponse>;
 }
 
-export default function ConsultantEarningsPage() {
+export default function EarningsSection() {
   const [status, setStatus] = useState<string | undefined>();
   const [page, setPage] = useState(1);
   const limit = 20;
@@ -116,15 +116,6 @@ export default function ConsultantEarningsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">
-          Consultant Earnings
-        </h1>
-        <p className="text-gray-600 mt-1">
-          Overview of all consultant earnings and platform revenue
-        </p>
-      </div>
-
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         {statsLoading ? (

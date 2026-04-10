@@ -1,3 +1,5 @@
+> **⚠️ SUPERSEDED on 2026-04-08.** PR #647 (feature/cleanup) addressed the bulk of this doc's admin/staff findings: the sidebar is unified via `CollapsibleSidebar`, System Jobs + Maintenance are removed from the staff dashboard, ~46 admin/staff API routes use shared `requirePrivilegedAuth` helpers, 5 route pairs use shared `lib/api/operators/*` utilities, and 5–7 dashboard page pairs use shared `components/dashboard/shared/*Page.tsx` components. The enterprise dashboard design section is being rewritten in PR2 as `docs/enterprise/00-canonical-design.md`. Retained for historical context — the admin/staff overlap audit that informed PR #647 is still readable here.
+
 # Dashboard Architecture Assessment & Enterprise Dashboard Design
 
 > Perspective: Senior Product Manager + Senior UI/UX Designer

@@ -1,24 +1,13 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { UserRole } from "@prisma/client";
-import { getSession } from "@/lib/auth-server";
+import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+
 export async function GET() {
   try {
-    const session = await getSession();
-
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Verify user is admin
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { role: true },
-    });
-
-    if (user?.role !== UserRole.ADMIN) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const auth = await requirePrivilegedAuth();
+    if (auth.error) return auth.error;
+    const session = auth.session;
 
     // Get current date info for time-based queries
     const now = new Date();

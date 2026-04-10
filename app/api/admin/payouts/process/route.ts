@@ -4,30 +4,18 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
 import { processApprovedPayouts } from "@/lib/payments/payouts";
+import { requireAdminAuth } from "@/lib/auth-helpers";
 
-import { getSession } from "@/lib/auth-server";
 /**
  * POST /api/admin/payouts/process
  * Process all approved payouts
  */
 export async function POST(_req: NextRequest) {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Check admin role
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { role: true },
-    });
-
-    if (user?.role !== "ADMIN") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const auth = await requireAdminAuth();
+    if (auth.error) return auth.error;
+    const session = auth.session;
 
     // Process approved payouts
     const results = await processApprovedPayouts();

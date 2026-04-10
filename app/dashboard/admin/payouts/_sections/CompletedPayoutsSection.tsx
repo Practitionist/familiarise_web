@@ -41,7 +41,7 @@ async function fetchCompletedPayouts(
   return response.json() as Promise<PayoutListResponse>;
 }
 
-export default function CompletedPayoutsPage() {
+export default function CompletedPayoutsSection() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const limit = 20;
@@ -106,34 +106,24 @@ export default function CompletedPayoutsPage() {
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <Card className="w-full max-w-md">
-          <CardHeader>
-            <CardTitle className="text-red-600">Error</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-gray-700">
-              {error instanceof Error
-                ? error.message
-                : "Failed to load payouts"}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
+      <Card className="w-full">
+        <CardHeader>
+          <CardTitle className="text-red-600">Error</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-gray-700">
+            {error instanceof Error
+              ? error.message
+              : "Failed to load payouts"}
+          </p>
+        </CardContent>
+      </Card>
     );
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">
-            Completed Payouts
-          </h1>
-          <p className="text-gray-600 mt-1">
-            Successfully completed payout history
-          </p>
-        </div>
+      <div className="flex items-center justify-end">
         <Button variant="outline" onClick={exportToCSV}>
           <Download className="w-4 h-4 mr-2" />
           Export CSV

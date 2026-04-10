@@ -1,3 +1,5 @@
+> **⚠️ SUPERSEDED on 2026-04-08.** The actual schema will land in PR2 (`feature/enterprise`) and will diverge from this proposal. PR2 uses `OrganizationProfile` + `OrganizationMemberProfile` sibling tables (typed enums via Prisma) rather than BetterAuth `additionalFields`, a unified `OrgMemberRole` enum with 6 values (spanning BUYER + PROVIDER contexts) rather than the 4-value role proposed here, and drops `AdminLevel` entirely (that cleanup landed in PR #647). Retained for historical context.
+
 # Enterprise — Schema Changes
 
 > All Prisma schema changes needed for enterprise features and BetterAuth migration.

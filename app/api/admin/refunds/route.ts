@@ -1,25 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { Prisma, UserRole, RefundStatus, PaymentGateway } from "@prisma/client";
+import { Prisma, RefundStatus, PaymentGateway } from "@prisma/client";
+import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 
-import { getSession } from "@/lib/auth-server";
 export async function GET(req: NextRequest) {
   try {
-    // Check authentication
-    const session = await getSession();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Check if user is admin
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { role: true },
-    });
-
-    if (user?.role !== UserRole.ADMIN && user?.role !== UserRole.STAFF) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const auth = await requirePrivilegedAuth();
+    if (auth.error) return auth.error;
 
     // Parse query parameters
     const searchParams = req.nextUrl.searchParams;

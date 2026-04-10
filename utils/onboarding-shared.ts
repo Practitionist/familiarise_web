@@ -89,7 +89,6 @@ export function buildStaffScalarData(data: StaffProfileCreateData) {
 /** Build the scalar data for an admin profile upsert */
 export function buildAdminScalarData(data: AdminProfileCreateData) {
   return {
-    adminLevel: data.adminLevel,
     notes: data.notes ?? null,
   };
 }

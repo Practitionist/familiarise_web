@@ -1,7 +1,6 @@
 import bcrypt from "bcrypt";
 import { faker } from "@faker-js/faker";
 import {
-  AdminLevel,
   AdminProfile,
   BudgetPreference,
   CareerStage,
@@ -71,9 +70,6 @@ const BUDGET_PREFERENCES: BudgetPreference[] = [
 
 // Session type enum values
 const SESSION_TYPES: SessionType[] = ["ONE_ON_ONE", "GROUP", "ASYNC_REVIEW"];
-
-// Admin level enum values
-const ADMIN_LEVELS: AdminLevel[] = ["SUPER_ADMIN", "ADMIN", "MODERATOR"];
 
 // Curated name pools for realistic, consistent seed data
 const FIRST_NAMES = [
@@ -495,22 +491,12 @@ function createStaffProfileData() {
   };
 }
 
-function createAdminProfileData(adminIndex: number): {
-  adminLevel: AdminLevel;
+function createAdminProfileData(_adminIndex: number): {
   notes: string | null;
 } {
-  // First admin is SUPER_ADMIN, rest are distributed
-  let adminLevel: AdminLevel;
-  if (adminIndex === 0) {
-    adminLevel = "SUPER_ADMIN";
-  } else if (adminIndex === 1) {
-    adminLevel = "ADMIN";
-  } else {
-    adminLevel = faker.helpers.arrayElement(ADMIN_LEVELS);
-  }
-
+  // AdminLevel enum was dropped — all admins are full ADMIN via UserRole.ADMIN.
+  // STAFF vs ADMIN differentiation lives on User.role, not AdminProfile.
   return {
-    adminLevel,
     notes: faker.datatype.boolean({ probability: 0.3 })
       ? sanitizeString(faker.lorem.paragraph())
       : null,

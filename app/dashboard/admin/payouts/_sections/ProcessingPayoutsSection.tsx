@@ -27,7 +27,7 @@ async function fetchProcessingPayouts(): Promise<PayoutListResponse> {
   return response.json() as Promise<PayoutListResponse>;
 }
 
-export default function ProcessingPayoutsPage() {
+export default function ProcessingPayoutsSection() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["admin-payouts-processing"],
     queryFn: fetchProcessingPayouts,
@@ -37,32 +37,23 @@ export default function ProcessingPayoutsPage() {
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <Card className="w-full max-w-md">
-          <CardHeader>
-            <CardTitle className="text-red-600">Error</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-gray-700">
-              {error instanceof Error
-                ? error.message
-                : "Failed to load payouts"}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
+      <Card className="w-full">
+        <CardHeader>
+          <CardTitle className="text-red-600">Error</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-gray-700">
+            {error instanceof Error
+              ? error.message
+              : "Failed to load payouts"}
+          </p>
+        </CardContent>
+      </Card>
     );
   }
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">Processing Payouts</h1>
-        <p className="text-gray-600 mt-1">
-          Payouts being processed by payment providers
-        </p>
-      </div>
-
       <Card>
         <CardHeader>
           <CardTitle className="text-lg flex items-center gap-2">
