@@ -80,7 +80,7 @@ export function CollapsibleSidebar({
       <div className="border-b border-zinc-200 dark:border-zinc-800">
         <div className="flex items-center justify-between h-16 px-4">
           {!collapsed && (
-            <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+            <h1 className="flex-1 min-w-0 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100 mr-2">
               {title}
             </h1>
           )}

@@ -15,7 +15,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
 import { ENABLE_PROVIDER_ORGS } from "@/lib/feature-flags";
-import { OrgSizeBucket } from "@prisma/client";
+import { OrganizationBillingMode, OrgSizeBucket } from "@prisma/client";
 
 const patchOrgSchema = z.object({
   // BetterAuth Organization fields
@@ -24,6 +24,7 @@ const patchOrgSchema = z.object({
 
   // OrganizationProfile fields
   billingEmail: z.string().email().optional(),
+  billingMode: z.nativeEnum(OrganizationBillingMode).optional(),
   description: z.string().max(2000).nullable().optional(),
   industry: z.string().max(100).nullable().optional(),
   sizeBucket: z.nativeEnum(OrgSizeBucket).nullable().optional(),

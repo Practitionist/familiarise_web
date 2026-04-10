@@ -46,6 +46,7 @@ export function ReviewStep({ onBack, onGoToStep, initialData }: StepProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           billingEmail: initialData.billingEmail,
+          billingMode: initialData.billingMode,
           description: initialData.description || null,
           industry: initialData.industry || null,
           sizeBucket: initialData.sizeBucket || null,
