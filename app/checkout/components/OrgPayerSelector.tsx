@@ -1,7 +1,7 @@
 "use client";
 
 import { useSession } from "@/lib/auth-client";
-import { Building2, CreditCard, Coins, Receipt } from "lucide-react";
+import { Building2, CreditCard } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
 interface OrgMembership {
@@ -18,24 +18,6 @@ interface OrgPayerSelectorProps {
   selectedOrganizationId: string | null;
   onSelect: (organizationId: string | null) => void;
 }
-
-const BILLING_MODE_LABELS: Record<string, { label: string; icon: typeof CreditCard; description: string }> = {
-  TAG_ONLY: {
-    label: "Tag-only",
-    icon: CreditCard,
-    description: "You pay now; tagged to org for reporting",
-  },
-  SEAT_PACK: {
-    label: "Credits",
-    icon: Coins,
-    description: "Deducted from org credit pool",
-  },
-  INVOICED_MONTHLY: {
-    label: "Invoiced",
-    icon: Receipt,
-    description: "Added to org's next invoice",
-  },
-};
 
 /**
  * Payer selector for checkout pages. Shows "Pay personally" vs

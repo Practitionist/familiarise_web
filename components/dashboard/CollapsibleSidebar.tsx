@@ -34,6 +34,17 @@ export interface CollapsibleSidebarProps {
   userName?: string | null;
   userEmail?: string | null;
   userImage?: string | null;
+  /**
+   * When provided, a personal user chip is rendered at the bottom of the
+   * sidebar (VS Code / Linear style). The header avatar then represents the
+   * entity (org, portal) rather than the person. `role` is shown as a small
+   * muted badge below the user's name.
+   */
+  bottomUserChip?: {
+    name: string | null;
+    image: string | null;
+    role: string;
+  };
   /** Current pathname (from `usePathname()`). Used to compute active state. */
   pathname: string;
   /** Sign-out handler invoked when the footer button is clicked. */
@@ -57,6 +68,7 @@ export function CollapsibleSidebar({
   userName,
   userEmail,
   userImage,
+  bottomUserChip,
   pathname,
   onSignOut,
 }: CollapsibleSidebarProps) {
@@ -168,7 +180,34 @@ export function CollapsibleSidebar({
       </nav>
 
       {/* Footer */}
-      <div className="border-t border-zinc-200 dark:border-zinc-800 p-2">
+      <div className="border-t border-zinc-200 dark:border-zinc-800 p-2 space-y-1">
+        {/* Personal user chip (org dashboard mode) */}
+        {bottomUserChip && (
+          <div
+            className={cn(
+              "flex items-center gap-2.5 px-3 py-2 rounded-lg",
+              collapsed && "justify-center px-0",
+            )}
+          >
+            <Avatar className="h-7 w-7 flex-shrink-0">
+              <AvatarImage src={bottomUserChip.image || ""} alt={bottomUserChip.name || ""} />
+              <AvatarFallback className="bg-zinc-700 text-white text-xs font-semibold">
+                {(bottomUserChip.name ?? "U").charAt(0).toUpperCase()}
+              </AvatarFallback>
+            </Avatar>
+            {!collapsed && (
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium text-zinc-900 dark:text-zinc-100 truncate leading-tight">
+                  {bottomUserChip.name}
+                </p>
+                <p className="text-[10px] text-zinc-400 dark:text-zinc-500 truncate leading-tight mt-0.5">
+                  {bottomUserChip.role}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
         <TooltipProvider delayDuration={0}>
           <Tooltip>
             <TooltipTrigger asChild>

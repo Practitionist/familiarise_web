@@ -107,7 +107,7 @@ export default function OrgCreditsPage({
             queryClient.invalidateQueries({ queryKey: ["org-credits", orgId] });
           },
         };
-        const rzp = new (window as unknown as { Razorpay: new (opts: unknown) => { open: () => void } }).Razorpay(options);
+        const rzp = new window.Razorpay(options);
         rzp.open();
       } else {
         setShowBuy(false);

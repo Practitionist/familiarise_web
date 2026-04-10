@@ -186,11 +186,18 @@ export default function OrgLayout({
         items={sidebarItems}
         basePath={`/dashboard/organization/${orgId}`}
         title={org?.organization.name ?? "Organization"}
-        footerLabel={`${org?.profile.kind} • ${org?.profile.billingMode}`}
         avatarFallback={(org?.organization.name ?? "O").charAt(0).toUpperCase()}
         userName={org?.organization.name}
-        userEmail={org?.membership.role}
         userImage={org?.organization.logo}
+        bottomUserChip={
+          session?.user
+            ? {
+                name: session.user.name ?? null,
+                image: session.user.image ?? null,
+                role: org?.membership.role ?? "",
+              }
+            : undefined
+        }
         pathname={pathname}
         onSignOut={handleSignOut}
       />

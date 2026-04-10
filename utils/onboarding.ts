@@ -180,7 +180,7 @@ export const OnboardingDataSchema = z.discriminatedUnion("role", [
     adminProfile: AdminProfileCreateObjectSchema.optional(),
   }),
   OnboardingBaseSchema.extend({
-    role: z.literal("ORG_ADMIN" as const),
+    role: z.literal(UserRole.ORG_ADMIN),
     consultantProfile: z.undefined().optional(),
     consulteeProfile: z.undefined().optional(),
     staffProfile: z.undefined().optional(),
@@ -637,8 +637,6 @@ export function transformOnboardingFormToServerData(
       };
 
     case UserRole.ORG_ADMIN:
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    case "ORG_ADMIN" as any:
       return {
         ...base,
         role: formData.role,
@@ -766,8 +764,6 @@ export function transformFrontendToServerData(
       };
 
     case UserRole.ORG_ADMIN:
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    case "ORG_ADMIN" as any:
       return {
         ...base,
         role: frontendData.role,

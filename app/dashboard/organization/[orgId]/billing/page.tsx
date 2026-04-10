@@ -143,7 +143,7 @@ export default function OrgBillingPage({
             });
           },
         };
-        const rzp = new (window as unknown as { Razorpay: new (opts: unknown) => { open: () => void } }).Razorpay(options);
+        const rzp = new window.Razorpay(options);
         rzp.open();
       } else {
         queryClient.invalidateQueries({
