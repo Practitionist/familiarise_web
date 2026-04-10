@@ -11,6 +11,8 @@ import {
 } from "@/lib/errors/classification/payment-error-classification";
 import { Prisma } from "@prisma/client";
 import { creditRefund } from "@/lib/payments/operations/org-credits";
+import { refundEarnings } from "@/lib/payments/payouts";
+import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -253,6 +255,33 @@ export async function POST(req: NextRequest) {
         });
 
         throw gatewayError;
+      }
+    }
+
+    // PHASE 2b: Run refund side effects for all paths (org + gateway).
+    // These mirror the side effects in handleRefundCreated() from the
+    // webhook path, ensuring financial consistency regardless of how the
+    // refund was triggered.
+    if (refundResult.status === "SUCCEEDED") {
+      try {
+        await refundEarnings(payment.id, {
+          refundAmount,
+          paymentAmount: payment.amount,
+        });
+      } catch (earningsError) {
+        console.error("[Refund] Failed to reverse earnings:", earningsError);
+      }
+      try {
+        await prisma.$transaction(async (tx) => {
+          await reverseCreditsForPayment(
+            payment.id,
+            tx,
+            refundAmount,
+            payment.amount,
+          );
+        });
+      } catch (creditsError) {
+        console.error("[Refund] Failed to reverse referral credits:", creditsError);
       }
     }
 

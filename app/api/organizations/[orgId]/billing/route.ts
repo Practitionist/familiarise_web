@@ -50,17 +50,22 @@ export async function GET(
         _count: true,
       }),
 
-      // INVOICED_MONTHLY pending charges: succeeded, unbilled payments.
+      // INVOICED_MONTHLY pending charges: net of refunds.
       access.org.billingMode === "INVOICED_MONTHLY"
-        ? prisma.payment.aggregate({
+        ? prisma.payment.findMany({
             where: {
               organizationProfileId: access.org.id,
               paymentStatus: "SUCCEEDED",
               paymentMethod: "ORG_INVOICED",
               billableToOrgInvoiceId: null,
             },
-            _sum: { amount: true },
-            _count: true,
+            select: {
+              amount: true,
+              refunds: {
+                where: { status: "SUCCEEDED" },
+                select: { amount: true },
+              },
+            },
           })
         : Promise.resolve(null),
 
@@ -84,10 +89,20 @@ export async function GET(
         invoiceCount: outstandingAggregate._count,
       },
       pendingCharges: pendingChargesAggregate
-        ? {
-            amount: pendingChargesAggregate._sum.amount ?? 0,
-            paymentCount: pendingChargesAggregate._count,
-          }
+        ? (() => {
+            const payments = pendingChargesAggregate as Array<{
+              amount: number;
+              refunds: Array<{ amount: number }>;
+            }>;
+            const netAmount = payments.reduce((sum, p) => {
+              const refunded = p.refunds.reduce((s, r) => s + r.amount, 0);
+              return sum + Math.max(0, (p.amount ?? 0) - refunded);
+            }, 0);
+            return {
+              amount: netAmount,
+              paymentCount: payments.length,
+            };
+          })()
         : null,
       creditPool: creditPool
         ? {

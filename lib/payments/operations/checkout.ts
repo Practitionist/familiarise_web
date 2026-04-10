@@ -1600,21 +1600,27 @@ export async function handleCheckout(
       );
     }
 
-    // INVOICED_MONTHLY: enforce orgInvoiceCreditLimit (max outstanding
-    // exposure before new bookings are blocked).
+    // INVOICED_MONTHLY: enforce orgInvoiceCreditLimit. Calculate net
+    // exposure (unbilled payments minus their refunds + outstanding invoices).
     if (
       orgProfile.billingMode === "INVOICED_MONTHLY" &&
       orgProfile.orgInvoiceCreditLimit !== null
     ) {
-      const [unbilledAgg, outstandingAgg] = await Promise.all([
-        prisma.payment.aggregate({
+      const [unbilledPayments, outstandingAgg] = await Promise.all([
+        prisma.payment.findMany({
           where: {
             organizationProfileId: orgProfile.id,
             paymentStatus: "SUCCEEDED",
             paymentMethod: "ORG_INVOICED",
             billableToOrgInvoiceId: null,
           },
-          _sum: { amount: true },
+          select: {
+            amount: true,
+            refunds: {
+              where: { status: "SUCCEEDED" },
+              select: { amount: true },
+            },
+          },
         }),
         prisma.organizationInvoice.aggregate({
           where: {
@@ -1624,8 +1630,12 @@ export async function handleCheckout(
           _sum: { amount: true },
         }),
       ]);
-      const exposure =
-        (unbilledAgg._sum.amount ?? 0) + (outstandingAgg._sum.amount ?? 0);
+      // Net unbilled = sum of (payment.amount - refunded) for each payment
+      const netUnbilled = unbilledPayments.reduce((sum, p) => {
+        const refunded = p.refunds.reduce((s, r) => s + r.amount, 0);
+        return sum + Math.max(0, (p.amount ?? 0) - refunded);
+      }, 0);
+      const exposure = netUnbilled + (outstandingAgg._sum.amount ?? 0);
       if (exposure >= orgProfile.orgInvoiceCreditLimit) {
         throw new Error(
           "Organization has reached its invoice credit limit. Outstanding invoices must be paid before new bookings.",
@@ -1635,6 +1645,13 @@ export async function handleCheckout(
 
     organizationProfileId = orgProfile.id;
     orgBillingMode = orgProfile.billingMode;
+
+    // Block personal referral credits on org-funded bookings. Mixing a
+    // personal-wallet incentive with employer-funded spend creates murky
+    // reimbursement/accounting and reward economics.
+    if (validatedData.useReferralCredits) {
+      validatedData = { ...validatedData, useReferralCredits: false };
+    }
   }
 
   try {
