@@ -21,6 +21,7 @@ import {
   MINIMUM_BOOKING_LEAD_TIME_MINUTES,
 } from "@/lib/payments/constants";
 import type { AppliedDiscount } from "@/types/checkout";
+import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
 import {
   ConsultantProfile,
   ConsultantReview,
@@ -87,6 +88,7 @@ export default function ConsultationCheckoutPage({
   const [isApplyingDiscount, setIsApplyingDiscount] = useState(false);
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [useReferralCredits, setUseReferralCredits] = useState(false);
+  const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null);
   const [availableCredits, setAvailableCredits] = useState(0);
   const [isLoadingCredits, setIsLoadingCredits] = useState(true);
 
@@ -311,7 +313,8 @@ export default function ConsultationCheckoutPage({
           discountCode: appliedDiscount?.code,
           displayCurrency: currency,
           notes: validatedSearchParams.notes,
-          useReferralCredits,
+          useReferralCredits: selectedOrganizationId ? false : useReferralCredits,
+          organizationId: selectedOrganizationId ?? undefined,
         });
 
         // Make single API call - backend decides dev vs prod flow
@@ -644,6 +647,15 @@ export default function ConsultationCheckoutPage({
           </div>
         </div>
         <Separator className="bg-zinc-200" />
+        <OrgPayerSelector
+          selectedOrganizationId={selectedOrganizationId}
+          onSelect={(id) => {
+            setSelectedOrganizationId(id);
+            // Disable referral credits when org is selected
+            if (id) setUseReferralCredits(false);
+          }}
+        />
+        <Separator className="bg-zinc-200" />
         <div className="grid gap-4">
           <div className="font-semibold">Discount Codes</div>
           <div className="flex items-center gap-2">
@@ -841,7 +853,8 @@ export default function ConsultationCheckoutPage({
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
                             notes: validatedSearchParams.notes,
-                            useReferralCredits,
+                            useReferralCredits: selectedOrganizationId ? false : useReferralCredits,
+                            organizationId: selectedOrganizationId ?? undefined,
                           })}
                           onPaymentSuccess={(response: {
                             razorpay_payment_id?: string;
@@ -877,7 +890,8 @@ export default function ConsultationCheckoutPage({
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
                             notes: validatedSearchParams.notes,
-                            useReferralCredits,
+                            useReferralCredits: selectedOrganizationId ? false : useReferralCredits,
+                            organizationId: selectedOrganizationId ?? undefined,
                           })}
                           onPaymentSuccess={(response: { message?: string }) => {
                             toast({

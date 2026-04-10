@@ -31,6 +31,7 @@ import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 import type { AppliedDiscount } from "@/types/checkout";
+import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
 
 import type {
   Appointment,
@@ -108,6 +109,7 @@ export default function WebinarCheckoutPage({
   const [isApplyingDiscount, setIsApplyingDiscount] = useState(false);
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [useReferralCredits, setUseReferralCredits] = useState(false);
+  const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null);
   const [availableCredits, setAvailableCredits] = useState(0);
   const [isLoadingCredits, setIsLoadingCredits] = useState(true);
 
@@ -254,7 +256,8 @@ export default function WebinarCheckoutPage({
           paymentGateway: gateway,
           displayCurrency: currency,
           fromWaitlist,
-          useReferralCredits,
+          useReferralCredits: selectedOrganizationId ? false : useReferralCredits,
+          organizationId: selectedOrganizationId ?? undefined,
         });
 
         // Handle unified checkout flow using the utility
@@ -590,6 +593,14 @@ export default function WebinarCheckoutPage({
           </div>
         </div>
         <Separator className="bg-zinc-200" />
+        <OrgPayerSelector
+          selectedOrganizationId={selectedOrganizationId}
+          onSelect={(id) => {
+            setSelectedOrganizationId(id);
+            if (id) setUseReferralCredits(false);
+          }}
+        />
+        <Separator className="bg-zinc-200" />
         <div className="grid gap-4">
           <div className="font-semibold">Discount Codes</div>
           <div className="flex items-center gap-2">
@@ -795,7 +806,8 @@ export default function WebinarCheckoutPage({
                             paymentGateway: "RAZORPAY",
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
-                            useReferralCredits,
+                            useReferralCredits: selectedOrganizationId ? false : useReferralCredits,
+                            organizationId: selectedOrganizationId ?? undefined,
                           })}
                           onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
                           onPaymentError={razorpayHandlers.onPaymentError}
@@ -810,7 +822,8 @@ export default function WebinarCheckoutPage({
                             paymentGateway: "STRIPE",
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
-                            useReferralCredits,
+                            useReferralCredits: selectedOrganizationId ? false : useReferralCredits,
+                            organizationId: selectedOrganizationId ?? undefined,
                           })}
                           onPaymentSuccess={stripeHandlers.onPaymentSuccess}
                           onPaymentError={stripeHandlers.onPaymentError}

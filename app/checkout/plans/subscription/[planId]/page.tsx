@@ -17,6 +17,7 @@ import {
   createCheckoutData,
 } from "@/schemas/checkout";
 import type { AppliedDiscount } from "@/types/checkout";
+import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
 import {
   ConsultantProfile,
   ConsultantReview,
@@ -87,6 +88,7 @@ export default function SubscriptionCheckoutPage({
   const [isApplyingDiscount, setIsApplyingDiscount] = useState(false);
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [useReferralCredits, setUseReferralCredits] = useState(false);
+  const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null);
   const [availableCredits, setAvailableCredits] = useState(0);
   const [isLoadingCredits, setIsLoadingCredits] = useState(true);
 
@@ -245,7 +247,8 @@ export default function SubscriptionCheckoutPage({
           discountCode: appliedDiscount?.code,
           paymentGateway: gateway,
           displayCurrency: currency,
-          useReferralCredits,
+          useReferralCredits: selectedOrganizationId ? false : useReferralCredits,
+          organizationId: selectedOrganizationId ?? undefined,
         });
 
         // Make API call - backend decides dev vs prod flow
@@ -581,6 +584,14 @@ export default function SubscriptionCheckoutPage({
           </div>
         </div>
         <Separator className="bg-zinc-200" />
+        <OrgPayerSelector
+          selectedOrganizationId={selectedOrganizationId}
+          onSelect={(id) => {
+            setSelectedOrganizationId(id);
+            if (id) setUseReferralCredits(false);
+          }}
+        />
+        <Separator className="bg-zinc-200" />
         <div className="grid gap-4">
           <div className="font-semibold">Discount Codes</div>
           <div className="flex items-center gap-2">
@@ -809,7 +820,8 @@ export default function SubscriptionCheckoutPage({
                             schedulingPeriodEndsAt: validatedSearchParams.schedulingPeriodEndsAt,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
-                            useReferralCredits,
+                            useReferralCredits: selectedOrganizationId ? false : useReferralCredits,
+                            organizationId: selectedOrganizationId ?? undefined,
                           })}
                           onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
                           onPaymentError={razorpayHandlers.onPaymentError}
@@ -827,7 +839,8 @@ export default function SubscriptionCheckoutPage({
                             schedulingPeriodEndsAt: validatedSearchParams.schedulingPeriodEndsAt,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
-                            useReferralCredits,
+                            useReferralCredits: selectedOrganizationId ? false : useReferralCredits,
+                            organizationId: selectedOrganizationId ?? undefined,
                           })}
                           onPaymentSuccess={stripeHandlers.onPaymentSuccess}
                           onPaymentError={stripeHandlers.onPaymentError}
