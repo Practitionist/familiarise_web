@@ -806,7 +806,7 @@ async function createOrgInTransaction(
  * Fire-and-forget invitations after the main TX commits.
  * Called from processOnboardingData only for ORG_ADMIN onboarding.
  */
-function sendOrgInvitationsAsync(
+async function sendOrgInvitationsAsync(
   orgId: string,
   userId: string,
   emails: string[],
@@ -815,9 +815,25 @@ function sendOrgInvitationsAsync(
   if (emails.length === 0) return;
   const expiresAt = new Date();
   expiresAt.setDate(expiresAt.getDate() + 14);
+
+  // Look up org name + inviter name for the email
+  const [org, inviter] = await Promise.all([
+    prisma.organization.findUnique({
+      where: { id: orgId },
+      select: { name: true },
+    }),
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true },
+    }),
+  ]);
+
+  const { sendOrgInvitationEmail } = await import("@/lib/email");
+  const { getAppUrl } = await import("@/lib/url");
+
   Promise.allSettled(
-    emails.map((email) =>
-      prisma.invitation.create({
+    emails.map(async (email) => {
+      const invitation = await prisma.invitation.create({
         data: {
           organizationId: orgId,
           email,
@@ -826,7 +842,18 @@ function sendOrgInvitationsAsync(
           expiresAt,
           inviterId: userId,
         },
-      }),
-    ),
+      });
+      // Fire-and-forget email
+      sendOrgInvitationEmail({
+        email,
+        inviterName: inviter?.name ?? "An administrator",
+        orgName: org?.name ?? "an organization",
+        role,
+        inviteUrl: `${getAppUrl()}/organizations/invite/${invitation.id}`,
+        expiresAt: expiresAt.toISOString(),
+      }).catch((err) =>
+        console.error("[ORG_ADMIN onboarding] email error:", err),
+      );
+    }),
   ).catch((err) => console.error("[ORG_ADMIN onboarding] invite error:", err));
 }

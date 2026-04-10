@@ -19,6 +19,8 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { ENABLE_PROVIDER_ORGS } from "@/lib/feature-flags";
+import { sendOrgInvitationEmail } from "@/lib/email";
+import { getAppUrl } from "@/lib/url";
 import { OrgMemberRole } from "@prisma/client";
 
 const inviteSchema = z.object({
@@ -127,9 +129,21 @@ export async function POST(
       },
     });
 
-    // TODO(Phase H/email): wire up Resend transactional template
-    // ("you're invited to join {orgName}") with the accept link
-    // `${BASE_URL}/organizations/invite/${invitation.id}`.
+    // Send invitation email (fire-and-forget — failure doesn't roll back the invitation).
+    const org = await prisma.organization.findUnique({
+      where: { id: orgId },
+      select: { name: true },
+    });
+    sendOrgInvitationEmail({
+      email,
+      inviterName: access.session.user.name ?? "An administrator",
+      orgName: org?.name ?? "an organization",
+      role,
+      inviteUrl: `${getAppUrl()}/organizations/invite/${invitation.id}`,
+      expiresAt: expiresAt.toISOString(),
+    }).catch((err) =>
+      console.error("[Invitations] Failed to send email:", err),
+    );
 
     return NextResponse.json({ invitation }, { status: 201 });
   } catch (error) {
