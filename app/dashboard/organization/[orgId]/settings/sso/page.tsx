@@ -204,7 +204,7 @@ export default function OrgSsoPage({
     <>
       <DashboardHeader
         title="SSO settings"
-        subtitle="Configure SAML / OIDC sign-in for this organization"
+        subtitle="Configure SSO sign-in for this organization (SAML supported; OIDC coming soon)"
         actions={
           <Link href={`/dashboard/organization/${orgId}/settings`}>
             <Button size="sm" variant="outline">
@@ -286,7 +286,7 @@ export default function OrgSsoPage({
             <div>
               <CardTitle className="text-base">SSO providers</CardTitle>
               <CardDescription>
-                SAML and OIDC providers registered for this organization.
+                SAML providers registered for this organization. OIDC support coming soon.
               </CardDescription>
             </div>
             <Button size="sm" onClick={() => setShowAdd(true)}>

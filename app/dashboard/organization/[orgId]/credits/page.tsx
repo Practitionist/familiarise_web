@@ -106,8 +106,8 @@ export default function OrgCreditsPage({
         subtitle="Pre-purchased credit pool used by SEAT_PACK billing"
         actions={
           !wrongMode && (
-            <Button size="sm" onClick={() => setShowBuy(true)}>
-              <Plus className="h-4 w-4 mr-1" /> Buy credits
+            <Button size="sm" disabled title="Gateway integration coming soon">
+              <Plus className="h-4 w-4 mr-1" /> Buy credits (coming soon)
             </Button>
           )
         }
@@ -118,9 +118,9 @@ export default function OrgCreditsPage({
             <CardHeader>
               <CardTitle>Not on Seat Pack billing</CardTitle>
               <CardDescription>
-                This page is only relevant when the org's billing mode is
-                SEAT_PACK. Switch the billing mode in Settings to enable
-                credit pool management.
+                This page is only relevant for organizations using SEAT_PACK
+                billing mode. Billing mode is set during organization
+                creation and cannot be changed after the first payment.
               </CardDescription>
             </CardHeader>
           </Card>

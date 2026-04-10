@@ -40,8 +40,8 @@ export function ReviewStep({ onBack, onGoToStep, initialData }: StepProps) {
     setError(null);
 
     try {
-      // Final PATCH to ensure all data is persisted
-      await fetch(`/api/organizations/${orgId}`, {
+      // Final PATCH to ensure all data is persisted. Fail closed on error.
+      const patchRes = await fetch(`/api/organizations/${orgId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -57,6 +57,10 @@ export function ReviewStep({ onBack, onGoToStep, initialData }: StepProps) {
           secondaryColor: initialData.secondaryColor ?? null,
         }),
       });
+      if (!patchRes.ok) {
+        const body = await patchRes.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to save organization settings.");
+      }
 
       // Send invitations in parallel
       if (emails.length > 0) {

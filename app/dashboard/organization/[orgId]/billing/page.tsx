@@ -240,10 +240,10 @@ export default function OrgBillingPage({
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => payMutation.mutate(inv.id)}
-                            disabled={payMutation.isPending}
+                            disabled
+                            title="Gateway integration coming soon"
                           >
-                            Pay
+                            Pay (coming soon)
                           </Button>
                         )}
                       </TableCell>
