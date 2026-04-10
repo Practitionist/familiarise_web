@@ -18,7 +18,6 @@ import { useToast } from "@/hooks/use-toast";
 import { useSession } from "@/lib/auth-client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
-import { AdminLevel } from "@prisma/client";
 
 interface AdminData {
   id: string;
@@ -35,7 +34,6 @@ interface AdminData {
   bio: string | null;
   adminProfile?: {
     id: string;
-    adminLevel: AdminLevel;
     notes: string | null;
   } | null;
 }
@@ -351,14 +349,6 @@ export default function AdminSettingsPage() {
             <CardTitle>Admin Profile</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Admin Level</Label>
-                <p className="text-sm text-gray-600 bg-gray-100 p-2 rounded">
-                  {adminData.adminProfile.adminLevel.replace("_", " ")}
-                </p>
-              </div>
-            </div>
             {adminData.adminProfile.notes && (
               <div className="space-y-2">
                 <Label>Notes</Label>
@@ -368,7 +358,7 @@ export default function AdminSettingsPage() {
               </div>
             )}
             <p className="text-xs text-gray-400">
-              Admin profile settings can only be modified by a Super Admin.
+              Admin profile notes are managed by platform administrators.
             </p>
           </CardContent>
         </Card>

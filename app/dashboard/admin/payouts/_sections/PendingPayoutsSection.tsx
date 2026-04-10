@@ -64,7 +64,7 @@ async function rejectPayout(id: string, reason: string): Promise<Payout> {
   return response.json() as Promise<Payout>;
 }
 
-export default function PendingPayoutsPage() {
+export default function PendingPayoutsSection() {
   const queryClient = useQueryClient();
   const [selectedPayout, setSelectedPayout] = useState<Payout | null>(null);
   const [rejectReason, setRejectReason] = useState("");
@@ -124,32 +124,23 @@ export default function PendingPayoutsPage() {
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <Card className="w-full max-w-md">
-          <CardHeader>
-            <CardTitle className="text-red-600">Error</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-gray-700">
-              {error instanceof Error
-                ? error.message
-                : "Failed to load payouts"}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
+      <Card className="w-full">
+        <CardHeader>
+          <CardTitle className="text-red-600">Error</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-gray-700">
+            {error instanceof Error
+              ? error.message
+              : "Failed to load payouts"}
+          </p>
+        </CardContent>
+      </Card>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">Pending Approval</h1>
-        <p className="text-gray-600 mt-1">
-          Review and approve consultant payouts
-        </p>
-      </div>
-
+    <>
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">
@@ -320,6 +311,6 @@ export default function PendingPayoutsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </>
   );
 }

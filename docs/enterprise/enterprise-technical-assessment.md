@@ -1,3 +1,5 @@
+> **⚠️ SUPERSEDED on 2026-04-08.** The canonical enterprise design is being written in PR2 (`feature/enterprise`) as `docs/enterprise/00-canonical-design.md`. This doc's GitHub issue triage (sections 1 and 2) is still useful background reading — several of its recommendations were adopted in PR #647 (AdminLevel drop, shared auth helpers, admin/staff sidebar unification). Its top-line recommendation to defer enterprise work was overridden. Retained for historical context.
+
 # Enterprise & SSO Technical Assessment
 
 > For: Kaustav (Technical Founder)

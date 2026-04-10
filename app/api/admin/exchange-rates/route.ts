@@ -8,28 +8,18 @@
  */
 
 import { NextResponse } from "next/server";
-import { UserRole } from "@prisma/client";
-import { getSession } from "@/lib/auth-server";
+import { requireAdminAuth } from "@/lib/auth-helpers";
 import {
   invalidateExchangeRateCache,
   getExchangeRateCacheInfo,
   getExchangeRates,
 } from "@/lib/currency";
-import prisma from "@/lib/prisma";
 
+// Local wrapper for the existing "in auth" call sites
 async function requireAdmin() {
-  const session = await getSession();
-  if (!session?.user?.id) {
-    return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
-  }
-  const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: { role: true },
-  });
-  if (user?.role !== UserRole.ADMIN) {
-    return { error: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
-  }
-  return { userId: session.user.id };
+  const result = await requireAdminAuth();
+  if (result.error) return { error: result.error };
+  return { userId: result.session.user.id };
 }
 
 export async function GET() {

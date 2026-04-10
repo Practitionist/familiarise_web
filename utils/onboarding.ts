@@ -4,7 +4,6 @@ import {
   UserRole,
   Gender,
   CareerStage,
-  AdminLevel,
   SessionType,
   AchievementType,
 } from "@prisma/client";
@@ -360,7 +359,6 @@ const staffFormFields = sharedFormFields.extend({
 
 const adminFormFields = sharedFormFields.extend({
   role: z.literal(UserRole.ADMIN),
-  adminLevel: z.nativeEnum(AdminLevel).optional(),
   adminNotes: z.string().optional(),
 });
 
@@ -594,14 +592,11 @@ export function transformOnboardingFormToServerData(
         consultantProfile: undefined,
         consulteeProfile: undefined,
         staffProfile: undefined,
-        ...(formData.adminLevel && {
-          adminProfile: {
-            create: {
-              adminLevel: formData.adminLevel,
-              notes: formData.adminNotes,
-            },
+        adminProfile: {
+          create: {
+            notes: formData.adminNotes,
           },
-        }),
+        },
       };
 
     default:

@@ -3,38 +3,24 @@ import { freezeAppointments } from "@/actions/maintenance/freeze-appointments";
 import { pauseDiscountCodes } from "@/actions/maintenance/pause-discount-codes";
 import { pauseWaitlistExpiry } from "@/actions/maintenance/pause-waitlist-expiry";
 import { runPostRecovery } from "@/actions/maintenance/post-recovery";
-import { MaintenancePhase, UserRole } from "@prisma/client";
+import { MaintenancePhase } from "@prisma/client";
 import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { createIncident, resolveIncident } from "@/lib/betterstack";
-import { getSession } from "@/lib/auth-server";
+import { requireAdminAuth } from "@/lib/auth-helpers";
 import { getMaintenanceState, setMaintenanceState } from "@/lib/maintenance";
 import prisma from "@/lib/prisma";
 
 const DEFAULT_WINDOW_MS = 4 * 60 * 60 * 1000;
 
+// Local wrapper preserves the existing call sites that expect `{ userId }`.
+// Maintenance is now strictly ADMIN-only (was previously allowing STAFF too).
 async function requireAdmin() {
-  const session = await getSession();
-  if (!session?.user) {
-    return {
-      error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
-    };
-  }
-
-  const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: { role: true },
-  });
-
-  if (user?.role !== UserRole.ADMIN && user?.role !== UserRole.STAFF) {
-    return {
-      error: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
-    };
-  }
-
-  return { userId: session.user.id };
+  const result = await requireAdminAuth();
+  if (result.error) return { error: result.error };
+  return { userId: result.session.user.id };
 }
 
 const postSchema = z.object({

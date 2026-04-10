@@ -1,7 +1,7 @@
 /**
  * System Jobs API - Secure Wrapper
  *
- * Provides authenticated access to system jobs for Admin and Staff users.
+ * Provides authenticated access to system jobs for Admin users only.
  * This wrapper verifies user session server-side and calls cleanup routes internally.
  *
  * NO CRON_SECRET is exposed to the frontend.
@@ -9,8 +9,6 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-import { UserRole } from "@prisma/client";
 
 // Import job functions directly - organized by category
 // Payments
@@ -59,7 +57,7 @@ import { reconcileDocumentStorage } from "@/scripts/cleanup/reconcile-document-s
 // Alerts
 import { alertOrphanedPayments } from "@/scripts/alerts/alert-orphaned-payments";
 
-import { getSession } from "@/lib/auth-server";
+import { requireAdminAuth } from "@/lib/auth-helpers";
 import { getMaintenanceState } from "@/lib/maintenance-edge";
 
 // Financial job IDs that must not run during DEGRADED maintenance.
@@ -347,30 +345,17 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
 
 /**
  * POST /api/admin/system-jobs/run
- * Run a system job by ID (requires ADMIN or STAFF role)
+ * Run a system job by ID (requires ADMIN role)
  */
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
-    // 1. Verify session
-    const session = await getSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    // 1. Verify admin auth
+    const auth = await requireAdminAuth();
+    if (auth.error) return auth.error;
+    const session = auth.session;
+    const user = session.user;
 
-    // 2. Check admin or staff role
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { role: true, name: true, email: true },
-    });
-
-    if (
-      !user ||
-      (user.role !== UserRole.STAFF && user.role !== UserRole.ADMIN)
-    ) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-
-    // 3. Get job ID from body
+    // 2. Get job ID from body
     const { jobId } = await req.json();
 
     if (!jobId || typeof jobId !== "string") {

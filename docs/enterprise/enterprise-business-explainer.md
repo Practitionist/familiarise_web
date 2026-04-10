@@ -1,3 +1,5 @@
+> **⚠️ SUPERSEDED on 2026-04-08.** The canonical enterprise design is being written in PR2 (`feature/enterprise`) as `docs/enterprise/00-canonical-design.md`. This doc recommended deferring enterprise work until after MVP; that recommendation was overridden in favor of building a unified BUYER/PROVIDER/HYBRID organization model now. The strategy framing and B2C-vs-B2B feature discussion are still useful background. Retained for historical context.
+
 # Enterprise & B2B: What It Means for Familiarise
 
 > For: Business Advisor (Non-Technical Reader)

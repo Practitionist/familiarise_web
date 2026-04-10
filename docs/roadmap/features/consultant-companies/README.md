@@ -1,3 +1,5 @@
+> **⚠️ SUPERSEDED on 2026-04-08.** This proposal's PROVIDER-only vision will become part of the unified BUYER/PROVIDER/HYBRID organization model in PR2 (`feature/enterprise`) as `docs/enterprise/00-canonical-design.md`. Role enum will be `OrgMemberRole` with 6 values (not `OrganizationRole` with 4). Revenue split mechanics and payment flow diagrams here are still accurate for PROVIDER orgs. Retained for historical context.
+
 # B2B Consultant Company Onboarding - Architecture Documentation
 
 ## Executive Summary

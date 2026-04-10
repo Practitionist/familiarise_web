@@ -21,9 +21,86 @@ export async function requireApiAuth(): Promise<
 
 /**
  * Checks if a user has privileged access (ADMIN or STAFF role).
+ *
+ * Prefer the typed helpers below in API handlers — this is here for
+ * places that just need a boolean branch (e.g., conditional DB queries).
  */
 export function isPrivileged(role: string | undefined | null): boolean {
   return role === "ADMIN" || role === "STAFF";
+}
+
+/**
+ * Strict ADMIN-only auth — for routes that mutate platform-level state
+ * irreversibly (system jobs, maintenance mode, exchange rates, newsletters,
+ * payouts processing). Replaces ad-hoc inline `requireAdmin()` helpers
+ * scattered across `app/api/admin/**`.
+ *
+ * @see docs/api/auth-helpers.md for the decision matrix.
+ */
+export async function requireAdminAuth(): Promise<
+  { session: Session; error?: never } | { session?: never; error: NextResponse }
+> {
+  const auth = await requireApiAuth();
+  if (auth.error) return { error: auth.error };
+  if (auth.session.user.role !== "ADMIN") {
+    return {
+      error: NextResponse.json(
+        { error: "Forbidden — admin access required" },
+        { status: 403 },
+      ),
+    };
+  }
+  return { session: auth.session };
+}
+
+/**
+ * Strict STAFF-only auth — rejects ADMIN.
+ *
+ * Use for routes that are specifically staff-scoped and where an ADMIN
+ * should NOT have access (e.g., "my support tickets" viewed by the staff
+ * member who owns them, separated from admin's own views). This is
+ * deliberately strict — most admin/staff routes want the PRIVILEGED
+ * flavor below. If you're refactoring a route that previously allowed
+ * both ADMIN and STAFF, use `requirePrivilegedAuth` instead.
+ */
+export async function requireStaffAuth(): Promise<
+  { session: Session; error?: never } | { session?: never; error: NextResponse }
+> {
+  const auth = await requireApiAuth();
+  if (auth.error) return { error: auth.error };
+  if (auth.session.user.role !== "STAFF") {
+    return {
+      error: NextResponse.json(
+        { error: "Forbidden — staff access required" },
+        { status: 403 },
+      ),
+    };
+  }
+  return { session: auth.session };
+}
+
+/**
+ * Privileged operator auth — ADMIN or STAFF. Use for read endpoints,
+ * moderation queues, support operations, and the shared admin/staff
+ * dashboard API surface. This is the most common helper for
+ * `app/api/admin/**` and `app/api/staff/**` routes.
+ *
+ * @see docs/api/auth-helpers.md for the decision matrix.
+ */
+export async function requirePrivilegedAuth(): Promise<
+  { session: Session; error?: never } | { session?: never; error: NextResponse }
+> {
+  const auth = await requireApiAuth();
+  if (auth.error) return { error: auth.error };
+  if (!isPrivileged(auth.session.user.role)) {
+    return {
+      error: NextResponse.json(
+        { error: "Forbidden — admin or staff access required" },
+        { status: 403 },
+      ),
+    };
+  }
+  return { session: auth.session };
 }
 
 /**

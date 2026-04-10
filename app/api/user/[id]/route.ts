@@ -92,7 +92,6 @@ export async function GET(
         adminProfile: {
           select: {
             id: true,
-            adminLevel: true,
             notes: true,
           },
         },
