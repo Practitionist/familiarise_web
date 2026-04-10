@@ -1,9 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Building2, Plus } from "lucide-react";
 
 import {
@@ -11,8 +9,6 @@ import {
   DashboardContent,
 } from "@/components/dashboard/DashboardShell";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -21,13 +17,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 
 interface OrgListItem {
   id: string;
@@ -48,61 +37,11 @@ async function fetchOrgs(): Promise<{ organizations: OrgListItem[] }> {
   return res.json();
 }
 
-interface CreateOrgPayload {
-  name: string;
-  billingEmail: string;
-  kind: "BUYER";
-  billingMode: "TAG_ONLY" | "SEAT_PACK" | "INVOICED_MONTHLY";
-}
-
-async function createOrg(payload: CreateOrgPayload) {
-  const res = await fetch("/api/organizations", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const body = await res.json();
-  if (!res.ok) throw new Error(body.error || "Failed to create organization");
-  return body as {
-    organization: { id: string; name: string };
-    profile: { id: string };
-  };
-}
-
 export default function OrganizationLandingPage() {
-  const router = useRouter();
-  const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ["organizations"],
     queryFn: fetchOrgs,
   });
-
-  const [showCreate, setShowCreate] = useState(false);
-  const [name, setName] = useState("");
-  const [billingEmail, setBillingEmail] = useState("");
-  const [billingMode, setBillingMode] =
-    useState<CreateOrgPayload["billingMode"]>("TAG_ONLY");
-  const [formError, setFormError] = useState<string | null>(null);
-
-  const createMutation = useMutation({
-    mutationFn: createOrg,
-    onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ["organizations"] });
-      router.push(`/dashboard/organization/${result.organization.id}/home`);
-    },
-    onError: (err: Error) => setFormError(err.message),
-  });
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setFormError(null);
-    createMutation.mutate({
-      name: name.trim(),
-      billingEmail: billingEmail.trim(),
-      kind: "BUYER",
-      billingMode,
-    });
-  };
 
   return (
     <>
@@ -110,95 +49,14 @@ export default function OrganizationLandingPage() {
         title="Organizations"
         subtitle="Schools, corporates, and teams you belong to"
         actions={
-          !showCreate && (
-            <Button onClick={() => setShowCreate(true)} size="sm">
+          <Link href="/dashboard/organization/create">
+            <Button size="sm">
               <Plus className="h-4 w-4 mr-1" /> New organization
             </Button>
-          )
+          </Link>
         }
       />
       <DashboardContent>
-        {showCreate && (
-          <Card className="mb-6">
-            <CardHeader>
-              <CardTitle>Create a new organization</CardTitle>
-              <CardDescription>
-                You will be its first owner. Settings can be changed later.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="org-name">Name</Label>
-                  <Input
-                    id="org-name"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="Acme School"
-                    required
-                    minLength={2}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="org-email">Billing email</Label>
-                  <Input
-                    id="org-email"
-                    type="email"
-                    value={billingEmail}
-                    onChange={(e) => setBillingEmail(e.target.value)}
-                    placeholder="billing@acme.edu"
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="org-billing">Billing mode</Label>
-                  <Select
-                    value={billingMode}
-                    onValueChange={(v) =>
-                      setBillingMode(v as CreateOrgPayload["billingMode"])
-                    }
-                  >
-                    <SelectTrigger id="org-billing">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="TAG_ONLY">
-                        Tag-only — learners pay individually
-                      </SelectItem>
-                      <SelectItem value="SEAT_PACK">
-                        Seat pack — pre-buy credits, learners draw down
-                      </SelectItem>
-                      <SelectItem value="INVOICED_MONTHLY">
-                        Invoiced monthly — pay once a month
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {formError && (
-                  <p className="text-sm text-red-600">{formError}</p>
-                )}
-
-                <div className="flex items-center gap-2">
-                  <Button type="submit" disabled={createMutation.isPending}>
-                    {createMutation.isPending ? "Creating…" : "Create"}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      setShowCreate(false);
-                      setFormError(null);
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </form>
-            </CardContent>
-          </Card>
-        )}
-
         {isLoading ? (
           <p className="text-sm text-zinc-500">Loading organizations…</p>
         ) : data && data.organizations.length > 0 ? (
@@ -250,13 +108,11 @@ export default function OrganizationLandingPage() {
               <p className="text-sm text-zinc-600">
                 You are not part of any organization yet.
               </p>
-              <Button
-                size="sm"
-                className="mt-4"
-                onClick={() => setShowCreate(true)}
-              >
-                Create your first organization
-              </Button>
+              <Link href="/dashboard/organization/create">
+                <Button size="sm" className="mt-4">
+                  Create your first organization
+                </Button>
+              </Link>
             </CardContent>
           </Card>
         )}

@@ -191,6 +191,28 @@ const MultiStepForm: React.FC = () => {
         });
       }
 
+      // Check for a pending org invitation token stored by the invite page.
+      // This bridges the signup → onboarding → dashboard chain where the
+      // callbackUrl would otherwise be lost.
+      const pendingToken =
+        typeof window !== "undefined"
+          ? localStorage.getItem("pendingOrgInviteToken")
+          : null;
+      if (pendingToken) {
+        localStorage.removeItem("pendingOrgInviteToken");
+        router.push(`/organizations/invite/${pendingToken}`);
+        return;
+      }
+
+      // Check for a callbackUrl query param (passed through from signup page)
+      const callbackUrl = new URLSearchParams(window.location.search).get(
+        "callbackUrl",
+      );
+      if (callbackUrl?.startsWith("/") && !callbackUrl.startsWith("//")) {
+        router.push(callbackUrl);
+        return;
+      }
+
       // Redirect based on role (server has already updated the user record,
       // session cookie will refresh automatically)
       if (finalData.role === "CONSULTANT" && result.user.consultantProfileId) {

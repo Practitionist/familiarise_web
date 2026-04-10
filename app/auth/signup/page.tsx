@@ -30,6 +30,7 @@ function SignUpContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const referralCode = searchParams.get("ref");
+  const callbackUrl = searchParams.get("callbackUrl");
   const { data: session, isPending } = useSession();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -38,16 +39,26 @@ function SignUpContent() {
   const [isLoading, setIsLoading] = useState(false);
   const [refCode, setRefCode] = useState(referralCode || "");
 
+  // Build onboarding URL with optional callbackUrl passthrough (for org invite flow)
+  const onboardingUrl = callbackUrl
+    ? `/form/onboarding?callbackUrl=${encodeURIComponent(callbackUrl)}`
+    : "/form/onboarding";
+
   // Redirect authenticated users based on onboarding status
   useEffect(() => {
     if (!isPending && session?.user) {
       if (session.user.onboardingCompleted) {
-        router.push("/dashboard");
+        // If there's a callbackUrl (e.g., from an invite link), honor it
+        if (callbackUrl?.startsWith("/") && !callbackUrl.startsWith("//")) {
+          router.push(callbackUrl);
+        } else {
+          router.push("/dashboard");
+        }
       } else {
-        router.push("/form/onboarding");
+        router.push(onboardingUrl);
       }
     }
-  }, [session, isPending, router]);
+  }, [session, isPending, router, callbackUrl, onboardingUrl]);
 
   // Show loading while checking session status (fallback for when middleware doesn't catch)
   if (isPending) {
@@ -109,7 +120,7 @@ function SignUpContent() {
           title: "Account Created Successfully!",
           description: "Redirecting to onboarding...",
         });
-        router.push("/form/onboarding");
+        router.push(onboardingUrl);
       }
     } catch (error: unknown) {
       console.error("Sign up error:", error);
@@ -257,8 +268,8 @@ function SignUpContent() {
           </div>
 
           <SocialLoginButtons
-            callbackURL="/dashboard"
-            newUserCallbackURL="/form/onboarding"
+            callbackURL={callbackUrl || "/dashboard"}
+            newUserCallbackURL={onboardingUrl}
             isLoading={isLoading}
           />
 

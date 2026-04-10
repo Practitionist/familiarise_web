@@ -48,6 +48,20 @@ export default function InviteAcceptPage({
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AcceptResponse | null>(null);
 
+  // Store the token in localStorage so new users signing up via this link
+  // can be auto-redirected back here after completing onboarding.
+  // This bridges the signup → onboarding → dashboard redirect chain where
+  // the callbackUrl would otherwise be lost.
+  useEffect(() => {
+    if (!isPending && !session?.user?.id) {
+      try {
+        localStorage.setItem("pendingOrgInviteToken", token);
+      } catch {
+        // localStorage unavailable — fallback to callbackUrl in the links below
+      }
+    }
+  }, [isPending, session, token]);
+
   useEffect(() => {
     if (isPending) return;
     if (!session?.user?.id) return;
