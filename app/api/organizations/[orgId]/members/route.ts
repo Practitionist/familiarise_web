@@ -140,6 +140,23 @@ export async function POST(
     }
 
     const result = await prisma.$transaction(async (tx) => {
+      // Re-check seat capacity inside the transaction to close the race
+      // window between the pre-check above and the increment below.
+      if (role === "ORG_LEARNER") {
+        const freshOrg = await tx.organizationProfile.findUnique({
+          where: { id: access.org.id },
+          select: { seatsUsed: true, seatsTotal: true },
+        });
+        if (
+          freshOrg?.seatsTotal !== null &&
+          freshOrg!.seatsUsed >= freshOrg!.seatsTotal!
+        ) {
+          throw new Error(
+            `Organization has reached its seat limit (${freshOrg!.seatsTotal}).`,
+          );
+        }
+      }
+
       let member;
       let memberProfile;
 

@@ -635,6 +635,21 @@ export async function processOnboardingData(
       "orgName" in validatedBody &&
       validatedBody.orgName
     ) {
+      // Validate org fields with the same strictness as the API routes.
+      const orgData = validatedBody as Record<string, unknown>;
+      const validModes = ["TAG_ONLY", "SEAT_PACK", "INVOICED_MONTHLY"];
+      if (orgData.orgBillingMode && !validModes.includes(orgData.orgBillingMode as string)) {
+        return { success: false, error: `Invalid billing mode: ${orgData.orgBillingMode}` };
+      }
+      // Gate PROVIDER-only invite roles (same as POST /api/organizations/[orgId]/invitations)
+      const providerGatedRoles = ["ORG_CONSULTANT", "ORG_SUPPORT"];
+      if (
+        orgData.orgInviteRole &&
+        providerGatedRoles.includes(orgData.orgInviteRole as string)
+      ) {
+        return { success: false, error: `${orgData.orgInviteRole} role is gated behind PROVIDER orgs.` };
+      }
+
       const org = await createOrgForOnboarding(userId, validatedBody as Parameters<typeof createOrgForOnboarding>[1]);
       orgId = org.orgId;
     }

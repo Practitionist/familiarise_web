@@ -147,6 +147,22 @@ export async function POST(req: NextRequest) {
     const consultantProfileId = auth.session.user.consultantProfileId ?? null;
 
     await prisma.$transaction(async (tx) => {
+      // Re-check seat capacity inside TX to close the race window.
+      if (role === "ORG_LEARNER") {
+        const freshOrg = await tx.organizationProfile.findUnique({
+          where: { id: orgProfile.id },
+          select: { seatsUsed: true, seatsTotal: true },
+        });
+        if (
+          freshOrg?.seatsTotal !== null &&
+          freshOrg!.seatsUsed >= freshOrg!.seatsTotal!
+        ) {
+          throw new Error(
+            `Organization has reached its seat limit (${freshOrg!.seatsTotal}).`,
+          );
+        }
+      }
+
       const member = await tx.member.create({
         data: {
           organizationId: invitation.organizationId,

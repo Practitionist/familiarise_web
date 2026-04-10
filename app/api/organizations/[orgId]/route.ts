@@ -104,6 +104,30 @@ export async function PATCH(
 
     const data = parsed.data;
 
+    // Guard billingMode mutation after first payment. The billing mode is
+    // selected at org creation and should be immutable once real payments
+    // exist — switching modes mid-stream would leave the ledger in an
+    // inconsistent state (e.g., credit pool with TAG_ONLY, unbilled
+    // payments after switching away from INVOICED_MONTHLY).
+    if (
+      data.billingMode !== undefined &&
+      data.billingMode !== access.org.billingMode
+    ) {
+      const hasPayments = await prisma.payment.count({
+        where: { organizationProfileId: access.org.id },
+        take: 1,
+      });
+      if (hasPayments > 0) {
+        return NextResponse.json(
+          {
+            error:
+              "Billing mode cannot be changed after the first payment. Contact support for billing mode migration.",
+          },
+          { status: 400 },
+        );
+      }
+    }
+
     // Rate-sum validation for PROVIDER orgs (FEATURE-FLAGGED).
     const ratesTouched =
       data.platformCommissionRate !== undefined ||

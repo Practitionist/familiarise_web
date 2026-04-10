@@ -117,7 +117,28 @@ export async function PATCH(
           : null;
     }
 
+    // Enforce seatsTotal when gaining a seat (PATCH promotes to ORG_LEARNER).
+    if (!wasSeatOccupying && isSeatOccupying && access.org.seatsTotal !== null) {
+      if (access.org.seatsUsed >= access.org.seatsTotal) {
+        return NextResponse.json(
+          { error: `Organization has reached its seat limit (${access.org.seatsTotal}).` },
+          { status: 403 },
+        );
+      }
+    }
+
     const [updated] = await prisma.$transaction(async (tx) => {
+      // Re-check seat capacity inside the transaction to close the race window.
+      if (!wasSeatOccupying && isSeatOccupying) {
+        const freshOrg = await tx.organizationProfile.findUnique({
+          where: { id: access.org.id },
+          select: { seatsUsed: true, seatsTotal: true },
+        });
+        if (freshOrg?.seatsTotal !== null && freshOrg!.seatsUsed >= freshOrg!.seatsTotal!) {
+          throw new Error("Seat limit reached");
+        }
+      }
+
       const profileUpdate = await tx.organizationMemberProfile.update({
         where: { id: memberId },
         data: {
@@ -192,13 +213,18 @@ export async function DELETE(
       }
     }
 
+    // Only decrement seatsUsed if the member was actually occupying a seat
+    // (active learner). Repeated DELETEs on an already-removed/suspended
+    // member must not push seatsUsed below the real count.
+    const wasSeatOccupying =
+      target.role === "ORG_LEARNER" && target.status === "ACTIVE";
+
     await prisma.$transaction([
       prisma.organizationMemberProfile.update({
         where: { id: memberId },
         data: { status: "REMOVED" },
       }),
-      // Decrement seatsUsed if this was an ORG_LEARNER.
-      ...(target.role === "ORG_LEARNER"
+      ...(wasSeatOccupying
         ? [
             prisma.organizationProfile.update({
               where: { id: access.org.id },
