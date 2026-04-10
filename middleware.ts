@@ -56,7 +56,7 @@ const ROUTE_PATTERNS = {
   // /api/plans/classes and /api/plans/webinars are public for browse/detail pages;
   //   their sub-routes (recordings, materials) enforce auth in their own handlers
   PUBLIC_API_PREFIXES: [
-    "/api/auth/",
+    "/api/auth/", // BetterAuth core + SSO endpoints (including /api/auth/sso/domain-check)
     "/api/health/",
     "/api/user/consultants", // Public: explore experts list and individual profiles
     "/api/user/reviews", // Public: consultant reviews
