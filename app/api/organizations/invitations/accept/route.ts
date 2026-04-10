@@ -11,6 +11,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { ENABLE_PROVIDER_ORGS } from "@/lib/feature-flags";
+import { acquireSeat } from "@/lib/api/organizations/seat-helpers";
 import { OrgMemberRole } from "@prisma/client";
 
 const acceptSchema = z.object({
@@ -108,18 +109,6 @@ export async function POST(req: NextRequest) {
     const orgProfile = invitation.organization.organizationProfile;
     const userId = auth.session.user.id;
 
-    // Enforce seatsTotal for ORG_LEARNER invitations.
-    if (role === "ORG_LEARNER" && orgProfile.seatsTotal !== null) {
-      if (orgProfile.seatsUsed >= orgProfile.seatsTotal) {
-        return NextResponse.json(
-          {
-            error: `This organization has reached its seat limit (${orgProfile.seatsTotal}). Contact the org admin.`,
-          },
-          { status: 403 },
-        );
-      }
-    }
-
     // Idempotent: if a Member already exists, surface that.
     const existing = await prisma.member.findUnique({
       where: {
@@ -147,20 +136,10 @@ export async function POST(req: NextRequest) {
     const consultantProfileId = auth.session.user.consultantProfileId ?? null;
 
     await prisma.$transaction(async (tx) => {
-      // Re-check seat capacity inside TX to close the race window.
+      // Atomic seat acquisition — conditional UPDATE prevents oversubscription.
       if (role === "ORG_LEARNER") {
-        const freshOrg = await tx.organizationProfile.findUnique({
-          where: { id: orgProfile.id },
-          select: { seatsUsed: true, seatsTotal: true },
-        });
-        if (
-          freshOrg?.seatsTotal !== null &&
-          freshOrg!.seatsUsed >= freshOrg!.seatsTotal!
-        ) {
-          throw new Error(
-            `Organization has reached its seat limit (${freshOrg!.seatsTotal}).`,
-          );
-        }
+        const acquired = await acquireSeat(tx, orgProfile.id);
+        if (!acquired) throw new Error("SEAT_LIMIT_REACHED");
       }
 
       const member = await tx.member.create({
@@ -185,12 +164,7 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      if (role === "ORG_LEARNER") {
-        await tx.organizationProfile.update({
-          where: { id: orgProfile.id },
-          data: { seatsUsed: { increment: 1 } },
-        });
-      }
+      // seatsUsed already incremented atomically by acquireSeat() above.
 
       await tx.invitation.update({
         where: { id: invitation.id },
@@ -206,6 +180,12 @@ export async function POST(req: NextRequest) {
       role,
     });
   } catch (error) {
+    if (error instanceof Error && error.message === "SEAT_LIMIT_REACHED") {
+      return NextResponse.json(
+        { error: "This organization has reached its seat limit. Contact the org admin." },
+        { status: 403 },
+      );
+    }
     console.error("[API /organizations/invitations/accept POST] error:", error);
     return NextResponse.json(
       { error: "Failed to accept invitation" },

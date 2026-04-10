@@ -13,6 +13,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { ENABLE_PROVIDER_ORGS } from "@/lib/feature-flags";
+import { acquireSeat } from "@/lib/api/organizations/seat-helpers";
 import { OrgMemberRole } from "@prisma/client";
 
 const addMemberSchema = z.object({
@@ -118,18 +119,6 @@ export async function POST(
       include: { organizationMemberProfile: true },
     });
 
-    // Enforce seatsTotal for ORG_LEARNER additions.
-    if (role === "ORG_LEARNER" && access.org.seatsTotal !== null) {
-      if (access.org.seatsUsed >= access.org.seatsTotal) {
-        return NextResponse.json(
-          {
-            error: `Organization has reached its seat limit (${access.org.seatsTotal}). Remove a learner or increase the seat budget in Settings.`,
-          },
-          { status: 403 },
-        );
-      }
-    }
-
     // If a member row exists but the profile is REMOVED, reactivate instead of 409.
     const existingProfile = existing?.organizationMemberProfile ?? null;
     if (existing && existingProfile && existingProfile.status !== "REMOVED") {
@@ -140,20 +129,12 @@ export async function POST(
     }
 
     const result = await prisma.$transaction(async (tx) => {
-      // Re-check seat capacity inside the transaction to close the race
-      // window between the pre-check above and the increment below.
+      // Atomic seat acquisition — the conditional UPDATE only succeeds when
+      // capacity allows, eliminating the read-check-write race.
       if (role === "ORG_LEARNER") {
-        const freshOrg = await tx.organizationProfile.findUnique({
-          where: { id: access.org.id },
-          select: { seatsUsed: true, seatsTotal: true },
-        });
-        if (
-          freshOrg?.seatsTotal !== null &&
-          freshOrg!.seatsUsed >= freshOrg!.seatsTotal!
-        ) {
-          throw new Error(
-            `Organization has reached its seat limit (${freshOrg!.seatsTotal}).`,
-          );
+        const acquired = await acquireSeat(tx, access.org.id);
+        if (!acquired) {
+          throw new Error("SEAT_LIMIT_REACHED");
         }
       }
 
@@ -202,19 +183,19 @@ export async function POST(
         });
       }
 
-      // Bump seatsUsed for BUYER seat tracking.
-      if (role === "ORG_LEARNER") {
-        await tx.organizationProfile.update({
-          where: { id: access.org.id },
-          data: { seatsUsed: { increment: 1 } },
-        });
-      }
+      // seatsUsed already incremented by acquireSeat() above for ORG_LEARNER.
 
       return { member, memberProfile };
     });
 
     return NextResponse.json({ memberProfile: result.memberProfile }, { status: 201 });
   } catch (error) {
+    if (error instanceof Error && error.message === "SEAT_LIMIT_REACHED") {
+      return NextResponse.json(
+        { error: "Organization has reached its seat limit. Remove a learner or increase the seat budget in Settings." },
+        { status: 403 },
+      );
+    }
     console.error("[API /organizations/[orgId]/members POST] error:", error);
     return NextResponse.json(
       { error: "Failed to add member" },

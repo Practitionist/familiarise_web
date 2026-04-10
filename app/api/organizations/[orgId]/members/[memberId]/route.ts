@@ -14,6 +14,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { ENABLE_PROVIDER_ORGS } from "@/lib/feature-flags";
+import { acquireSeat, releaseSeat } from "@/lib/api/organizations/seat-helpers";
 import { OrgMemberRole, OrgMemberStatus } from "@prisma/client";
 
 const patchMemberSchema = z.object({
@@ -117,26 +118,13 @@ export async function PATCH(
           : null;
     }
 
-    // Enforce seatsTotal when gaining a seat (PATCH promotes to ORG_LEARNER).
-    if (!wasSeatOccupying && isSeatOccupying && access.org.seatsTotal !== null) {
-      if (access.org.seatsUsed >= access.org.seatsTotal) {
-        return NextResponse.json(
-          { error: `Organization has reached its seat limit (${access.org.seatsTotal}).` },
-          { status: 403 },
-        );
-      }
-    }
-
     const [updated] = await prisma.$transaction(async (tx) => {
-      // Re-check seat capacity inside the transaction to close the race window.
+      // Atomic seat acquisition/release via conditional UPDATE.
       if (!wasSeatOccupying && isSeatOccupying) {
-        const freshOrg = await tx.organizationProfile.findUnique({
-          where: { id: access.org.id },
-          select: { seatsUsed: true, seatsTotal: true },
-        });
-        if (freshOrg?.seatsTotal !== null && freshOrg!.seatsUsed >= freshOrg!.seatsTotal!) {
-          throw new Error("Seat limit reached");
-        }
+        const acquired = await acquireSeat(tx, access.org.id);
+        if (!acquired) throw new Error("SEAT_LIMIT_REACHED");
+      } else if (wasSeatOccupying && !isSeatOccupying) {
+        await releaseSeat(tx, access.org.id);
       }
 
       const profileUpdate = await tx.organizationMemberProfile.update({
@@ -159,23 +147,18 @@ export async function PATCH(
           data: { role },
         });
       }
-      // Reconcile seatsUsed in the same transaction.
-      if (wasSeatOccupying && !isSeatOccupying) {
-        await tx.organizationProfile.update({
-          where: { id: access.org.id },
-          data: { seatsUsed: { decrement: 1 } },
-        });
-      } else if (!wasSeatOccupying && isSeatOccupying) {
-        await tx.organizationProfile.update({
-          where: { id: access.org.id },
-          data: { seatsUsed: { increment: 1 } },
-        });
-      }
+      // seatsUsed already updated atomically by acquireSeat/releaseSeat above.
       return [profileUpdate];
     });
 
     return NextResponse.json({ memberProfile: updated });
   } catch (error) {
+    if (error instanceof Error && error.message === "SEAT_LIMIT_REACHED") {
+      return NextResponse.json(
+        { error: "Organization has reached its seat limit." },
+        { status: 403 },
+      );
+    }
     console.error(
       "[API /organizations/[orgId]/members/[memberId] PATCH] error:",
       error,
@@ -213,26 +196,18 @@ export async function DELETE(
       }
     }
 
-    // Only decrement seatsUsed if the member was actually occupying a seat
-    // (active learner). Repeated DELETEs on an already-removed/suspended
-    // member must not push seatsUsed below the real count.
     const wasSeatOccupying =
       target.role === "ORG_LEARNER" && target.status === "ACTIVE";
 
-    await prisma.$transaction([
-      prisma.organizationMemberProfile.update({
+    await prisma.$transaction(async (tx) => {
+      await tx.organizationMemberProfile.update({
         where: { id: memberId },
         data: { status: "REMOVED" },
-      }),
-      ...(wasSeatOccupying
-        ? [
-            prisma.organizationProfile.update({
-              where: { id: access.org.id },
-              data: { seatsUsed: { decrement: 1 } },
-            }),
-          ]
-        : []),
-    ]);
+      });
+      if (wasSeatOccupying) {
+        await releaseSeat(tx, access.org.id);
+      }
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {
