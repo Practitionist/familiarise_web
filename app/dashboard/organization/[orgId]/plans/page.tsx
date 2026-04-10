@@ -2,7 +2,7 @@
 
 import { use, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Pencil } from "lucide-react";
 
 import {
   DashboardHeader,
@@ -84,6 +84,21 @@ async function createPlan(orgId: string, payload: CreatePlanPayload) {
   return body;
 }
 
+async function updatePlan(
+  orgId: string,
+  planId: string,
+  payload: { title?: string; description?: string | null; price?: number; isActive?: boolean },
+) {
+  const res = await fetch(`/api/organizations/${orgId}/plans/${planId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || "Failed to update plan");
+  return body;
+}
+
 async function deletePlan(orgId: string, planId: string) {
   const res = await fetch(`/api/organizations/${orgId}/plans/${planId}`, {
     method: "DELETE",
@@ -139,6 +154,35 @@ export default function OrgPlansPage({
       queryClient.invalidateQueries({ queryKey: ["org-plans", orgId] }),
   });
 
+  // Edit plan state
+  const [editPlan, setEditPlan] = useState<OrgPlan | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDesc, setEditDesc] = useState("");
+  const [editPriceMajor, setEditPriceMajor] = useState("0");
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const openEditPlan = (p: OrgPlan) => {
+    setEditPlan(p);
+    setEditTitle(p.title);
+    setEditDesc(p.description ?? "");
+    setEditPriceMajor(String(p.price / 100));
+    setEditError(null);
+  };
+
+  const editPlanMutation = useMutation({
+    mutationFn: () =>
+      updatePlan(orgId, editPlan!.id, {
+        title: editTitle.trim(),
+        description: editDesc.trim() || null,
+        price: Math.round(parseFloat(editPriceMajor || "0") * 100),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["org-plans", orgId] });
+      setEditPlan(null);
+    },
+    onError: (err: Error) => setEditError(err.message),
+  });
+
   return (
     <>
       <DashboardHeader
@@ -192,15 +236,25 @@ export default function OrgPlansPage({
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Archive plan"
-                          onClick={() => deleteMutation.mutate(p.id)}
-                          disabled={!p.isActive || deleteMutation.isPending}
-                        >
-                          <Trash2 className="h-4 w-4 text-red-500" />
-                        </Button>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label="Edit plan"
+                            onClick={() => openEditPlan(p)}
+                          >
+                            <Pencil className="h-4 w-4 text-zinc-500" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label="Archive plan"
+                            onClick={() => deleteMutation.mutate(p.id)}
+                            disabled={!p.isActive || deleteMutation.isPending}
+                          >
+                            <Trash2 className="h-4 w-4 text-red-500" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -282,6 +336,56 @@ export default function OrgPlansPage({
               disabled={createMutation.isPending || title.length < 2}
             >
               {createMutation.isPending ? "Creating…" : "Create plan"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit plan dialog */}
+      <Dialog open={!!editPlan} onOpenChange={(open) => !open && setEditPlan(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit plan</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit-title">Title</Label>
+              <Input
+                id="edit-title"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-desc">Description</Label>
+              <Input
+                id="edit-desc"
+                value={editDesc}
+                onChange={(e) => setEditDesc(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-price">Price (INR)</Label>
+              <Input
+                id="edit-price"
+                type="number"
+                min="0"
+                step="0.01"
+                value={editPriceMajor}
+                onChange={(e) => setEditPriceMajor(e.target.value)}
+              />
+            </div>
+            {editError && <p className="text-sm text-red-600">{editError}</p>}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditPlan(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => editPlanMutation.mutate()}
+              disabled={editPlanMutation.isPending || editTitle.length < 2}
+            >
+              {editPlanMutation.isPending ? "Saving…" : "Save changes"}
             </Button>
           </DialogFooter>
         </DialogContent>

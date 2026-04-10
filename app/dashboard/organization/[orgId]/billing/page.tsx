@@ -1,8 +1,17 @@
 "use client";
 
-import { use } from "react";
+import { use, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CreditCard, AlertCircle, Sparkles } from "lucide-react";
+import { CreditCard, AlertCircle, Sparkles, Plus, Trash2 } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 import {
   DashboardHeader,
@@ -122,21 +131,69 @@ export default function OrgBillingPage({
     },
   });
 
+  // Manual invoice composer state
+  const [showComposer, setShowComposer] = useState(false);
+  const [lineItems, setLineItems] = useState([
+    { description: "", quantity: 1, unitPrice: "" },
+  ]);
+  const [taxRate, setTaxRate] = useState("");
+  const [gstin, setGstin] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [composerError, setComposerError] = useState<string | null>(null);
+
+  async function createInvoice() {
+    setComposerError(null);
+    const items = lineItems
+      .filter((li) => li.description.trim())
+      .map((li) => ({
+        description: li.description.trim(),
+        quantity: li.quantity,
+        unitPrice: Math.round(parseFloat(li.unitPrice || "0") * 100),
+      }));
+    if (items.length === 0) {
+      setComposerError("Add at least one line item.");
+      return;
+    }
+    const res = await fetch(`/api/organizations/${orgId}/billing/invoices`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        items,
+        taxRate: taxRate ? parseFloat(taxRate) : undefined,
+        gstin: gstin || undefined,
+        dueDate: dueDate || undefined,
+      }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      setComposerError(body.error || "Failed to create invoice");
+      return;
+    }
+    queryClient.invalidateQueries({ queryKey: ["org-billing-invoices", orgId] });
+    setShowComposer(false);
+    setLineItems([{ description: "", quantity: 1, unitPrice: "" }]);
+  }
+
   return (
     <>
       <DashboardHeader
         title="Billing"
         subtitle="Invoices, charges, and outstanding balance"
         actions={
-          summary.data?.billingMode === "INVOICED_MONTHLY" && (
-            <Button
-              size="sm"
-              onClick={() => generateMutation.mutate()}
-              disabled={generateMutation.isPending}
-            >
-              <Sparkles className="h-4 w-4 mr-1" /> Generate invoice
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => setShowComposer(true)}>
+              <Plus className="h-4 w-4 mr-1" /> Create invoice
             </Button>
-          )
+            {summary.data?.billingMode === "INVOICED_MONTHLY" && (
+              <Button
+                size="sm"
+                onClick={() => generateMutation.mutate()}
+                disabled={generateMutation.isPending}
+              >
+                <Sparkles className="h-4 w-4 mr-1" /> Generate invoice
+              </Button>
+            )}
+          </div>
         }
       />
       <DashboardContent>
@@ -265,6 +322,122 @@ export default function OrgBillingPage({
           </CardContent>
         </Card>
       </DashboardContent>
+
+      {/* Manual invoice composer dialog */}
+      <Dialog open={showComposer} onOpenChange={setShowComposer}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Create manual invoice</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Line items</Label>
+              {lineItems.map((li, i) => (
+                <div key={i} className="flex gap-2 items-end">
+                  <Input
+                    placeholder="Description"
+                    value={li.description}
+                    onChange={(e) => {
+                      const next = [...lineItems];
+                      next[i] = { ...next[i], description: e.target.value };
+                      setLineItems(next);
+                    }}
+                    className="flex-1"
+                  />
+                  <Input
+                    placeholder="Qty"
+                    type="number"
+                    min={1}
+                    value={li.quantity}
+                    onChange={(e) => {
+                      const next = [...lineItems];
+                      next[i] = { ...next[i], quantity: parseInt(e.target.value) || 1 };
+                      setLineItems(next);
+                    }}
+                    className="w-16"
+                  />
+                  <Input
+                    placeholder="Price (INR)"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={li.unitPrice}
+                    onChange={(e) => {
+                      const next = [...lineItems];
+                      next[i] = { ...next[i], unitPrice: e.target.value };
+                      setLineItems(next);
+                    }}
+                    className="w-28"
+                  />
+                  {lineItems.length > 1 && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() =>
+                        setLineItems(lineItems.filter((_, j) => j !== i))
+                      }
+                    >
+                      <Trash2 className="h-4 w-4 text-red-400" />
+                    </Button>
+                  )}
+                </div>
+              ))}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  setLineItems([...lineItems, { description: "", quantity: 1, unitPrice: "" }])
+                }
+              >
+                <Plus className="h-4 w-4 mr-1" /> Add line
+              </Button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="inv-tax">Tax rate (0-1)</Label>
+                <Input
+                  id="inv-tax"
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={taxRate}
+                  onChange={(e) => setTaxRate(e.target.value)}
+                  placeholder="e.g., 0.18"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="inv-gstin">GSTIN</Label>
+                <Input
+                  id="inv-gstin"
+                  value={gstin}
+                  onChange={(e) => setGstin(e.target.value)}
+                  placeholder="Optional"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="inv-due">Due date</Label>
+              <Input
+                id="inv-due"
+                type="date"
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+              />
+            </div>
+            {composerError && (
+              <p className="text-sm text-red-600">{composerError}</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowComposer(false)}>
+              Cancel
+            </Button>
+            <Button onClick={createInvoice}>Create invoice</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
