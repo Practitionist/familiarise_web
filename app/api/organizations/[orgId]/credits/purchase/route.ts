@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { createRazorpayOrder } from "@/lib/payments/core/razorpay";
 
 const purchaseSchema = z.object({
   amountPaise: z.number().int().positive(),
@@ -58,12 +59,30 @@ export async function POST(
       },
     });
 
+    // Create a Razorpay order. The webhook (payment.captured / order.paid)
+    // matches by metadata.type=credit_purchase + metadata.purchaseId to
+    // call purchaseCredits() and increment the pool.
+    const order = await createRazorpayOrder({
+      amount: amountPaise,
+      currency: "INR",
+      metadata: {
+        appointmentId: purchase.id,
+        appointmentType: "ORG_CREDIT_PURCHASE",
+        orgId,
+        purchaseId: purchase.id,
+        orgProfileId: access.org.id,
+        type: "credit_purchase",
+      },
+      paymentGateway: "RAZORPAY",
+    });
+
     return NextResponse.json(
       {
-        pendingPhaseJ: true,
-        purchase,
-        message:
-          "Gateway checkout for credit packs ships in Phase J (org-credits service).",
+        orderId: order.id,
+        amount: order.amount,
+        currency: order.currency,
+        purchaseId: purchase.id,
+        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
       },
       { status: 201 },
     );
@@ -73,7 +92,12 @@ export async function POST(
       error,
     );
     return NextResponse.json(
-      { error: "Failed to initiate credit purchase" },
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to initiate credit purchase",
+      },
       { status: 500 },
     );
   }

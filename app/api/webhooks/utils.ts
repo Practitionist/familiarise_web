@@ -17,6 +17,46 @@ export {
   handlePaymentSuccess,
   handlePaymentFailure,
 } from "@/lib/payments/webhooks/handlers";
+import { purchaseCredits } from "@/lib/payments/operations/org-credits";
+
+/**
+ * Handle org-specific payment success (credit_purchase or invoice_payment).
+ * These bypass the standard handlePaymentSuccess flow because they don't
+ * involve appointments or booking confirmations.
+ */
+export async function handleOrgPaymentSuccess(
+  notes: Record<string, string>,
+): Promise<void> {
+  if (notes.type === "credit_purchase") {
+    const { purchaseId, orgProfileId } = notes;
+    if (!purchaseId || !orgProfileId) {
+      console.error("[Webhook] credit_purchase missing purchaseId or orgProfileId");
+      return;
+    }
+    const purchase = await prisma.orgCreditPurchase.findUnique({
+      where: { id: purchaseId },
+    });
+    if (!purchase) {
+      console.error(`[Webhook] OrgCreditPurchase not found: ${purchaseId}`);
+      return;
+    }
+    await prisma.$transaction(async (tx) => {
+      await purchaseCredits(tx, orgProfileId, purchase.creditsPurchased);
+    });
+    console.log(`[Webhook] Credit purchase completed: ${purchaseId}, credits: ${purchase.creditsPurchased}`);
+  } else if (notes.type === "invoice_payment") {
+    const { invoiceId } = notes;
+    if (!invoiceId) {
+      console.error("[Webhook] invoice_payment missing invoiceId");
+      return;
+    }
+    await prisma.organizationInvoice.update({
+      where: { id: invoiceId },
+      data: { status: "PAID", paidAt: new Date() },
+    });
+    console.log(`[Webhook] Invoice paid: ${invoiceId}`);
+  }
+}
 
 /**
  * Lightweight DB health check for webhook handlers.

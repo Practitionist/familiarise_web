@@ -121,13 +121,35 @@ export default function OrgBillingPage({
 
   const payMutation = useMutation({
     mutationFn: (invoiceId: string) => payInvoice(orgId, invoiceId),
-    onSuccess: (result: { pendingPhaseK?: boolean; message?: string }) => {
-      if (result.pendingPhaseK) {
-        alert(result.message ?? "Gateway integration coming soon.");
+    onSuccess: (result: {
+      orderId?: string;
+      key?: string;
+      amount?: number;
+    }) => {
+      if (result.orderId && result.key && typeof window !== "undefined") {
+        const options = {
+          key: result.key,
+          amount: result.amount,
+          currency: "INR",
+          name: "Familiarise",
+          description: "Invoice Payment",
+          order_id: result.orderId,
+          handler: () => {
+            queryClient.invalidateQueries({
+              queryKey: ["org-billing-invoices", orgId],
+            });
+            queryClient.invalidateQueries({
+              queryKey: ["org-billing", orgId],
+            });
+          },
+        };
+        const rzp = new (window as unknown as { Razorpay: new (opts: unknown) => { open: () => void } }).Razorpay(options);
+        rzp.open();
+      } else {
+        queryClient.invalidateQueries({
+          queryKey: ["org-billing-invoices", orgId],
+        });
       }
-      queryClient.invalidateQueries({
-        queryKey: ["org-billing-invoices", orgId],
-      });
     },
   });
 
@@ -297,10 +319,10 @@ export default function OrgBillingPage({
                           <Button
                             size="sm"
                             variant="outline"
-                            disabled
-                            title="Gateway integration coming soon"
+                            onClick={() => payMutation.mutate(inv.id)}
+                            disabled={payMutation.isPending}
                           >
-                            Pay (coming soon)
+                            Pay
                           </Button>
                         )}
                       </TableCell>

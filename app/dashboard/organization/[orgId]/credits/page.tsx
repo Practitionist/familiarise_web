@@ -88,12 +88,31 @@ export default function OrgCreditsPage({
   const purchaseMutation = useMutation({
     mutationFn: () =>
       purchaseCredits(orgId, Math.round(parseFloat(amountMajor || "0") * 100)),
-    onSuccess: (result: { pendingPhaseJ?: boolean; message?: string }) => {
-      if (result.pendingPhaseJ) {
-        alert(result.message ?? "Gateway integration coming soon.");
+    onSuccess: (result: {
+      orderId?: string;
+      key?: string;
+      amount?: number;
+    }) => {
+      if (result.orderId && result.key && typeof window !== "undefined") {
+        // Open Razorpay checkout popup
+        const options = {
+          key: result.key,
+          amount: result.amount,
+          currency: "INR",
+          name: "Familiarise",
+          description: "Credit Pack Purchase",
+          order_id: result.orderId,
+          handler: () => {
+            setShowBuy(false);
+            queryClient.invalidateQueries({ queryKey: ["org-credits", orgId] });
+          },
+        };
+        const rzp = new (window as unknown as { Razorpay: new (opts: unknown) => { open: () => void } }).Razorpay(options);
+        rzp.open();
+      } else {
+        setShowBuy(false);
+        queryClient.invalidateQueries({ queryKey: ["org-credits", orgId] });
       }
-      setShowBuy(false);
-      queryClient.invalidateQueries({ queryKey: ["org-credits", orgId] });
     },
   });
 
@@ -106,8 +125,8 @@ export default function OrgCreditsPage({
         subtitle="Pre-purchased credit pool used by SEAT_PACK billing"
         actions={
           !wrongMode && (
-            <Button size="sm" disabled title="Gateway integration coming soon">
-              <Plus className="h-4 w-4 mr-1" /> Buy credits (coming soon)
+            <Button size="sm" onClick={() => setShowBuy(true)}>
+              <Plus className="h-4 w-4 mr-1" /> Buy credits
             </Button>
           )
         }

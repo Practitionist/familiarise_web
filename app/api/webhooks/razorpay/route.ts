@@ -3,6 +3,7 @@ import { after } from "next/server";
 import {
   handlePaymentFailure,
   handlePaymentSuccess,
+  handleOrgPaymentSuccess,
   handleRefundCreated,
   handleDisputeCreated,
   handleDisputeUpdated,
@@ -179,19 +180,37 @@ async function processWebhookEvent(
     switch (eventType) {
       case "payment.captured": {
         const capturedEvent = razorpayPaymentCapturedEventSchema.parse(event);
-        await handlePaymentSuccess(
-          capturedEvent.payload.payment.entity.order_id,
-          capturedEvent.payload.payment.entity.notes || {},
-        );
+        const capturedNotes =
+          (capturedEvent.payload.payment.entity.notes as Record<string, string>) || {};
+        if (
+          capturedNotes.type === "credit_purchase" ||
+          capturedNotes.type === "invoice_payment"
+        ) {
+          await handleOrgPaymentSuccess(capturedNotes);
+        } else {
+          await handlePaymentSuccess(
+            capturedEvent.payload.payment.entity.order_id,
+            capturedNotes,
+          );
+        }
         break;
       }
 
       case "order.paid": {
         const paidEvent = razorpayOrderPaidEventSchema.parse(event);
-        await handlePaymentSuccess(
-          paidEvent.payload.order.entity.id,
-          paidEvent.payload.order.entity.notes || {},
-        );
+        const paidNotes =
+          (paidEvent.payload.order.entity.notes as Record<string, string>) || {};
+        if (
+          paidNotes.type === "credit_purchase" ||
+          paidNotes.type === "invoice_payment"
+        ) {
+          await handleOrgPaymentSuccess(paidNotes);
+        } else {
+          await handlePaymentSuccess(
+            paidEvent.payload.order.entity.id,
+            paidNotes,
+          );
+        }
         break;
       }
 
