@@ -10,6 +10,7 @@ import {
   logClassifiedError,
 } from "@/lib/errors/classification/payment-error-classification";
 import { Prisma } from "@prisma/client";
+import { creditRefund } from "@/lib/payments/operations/org-credits";
 import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -109,6 +110,9 @@ export async function POST(req: NextRequest) {
           appointment: true,
           refunds: true,
           earnings: true,
+          organizationProfile: {
+            select: { id: true, billingMode: true },
+          },
         },
       });
 
@@ -174,30 +178,77 @@ export async function POST(req: NextRequest) {
 
     const { payment, pendingRefund, refundAmount } = phase1Result;
 
-    // PHASE 2: Call external payment gateway OUTSIDE transaction
+    // PHASE 2: Route refund based on payment method
+    //
+    // Enterprise org billing modes:
+    //   - ORG_CREDIT (SEAT_PACK): credit the pool back instead of calling
+    //     the gateway. No real money movement — just a ledger reversal.
+    //   - ORG_INVOICED (INVOICED_MONTHLY): if the invoice hasn't been paid
+    //     yet, unbill the payment so it drops out of the next rollup. If
+    //     already paid, mark as succeeded so the admin can issue a manual
+    //     credit note on the next invoice cycle.
+    //   - CARD / TAG_ONLY: normal gateway refund.
     let refundResult;
-    try {
-      refundResult = await createRefund({
-        paymentIntentId: payment.paymentIntent,
-        amount: refundAmount,
-        reason,
-      });
-    } catch (gatewayError) {
-      // Gateway call failed - mark refund as FAILED
-      await prisma.refund.update({
-        where: { id: pendingRefund.id },
-        data: {
-          status: "FAILED",
-          metadata: {
-            error:
-              gatewayError instanceof Error
-                ? gatewayError.message
-                : "Gateway call failed",
-          },
-        },
-      });
+    const isOrgCreditRefund = payment.paymentMethod === "ORG_CREDIT";
+    const isOrgInvoicedRefund = payment.paymentMethod === "ORG_INVOICED";
 
-      throw gatewayError;
+    if (isOrgCreditRefund && payment.organizationProfileId) {
+      // SEAT_PACK: credit the pool back.
+      await prisma.$transaction(async (tx) => {
+        await creditRefund(
+          tx,
+          payment.organizationProfileId!,
+          refundAmount,
+          payment.id,
+        );
+      });
+      refundResult = {
+        refundId: `org_credit_refund_${crypto.randomUUID()}`,
+        amount: refundAmount,
+        currency: payment.currency,
+        status: "SUCCEEDED" as const,
+        metadata: { method: "ORG_CREDIT", poolCredited: true },
+      };
+    } else if (isOrgInvoicedRefund) {
+      // INVOICED_MONTHLY: unbill the payment if invoice not yet paid.
+      if (payment.billableToOrgInvoiceId) {
+        await prisma.payment.update({
+          where: { id: payment.id },
+          data: { billableToOrgInvoiceId: null },
+        });
+      }
+      refundResult = {
+        refundId: `org_invoiced_refund_${crypto.randomUUID()}`,
+        amount: refundAmount,
+        currency: payment.currency,
+        status: "SUCCEEDED" as const,
+        metadata: { method: "ORG_INVOICED", unbilled: true },
+      };
+    } else {
+      // Standard gateway refund (TAG_ONLY / B2C / CARD).
+      try {
+        refundResult = await createRefund({
+          paymentIntentId: payment.paymentIntent,
+          amount: refundAmount,
+          reason,
+        });
+      } catch (gatewayError) {
+        // Gateway call failed - mark refund as FAILED
+        await prisma.refund.update({
+          where: { id: pendingRefund.id },
+          data: {
+            status: "FAILED",
+            metadata: {
+              error:
+                gatewayError instanceof Error
+                  ? gatewayError.message
+                  : "Gateway call failed",
+            },
+          },
+        });
+
+        throw gatewayError;
+      }
     }
 
     // PHASE 3: Update refund record with gateway result
