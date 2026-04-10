@@ -93,9 +93,9 @@ export default function OrgCreditsPage({
       key?: string;
       amount?: number;
     }) => {
-      if (result.orderId && result.key && typeof window !== "undefined") {
+      if (result.orderId && result.key && result.amount && typeof window !== "undefined") {
         // Open Razorpay checkout popup
-        const options = {
+        const options: RazorpayOptions = {
           key: result.key,
           amount: result.amount,
           currency: "INR",

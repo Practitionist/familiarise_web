@@ -13,7 +13,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-import { OrgInvoiceStatus } from "@prisma/client";
+import { OrgInvoiceStatus, Prisma } from "@prisma/client";
 
 const lineItemSchema = z.object({
   description: z.string().min(1).max(200),
@@ -117,7 +117,7 @@ export async function POST(
         amount,
         currency,
         status: "DRAFT",
-        items: items as unknown as object,
+        items: items as Prisma.InputJsonValue,
         taxAmount: taxRate ? taxAmount : null,
         taxRate: taxRate ?? null,
         hsnCode: hsnCode ?? "999293",

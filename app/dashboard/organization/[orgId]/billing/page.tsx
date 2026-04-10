@@ -126,8 +126,8 @@ export default function OrgBillingPage({
       key?: string;
       amount?: number;
     }) => {
-      if (result.orderId && result.key && typeof window !== "undefined") {
-        const options = {
+      if (result.orderId && result.key && result.amount && typeof window !== "undefined") {
+        const options: RazorpayOptions = {
           key: result.key,
           amount: result.amount,
           currency: "INR",
