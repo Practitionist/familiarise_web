@@ -1,0 +1,105 @@
+/**
+ * Org billing summary — high-level stats card data for the billing dashboard.
+ *
+ * GET — ORG_MANAGER+; returns this-month gross, outstanding invoice total,
+ * billing mode, and (for SEAT_PACK orgs) credit pool snapshot. Cheap aggregate
+ * query — keep it lean. Detail breakdowns live in /billing/invoices and
+ * /credits.
+ */
+
+import { NextRequest, NextResponse } from "next/server";
+import prisma from "@/lib/prisma";
+import { requireOrgAccess } from "@/lib/auth-helpers";
+
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: Promise<{ orgId: string }> },
+) {
+  try {
+    const { orgId } = await params;
+    const access = await requireOrgAccess(orgId, "ORG_MANAGER");
+    if (access.error) return access.error;
+
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    const [
+      monthAggregate,
+      outstandingAggregate,
+      pendingChargesAggregate,
+      creditPool,
+    ] = await Promise.all([
+      // This month's gross — sum of payments tagged to this org regardless of mode.
+      prisma.payment.aggregate({
+        where: {
+          organizationProfileId: access.org.id,
+          createdAt: { gte: monthStart },
+        },
+        _sum: { amount: true },
+        _count: true,
+      }),
+
+      // Outstanding invoices: SENT or OVERDUE.
+      prisma.organizationInvoice.aggregate({
+        where: {
+          organizationProfileId: access.org.id,
+          status: { in: ["SENT", "OVERDUE"] },
+        },
+        _sum: { amount: true },
+        _count: true,
+      }),
+
+      // INVOICED_MONTHLY pending charges: payments not yet rolled into an invoice.
+      access.org.billingMode === "INVOICED_MONTHLY"
+        ? prisma.payment.aggregate({
+            where: {
+              organizationProfileId: access.org.id,
+              billableToOrgInvoiceId: null,
+            },
+            _sum: { amount: true },
+            _count: true,
+          })
+        : Promise.resolve(null),
+
+      // SEAT_PACK credit pool snapshot.
+      access.org.billingMode === "SEAT_PACK"
+        ? prisma.orgCreditPool.findUnique({
+            where: { organizationProfileId: access.org.id },
+          })
+        : Promise.resolve(null),
+    ]);
+
+    return NextResponse.json({
+      billingMode: access.org.billingMode,
+      currency: "INR",
+      monthToDate: {
+        gross: monthAggregate._sum.amount ?? 0,
+        paymentCount: monthAggregate._count,
+      },
+      outstanding: {
+        amount: outstandingAggregate._sum.amount ?? 0,
+        invoiceCount: outstandingAggregate._count,
+      },
+      pendingCharges: pendingChargesAggregate
+        ? {
+            amount: pendingChargesAggregate._sum.amount ?? 0,
+            paymentCount: pendingChargesAggregate._count,
+          }
+        : null,
+      creditPool: creditPool
+        ? {
+            balance: creditPool.balance,
+            totalPurchased: creditPool.totalPurchased,
+          }
+        : null,
+      orgInvoiceCreditLimit: access.org.orgInvoiceCreditLimit,
+      paymentTermsDays: access.org.paymentTermsDays,
+    });
+  } catch (error) {
+    console.error("[API /organizations/[orgId]/billing GET] error:", error);
+    return NextResponse.json(
+      { error: "Failed to fetch billing summary" },
+      { status: 500 },
+    );
+  }
+}

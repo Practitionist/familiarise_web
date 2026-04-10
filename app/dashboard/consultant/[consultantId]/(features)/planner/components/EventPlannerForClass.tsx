@@ -296,6 +296,7 @@ export function EventPlannerForClass({
           topics: formData.topics,
           consultantProfileId: consultantId,
           consultantProfile: null,
+          organizationProfileId: null,
           certificateProvided: formData.certificateProvided ?? false,
           recordingEnabled: formData.recordingEnabled ?? false,
           recordingStoragePolicy: initialData?.classPlan?.recordingStoragePolicy ?? "STREAM_ONLY",
