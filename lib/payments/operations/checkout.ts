@@ -1571,7 +1571,7 @@ export async function handleCheckout(
   if (validatedData.organizationId) {
     const orgProfile = await prisma.organizationProfile.findUnique({
       where: { organizationId: validatedData.organizationId },
-      select: { id: true, billingMode: true, status: true },
+      select: { id: true, billingMode: true, status: true, orgInvoiceCreditLimit: true },
     });
     if (!orgProfile || orgProfile.status !== "ACTIVE") {
       throw new Error("Organization not found or deactivated.");
@@ -1581,6 +1581,10 @@ export async function handleCheckout(
     // allowing any org-funded billing. Without this check, any user could
     // pass another org's ID and drain their credit pool or push bookings
     // onto their invoice. Fail closed — reject if not a member.
+    // NOTE: Any active member may spend org budget (role-blind). This is
+    // intentional — learners, managers, and admins all book on behalf of
+    // the org. If role-based spending restrictions are needed later, add
+    // them here by checking callerMembership.role.
     const callerMembership =
       await prisma.organizationMemberProfile.findFirst({
         where: {
@@ -1594,6 +1598,39 @@ export async function handleCheckout(
       throw new Error(
         "You are not an active member of this organization.",
       );
+    }
+
+    // INVOICED_MONTHLY: enforce orgInvoiceCreditLimit (max outstanding
+    // exposure before new bookings are blocked).
+    if (
+      orgProfile.billingMode === "INVOICED_MONTHLY" &&
+      orgProfile.orgInvoiceCreditLimit !== null
+    ) {
+      const [unbilledAgg, outstandingAgg] = await Promise.all([
+        prisma.payment.aggregate({
+          where: {
+            organizationProfileId: orgProfile.id,
+            paymentStatus: "SUCCEEDED",
+            paymentMethod: "ORG_INVOICED",
+            billableToOrgInvoiceId: null,
+          },
+          _sum: { amount: true },
+        }),
+        prisma.organizationInvoice.aggregate({
+          where: {
+            organizationProfileId: orgProfile.id,
+            status: { in: ["SENT", "OVERDUE"] },
+          },
+          _sum: { amount: true },
+        }),
+      ]);
+      const exposure =
+        (unbilledAgg._sum.amount ?? 0) + (outstandingAgg._sum.amount ?? 0);
+      if (exposure >= orgProfile.orgInvoiceCreditLimit) {
+        throw new Error(
+          "Organization has reached its invoice credit limit. Outstanding invoices must be paid before new bookings.",
+        );
+      }
     }
 
     organizationProfileId = orgProfile.id;

@@ -29,10 +29,11 @@ export async function GET(
       pendingChargesAggregate,
       creditPool,
     ] = await Promise.all([
-      // This month's gross — sum of payments tagged to this org regardless of mode.
+      // This month's gross — only succeeded payments tagged to this org.
       prisma.payment.aggregate({
         where: {
           organizationProfileId: access.org.id,
+          paymentStatus: "SUCCEEDED",
           createdAt: { gte: monthStart },
         },
         _sum: { amount: true },
@@ -49,11 +50,13 @@ export async function GET(
         _count: true,
       }),
 
-      // INVOICED_MONTHLY pending charges: payments not yet rolled into an invoice.
+      // INVOICED_MONTHLY pending charges: succeeded, unbilled payments.
       access.org.billingMode === "INVOICED_MONTHLY"
         ? prisma.payment.aggregate({
             where: {
               organizationProfileId: access.org.id,
+              paymentStatus: "SUCCEEDED",
+              paymentMethod: "ORG_INVOICED",
               billableToOrgInvoiceId: null,
             },
             _sum: { amount: true },

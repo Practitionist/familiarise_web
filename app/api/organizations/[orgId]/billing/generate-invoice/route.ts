@@ -39,11 +39,12 @@ export async function POST(
       );
     }
 
-    // Aggregate every payment tagged to this org that is not yet billed.
-    // Joining `appointment` so the line items can carry the booking type.
+    // Aggregate succeeded ORG_INVOICED payments that are not yet billed.
     const unbilled = await prisma.payment.findMany({
       where: {
         organizationProfileId: access.org.id,
+        paymentStatus: "SUCCEEDED",
+        paymentMethod: "ORG_INVOICED",
         billableToOrgInvoiceId: null,
       },
       select: {
@@ -51,6 +52,10 @@ export async function POST(
         amount: true,
         createdAt: true,
         appointment: { select: { appointmentType: true } },
+        refunds: {
+          where: { status: "SUCCEEDED" },
+          select: { amount: true },
+        },
       },
       orderBy: { createdAt: "asc" },
     });
@@ -62,13 +67,27 @@ export async function POST(
       );
     }
 
-    const subtotal = unbilled.reduce((sum, p) => sum + (p.amount ?? 0), 0);
-    const items = unbilled.map((p) => ({
-      paymentId: p.id,
-      description: `Booking (${p.appointment?.appointmentType ?? "UNKNOWN"})`,
-      quantity: 1,
-      unitPrice: p.amount ?? 0,
-    }));
+    // Net out successful refunds from each payment's billable amount.
+    const itemsWithNet = unbilled.map((p) => {
+      const refundedTotal = p.refunds.reduce((s, r) => s + r.amount, 0);
+      const netAmount = Math.max(0, (p.amount ?? 0) - refundedTotal);
+      return {
+        paymentId: p.id,
+        description: `Booking (${p.appointment?.appointmentType ?? "UNKNOWN"})`,
+        quantity: 1,
+        unitPrice: netAmount,
+      };
+    }).filter((item) => item.unitPrice > 0); // Skip fully-refunded bookings
+
+    if (itemsWithNet.length === 0) {
+      return NextResponse.json(
+        { error: "No billable payments after refund adjustments." },
+        { status: 400 },
+      );
+    }
+
+    const subtotal = itemsWithNet.reduce((sum, item) => sum + item.unitPrice, 0);
+    const items = itemsWithNet;
 
     const periodStart = unbilled[0].createdAt;
     const periodEnd = unbilled[unbilled.length - 1].createdAt;

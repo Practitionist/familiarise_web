@@ -211,6 +211,11 @@ export async function POST(req: NextRequest) {
       };
     } else if (isOrgInvoicedRefund) {
       // INVOICED_MONTHLY: unbill the payment if invoice not yet paid.
+      // TODO(billing): When the payment is already attached to a PAID invoice,
+      // this only unbills it — the OrganizationInvoice.amount and items are NOT
+      // updated. A proper credit-note / invoice adjustment system is needed for
+      // post-payment refunds to keep invoice totals correct. For now, the admin
+      // must manually reconcile the invoice. See PR #655 review round 5.
       if (payment.billableToOrgInvoiceId) {
         await prisma.payment.update({
           where: { id: payment.id },

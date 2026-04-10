@@ -53,18 +53,21 @@ export async function GET(
       prisma.payment.count({
         where: {
           organizationProfileId: access.org.id,
+          paymentStatus: "SUCCEEDED",
           createdAt: { gte: monthStart },
         },
       }),
       prisma.payment.count({
         where: {
           organizationProfileId: access.org.id,
+          paymentStatus: "SUCCEEDED",
           createdAt: { gte: lastMonthStart, lt: monthStart },
         },
       }),
       prisma.payment.aggregate({
         where: {
           organizationProfileId: access.org.id,
+          paymentStatus: "SUCCEEDED",
           createdAt: { gte: monthStart },
         },
         _sum: { amount: true },
