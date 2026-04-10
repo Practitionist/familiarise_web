@@ -62,10 +62,10 @@ model User {
   supportTickets   SupportTicket[]
   supportResponses SupportResponse[]
 
-  accounts         Account[]     // BetterAuth Accounts
-  sessions         Session[]     // BetterAuth Sessions
-  members          Member[]      // Organization memberships
-  invitationsSent  Invitation[]  @relation("InvitationsSent")
+  accounts        Account[] // BetterAuth Accounts
+  sessions        Session[] // BetterAuth Sessions
+  members         Member[] // Organization memberships
+  invitationsSent Invitation[] @relation("InvitationsSent")
 
   // Staff Dashboard Relations
   reportsSubmitted  ModerationReport[] @relation("ReportsSubmitted")
@@ -383,8 +383,9 @@ model Organization {
   members     Member[]
   invitations Invitation[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  organizationProfile OrganizationProfile?
 
   @@map("organizations")
 }
@@ -397,6 +398,10 @@ model Member {
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Enterprise: typed sibling profile carrying the typed role enum and
+  // consultant/consultee profile FKs that BetterAuth's Member can't express.
+  organizationMemberProfile OrganizationMemberProfile?
 
   createdAt DateTime @default(now())
 
@@ -419,6 +424,429 @@ model Invitation {
   createdAt DateTime @default(now())
 
   @@map("invitations")
+}
+
+//////////////////////////////////////////////////// ENTERPRISE / ORGANIZATION PROFILES ////////////////////////////////////////////////////
+//
+// This block adds the enterprise layer on top of the BetterAuth Organization/
+// Member/Invitation tables above. The core split:
+//
+//   - BetterAuth tables (identity): name, slug, role-as-string, invitations
+//   - OrganizationProfile (enterprise): kind, billing mode, branding, rates, seats
+//   - OrganizationMemberProfile (typed roles): enum role + status + profile FKs
+//
+// PROVIDER (consultant agency) support is in the schema but gated by the
+// ENABLE_PROVIDER_ORGS environment flag at the API/UI layer. See
+// lib/feature-flags.ts and Issue #646. The PROVIDER-specific tables below are
+// marked with FEATURE-FLAGGED comments — they exist on disk but are inert
+// until the flag is flipped.
+
+model OrganizationProfile {
+  id             String       @id @default(uuid())
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  // Discriminator: BUYER (schools/corporates), PROVIDER (consultant agencies, gated), HYBRID
+  kind        OrganizationKind        @default(BUYER)
+  status      OrganizationStatus      @default(PENDING_VERIFICATION)
+  // BUYER billing model — selected at org creation, immutable after first payment
+  billingMode OrganizationBillingMode @default(TAG_ONLY)
+
+  // Org metadata
+  billingEmail String
+  description  String?        @db.Text
+  industry     String?
+  sizeBucket   OrgSizeBucket?
+  website      String?
+
+  // Branding
+  logo           String?
+  bannerImage    String?
+  primaryColor   String?
+  secondaryColor String?
+
+  // Revenue rates — FEATURE-FLAGGED: only consulted for PROVIDER/HYBRID kinds
+  // when ENABLE_PROVIDER_ORGS is true. BUYER payments use the standard
+  // platform fee unchanged.
+  platformCommissionRate Float @default(0.10) // 10% platform
+  orgRetainRate          Float @default(0.05) // 5% org
+  consultantPayoutRate   Float @default(0.85) // 85% consultant
+  // Validation: rates sum to 1.0 enforced at API layer (PATCH /api/organizations/[id])
+
+  // Buyer settings
+  seatsTotal            Int? // null = unlimited (rare; usually a custom enterprise plan)
+  seatsUsed             Int  @default(0)
+  // INVOICED_MONTHLY: max outstanding invoice balance before new checkouts are blocked
+  orgInvoiceCreditLimit Int? // in paise; null = unlimited
+  // INVOICED_MONTHLY: payment terms (NET-7, NET-15, NET-30, etc.)
+  paymentTermsDays      Int  @default(30)
+
+  // Policies
+  defaultCancellationPolicy String? @db.Text
+  defaultRefundPolicy       String? @db.Text
+  // FEATURE-FLAGGED: only consulted for PROVIDER orgs (auto-approve consultants joining the agency)
+  autoApproveConsultants    Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Sibling relations
+  members         OrganizationMemberProfile[]
+  ssoSettings     OrganizationSSOSettings?
+  invoices        OrganizationInvoice[]
+  plans           OrganizationPlan[]
+  creditPool      OrgCreditPool?
+  creditPurchases OrgCreditPurchase[]
+  creditLedger    OrgCreditLedger[]
+  payments        Payment[] // back-relation for Payment.organizationProfile
+
+  // FEATURE-FLAGGED: PROVIDER org back-relations
+  payoutAccount OrganizationPayoutAccount?
+  payouts       OrganizationPayout[]
+  earnings      OrganizationEarnings[]
+
+  // Catalog plans owned by the org (back-relations)
+  consultationPlans ConsultationPlan[]
+  subscriptionPlans SubscriptionPlan[]
+  webinarPlans      WebinarPlan[]
+  classPlans        ClassPlan[]
+
+  @@index([kind])
+  @@index([status])
+}
+
+enum OrganizationKind {
+  BUYER // Schools, corporates, agencies buying for their employees/students
+  PROVIDER // Consultant agencies hosting multiple consultants (FEATURE-FLAGGED)
+  HYBRID // Both — covers university/training-firm scenarios (FEATURE-FLAGGED)
+}
+
+enum OrganizationStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+}
+
+enum OrganizationBillingMode {
+  TAG_ONLY // Learner pays at checkout; payment is tagged with org for reporting only
+  SEAT_PACK // Org pre-purchases credits; learner checkouts decrement the credit pool
+  INVOICED_MONTHLY // Learners book freely; org gets a NET-X invoice at month-end
+}
+
+enum OrgSizeBucket {
+  SMALL_1_50
+  MEDIUM_51_200
+  LARGE_201_1000
+  ENTERPRISE_1000_PLUS
+}
+
+// Typed sibling for BetterAuth's Member table.
+// BetterAuth's Member.role is a String; we mirror it here as a typed enum
+// and add the consultant/consultee profile FKs that BetterAuth doesn't know about.
+model OrganizationMemberProfile {
+  id                    String              @id @default(uuid())
+  memberId              String              @unique // FK to BetterAuth Member.id
+  member                Member              @relation(fields: [memberId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  organizationProfileId String
+  organizationProfile   OrganizationProfile @relation(fields: [organizationProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  role   OrgMemberRole
+  status OrgMemberStatus @default(ACTIVE)
+
+  // Profile links (only one of these is set per member, based on role)
+  // ORG_LEARNER → consulteeProfileId set
+  // ORG_CONSULTANT (FEATURE-FLAGGED) → consultantProfileId set
+  // Other roles (OWNER/ADMIN/MANAGER/SUPPORT) → both null, just metadata
+  consultantProfileId String?            @unique
+  consultantProfile   ConsultantProfile? @relation("OrgMemberConsultant", fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+  consulteeProfileId  String?            @unique
+  consulteeProfile    ConsulteeProfile?  @relation("OrgMemberConsultee", fields: [consulteeProfileId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+
+  // FEATURE-FLAGGED: per-consultant rate override for PROVIDER orgs.
+  // null = use org's consultantPayoutRate.
+  customConsultantPayoutRate Float?
+
+  // BUYER seat metadata
+  seatAssignedAt DateTime? // when an ORG_LEARNER was assigned a seat (for invoiced/seat-pack reporting)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationProfileId])
+  @@index([role])
+  @@index([status])
+}
+
+enum OrgMemberRole {
+  ORG_OWNER // Full control: billing, deletion, settings, members. Both kinds.
+  ORG_ADMIN // Members + plans + settings (no billing/deletion). Both kinds.
+  ORG_MANAGER // BUYER: team analytics + seat mgmt. PROVIDER: consultant earnings view.
+  ORG_CONSULTANT // PROVIDER only — provides services on behalf of the org. FEATURE-FLAGGED.
+  ORG_LEARNER // BUYER only — employee/student consuming sessions.
+  ORG_SUPPORT // Either — support staff with no billing access. FEATURE-FLAGGED for PROVIDER.
+}
+
+enum OrgMemberStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  REMOVED
+}
+
+// SSO settings — our policy fields. The actual SAML/OIDC provider config
+// lives in BetterAuth's auto-generated `ssoProvider` table (one provider per
+// row, linked to organizationId).
+model OrganizationSSOSettings {
+  id                    String              @id @default(uuid())
+  organizationProfileId String              @unique
+  organizationProfile   OrganizationProfile @relation(fields: [organizationProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  // Comma-separated email domains (e.g. ["acme.com", "acme.edu"]) that this
+  // org claims. Used by the signin domain router in middleware.ts.
+  allowedEmailDomains String[] @default([])
+
+  // If true, users with an email matching allowedEmailDomains MUST sign in
+  // via the org's SSO provider. Personal Google/GitHub OAuth is rejected.
+  enforceSSO Boolean @default(false)
+
+  // Default role assigned when a new user auto-joins via SSO domain match.
+  defaultRoleForAutoJoin OrgMemberRole @default(ORG_LEARNER)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// FEATURE-FLAGGED: PROVIDER org payout account (where the org's slice goes).
+// Schema-only — no API/UI without ENABLE_PROVIDER_ORGS=true. See Issue #646.
+model OrganizationPayoutAccount {
+  id                    String              @id @default(uuid())
+  organizationProfileId String              @unique
+  organizationProfile   OrganizationProfile @relation(fields: [organizationProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  // Bank details (encrypted at rest in production — base64 stub for now)
+  accountHolderName      String
+  accountNumberEncrypted String
+  accountNumberLast4     String
+  bankName               String
+  ifscCode               String?
+  routingNumber          String?
+  swiftCode              String?
+
+  // Gateway IDs
+  stripeConnectId       String? @unique
+  razorpayContactId     String? @unique
+  razorpayFundAccountId String?
+
+  status     OrgPayoutAccountStatus @default(PENDING_VERIFICATION)
+  verifiedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum OrgPayoutAccountStatus {
+  PENDING_VERIFICATION
+  VERIFIED
+  FAILED_VERIFICATION
+  SUSPENDED
+}
+
+// FEATURE-FLAGGED: PROVIDER org payout history. Schema-only.
+model OrganizationPayout {
+  id                    String              @id @default(uuid())
+  organizationProfileId String
+  organizationProfile   OrganizationProfile @relation(fields: [organizationProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  amount         Int // in paise
+  currency       String         @default("INR")
+  status         PayoutStatus   @default(PENDING) // reuses existing PayoutStatus enum
+  paymentGateway PaymentGateway
+
+  // Period covered
+  periodStart DateTime
+  periodEnd   DateTime
+
+  // Breakdown
+  grossRevenue Int
+  platformFee  Int
+  refunds      Int @default(0)
+  netPayout    Int
+
+  // Gateway tracking
+  payoutReference String?
+  failureReason   String?
+  processedAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationProfileId])
+  @@index([status])
+  @@index([periodStart, periodEnd])
+}
+
+// FEATURE-FLAGGED: PROVIDER org earnings (org's slice of each payment).
+// Parallel to ConsultantEarnings — kept separate so each party's payout
+// status is tracked independently. Schema-only.
+model OrganizationEarnings {
+  id                    String              @id @default(uuid())
+  organizationProfileId String
+  organizationProfile   OrganizationProfile @relation(fields: [organizationProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  paymentId String  @unique
+  payment   Payment @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  grossAmount    Int // in paise — same as Payment.originalAmount
+  platformFee    Int // platform's slice (10% by default)
+  orgShare       Int // org's slice (5% by default)
+  refundedAmount Int @default(0)
+
+  status    EarningStatus @default(PENDING) // reuses existing EarningStatus enum
+  holdUntil DateTime
+  currency  String        @default("INR")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationProfileId])
+  @@index([status])
+}
+
+// Org-level invoices. Used by:
+//   - INVOICED_MONTHLY billing mode (BUYER) — auto-generated monthly by cron
+//   - PROVIDER orgs (FEATURE-FLAGGED) — periodic settlement statements
+//   - Manual invoicing (ORG_OWNER) — ad-hoc charges
+model OrganizationInvoice {
+  id                    String              @id @default(uuid())
+  organizationProfileId String
+  organizationProfile   OrganizationProfile @relation(fields: [organizationProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  invoiceNumber String           @unique
+  amount        Int // in paise
+  currency      String           @default("INR")
+  status        OrgInvoiceStatus @default(DRAFT)
+
+  // Line items as JSON: [{ description, quantity, unitPrice, paymentId? }, ...]
+  items Json
+
+  // GST compliance (Indian tax regulations)
+  taxAmount Int?
+  taxRate   Float?
+  hsnCode   String? @default("999293") // SAC code for educational services
+  gstin     String?
+
+  // Optional FK to a Payment if this invoice was paid via the standard checkout
+  paymentId String?  @unique
+  payment   Payment? @relation("OrgInvoicePayment", fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+
+  // INVOICED_MONTHLY billing mode metadata
+  billingCycleStart DateTime?
+  billingCycleEnd   DateTime?
+  autoGenerated     Boolean   @default(false) // true = generated by monthly cron, false = manual
+
+  // Status timestamps
+  dueDate DateTime?
+  paidAt  DateTime?
+  pdfUrl  String? // populated by Issue #438 invoice PDF rendering (deferred)
+
+  // Back-relation: payments billed against this invoice (INVOICED_MONTHLY)
+  billedPayments Payment[] @relation("PaymentBillableToOrgInvoice")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationProfileId])
+  @@index([status])
+  @@index([dueDate])
+  @@index([billingCycleStart, billingCycleEnd])
+}
+
+enum OrgInvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+// Org-owned catalog plans. These are templates that the org curates for its
+// members. Distinct from per-consultant plans (ConsultationPlan etc.) — when
+// rendered to learners, the org's plans show up alongside or instead of the
+// consultant's own plans, depending on settings.
+model OrganizationPlan {
+  id                    String              @id @default(uuid())
+  organizationProfileId String
+  organizationProfile   OrganizationProfile @relation(fields: [organizationProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  planType      AppointmentsType // CONSULTATION | SUBSCRIPTION | WEBINAR | CLASS | TRIAL
+  title         String
+  description   String?          @db.Text
+  price         Int // in paise
+  priceCurrency String           @default("INR")
+
+  isActive Boolean @default(true)
+  config   Json // type-specific JSON (durationInHours, callsPerWeek, maxParticipants, etc.)
+
+  // Which consultants this plan is assigned to (for PROVIDER orgs that pool
+  // multiple consultants). Empty array = any org consultant can fulfill.
+  // FEATURE-FLAGGED for non-empty assignment.
+  assignedConsultantIds String[] @default([])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationProfileId])
+  @@index([planType])
+}
+
+// SEAT_PACK billing — credit pool. Org owner pre-purchases credits via gateway,
+// learners draw down on each booking.
+model OrgCreditPool {
+  id                    String              @id @default(uuid())
+  organizationProfileId String              @unique
+  organizationProfile   OrganizationProfile @relation(fields: [organizationProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  balance        Int    @default(0) // in paise (1 paise = 1 credit unit, for simplicity)
+  totalPurchased Int    @default(0) // lifetime total credits purchased
+  currency       String @default("INR")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model OrgCreditPurchase {
+  id                    String              @id @default(uuid())
+  organizationProfileId String
+  organizationProfile   OrganizationProfile @relation(fields: [organizationProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  creditsPurchased Int // amount added to OrgCreditPool.balance
+  amountPaid       Int // in paise (gateway charge)
+  currency         String   @default("INR")
+  paymentId        String?  @unique
+  payment          Payment? @relation("OrgCreditPurchasePayment", fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+
+  expiresAt   DateTime? // optional credit expiry (unused for MVP)
+  purchasedAt DateTime  @default(now())
+
+  @@index([organizationProfileId])
+}
+
+// Immutable ledger of every credit grant/debit. One row per state change.
+model OrgCreditLedger {
+  id                    String              @id @default(uuid())
+  organizationProfileId String
+  organizationProfile   OrganizationProfile @relation(fields: [organizationProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  delta           Int // signed: + for purchase/refund, - for booking deduction
+  reason          String // "purchase" | "booking" | "refund" | "adjustment" | etc.
+  paymentId       String? // FK to the booking Payment for "booking"/"refund" rows
+  memberProfileId String? // who consumed (ORG_LEARNER), if applicable
+  balanceAfter    Int // running balance after this entry
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationProfileId, createdAt])
 }
 
 //////////////////////////////////////////////////// USER PROFILES and SLOTTING MECHANISM ////////////////////////////////////////////////////
@@ -495,6 +923,11 @@ model ConsultantProfile {
   totalRevenue   Int @default(0)
   pendingRevenue Int @default(0)
 
+  // Enterprise: optional org membership (FEATURE-FLAGGED for PROVIDER orgs).
+  // null = independent consultant (most B2C consultants).
+  organizationMemberProfile OrganizationMemberProfile? @relation("OrgMemberConsultant")
+  isIndependent             Boolean                    @default(true)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -561,10 +994,10 @@ model ConsultantReview {
 }
 
 model ConsulteeProfile {
-  id                           String            @id @default(uuid())
-  aboutMe                      String?           @db.Text
-  preferredLanguage            String?
-  goals                        String?           @db.Text
+  id                String  @id @default(uuid())
+  aboutMe           String? @db.Text
+  preferredLanguage String?
+  goals             String? @db.Text
 
   careerStage      CareerStage?
   skillsToDevelop  String[]          @default([])
@@ -579,6 +1012,11 @@ model ConsulteeProfile {
 
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String @unique
+
+  // Enterprise: optional org membership for ORG_LEARNERs (BUYER orgs).
+  // null = independent learner (most B2C consultees).
+  organizationMemberProfile OrganizationMemberProfile? @relation("OrgMemberConsultee")
+  isIndependent             Boolean                    @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -761,11 +1199,17 @@ model ConsultationPlan {
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
 
+  // Enterprise: optional org ownership for catalog plans curated at the org level
+  organizationProfile   OrganizationProfile? @relation(fields: [organizationProfileId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+  organizationProfileId String?
+
   consultations Consultation[]
   materials     PlanMaterial[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([organizationProfileId])
 }
 
 model Consultation {
@@ -829,6 +1273,10 @@ model SubscriptionPlan {
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
 
+  // Enterprise: optional org ownership
+  organizationProfile   OrganizationProfile? @relation(fields: [organizationProfileId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+  organizationProfileId String?
+
   subscriptions        Subscription[]
   subscriptionContents SubscriptionContent[]
   trialSessions        TrialSession[]
@@ -836,6 +1284,8 @@ model SubscriptionPlan {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([organizationProfileId])
 }
 
 model Subscription {
@@ -985,34 +1435,40 @@ enum BookingSource {
 
 // Many-Many Webinar
 model WebinarPlan {
-  id                  String   @id @default(cuid())
-  title               String
-  topics              Topic[]  @relation("TopicToWebinarPlan")
-  description         String?  @db.Text
-  price               Int // in paise (smallest currency unit, e.g. 50000 = ₹500)
-  priceCurrency       String   @default("INR")
-  certificateProvided Boolean  @default(false)
+  id                     String                 @id @default(cuid())
+  title                  String
+  topics                 Topic[]                @relation("TopicToWebinarPlan")
+  description            String?                @db.Text
+  price                  Int // in paise (smallest currency unit, e.g. 50000 = ₹500)
+  priceCurrency          String                 @default("INR")
+  certificateProvided    Boolean                @default(false)
   recordingEnabled       Boolean                @default(false) // Allow consultant to record sessions
   recordingStoragePolicy RecordingStoragePolicy @default(STREAM_ONLY)
   durationInHours        Float                  @default(1) // Duration in hours
   maxParticipants        Int                    @default(100)
-  language            String?  @default("English")
-  level               String?  @default("Beginner")
-  prerequisites       String?  @default("None")
-  materialProvided    String?  @default("None")
-  learningOutcomes    String[] @default([])
-  imageUrl            String?
+  language               String?                @default("English")
+  level                  String?                @default("Beginner")
+  prerequisites          String?                @default("None")
+  materialProvided       String?                @default("None")
+  learningOutcomes       String[]               @default([])
+  imageUrl               String?
 
-  consultantProfile   ConsultantProfile?    @relation(fields: [consultantProfileId], references: [id])
+  consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
   consultantProfileId String?
-  webinars            Webinar[]
-  materials           PlanMaterial[]
-  collaborators       WebinarCollaborator[]
+
+  // Enterprise: optional org ownership
+  organizationProfile   OrganizationProfile? @relation(fields: [organizationProfileId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+  organizationProfileId String?
+
+  webinars      Webinar[]
+  materials     PlanMaterial[]
+  collaborators WebinarCollaborator[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([consultantProfileId])
+  @@index([organizationProfileId])
 }
 
 model Webinar {
@@ -1042,40 +1498,46 @@ enum WebinarStatus {
 
 // Many-Many Class
 model ClassPlan {
-  id                     String           @id @default(cuid())
+  id                     String                 @id @default(cuid())
   title                  String
-  description            String           @db.Text
-  topics                 Topic[]          @relation("TopicToClassPlan")
+  description            String                 @db.Text
+  topics                 Topic[]                @relation("TopicToClassPlan")
   classContents          ClassContent[]
   price                  Int // in paise (smallest currency unit, e.g. 50000 = ₹500)
-  priceCurrency          String           @default("INR")
+  priceCurrency          String                 @default("INR")
   certificateProvided    Boolean                @default(false)
   recordingEnabled       Boolean                @default(false) // Allow consultant to record sessions
   recordingStoragePolicy RecordingStoragePolicy @default(STREAM_ONLY)
   durationInMonths       Int                    @default(1) // Duration in months
-  meetingsPerWeek        Int              @default(1)
-  sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
-  totalSessions          Int              @default(4) // meetingsPerWeek × durationInMonths × 4
-  totalHours             Float            @default(4.0) // totalSessions × sessionDurationInHours
-  emailSupport           PlanEmailSupport @default(GENERAL)
-  maxParticipants        Int              @default(1)
-  language               String?          @default("English")
-  level                  String?          @default("Beginner")
-  prerequisites          String?          @default("None")
-  materialProvided       String?          @default("None")
-  learningOutcomes       String[]         @default([])
+  meetingsPerWeek        Int                    @default(1)
+  sessionDurationInHours Float                  @default(1.0) // Duration of each session in hours
+  totalSessions          Int                    @default(4) // meetingsPerWeek × durationInMonths × 4
+  totalHours             Float                  @default(4.0) // totalSessions × sessionDurationInHours
+  emailSupport           PlanEmailSupport       @default(GENERAL)
+  maxParticipants        Int                    @default(1)
+  language               String?                @default("English")
+  level                  String?                @default("Beginner")
+  prerequisites          String?                @default("None")
+  materialProvided       String?                @default("None")
+  learningOutcomes       String[]               @default([])
   imageUrl               String?
 
-  consultantProfile   ConsultantProfile?  @relation(fields: [consultantProfileId], references: [id])
+  consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
   consultantProfileId String?
-  classes             Class[]
-  materials           PlanMaterial[]
-  collaborators       ClassCollaborator[]
+
+  // Enterprise: optional org ownership
+  organizationProfile   OrganizationProfile? @relation(fields: [organizationProfileId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+  organizationProfileId String?
+
+  classes       Class[]
+  materials     PlanMaterial[]
+  collaborators ClassCollaborator[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([consultantProfileId])
+  @@index([organizationProfileId])
 }
 
 model Class {
@@ -1426,7 +1888,7 @@ enum RecordingStorageType {
 
 // Recording storage policy for plans (determines where recordings are stored)
 enum RecordingStoragePolicy {
-  STREAM_ONLY        // 2-week temporary storage (free tier)
+  STREAM_ONLY // 2-week temporary storage (free tier)
   SUPABASE_PERMANENT // Permanent storage (premium tier)
 }
 
@@ -1514,10 +1976,10 @@ model Payment {
   isMockPayment  Boolean        @default(false) // For development: mock payments skip gateway calls
 
   // International payment tracking
-  buyerCountry           String?  // ISO 3166-1 alpha-2 code detected at checkout
-  isInternational        Boolean  @default(false) // Denormalized for query efficiency
+  buyerCountry              String? // ISO 3166-1 alpha-2 code detected at checkout
+  isInternational           Boolean @default(false) // Denormalized for query efficiency
   displayCurrencyAtCheckout String? @db.VarChar(3) // Currency code shown to the buyer at checkout
-  exchangeRateAtCheckout Float?   // Snapshot of INR→displayCurrencyAtCheckout for audit
+  exchangeRateAtCheckout    Float? // Snapshot of INR→displayCurrencyAtCheckout for audit
 
   user           User          @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId         String
@@ -1534,6 +1996,22 @@ model Payment {
   creditUsages ReferralCreditUsage[]
   invoice      Invoice?
 
+  // Enterprise: optional org tagging.
+  // Set on payments made by an org member (BUYER mode TAG_ONLY/SEAT_PACK/INVOICED_MONTHLY).
+  // FEATURE-FLAGGED: PROVIDER orgs use the same tag but trigger 3-way split logic.
+  organizationProfile   OrganizationProfile? @relation(fields: [organizationProfileId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+  organizationProfileId String?
+
+  // INVOICED_MONTHLY: rolled up into this org invoice when the cron runs.
+  // null = not yet billed (still in this month's pending charges).
+  billableToOrgInvoice   OrganizationInvoice? @relation("PaymentBillableToOrgInvoice", fields: [billableToOrgInvoiceId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+  billableToOrgInvoiceId String?
+
+  // Back-relations for org settlement flows
+  organizationEarnings       OrganizationEarnings? // FEATURE-FLAGGED: PROVIDER 3-way split
+  organizationInvoiceSettled OrganizationInvoice?  @relation("OrgInvoicePayment") // back-relation for OrganizationInvoice.payment
+  orgCreditPurchase          OrgCreditPurchase?    @relation("OrgCreditPurchasePayment") // back-relation for OrgCreditPurchase.payment
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1545,6 +2023,8 @@ model Payment {
   @@index([userId])
   @@index([appointmentId])
   @@index([paymentStatus, createdAt])
+  @@index([organizationProfileId])
+  @@index([billableToOrgInvoiceId])
 }
 
 enum PaymentGateway {
@@ -1563,16 +2043,16 @@ enum PaymentStatus {
 }
 
 model Refund {
-  id             String         @id @default(uuid())
-  amount         Int // Amount refunded in smallest currency unit (e.g., cents for USD)
-  currency       String
-  reason         String? // Reason for refund
-  status         RefundStatus
-  refundId       String         @unique // Gateway-specific refund ID (Stripe/Razorpay)
-  paymentGateway PaymentGateway
+  id                   String         @id @default(uuid())
+  amount               Int // Amount refunded in smallest currency unit (e.g., cents for USD)
+  currency             String
+  reason               String? // Reason for refund
+  status               RefundStatus
+  refundId             String         @unique // Gateway-specific refund ID (Stripe/Razorpay)
+  paymentGateway       PaymentGateway
   metadata             Json? // Additional gateway-specific metadata
   exchangeRateAtRefund Float? // INR→displayCurrency rate snapshot at refund time
-  displayCurrency      String? @db.VarChar(3) // Currency the buyer originally saw
+  displayCurrency      String?        @db.VarChar(3) // Currency the buyer originally saw
 
   payment   Payment @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   paymentId String
@@ -1710,9 +2190,9 @@ model Payout {
   batchId             String?
 
   // TDS (Tax Deducted at Source) — Section 194J
-  tdsDeducted Int @default(0) // TDS amount deducted from this payout, in paise
-  netAmount   Int? // Amount after TDS deduction (amount - tdsDeducted), sent to gateway
-  tdsRateApplied   Float?  // TDS rate reserved for this payout, used when creating the final audit record
+  tdsDeducted      Int     @default(0) // TDS amount deducted from this payout, in paise
+  netAmount        Int? // Amount after TDS deduction (amount - tdsDeducted), sent to gateway
+  tdsRateApplied   Float? // TDS rate reserved for this payout, used when creating the final audit record
   tdsFinancialYear String? // FY when TDS was calculated (e.g. "2026-27"). Persisted to avoid FY-boundary drift.
 
   // Processing
@@ -1775,15 +2255,15 @@ model PayoutAccount {
 ////////////////////////////////////////// TAX & COMPLIANCE //////////////////////////////////////////
 
 model ConsultantTaxInfo {
-  id                  String  @id @default(cuid())
-  consultantProfileId String  @unique
-  panEncrypted        Bytes?           // AES-256-GCM encrypted PAN. Format: [12B IV][ciphertext][16B auth tag]
-  panLast4            String?  @db.VarChar(4) // Cleartext last 4 chars for masked display
-  panVerified         Boolean @default(false)
+  id                  String    @id @default(cuid())
+  consultantProfileId String    @unique
+  panEncrypted        Bytes? // AES-256-GCM encrypted PAN. Format: [12B IV][ciphertext][16B auth tag]
+  panLast4            String?   @db.VarChar(4) // Cleartext last 4 chars for masked display
+  panVerified         Boolean   @default(false)
   gstin               String? // GSTIN for registered consultants
-  gstinVerified       Boolean @default(false)
-  country             String  @default("IN") // ISO 3166-1 alpha-2
-  isIndianResident    Boolean @default(true)
+  gstinVerified       Boolean   @default(false)
+  country             String    @default("IN") // ISO 3166-1 alpha-2
+  isIndianResident    Boolean   @default(true)
   lutNumber           String? // Letter of Undertaking for export zero-rating
   lutValidUntil       DateTime?
 
@@ -1796,22 +2276,22 @@ model ConsultantTaxInfo {
 }
 
 model TDSRecord {
-  id                      String  @id @default(cuid())
-  consultantProfileId     String
-  financialYear           String  // "2026-27" format (Apr-Mar)
-  quarter                 Int     // 1=Apr-Jun, 2=Jul-Sep, 3=Oct-Dec, 4=Jan-Mar
+  id                  String @id @default(cuid())
+  consultantProfileId String
+  financialYear       String // "2026-27" format (Apr-Mar)
+  quarter             Int // 1=Apr-Jun, 2=Jul-Sep, 3=Oct-Dec, 4=Jan-Mar
 
   // Amounts in paise
-  cumulativeAmountCredited Int    // FY cumulative of amounts credited/paid to consultant (sum of completed payouts)
-  tdsDeducted             Int     // TDS amount deducted this record
-  tdsRate                 Float   // Rate at time of deduction (10 or 20)
+  cumulativeAmountCredited Int // FY cumulative of amounts credited/paid to consultant (sum of completed payouts)
+  tdsDeducted              Int // TDS amount deducted this record
+  tdsRate                  Float // Rate at time of deduction (10 or 20)
 
   // Link to the payout that triggered this deduction
   payoutId   String?
   earningsId String?
 
   // Reversal flag (for refund-triggered TDS reversals — negative tdsDeducted)
-  isReversal        Boolean   @default(false)
+  isReversal Boolean @default(false)
 
   // Filing status
   reportedInForm26Q Boolean   @default(false)
@@ -1878,8 +2358,8 @@ model DiscountCode {
   code          String       @unique
   description   String
   discountType  DiscountType
-  discountValue Int    // For PERCENTAGE: whole number (10 = 10%). For FIXED_AMOUNT: in paise
-  currency      String @default("INR") // Currency for FIXED_AMOUNT discounts
+  discountValue Int // For PERCENTAGE: whole number (10 = 10%). For FIXED_AMOUNT: in paise
+  currency      String       @default("INR") // Currency for FIXED_AMOUNT discounts
   isActive      Boolean      @default(true)
   expiresAt     DateTime?
   maxUses       Int?
