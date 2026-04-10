@@ -2141,8 +2141,9 @@ export async function handleCheckout(
           "not been scheduled",
           "already have a pending or active subscription",
           "overlapping dates",
+          "insufficient credits",
         ];
-        if (preservedMessages.some((msg) => dbError.message.includes(msg))) {
+        if (preservedMessages.some((msg) => dbError.message.toLowerCase().includes(msg))) {
           throw dbError;
         }
       }

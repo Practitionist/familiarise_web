@@ -96,6 +96,9 @@ export const BUSINESS_ERROR_PATTERNS: ReadonlyArray<{
   { pattern: "below the", errorType: ErrorTypes.AVAILABILITY },
   { pattern: "percentage value must be", errorType: ErrorTypes.AVAILABILITY },
 
+  // Org credit pool
+  { pattern: "insufficient credits", errorType: ErrorTypes.AVAILABILITY },
+
   // Lock contention (payout batches, etc.)
   { pattern: "already in progress", errorType: ErrorTypes.LOCK_CONTENTION },
 ] as const;

@@ -66,6 +66,10 @@ export interface VolumeConfig {
   earningsPercentage: number; // % of payments that generate earnings
   payoutsPercentage: number; // % of earnings that get paid out
   invoicesPercentage: number; // % of payments that get invoices
+  // Phase 15: Enterprise Organizations
+  organizations: { buyer: number; seatPack: number; invoiced: number };
+  membersPerOrg: { min: number; max: number };
+  plansPerOrg: { min: number; max: number };
 }
 
 /**
@@ -110,6 +114,9 @@ const VOLUMES: Record<SeedMode, VolumeConfig> = {
     earningsPercentage: 70,
     payoutsPercentage: 50,
     invoicesPercentage: 80,
+    organizations: { buyer: 2, seatPack: 1, invoiced: 1 },
+    membersPerOrg: { min: 3, max: 6 },
+    plansPerOrg: { min: 1, max: 2 },
   },
 
   medium: {
@@ -150,6 +157,9 @@ const VOLUMES: Record<SeedMode, VolumeConfig> = {
     earningsPercentage: 75,
     payoutsPercentage: 60,
     invoicesPercentage: 85,
+    organizations: { buyer: 4, seatPack: 2, invoiced: 2 },
+    membersPerOrg: { min: 4, max: 8 },
+    plansPerOrg: { min: 1, max: 3 },
   },
 
   large: {
@@ -190,6 +200,9 @@ const VOLUMES: Record<SeedMode, VolumeConfig> = {
     earningsPercentage: 80,
     payoutsPercentage: 65,
     invoicesPercentage: 90,
+    organizations: { buyer: 8, seatPack: 4, invoiced: 3 },
+    membersPerOrg: { min: 5, max: 10 },
+    plansPerOrg: { min: 2, max: 4 },
   },
 };
 
@@ -274,6 +287,13 @@ export function printConfigSummary(): void {
   console.log(`    - Class: ${volumes.appointments.class}`);
   console.log(`  Payments: ${volumes.payments}`);
   console.log(`  Topics: ${volumes.topics}`);
+  const orgs = volumes.organizations;
+  console.log(
+    `  Organizations: ${orgs.buyer + orgs.seatPack + orgs.invoiced} total`,
+  );
+  console.log(
+    `    - TAG_ONLY: ${orgs.buyer}, SEAT_PACK: ${orgs.seatPack}, INVOICED: ${orgs.invoiced}`,
+  );
   console.log("=".repeat(60));
 }
 

@@ -60,6 +60,9 @@ import { createInvoices } from "./seedFiles/13d-create-invoices";
 import { createReferralCodes } from "./seedFiles/14a-create-referral-codes";
 import { createCollaborators } from "./seedFiles/14b-create-collaborators";
 
+// Phase 15: Enterprise Organizations
+import { createOrganizations } from "./seedFiles/15a-create-organizations";
+
 async function seed() {
   console.log("Starting seed process...");
 
@@ -190,6 +193,10 @@ async function seed() {
 
     console.log("Creating collaborators...");
     await createCollaborators();
+
+    // Phase 15: Enterprise Organizations
+    console.log("\n[Phase 15] Creating enterprise organizations...");
+    await createOrganizations(users);
 
     // Summary
     const endTime = Date.now();

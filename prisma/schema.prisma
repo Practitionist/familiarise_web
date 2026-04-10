@@ -573,9 +573,9 @@ model OrganizationMemberProfile {
   // ORG_LEARNER → consulteeProfileId set
   // ORG_CONSULTANT (FEATURE-FLAGGED) → consultantProfileId set
   // Other roles (OWNER/ADMIN/MANAGER/SUPPORT) → both null, just metadata
-  consultantProfileId String?            @unique
+  consultantProfileId String?
   consultantProfile   ConsultantProfile? @relation("OrgMemberConsultant", fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: SetNull)
-  consulteeProfileId  String?            @unique
+  consulteeProfileId  String?
   consulteeProfile    ConsulteeProfile?  @relation("OrgMemberConsultee", fields: [consulteeProfileId], references: [id], onUpdate: Cascade, onDelete: SetNull)
 
   // FEATURE-FLAGGED: per-consultant rate override for PROVIDER orgs.
@@ -591,6 +591,8 @@ model OrganizationMemberProfile {
   @@index([organizationProfileId])
   @@index([role])
   @@index([status])
+  @@index([consulteeProfileId])
+  @@index([consultantProfileId])
 }
 
 enum OrgMemberRole {
@@ -948,7 +950,7 @@ model ConsultantProfile {
 
   // Enterprise: optional org membership (FEATURE-FLAGGED for PROVIDER orgs).
   // null = independent consultant (most B2C consultants).
-  organizationMemberProfile OrganizationMemberProfile? @relation("OrgMemberConsultant")
+  organizationMemberProfiles OrganizationMemberProfile[] @relation("OrgMemberConsultant")
   isIndependent             Boolean                    @default(true)
 
   createdAt DateTime @default(now())
@@ -1038,7 +1040,7 @@ model ConsulteeProfile {
 
   // Enterprise: optional org membership for ORG_LEARNERs (BUYER orgs).
   // null = independent learner (most B2C consultees).
-  organizationMemberProfile OrganizationMemberProfile? @relation("OrgMemberConsultee")
+  organizationMemberProfiles OrganizationMemberProfile[] @relation("OrgMemberConsultee")
   isIndependent             Boolean                    @default(true)
 
   createdAt DateTime @default(now())

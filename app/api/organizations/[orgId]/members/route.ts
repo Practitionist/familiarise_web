@@ -115,8 +115,12 @@ export async function POST(
       where: {
         organizationId_userId: { organizationId: orgId, userId: user.id },
       },
+      include: { organizationMemberProfile: true },
     });
-    if (existing) {
+
+    // If a member row exists but the profile is REMOVED, reactivate instead of 409.
+    const existingProfile = existing?.organizationMemberProfile ?? null;
+    if (existing && existingProfile && existingProfile.status !== "REMOVED") {
       return NextResponse.json(
         { error: "User is already a member of this organization." },
         { status: 409 },
@@ -124,28 +128,50 @@ export async function POST(
     }
 
     const result = await prisma.$transaction(async (tx) => {
-      const member = await tx.member.create({
-        data: {
-          organizationId: orgId,
-          userId: user.id,
-          role,
-        },
-      });
+      let member;
+      let memberProfile;
 
-      const memberProfile = await tx.organizationMemberProfile.create({
-        data: {
-          memberId: member.id,
-          organizationProfileId: access.org.id,
-          role,
-          status: "ACTIVE",
-          // ORG_LEARNER → link consultee profile (BUYER); ORG_CONSULTANT → link consultant profile (PROVIDER, gated)
-          consulteeProfileId:
-            role === "ORG_LEARNER" ? user.consulteeProfileId : null,
-          consultantProfileId:
-            role === "ORG_CONSULTANT" ? user.consultantProfileId : null,
-          seatAssignedAt: role === "ORG_LEARNER" ? new Date() : null,
-        },
-      });
+      if (existing && existingProfile?.status === "REMOVED") {
+        // Reactivate: update the existing BetterAuth member role and the profile
+        member = await tx.member.update({
+          where: { id: existing.id },
+          data: { role },
+        });
+        memberProfile = await tx.organizationMemberProfile.update({
+          where: { id: existingProfile.id },
+          data: {
+            role,
+            status: "ACTIVE",
+            consulteeProfileId:
+              role === "ORG_LEARNER" ? user.consulteeProfileId : null,
+            consultantProfileId:
+              role === "ORG_CONSULTANT" ? user.consultantProfileId : null,
+            seatAssignedAt: role === "ORG_LEARNER" ? new Date() : null,
+          },
+        });
+      } else {
+        member = await tx.member.create({
+          data: {
+            organizationId: orgId,
+            userId: user.id,
+            role,
+          },
+        });
+        memberProfile = await tx.organizationMemberProfile.create({
+          data: {
+            memberId: member.id,
+            organizationProfileId: access.org.id,
+            role,
+            status: "ACTIVE",
+            // ORG_LEARNER → link consultee profile (BUYER); ORG_CONSULTANT → link consultant profile (PROVIDER, gated)
+            consulteeProfileId:
+              role === "ORG_LEARNER" ? user.consulteeProfileId : null,
+            consultantProfileId:
+              role === "ORG_CONSULTANT" ? user.consultantProfileId : null,
+            seatAssignedAt: role === "ORG_LEARNER" ? new Date() : null,
+          },
+        });
+      }
 
       // Bump seatsUsed for BUYER seat tracking.
       if (role === "ORG_LEARNER") {
