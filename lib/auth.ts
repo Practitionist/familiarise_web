@@ -246,6 +246,51 @@ export const auth = betterAuth({
         adminProfileId?: string | null;
       };
 
+      // SSO membership sync: BetterAuth SSO auto-provisioning creates a
+      // BetterAuth `member` row but NOT the typed `OrganizationMemberProfile`
+      // sibling the app requires. Auto-repair missing profiles here so
+      // SSO-provisioned users get access on first session load.
+      const bareMembers = await prisma.member.findMany({
+        where: {
+          userId: user.id,
+          organizationMemberProfile: null, // no typed sibling yet
+        },
+        select: {
+          id: true,
+          organizationId: true,
+          role: true,
+          organization: {
+            select: {
+              organizationProfile: {
+                select: {
+                  id: true,
+                  ssoSettings: { select: { defaultRoleForAutoJoin: true } },
+                },
+              },
+            },
+          },
+        },
+      });
+      for (const bm of bareMembers) {
+        const orgProfile = bm.organization?.organizationProfile;
+        if (!orgProfile) continue;
+        const defaultRole =
+          orgProfile.ssoSettings?.defaultRoleForAutoJoin ?? "ORG_LEARNER";
+        try {
+          await prisma.organizationMemberProfile.create({
+            data: {
+              memberId: bm.id,
+              organizationProfileId: orgProfile.id,
+              role: defaultRole,
+              status: "ACTIVE",
+            },
+          });
+        } catch {
+          // Unique constraint race — profile was created between the check
+          // and now (concurrent session loads). Safe to ignore.
+        }
+      }
+
       // Enterprise: load the user's active org memberships so the OrgSwitcher
       // and any org-aware route can read them from the session without an
       // extra DB roundtrip. Cheap query — joined to the typed sibling profile

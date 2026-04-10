@@ -87,8 +87,15 @@ interface ProviderPayload {
   providerId: string;
   domain: string;
   issuer: string;
-  samlConfig?: string;
-  oidcConfig?: string;
+  providerType: "saml" | "oidc";
+  samlConfig?: { issuer: string; entryPoint: string; cert: string };
+  oidcConfig?: {
+    issuer: string;
+    clientId: string;
+    clientSecret: string;
+    discoveryEndpoint: string;
+    pkce: boolean;
+  };
 }
 
 async function createProvider(orgId: string, payload: ProviderPayload) {
@@ -157,10 +164,17 @@ export default function OrgSsoPage({
   });
 
   const [showAdd, setShowAdd] = useState(false);
+  const [providerType, setProviderType] = useState<"saml" | "oidc">("saml");
   const [providerId, setProviderId] = useState("");
   const [domain, setDomain] = useState("");
   const [issuer, setIssuer] = useState("");
-  const [samlConfig, setSamlConfig] = useState("");
+  // SAML fields
+  const [samlEntryPoint, setSamlEntryPoint] = useState("");
+  const [samlCert, setSamlCert] = useState("");
+  // OIDC fields
+  const [oidcClientId, setOidcClientId] = useState("");
+  const [oidcClientSecret, setOidcClientSecret] = useState("");
+  const [oidcDiscoveryUrl, setOidcDiscoveryUrl] = useState("");
   const [providerError, setProviderError] = useState<string | null>(null);
 
   const createProviderMutation = useMutation({
@@ -169,7 +183,24 @@ export default function OrgSsoPage({
         providerId: providerId.trim(),
         domain: domain.trim(),
         issuer: issuer.trim(),
-        samlConfig: samlConfig.trim() || undefined,
+        providerType,
+        ...(providerType === "saml"
+          ? {
+              samlConfig: {
+                issuer: issuer.trim(),
+                entryPoint: samlEntryPoint.trim(),
+                cert: samlCert.trim(),
+              },
+            }
+          : {
+              oidcConfig: {
+                issuer: issuer.trim(),
+                clientId: oidcClientId.trim(),
+                clientSecret: oidcClientSecret.trim(),
+                discoveryEndpoint: oidcDiscoveryUrl.trim(),
+                pkce: true,
+              },
+            }),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["org-sso", orgId] });
@@ -177,7 +208,11 @@ export default function OrgSsoPage({
       setProviderId("");
       setDomain("");
       setIssuer("");
-      setSamlConfig("");
+      setSamlEntryPoint("");
+      setSamlCert("");
+      setOidcClientId("");
+      setOidcClientSecret("");
+      setOidcDiscoveryUrl("");
       setProviderError(null);
     },
     onError: (err: Error) => setProviderError(err.message),
@@ -375,15 +410,69 @@ export default function OrgSsoPage({
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="prov-saml">SAML metadata XML</Label>
-              <textarea
-                id="prov-saml"
-                value={samlConfig}
-                onChange={(e) => setSamlConfig(e.target.value)}
-                className="w-full min-h-24 rounded-md border border-zinc-300 px-3 py-2 text-sm font-mono"
-                placeholder="<EntityDescriptor …>"
-              />
+              <Label>Provider type</Label>
+              <Select value={providerType} onValueChange={(v) => setProviderType(v as "saml" | "oidc")}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="saml">SAML</SelectItem>
+                  <SelectItem value="oidc">OIDC</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
+            {providerType === "saml" ? (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="saml-entry">SSO entry point URL</Label>
+                  <Input
+                    id="saml-entry"
+                    value={samlEntryPoint}
+                    onChange={(e) => setSamlEntryPoint(e.target.value)}
+                    placeholder="https://idp.acme.com/sso/saml"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="saml-cert">X.509 certificate</Label>
+                  <textarea
+                    id="saml-cert"
+                    value={samlCert}
+                    onChange={(e) => setSamlCert(e.target.value)}
+                    className="w-full min-h-20 rounded-md border border-zinc-300 px-3 py-2 text-sm font-mono"
+                    placeholder="MIICpDCCAYwCCQC..."
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="oidc-client-id">Client ID</Label>
+                  <Input
+                    id="oidc-client-id"
+                    value={oidcClientId}
+                    onChange={(e) => setOidcClientId(e.target.value)}
+                    placeholder="abc123..."
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="oidc-secret">Client secret</Label>
+                  <Input
+                    id="oidc-secret"
+                    type="password"
+                    value={oidcClientSecret}
+                    onChange={(e) => setOidcClientSecret(e.target.value)}
+                    placeholder="secret..."
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="oidc-discovery">Discovery URL</Label>
+                  <Input
+                    id="oidc-discovery"
+                    value={oidcDiscoveryUrl}
+                    onChange={(e) => setOidcDiscoveryUrl(e.target.value)}
+                    placeholder="https://idp.acme.com/.well-known/openid-configuration"
+                  />
+                </div>
+              </>
+            )}
             {providerError && (
               <p className="text-sm text-red-600">{providerError}</p>
             )}

@@ -9,22 +9,39 @@
  * table. We tag the row with `organizationId` so the signin domain router in
  * middleware.ts can find the right provider for an incoming domain match.
  *
- * TODO(SSO): This route writes raw samlConfig/oidcConfig strings into the
- * ssoProvider table. BetterAuth's SSO plugin may expect structured JSON or
- * specific fields in these columns at runtime. Before enabling real SSO
- * sign-in, normalize provider config into the exact shape the plugin expects:
- *   - SAML: parse XML metadata into entityId, ssoUrl, certificate, etc.
- *   - OIDC: store { clientId, clientSecret, issuer, authorizationUrl, ... }
- * Also: BetterAuth SSO auto-provisioning creates a BetterAuth `member` row
- * but NOT the OrganizationMemberProfile the app requires. Until a sync hook
- * is added, SSO-provisioned users will authenticate but get 403 from
- * requireOrgAccess(). See PR #655 review feedback for details.
+ * Provider config is now normalized to match BetterAuth's expected shapes:
+ *   - SAML: { issuer, entryPoint, cert, callbackUrl? } → JSON.stringify'd into samlConfig
+ *   - OIDC: { issuer, clientId, clientSecret, discoveryEndpoint, pkce, scopes? } → JSON.stringify'd into oidcConfig
+ *
+ * NOTE: BetterAuth SSO auto-provisioning creates a BetterAuth `member` row
+ * but NOT the OrganizationMemberProfile the app requires. The customSession
+ * callback now auto-repairs missing profiles (see lib/auth.ts), so SSO-
+ * provisioned users will get their OrganizationMemberProfile created on
+ * first session load.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+
+// OIDC config matching BetterAuth's OIDCConfig interface
+const oidcConfigSchema = z.object({
+  issuer: z.string().url(),
+  clientId: z.string().min(1),
+  clientSecret: z.string().min(1),
+  discoveryEndpoint: z.string().url(),
+  pkce: z.boolean().default(true),
+  scopes: z.array(z.string()).optional(),
+});
+
+// SAML config matching BetterAuth's SAMLConfig interface
+const samlConfigSchema = z.object({
+  issuer: z.string().min(1),
+  entryPoint: z.string().url(),
+  cert: z.string().min(1),
+  callbackUrl: z.string().url().optional(),
+});
 
 const createProviderSchema = z.object({
   providerId: z
@@ -35,8 +52,10 @@ const createProviderSchema = z.object({
     .regex(/^[a-z0-9-]+$/i, "providerId must be alphanumeric"),
   domain: z.string().trim().min(3).max(255),
   issuer: z.string().trim().min(1).max(500),
-  samlConfig: z.string().optional(), // SAML metadata XML
-  oidcConfig: z.string().optional(), // OIDC discovery JSON
+  providerType: z.enum(["saml", "oidc"]),
+  // Structured config matching BetterAuth plugin expectations
+  samlConfig: samlConfigSchema.optional(),
+  oidcConfig: oidcConfigSchema.optional(),
 });
 
 export async function GET(
@@ -89,14 +108,22 @@ export async function POST(
       );
     }
 
-    const { providerId, domain, issuer, samlConfig, oidcConfig } = parsed.data;
-    if (!samlConfig && !oidcConfig) {
+    const { providerId, domain, issuer, providerType, samlConfig, oidcConfig } = parsed.data;
+
+    if (providerType === "saml" && !samlConfig) {
       return NextResponse.json(
-        { error: "Either samlConfig (SAML XML) or oidcConfig (OIDC JSON) is required." },
+        { error: "SAML config (issuer, entryPoint, cert) is required for SAML providers." },
+        { status: 400 },
+      );
+    }
+    if (providerType === "oidc" && !oidcConfig) {
+      return NextResponse.json(
+        { error: "OIDC config (issuer, clientId, clientSecret, discoveryEndpoint) is required for OIDC providers." },
         { status: 400 },
       );
     }
 
+    // Store config as JSON strings matching BetterAuth's expected shapes.
     const provider = await prisma.ssoProvider.create({
       data: {
         id: crypto.randomUUID(),
@@ -104,8 +131,8 @@ export async function POST(
         domain,
         issuer,
         organizationId: orgId,
-        samlConfig: samlConfig ?? null,
-        oidcConfig: oidcConfig ?? null,
+        samlConfig: samlConfig ? JSON.stringify(samlConfig) : null,
+        oidcConfig: oidcConfig ? JSON.stringify(oidcConfig) : null,
         userId: access.session.user.id,
       },
     });

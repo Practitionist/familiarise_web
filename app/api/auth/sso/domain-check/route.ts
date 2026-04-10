@@ -56,9 +56,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ enforceSSO: false });
   }
 
-  // TODO(SSO): The ssoSignInUrl below assumes BetterAuth exposes a
-  // /sign-in/{providerId} path. Verify against the actual plugin routes —
-  // BetterAuth SSO may use a body-driven /sign-in/sso endpoint instead.
+  // BetterAuth SSO uses POST /api/auth/sign-in/sso with body params.
+  // Return the endpoint + required body fields so the signin page can
+  // construct the correct request.
   return NextResponse.json({
     enforceSSO: true,
     organizationName:
@@ -66,6 +66,11 @@ export async function GET(req: NextRequest) {
     organizationSlug:
       ssoSettings.organizationProfile.organization.slug,
     providerId: provider.providerId,
-    ssoSignInUrl: `/api/auth/sso/sign-in/${provider.providerId}`,
+    ssoEndpoint: "/api/auth/sign-in/sso",
+    ssoBody: {
+      providerId: provider.providerId,
+      domain,
+      callbackURL: "/dashboard",
+    },
   });
 }
