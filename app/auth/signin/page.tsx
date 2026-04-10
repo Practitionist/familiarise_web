@@ -75,6 +75,20 @@ function SignInContent() {
     );
   }
 
+  const friendlyAuthError = (raw: string | undefined): string => {
+    if (!raw) return "Invalid email or password.";
+    const lower = raw.toLowerCase();
+    if (lower.includes("email") && (lower.includes("invalid") || lower.includes("required")))
+      return "Please enter a valid email address.";
+    if (lower.includes("password") && (lower.includes("too small") || lower.includes(">=") || lower.includes("required")))
+      return "Please enter your password.";
+    if (lower.includes("invalid") && lower.includes("credentials"))
+      return "Invalid email or password.";
+    if (lower.includes("not found") || lower.includes("no user"))
+      return "No account found with this email. Check the address or sign up.";
+    return raw.replace(/\[body\.\w+\]\s*/g, "").trim() || "Invalid email or password.";
+  };
+
   const handleEmailSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
@@ -89,7 +103,7 @@ function SignInContent() {
       if (error) {
         toast({
           title: "Sign In Failed",
-          description: error.message || "Invalid email or password.",
+          description: friendlyAuthError(error.message),
           variant: "destructive",
         });
       } else if (data) {

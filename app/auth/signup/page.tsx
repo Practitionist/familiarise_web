@@ -81,6 +81,26 @@ function SignUpContent() {
     );
   }
 
+  /**
+   * Translate BetterAuth's developer-facing validation errors into
+   * user-friendly messages. Raw errors look like:
+   *   "[body.email] Invalid email address; [body.password] Too small: ..."
+   */
+  const friendlyAuthError = (raw: string | undefined): string => {
+    if (!raw) return "An unexpected error occurred. Please try again.";
+    const lower = raw.toLowerCase();
+    const issues: string[] = [];
+    if (lower.includes("email") && (lower.includes("invalid") || lower.includes("required")))
+      issues.push("Please enter a valid email address.");
+    if (lower.includes("password") && (lower.includes("too small") || lower.includes(">=") || lower.includes("required")))
+      issues.push("Password must be at least 8 characters.");
+    if (lower.includes("already") || lower.includes("exists"))
+      return "An account with this email already exists. Try signing in instead.";
+    if (issues.length > 0) return issues.join(" ");
+    // Strip "[body.field]" prefixes for anything we didn't catch
+    return raw.replace(/\[body\.\w+\]\s*/g, "").trim() || "An unexpected error occurred.";
+  };
+
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (password !== confirmPassword) {
@@ -100,7 +120,7 @@ function SignUpContent() {
       if (error) {
         toast({
           title: "Sign Up Failed",
-          description: error.message || "An unexpected error occurred.",
+          description: friendlyAuthError(error.message),
           variant: "destructive",
         });
       } else if (data) {
