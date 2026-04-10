@@ -179,6 +179,24 @@ export const OnboardingDataSchema = z.discriminatedUnion("role", [
     staffProfile: z.undefined().optional(),
     adminProfile: AdminProfileCreateObjectSchema.optional(),
   }),
+  OnboardingBaseSchema.extend({
+    role: z.literal(UserRole.ORG_ADMIN),
+    consultantProfile: z.undefined().optional(),
+    consulteeProfile: z.undefined().optional(),
+    staffProfile: z.undefined().optional(),
+    // Org fields carried through to processOnboardingData
+    orgName: z.string().min(2).max(100).optional(),
+    orgBillingEmail: z.string().email().optional(),
+    orgBillingMode: z.string().optional(),
+    orgDescription: z.string().optional(),
+    orgIndustry: z.string().optional(),
+    orgSizeBucket: z.string().optional(),
+    orgWebsite: z.string().optional(),
+    orgPaymentTermsDays: z.coerce.number().optional(),
+    orgSeatsTotal: z.coerce.number().nullable().optional(),
+    orgInviteEmails: z.array(z.string().email()).optional(),
+    orgInviteRole: z.string().optional(),
+  }),
 ]);
 
 // ============================================================================
@@ -362,6 +380,23 @@ const adminFormFields = sharedFormFields.extend({
   adminNotes: z.string().optional(),
 });
 
+const orgAdminFormFields = sharedFormFields.extend({
+  role: z.literal(UserRole.ORG_ADMIN),
+  // Org fields (merged wizard — collected during onboarding step 1)
+  orgName: z.string().min(2).max(100),
+  orgBillingEmail: z.string().email(),
+  orgBillingMode: z.enum(["TAG_ONLY", "SEAT_PACK", "INVOICED_MONTHLY"]).default("TAG_ONLY"),
+  orgDescription: z.string().max(2000).optional(),
+  orgIndustry: z.string().optional(),
+  orgSizeBucket: z.string().optional(),
+  orgWebsite: z.string().optional(),
+  orgPaymentTermsDays: z.coerce.number().int().min(1).max(120).default(30),
+  orgSeatsTotal: z.coerce.number().int().positive().nullable().optional(),
+  // Invite team (collected during onboarding step 1)
+  orgInviteEmails: z.array(z.string().email()).default([]),
+  orgInviteRole: z.string().default("ORG_LEARNER"),
+});
+
 // Combined mega-schema: discriminated union on role to prevent
 // z.union from matching the wrong schema and stripping role-specific fields
 export const OnboardingFormDataSchema = z.discriminatedUnion("role", [
@@ -369,6 +404,7 @@ export const OnboardingFormDataSchema = z.discriminatedUnion("role", [
   consulteeFormFields,
   staffFormFields,
   adminFormFields,
+  orgAdminFormFields,
 ]);
 
 // ============================================================================
@@ -416,7 +452,8 @@ export type OnboardingFormData = Omit<
 > &
   Partial<Omit<z.infer<typeof consulteeFormFields>, "role">> &
   Partial<Omit<z.infer<typeof staffFormFields>, "role">> &
-  Partial<Omit<z.infer<typeof adminFormFields>, "role">> & {
+  Partial<Omit<z.infer<typeof adminFormFields>, "role">> &
+  Partial<Omit<z.infer<typeof orgAdminFormFields>, "role">> & {
     role: UserRole;
   };
 

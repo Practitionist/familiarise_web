@@ -42,6 +42,10 @@ const ROLE_INFO: Record<
     title: "Consultee",
     description: "Learn from experienced professionals",
   },
+  ORG_ADMIN: {
+    title: "Organization Admin",
+    description: "Set up an org for your school or company",
+  },
 };
 
 const GENDER_OPTIONS = [

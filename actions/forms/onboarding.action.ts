@@ -7,7 +7,7 @@ import { getSession } from "@/lib/auth-server";
 export async function updateOnboardingInformationAction(
   userId: string,
   body: unknown,
-): Promise<{ success: boolean; user?: Record<string, unknown>; error?: string; verificationWarning?: string }> {
+): Promise<{ success: boolean; user?: Record<string, unknown>; error?: string; verificationWarning?: string; orgId?: string }> {
   console.log(
     "Server Action: updateOnboardingInformationAction - Delegating to central utils",
   );

@@ -25,6 +25,8 @@ import PersonalInfoAndRoleForm from "./components/PersonalInfoAndRoleForm";
 import StaffAgreementForm from "./components/StaffAgreementForm";
 import StaffProfileForm from "./components/StaffProfileForm";
 import StaffReviewForm from "./components/StaffReviewForm";
+import OrgAdminOrgSetupStep from "./components/OrgAdminOrgSetupStep";
+import OrgAdminReviewStep from "./components/OrgAdminReviewStep";
 
 // Step labels for progress indicator
 const STEP_LABELS = {
@@ -42,6 +44,7 @@ const STEP_LABELS = {
     "Agreement",
     "Review",
   ],
+  ORG_ADMIN: ["Personal Info", "Organization Setup", "Review & Launch"],
 };
 
 const MultiStepForm: React.FC = () => {
@@ -213,6 +216,12 @@ const MultiStepForm: React.FC = () => {
         return;
       }
 
+      // ORG_ADMIN: redirect to their new org dashboard
+      if (finalData.role === "ORG_ADMIN" && result.orgId) {
+        router.push(`/dashboard/organization/${result.orgId}/home`);
+        return;
+      }
+
       // Redirect based on role (server has already updated the user record,
       // session cookie will refresh automatically)
       if (finalData.role === "CONSULTANT" && result.user.consultantProfileId) {
@@ -281,6 +290,14 @@ const MultiStepForm: React.FC = () => {
               <StaffProfileForm
                 onNext={handleNext}
                 onBack={handleBack}
+                initialData={formData as Parameters<typeof StaffProfileForm>[0]["initialData"]}
+              />
+            );
+          case "ORG_ADMIN":
+            return (
+              <OrgAdminOrgSetupStep
+                onNext={handleNext}
+                onBack={handleBack}
                 initialData={formData}
               />
             );
@@ -302,7 +319,7 @@ const MultiStepForm: React.FC = () => {
               <ConsulteeAgreementForm
                 onNext={handleNext}
                 onBack={handleBack}
-                formData={formData}
+                formData={formData as Parameters<typeof ConsulteeAgreementForm>[0]["formData"]}
               />
             );
           case "STAFF":
@@ -310,7 +327,16 @@ const MultiStepForm: React.FC = () => {
               <StaffAgreementForm
                 onNext={handleNext}
                 onBack={handleBack}
-                initialData={formData}
+                initialData={formData as Parameters<typeof StaffAgreementForm>[0]["initialData"]}
+              />
+            );
+          case "ORG_ADMIN":
+            return (
+              <OrgAdminReviewStep
+                onSubmit={handleSubmit}
+                onBack={handleBack}
+                formData={formData}
+                onGoToStep={handleGoToStep}
               />
             );
           default:
@@ -331,7 +357,7 @@ const MultiStepForm: React.FC = () => {
               <ConsulteeReviewForm
                 onSubmit={handleSubmit}
                 onBack={handleBack}
-                formData={formData}
+                formData={formData as Parameters<typeof ConsulteeReviewForm>[0]["formData"]}
                 onGoToStep={handleGoToStep}
               />
             );
@@ -340,7 +366,7 @@ const MultiStepForm: React.FC = () => {
               <StaffReviewForm
                 onSubmit={handleSubmit}
                 onBack={handleBack}
-                formData={formData}
+                formData={formData as Parameters<typeof StaffReviewForm>[0]["formData"]}
                 onGoToStep={handleGoToStep}
               />
             );

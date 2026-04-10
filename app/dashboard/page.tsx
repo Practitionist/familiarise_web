@@ -91,6 +91,19 @@ export default function Dashboard() {
                   : "/",
               );
               break;
+            case "ORG_ADMIN": {
+              // ORG_ADMIN users land on their org dashboard.
+              const memberships = session?.user?.organizationMemberships;
+              const firstOrg = memberships?.[0];
+              if (firstOrg) {
+                router.push(
+                  `/dashboard/organization/${firstOrg.organizationId}/home`,
+                );
+              } else {
+                router.push("/dashboard/organization");
+              }
+              break;
+            }
             default:
               router.push("/dashboard/error");
           }

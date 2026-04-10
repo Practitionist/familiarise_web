@@ -28,8 +28,11 @@ import { useSession } from "@/lib/auth-client";
 export function OrganizationSwitcher() {
   const { data: session } = useSession();
   const memberships = session?.user?.organizationMemberships ?? [];
+  const isOrgAdmin = session?.user?.role === "ORG_ADMIN";
 
-  if (memberships.length === 0) {
+  // ORG_ADMIN users always see the switcher (they need "Create or manage" access).
+  // Other roles only see it when they have at least one org membership.
+  if (memberships.length === 0 && !isOrgAdmin) {
     return null;
   }
 

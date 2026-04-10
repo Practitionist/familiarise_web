@@ -327,6 +327,9 @@ async function upsertProfileByRole(
         );
       }
       return {};
+    case UserRole.ORG_ADMIN:
+      // No personal profile — org creation happens post-transaction.
+      return {};
     default: {
       const _exhaustiveCheck: never = validatedBody;
       throw new Error(
@@ -550,7 +553,7 @@ export async function processOnboardingData(
   // (consultantProfile, consulteeProfile, slots, domain, etc.). Typing it
   // precisely would require a shared Prisma payload type across server/action/client
   // layers — not worth the coupling. Callers only read a few string IDs from it.
-): Promise<{ success: boolean; user?: Record<string, unknown>; error?: string; verificationWarning?: string }> {
+): Promise<{ success: boolean; user?: Record<string, unknown>; error?: string; verificationWarning?: string; orgId?: string }> {
   const { validateOnboardingData } = await import("./onboarding");
 
   try {
@@ -625,6 +628,17 @@ export async function processOnboardingData(
       { maxWait: 10000, timeout: 30000 },
     );
 
+    // Post-transaction: ORG_ADMIN org creation
+    let orgId: string | undefined;
+    if (
+      validatedBody.role === UserRole.ORG_ADMIN &&
+      "orgName" in validatedBody &&
+      validatedBody.orgName
+    ) {
+      const org = await createOrgForOnboarding(userId, validatedBody as Parameters<typeof createOrgForOnboarding>[1]);
+      orgId = org.orgId;
+    }
+
     // Post-transaction: consultant verification
     let verificationWarning: string | undefined;
     if (
@@ -649,7 +663,7 @@ export async function processOnboardingData(
       }
     }
 
-    return { success: true, user: updatedUser, verificationWarning };
+    return { success: true, user: updatedUser, verificationWarning, orgId };
   } catch (error: unknown) {
     console.error("Error in processOnboardingData:", error);
     const errorMessage =
@@ -664,4 +678,114 @@ export async function processOnboardingData(
     }
     return { success: false, error: errorMessage };
   }
+}
+
+// ============================================================================
+// ORG_ADMIN: Create organization during onboarding
+// ============================================================================
+
+function slugify(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+}
+
+async function createOrgForOnboarding(
+  userId: string,
+  data: {
+    orgName: string;
+    orgBillingEmail: string;
+    orgBillingMode?: string;
+    orgDescription?: string;
+    orgIndustry?: string;
+    orgSizeBucket?: string;
+    orgWebsite?: string;
+    orgPaymentTermsDays?: number;
+    orgSeatsTotal?: number | null;
+    orgInviteEmails?: string[];
+    orgInviteRole?: string;
+  },
+): Promise<{ orgId: string; orgProfileId: string }> {
+  const billingMode = (data.orgBillingMode ?? "TAG_ONLY") as
+    | "TAG_ONLY"
+    | "SEAT_PACK"
+    | "INVOICED_MONTHLY";
+  const slug = `${slugify(data.orgName)}-${Math.random().toString(36).slice(2, 8)}`;
+
+  const result = await prisma.$transaction(async (tx) => {
+    const organization = await tx.organization.create({
+      data: { name: data.orgName, slug },
+    });
+
+    const profile = await tx.organizationProfile.create({
+      data: {
+        organizationId: organization.id,
+        kind: "BUYER",
+        status: "ACTIVE",
+        billingMode,
+        billingEmail: data.orgBillingEmail,
+        description: data.orgDescription ?? null,
+        industry: data.orgIndustry ?? null,
+        sizeBucket: (data.orgSizeBucket as "SMALL_1_50" | "MEDIUM_51_200" | "LARGE_201_1000" | "ENTERPRISE_1000_PLUS") ?? null,
+        website: data.orgWebsite ?? null,
+        paymentTermsDays: data.orgPaymentTermsDays ?? 30,
+        seatsTotal: data.orgSeatsTotal ?? null,
+      },
+    });
+
+    const member = await tx.member.create({
+      data: {
+        organizationId: organization.id,
+        userId,
+        role: "ORG_OWNER",
+      },
+    });
+
+    await tx.organizationMemberProfile.create({
+      data: {
+        memberId: member.id,
+        organizationProfileId: profile.id,
+        role: "ORG_OWNER",
+        status: "ACTIVE",
+      },
+    });
+
+    if (billingMode === "SEAT_PACK") {
+      await tx.orgCreditPool.create({
+        data: {
+          organizationProfileId: profile.id,
+          balance: 0,
+          totalPurchased: 0,
+        },
+      });
+    }
+
+    return { orgId: organization.id, orgProfileId: profile.id };
+  });
+
+  // Send invitations (fire-and-forget, outside transaction)
+  const emails = data.orgInviteEmails ?? [];
+  const role = data.orgInviteRole ?? "ORG_LEARNER";
+  if (emails.length > 0) {
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 14);
+    Promise.allSettled(
+      emails.map((email) =>
+        prisma.invitation.create({
+          data: {
+            organizationId: result.orgId,
+            email,
+            role,
+            status: "pending",
+            expiresAt,
+            inviterId: userId,
+          },
+        }),
+      ),
+    ).catch((err) => console.error("[ORG_ADMIN onboarding] invite error:", err));
+  }
+
+  return result;
 }

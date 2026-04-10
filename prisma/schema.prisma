@@ -2623,6 +2623,7 @@ enum UserRole {
   CONSULTEE
   ADMIN
   STAFF
+  ORG_ADMIN // Enterprise org administrator — manages orgs, no booking/consulting
 }
 
 enum DayOfWeek {
