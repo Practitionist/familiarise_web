@@ -42,7 +42,7 @@ export default function OrgPayoutsPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = use(params);
-  const { data } = useQuery({
+  const { data, isPending } = useQuery({
     queryKey: ["org-payouts", orgId],
     queryFn: () => fetchPayouts(orgId),
   });
@@ -56,7 +56,7 @@ export default function OrgPayoutsPage({
         subtitle="Settlement history for the organization"
       />
       <DashboardContent>
-        {isGated ? (
+        {isPending ? null : isGated ? (
           <Card>
             <CardHeader>
               <div className="flex items-center gap-2">

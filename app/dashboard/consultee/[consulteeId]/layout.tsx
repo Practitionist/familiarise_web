@@ -18,6 +18,7 @@ import { UserProvider } from "./UserContext";
 import { motion, AnimatePresence } from "framer-motion";
 import { schedulePrefetch } from "@/lib/dashboard-queries";
 import { UserDropdown } from "@/components/dashboard/UserDropdown";
+import { OrganizationSwitcher } from "@/components/dashboard/OrganizationSwitcher";
 import { cn } from "@/utils/tailwind";
 import {
   Home,
@@ -212,6 +213,7 @@ function ConsulteeNav({
                     {getGreeting()}, {userName.split(" ")[0]}
                   </span>
                 )}
+                <OrganizationSwitcher />
                 <NotificationInbox />
                 <UserDropdown
                   userName={userName}
