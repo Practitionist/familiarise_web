@@ -270,6 +270,7 @@ export async function fetchDocuments(
     const fallbackMetadata = {
       pendingCount: 0,
       reviewingCount: 0,
+      needsRevisionCount: 0,
       completedCount: 0,
     };
 

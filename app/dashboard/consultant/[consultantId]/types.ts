@@ -194,6 +194,7 @@ export interface DocumentsPagination {
 export interface DocumentsMetadata {
   pendingCount: number;
   reviewingCount: number;
+  needsRevisionCount: number;
   completedCount: number;
 }
 

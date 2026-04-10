@@ -261,7 +261,7 @@ export async function GET(
         prisma.appointmentDocument.count({ where }),
         prisma.appointmentDocument.groupBy({
           by: ["reviewStatus"],
-          where,
+          where: { ...where, reviewStatus: undefined },
           _count: { _all: true },
         }),
       ]);
@@ -293,6 +293,7 @@ export async function GET(
         metadata: {
           pendingCount: 0,
           reviewingCount: 0,
+          needsRevisionCount: 0,
           completedCount: 0,
         },
       });
@@ -384,6 +385,7 @@ export async function GET(
     const metadata = {
       pendingCount: countByStatus.get("PENDING") ?? 0,
       reviewingCount: countByStatus.get("IN_REVIEW") ?? 0,
+      needsRevisionCount: countByStatus.get("NEEDS_REVISION") ?? 0,
       completedCount:
         (countByStatus.get("APPROVED") ?? 0) +
         (countByStatus.get("REJECTED") ?? 0),
