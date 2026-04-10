@@ -1,7 +1,8 @@
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { nextCookies } from "better-auth/next-js";
-import { customSession } from "better-auth/plugins";
+import { customSession, organization } from "better-auth/plugins";
+import { sso } from "@better-auth/sso";
 import bcrypt from "bcrypt";
 import prisma from "@/lib/prisma";
 import {
@@ -215,6 +216,21 @@ export const auth = betterAuth({
   },
 
   plugins: [
+    // Enterprise: BetterAuth Organization plugin.
+    // Pre-MVP cap of 5 orgs per user. Default creator role is ORG_OWNER —
+    // mirrored at the typed sibling layer (OrganizationMemberProfile).
+    organization({
+      organizationLimit: 5,
+      creatorRole: "ORG_OWNER",
+    }),
+
+    // Enterprise: SSO plugin (SAML / OIDC).
+    // Auto-generates the `ssoProvider` table. Per-org providers are linked
+    // via `organizationId` on the row. See lib/auth-helpers.ts and the
+    // OrganizationSSOSettings model in prisma/schema.prisma for the policy
+    // layer (allowedEmailDomains, enforceSSO).
+    sso(),
+
     customSession(async ({ user: baseUser, session }) => {
       // Cast to include additionalFields (available at runtime via BetterAuth,
       // but not reflected in the customSession callback's parameter type)
@@ -229,6 +245,43 @@ export const auth = betterAuth({
         staffProfileId?: string | null;
         adminProfileId?: string | null;
       };
+
+      // Enterprise: load the user's active org memberships so the OrgSwitcher
+      // and any org-aware route can read them from the session without an
+      // extra DB roundtrip. Cheap query — joined to the typed sibling profile
+      // for the role enum and the parent OrganizationProfile/Organization.
+      const memberships = await prisma.organizationMemberProfile.findMany({
+        where: {
+          status: "ACTIVE",
+          member: { userId: user.id },
+        },
+        select: {
+          role: true,
+          organizationProfileId: true,
+          organizationProfile: {
+            select: {
+              kind: true,
+              status: true,
+              organization: {
+                select: { id: true, name: true, slug: true, logo: true },
+              },
+            },
+          },
+        },
+      });
+
+      const organizationMemberships = memberships
+        .filter((m) => m.organizationProfile.status === "ACTIVE")
+        .map((m) => ({
+          organizationId: m.organizationProfile.organization.id,
+          organizationName: m.organizationProfile.organization.name,
+          organizationSlug: m.organizationProfile.organization.slug,
+          organizationLogo: m.organizationProfile.organization.logo,
+          organizationProfileId: m.organizationProfileId,
+          kind: m.organizationProfile.kind,
+          role: m.role,
+        }));
+
       return {
         user: {
           ...user,
@@ -241,6 +294,7 @@ export const auth = betterAuth({
           consulteeProfileId: user.consulteeProfileId ?? undefined,
           staffProfileId: user.staffProfileId ?? undefined,
           adminProfileId: user.adminProfileId ?? undefined,
+          organizationMemberships,
         },
         session,
       };

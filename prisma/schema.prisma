@@ -80,6 +80,9 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  invitations  Invitation[]
+  ssoproviders SsoProvider[]
+
   @@index([consultantProfileId])
   @@index([consulteeProfileId])
   @@index([adminProfileId])
@@ -199,6 +202,7 @@ enum SupportPriority {
 }
 
 // Cancellation reasons for Consultations and Subscriptions
+
 enum CancellationReason {
   // User-initiated
   SCHEDULE_CONFLICT
@@ -224,6 +228,7 @@ enum CancellationReason {
 }
 
 // Issue types for support tickets (Swiggy-style categorization)
+
 enum SupportIssueType {
   // Session Issues
   CONSULTANT_NO_SHOW
@@ -357,6 +362,8 @@ model Session {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  activeOrganizationId String?
+
   @@index([userId])
   @@map("sessions")
 }
@@ -370,6 +377,7 @@ model Verification {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([identifier])
   @@map("verifications")
 }
 
@@ -406,6 +414,8 @@ model Member {
   createdAt DateTime @default(now())
 
   @@unique([organizationId, userId])
+  @@index([organizationId])
+  @@index([userId])
   @@map("members")
 }
 
@@ -422,7 +432,11 @@ model Invitation {
   inviter      User         @relation("InvitationsSent", fields: [inviterId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id])
+  userId    String?
 
+  @@index([organizationId])
+  @@index([email])
   @@map("invitations")
 }
 
@@ -544,6 +558,7 @@ enum OrgSizeBucket {
 // Typed sibling for BetterAuth's Member table.
 // BetterAuth's Member.role is a String; we mirror it here as a typed enum
 // and add the consultant/consultee profile FKs that BetterAuth doesn't know about.
+
 model OrganizationMemberProfile {
   id                    String              @id @default(uuid())
   memberId              String              @unique // FK to BetterAuth Member.id
@@ -597,6 +612,7 @@ enum OrgMemberStatus {
 // SSO settings — our policy fields. The actual SAML/OIDC provider config
 // lives in BetterAuth's auto-generated `ssoProvider` table (one provider per
 // row, linked to organizationId).
+
 model OrganizationSSOSettings {
   id                    String              @id @default(uuid())
   organizationProfileId String              @unique
@@ -619,6 +635,7 @@ model OrganizationSSOSettings {
 
 // FEATURE-FLAGGED: PROVIDER org payout account (where the org's slice goes).
 // Schema-only — no API/UI without ENABLE_PROVIDER_ORGS=true. See Issue #646.
+
 model OrganizationPayoutAccount {
   id                    String              @id @default(uuid())
   organizationProfileId String              @unique
@@ -653,6 +670,7 @@ enum OrgPayoutAccountStatus {
 }
 
 // FEATURE-FLAGGED: PROVIDER org payout history. Schema-only.
+
 model OrganizationPayout {
   id                    String              @id @default(uuid())
   organizationProfileId String
@@ -689,6 +707,7 @@ model OrganizationPayout {
 // FEATURE-FLAGGED: PROVIDER org earnings (org's slice of each payment).
 // Parallel to ConsultantEarnings — kept separate so each party's payout
 // status is tracked independently. Schema-only.
+
 model OrganizationEarnings {
   id                    String              @id @default(uuid())
   organizationProfileId String
@@ -717,6 +736,7 @@ model OrganizationEarnings {
 //   - INVOICED_MONTHLY billing mode (BUYER) — auto-generated monthly by cron
 //   - PROVIDER orgs (FEATURE-FLAGGED) — periodic settlement statements
 //   - Manual invoicing (ORG_OWNER) — ad-hoc charges
+
 model OrganizationInvoice {
   id                    String              @id @default(uuid())
   organizationProfileId String
@@ -774,6 +794,7 @@ enum OrgInvoiceStatus {
 // members. Distinct from per-consultant plans (ConsultationPlan etc.) — when
 // rendered to learners, the org's plans show up alongside or instead of the
 // consultant's own plans, depending on settings.
+
 model OrganizationPlan {
   id                    String              @id @default(uuid())
   organizationProfileId String
@@ -802,6 +823,7 @@ model OrganizationPlan {
 
 // SEAT_PACK billing — credit pool. Org owner pre-purchases credits via gateway,
 // learners draw down on each booking.
+
 model OrgCreditPool {
   id                    String              @id @default(uuid())
   organizationProfileId String              @unique
@@ -833,6 +855,7 @@ model OrgCreditPurchase {
 }
 
 // Immutable ledger of every credit grant/debit. One row per state change.
+
 model OrgCreditLedger {
   id                    String              @id @default(uuid())
   organizationProfileId String
@@ -1159,22 +1182,22 @@ model SlotOfAvailabilityWeekly {
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
 
-  createdAt DateTime @default(now()) @db.Timestamptz()
-  updatedAt DateTime @updatedAt @db.Timestamptz()
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@index([consultantProfileId])
 }
 
 model SlotOfAvailabilityCustom {
   id       String   @id @default(uuid())
-  startsAt DateTime @db.Timestamptz()
-  endsAt   DateTime @db.Timestamptz()
+  startsAt DateTime @db.Timestamptz
+  endsAt   DateTime @db.Timestamptz
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
 
-  createdAt DateTime @default(now()) @db.Timestamptz()
-  updatedAt DateTime @updatedAt @db.Timestamptz()
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@index([consultantProfileId])
 }
@@ -1182,6 +1205,7 @@ model SlotOfAvailabilityCustom {
 //////////////////////////////////////////////////// PRICING PLANS ////////////////////////////////////////////////////
 
 // 1-1 Consultation
+
 model ConsultationPlan {
   id               String   @id @default(cuid())
   title            String
@@ -1220,7 +1244,7 @@ model Consultation {
   requestStatus          RequestStatus    @default(PENDING)
   requestedBy            ConsulteeProfile @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
   requestedById          String
-  requestedAt            DateTime         @default(now()) @db.Timestamptz()
+  requestedAt            DateTime         @default(now()) @db.Timestamptz
   requestNotes           String?
   pendingPaymentUrl      String? // Payment link while awaiting payment (cleared after payment)
   bookingSource          BookingSource    @default(REQUEST_SUBMITTED)
@@ -1231,13 +1255,13 @@ model Consultation {
   // Cancellation tracking
   cancellationReason CancellationReason?
   cancellationNotes  String?             @db.Text
-  cancelledAt        DateTime?           @db.Timestamptz()
+  cancelledAt        DateTime?           @db.Timestamptz
   cancelledBy        String? // userId who cancelled
 
   appointment Appointment?
 
-  createdAt DateTime @default(now()) @db.Timestamptz()
-  updatedAt DateTime @updatedAt @db.Timestamptz()
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@index([requestedById])
   @@index([consultationPlanId])
@@ -1290,14 +1314,14 @@ model SubscriptionPlan {
 
 model Subscription {
   id                       String   @id @default(cuid())
-  schedulingPeriodStartsAt DateTime @db.Timestamptz()
-  schedulingPeriodEndsAt   DateTime @db.Timestamptz()
+  schedulingPeriodStartsAt DateTime @db.Timestamptz
+  schedulingPeriodEndsAt   DateTime @db.Timestamptz
   schedulingTimezone       String   @default("Asia/Kolkata")
 
   requestStatus          RequestStatus    @default(PENDING)
   requestedBy            ConsulteeProfile @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
   requestedById          String
-  requestedAt            DateTime         @default(now()) @db.Timestamptz()
+  requestedAt            DateTime         @default(now()) @db.Timestamptz
   requestNotes           String?
   pendingPaymentUrl      String? // Payment link while awaiting payment (cleared after payment)
   bookingSource          BookingSource    @default(REQUEST_SUBMITTED)
@@ -1308,7 +1332,7 @@ model Subscription {
   // Cancellation tracking
   cancellationReason CancellationReason?
   cancellationNotes  String?             @db.Text
-  cancelledAt        DateTime?           @db.Timestamptz()
+  cancelledAt        DateTime?           @db.Timestamptz
   cancelledBy        String? // userId who cancelled
 
   subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
@@ -1317,8 +1341,8 @@ model Subscription {
   appointments       Appointment[]
   convertedFromTrial TrialSession?
 
-  createdAt DateTime @default(now()) @db.Timestamptz()
-  updatedAt DateTime @updatedAt @db.Timestamptz()
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@index([requestedById])
   @@index([subscriptionPlanId])
@@ -1340,6 +1364,7 @@ enum RequestStatus {
 }
 
 // Free trial session tracking for subscriptions
+
 model TrialSession {
   id     String             @id @default(cuid())
   status TrialSessionStatus @default(PENDING)
@@ -1369,7 +1394,8 @@ model TrialSession {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([consulteeProfileId, consultantProfileId]) // One trial per consultant
+  // One trial per consultant
+  @@unique([consulteeProfileId, consultantProfileId])
   @@index([consultantProfileId])
   @@index([subscriptionPlanId])
 }
@@ -1384,6 +1410,7 @@ enum TrialSessionStatus {
 }
 
 // Activity tracking for consultant dashboard
+
 model ActivityLog {
   id           String       @id @default(cuid())
   activityType ActivityType
@@ -1434,6 +1461,7 @@ enum BookingSource {
 }
 
 // Many-Many Webinar
+
 model WebinarPlan {
   id                     String                 @id @default(cuid())
   title                  String
@@ -1497,6 +1525,7 @@ enum WebinarStatus {
 }
 
 // Many-Many Class
+
 model ClassPlan {
   id                     String                 @id @default(cuid())
   title                  String
@@ -1542,8 +1571,8 @@ model ClassPlan {
 
 model Class {
   id                       String      @id @default(cuid())
-  schedulingPeriodStartsAt DateTime?   @db.Timestamptz()
-  schedulingPeriodEndsAt   DateTime?   @db.Timestamptz()
+  schedulingPeriodStartsAt DateTime?   @db.Timestamptz
+  schedulingPeriodEndsAt   DateTime?   @db.Timestamptz
   schedulingTimezone       String      @default("Asia/Kolkata")
   status                   ClassStatus @default(SCHEDULED)
   waitlist                 Waitlist[]
@@ -1555,8 +1584,8 @@ model Class {
 
   appointments Appointment[]
 
-  createdAt DateTime @default(now()) @db.Timestamptz()
-  updatedAt DateTime @updatedAt @db.Timestamptz()
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@index([classPlanId])
   @@index([status])
@@ -1582,6 +1611,7 @@ model ClassContent {
 }
 
 // Session-by-session curriculum for subscriptions (similar to ClassContent)
+
 model SubscriptionContent {
   id            String  @id @default(cuid())
   title         String
@@ -1633,6 +1663,7 @@ model Newsletter {
 }
 
 // Waitlist status for tracking user position and notification state
+
 enum WaitlistStatus {
   WAITING // In queue, waiting for spot
   NOTIFIED // Spot available, awaiting user response
@@ -1688,6 +1719,7 @@ model Waitlist {
 ////////////////////////////////////////////// APPOINTMENT ////////////////////////////////////////////////////
 
 // Generic Appointment Model
+
 model Appointment {
   id                 String              @id @default(uuid())
   appointmentType    AppointmentsType
@@ -1710,8 +1742,8 @@ model Appointment {
   payment   Payment[]
   documents AppointmentDocument[]
 
-  createdAt DateTime @default(now()) @db.Timestamptz()
-  updatedAt DateTime @updatedAt @db.Timestamptz()
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@index([subscriptionId])
   @@index([classId])
@@ -1729,6 +1761,7 @@ enum AppointmentsType {
 }
 
 // Document Review Models
+
 model AppointmentDocument {
   id           String  @id @default(uuid())
   fileName     String
@@ -1781,6 +1814,7 @@ enum DocumentUploadRole {
 }
 
 // Plan Materials - Consultant-uploaded materials at plan level (shared across all instances)
+
 model PlanMaterial {
   id           String  @id @default(uuid())
   fileName     String
@@ -1819,24 +1853,24 @@ model SlotOfAppointment {
 
   user User[] @relation("SlotOfAppointmentToUser")
 
-  startsAt    DateTime @db.Timestamptz()
-  endsAt      DateTime @db.Timestamptz()
+  startsAt    DateTime @db.Timestamptz
+  endsAt      DateTime @db.Timestamptz
   isTentative Boolean  @default(false)
 
   completionStatus SlotCompletionStatus @default(SCHEDULED)
-  completedAt      DateTime?            @db.Timestamptz()
+  completedAt      DateTime?            @db.Timestamptz
 
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   appointmentId String
 
   meetingSession MeetingSession?
 
-  createdAt DateTime @default(now()) @db.Timestamptz()
-  updatedAt DateTime @updatedAt @db.Timestamptz()
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
+  // OPT-3: Additional indexes for time range queries in validateSlotAvailability
   @@index([appointmentId])
   @@index([isTentative, appointmentId])
-  // OPT-3: Additional indexes for time range queries in validateSlotAvailability
   @@index([startsAt, endsAt])
   @@index([isTentative, startsAt, endsAt])
   @@index([createdAt])
@@ -1881,18 +1915,21 @@ model MeetingSession {
 }
 
 // Recording storage types
+
 enum RecordingStorageType {
   STREAM_S3 // Default: expires in 2 weeks
   SUPABASE // Permanent storage
 }
 
 // Recording storage policy for plans (determines where recordings are stored)
+
 enum RecordingStoragePolicy {
   STREAM_ONLY // 2-week temporary storage (free tier)
   SUPABASE_PERMANENT // Permanent storage (premium tier)
 }
 
 // Recording status lifecycle
+
 enum RecordingStatus {
   RECORDING // Currently being recorded
   PROCESSING // Stream is processing the recording
@@ -1904,6 +1941,7 @@ enum RecordingStatus {
 }
 
 // Model for storing recording details with dual storage support
+
 model Recording {
   id                String   @id @default(cuid())
   title             String
@@ -2015,7 +2053,8 @@ model Payment {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([userId, appointmentId]) // Allow multiple users to pay for same appointment (webinars/classes)
+  // Allow multiple users to pay for same appointment (webinars/classes)
+  @@unique([userId, appointmentId])
   @@index([expiresAt, paymentStatus])
   @@index([isMockPayment])
   @@index([paymentStatus])
@@ -2633,6 +2672,7 @@ enum SessionType {
 //////////////////////////////////////////////////// STAFF DASHBOARD MODELS ////////////////////////////////////////////////////
 
 // Content Moderation Enums
+
 enum ModerationReportType {
   REVIEW
   PROFILE
@@ -2674,6 +2714,7 @@ enum SystemJobStatus {
 }
 
 // Content Moderation Models
+
 model ModerationReport {
   id          String                 @id @default(uuid())
   type        ModerationReportType
@@ -2737,6 +2778,7 @@ model ModerationAction {
 }
 
 // Profile Verification Models
+
 model ConsultantProfileVerification {
   id     String                    @id @default(uuid())
   status ProfileVerificationStatus @default(PENDING)
@@ -2791,6 +2833,7 @@ model ProfileVerificationDocument {
 }
 
 // System Jobs Models
+
 model SystemJobExecution {
   id        String          @id @default(uuid())
   jobId     String // Maps to job configuration ID
@@ -2874,4 +2917,19 @@ model MaintenanceWindow {
   updatedAt DateTime @updatedAt
 
   @@map("maintenance_windows")
+}
+
+model SsoProvider {
+  id             String  @id
+  issuer         String
+  oidcConfig     String?
+  samlConfig     String?
+  userId         String?
+  user           User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  providerId     String
+  organizationId String?
+  domain         String
+
+  @@unique([providerId])
+  @@map("ssoProvider")
 }
