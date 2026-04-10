@@ -258,7 +258,19 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // PHASE 2b: Run refund side effects for all paths (org + gateway).
+    // PHASE 3: Update refund record BEFORE side effects so that
+    // reverseCreditsForPayment() can see this refund as SUCCEEDED when
+    // computing cumulative restoration (it queries SUCCEEDED refunds).
+    const finalRefund = await prisma.refund.update({
+      where: { id: pendingRefund.id },
+      data: {
+        status: refundResult.status,
+        refundId: refundResult.refundId,
+        metadata: refundResult.metadata as Prisma.InputJsonValue,
+      },
+    });
+
+    // PHASE 4: Run refund side effects for all paths (org + gateway).
     // These mirror the side effects in handleRefundCreated() from the
     // webhook path, ensuring financial consistency regardless of how the
     // refund was triggered.
@@ -267,6 +279,7 @@ export async function POST(req: NextRequest) {
         await refundEarnings(payment.id, {
           refundAmount,
           paymentAmount: payment.amount,
+          forceRefund: forceRefund ?? false,
         });
       } catch (earningsError) {
         console.error("[Refund] Failed to reverse earnings:", earningsError);
@@ -284,16 +297,6 @@ export async function POST(req: NextRequest) {
         console.error("[Refund] Failed to reverse referral credits:", creditsError);
       }
     }
-
-    // PHASE 3: Update refund record with gateway result
-    const finalRefund = await prisma.refund.update({
-      where: { id: pendingRefund.id },
-      data: {
-        status: refundResult.status,
-        refundId: refundResult.refundId,
-        metadata: refundResult.metadata as Prisma.InputJsonValue,
-      },
-    });
 
     return NextResponse.json({
       success: true,
