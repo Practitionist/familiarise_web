@@ -3,6 +3,7 @@
 import { use, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Mail, Trash2, Copy } from "lucide-react";
+import { useRequireOrgRole } from "../useOrgRole";
 
 import {
   DashboardHeader,
@@ -98,6 +99,7 @@ export default function OrgInvitationsPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = use(params);
+  const { allowed } = useRequireOrgRole(orgId, "ORG_ADMIN");
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
@@ -126,6 +128,8 @@ export default function OrgInvitationsPage({
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["org-invitations", orgId] }),
   });
+
+  if (!allowed) return null;
 
   const copyInviteLink = (invitationId: string) => {
     const url = `${window.location.origin}/organizations/invite/${invitationId}`;

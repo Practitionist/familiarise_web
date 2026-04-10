@@ -2,6 +2,7 @@
 
 import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useRequireOrgRole } from "../useOrgRole";
 import {
   Users,
   Briefcase,
@@ -44,10 +45,13 @@ export default function OrgAnalyticsPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = use(params);
+  const { allowed } = useRequireOrgRole(orgId, "ORG_MANAGER");
   const { data, isLoading } = useQuery({
     queryKey: ["org-analytics", orgId],
     queryFn: () => fetchAnalytics(orgId),
   });
+
+  if (!allowed) return null;
 
   if (isLoading) {
     return (

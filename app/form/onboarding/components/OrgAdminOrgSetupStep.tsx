@@ -26,17 +26,20 @@ const BILLING_MODES = [
   {
     value: "TAG_ONLY",
     label: "Tag-only",
-    description: "Learners pay individually. Payments are tagged to your org for reporting.",
+    description:
+      "Learners pay at checkout with their own card. Payments are tagged to your organization for reporting and analytics. No org-level billing.",
   },
   {
     value: "SEAT_PACK",
     label: "Seat pack",
-    description: "Pre-buy credits. Learner bookings deduct from your credit pool.",
+    description:
+      "Your organization pre-purchases a credit pool. When learners book, credits are deducted automatically. Top up anytime from the dashboard.",
   },
   {
     value: "INVOICED_MONTHLY",
     label: "Invoiced monthly",
-    description: "Learners book freely. You get one invoice at month-end.",
+    description:
+      "Learners book freely throughout the month. At month-end, your org receives one consolidated invoice. Pay within your configured NET terms.",
   },
 ];
 
@@ -221,17 +224,40 @@ export default function OrgAdminOrgSetupStep({
         <h3 className="text-sm font-semibold text-zinc-900">Billing</h3>
         <div className="space-y-2">
           <Label>Billing mode</Label>
-          <Select value={orgBillingMode} onValueChange={setOrgBillingMode}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {BILLING_MODES.map((m) => (
-                <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <p className="text-xs text-zinc-500">
-            {BILLING_MODES.find((m) => m.value === orgBillingMode)?.description}
-          </p>
+          <div className="space-y-2">
+            {BILLING_MODES.map((m) => (
+              <button
+                key={m.value}
+                type="button"
+                onClick={() => setOrgBillingMode(m.value)}
+                className={`w-full flex items-start gap-3 p-3 rounded-lg border text-left transition-colors ${
+                  orgBillingMode === m.value
+                    ? "border-zinc-900 bg-zinc-50 ring-1 ring-zinc-900"
+                    : "border-zinc-200 hover:border-zinc-300"
+                }`}
+              >
+                <div
+                  className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                    orgBillingMode === m.value
+                      ? "border-zinc-900"
+                      : "border-zinc-300"
+                  }`}
+                >
+                  {orgBillingMode === m.value && (
+                    <div className="w-2 h-2 rounded-full bg-zinc-900" />
+                  )}
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-zinc-900">
+                    {m.label}
+                  </p>
+                  <p className="text-xs text-zinc-500 mt-0.5">
+                    {m.description}
+                  </p>
+                </div>
+              </button>
+            ))}
+          </div>
         </div>
         {orgBillingMode === "INVOICED_MONTHLY" && (
           <div className="space-y-2">

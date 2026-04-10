@@ -43,8 +43,8 @@ const ROLE_INFO: Record<
     description: "Learn from experienced professionals",
   },
   ORG_ADMIN: {
-    title: "Organization Admin",
-    description: "Set up an org for your school or company",
+    title: "Organization Owner",
+    description: "Create and manage an organization for your school or company",
   },
 };
 

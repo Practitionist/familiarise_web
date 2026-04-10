@@ -4,6 +4,7 @@ import { use, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Pencil } from "lucide-react";
 
+import { useOrgRole } from "../useOrgRole";
 import {
   DashboardHeader,
   DashboardContent,
@@ -115,6 +116,7 @@ export default function OrgPlansPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = use(params);
+  const { isAtLeast } = useOrgRole(orgId);
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
@@ -189,9 +191,11 @@ export default function OrgPlansPage({
         title="Plans"
         subtitle="Catalog plans owned by this organization"
         actions={
-          <Button size="sm" onClick={() => setShowCreate(true)}>
-            <Plus className="h-4 w-4 mr-1" /> New plan
-          </Button>
+          isAtLeast("ORG_ADMIN") && (
+            <Button size="sm" onClick={() => setShowCreate(true)}>
+              <Plus className="h-4 w-4 mr-1" /> New plan
+            </Button>
+          )
         }
       />
       <DashboardContent>
@@ -235,27 +239,29 @@ export default function OrgPlansPage({
                           {p.isActive ? "Active" : "Archived"}
                         </Badge>
                       </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label="Edit plan"
-                            onClick={() => openEditPlan(p)}
-                          >
-                            <Pencil className="h-4 w-4 text-zinc-500" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label="Archive plan"
-                            onClick={() => deleteMutation.mutate(p.id)}
-                            disabled={!p.isActive || deleteMutation.isPending}
-                          >
-                            <Trash2 className="h-4 w-4 text-red-500" />
-                          </Button>
-                        </div>
-                      </TableCell>
+                      {isAtLeast("ORG_ADMIN") && (
+                        <TableCell>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Edit plan"
+                              onClick={() => openEditPlan(p)}
+                            >
+                              <Pencil className="h-4 w-4 text-zinc-500" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Archive plan"
+                              onClick={() => deleteMutation.mutate(p.id)}
+                              disabled={!p.isActive || deleteMutation.isPending}
+                            >
+                              <Trash2 className="h-4 w-4 text-red-500" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      )}
                     </TableRow>
                   ))}
                   {data && data.plans.length === 0 && (

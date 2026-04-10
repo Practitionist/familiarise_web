@@ -93,9 +93,9 @@ export default function OrgLayout({
     staleTime: 60_000,
   });
 
-  // Compute the sidebar items based on org kind + role.
-  // Note: PROVIDER feature flag is enforced at the API layer, so the
-  // consultants/payouts links here just self-hide for BUYER orgs.
+  // Compute the sidebar items based on org kind, billing mode, AND role.
+  // Lower roles see fewer nav items — the API layer enforces this too,
+  // but hiding the pages prevents confusion.
   const sidebarItems: CollapsibleSidebarItem[] = useMemo(() => {
     if (!org) return [];
     const isProviderOrHybrid =
@@ -103,10 +103,19 @@ export default function OrgLayout({
     const isBuyerOrHybrid =
       org.profile.kind === "BUYER" || org.profile.kind === "HYBRID";
 
+    // Role rank check — mirrors ORG_ROLE_RANK from lib/auth-helpers.ts
+    const role = org.membership.role;
+    const RANKS: Record<string, number> = {
+      ORG_OWNER: 100, ORG_ADMIN: 80, ORG_MANAGER: 60,
+      ORG_CONSULTANT: 40, ORG_SUPPORT: 30, ORG_LEARNER: 20,
+    };
+    const isAtLeast = (min: string) =>
+      (RANKS[role] ?? 0) >= (RANKS[min] ?? 0);
+
     const items: { name: string; icon: LucideIcon; path: string; show?: boolean }[] = [
       { name: "Overview", icon: Home, path: "home" },
       { name: "Members", icon: Users, path: "members" },
-      { name: "Invitations", icon: Mail, path: "invitations" },
+      { name: "Invitations", icon: Mail, path: "invitations", show: isAtLeast("ORG_ADMIN") },
       { name: "Learners", icon: GraduationCap, path: "learners", show: isBuyerOrHybrid },
       { name: "Consultants", icon: UserCog, path: "consultants", show: isProviderOrHybrid },
       { name: "Plans", icon: Briefcase, path: "plans" },
@@ -114,17 +123,17 @@ export default function OrgLayout({
         name: "Credits",
         icon: Coins,
         path: "credits",
-        show: org.profile.billingMode === "SEAT_PACK",
+        show: org.profile.billingMode === "SEAT_PACK" && isAtLeast("ORG_MANAGER"),
       },
-      { name: "Billing", icon: CreditCard, path: "billing" },
+      { name: "Billing", icon: CreditCard, path: "billing", show: isAtLeast("ORG_MANAGER") },
       {
         name: "Payouts",
         icon: Wallet,
         path: "payouts",
         show: isProviderOrHybrid,
       },
-      { name: "Analytics", icon: BarChart3, path: "analytics" },
-      { name: "Settings", icon: Settings, path: "settings" },
+      { name: "Analytics", icon: BarChart3, path: "analytics", show: isAtLeast("ORG_MANAGER") },
+      { name: "Settings", icon: Settings, path: "settings", show: isAtLeast("ORG_ADMIN") },
     ];
 
     return items

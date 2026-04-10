@@ -4,6 +4,7 @@ import { use, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { UserPlus, Trash2, Pencil } from "lucide-react";
 
+import { useOrgRole } from "../useOrgRole";
 import {
   DashboardHeader,
   DashboardContent,
@@ -118,6 +119,7 @@ export default function OrgMembersPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = use(params);
+  const { isAtLeast } = useOrgRole(orgId);
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
@@ -181,9 +183,11 @@ export default function OrgMembersPage({
         title="Members"
         subtitle="Everyone with a seat in this organization"
         actions={
-          <Button size="sm" onClick={() => setShowInvite(true)}>
-            <UserPlus className="h-4 w-4 mr-1" /> Add member
-          </Button>
+          isAtLeast("ORG_ADMIN") && (
+            <Button size="sm" onClick={() => setShowInvite(true)}>
+              <UserPlus className="h-4 w-4 mr-1" /> Add member
+            </Button>
+          )
         }
       />
       <DashboardContent>
@@ -205,7 +209,9 @@ export default function OrgMembersPage({
                     <TableHead>Member</TableHead>
                     <TableHead>Role</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead className="w-24">Actions</TableHead>
+                    {isAtLeast("ORG_ADMIN") && (
+                      <TableHead className="w-24">Actions</TableHead>
+                    )}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -233,27 +239,29 @@ export default function OrgMembersPage({
                           {m.status}
                         </Badge>
                       </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label="Edit member"
-                            onClick={() => openEdit(m)}
-                          >
-                            <Pencil className="h-4 w-4 text-zinc-500" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label="Remove member"
-                            onClick={() => removeMutation.mutate(m.id)}
-                            disabled={removeMutation.isPending}
-                          >
-                            <Trash2 className="h-4 w-4 text-red-500" />
-                          </Button>
-                        </div>
-                      </TableCell>
+                      {isAtLeast("ORG_ADMIN") && (
+                        <TableCell>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Edit member"
+                              onClick={() => openEdit(m)}
+                            >
+                              <Pencil className="h-4 w-4 text-zinc-500" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Remove member"
+                              onClick={() => removeMutation.mutate(m.id)}
+                              disabled={removeMutation.isPending}
+                            >
+                              <Trash2 className="h-4 w-4 text-red-500" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      )}
                     </TableRow>
                   ))}
                   {data && data.members.length === 0 && (

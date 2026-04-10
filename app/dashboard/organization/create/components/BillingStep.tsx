@@ -19,17 +19,20 @@ const BILLING_MODES = [
   {
     value: "TAG_ONLY",
     label: "Tag-only",
-    description: "Learners pay individually. Payments are tagged to your org for reporting.",
+    description:
+      "Learners pay at checkout with their own card. Payments are tagged to your organization for reporting and analytics. No org-level billing.",
   },
   {
     value: "SEAT_PACK",
     label: "Seat pack",
-    description: "Pre-buy credits. Learner bookings deduct from your credit pool.",
+    description:
+      "Your organization pre-purchases a credit pool. When learners book, credits are deducted automatically. Top up anytime from the dashboard.",
   },
   {
     value: "INVOICED_MONTHLY",
     label: "Invoiced monthly",
-    description: "Learners book freely. You get one invoice at month-end.",
+    description:
+      "Learners book freely throughout the month. At month-end, your org receives one consolidated invoice. Pay within your configured NET terms.",
   },
 ];
 
@@ -57,26 +60,42 @@ export function BillingStep({ onNext, onBack, initialData }: StepProps) {
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
       <div className="space-y-2">
         <Label>Billing mode</Label>
-        <Select
-          value={billingMode}
-          onValueChange={(v) =>
-            setValue("billingMode", v as BillingFormData["billingMode"])
-          }
-        >
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {BILLING_MODES.map((mode) => (
-              <SelectItem key={mode.value} value={mode.value}>
-                {mode.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <p className="text-xs text-zinc-500">
-          {BILLING_MODES.find((m) => m.value === billingMode)?.description}
-        </p>
+        <div className="space-y-2">
+          {BILLING_MODES.map((mode) => (
+            <button
+              key={mode.value}
+              type="button"
+              onClick={() =>
+                setValue("billingMode", mode.value as BillingFormData["billingMode"])
+              }
+              className={`w-full flex items-start gap-3 p-3 rounded-lg border text-left transition-colors ${
+                billingMode === mode.value
+                  ? "border-zinc-900 bg-zinc-50 ring-1 ring-zinc-900"
+                  : "border-zinc-200 hover:border-zinc-300"
+              }`}
+            >
+              <div
+                className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                  billingMode === mode.value
+                    ? "border-zinc-900"
+                    : "border-zinc-300"
+                }`}
+              >
+                {billingMode === mode.value && (
+                  <div className="w-2 h-2 rounded-full bg-zinc-900" />
+                )}
+              </div>
+              <div>
+                <p className="text-sm font-medium text-zinc-900">
+                  {mode.label}
+                </p>
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  {mode.description}
+                </p>
+              </div>
+            </button>
+          ))}
+        </div>
       </div>
 
       {billingMode === "INVOICED_MONTHLY" && (

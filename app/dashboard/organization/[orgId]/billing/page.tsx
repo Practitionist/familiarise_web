@@ -3,6 +3,7 @@
 import { use, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CreditCard, AlertCircle, Sparkles, Plus, Trash2 } from "lucide-react";
+import { useOrgRole, useRequireOrgRole } from "../useOrgRole";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -98,6 +99,8 @@ export default function OrgBillingPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = use(params);
+  const { isAtLeast } = useOrgRole(orgId);
+  const { allowed } = useRequireOrgRole(orgId, "ORG_MANAGER");
   const queryClient = useQueryClient();
 
   const summary = useQuery({
@@ -163,6 +166,8 @@ export default function OrgBillingPage({
   const [dueDate, setDueDate] = useState("");
   const [composerError, setComposerError] = useState<string | null>(null);
 
+  if (!allowed) return null;
+
   async function createInvoice() {
     setComposerError(null);
     const items = lineItems
@@ -203,10 +208,13 @@ export default function OrgBillingPage({
         subtitle="Invoices, charges, and outstanding balance"
         actions={
           <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={() => setShowComposer(true)}>
-              <Plus className="h-4 w-4 mr-1" /> Create invoice
-            </Button>
-            {summary.data?.billingMode === "INVOICED_MONTHLY" && (
+            {isAtLeast("ORG_OWNER") && (
+              <Button size="sm" variant="outline" onClick={() => setShowComposer(true)}>
+                <Plus className="h-4 w-4 mr-1" /> Create invoice
+              </Button>
+            )}
+            {isAtLeast("ORG_OWNER") &&
+              summary.data?.billingMode === "INVOICED_MONTHLY" && (
               <Button
                 size="sm"
                 onClick={() => generateMutation.mutate()}

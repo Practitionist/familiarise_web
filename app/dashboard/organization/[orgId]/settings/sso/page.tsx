@@ -4,6 +4,7 @@ import { use, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, ArrowLeft } from "lucide-react";
 import Link from "next/link";
+import { useRequireOrgRole } from "../../useOrgRole";
 
 import {
   DashboardHeader,
@@ -132,6 +133,7 @@ export default function OrgSsoPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = use(params);
+  const { allowed } = useRequireOrgRole(orgId, "ORG_OWNER");
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ["org-sso", orgId],
@@ -223,6 +225,8 @@ export default function OrgSsoPage({
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["org-sso", orgId] }),
   });
+
+  if (!allowed) return null;
 
   if (isLoading) {
     return (
