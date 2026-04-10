@@ -180,7 +180,7 @@ export const OnboardingDataSchema = z.discriminatedUnion("role", [
     adminProfile: AdminProfileCreateObjectSchema.optional(),
   }),
   OnboardingBaseSchema.extend({
-    role: z.literal(UserRole.ORG_ADMIN),
+    role: z.literal("ORG_ADMIN" as const),
     consultantProfile: z.undefined().optional(),
     consulteeProfile: z.undefined().optional(),
     staffProfile: z.undefined().optional(),
@@ -381,7 +381,7 @@ const adminFormFields = sharedFormFields.extend({
 });
 
 const orgAdminFormFields = sharedFormFields.extend({
-  role: z.literal(UserRole.ORG_ADMIN),
+  role: z.literal("ORG_ADMIN" as const),
   // Org fields (merged wizard — collected during onboarding step 1)
   orgName: z.string().min(2).max(100),
   orgBillingEmail: z.string().email(),
@@ -636,6 +636,28 @@ export function transformOnboardingFormToServerData(
         },
       };
 
+    case UserRole.ORG_ADMIN:
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    case "ORG_ADMIN" as any:
+      return {
+        ...base,
+        role: formData.role,
+        consultantProfile: undefined,
+        consulteeProfile: undefined,
+        staffProfile: undefined,
+        orgName: formData.orgName,
+        orgBillingEmail: formData.orgBillingEmail,
+        orgBillingMode: formData.orgBillingMode,
+        orgDescription: formData.orgDescription,
+        orgIndustry: formData.orgIndustry,
+        orgSizeBucket: formData.orgSizeBucket,
+        orgWebsite: formData.orgWebsite,
+        orgPaymentTermsDays: formData.orgPaymentTermsDays,
+        orgSeatsTotal: formData.orgSeatsTotal,
+        orgInviteEmails: formData.orgInviteEmails,
+        orgInviteRole: formData.orgInviteRole,
+      } as OnboardingData;
+
     default:
       throw new Error(`Invalid role: ${formData.role}`);
   }
@@ -742,6 +764,17 @@ export function transformFrontendToServerData(
         consulteeProfile: undefined,
         staffProfile: undefined,
       };
+
+    case UserRole.ORG_ADMIN:
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    case "ORG_ADMIN" as any:
+      return {
+        ...base,
+        role: frontendData.role,
+        consultantProfile: undefined,
+        consulteeProfile: undefined,
+        staffProfile: undefined,
+      } as OnboardingData;
 
     default:
       throw new Error(`Invalid role: ${frontendData.role}`);
