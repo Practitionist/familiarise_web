@@ -1573,13 +1573,31 @@ export async function handleCheckout(
       where: { organizationId: validatedData.organizationId },
       select: { id: true, billingMode: true, status: true },
     });
-    if (orgProfile && orgProfile.status === "ACTIVE") {
-      organizationProfileId = orgProfile.id;
-      orgBillingMode = orgProfile.billingMode;
+    if (!orgProfile || orgProfile.status !== "ACTIVE") {
+      throw new Error("Organization not found or deactivated.");
     }
-    // If the org doesn't exist or is deactivated, we silently proceed
-    // without the tag — this matches TAG_ONLY semantics (the learner still
-    // pays normally; the tag is for reporting, not access control).
+
+    // SECURITY: Verify the caller is an active member of this org before
+    // allowing any org-funded billing. Without this check, any user could
+    // pass another org's ID and drain their credit pool or push bookings
+    // onto their invoice. Fail closed — reject if not a member.
+    const callerMembership =
+      await prisma.organizationMemberProfile.findFirst({
+        where: {
+          organizationProfileId: orgProfile.id,
+          status: "ACTIVE",
+          member: { userId },
+        },
+        select: { role: true, seatAssignedAt: true },
+      });
+    if (!callerMembership) {
+      throw new Error(
+        "You are not an active member of this organization.",
+      );
+    }
+
+    organizationProfileId = orgProfile.id;
+    orgBillingMode = orgProfile.billingMode;
   }
 
   try {

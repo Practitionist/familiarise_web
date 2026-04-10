@@ -118,6 +118,18 @@ export async function POST(
       include: { organizationMemberProfile: true },
     });
 
+    // Enforce seatsTotal for ORG_LEARNER additions.
+    if (role === "ORG_LEARNER" && access.org.seatsTotal !== null) {
+      if (access.org.seatsUsed >= access.org.seatsTotal) {
+        return NextResponse.json(
+          {
+            error: `Organization has reached its seat limit (${access.org.seatsTotal}). Remove a learner or increase the seat budget in Settings.`,
+          },
+          { status: 403 },
+        );
+      }
+    }
+
     // If a member row exists but the profile is REMOVED, reactivate instead of 409.
     const existingProfile = existing?.organizationMemberProfile ?? null;
     if (existing && existingProfile && existingProfile.status !== "REMOVED") {

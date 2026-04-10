@@ -9,8 +9,16 @@
  * table. We tag the row with `organizationId` so the signin domain router in
  * middleware.ts can find the right provider for an incoming domain match.
  *
- * Phase L (SSO admin UI) wires this endpoint into the dashboard form for
- * uploading SAML metadata and OIDC client credentials.
+ * TODO(SSO): This route writes raw samlConfig/oidcConfig strings into the
+ * ssoProvider table. BetterAuth's SSO plugin may expect structured JSON or
+ * specific fields in these columns at runtime. Before enabling real SSO
+ * sign-in, normalize provider config into the exact shape the plugin expects:
+ *   - SAML: parse XML metadata into entityId, ssoUrl, certificate, etc.
+ *   - OIDC: store { clientId, clientSecret, issuer, authorizationUrl, ... }
+ * Also: BetterAuth SSO auto-provisioning creates a BetterAuth `member` row
+ * but NOT the OrganizationMemberProfile the app requires. Until a sync hook
+ * is added, SSO-provisioned users will authenticate but get 403 from
+ * requireOrgAccess(). See PR #655 review feedback for details.
  */
 
 import { NextRequest, NextResponse } from "next/server";

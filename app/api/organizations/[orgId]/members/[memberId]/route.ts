@@ -85,18 +85,69 @@ export async function PATCH(
       }
     }
 
+    // Compute seat transition for seatsUsed bookkeeping.
+    const oldRole = target.role;
+    const oldStatus = target.status;
+    const newRole = role ?? oldRole;
+    const newStatus = status ?? oldStatus;
+    const wasSeatOccupying =
+      oldRole === "ORG_LEARNER" && oldStatus === "ACTIVE";
+    const isSeatOccupying =
+      newRole === "ORG_LEARNER" && newStatus === "ACTIVE";
+
+    // Resolve profile FKs — look up user to link correct profiles.
+    let consulteeProfileId: string | null = target.consulteeProfileId;
+    let consultantProfileId: string | null = target.consultantProfileId;
+    if (role !== undefined && role !== oldRole) {
+      const user = await prisma.member.findUnique({
+        where: { id: target.memberId },
+        select: {
+          user: {
+            select: { consulteeProfileId: true, consultantProfileId: true },
+          },
+        },
+      });
+      consulteeProfileId =
+        newRole === "ORG_LEARNER"
+          ? user?.user.consulteeProfileId ?? null
+          : null;
+      consultantProfileId =
+        newRole === "ORG_CONSULTANT"
+          ? user?.user.consultantProfileId ?? null
+          : null;
+    }
+
     const [updated] = await prisma.$transaction(async (tx) => {
       const profileUpdate = await tx.organizationMemberProfile.update({
         where: { id: memberId },
         data: {
           ...(role !== undefined && { role }),
           ...(status !== undefined && { status }),
+          consulteeProfileId,
+          consultantProfileId,
+          seatAssignedAt: isSeatOccupying && !wasSeatOccupying
+            ? new Date()
+            : !isSeatOccupying && wasSeatOccupying
+              ? null
+              : undefined,
         },
       });
       if (role !== undefined) {
         await tx.member.update({
           where: { id: target.memberId },
           data: { role },
+        });
+      }
+      // Reconcile seatsUsed in the same transaction.
+      if (wasSeatOccupying && !isSeatOccupying) {
+        await tx.organizationProfile.update({
+          where: { id: access.org.id },
+          data: { seatsUsed: { decrement: 1 } },
+        });
+      } else if (!wasSeatOccupying && isSeatOccupying) {
+        await tx.organizationProfile.update({
+          where: { id: access.org.id },
+          data: { seatsUsed: { increment: 1 } },
         });
       }
       return [profileUpdate];

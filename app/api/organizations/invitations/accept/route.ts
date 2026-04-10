@@ -108,6 +108,18 @@ export async function POST(req: NextRequest) {
     const orgProfile = invitation.organization.organizationProfile;
     const userId = auth.session.user.id;
 
+    // Enforce seatsTotal for ORG_LEARNER invitations.
+    if (role === "ORG_LEARNER" && orgProfile.seatsTotal !== null) {
+      if (orgProfile.seatsUsed >= orgProfile.seatsTotal) {
+        return NextResponse.json(
+          {
+            error: `This organization has reached its seat limit (${orgProfile.seatsTotal}). Contact the org admin.`,
+          },
+          { status: 403 },
+        );
+      }
+    }
+
     // Idempotent: if a Member already exists, surface that.
     const existing = await prisma.member.findUnique({
       where: {
