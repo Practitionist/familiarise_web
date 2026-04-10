@@ -89,6 +89,12 @@ export const checkoutSchema = z
     notes: z.string().optional(),
     fromWaitlist: z.string().optional(), // Waitlist ID if coming from waitlist flow
     useReferralCredits: z.boolean().optional(), // Apply available referral credits
+    // Enterprise: optional org context. When set, the payment is tagged with
+    // organizationProfileId and billing is routed per the org's billingMode.
+    // TAG_ONLY → normal gateway, payment tagged for reporting.
+    // SEAT_PACK → credit deduction (Phase J).
+    // INVOICED_MONTHLY → invoice rollup (Phase K).
+    organizationId: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     // === CONSULTATION validation ===
@@ -306,6 +312,7 @@ export const createCheckoutData = (params: {
   notes?: string;
   fromWaitlist?: string;
   useReferralCredits?: boolean;
+  organizationId?: string;
 }): CheckoutInput => {
   return {
     appointmentType: params.appointmentType,
@@ -323,5 +330,6 @@ export const createCheckoutData = (params: {
     notes: params.notes,
     fromWaitlist: params.fromWaitlist,
     useReferralCredits: params.useReferralCredits,
+    organizationId: params.organizationId,
   };
 };

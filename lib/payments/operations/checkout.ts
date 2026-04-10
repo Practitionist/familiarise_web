@@ -1561,6 +1561,27 @@ export async function handleCheckout(
   let paymentResponse: { id: string; client_secret: string | null } | null =
     null;
 
+  // Enterprise: resolve org context early so it is available when building
+  // the Payment row. For TAG_ONLY orgs this is purely a tag — the gateway
+  // flow is unchanged. SEAT_PACK and INVOICED_MONTHLY branching (Phases J/K)
+  // will read `orgBillingMode` to decide whether to skip the gateway.
+  let organizationProfileId: string | null = null;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  let orgBillingMode: string | null = null;
+  if (validatedData.organizationId) {
+    const orgProfile = await prisma.organizationProfile.findUnique({
+      where: { organizationId: validatedData.organizationId },
+      select: { id: true, billingMode: true, status: true },
+    });
+    if (orgProfile && orgProfile.status === "ACTIVE") {
+      organizationProfileId = orgProfile.id;
+      orgBillingMode = orgProfile.billingMode;
+    }
+    // If the org doesn't exist or is deactivated, we silently proceed
+    // without the tag — this matches TAG_ONLY semantics (the learner still
+    // pays normally; the tag is for reporting, not access control).
+  }
+
   try {
     // STEP 1: Calculate amount and fetch plan data (OUTSIDE LOCK - just pricing)
     const {
@@ -1745,6 +1766,10 @@ export async function handleCheckout(
               isInternational,
               displayCurrencyAtCheckout,
               exchangeRateAtCheckout,
+              // Enterprise: org tag for reporting / billing. For TAG_ONLY this
+              // is purely a tag; SEAT_PACK and INVOICED_MONTHLY branching will
+              // set additional fields here in Phases J/K.
+              organizationProfileId,
             },
           });
 
