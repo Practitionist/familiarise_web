@@ -177,8 +177,55 @@ export interface RequestsTabProps {
   onUpdate?: () => void;
 }
 
+/**
+ * Pagination envelope returned by the consultant documents API (issue #346).
+ * Defined here so both the fetch helper and the UI can import it.
+ */
+export interface DocumentsPagination {
+  limit: number;
+  offset: number;
+  totalCount: number;
+  totalPages: number;
+  currentPage: number;
+  hasNextPage: boolean;
+  hasPrevPage: boolean;
+}
+
+export interface DocumentsMetadata {
+  pendingCount: number;
+  reviewingCount: number;
+  needsRevisionCount: number;
+  completedCount: number;
+}
+
+export interface DocumentsPage {
+  data: IDocument[];
+  pagination: DocumentsPagination;
+  metadata: DocumentsMetadata;
+  count?: number;
+  message?: string;
+  consultant?: string;
+  filters?: {
+    status?: string | null;
+    appointmentType?: string | null;
+  };
+}
+
 export interface DocumentsTabProps {
-  documents: IDocument[];
+  documentsPage: DocumentsPage | undefined;
+  isPlaceholderData: boolean;
+
+  // Pagination
+  page: number;
+  pageSize: number;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
+
+  // Filters (lifted up into the page component)
+  statusFilter: string;
+  typeFilter: string;
+  onStatusFilterChange: (status: string) => void;
+  onTypeFilterChange: (type: string) => void;
 }
 
 // Props for reusable components
