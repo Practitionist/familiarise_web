@@ -2,6 +2,11 @@ import { getSession } from "@/lib/auth-server";
 import { NextResponse } from "next/server";
 import type { Session } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import type {
+  OrganizationProfile,
+  OrganizationMemberProfile,
+  OrgMemberRole,
+} from "@prisma/client";
 
 /**
  * Requires API authentication and returns the session or an error response.
@@ -256,4 +261,168 @@ export async function authorizeEventAccess(
   }
 
   return null;
+}
+
+// ============================================================================
+// ORGANIZATION ACCESS HELPERS (ENTERPRISE)
+// ============================================================================
+
+/**
+ * Numeric rank for OrgMemberRole — higher = more privileged.
+ *
+ * Used for "minimum role" checks via {@link orgRoleSatisfies}. Note that
+ * ORG_SUPPORT and ORG_LEARNER deliberately sit between ORG_MANAGER and the
+ * absolute floor — they have legitimate access to view their own data but
+ * shouldn't be promoted above MANAGER without an explicit role change.
+ */
+const ORG_ROLE_RANK: Record<OrgMemberRole, number> = {
+  ORG_OWNER: 100,
+  ORG_ADMIN: 80,
+  ORG_MANAGER: 60,
+  ORG_CONSULTANT: 40,
+  ORG_SUPPORT: 30,
+  ORG_LEARNER: 20,
+};
+
+/**
+ * Whether `actual` role meets the `minimum` role requirement.
+ *
+ * Examples:
+ *   orgRoleSatisfies("ORG_OWNER", "ORG_ADMIN") → true
+ *   orgRoleSatisfies("ORG_LEARNER", "ORG_MANAGER") → false
+ *   orgRoleSatisfies("ORG_ADMIN", "ORG_ADMIN") → true (>=)
+ */
+export function orgRoleSatisfies(
+  actual: OrgMemberRole,
+  minimum: OrgMemberRole,
+): boolean {
+  return ORG_ROLE_RANK[actual] >= ORG_ROLE_RANK[minimum];
+}
+
+export type OrgAccessGrant = {
+  session: Session;
+  member: OrganizationMemberProfile;
+  org: OrganizationProfile;
+};
+
+/**
+ * Require that the session user is an active member of the specified
+ * organization (by `organizationId` — the BetterAuth `Organization.id`).
+ *
+ * Optionally require a minimum role. Roles are ranked via {@link ORG_ROLE_RANK}
+ * and compared with {@link orgRoleSatisfies}.
+ *
+ * **Platform admins (UserRole.ADMIN) bypass org membership checks.** They can
+ * manage any org for operability/support reasons. STAFF do NOT bypass — they're
+ * platform-side, not org-side.
+ *
+ * @returns On success: { session, member, org } where `org` is the
+ *          OrganizationProfile (with full enterprise fields) and `member` is
+ *          the user's OrganizationMemberProfile (with the typed role enum).
+ *          On failure: { error: NextResponse } with 401/403/404 as appropriate.
+ *
+ * @example
+ *   export async function GET(_req, { params }) {
+ *     const access = await requireOrgAccess((await params).orgId);
+ *     if (access.error) return access.error;
+ *     // access.session, access.member, access.org are all defined
+ *   }
+ */
+export async function requireOrgAccess(
+  organizationId: string,
+  minimumRole?: OrgMemberRole,
+): Promise<({ error?: never } & OrgAccessGrant) | { error: NextResponse }> {
+  const auth = await requireApiAuth();
+  if (auth.error) return { error: auth.error };
+
+  // Resolve OrganizationProfile by the BetterAuth Organization.id
+  const org = await prisma.organizationProfile.findUnique({
+    where: { organizationId },
+  });
+  if (!org) {
+    return {
+      error: NextResponse.json(
+        { error: "Organization not found" },
+        { status: 404 },
+      ),
+    };
+  }
+
+  if (org.status === "DEACTIVATED") {
+    return {
+      error: NextResponse.json(
+        { error: "Organization has been deactivated" },
+        { status: 403 },
+      ),
+    };
+  }
+
+  const userId = auth.session.user.id;
+
+  // Platform admins bypass org membership checks for operability.
+  // They get a synthesized OWNER-rank member record so callers don't have to
+  // special-case admin paths.
+  if (auth.session.user.role === "ADMIN") {
+    const stub: OrganizationMemberProfile = {
+      id: `__admin_stub_${userId}`,
+      memberId: `__admin_stub_${userId}`,
+      organizationProfileId: org.id,
+      role: "ORG_OWNER",
+      status: "ACTIVE",
+      consultantProfileId: null,
+      consulteeProfileId: null,
+      customConsultantPayoutRate: null,
+      seatAssignedAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    return { session: auth.session, member: stub, org };
+  }
+
+  // Look up the typed member profile by joining through BetterAuth's Member.
+  const member = await prisma.organizationMemberProfile.findFirst({
+    where: {
+      organizationProfileId: org.id,
+      member: { userId },
+    },
+  });
+
+  if (!member) {
+    return {
+      error: NextResponse.json(
+        { error: "Not a member of this organization" },
+        { status: 403 },
+      ),
+    };
+  }
+
+  if (member.status !== "ACTIVE") {
+    return {
+      error: NextResponse.json(
+        { error: `Membership is ${member.status.toLowerCase()}` },
+        { status: 403 },
+      ),
+    };
+  }
+
+  if (minimumRole && !orgRoleSatisfies(member.role, minimumRole)) {
+    return {
+      error: NextResponse.json(
+        { error: `Forbidden — ${minimumRole} or higher required` },
+        { status: 403 },
+      ),
+    };
+  }
+
+  return { session: auth.session, member, org };
+}
+
+/**
+ * Convenience wrapper around {@link requireOrgAccess} for owner-only operations:
+ * settings mutation, billing changes, payout account, organization deletion.
+ */
+export async function requireOrgOwner(
+  organizationId: string,
+): Promise<({ error?: never } & OrgAccessGrant) | { error: NextResponse }> {
+  return requireOrgAccess(organizationId, "ORG_OWNER");
 }
