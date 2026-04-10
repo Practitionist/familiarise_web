@@ -42,6 +42,7 @@ import {
   createEarningsFromPayment,
   type AppointmentType,
 } from "@/lib/payments/payouts";
+import { deductCredits } from "@/lib/payments/operations/org-credits";
 import {
   determineTax,
   appointmentTypeToServiceType,
@@ -1566,7 +1567,6 @@ export async function handleCheckout(
   // flow is unchanged. SEAT_PACK and INVOICED_MONTHLY branching (Phases J/K)
   // will read `orgBillingMode` to decide whether to skip the gateway.
   let organizationProfileId: string | null = null;
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   let orgBillingMode: string | null = null;
   if (validatedData.organizationId) {
     const orgProfile = await prisma.organizationProfile.findUnique({
@@ -1637,13 +1637,27 @@ export async function handleCheckout(
       }),
     );
 
+    // Enterprise: SEAT_PACK orgs pay via the credit pool, not the gateway.
+    // Treat like a zero-amount flow — skip PaymentIntent, succeed immediately,
+    // and deduct from the pool inside the Serializable transaction below.
+    const isOrgCreditPayment = orgBillingMode === "SEAT_PACK" && !!organizationProfileId;
+
+    // Enterprise: INVOICED_MONTHLY orgs also skip the gateway — bookings are
+    // accumulated and invoiced at month-end. Marked as succeeded immediately.
+    const isOrgInvoicedPayment = orgBillingMode === "INVOICED_MONTHLY" && !!organizationProfileId;
+
     // FIX #520: Detect zero-amount payments (credits fully cover cost)
     // Both Stripe and Razorpay reject amount <= 0, so we skip the gateway
     // entirely and treat this like a "free" payment that succeeds immediately.
     const isZeroAmountPayment = amount === 0 && creditsApplied > 0;
 
     // STEP 4: Create payment intent (INSIDE LOCK)
-    if (isZeroAmountPayment) {
+    // Enterprise org billing modes skip the gateway entirely.
+    if (isOrgCreditPayment || isOrgInvoicedPayment) {
+      const prefix = isOrgCreditPayment ? "org_credit" : "org_invoiced";
+      const syntheticId = `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+      paymentResponse = { id: syntheticId, client_secret: null };
+    } else if (isZeroAmountPayment) {
       const freePaymentId = `free_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
       paymentResponse = { id: freePaymentId, client_secret: null };
       console.log(
@@ -1681,7 +1695,8 @@ export async function handleCheckout(
 
           // FIX #520: Zero-amount payments (credits cover full cost) skip the
           // gateway, so slots should be confirmed immediately just like mock payments.
-          const skipPayment = isMockPayment || isZeroAmountPayment;
+          // Enterprise: org credit and invoiced payments also skip the gateway.
+          const skipPayment = isMockPayment || isZeroAmountPayment || isOrgCreditPayment || isOrgInvoicedPayment;
 
           // Create appointment based on type (with isTentative flag)
           switch (validatedData.appointmentType) {
@@ -1748,14 +1763,20 @@ export async function handleCheckout(
               originalAmount,
               taxAmount,
               currency,
-              paymentMethod: isZeroAmountPayment ? "CREDITS" : "CARD",
+              paymentMethod: isOrgCreditPayment
+                ? "ORG_CREDIT"
+                : isOrgInvoicedPayment
+                  ? "ORG_INVOICED"
+                  : isZeroAmountPayment
+                    ? "CREDITS"
+                    : "CARD",
               paymentIntent: paymentResponse!.id,
               paymentGateway: validatedData.paymentGateway,
               // FIX #520: Zero-amount and mock payments succeed immediately (no webhook)
               paymentStatus: skipPayment
                 ? PaymentStatus.SUCCEEDED
                 : PaymentStatus.PENDING,
-              isMockPayment: isMockPayment || isZeroAmountPayment,
+              isMockPayment: isMockPayment || isZeroAmountPayment || isOrgCreditPayment || isOrgInvoicedPayment,
               userId: userId,
               appointmentId: createdAppointment?.id || null,
               discountCodeId,
@@ -1772,6 +1793,13 @@ export async function handleCheckout(
               organizationProfileId,
             },
           });
+
+          // Enterprise: SEAT_PACK credit deduction inside the Serializable TX.
+          // The pool balance check + decrement is atomic with the Payment creation,
+          // so concurrent checkouts can't overdraw.
+          if (isOrgCreditPayment && organizationProfileId) {
+            await deductCredits(tx, organizationProfileId, amount, payment.id);
+          }
 
           // Increment discount code usage count atomically (only after payment is created)
           // This ensures count only increases when payment is successfully created.
@@ -1873,10 +1901,10 @@ export async function handleCheckout(
         }),
       );
 
-      // Mock/zero-amount payment post-processing: referral qualifying action + waitlist
-      // Real payments handle this via handlePaymentSuccess() in the webhook,
-      // but mock and zero-amount payments bypass webhooks entirely.
-      if (isMockPayment || isZeroAmountPayment) {
+      // Mock/zero-amount/org-billing payment post-processing: referral qualifying
+      // action + waitlist. Real payments handle this via handlePaymentSuccess()
+      // in the webhook, but these flows bypass webhooks entirely.
+      if (isMockPayment || isZeroAmountPayment || isOrgCreditPayment || isOrgInvoicedPayment) {
         // Trigger referral reward if this is the user's first paid booking
         try {
           await processQualifyingAction(userId, "first_paid_booking");
