@@ -38,6 +38,47 @@ export async function GET(
     const status = searchParams.get("status");
     const appointmentType = searchParams.get("appointmentType");
 
+    // Parse + validate pagination params (issue #346)
+    const DEFAULT_LIMIT = 10;
+    const MAX_LIMIT = 100;
+
+    const rawLimit = searchParams.get("limit");
+    const rawOffset = searchParams.get("offset");
+
+    const parsedLimit = rawLimit
+      ? Number.parseInt(rawLimit, 10)
+      : DEFAULT_LIMIT;
+    const parsedOffset = rawOffset ? Number.parseInt(rawOffset, 10) : 0;
+
+    if (
+      !Number.isFinite(parsedLimit) ||
+      parsedLimit < 1 ||
+      parsedLimit > MAX_LIMIT
+    ) {
+      return NextResponse.json(
+        {
+          error: "Invalid limit",
+          message: `"limit" must be an integer between 1 and ${MAX_LIMIT}.`,
+          code: "INVALID_PAGINATION",
+        },
+        { status: 400 },
+      );
+    }
+
+    if (!Number.isFinite(parsedOffset) || parsedOffset < 0) {
+      return NextResponse.json(
+        {
+          error: "Invalid offset",
+          message: `"offset" must be a non-negative integer.`,
+          code: "INVALID_PAGINATION",
+        },
+        { status: 400 },
+      );
+    }
+
+    const take = parsedLimit;
+    const skip = parsedOffset;
+
     // Verify user is the consultant with enhanced error handling
     let consultant;
     try {
@@ -171,45 +212,65 @@ export async function GET(
       }
     }
 
-    // Fetch documents with enhanced error handling
+    // Fetch documents, total count, and status breakdown in parallel.
+    // - findMany: current page only (take/skip)
+    // - count: total matching rows across all pages
+    // - groupBy: per-status counts for the metadata block (filter-aware)
     let documents;
+    let totalCount: number;
+    let metadataGrouped: Array<{
+      reviewStatus: DocumentReviewStatus;
+      _count: { _all: number };
+    }>;
     try {
-      documents = await prisma.appointmentDocument.findMany({
-        where,
-        include: {
-          appointment: {
-            include: {
-              consultation: {
-                include: {
-                  requestedBy: {
-                    include: {
-                      user: true,
+      [documents, totalCount, metadataGrouped] = await Promise.all([
+        prisma.appointmentDocument.findMany({
+          where,
+          include: {
+            appointment: {
+              include: {
+                consultation: {
+                  include: {
+                    requestedBy: {
+                      include: {
+                        user: true,
+                      },
                     },
+                    consultationPlan: true,
                   },
-                  consultationPlan: true,
                 },
-              },
-              subscription: {
-                include: {
-                  requestedBy: {
-                    include: {
-                      user: true,
+                subscription: {
+                  include: {
+                    requestedBy: {
+                      include: {
+                        user: true,
+                      },
                     },
+                    subscriptionPlan: true,
                   },
-                  subscriptionPlan: true,
                 },
               },
             },
           },
-        },
-        orderBy: {
-          uploadedAt: "desc",
-        },
-      });
+          orderBy: {
+            uploadedAt: "desc",
+          },
+          take,
+          skip,
+        }),
+        prisma.appointmentDocument.count({ where }),
+        prisma.appointmentDocument.groupBy({
+          by: ["reviewStatus"],
+          where: { ...where, reviewStatus: undefined },
+          _count: { _all: true },
+        }),
+      ]);
     } catch (dbError) {
       console.error("Database error fetching documents:", dbError);
 
-      // Return empty array with helpful message instead of failing
+      // Return an empty page envelope with helpful message instead of failing.
+      // Shape must match the success branch so the UI's pagination prop is
+      // never undefined on DB errors.
       return NextResponse.json({
         data: [],
         count: 0,
@@ -219,6 +280,21 @@ export async function GET(
         filters: {
           status,
           appointmentType,
+        },
+        pagination: {
+          limit: take,
+          offset: skip,
+          totalCount: 0,
+          totalPages: 1,
+          currentPage: 1,
+          hasNextPage: false,
+          hasPrevPage: false,
+        },
+        metadata: {
+          pendingCount: 0,
+          reviewingCount: 0,
+          needsRevisionCount: 0,
+          completedCount: 0,
         },
       });
     }
@@ -301,9 +377,23 @@ export async function GET(
       }
     });
 
-    // Provide helpful context messages
+    // Derive metadata counts from the groupBy result so they reflect the
+    // full filtered dataset, not just the current page (issue #346, Q1).
+    const countByStatus = new Map<DocumentReviewStatus, number>(
+      metadataGrouped.map((row) => [row.reviewStatus, row._count._all]),
+    );
+    const metadata = {
+      pendingCount: countByStatus.get("PENDING") ?? 0,
+      reviewingCount: countByStatus.get("IN_REVIEW") ?? 0,
+      needsRevisionCount: countByStatus.get("NEEDS_REVISION") ?? 0,
+      completedCount:
+        (countByStatus.get("APPROVED") ?? 0) +
+        (countByStatus.get("REJECTED") ?? 0),
+    };
+
+    // Provide helpful context messages. `totalCount` now comes from the
+    // count() query so it reflects all rows matching `where`, not the page.
     let message = "";
-    const totalCount = transformedDocuments.length;
     const isDevelopment = process.env.NODE_ENV === "development";
     const devModeMessage = isDevelopment
       ? " [DEV MODE - Access control bypassed]"
@@ -336,17 +426,16 @@ export async function GET(
         status,
         appointmentType,
       },
-      metadata: {
-        pendingCount: transformedDocuments.filter(
-          (d) => d.reviewStatus === "PENDING",
-        ).length,
-        reviewingCount: transformedDocuments.filter(
-          (d) => d.reviewStatus === "IN_REVIEW",
-        ).length,
-        completedCount: transformedDocuments.filter((d) =>
-          ["APPROVED", "REJECTED"].includes(d.reviewStatus),
-        ).length,
+      pagination: {
+        limit: take,
+        offset: skip,
+        totalCount,
+        totalPages: Math.max(1, Math.ceil(totalCount / take)),
+        currentPage: Math.floor(skip / take) + 1,
+        hasNextPage: skip + take < totalCount,
+        hasPrevPage: skip > 0,
       },
+      metadata,
     });
   } catch (error) {
     console.error("Error fetching consultant documents:", error);

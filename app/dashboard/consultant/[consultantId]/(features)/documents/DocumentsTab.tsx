@@ -56,15 +56,27 @@ import {
   getDocumentTypeIcon,
 } from "@/app/dashboard/shared/utils/document-utils";
 
-const PAGE_LIMIT = 10;
+// Appointment types are fixed on the server (Consultation | Subscription).
+// Hardcoding here so the type filter dropdown isn't dependent on the current
+// page's rows (which would give an incomplete list under pagination).
+const APPOINTMENT_TYPES = ["Consultation", "Subscription"] as const;
 
 interface ExtendedDocumentsTabProps extends DocumentsTabProps {
   onRefresh?: () => void;
 }
 
 export function DocumentsTab({
-  documents,
+  documentsPage,
+  isPlaceholderData,
   onRefresh,
+  page,
+  pageSize,
+  onPageChange,
+  onPageSizeChange,
+  statusFilter,
+  typeFilter,
+  onStatusFilterChange,
+  onTypeFilterChange,
 }: Readonly<ExtendedDocumentsTabProps>) {
   const [selectedDocument, setSelectedDocument] = useState<IDocument | null>(
     null,
@@ -78,71 +90,60 @@ export function DocumentsTab({
   const [isUpdating, setIsUpdating] = useState(false);
   const { toast } = useToast();
 
-  // Search, filter, and pagination state
+  // Search is client-side (scoped to the current page). Status and type
+  // filters are server-side and lifted to the parent page component so the
+  // React Query key depends on them (issue #346).
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [typeFilter, setTypeFilter] = useState<string>("all");
-  const [page, setPage] = useState(1);
 
   // Bulk selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isBulkUpdating, setIsBulkUpdating] = useState(false);
 
-  // Debounce search input
+  // Debounce search input. Search is local to the current page, so we don't
+  // need to reset server-side pagination on every keystroke.
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearch(search);
-      setPage(1);
     }, 300);
     return () => clearTimeout(timer);
   }, [search]);
 
-  // Reset page when filters change
+  // Documents and pagination metadata come straight from the server envelope.
+  const documents = documentsPage?.data ?? [];
+  const pagination = documentsPage?.pagination;
+  const totalCount = pagination?.totalCount ?? 0;
+  const totalPages = pagination?.totalPages ?? 1;
+  const currentPage = pagination?.currentPage ?? page;
+  const hasNextPage = pagination?.hasNextPage ?? false;
+  const hasPrevPage = pagination?.hasPrevPage ?? false;
+
+  // Clear bulk selection when the server page or page size changes — rows
+  // that were selected are no longer visible, so acting on them would be
+  // surprising. Matches the Gmail pattern for paginated bulk actions.
   useEffect(() => {
-    setPage(1);
-  }, [statusFilter, typeFilter]);
+    setSelectedIds(new Set());
+  }, [page, pageSize]);
 
-  // Client-side filtering
+  // Client-side search filter only. Status and type filters are applied on
+  // the server so pagination metadata stays accurate across all matching rows.
   const filteredDocuments = useMemo(() => {
+    if (!debouncedSearch) return documents;
+    const query = debouncedSearch.toLowerCase();
     return documents.filter((doc) => {
-      // Status filter
-      if (statusFilter !== "all" && doc.reviewStatus !== statusFilter) {
-        return false;
-      }
-      // Type filter
-      if (typeFilter !== "all" && doc.appointmentType !== typeFilter) {
-        return false;
-      }
-      // Search filter
-      if (debouncedSearch) {
-        const query = debouncedSearch.toLowerCase();
-        return (
-          doc.originalName.toLowerCase().includes(query) ||
-          doc.clientName.toLowerCase().includes(query) ||
-          doc.appointmentTitle.toLowerCase().includes(query) ||
-          (doc.description?.toLowerCase().includes(query) ?? false)
-        );
-      }
-      return true;
+      return (
+        doc.originalName.toLowerCase().includes(query) ||
+        doc.clientName.toLowerCase().includes(query) ||
+        doc.appointmentTitle.toLowerCase().includes(query) ||
+        (doc.description?.toLowerCase().includes(query) ?? false)
+      );
     });
-  }, [documents, statusFilter, typeFilter, debouncedSearch]);
+  }, [documents, debouncedSearch]);
 
-  // Pagination
-  const totalPages = Math.max(1, Math.ceil(filteredDocuments.length / PAGE_LIMIT));
-  const paginatedDocuments = useMemo(() => {
-    const start = (page - 1) * PAGE_LIMIT;
-    return filteredDocuments.slice(start, start + PAGE_LIMIT);
-  }, [filteredDocuments, page]);
-
-  const showStart = filteredDocuments.length === 0 ? 0 : (page - 1) * PAGE_LIMIT + 1;
-  const showEnd = Math.min(page * PAGE_LIMIT, filteredDocuments.length);
-
-  // Unique appointment types for type filter
-  const appointmentTypes = useMemo(() => {
-    const types = new Set(documents.map((d) => d.appointmentType));
-    return Array.from(types).sort();
-  }, [documents]);
+  // "Showing X-Y of Z" values derive from the server pagination envelope so
+  // they remain consistent across pages regardless of client-side search.
+  const showStart = totalCount === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const showEnd = Math.min(currentPage * pageSize, totalCount);
 
   const hasActiveFilters =
     statusFilter !== "all" || typeFilter !== "all" || debouncedSearch !== "";
@@ -150,24 +151,24 @@ export function DocumentsTab({
   const clearFilters = () => {
     setSearch("");
     setDebouncedSearch("");
-    setStatusFilter("all");
-    setTypeFilter("all");
-    setPage(1);
+    onStatusFilterChange("all");
+    onTypeFilterChange("all");
   };
 
-  // Bulk selection helpers
+  // Bulk selection helpers. "On page" here means rows currently visible, i.e.
+  // the server-paginated page intersected with the client-side search.
   const allOnPageSelected =
-    paginatedDocuments.length > 0 &&
-    paginatedDocuments.every((d) => selectedIds.has(d.id));
+    filteredDocuments.length > 0 &&
+    filteredDocuments.every((d) => selectedIds.has(d.id));
 
   const toggleSelectAll = () => {
     if (allOnPageSelected) {
       const next = new Set(selectedIds);
-      paginatedDocuments.forEach((d) => next.delete(d.id));
+      filteredDocuments.forEach((d) => next.delete(d.id));
       setSelectedIds(next);
     } else {
       const next = new Set(selectedIds);
-      paginatedDocuments.forEach((d) => next.add(d.id));
+      filteredDocuments.forEach((d) => next.add(d.id));
       setSelectedIds(next);
     }
   };
@@ -311,9 +312,9 @@ export function DocumentsTab({
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-bold whitespace-nowrap">Documents For Review</h1>
           <Badge variant="secondary" className="text-sm">
-            {filteredDocuments.length !== documents.length
-              ? `${filteredDocuments.length} / ${documents.length}`
-              : documents.length}
+            {debouncedSearch && filteredDocuments.length !== documents.length
+              ? `${filteredDocuments.length} / ${totalCount}`
+              : totalCount}
           </Badge>
         </div>
         <p className="text-sm text-gray-600 mt-1">
@@ -340,7 +341,7 @@ export function DocumentsTab({
             </button>
           )}
         </div>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
+        <Select value={statusFilter} onValueChange={onStatusFilterChange}>
           <SelectTrigger className="w-[160px]">
             <SelectValue placeholder="Status" />
           </SelectTrigger>
@@ -353,17 +354,30 @@ export function DocumentsTab({
             <SelectItem value="NEEDS_REVISION">Needs Revision</SelectItem>
           </SelectContent>
         </Select>
-        <Select value={typeFilter} onValueChange={setTypeFilter}>
+        <Select value={typeFilter} onValueChange={onTypeFilterChange}>
           <SelectTrigger className="w-[160px]">
             <SelectValue placeholder="Type" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Types</SelectItem>
-            {appointmentTypes.map((type) => (
+            {APPOINTMENT_TYPES.map((type) => (
               <SelectItem key={type} value={type}>
-                {type.charAt(0) + type.slice(1).toLowerCase()}
+                {type}
               </SelectItem>
             ))}
+          </SelectContent>
+        </Select>
+        <Select
+          value={String(pageSize)}
+          onValueChange={(value) => onPageSizeChange(Number(value))}
+        >
+          <SelectTrigger className="w-[120px]">
+            <SelectValue placeholder="Page size" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="10">10 / page</SelectItem>
+            <SelectItem value="25">25 / page</SelectItem>
+            <SelectItem value="50">50 / page</SelectItem>
           </SelectContent>
         </Select>
         {hasActiveFilters && (
@@ -373,11 +387,18 @@ export function DocumentsTab({
         )}
       </div>
 
-      {/* Fix #3: Results count */}
-      {filteredDocuments.length > 0 && (
+      {/* Fix #3: Results count — driven by the server pagination envelope */}
+      {totalCount > 0 && (
         <div className="text-sm text-gray-500 mb-2">
-          Showing {showStart}-{showEnd} of {filteredDocuments.length} document
-          {filteredDocuments.length !== 1 ? "s" : ""}
+          Showing {showStart}-{showEnd} of {totalCount} document
+          {totalCount !== 1 ? "s" : ""}
+          {debouncedSearch && filteredDocuments.length !== documents.length && (
+            <>
+              {" "}
+              ({filteredDocuments.length} match
+              {filteredDocuments.length !== 1 ? "es" : ""} on this page)
+            </>
+          )}
         </div>
       )}
 
@@ -424,7 +445,7 @@ export function DocumentsTab({
               {/* Fix #8: Checkbox column header */}
               <TableHead className="w-10">
                 <Checkbox
-                  checked={allOnPageSelected && paginatedDocuments.length > 0}
+                  checked={allOnPageSelected && filteredDocuments.length > 0}
                   onCheckedChange={toggleSelectAll}
                   aria-label="Select all documents on this page"
                 />
@@ -438,7 +459,7 @@ export function DocumentsTab({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {paginatedDocuments.map((document) => (
+            {filteredDocuments.map((document) => (
               <TableRow key={document.id}>
                 {/* Fix #8: Checkbox column */}
                 <TableCell>
@@ -541,7 +562,7 @@ export function DocumentsTab({
               </TableRow>
             ))}
             {/* Fix #6: Enhanced empty states */}
-            {paginatedDocuments.length === 0 && hasActiveFilters && (
+            {filteredDocuments.length === 0 && hasActiveFilters && (
               <TableRow>
                 <TableCell
                   colSpan={7}
@@ -567,7 +588,7 @@ export function DocumentsTab({
                 </TableCell>
               </TableRow>
             )}
-            {documents.length === 0 && (
+            {totalCount === 0 && !hasActiveFilters && (
               <TableRow>
                 <TableCell
                   colSpan={7}
@@ -587,18 +608,20 @@ export function DocumentsTab({
         </Table>
       </div>
 
-      {/* Fix #3: Pagination controls */}
+      {/* Pagination controls — driven by the server envelope (issue #346).
+          Buttons are disabled while a placeholder page is visible so users
+          can't fire off duplicate requests mid-transition. */}
       {totalPages > 1 && (
         <div className="flex items-center justify-between mt-4">
           <div className="text-sm text-gray-500">
-            Page {page} of {totalPages}
+            Page {currentPage} of {totalPages}
           </div>
           <div className="flex items-center gap-2">
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setPage((p) => p - 1)}
-              disabled={page <= 1}
+              onClick={() => onPageChange(page - 1)}
+              disabled={!hasPrevPage || isPlaceholderData}
             >
               <ChevronLeft className="h-4 w-4 mr-1" />
               Previous
@@ -606,8 +629,8 @@ export function DocumentsTab({
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setPage((p) => p + 1)}
-              disabled={page >= totalPages}
+              onClick={() => onPageChange(page + 1)}
+              disabled={!hasNextPage || isPlaceholderData}
             >
               Next
               <ChevronRight className="h-4 w-4 ml-1" />
