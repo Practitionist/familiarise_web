@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 
@@ -36,8 +36,10 @@ export function useOrgRole(orgId: string) {
   });
 
   const currentRole = role ?? "ORG_LEARNER";
-  const isAtLeast = (min: string) =>
-    (RANKS[currentRole] ?? 0) >= (RANKS[min] ?? 0);
+  const isAtLeast = useCallback(
+    (min: string) => (RANKS[currentRole] ?? 0) >= (RANKS[min] ?? 0),
+    [currentRole],
+  );
 
   return { role: currentRole, isAtLeast, isLoading: !role };
 }

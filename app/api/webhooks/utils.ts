@@ -34,27 +34,27 @@ export async function handleOrgPaymentSuccess(
       return;
     }
 
-    // Idempotency: use OrgCreditPurchase.paymentId as a "processed" marker.
-    // The first webhook event atomically sets paymentId + credits the pool.
-    // Subsequent events (Razorpay often sends both payment.captured AND
-    // order.paid) see paymentId is already set and no-op.
+    // Idempotency: use a conditional UPDATE on OrgCreditPurchase to claim
+    // the purchase exactly once. The UPDATE only succeeds when expiresAt IS
+    // NULL (unclaimed). We repurpose the nullable expiresAt field as a
+    // "processedAt" marker — set to NOW() on first webhook, subsequent
+    // events see it's already set and the updateMany returns count=0.
+    // NOTE: We do NOT use paymentId because it's a FK to Payment.id and
+    // we don't create a Payment row for credit purchases.
     const settled = await prisma.$transaction(async (tx) => {
-      const purchase = await tx.orgCreditPurchase.findUnique({
-        where: { id: purchaseId },
+      const claimed = await tx.orgCreditPurchase.updateMany({
+        where: { id: purchaseId, expiresAt: null },
+        data: { expiresAt: new Date() },
       });
-      if (!purchase) {
-        console.error(`[Webhook] OrgCreditPurchase not found: ${purchaseId}`);
-        return false;
-      }
-      if (purchase.paymentId) {
+      if (claimed.count === 0) {
         console.log(`[Webhook] Credit purchase ${purchaseId} already processed — skipping (idempotent)`);
         return false;
       }
-      // Atomically mark as processed + credit the pool.
-      await tx.orgCreditPurchase.update({
+      const purchase = await tx.orgCreditPurchase.findUnique({
         where: { id: purchaseId },
-        data: { paymentId: `rzp_${Date.now()}` },
+        select: { creditsPurchased: true },
       });
+      if (!purchase) return false;
       await purchaseCredits(tx, orgProfileId, purchase.creditsPurchased);
       return true;
     });

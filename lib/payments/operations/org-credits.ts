@@ -5,10 +5,8 @@
  * Every mutation writes an immutable OrgCreditLedger row, maintaining a
  * running balance for audit.
  *
- * Usage:
- *   - `deductCredits()` → called from `handleCheckout` when billingMode === SEAT_PACK
- *   - `creditRefund()` → called from the refund handler (Phase M) to reverse a deduction
- *   - `purchaseCredits()` → called from the gateway webhook after the org owner pays for a credit pack
+ * All balance mutations use Prisma's atomic `increment`/`decrement` operators
+ * to prevent read-then-write races under concurrent transactions.
  */
 
 import { Prisma } from "@prisma/client";
@@ -16,12 +14,8 @@ import { Prisma } from "@prisma/client";
 type TxClient = Prisma.TransactionClient;
 
 /**
- * Deduct credits from the org pool. Throws if insufficient balance.
- *
- * Must be called inside a Prisma interactive transaction to guarantee
- * atomicity with the Payment creation in `handleCheckout`.
- *
- * @returns The OrgCreditLedger row (for audit).
+ * Deduct credits from the org pool. Uses a conditional raw SQL UPDATE to
+ * prevent overdraft under concurrency — same pattern as acquireSeat().
  */
 export async function deductCredits(
   tx: TxClient,
@@ -32,35 +26,38 @@ export async function deductCredits(
 ): Promise<{ balanceAfter: number }> {
   if (amountPaise <= 0) throw new Error("Deduction amount must be positive");
 
-  const pool = await tx.orgCreditPool.findUnique({
-    where: { organizationProfileId },
-  });
-  if (!pool) throw new Error("Credit pool not found for this organization");
-  if (pool.balance < amountPaise) {
+  // Atomic conditional decrement — only succeeds if balance >= amountPaise.
+  const rows: number = await tx.$executeRaw`
+    UPDATE "OrgCreditPool"
+    SET balance = balance - ${amountPaise}, "updatedAt" = NOW()
+    WHERE "organizationProfileId" = ${organizationProfileId}
+      AND balance >= ${amountPaise}
+  `;
+  if (rows === 0) {
     throw new Error(
-      `Insufficient credits: need ${amountPaise} paise but pool has ${pool.balance}`,
+      `Insufficient credits: need ${amountPaise} paise`,
     );
   }
 
-  const newBalance = pool.balance - amountPaise;
-
-  await tx.orgCreditPool.update({
+  // Read back the updated balance for the ledger row.
+  const pool = await tx.orgCreditPool.findUnique({
     where: { organizationProfileId },
-    data: { balance: newBalance },
+    select: { balance: true },
   });
+  const balanceAfter = pool?.balance ?? 0;
 
-  const ledger = await tx.orgCreditLedger.create({
+  await tx.orgCreditLedger.create({
     data: {
       organizationProfileId,
       delta: -amountPaise,
       reason: "booking",
       paymentId: paymentId ?? null,
       memberProfileId: memberProfileId ?? null,
-      balanceAfter: newBalance,
+      balanceAfter,
     },
   });
 
-  return { balanceAfter: ledger.balanceAfter };
+  return { balanceAfter };
 }
 
 /**
@@ -74,16 +71,11 @@ export async function creditRefund(
 ): Promise<{ balanceAfter: number }> {
   if (amountPaise <= 0) throw new Error("Refund amount must be positive");
 
-  const pool = await tx.orgCreditPool.findUnique({
+  // Atomic increment — no race possible.
+  const updated = await tx.orgCreditPool.update({
     where: { organizationProfileId },
-  });
-  if (!pool) throw new Error("Credit pool not found for this organization");
-
-  const newBalance = pool.balance + amountPaise;
-
-  await tx.orgCreditPool.update({
-    where: { organizationProfileId },
-    data: { balance: newBalance },
+    data: { balance: { increment: amountPaise } },
+    select: { balance: true },
   });
 
   await tx.orgCreditLedger.create({
@@ -92,11 +84,11 @@ export async function creditRefund(
       delta: amountPaise,
       reason: "refund",
       paymentId: paymentId ?? null,
-      balanceAfter: newBalance,
+      balanceAfter: updated.balance,
     },
   });
 
-  return { balanceAfter: newBalance };
+  return { balanceAfter: updated.balance };
 }
 
 /**
@@ -111,19 +103,14 @@ export async function purchaseCredits(
 ): Promise<{ balanceAfter: number }> {
   if (creditsPaise <= 0) throw new Error("Purchase amount must be positive");
 
-  const pool = await tx.orgCreditPool.findUnique({
-    where: { organizationProfileId },
-  });
-  if (!pool) throw new Error("Credit pool not found for this organization");
-
-  const newBalance = pool.balance + creditsPaise;
-
-  await tx.orgCreditPool.update({
+  // Atomic increment — no race possible.
+  const updated = await tx.orgCreditPool.update({
     where: { organizationProfileId },
     data: {
-      balance: newBalance,
+      balance: { increment: creditsPaise },
       totalPurchased: { increment: creditsPaise },
     },
+    select: { balance: true },
   });
 
   await tx.orgCreditLedger.create({
@@ -132,9 +119,9 @@ export async function purchaseCredits(
       delta: creditsPaise,
       reason: "purchase",
       paymentId: paymentId ?? null,
-      balanceAfter: newBalance,
+      balanceAfter: updated.balance,
     },
   });
 
-  return { balanceAfter: newBalance };
+  return { balanceAfter: updated.balance };
 }
