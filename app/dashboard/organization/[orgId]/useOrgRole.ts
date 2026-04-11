@@ -44,12 +44,15 @@ export function useOrgRole(orgId: string) {
 
 /**
  * Hook that redirects to the org home page if the user's role is below
- * the required minimum. Use at the top of restricted pages to prevent
- * direct URL access by lower roles.
+ * the required minimum. Deny-by-default: `allowed` is false until the
+ * role check completes AND passes. This prevents the page from rendering
+ * (and firing data-fetching queries) before authorization is confirmed.
  */
 export function useRequireOrgRole(orgId: string, minRole: string) {
   const { isAtLeast, isLoading } = useOrgRole(orgId);
   const router = useRouter();
+
+  const allowed = !isLoading && isAtLeast(minRole);
 
   useEffect(() => {
     if (!isLoading && !isAtLeast(minRole)) {
@@ -57,5 +60,5 @@ export function useRequireOrgRole(orgId: string, minRole: string) {
     }
   }, [isLoading, isAtLeast, minRole, orgId, router]);
 
-  return { allowed: isLoading || isAtLeast(minRole), isLoading };
+  return { allowed, isLoading };
 }
