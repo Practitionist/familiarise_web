@@ -15,7 +15,7 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { ENABLE_PROVIDER_ORGS } from "@/lib/feature-flags";
 import { acquireSeat, releaseSeat } from "@/lib/api/organizations/seat-helpers";
-import { OrgMemberRole, OrgMemberStatus } from "@prisma/client";
+import { OrgAuditAction, OrgMemberRole, OrgMemberStatus, Prisma } from "@prisma/client";
 
 const patchMemberSchema = z.object({
   role: z.nativeEnum(OrgMemberRole).optional(),
@@ -116,6 +116,20 @@ export async function PATCH(
         newRole === "ORG_CONSULTANT"
           ? user?.user.consultantProfileId ?? null
           : null;
+
+      // Reject the role change if the target user lacks the required profile.
+      if (newRole === "ORG_LEARNER" && !consulteeProfileId) {
+        return NextResponse.json(
+          { error: "This user has not completed learner onboarding and cannot be assigned ORG_LEARNER." },
+          { status: 422 },
+        );
+      }
+      if (newRole === "ORG_CONSULTANT" && !consultantProfileId) {
+        return NextResponse.json(
+          { error: "This user has not completed consultant onboarding and cannot be assigned ORG_CONSULTANT." },
+          { status: 422 },
+        );
+      }
     }
 
     const [updated] = await prisma.$transaction(async (tx) => {
@@ -147,6 +161,39 @@ export async function PATCH(
           data: { role },
         });
       }
+
+      // Audit log — record every role/status change for compliance.
+      const isRoleChange = role !== undefined && role !== oldRole;
+      const isStatusChange = status !== undefined && status !== oldStatus;
+      if (isRoleChange || isStatusChange) {
+        const auditDetails: Record<string, unknown> = {};
+        let description: string;
+        let action: OrgAuditAction;
+
+        if (isRoleChange) {
+          auditDetails.roleFrom = oldRole;
+          auditDetails.roleTo = role;
+          description = `Role changed from ${oldRole} to ${role}`;
+          action = OrgAuditAction.ROLE_CHANGE;
+        } else {
+          auditDetails.statusFrom = oldStatus;
+          auditDetails.statusTo = status;
+          description = `Status changed from ${oldStatus} to ${status}`;
+          action = OrgAuditAction.STATUS_CHANGE;
+        }
+
+        await tx.orgAuditLog.create({
+          data: {
+            organizationProfileId: access.org.id,
+            actorMemberId: access.member.id,
+            targetMemberId: memberId,
+            action,
+            description,
+            details: auditDetails as Prisma.InputJsonValue,
+          },
+        });
+      }
+
       // seatsUsed already updated atomically by acquireSeat/releaseSeat above.
       return [profileUpdate];
     });
@@ -207,6 +254,16 @@ export async function DELETE(
       if (wasSeatOccupying) {
         await releaseSeat(tx, access.org.id);
       }
+      await tx.orgAuditLog.create({
+        data: {
+          organizationProfileId: access.org.id,
+          actorMemberId: access.member.id,
+          targetMemberId: memberId,
+          action: OrgAuditAction.MEMBER_REMOVED,
+          description: `Member removed (was ${target.role})`,
+          details: { role: target.role, previousStatus: target.status },
+        },
+      });
     });
 
     return NextResponse.json({ success: true });

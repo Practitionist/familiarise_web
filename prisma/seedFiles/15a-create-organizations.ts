@@ -9,6 +9,7 @@
 
 import { faker } from "@faker-js/faker";
 import {
+  OrgAuditAction,
   OrganizationBillingMode,
   OrganizationKind,
   OrgMemberRole,
@@ -163,7 +164,7 @@ export async function createOrganizations(
         },
       });
 
-      await prisma.organizationMemberProfile.create({
+      const ownerMemberProfile = await prisma.organizationMemberProfile.create({
         data: {
           memberId: ownerMember.id,
           organizationProfileId: profile.id,
@@ -201,11 +202,23 @@ export async function createOrganizations(
         });
         if (existing) continue;
 
+        // Respect seatsTotal: if this slot would be ORG_LEARNER and the org is
+        // already at capacity, downgrade to ORG_MANAGER so the DB CHECK
+        // constraint (seatsUsed <= seatsTotal) is never violated by seed data.
+        let effectiveRole = role;
+        if (
+          effectiveRole === "ORG_LEARNER" &&
+          profile.seatsTotal !== null &&
+          seatsUsed >= profile.seatsTotal
+        ) {
+          effectiveRole = "ORG_MANAGER";
+        }
+
         const member = await prisma.member.create({
           data: {
             organizationId: organization.id,
             userId: memberUser.id,
-            role,
+            role: effectiveRole,
           },
         });
 
@@ -213,18 +226,20 @@ export async function createOrganizations(
           data: {
             memberId: member.id,
             organizationProfileId: profile.id,
-            role,
+            role: effectiveRole,
             status: "ACTIVE",
             consulteeProfileId:
-              role === "ORG_LEARNER"
+              effectiveRole === "ORG_LEARNER"
                 ? memberUser.consulteeProfile?.id ?? null
                 : null,
             seatAssignedAt:
-              role === "ORG_LEARNER" ? faker.date.recent({ days: 30 }) : null,
+              effectiveRole === "ORG_LEARNER"
+                ? faker.date.recent({ days: 30 })
+                : null,
           },
         });
 
-        if (role === "ORG_LEARNER") seatsUsed++;
+        if (effectiveRole === "ORG_LEARNER") seatsUsed++;
       }
 
       // Update seatsUsed
@@ -303,6 +318,30 @@ export async function createOrganizations(
           where: { organizationProfileId: profile.id },
           data: { balance: runningBalance, totalPurchased },
         });
+
+        // 6b. OrgCreditPurchase history — 1-3 confirmed purchases matching the pool total
+        let remaining = totalPurchased;
+        const purchaseCount = faker.number.int({ min: 1, max: 3 });
+        for (let p = 0; p < purchaseCount; p++) {
+          const isLast = p === purchaseCount - 1;
+          const amount = isLast
+            ? remaining
+            : faker.number.int({ min: Math.floor(remaining * 0.2), max: Math.floor(remaining * 0.6) });
+          remaining -= amount;
+          // Simulate a completed Razorpay payment ID
+          const fakePaymentId = `pay_seed_${faker.string.alphanumeric(14)}`;
+          await prisma.orgCreditPurchase.create({
+            data: {
+              organizationProfileId: profile.id,
+              creditsPurchased: amount,
+              amountPaid: amount,
+              currency: "INR",
+              paymentId: fakePaymentId,
+              purchasedAt: faker.date.recent({ days: 90 }),
+            },
+          });
+          if (remaining <= 0) break;
+        }
       }
 
       // 7. INVOICED_MONTHLY: create a sample invoice
@@ -373,6 +412,20 @@ export async function createOrganizations(
           },
         });
       }
+
+      // 10. OrgAuditLog — seed initial MEMBER_ADDED entries for the owner
+      // (member additions for other members bypass the API in seeding, so we
+      //  only log the org creation / owner addition here for realism)
+      await prisma.orgAuditLog.create({
+        data: {
+          organizationProfileId: profile.id,
+          actorMemberId: ownerMemberProfile.id,
+          targetMemberId: ownerMemberProfile.id,
+          action: OrgAuditAction.MEMBER_ADDED,
+          description: `${ownerUser.email ?? "owner"} added as ORG_OWNER (org creation)`,
+          details: { role: "ORG_OWNER", email: ownerUser.email ?? null, viaOrgCreation: true },
+        },
+      });
 
       console.log(
         `    ✓ ${name} (${spec.billingMode}, ${memberCount + 1} members)`,

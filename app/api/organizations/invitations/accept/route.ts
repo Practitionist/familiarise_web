@@ -12,7 +12,7 @@ import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { ENABLE_PROVIDER_ORGS } from "@/lib/feature-flags";
 import { acquireSeat } from "@/lib/api/organizations/seat-helpers";
-import { OrgMemberRole } from "@prisma/client";
+import { OrgAuditAction, OrgMemberRole } from "@prisma/client";
 
 const acceptSchema = z.object({
   token: z.string().min(16),
@@ -135,6 +135,20 @@ export async function POST(req: NextRequest) {
     const consulteeProfileId = auth.session.user.consulteeProfileId ?? null;
     const consultantProfileId = auth.session.user.consultantProfileId ?? null;
 
+    // Profile link guard — same check as the direct-add flow.
+    if (role === "ORG_LEARNER" && !consulteeProfileId) {
+      return NextResponse.json(
+        { error: "Complete your learner profile before accepting this invitation." },
+        { status: 422 },
+      );
+    }
+    if (role === "ORG_CONSULTANT" && !consultantProfileId) {
+      return NextResponse.json(
+        { error: "Complete your consultant profile before accepting this invitation." },
+        { status: 422 },
+      );
+    }
+
     await prisma.$transaction(async (tx) => {
       // Atomic seat acquisition — conditional UPDATE prevents oversubscription.
       if (role === "ORG_LEARNER") {
@@ -150,7 +164,7 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      await tx.organizationMemberProfile.create({
+      const memberProfile = await tx.organizationMemberProfile.create({
         data: {
           memberId: member.id,
           organizationProfileId: orgProfile.id,
@@ -169,6 +183,18 @@ export async function POST(req: NextRequest) {
       await tx.invitation.update({
         where: { id: invitation.id },
         data: { status: "accepted" },
+      });
+
+      // Audit log — actor and target are the same person (self-join via invite).
+      await tx.orgAuditLog.create({
+        data: {
+          organizationProfileId: orgProfile.id,
+          actorMemberId: memberProfile.id,
+          targetMemberId: memberProfile.id,
+          action: OrgAuditAction.MEMBER_ADDED,
+          description: `${auth.session.user.email} joined as ${role} via invitation`,
+          details: { role, email: auth.session.user.email, viaInvitation: true },
+        },
       });
     });
 

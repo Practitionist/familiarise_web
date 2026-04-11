@@ -17,8 +17,19 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { OrgMemberRole } from "@prisma/client";
 
+// RFC-1123 hostname regex: labels separated by dots, no leading/trailing hyphens.
+const DOMAIN_REGEX = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i;
+
 const patchSsoSchema = z.object({
-  allowedEmailDomains: z.array(z.string().min(3).max(255)).optional(),
+  allowedEmailDomains: z
+    .array(
+      z
+        .string()
+        .min(3)
+        .max(255)
+        .regex(DOMAIN_REGEX, "Must be a valid domain (e.g. example.com)"),
+    )
+    .optional(),
   enforceSSO: z.boolean().optional(),
   defaultRoleForAutoJoin: z.nativeEnum(OrgMemberRole).optional(),
 });
@@ -80,6 +91,30 @@ export async function PATCH(
         { error: "Invalid request body", details: parsed.error.flatten() },
         { status: 400 },
       );
+    }
+
+    // Cross-org uniqueness check: no two orgs may claim the same email domain.
+    // Without this, the SSO domain router would silently pick one org over another.
+    if (parsed.data.allowedEmailDomains && parsed.data.allowedEmailDomains.length > 0) {
+      const conflicts = await prisma.organizationSSOSettings.findMany({
+        where: {
+          organizationProfileId: { not: access.org.id },
+          allowedEmailDomains: { hasSome: parsed.data.allowedEmailDomains },
+        },
+        select: { allowedEmailDomains: true },
+      });
+      if (conflicts.length > 0) {
+        const claimed = conflicts.flatMap((c) => c.allowedEmailDomains);
+        const overlapping = parsed.data.allowedEmailDomains.filter((d) =>
+          claimed.includes(d),
+        );
+        return NextResponse.json(
+          {
+            error: `Domain(s) already claimed by another organization: ${overlapping.join(", ")}`,
+          },
+          { status: 409 },
+        );
+      }
     }
 
     const settings = await prisma.organizationSSOSettings.upsert({

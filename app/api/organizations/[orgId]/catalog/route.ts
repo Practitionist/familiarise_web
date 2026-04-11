@@ -117,6 +117,28 @@ export async function POST(
     }
 
     const { planId, planType } = parsed.data;
+
+    // IDOR guard: plan must exist and be unclaimed (organizationProfileId IS NULL).
+    // Prevents an ORG_ADMIN from hijacking a plan that already belongs to another org.
+    const planExists = await (async () => {
+      switch (planType) {
+        case "CONSULTATION": return prisma.consultationPlan.findUnique({ where: { id: planId }, select: { id: true, organizationProfileId: true } });
+        case "SUBSCRIPTION":  return prisma.subscriptionPlan.findUnique({ where: { id: planId }, select: { id: true, organizationProfileId: true } });
+        case "WEBINAR":       return prisma.webinarPlan.findUnique({ where: { id: planId }, select: { id: true, organizationProfileId: true } });
+        case "CLASS":         return prisma.classPlan.findUnique({ where: { id: planId }, select: { id: true, organizationProfileId: true } });
+      }
+    })();
+
+    if (!planExists) {
+      return NextResponse.json({ error: "Plan not found." }, { status: 404 });
+    }
+    if (planExists.organizationProfileId !== null) {
+      return NextResponse.json(
+        { error: "Plan is already linked to an organization." },
+        { status: 409 },
+      );
+    }
+
     const data = { organizationProfileId: access.org.id };
 
     switch (planType) {
@@ -160,6 +182,24 @@ export async function DELETE(
     }
 
     const { planId, planType } = parsed.data;
+
+    // Ownership guard: plan must exist and belong to THIS org before unlinking.
+    const planExists = await (async () => {
+      switch (planType) {
+        case "CONSULTATION": return prisma.consultationPlan.findUnique({ where: { id: planId }, select: { id: true, organizationProfileId: true } });
+        case "SUBSCRIPTION":  return prisma.subscriptionPlan.findUnique({ where: { id: planId }, select: { id: true, organizationProfileId: true } });
+        case "WEBINAR":       return prisma.webinarPlan.findUnique({ where: { id: planId }, select: { id: true, organizationProfileId: true } });
+        case "CLASS":         return prisma.classPlan.findUnique({ where: { id: planId }, select: { id: true, organizationProfileId: true } });
+      }
+    })();
+
+    if (!planExists || planExists.organizationProfileId !== access.org.id) {
+      return NextResponse.json(
+        { error: "Plan not found or does not belong to this organization." },
+        { status: 404 },
+      );
+    }
+
     const data = { organizationProfileId: null };
 
     switch (planType) {

@@ -43,7 +43,7 @@ const patchOrgSchema = z.object({
   defaultCancellationPolicy: z.string().max(5000).nullable().optional(),
   defaultRefundPolicy: z.string().max(5000).nullable().optional(),
   seatsTotal: z.number().int().positive().nullable().optional(),
-  orgInvoiceCreditLimit: z.number().int().nonnegative().nullable().optional(),
+  orgInvoiceCreditLimit: z.number().int().positive().nullable().optional(),
   paymentTermsDays: z.number().int().min(1).max(120).optional(),
 
   // PROVIDER-only fields (feature-flagged)
@@ -103,6 +103,19 @@ export async function PATCH(
     }
 
     const data = parsed.data;
+
+    // Guard seatsTotal reduction below current usage.
+    // Setting seatsTotal < seatsUsed would create an impossible over-capacity state.
+    if (data.seatsTotal !== undefined && data.seatsTotal !== null) {
+      if (data.seatsTotal < access.org.seatsUsed) {
+        return NextResponse.json(
+          {
+            error: `Cannot set seat limit to ${data.seatsTotal} — ${access.org.seatsUsed} seats are currently in use. Remove learners first or choose a higher limit.`,
+          },
+          { status: 400 },
+        );
+      }
+    }
 
     // Guard billingMode mutation after first payment. The billing mode is
     // selected at org creation and should be immutable once real payments

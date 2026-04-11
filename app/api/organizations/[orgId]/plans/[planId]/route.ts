@@ -84,24 +84,29 @@ export async function PATCH(
       );
     }
 
-    const existing = await prisma.organizationPlan.findFirst({
-      where: { id: planId, organizationProfileId: access.org.id },
-      select: { id: true },
+    const { config, ...rest } = parsed.data;
+
+    // Ownership check and update are done atomically inside a transaction to
+    // eliminate the TOCTOU window between findFirst and update.
+    const plan = await prisma.$transaction(async (tx) => {
+      const existing = await tx.organizationPlan.findFirst({
+        where: { id: planId, organizationProfileId: access.org.id },
+        select: { id: true },
+      });
+      if (!existing) return null;
+      return tx.organizationPlan.update({
+        where: { id: planId },
+        data: {
+          ...rest,
+          ...(config !== undefined && {
+            config: config as Prisma.InputJsonValue,
+          }),
+        },
+      });
     });
-    if (!existing) {
+    if (!plan) {
       return NextResponse.json({ error: "Plan not found" }, { status: 404 });
     }
-
-    const { config, ...rest } = parsed.data;
-    const plan = await prisma.organizationPlan.update({
-      where: { id: planId },
-      data: {
-        ...rest,
-        ...(config !== undefined && {
-          config: config as Prisma.InputJsonValue,
-        }),
-      },
-    });
     return NextResponse.json({ plan });
   } catch (error) {
     console.error(
@@ -124,18 +129,22 @@ export async function DELETE(
     const access = await requireOrgAccess(orgId, "ORG_ADMIN");
     if (access.error) return access.error;
 
-    const existing = await prisma.organizationPlan.findFirst({
-      where: { id: planId, organizationProfileId: access.org.id },
-      select: { id: true },
+    // Ownership check and soft-delete are done atomically to close the TOCTOU gap.
+    const deleted = await prisma.$transaction(async (tx) => {
+      const existing = await tx.organizationPlan.findFirst({
+        where: { id: planId, organizationProfileId: access.org.id },
+        select: { id: true },
+      });
+      if (!existing) return false;
+      await tx.organizationPlan.update({
+        where: { id: planId },
+        data: { isActive: false },
+      });
+      return true;
     });
-    if (!existing) {
+    if (!deleted) {
       return NextResponse.json({ error: "Plan not found" }, { status: 404 });
     }
-
-    await prisma.organizationPlan.update({
-      where: { id: planId },
-      data: { isActive: false },
-    });
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error(

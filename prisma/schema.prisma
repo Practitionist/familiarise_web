@@ -512,6 +512,7 @@ model OrganizationProfile {
   creditPool      OrgCreditPool?
   creditPurchases OrgCreditPurchase[]
   creditLedger    OrgCreditLedger[]
+  auditLogs       OrgAuditLog[]
   payments        Payment[] // back-relation for Payment.organizationProfile
 
   // FEATURE-FLAGGED: PROVIDER org back-relations
@@ -872,6 +873,37 @@ model OrgCreditLedger {
   createdAt DateTime @default(now())
 
   @@index([organizationProfileId, createdAt])
+}
+
+// Immutable audit trail for org member management actions (role/status changes,
+// additions, removals). Used for compliance and support investigations.
+
+model OrgAuditLog {
+  id                    String              @id @default(cuid())
+  organizationProfileId String
+  organizationProfile   OrganizationProfile @relation(fields: [organizationProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+
+  // Who performed the action (OrganizationMemberProfile.id of the actor)
+  actorMemberId  String?
+  // Who was acted upon (OrganizationMemberProfile.id of the target)
+  targetMemberId String?
+
+  action      OrgAuditAction
+  // Human-readable summary for the UI audit trail (following ActivityLog pattern)
+  description String
+  // Structured payload for filtering/analytics — e.g. { roleFrom, roleTo } or { email }
+  details     Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationProfileId, createdAt])
+}
+
+enum OrgAuditAction {
+  MEMBER_ADDED
+  MEMBER_REMOVED
+  ROLE_CHANGE
+  STATUS_CHANGE
 }
 
 //////////////////////////////////////////////////// USER PROFILES and SLOTTING MECHANISM ////////////////////////////////////////////////////

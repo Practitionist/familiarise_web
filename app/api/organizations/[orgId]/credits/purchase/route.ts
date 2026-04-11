@@ -17,8 +17,10 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import { createRazorpayOrder } from "@/lib/payments/core/razorpay";
 
 const purchaseSchema = z.object({
+  // 1 paise = 1 credit unit (per OrgCreditPool docstring).
+  // No upper cap — enterprise orgs legitimately purchase large credit packs.
+  // The payment gateway enforces its own transaction limits.
   amountPaise: z.number().int().positive(),
-  // 1 paise = 1 credit unit (per OrgCreditPool docstring)
 });
 
 export async function POST(

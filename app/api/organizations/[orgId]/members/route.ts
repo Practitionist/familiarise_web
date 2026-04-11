@@ -14,7 +14,7 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { ENABLE_PROVIDER_ORGS } from "@/lib/feature-flags";
 import { acquireSeat } from "@/lib/api/organizations/seat-helpers";
-import { OrgMemberRole } from "@prisma/client";
+import { OrgAuditAction, OrgMemberRole } from "@prisma/client";
 
 const addMemberSchema = z.object({
   email: z.string().email(),
@@ -112,6 +112,21 @@ export async function POST(
       );
     }
 
+    // Ensure the user has completed the required onboarding profile for the role.
+    // ORG_LEARNER needs a consulteeProfileId; ORG_CONSULTANT needs a consultantProfileId.
+    if (role === "ORG_LEARNER" && !user.consulteeProfileId) {
+      return NextResponse.json(
+        { error: "This user has not completed learner onboarding and cannot be added as ORG_LEARNER." },
+        { status: 422 },
+      );
+    }
+    if (role === "ORG_CONSULTANT" && !user.consultantProfileId) {
+      return NextResponse.json(
+        { error: "This user has not completed consultant onboarding and cannot be added as ORG_CONSULTANT." },
+        { status: 422 },
+      );
+    }
+
     const existing = await prisma.member.findUnique({
       where: {
         organizationId_userId: { organizationId: orgId, userId: user.id },
@@ -184,6 +199,18 @@ export async function POST(
       }
 
       // seatsUsed already incremented by acquireSeat() above for ORG_LEARNER.
+
+      // Audit log — record member additions for compliance.
+      await tx.orgAuditLog.create({
+        data: {
+          organizationProfileId: access.org.id,
+          actorMemberId: access.member.id,
+          targetMemberId: memberProfile.id,
+          action: OrgAuditAction.MEMBER_ADDED,
+          description: `${email} added as ${role}`,
+          details: { role, email },
+        },
+      });
 
       return { member, memberProfile };
     });
