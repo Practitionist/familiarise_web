@@ -2,7 +2,8 @@
 
 import { use, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Pencil } from "lucide-react";
+import { Plus, Trash2, Search } from "lucide-react";
+import { useDebouncedCallback } from "use-debounce";
 
 import { useOrgRole } from "../useOrgRole";
 import {
@@ -11,8 +12,8 @@ import {
 } from "@/components/dashboard/DashboardShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   Card,
   CardContent,
@@ -29,86 +30,87 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   Dialog,
   DialogContent,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
-interface OrgPlan {
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+interface CatalogItem {
   id: string;
-  planType: "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS" | "TRIAL";
+  planType: "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS";
   title: string;
-  description: string | null;
   price: number;
   priceCurrency: string;
-  isActive: boolean;
+  consultant: { name: string | null; image: string | null } | null;
 }
 
-const PLAN_TYPES = [
-  { value: "CONSULTATION", label: "Consultation" },
-  { value: "SUBSCRIPTION", label: "Subscription" },
-  { value: "WEBINAR", label: "Webinar" },
-  { value: "CLASS", label: "Class" },
-];
+interface SearchResult extends CatalogItem {
+  consultant: { name: string | null; image: string | null };
+}
 
-async function fetchPlans(orgId: string): Promise<{ plans: OrgPlan[] }> {
-  const res = await fetch(`/api/organizations/${orgId}/plans`);
-  if (!res.ok) throw new Error("Failed to load plans");
+// ---------------------------------------------------------------------------
+// API
+// ---------------------------------------------------------------------------
+
+async function fetchCatalog(
+  orgId: string,
+): Promise<{ catalog: CatalogItem[] }> {
+  const res = await fetch(`/api/organizations/${orgId}/catalog`);
+  if (!res.ok) throw new Error("Failed to load catalog");
   return res.json();
 }
 
-interface CreatePlanPayload {
-  planType: string;
-  title: string;
-  description: string;
-  price: number;
+async function searchPlans(
+  orgId: string,
+  search: string,
+  planType: string | null,
+): Promise<{ results: SearchResult[] }> {
+  const params = new URLSearchParams({ limit: "15" });
+  if (search) params.set("search", search);
+  if (planType && planType !== "ALL") params.set("planType", planType);
+  const res = await fetch(
+    `/api/organizations/${orgId}/catalog/search?${params}`,
+  );
+  if (!res.ok) return { results: [] };
+  return res.json();
 }
 
-async function createPlan(orgId: string, payload: CreatePlanPayload) {
-  const res = await fetch(`/api/organizations/${orgId}/plans`, {
+async function linkPlan(orgId: string, planId: string, planType: string) {
+  const res = await fetch(`/api/organizations/${orgId}/catalog`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const body = await res.json();
-  if (!res.ok) throw new Error(body.error || "Failed to create plan");
-  return body;
-}
-
-async function updatePlan(
-  orgId: string,
-  planId: string,
-  payload: { title?: string; description?: string | null; price?: number; isActive?: boolean },
-) {
-  const res = await fetch(`/api/organizations/${orgId}/plans/${planId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const body = await res.json();
-  if (!res.ok) throw new Error(body.error || "Failed to update plan");
-  return body;
-}
-
-async function deletePlan(orgId: string, planId: string) {
-  const res = await fetch(`/api/organizations/${orgId}/plans/${planId}`, {
-    method: "DELETE",
+    body: JSON.stringify({ planId, planType }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || "Failed to delete plan");
+    throw new Error(body.error || "Failed to add plan");
   }
 }
+
+async function unlinkPlan(orgId: string, planId: string, planType: string) {
+  const res = await fetch(`/api/organizations/${orgId}/catalog`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ planId, planType }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to remove plan");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
+const PLAN_TYPE_TABS = ["ALL", "CONSULTATION", "SUBSCRIPTION", "WEBINAR", "CLASS"];
 
 export default function OrgPlansPage({
   params,
@@ -120,80 +122,52 @@ export default function OrgPlansPage({
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
-    queryKey: ["org-plans", orgId],
-    queryFn: () => fetchPlans(orgId),
+    queryKey: ["org-catalog", orgId],
+    queryFn: () => fetchCatalog(orgId),
   });
 
-  const [showCreate, setShowCreate] = useState(false);
-  const [planType, setPlanType] = useState("CONSULTATION");
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [priceMajor, setPriceMajor] = useState("0");
-  const [error, setError] = useState<string | null>(null);
+  // Browse modal state
+  const [showBrowse, setShowBrowse] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchType, setSearchType] = useState("ALL");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
 
-  const createMutation = useMutation({
-    mutationFn: () =>
-      createPlan(orgId, {
-        planType,
-        title: title.trim(),
-        description: description.trim(),
-        price: Math.round(parseFloat(priceMajor || "0") * 100),
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["org-plans", orgId] });
-      setShowCreate(false);
-      setTitle("");
-      setDescription("");
-      setPriceMajor("0");
-      setError(null);
-    },
-    onError: (err: Error) => setError(err.message),
+  const debouncedSetSearch = useDebouncedCallback(
+    (val: string) => setDebouncedSearch(val),
+    300,
+  );
+
+  const searchResults = useQuery({
+    queryKey: ["org-catalog-search", orgId, debouncedSearch, searchType],
+    queryFn: () => searchPlans(orgId, debouncedSearch, searchType),
+    enabled: showBrowse,
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: (planId: string) => deletePlan(orgId, planId),
+  const catalogIds = new Set(data?.catalog.map((c) => c.id) ?? []);
+
+  const addMutation = useMutation({
+    mutationFn: ({ planId, planType }: { planId: string; planType: string }) =>
+      linkPlan(orgId, planId, planType),
     onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["org-plans", orgId] }),
+      queryClient.invalidateQueries({ queryKey: ["org-catalog", orgId] }),
   });
 
-  // Edit plan state
-  const [editPlan, setEditPlan] = useState<OrgPlan | null>(null);
-  const [editTitle, setEditTitle] = useState("");
-  const [editDesc, setEditDesc] = useState("");
-  const [editPriceMajor, setEditPriceMajor] = useState("0");
-  const [editError, setEditError] = useState<string | null>(null);
-
-  const openEditPlan = (p: OrgPlan) => {
-    setEditPlan(p);
-    setEditTitle(p.title);
-    setEditDesc(p.description ?? "");
-    setEditPriceMajor(String(p.price / 100));
-    setEditError(null);
-  };
-
-  const editPlanMutation = useMutation({
-    mutationFn: () =>
-      updatePlan(orgId, editPlan!.id, {
-        title: editTitle.trim(),
-        description: editDesc.trim() || null,
-        price: Math.round(parseFloat(editPriceMajor || "0") * 100),
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["org-plans", orgId] });
-      setEditPlan(null);
-    },
-    onError: (err: Error) => setEditError(err.message),
+  const removeMutation = useMutation({
+    mutationFn: ({ planId, planType }: { planId: string; planType: string }) =>
+      unlinkPlan(orgId, planId, planType),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["org-catalog", orgId] }),
   });
 
   return (
     <>
       <DashboardHeader
-        title="Plans"
-        subtitle="Catalog plans owned by this organization"
+        title="Curated Plans"
+        subtitle="Plans recommended for your learners"
         actions={
           isAtLeast("ORG_ADMIN") && (
-            <Button size="sm" onClick={() => setShowCreate(true)}>
-              <Plus className="h-4 w-4 mr-1" /> New plan
+            <Button size="sm" onClick={() => setShowBrowse(true)}>
+              <Plus className="h-4 w-4 mr-1" /> Browse & add plans
             </Button>
           )
         }
@@ -202,198 +176,189 @@ export default function OrgPlansPage({
         <Card>
           <CardHeader>
             <CardTitle className="text-base">
-              {isLoading ? "Loading…" : `${data?.plans.length ?? 0} plans`}
+              {isLoading
+                ? "Loading…"
+                : `${data?.catalog.length ?? 0} plans in catalog`}
             </CardTitle>
             <CardDescription>
-              Plans created here can be assigned to learners and bookings.
+              Consultant plans linked to your organization. Learners can book
+              these through the explore page.
             </CardDescription>
           </CardHeader>
           <CardContent>
             {isLoading ? (
               <p className="text-sm text-zinc-500">Loading…</p>
-            ) : (
+            ) : data && data.catalog.length > 0 ? (
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Title</TableHead>
+                    <TableHead>Plan</TableHead>
                     <TableHead>Type</TableHead>
+                    <TableHead>Consultant</TableHead>
                     <TableHead>Price</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="w-12"></TableHead>
+                    {isAtLeast("ORG_ADMIN") && (
+                      <TableHead className="w-12"></TableHead>
+                    )}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {data?.plans.map((p) => (
-                    <TableRow key={p.id}>
-                      <TableCell className="font-medium">{p.title}</TableCell>
-                      <TableCell>
-                        <Badge variant="secondary">{p.planType}</Badge>
+                  {data.catalog.map((item) => (
+                    <TableRow key={`${item.planType}-${item.id}`}>
+                      <TableCell className="font-medium">
+                        {item.title}
                       </TableCell>
                       <TableCell>
-                        {formatCurrencyAmount(p.price, p.priceCurrency)}
+                        <Badge variant="secondary">{item.planType}</Badge>
                       </TableCell>
                       <TableCell>
-                        <Badge
-                          variant={p.isActive ? "default" : "outline"}
-                        >
-                          {p.isActive ? "Active" : "Archived"}
-                        </Badge>
+                        <div className="flex items-center gap-2">
+                          <Avatar className="h-6 w-6">
+                            <AvatarImage src={item.consultant?.image ?? undefined} />
+                            <AvatarFallback className="text-xs">
+                              {(item.consultant?.name ?? "?").charAt(0)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <span className="text-sm text-zinc-700">
+                            {item.consultant?.name ?? "—"}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {formatCurrencyAmount(item.price, item.priceCurrency)}
                       </TableCell>
                       {isAtLeast("ORG_ADMIN") && (
                         <TableCell>
-                          <div className="flex items-center gap-1">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              aria-label="Edit plan"
-                              onClick={() => openEditPlan(p)}
-                            >
-                              <Pencil className="h-4 w-4 text-zinc-500" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              aria-label="Archive plan"
-                              onClick={() => deleteMutation.mutate(p.id)}
-                              disabled={!p.isActive || deleteMutation.isPending}
-                            >
-                              <Trash2 className="h-4 w-4 text-red-500" />
-                            </Button>
-                          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label="Remove from catalog"
+                            onClick={() =>
+                              removeMutation.mutate({
+                                planId: item.id,
+                                planType: item.planType,
+                              })
+                            }
+                            disabled={removeMutation.isPending}
+                          >
+                            <Trash2 className="h-4 w-4 text-red-500" />
+                          </Button>
                         </TableCell>
                       )}
                     </TableRow>
                   ))}
-                  {data && data.plans.length === 0 && (
-                    <TableRow>
-                      <TableCell
-                        colSpan={5}
-                        className="text-center text-sm text-zinc-500 py-6"
-                      >
-                        No plans yet.
-                      </TableCell>
-                    </TableRow>
-                  )}
                 </TableBody>
               </Table>
+            ) : (
+              <div className="text-center py-8">
+                <p className="text-sm text-zinc-500">
+                  No plans curated yet.
+                  {isAtLeast("ORG_ADMIN") &&
+                    " Click 'Browse & add plans' to get started."}
+                </p>
+              </div>
             )}
           </CardContent>
         </Card>
       </DashboardContent>
 
-      <Dialog open={showCreate} onOpenChange={setShowCreate}>
-        <DialogContent>
+      {/* Browse & add modal */}
+      <Dialog open={showBrowse} onOpenChange={setShowBrowse}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>New plan</DialogTitle>
+            <DialogTitle>Browse consultant plans</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="plan-type">Type</Label>
-              <Select value={planType} onValueChange={setPlanType}>
-                <SelectTrigger id="plan-type">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PLAN_TYPES.map((p) => (
-                    <SelectItem key={p.value} value={p.value}>
-                      {p.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="plan-title">Title</Label>
-              <Input
-                id="plan-title"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="System design 1:1"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="plan-desc">Description</Label>
-              <Input
-                id="plan-desc"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Optional"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="plan-price">Price (₹)</Label>
-              <Input
-                id="plan-price"
-                type="number"
-                min="0"
-                step="0.01"
-                value={priceMajor}
-                onChange={(e) => setPriceMajor(e.target.value)}
-              />
-            </div>
-            {error && <p className="text-sm text-red-600">{error}</p>}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCreate(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={() => createMutation.mutate()}
-              disabled={createMutation.isPending || title.length < 2}
-            >
-              {createMutation.isPending ? "Creating…" : "Create plan"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
-      {/* Edit plan dialog */}
-      <Dialog open={!!editPlan} onOpenChange={(open) => !open && setEditPlan(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Edit plan</DialogTitle>
-          </DialogHeader>
           <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit-title">Title</Label>
+            <div className="relative">
+              <Search className="absolute left-3 top-2.5 h-4 w-4 text-zinc-400" />
               <Input
-                id="edit-title"
-                value={editTitle}
-                onChange={(e) => setEditTitle(e.target.value)}
+                placeholder="Search by plan name…"
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  debouncedSetSearch(e.target.value);
+                }}
+                className="pl-9"
               />
             </div>
+
+            <Tabs value={searchType} onValueChange={setSearchType}>
+              <TabsList className="w-full">
+                {PLAN_TYPE_TABS.map((t) => (
+                  <TabsTrigger key={t} value={t} className="text-xs">
+                    {t === "ALL" ? "All" : t.charAt(0) + t.slice(1).toLowerCase()}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+
             <div className="space-y-2">
-              <Label htmlFor="edit-desc">Description</Label>
-              <Input
-                id="edit-desc"
-                value={editDesc}
-                onChange={(e) => setEditDesc(e.target.value)}
-              />
+              {searchResults.isLoading ? (
+                <p className="text-sm text-zinc-500 text-center py-4">
+                  Searching…
+                </p>
+              ) : searchResults.data &&
+                searchResults.data.results.length > 0 ? (
+                searchResults.data.results.map((result) => {
+                  const isAdded = catalogIds.has(result.id);
+                  return (
+                    <div
+                      key={`${result.planType}-${result.id}`}
+                      className="flex items-center gap-3 p-3 rounded-lg border border-zinc-200 hover:border-zinc-300 transition-colors"
+                    >
+                      <Avatar className="h-8 w-8 shrink-0">
+                        <AvatarImage src={result.consultant.image ?? undefined} />
+                        <AvatarFallback className="text-xs">
+                          {(result.consultant.name ?? "?").charAt(0)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-zinc-900 truncate">
+                          {result.title}
+                        </p>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-xs text-zinc-500">
+                            {result.consultant.name}
+                          </span>
+                          <Badge
+                            variant="outline"
+                            className="text-[10px] h-4 px-1"
+                          >
+                            {result.planType}
+                          </Badge>
+                          <span className="text-xs text-zinc-500">
+                            {formatCurrencyAmount(
+                              result.price,
+                              result.priceCurrency,
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant={isAdded ? "outline" : "default"}
+                        disabled={isAdded || addMutation.isPending}
+                        onClick={() =>
+                          addMutation.mutate({
+                            planId: result.id,
+                            planType: result.planType,
+                          })
+                        }
+                      >
+                        {isAdded ? "Added" : "+ Add"}
+                      </Button>
+                    </div>
+                  );
+                })
+              ) : (
+                <p className="text-sm text-zinc-500 text-center py-4">
+                  {searchQuery
+                    ? "No plans found matching your search."
+                    : "Search for consultant plans to add to your catalog."}
+                </p>
+              )}
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-price">Price (INR)</Label>
-              <Input
-                id="edit-price"
-                type="number"
-                min="0"
-                step="0.01"
-                value={editPriceMajor}
-                onChange={(e) => setEditPriceMajor(e.target.value)}
-              />
-            </div>
-            {editError && <p className="text-sm text-red-600">{editError}</p>}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditPlan(null)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={() => editPlanMutation.mutate()}
-              disabled={editPlanMutation.isPending || editTitle.length < 2}
-            >
-              {editPlanMutation.isPending ? "Saving…" : "Save changes"}
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>
