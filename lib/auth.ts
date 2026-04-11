@@ -277,13 +277,35 @@ export const auth = betterAuth({
         const defaultRole =
           orgProfile.ssoSettings?.defaultRoleForAutoJoin ?? "ORG_LEARNER";
         try {
-          await prisma.organizationMemberProfile.create({
-            data: {
-              memberId: bm.id,
-              organizationProfileId: orgProfile.id,
-              role: defaultRole,
-              status: "ACTIVE",
-            },
+          await prisma.$transaction(async (tx) => {
+            // For ORG_LEARNER, acquire a seat atomically + link consultee profile.
+            if (defaultRole === "ORG_LEARNER") {
+              const { acquireSeat } = await import(
+                "@/lib/api/organizations/seat-helpers"
+              );
+              const acquired = await acquireSeat(tx, orgProfile.id);
+              if (!acquired) {
+                console.warn(
+                  `[SSO sync] Seat limit reached for org ${orgProfile.id} — skipping learner creation`,
+                );
+                return; // Don't create a learner membership without a seat
+              }
+            }
+
+            await tx.organizationMemberProfile.create({
+              data: {
+                memberId: bm.id,
+                organizationProfileId: orgProfile.id,
+                role: defaultRole,
+                status: "ACTIVE",
+                consulteeProfileId:
+                  defaultRole === "ORG_LEARNER"
+                    ? (user as Record<string, unknown>).consulteeProfileId as string ?? null
+                    : null,
+                seatAssignedAt:
+                  defaultRole === "ORG_LEARNER" ? new Date() : null,
+              },
+            });
           });
         } catch {
           // Unique constraint race — profile was created between the check

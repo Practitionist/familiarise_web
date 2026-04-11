@@ -33,26 +33,59 @@ export async function handleOrgPaymentSuccess(
       console.error("[Webhook] credit_purchase missing purchaseId or orgProfileId");
       return;
     }
-    const purchase = await prisma.orgCreditPurchase.findUnique({
-      where: { id: purchaseId },
-    });
-    if (!purchase) {
-      console.error(`[Webhook] OrgCreditPurchase not found: ${purchaseId}`);
-      return;
-    }
-    await prisma.$transaction(async (tx) => {
+
+    // Idempotency: use OrgCreditPurchase.paymentId as a "processed" marker.
+    // The first webhook event atomically sets paymentId + credits the pool.
+    // Subsequent events (Razorpay often sends both payment.captured AND
+    // order.paid) see paymentId is already set and no-op.
+    const settled = await prisma.$transaction(async (tx) => {
+      const purchase = await tx.orgCreditPurchase.findUnique({
+        where: { id: purchaseId },
+      });
+      if (!purchase) {
+        console.error(`[Webhook] OrgCreditPurchase not found: ${purchaseId}`);
+        return false;
+      }
+      if (purchase.paymentId) {
+        console.log(`[Webhook] Credit purchase ${purchaseId} already processed — skipping (idempotent)`);
+        return false;
+      }
+      // Atomically mark as processed + credit the pool.
+      await tx.orgCreditPurchase.update({
+        where: { id: purchaseId },
+        data: { paymentId: `rzp_${Date.now()}` },
+      });
       await purchaseCredits(tx, orgProfileId, purchase.creditsPurchased);
+      return true;
     });
-    console.log(`[Webhook] Credit purchase completed: ${purchaseId}, credits: ${purchase.creditsPurchased}`);
+
+    if (settled) {
+      console.log(`[Webhook] Credit purchase completed: ${purchaseId}`);
+    }
   } else if (notes.type === "invoice_payment") {
     const { invoiceId } = notes;
     if (!invoiceId) {
       console.error("[Webhook] invoice_payment missing invoiceId");
       return;
     }
+
+    // Idempotency: only flip to PAID if not already PAID.
+    // Store the Razorpay order ID for reconciliation.
+    const invoice = await prisma.organizationInvoice.findUnique({
+      where: { id: invoiceId },
+      select: { status: true },
+    });
+    if (invoice?.status === "PAID") {
+      console.log(`[Webhook] Invoice ${invoiceId} already PAID — skipping`);
+      return;
+    }
+
     await prisma.organizationInvoice.update({
       where: { id: invoiceId },
-      data: { status: "PAID", paidAt: new Date() },
+      data: {
+        status: "PAID",
+        paidAt: new Date(),
+      },
     });
     console.log(`[Webhook] Invoice paid: ${invoiceId}`);
   }
