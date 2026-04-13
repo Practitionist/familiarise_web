@@ -52,7 +52,7 @@ export default function CreateOrganizationWizard() {
           body: JSON.stringify({
             name: merged.name,
             billingEmail: merged.billingEmail,
-            kind: "BUYER",
+            kind: merged.kind || "BUYER",
             billingMode: merged.billingMode ?? "TAG_ONLY",
             description: merged.description || undefined,
             industry: merged.industry || undefined,

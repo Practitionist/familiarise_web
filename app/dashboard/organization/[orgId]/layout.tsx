@@ -35,7 +35,7 @@ interface OrgDetailsResponse {
     id: string;
     kind: "BUYER" | "PROVIDER" | "HYBRID";
     status: string;
-    billingMode: "TAG_ONLY" | "SEAT_PACK" | "INVOICED_MONTHLY";
+    billingMode: "TAG_ONLY" | "SEAT_PACK" | "INVOICED_MONTHLY" | "PREPAID_UNLIMITED";
   };
   membership: { role: string; status: string };
 }

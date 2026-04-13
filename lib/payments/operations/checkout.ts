@@ -1568,10 +1568,11 @@ export async function handleCheckout(
   // will read `orgBillingMode` to decide whether to skip the gateway.
   let organizationProfileId: string | null = null;
   let orgBillingMode: string | null = null;
+  let orgContractEndDate: Date | null = null;
   if (validatedData.organizationId) {
     const orgProfile = await prisma.organizationProfile.findUnique({
       where: { organizationId: validatedData.organizationId },
-      select: { id: true, billingMode: true, status: true, orgInvoiceCreditLimit: true },
+      select: { id: true, billingMode: true, status: true, orgInvoiceCreditLimit: true, contractEndDate: true },
     });
     if (!orgProfile || orgProfile.status !== "ACTIVE") {
       throw new Error("Organization not found or deactivated.");
@@ -1645,6 +1646,7 @@ export async function handleCheckout(
 
     organizationProfileId = orgProfile.id;
     orgBillingMode = orgProfile.billingMode;
+    orgContractEndDate = orgProfile.contractEndDate;
 
     // Block personal referral credits on org-funded bookings. Mixing a
     // personal-wallet incentive with employer-funded spend creates murky
@@ -1718,15 +1720,33 @@ export async function handleCheckout(
     // accumulated and invoiced at month-end. Marked as succeeded immediately.
     const isOrgInvoicedPayment = orgBillingMode === "INVOICED_MONTHLY" && !!organizationProfileId;
 
+    // Enterprise: PREPAID_UNLIMITED orgs have a flat-fee license — no per-session billing.
+    // Sessions are free for learners. Payment is synthetic with amount 0.
+    const isOrgPrepaidUnlimited = orgBillingMode === "PREPAID_UNLIMITED" && !!organizationProfileId;
+
     // FIX #520: Detect zero-amount payments (credits fully cover cost)
     // Both Stripe and Razorpay reject amount <= 0, so we skip the gateway
     // entirely and treat this like a "free" payment that succeeds immediately.
     const isZeroAmountPayment = amount === 0 && creditsApplied > 0;
 
     // STEP 4: Create payment intent (INSIDE LOCK)
+    // PREPAID_UNLIMITED: verify the license hasn't expired before proceeding.
+    if (isOrgPrepaidUnlimited) {
+      if (orgContractEndDate && new Date() > orgContractEndDate) {
+        return {
+          success: false,
+          error: "Your organization's prepaid license has expired. Please contact your admin to renew.",
+        };
+      }
+    }
+
     // Enterprise org billing modes skip the gateway entirely.
-    if (isOrgCreditPayment || isOrgInvoicedPayment) {
-      const prefix = isOrgCreditPayment ? "org_credit" : "org_invoiced";
+    if (isOrgCreditPayment || isOrgInvoicedPayment || isOrgPrepaidUnlimited) {
+      const prefix = isOrgCreditPayment
+        ? "org_credit"
+        : isOrgPrepaidUnlimited
+          ? "org_prepaid"
+          : "org_invoiced";
       const syntheticId = `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
       paymentResponse = { id: syntheticId, client_secret: null };
     } else if (isZeroAmountPayment) {
@@ -1768,7 +1788,7 @@ export async function handleCheckout(
           // FIX #520: Zero-amount payments (credits cover full cost) skip the
           // gateway, so slots should be confirmed immediately just like mock payments.
           // Enterprise: org credit and invoiced payments also skip the gateway.
-          const skipPayment = isMockPayment || isZeroAmountPayment || isOrgCreditPayment || isOrgInvoicedPayment;
+          const skipPayment = isMockPayment || isZeroAmountPayment || isOrgCreditPayment || isOrgInvoicedPayment || isOrgPrepaidUnlimited;
 
           // Create appointment based on type (with isTentative flag)
           switch (validatedData.appointmentType) {
@@ -1839,16 +1859,18 @@ export async function handleCheckout(
                 ? "ORG_CREDIT"
                 : isOrgInvoicedPayment
                   ? "ORG_INVOICED"
-                  : isZeroAmountPayment
-                    ? "CREDITS"
-                    : "CARD",
+                  : isOrgPrepaidUnlimited
+                    ? "ORG_PREPAID"
+                    : isZeroAmountPayment
+                      ? "CREDITS"
+                      : "CARD",
               paymentIntent: paymentResponse!.id,
               paymentGateway: validatedData.paymentGateway,
               // FIX #520: Zero-amount and mock payments succeed immediately (no webhook)
               paymentStatus: skipPayment
                 ? PaymentStatus.SUCCEEDED
                 : PaymentStatus.PENDING,
-              isMockPayment: isMockPayment || isZeroAmountPayment || isOrgCreditPayment || isOrgInvoicedPayment,
+              isMockPayment: isMockPayment || isZeroAmountPayment || isOrgCreditPayment || isOrgInvoicedPayment || isOrgPrepaidUnlimited,
               userId: userId,
               appointmentId: createdAppointment?.id || null,
               discountCodeId,
@@ -1976,7 +1998,7 @@ export async function handleCheckout(
       // Mock/zero-amount/org-billing payment post-processing: referral qualifying
       // action + waitlist. Real payments handle this via handlePaymentSuccess()
       // in the webhook, but these flows bypass webhooks entirely.
-      if (isMockPayment || isZeroAmountPayment || isOrgCreditPayment || isOrgInvoicedPayment) {
+      if (isMockPayment || isZeroAmountPayment || isOrgCreditPayment || isOrgInvoicedPayment || isOrgPrepaidUnlimited) {
         // Trigger referral reward if this is the user's first paid booking
         try {
           await processQualifyingAction(userId, "first_paid_booking");

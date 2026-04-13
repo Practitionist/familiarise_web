@@ -237,7 +237,7 @@ export const checkoutSuccessResponseSchema = z.object({
   paymentIntent: z
     .object({
       id: z.string(),
-      client_secret: z.string().optional(), // Can be Payment Intent secret or Checkout URL
+      client_secret: z.string().nullish(), // Can be Payment Intent secret, Checkout URL, or null for org billing modes
     })
     .optional(),
   amount: z.number().optional(),

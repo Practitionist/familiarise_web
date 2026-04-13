@@ -1,16 +1,22 @@
 export interface OrgWizardData {
   // Step 0: Org Info
   name: string;
+  kind: "BUYER" | "PROVIDER" | "HYBRID";
   description: string;
   industry: string;
   sizeBucket: string;
   website: string;
   billingEmail: string;
 
-  // Step 1: Billing & Seats
-  billingMode: "TAG_ONLY" | "SEAT_PACK" | "INVOICED_MONTHLY";
+  // Step 1: Billing & Seats (BUYER/HYBRID only)
+  billingMode: "TAG_ONLY" | "SEAT_PACK" | "INVOICED_MONTHLY" | "PREPAID_UNLIMITED";
   paymentTermsDays: number;
   seatsTotal: number | null;
+
+  // Step 1 alt: Revenue Rates (PROVIDER/HYBRID only)
+  platformCommissionRate: number;
+  orgRetainRate: number;
+  consultantPayoutRate: number;
 
   // Step 2: Branding
   logo: string | null;

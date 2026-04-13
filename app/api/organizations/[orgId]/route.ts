@@ -51,6 +51,8 @@ const patchOrgSchema = z.object({
   orgRetainRate: z.number().min(0).max(1).optional(),
   consultantPayoutRate: z.number().min(0).max(1).optional(),
   autoApproveConsultants: z.boolean().optional(),
+  payoutFrequency: z.enum(["WEEKLY", "BI_WEEKLY", "MONTHLY"]).optional(),
+  enforceOrganizationPlans: z.boolean().optional(),
 });
 
 export async function GET(

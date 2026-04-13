@@ -317,6 +317,7 @@ export default function SubscriptionCheckoutPage({
       toast,
       appliedDiscount,
       useReferralCredits,
+      selectedOrganizationId,
       validatedSearchParams,
       currency,
       handleApiError,

@@ -495,11 +495,20 @@ model OrganizationProfile {
   // INVOICED_MONTHLY: payment terms (NET-7, NET-15, NET-30, etc.)
   paymentTermsDays      Int  @default(30)
 
+  // PREPAID_UNLIMITED: enterprise license contract period
+  contractStartDate DateTime?
+  contractEndDate   DateTime?
+
   // Policies
   defaultCancellationPolicy String? @db.Text
   defaultRefundPolicy       String? @db.Text
   // FEATURE-FLAGGED: only consulted for PROVIDER orgs (auto-approve consultants joining the agency)
   autoApproveConsultants    Boolean @default(false)
+
+  // FEATURE-FLAGGED: payout cadence for PROVIDER/HYBRID orgs
+  payoutFrequency PayoutFrequency @default(MONTHLY)
+  // When true, PROVIDER/HYBRID org consultants can only use org-created plans (no personal plans)
+  enforceOrganizationPlans Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -547,6 +556,7 @@ enum OrganizationBillingMode {
   TAG_ONLY // Learner pays at checkout; payment is tagged with org for reporting only
   SEAT_PACK // Org pre-purchases credits; learner checkouts decrement the credit pool
   INVOICED_MONTHLY // Learners book freely; org gets a NET-X invoice at month-end
+  PREPAID_UNLIMITED // Flat-fee enterprise license; no per-session billing; sessions free for learners
 }
 
 enum OrgSizeBucket {
@@ -582,6 +592,17 @@ model OrganizationMemberProfile {
   // FEATURE-FLAGGED: per-consultant rate override for PROVIDER orgs.
   // null = use org's consultantPayoutRate.
   customConsultantPayoutRate Float?
+
+  // FEATURE-FLAGGED: controls who receives the consultant's share of earnings.
+  // CONSULTANT = consultant receives their share directly (default)
+  // ORGANIZATION = internal/salaried consultant; org captures consultant's share too
+  earningsRecipient EarningsRecipient @default(CONSULTANT)
+
+  // Consultant application metadata (PROVIDER orgs)
+  applicationNote String? @db.Text // free-text note from consultant application
+  appliedAt       DateTime?
+  approvedAt      DateTime?
+  approvedBy      String? // OrganizationMemberProfile.id of approver
 
   // BUYER seat metadata
   seatAssignedAt DateTime? // when an ORG_LEARNER was assigned a seat (for invoiced/seat-pack reporting)
@@ -699,6 +720,9 @@ model OrganizationPayout {
   failureReason   String?
   processedAt     DateTime?
 
+  // Linked earnings included in this payout batch
+  earnings OrganizationEarnings[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -716,7 +740,7 @@ model OrganizationEarnings {
   organizationProfileId String
   organizationProfile   OrganizationProfile @relation(fields: [organizationProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
 
-  paymentId String  @unique
+  paymentId String
   payment   Payment @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
 
   grossAmount    Int // in paise — same as Payment.originalAmount
@@ -728,11 +752,17 @@ model OrganizationEarnings {
   holdUntil DateTime
   currency  String        @default("INR")
 
+  // Payout batch this earning was included in (null until batched)
+  orgPayoutId String?
+  orgPayout   OrganizationPayout? @relation(fields: [orgPayoutId], references: [id])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([paymentId, organizationProfileId]) // one org earning per payment per org
   @@index([organizationProfileId])
   @@index([status])
+  @@index([orgPayoutId])
 }
 
 // Org-level invoices. Used by:
@@ -904,6 +934,23 @@ enum OrgAuditAction {
   MEMBER_REMOVED
   ROLE_CHANGE
   STATUS_CHANGE
+  CONSULTANT_APPLIED
+  CONSULTANT_APPROVED
+  CONSULTANT_REJECTED
+  PAYOUT_INITIATED
+  PAYOUT_PROCESSED
+  SETTINGS_CHANGED
+}
+
+enum PayoutFrequency {
+  WEEKLY
+  BI_WEEKLY
+  MONTHLY
+}
+
+enum EarningsRecipient {
+  CONSULTANT   // Consultant receives their share directly (default)
+  ORGANIZATION // Internal/salaried consultant: org captures consultant's share too
 }
 
 //////////////////////////////////////////////////// USER PROFILES and SLOTTING MECHANISM ////////////////////////////////////////////////////
@@ -2080,7 +2127,7 @@ model Payment {
   billableToOrgInvoiceId String?
 
   // Back-relations for org settlement flows
-  organizationEarnings       OrganizationEarnings? // FEATURE-FLAGGED: PROVIDER 3-way split
+  organizationEarnings       OrganizationEarnings[] // FEATURE-FLAGGED: PROVIDER 3-way split (one per org)
   organizationInvoiceSettled OrganizationInvoice?  @relation("OrgInvoicePayment") // back-relation for OrganizationInvoice.payment
   orgCreditPurchase          OrgCreditPurchase?    @relation("OrgCreditPurchasePayment") // back-relation for OrgCreditPurchase.payment
 

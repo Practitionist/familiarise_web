@@ -40,7 +40,7 @@ import {
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 interface BillingSummary {
-  billingMode: "TAG_ONLY" | "SEAT_PACK" | "INVOICED_MONTHLY";
+  billingMode: "TAG_ONLY" | "SEAT_PACK" | "INVOICED_MONTHLY" | "PREPAID_UNLIMITED";
   monthToDate: { gross: number; paymentCount: number };
   outstanding: { amount: number; invoiceCount: number };
   pendingCharges: { amount: number; paymentCount: number } | null;
@@ -270,6 +270,20 @@ export default function OrgBillingPage({
               title="Payment terms"
               value={`NET-${summary.data?.paymentTermsDays ?? 30}`}
             />
+            {summary.data?.billingMode && (
+              <StatCard
+                title="Billing mode"
+                value={
+                  summary.data.billingMode === "PREPAID_UNLIMITED"
+                    ? "Prepaid Unlimited"
+                    : summary.data.billingMode === "SEAT_PACK"
+                    ? "Seat Pack"
+                    : summary.data.billingMode === "INVOICED_MONTHLY"
+                    ? "Invoiced Monthly"
+                    : "Tag Only"
+                }
+              />
+            )}
           </DashboardGrid>
         )}
 

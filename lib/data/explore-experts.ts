@@ -42,6 +42,28 @@ export const consultantListInclude = {
   },
 } as const;
 
+// Separate include for org membership (not under `as const` to avoid readonly array issues with Prisma)
+export const orgMembershipInclude = {
+  organizationMemberProfiles: {
+    where: {
+      role: "ORG_CONSULTANT" as const,
+      status: "ACTIVE" as const,
+      organizationProfile: {
+        kind: { in: ["PROVIDER", "HYBRID"] as ["PROVIDER", "HYBRID"] },
+        status: "ACTIVE" as const,
+      },
+    },
+    select: {
+      organizationProfile: {
+        select: {
+          organization: { select: { name: true, slug: true, logo: true } },
+        },
+      },
+    },
+    take: 1,
+  },
+};
+
 // ---------------------------------------------------------------------------
 // Experts metadata (filters, domain grid, language list)
 // ---------------------------------------------------------------------------
@@ -196,7 +218,7 @@ export const getCuratedExperts = cache(
       where: { verificationStatus: "VERIFIED" },
       orderBy,
       take: limit,
-      include: consultantListInclude,
+      include: { ...consultantListInclude, ...orgMembershipInclude },
     });
   },
 );

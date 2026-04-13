@@ -193,8 +193,19 @@ export async function POST(req: NextRequest) {
     let refundResult;
     const isOrgCreditRefund = payment.paymentMethod === "ORG_CREDIT";
     const isOrgInvoicedRefund = payment.paymentMethod === "ORG_INVOICED";
+    const isOrgPrepaidRefund = payment.paymentMethod === "ORG_PREPAID";
 
-    if (isOrgCreditRefund && payment.organizationProfileId) {
+    if (isOrgPrepaidRefund) {
+      // PREPAID_UNLIMITED: no financial action — the original payment was 0.
+      // Just reverse earnings (handled below in side effects) and cancel the session.
+      refundResult = {
+        refundId: `org_prepaid_refund_${crypto.randomUUID()}`,
+        amount: 0,
+        currency: payment.currency,
+        status: "SUCCEEDED" as const,
+        metadata: { method: "ORG_PREPAID", noFinancialAction: true },
+      };
+    } else if (isOrgCreditRefund && payment.organizationProfileId) {
       // SEAT_PACK: credit the pool back.
       await prisma.$transaction(async (tx) => {
         await creditRefund(

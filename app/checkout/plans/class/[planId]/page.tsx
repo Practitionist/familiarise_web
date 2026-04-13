@@ -306,6 +306,7 @@ export default function ClassCheckoutPage({
       toast,
       appliedDiscount,
       useReferralCredits,
+      selectedOrganizationId,
       validatedSearchParams,
       currency,
       availableClassId,

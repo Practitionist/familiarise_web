@@ -59,9 +59,34 @@ export async function POST(
   const access = await requireOrgAccess(orgId, "ORG_OWNER");
   if (access.error) return access.error;
 
-  // PROVIDER payout batch creation will live here when the flag is flipped.
-  return NextResponse.json(
-    { error: "PROVIDER payout batch creation is pending implementation." },
-    { status: 501 },
-  );
+  if (access.org.kind === "BUYER") {
+    return NextResponse.json(
+      { error: "BUYER orgs do not have payouts." },
+      { status: 400 },
+    );
+  }
+
+  try {
+    const {
+      getOrgPayoutEligibility,
+      createOrgPayoutBatch,
+    } = await import("@/lib/payments/payouts/org-payout-service");
+
+    // Pre-check eligibility
+    const eligibility = await getOrgPayoutEligibility(access.org.id);
+    if (!eligibility.eligible) {
+      return NextResponse.json(
+        { error: eligibility.reason },
+        { status: 400 },
+      );
+    }
+
+    const result = await createOrgPayoutBatch(access.org.id);
+    return NextResponse.json(result, { status: 201 });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to create payout batch.";
+    const status = message.includes("try again") ? 409 : 500;
+    return NextResponse.json({ error: message }, { status });
+  }
 }

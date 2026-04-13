@@ -10,7 +10,7 @@ export const orgInfoSchema = z.object({
 });
 
 export const billingSchema = z.object({
-  billingMode: z.enum(["TAG_ONLY", "SEAT_PACK", "INVOICED_MONTHLY"]),
+  billingMode: z.enum(["TAG_ONLY", "SEAT_PACK", "INVOICED_MONTHLY", "PREPAID_UNLIMITED"]),
   paymentTermsDays: z.coerce.number().int().min(1).max(120),
   seatsTotal: z.coerce.number().int().positive().nullable(),
 });

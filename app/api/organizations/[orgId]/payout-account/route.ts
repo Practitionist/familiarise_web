@@ -67,9 +67,12 @@ export async function PUT(
   }
 
   const { accountNumber, ...rest } = parsed.data;
-  // STUB encryption — Issue #646 covers replacing this with libsodium / KMS.
-  const accountNumberEncrypted = Buffer.from(accountNumber).toString("base64");
-  const accountNumberLast4 = accountNumber.slice(-4);
+  const { encryptAccountNumber } = await import(
+    "@/lib/payments/payouts/account-crypto"
+  );
+  const { encrypted, last4 } = encryptAccountNumber(accountNumber);
+  const accountNumberEncrypted = Buffer.from(encrypted).toString("base64");
+  const accountNumberLast4 = last4;
 
   const account = await prisma.organizationPayoutAccount.upsert({
     where: { organizationProfileId: access.org.id },
@@ -83,6 +86,17 @@ export async function PUT(
       accountNumberEncrypted,
       accountNumberLast4,
       ...rest,
+    },
+  });
+
+  // Audit log
+  await prisma.orgAuditLog.create({
+    data: {
+      organizationProfileId: access.org.id,
+      actorMemberId: access.member.id,
+      action: "SETTINGS_CHANGED",
+      description: "Payout account updated",
+      details: { field: "payoutAccount", change: "upserted" },
     },
   });
 
@@ -104,6 +118,17 @@ export async function DELETE(
       where: { organizationProfileId: access.org.id },
     })
     .catch(() => null); // idempotent — silently no-op if absent
+
+  // Audit log
+  await prisma.orgAuditLog.create({
+    data: {
+      organizationProfileId: access.org.id,
+      actorMemberId: access.member.id,
+      action: "SETTINGS_CHANGED",
+      description: "Payout account deleted",
+      details: { field: "payoutAccount", change: "deleted" },
+    },
+  });
 
   return NextResponse.json({ success: true });
 }

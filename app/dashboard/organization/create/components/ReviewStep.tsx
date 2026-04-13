@@ -166,12 +166,12 @@ export function ReviewStep({ onBack, onGoToStep, initialData }: StepProps) {
       </Section>
 
       <Section title="Billing & Seats" step={1}>
-        <p>
+        <div className="flex items-center gap-2">
           <strong>Mode:</strong>{" "}
           <Badge variant="secondary">
             {initialData.billingMode ?? "TAG_ONLY"}
           </Badge>
-        </p>
+        </div>
         {initialData.billingMode === "INVOICED_MONTHLY" && (
           <p>
             <strong>Payment terms:</strong> NET-

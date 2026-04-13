@@ -17,6 +17,7 @@ import {
   ArrowRight,
   CheckCircle2,
   BadgeCheck,
+  Building2,
 } from "lucide-react";
 import { useCurrency } from "@/hooks/useCurrency";
 
@@ -189,6 +190,21 @@ export const ConsultantCard = memo(function ConsultantCard({
                   <span title="Verified by Familiarise">
                     <BadgeCheck className="w-5 h-5 text-blue-500" />
                   </span>
+                )}
+                {consultant.organizationBadge && (
+                  <Link
+                    href={`/org/${consultant.organizationBadge.slug}`}
+                    onClick={(e) => e.stopPropagation()}
+                    title={consultant.organizationBadge.name}
+                  >
+                    <Badge
+                      variant="outline"
+                      className="border-indigo-200 text-indigo-700 text-[10px] px-1.5 py-0 hover:bg-indigo-50 transition-colors"
+                    >
+                      <Building2 className="w-3 h-3 mr-0.5" />
+                      {consultant.organizationBadge.name}
+                    </Badge>
+                  </Link>
                 )}
               </div>
               <div className="flex items-center gap-2 mt-2">

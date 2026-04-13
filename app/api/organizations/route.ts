@@ -222,7 +222,11 @@ export async function POST(req: NextRequest) {
             sizeBucket: sizeBucket ?? null,
             website: website ?? null,
             logo: logo ?? null,
-            status: "ACTIVE",
+            // PROVIDER/HYBRID orgs require admin approval before activation
+            status:
+              kind === "PROVIDER" || kind === "HYBRID"
+                ? "PENDING_VERIFICATION"
+                : "ACTIVE",
           },
         });
 

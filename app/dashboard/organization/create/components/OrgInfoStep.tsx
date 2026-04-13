@@ -28,6 +28,24 @@ const INDUSTRIES = [
   "Other",
 ];
 
+const ORG_KINDS = [
+  {
+    value: "BUYER",
+    label: "Buyer",
+    description: "Sponsor sessions for your employees or students",
+  },
+  {
+    value: "PROVIDER",
+    label: "Provider (Agency)",
+    description: "Host consultants and earn from their bookings",
+  },
+  {
+    value: "HYBRID",
+    label: "Hybrid",
+    description: "Both sponsor learners and host consultants",
+  },
+];
+
 const SIZE_BUCKETS = [
   { value: "SMALL_1_50", label: "1-50 employees" },
   { value: "MEDIUM_51_200", label: "51-200 employees" },
@@ -54,10 +72,42 @@ export function OrgInfoStep({ onNext, initialData, isSubmitting }: StepProps) {
     },
   });
 
-  const onSubmit = (data: OrgInfoFormData) => onNext(data);
+  const selectedKind = watch("kind" as keyof OrgInfoFormData) as string || initialData.kind || "BUYER";
+
+  const onSubmit = (data: OrgInfoFormData) => onNext({ ...data, kind: selectedKind } as Partial<import("../types").OrgWizardData>);
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+      {/* Organization type selector */}
+      <div className="space-y-2">
+        <Label>Organization type</Label>
+        <div className="grid grid-cols-1 gap-2">
+          {ORG_KINDS.map((kind) => (
+            <label
+              key={kind.value}
+              className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${
+                selectedKind === kind.value
+                  ? "border-zinc-900 bg-zinc-50"
+                  : "border-zinc-200 hover:border-zinc-300"
+              }`}
+            >
+              <input
+                type="radio"
+                name="kind"
+                value={kind.value}
+                checked={selectedKind === kind.value}
+                onChange={() => setValue("kind" as keyof OrgInfoFormData, kind.value as never)}
+                className="mt-1"
+              />
+              <div>
+                <p className="text-sm font-medium">{kind.label}</p>
+                <p className="text-xs text-zinc-500">{kind.description}</p>
+              </div>
+            </label>
+          ))}
+        </div>
+      </div>
+
       <div className="space-y-2">
         <Label htmlFor="name">Organization name *</Label>
         <Input id="name" {...register("name")} placeholder="Acme School" />

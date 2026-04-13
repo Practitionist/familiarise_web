@@ -65,6 +65,11 @@ export interface IConsultantCardData {
   subDomains: { id: string; name: string }[];
   tags: { id: string; name: string }[];
   reviews?: { rating: number }[];
+  organizationBadge?: {
+    name: string;
+    slug: string;
+    logo: string | null;
+  } | null;
   subscriptionPlans?: Array<{
     id: string;
     title: string;

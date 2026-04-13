@@ -588,7 +588,7 @@ export async function processOnboardingData(
       validatedBody.orgName;
     if (isOrgAdmin) {
       const orgData = validatedBody as Record<string, unknown>;
-      const validModes = ["TAG_ONLY", "SEAT_PACK", "INVOICED_MONTHLY"];
+      const validModes = ["TAG_ONLY", "SEAT_PACK", "INVOICED_MONTHLY", "PREPAID_UNLIMITED"];
       if (orgData.orgBillingMode && !validModes.includes(orgData.orgBillingMode as string)) {
         return { success: false, error: `Invalid billing mode: ${orgData.orgBillingMode}` };
       }
@@ -749,7 +749,8 @@ async function createOrgInTransaction(
   const billingMode = (data.orgBillingMode ?? "TAG_ONLY") as
     | "TAG_ONLY"
     | "SEAT_PACK"
-    | "INVOICED_MONTHLY";
+    | "INVOICED_MONTHLY"
+    | "PREPAID_UNLIMITED";
   const slug = `${slugify(data.orgName)}-${Math.random().toString(36).slice(2, 8)}`;
 
   const organization = await tx.organization.create({
