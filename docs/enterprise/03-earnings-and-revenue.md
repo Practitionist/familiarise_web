@@ -322,7 +322,8 @@ createEarningsFromPayment()
 | Scenario | Behavior |
 |----------|----------|
 | Zero org share (Platform-only mode) | No `OrganizationEarnings` row created. Log message: "Platform-only mode ... skipping 0-value org earnings" |
-| Multi-org consultant | `resolveOrgSplit` picks the first active PROVIDER/HYBRID membership. Future: allow consultant to select which org gets credit per-booking. |
+| Multi-org consultant | `resolveOrgSplit` picks the **oldest** active PROVIDER/HYBRID membership (`orderBy: createdAt asc`) for deterministic routing. The explore badge uses the same ordering, so earnings attribution and UI badge always resolve to the same org. Future: allow consultant to select which org gets credit per-booking. |
+| Negative orgShare (misconfigured rates) | If `customConsultantPayoutRate` + platform fee > 100%, `orgShare` would be negative. Guard clamps it to 0 and gives the remainder to the consultant. Console error logged — fix rate configuration. |
 | Per-consultant rate override + collaborator | Override applies to the host's org membership. Collaborators in other orgs (or independent) use their own org split or the B2C split. |
 | Partial refund on 3-way split | `refundRatio` applied proportionally to both `ConsultantEarnings.refundedShareAmount` and `OrganizationEarnings.refundedAmount`. Status set to REFUNDED only when cumulative refund >= original share. |
 | Refund of PAID earnings (already disbursed) | Requires `forceRefund: true`. Creates a TDS reversal record (`isReversal: true`) and decrements `totalRevenue` instead of `pendingRevenue`. |

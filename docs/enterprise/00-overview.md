@@ -26,7 +26,7 @@ The Enterprise system is a B2B layer built on top of the Familiarise B2C marketp
 | All 4 BUYER billing modes | Shipped in one PR | Modes share 90% of checkout logic; splitting would create merge conflicts |
 | Full SSO admin UI | `OrganizationSSOSettings` model + BetterAuth `ssoProvider` table | Our policy fields (domain allowlist, enforce flag) live in our model; SAML/OIDC config in BetterAuth's |
 | Discovery | Both `/explore` badge + `/explore/companies` page | PROVIDER consultants show org badge on cards; orgs get a dedicated listing page |
-| Multi-org consultants | Allowed | A freelancer can belong to multiple agencies; `resolveOrgSplit` picks the first active PROVIDER/HYBRID membership |
+| Multi-org consultants | Allowed | A freelancer can belong to multiple agencies; `resolveOrgSplit` picks the **oldest** active PROVIDER/HYBRID membership (`orderBy: createdAt asc`) for deterministic routing. The explore badge query uses the same ordering, so earnings and badge always resolve to the same org. |
 | Admin verification | Required for PROVIDER/HYBRID orgs | `OrganizationStatus.PENDING_VERIFICATION` until platform admin approves |
 | Single role per org | No dual membership | One `OrganizationMemberProfile` per user per org; simplifies permission checks |
 | Configurable payout frequency | `PayoutFrequency` enum: WEEKLY, BI_WEEKLY, MONTHLY | Stored on `OrganizationProfile.payoutFrequency` (default MONTHLY) |

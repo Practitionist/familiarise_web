@@ -53,6 +53,7 @@ export const orgMembershipInclude = {
         status: "ACTIVE" as const,
       },
     },
+    orderBy: { createdAt: "asc" as const },
     select: {
       organizationProfile: {
         select: {

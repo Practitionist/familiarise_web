@@ -100,6 +100,9 @@ async function resolveOrgSplit(
 ): Promise<OrgEarningsSplit | null> {
   if (!ENABLE_PROVIDER_ORGS) return null;
 
+  // Deterministic ordering: oldest membership wins. This ensures earnings
+  // always route to the same org for multi-org consultants. The badge query
+  // in explore-experts.ts uses the same orderBy for consistency.
   const orgMembership = await tx.organizationMemberProfile.findFirst({
     where: {
       consultantProfileId,
@@ -110,6 +113,7 @@ async function resolveOrgSplit(
         status: "ACTIVE",
       },
     },
+    orderBy: { createdAt: "asc" },
     include: {
       organizationProfile: {
         select: {

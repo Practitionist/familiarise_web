@@ -211,6 +211,12 @@ PENDING ──► PROCESSING ──► COMPLETED
                             status: PAID
 ```
 
+**Claim-once atomicity**: The PENDING → PROCESSING transition uses a conditional
+`updateMany({ where: { id, status: PENDING } })`. If the affected row count is 0,
+another concurrent call already claimed the payout — the current call throws
+without dispatching to the gateway. This prevents duplicate disbursements even
+if the admin process route is triggered multiple times.
+
 ### Gateway Dispatch
 
 | Gateway | Condition | Transfer Mode |
@@ -221,7 +227,7 @@ PENDING ──► PROCESSING ──► COMPLETED
 
 **Razorpay mode selection**: `payout.amount >= 20000000` (₹2,00,000 in paise) uses RTGS; otherwise IMPS.
 
-**Idempotency**: Razorpay payouts use `idempotencyKey: "org-payout-{payoutId}"` to prevent duplicate disbursements.
+**Idempotency**: Both Razorpay and Stripe payouts pass `idempotencyKey: "org-payout-{payoutId}"` to prevent duplicate disbursements. Combined with the atomic claim-once status transition above, this gives defence-in-depth: even if two jobs race past the claim check, the gateway itself will reject the duplicate.
 
 **File**: `lib/payments/payouts/org-payout-service.ts`
 

@@ -374,7 +374,7 @@ The two streams operate independently. Credit pool purchases fund the BUYER side
 | Same-org learner books same-org consultant (HYBRID) | Both billing (credit deduction from pool) AND earnings (3-way split) activate. The org pays via credits and also receives an org share from the payment. |
 | Credit pool hits Rs 0 | Next booking from an ORG_LEARNER is blocked: "insufficient credits" |
 | PREPAID_UNLIMITED contract expires | Checkout checks `contractEndDate` and returns "license expired" |
-| Consultant in 2 PROVIDER orgs | `resolveOrgSplit` uses `findFirst` -- the first active PROVIDER/HYBRID membership determines the split. Future: allow per-booking org selection. |
+| Consultant in 2 PROVIDER orgs | `resolveOrgSplit` uses `findFirst` with `orderBy: createdAt asc` — the **oldest** active PROVIDER/HYBRID membership determines the split. Badge query uses the same ordering so earnings and UI stay consistent. Future: allow per-booking org selection. |
 | Refund on 3-way split | Both `ConsultantEarnings` and `OrganizationEarnings` are reversed proportionally. TDS reversal records created if payout was already completed. |
 | PROVIDER org deactivated | Org profile status set to DEACTIVATED. API routes check `org.status === ACTIVE`; all bookings and payouts blocked. Existing READY earnings are held. |
 | Rate override + collaborator split | Org share uses `customConsultantPayoutRate` to compute the consultant pool, then the pool is split among host and collaborators per their `revenueSharePercentage`. |

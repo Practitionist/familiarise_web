@@ -123,17 +123,30 @@ Filtered view of ORG_LEARNER members. Shows seat join timestamps and allows remo
 
 ### Consultants (PROVIDER/HYBRID only)
 
-Two sections:
+Two sections rendered on `app/dashboard/organization/[orgId]/consultants/page.tsx`:
 
-1. **Active consultants**: List with name, headline, rating, earnings summary. Per-consultant actions:
-   - `customConsultantPayoutRate` override (e.g., set one consultant to 90% instead of the org-wide 85%)
-   - `earningsRecipient` toggle: CONSULTANT (default, consultant receives their share) vs ORGANIZATION (salaried/internal consultant, org captures their share)
+1. **Pending Applications** card (ORG_ADMIN+): a table of all PENDING consultant applications with Applicant, Note, Applied date, and Approve/Reject action buttons. Buttons POST to `/api/organizations/[orgId]/consultants` with `{ memberId, action: "APPROVE" | "REJECT" }`. Only rendered when there are pending applications.
 
-2. **Pending applications**: Consultants who applied via the public org page. Approve/reject buttons (ORG_ADMIN+).
+2. **Active Consultants** card: a table of all ACTIVE consultants with Consultant, Headline, Rating, Earnings mode, Verified columns. The Earnings column shows:
+   - `Internal` badge when `earningsRecipient === ORGANIZATION`
+   - Custom rate percentage (e.g., `90%`) when `customConsultantPayoutRate` is set
+   - `Default` otherwise
 
-When `ENABLE_PROVIDER_ORGS=false`, this page shows a lock card (see Lock Card Pattern below).
+**Per-consultant payout controls** are edited via the member PATCH endpoint:
 
-**File**: `app/api/organizations/[orgId]/consultants/route.ts`
+```
+PATCH /api/organizations/[orgId]/members/[memberId]
+{ customConsultantPayoutRate?: number | null, earningsRecipient?: "CONSULTANT" | "ORGANIZATION" }
+```
+
+Both fields are gated behind `ENABLE_PROVIDER_ORGS`. The inline edit UI for these fields is a follow-up — for now they are editable via direct API call or SQL.
+
+When `ENABLE_PROVIDER_ORGS=false`, the consultants page shows a lock card (see Lock Card Pattern below).
+
+**Files**:
+- Page: `app/dashboard/organization/[orgId]/consultants/page.tsx`
+- List/approval API: `app/api/organizations/[orgId]/consultants/route.ts`
+- Payout-controls PATCH: `app/api/organizations/[orgId]/members/[memberId]/route.ts`
 
 ### Plans
 

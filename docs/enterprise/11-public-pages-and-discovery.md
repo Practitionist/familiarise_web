@@ -39,7 +39,9 @@ PROVIDER and HYBRID organizations get a public presence on the Familiarise platf
 - **Branding**: `primaryColor` and `secondaryColor` from `OrganizationProfile` applied as a CSS gradient on the hero
 - **Banner image**: Rendered behind the hero with 20% opacity overlay
 - **Consultant roster**: Grid (1/2/3 columns responsive) of cards showing name, avatar, headline, rating, experience, verified badge
-- **CTA**: "Browse all organizations" link pointing to `/explore/companies`
+- **CTAs**:
+  - **"Apply as Consultant"** button (client component `ApplyButton.tsx`). POSTs to `/api/organizations/[orgId]/consultants/apply` with inline loading/error/success feedback. If the caller isn't a verified consultant, the API returns 403 and the button shows an inline error.
+  - **"Browse all organizations"** link pointing to `/explore/companies`
 
 ### Access Rules
 
@@ -197,5 +199,5 @@ The query mirrors the server component page -- same data, same access rules, but
 | Consultant removed from org but page cached | Next roster query excludes non-ACTIVE members |
 | Org has zero consultants | Roster section shows "No consultants listed yet." |
 | BUYER org slug accessed at /org/[slug] | Returns 404 (BUYER orgs have no public page) |
-| Consultant in multiple PROVIDER orgs | Badge shows only the first active membership (take: 1) |
+| Consultant in multiple PROVIDER orgs | Badge shows the **oldest** active membership (`orderBy: createdAt asc, take: 1`). Matches `resolveOrgSplit` ordering so earnings and badge always agree. |
 | Org slug collision at creation | Retry with random suffix appended (e.g., `techconsult-a3kz7m`) |

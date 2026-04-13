@@ -2,8 +2,9 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { Building2, Globe, Users, Star, ExternalLink } from "lucide-react";
+import { ApplyButton } from "./ApplyButton";
 import prisma from "@/lib/prisma";
-import type { OrganizationKind, OrgMemberStatus } from "@prisma/client";
+import type { OrgMemberStatus } from "@prisma/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -233,16 +234,19 @@ export default async function PublicOrgPage({ params }: OrgPageProps) {
         )}
 
         {/* CTA for consultants */}
-        <div className="mt-12 text-center">
-          <p className="text-zinc-500 text-sm mb-3">
+        <div className="mt-12 text-center space-y-3">
+          <p className="text-zinc-500 text-sm">
             Are you a consultant? Join this organization.
           </p>
-          <Link href={`/explore/companies`}>
-            <Button variant="outline" size="sm">
-              <Building2 className="h-4 w-4 mr-1.5" />
-              Browse all organizations
-            </Button>
-          </Link>
+          <div className="flex items-center justify-center gap-3">
+            <ApplyButton orgId={org.id} />
+            <Link href={`/explore/companies`}>
+              <Button variant="outline" size="sm">
+                <Building2 className="h-4 w-4 mr-1.5" />
+                Browse all organizations
+              </Button>
+            </Link>
+          </div>
         </div>
       </div>
     </main>
@@ -253,7 +257,10 @@ export async function generateMetadata({ params }: OrgPageProps) {
   const { slug } = await params;
   const org = await prisma.organization.findUnique({
     where: { slug },
-    select: { name: true, organizationProfile: { select: { description: true } } },
+    select: {
+      name: true,
+      organizationProfile: { select: { description: true } },
+    },
   });
 
   return {

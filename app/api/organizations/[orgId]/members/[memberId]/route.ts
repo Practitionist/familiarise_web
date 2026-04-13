@@ -15,11 +15,20 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { ENABLE_PROVIDER_ORGS } from "@/lib/feature-flags";
 import { acquireSeat, releaseSeat } from "@/lib/api/organizations/seat-helpers";
-import { OrgAuditAction, OrgMemberRole, OrgMemberStatus, Prisma } from "@prisma/client";
+import {
+  EarningsRecipient,
+  OrgAuditAction,
+  OrgMemberRole,
+  OrgMemberStatus,
+  Prisma,
+} from "@prisma/client";
 
 const patchMemberSchema = z.object({
   role: z.nativeEnum(OrgMemberRole).optional(),
   status: z.nativeEnum(OrgMemberStatus).optional(),
+  // PROVIDER-only: per-consultant payout controls
+  customConsultantPayoutRate: z.number().min(0).max(1).nullable().optional(),
+  earningsRecipient: z.nativeEnum(EarningsRecipient).optional(),
 });
 
 const PROVIDER_GATED_ROLES: OrgMemberRole[] = ["ORG_CONSULTANT", "ORG_SUPPORT"];
@@ -52,7 +61,21 @@ export async function PATCH(
       );
     }
 
-    const { role, status } = parsed.data;
+    const { role, status, customConsultantPayoutRate, earningsRecipient } =
+      parsed.data;
+
+    // Gate per-consultant payout controls behind ENABLE_PROVIDER_ORGS.
+    const payoutControlsTouched =
+      customConsultantPayoutRate !== undefined || earningsRecipient !== undefined;
+    if (payoutControlsTouched && !ENABLE_PROVIDER_ORGS) {
+      return NextResponse.json(
+        {
+          error: "Per-consultant payout controls require PROVIDER orgs.",
+          flag: "ENABLE_PROVIDER_ORGS",
+        },
+        { status: 501 },
+      );
+    }
 
     if (!ENABLE_PROVIDER_ORGS && role && PROVIDER_GATED_ROLES.includes(role)) {
       return NextResponse.json(
@@ -146,6 +169,10 @@ export async function PATCH(
         data: {
           ...(role !== undefined && { role }),
           ...(status !== undefined && { status }),
+          ...(customConsultantPayoutRate !== undefined && {
+            customConsultantPayoutRate,
+          }),
+          ...(earningsRecipient !== undefined && { earningsRecipient }),
           consulteeProfileId,
           consultantProfileId,
           seatAssignedAt: isSeatOccupying && !wasSeatOccupying

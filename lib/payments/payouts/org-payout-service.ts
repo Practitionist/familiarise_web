@@ -352,6 +352,7 @@ export async function processOrgPayout(payoutId: string): Promise<void> {
           currency: payout.currency.toLowerCase(),
           destinationAccountId: payoutAccount.stripeConnectId,
           transferGroup: `org-payout-${payout.id}`,
+          idempotencyKey: `org-payout-${payout.id}`,
         });
 
         await prisma.organizationPayout.update({

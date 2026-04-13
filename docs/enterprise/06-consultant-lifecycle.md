@@ -63,7 +63,9 @@ The org admin sends an invite with `role=ORG_CONSULTANT`. The consultant receive
 
 ### Path B: Self-Application (Pull)
 
-The consultant visits the org's public page (`/org/[slug]`) and clicks "Apply".
+The consultant visits the org's public page (`/org/[slug]`) and clicks **"Apply as Consultant"**. The button is a client component (`ApplyButton.tsx`) that POSTs to the apply endpoint and shows inline loading/error/success feedback.
+
+Concurrency safety: the Member find-or-create runs inside the transaction, so two simultaneous applications can't both create a Member row (`P2002` → 409 response).
 
 ```
 Consultant visits /org/[slug]
@@ -128,6 +130,15 @@ Valid status filter values: `ACTIVE`, `PENDING`, `SUSPENDED`, `REMOVED`.
 Both actions write an OrgAuditLog entry (CONSULTANT_APPROVED or CONSULTANT_REJECTED).
 
 **File**: `app/api/organizations/[orgId]/consultants/route.ts`
+
+### Dashboard UI
+
+The consultants dashboard (`/dashboard/organization/[orgId]/consultants`) renders two sections when the caller is ORG_ADMIN or higher:
+
+1. **Pending Applications** card — a table of all PENDING consultant applications with columns: Applicant, Note, Applied date, and Approve/Reject action buttons. The buttons POST to `/api/organizations/[orgId]/consultants` with the appropriate action.
+2. **Active Consultants** card — a table of all ACTIVE consultants with columns: Consultant, Headline, Rating, Earnings mode, Verified. The Earnings column shows `Internal` for `earningsRecipient = ORGANIZATION`, the custom rate percentage if `customConsultantPayoutRate` is set, or `Default` otherwise.
+
+**File**: `app/dashboard/organization/[orgId]/consultants/page.tsx`
 
 ---
 
@@ -204,6 +215,26 @@ The `earningsRecipient` field on OrgMemberProfile controls where the consultant'
 | `ORGANIZATION` | Org captures the consultant's share too | Salaried/internal consultants |
 
 When set to `ORGANIZATION`, the org receives both its own 5% share and the consultant's 85% share (90% total), and handles the consultant's compensation outside Familiarise.
+
+### Admin API for Payout Controls
+
+Both `customConsultantPayoutRate` and `earningsRecipient` are editable via the member PATCH endpoint:
+
+**Endpoint**: `PATCH /api/organizations/[orgId]/members/[memberId]`
+**Auth**: ORG_ADMIN or higher
+**Body** (all fields optional):
+```json
+{
+  "customConsultantPayoutRate": 0.90,
+  "earningsRecipient": "ORGANIZATION"
+}
+```
+
+- Setting `customConsultantPayoutRate: null` clears the override (reverts to org default).
+- Both fields are gated behind `ENABLE_PROVIDER_ORGS` — returns 501 if the flag is off.
+- Payout-controls edits do not trigger seat bookkeeping (no role/status change).
+
+**File**: `app/api/organizations/[orgId]/members/[memberId]/route.ts`
 
 ---
 
