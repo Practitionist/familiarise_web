@@ -94,6 +94,52 @@ export async function PATCH(
       return NextResponse.json({ error: "Member not found" }, { status: 404 });
     }
 
+    // Domain validation for per-consultant payout controls:
+    //   - target must become (or already be) an ORG_CONSULTANT
+    //   - the org must be PROVIDER or HYBRID kind
+    //   - the effective rate combination must not exceed 1.0
+    if (payoutControlsTouched) {
+      const effectiveRole = role ?? target.role;
+      if (effectiveRole !== "ORG_CONSULTANT") {
+        return NextResponse.json(
+          {
+            error:
+              "Payout controls (customConsultantPayoutRate, earningsRecipient) can only be set on ORG_CONSULTANT members.",
+          },
+          { status: 400 },
+        );
+      }
+      if (access.org.kind !== "PROVIDER" && access.org.kind !== "HYBRID") {
+        return NextResponse.json(
+          {
+            error: `Payout controls are only available on PROVIDER/HYBRID orgs (this org is ${access.org.kind}).`,
+          },
+          { status: 400 },
+        );
+      }
+      // Validate effective rate combination if a custom rate is being set.
+      // customConsultantPayoutRate = null is valid (clears the override).
+      if (
+        customConsultantPayoutRate !== undefined &&
+        customConsultantPayoutRate !== null
+      ) {
+        const platform = access.org.platformCommissionRate;
+        const orgRetain = access.org.orgRetainRate;
+        const effectiveSum = platform + orgRetain + customConsultantPayoutRate;
+        // Hard-fail when override + fixed rates exceed 100% (would produce
+        // negative orgShare at earnings time). Under 100% is valid — the org
+        // just captures more than its default retain rate.
+        if (effectiveSum > 1.0001) {
+          return NextResponse.json(
+            {
+              error: `customConsultantPayoutRate (${customConsultantPayoutRate}) + platform (${platform}) + orgRetain (${orgRetain}) = ${effectiveSum.toFixed(4)} exceeds 1.0. Reduce the override or adjust the org's fixed rates.`,
+            },
+            { status: 400 },
+          );
+        }
+      }
+    }
+
     // Last-owner guard — applies to both role demotion and status removal.
     if (target.role === "ORG_OWNER" && target.status === "ACTIVE") {
       const demoting = role !== undefined && role !== "ORG_OWNER";

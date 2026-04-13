@@ -234,6 +234,16 @@ Both `customConsultantPayoutRate` and `earningsRecipient` are editable via the m
 - Both fields are gated behind `ENABLE_PROVIDER_ORGS` — returns 501 if the flag is off.
 - Payout-controls edits do not trigger seat bookkeeping (no role/status change).
 
+**Domain validation** (fails fast at the PATCH handler, before any DB write):
+
+| Check | Error | Status |
+| ----- | ----- | ------ |
+| Target member isn't ORG_CONSULTANT (effective role after the update) | "Payout controls can only be set on ORG_CONSULTANT members" | 400 |
+| Org kind is not PROVIDER or HYBRID | "Payout controls are only available on PROVIDER/HYBRID orgs" | 400 |
+| `customConsultantPayoutRate` + `platformCommissionRate` + `orgRetainRate` > 1.0001 | "customConsultantPayoutRate (0.95) + platform (0.10) + orgRetain (0.05) = 1.10 exceeds 1.0" | 400 |
+
+The rate-sum check rejects overrides that would produce a negative `orgShare` at earnings time. Overrides under 100% are valid — the org simply captures more than its default retain rate in that case.
+
 **File**: `app/api/organizations/[orgId]/members/[memberId]/route.ts`
 
 ---

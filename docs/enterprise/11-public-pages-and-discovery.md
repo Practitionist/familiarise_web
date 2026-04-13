@@ -40,7 +40,11 @@ PROVIDER and HYBRID organizations get a public presence on the Familiarise platf
 - **Banner image**: Rendered behind the hero with 20% opacity overlay
 - **Consultant roster**: Grid (1/2/3 columns responsive) of cards showing name, avatar, headline, rating, experience, verified badge
 - **CTAs**:
-  - **"Apply as Consultant"** button (client component `ApplyButton.tsx`). POSTs to `/api/organizations/[orgId]/consultants/apply` with inline loading/error/success feedback. If the caller isn't a verified consultant, the API returns 403 and the button shows an inline error.
+  - **"Apply as Consultant"** button (client component `ApplyButton.tsx`). POSTs to `/api/organizations/[orgId]/consultants/apply` with inline loading/error/success feedback and status-specific handling:
+    - **401 (unauthenticated)** — redirects to `/auth/signin?callbackUrl=<current-path>` so the user returns to the org page after signing in
+    - **403 (not a verified consultant)** — shows "You need a verified consultant profile to apply. Complete consultant onboarding first."
+    - **409 (already a member)** — shows the duplicate-member message from the API
+    - **2xx** — shows the success message (either "Application submitted" or "Auto-approved")
   - **"Browse all organizations"** link pointing to `/explore/companies`
 
 ### Access Rules
