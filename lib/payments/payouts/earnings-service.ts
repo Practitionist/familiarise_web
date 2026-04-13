@@ -149,6 +149,23 @@ async function resolveOrgSplit(
   const consultantShare = Math.round(grossAmount * effectiveConsultantRate);
   const orgShare = grossAmount - platformFee - consultantShare;
 
+  // Guard: customConsultantPayoutRate can push platform + consultant > 100%,
+  // making orgShare negative. Clamp to 0 and log the misconfiguration.
+  if (orgShare < 0) {
+    console.error(
+      `[Earnings] Negative orgShare (${orgShare}) for org ${org.id}: ` +
+        `platform=${org.platformCommissionRate}, consultant=${effectiveConsultantRate}. ` +
+        `Clamping orgShare to 0. Fix the rate configuration.`,
+    );
+    return {
+      organizationProfileId: org.id,
+      platformFee,
+      orgShare: 0,
+      consultantShare: grossAmount - platformFee, // consultant gets the remainder
+      earningsRecipient,
+    };
+  }
+
   return {
     organizationProfileId: org.id,
     platformFee,

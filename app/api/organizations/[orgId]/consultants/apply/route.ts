@@ -98,19 +98,21 @@ export async function POST(
     );
   }
 
-  // Find or create the BetterAuth Member row
-  let member = await prisma.member.findFirst({
-    where: {
-      organizationId: orgProfile.organization.id,
-      userId: auth.session.user.id,
-    },
-  });
-
   const autoApprove = orgProfile.autoApproveConsultants;
   const memberStatus = autoApprove ? "ACTIVE" : "PENDING";
   const now = new Date();
 
+  try {
   await prisma.$transaction(async (tx) => {
+    // Find or create the BetterAuth Member row inside the transaction
+    // to prevent TOCTOU race on concurrent applications.
+    let member = await tx.member.findFirst({
+      where: {
+        organizationId: orgProfile.organization.id,
+        userId: auth.session.user.id,
+      },
+    });
+
     if (!member) {
       member = await tx.member.create({
         data: {
@@ -154,6 +156,20 @@ export async function POST(
       },
     });
   });
+  } catch (error) {
+    // Handle unique constraint violation from concurrent applications
+    if (
+      error instanceof (await import("@prisma/client")).Prisma
+        .PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      return NextResponse.json(
+        { error: "You are already a member of this organization.", status: "DUPLICATE" },
+        { status: 409 },
+      );
+    }
+    throw error;
+  }
 
   return NextResponse.json(
     {

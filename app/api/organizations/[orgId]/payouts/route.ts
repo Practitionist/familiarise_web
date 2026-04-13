@@ -70,6 +70,8 @@ export async function POST(
     const {
       getOrgPayoutEligibility,
       createOrgPayoutBatch,
+      PayoutLockError,
+      PayoutValidationError,
     } = await import("@/lib/payments/payouts/org-payout-service");
 
     // Pre-check eligibility
@@ -84,9 +86,17 @@ export async function POST(
     const result = await createOrgPayoutBatch(access.org.id);
     return NextResponse.json(result, { status: 201 });
   } catch (error) {
+    const { PayoutLockError, PayoutValidationError } = await import(
+      "@/lib/payments/payouts/org-payout-service"
+    );
+    if (error instanceof PayoutLockError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    if (error instanceof PayoutValidationError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     const message =
       error instanceof Error ? error.message : "Failed to create payout batch.";
-    const status = message.includes("try again") ? 409 : 500;
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

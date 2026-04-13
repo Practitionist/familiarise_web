@@ -14,6 +14,28 @@ import { acquireLock, releaseLock } from "@/lib/redis";
 import { PAYOUT_CONSTANTS } from "./constants";
 
 // ============================================
+// Errors
+// ============================================
+
+/** Thrown when a payout batch cannot be created due to a lock conflict. */
+export class PayoutLockError extends Error {
+  readonly code = "PAYOUT_LOCK_CONFLICT" as const;
+  constructor(message?: string) {
+    super(message ?? "Another payout batch is being created for this organization. Please try again.");
+    this.name = "PayoutLockError";
+  }
+}
+
+/** Thrown when payout validation fails (insufficient balance, missing account, etc.) */
+export class PayoutValidationError extends Error {
+  readonly code = "PAYOUT_VALIDATION_FAILED" as const;
+  constructor(message: string) {
+    super(message);
+    this.name = "PayoutValidationError";
+  }
+}
+
+// ============================================
 // Types
 // ============================================
 
@@ -115,9 +137,7 @@ export async function createOrgPayoutBatch(
   const lockToken = await acquireLock(lockKey, LOCK_TTL_MS);
 
   if (!lockToken) {
-    throw new Error(
-      "Another payout batch is being created for this organization. Please try again.",
-    );
+    throw new PayoutLockError();
   }
 
   try {
@@ -133,7 +153,7 @@ export async function createOrgPayoutBatch(
       });
 
       if (readyEarnings.length === 0) {
-        throw new Error("No earnings ready for payout.");
+        throw new PayoutValidationError("No earnings ready for payout.");
       }
 
       // Calculate totals
@@ -156,7 +176,7 @@ export async function createOrgPayoutBatch(
       const netPayout = totalOrgShare - refunds;
 
       if (netPayout < PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT) {
-        throw new Error(
+        throw new PayoutValidationError(
           `Net payout amount (${netPayout / 100}) is below minimum threshold (${PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT / 100}).`,
         );
       }
@@ -171,7 +191,7 @@ export async function createOrgPayoutBatch(
       });
 
       if (!payoutAccount || payoutAccount.status !== "VERIFIED") {
-        throw new Error("Payout account must be verified before creating a payout batch.");
+        throw new PayoutValidationError("Payout account must be verified before creating a payout batch.");
       }
 
       const paymentGateway = payoutAccount.razorpayContactId
@@ -252,9 +272,6 @@ export async function processOrgPayout(payoutId: string): Promise<void> {
   });
 
   if (!payout) throw new Error(`Payout ${payoutId} not found.`);
-  if (payout.status !== PayoutStatus.PENDING) {
-    throw new Error(`Payout ${payoutId} is ${payout.status}, expected PENDING.`);
-  }
 
   const payoutAccount = payout.organizationProfile.payoutAccount;
   if (!payoutAccount || payoutAccount.status !== "VERIFIED") {
@@ -268,11 +285,19 @@ export async function processOrgPayout(payoutId: string): Promise<void> {
     throw new Error("Payout account not verified.");
   }
 
-  // Set to PROCESSING
-  await prisma.organizationPayout.update({
-    where: { id: payoutId },
+  // Atomic status transition: PENDING → PROCESSING.
+  // Uses conditional updateMany to prevent TOCTOU race — if two concurrent
+  // calls both reach here, only one will match the WHERE clause.
+  const transitioned = await prisma.organizationPayout.updateMany({
+    where: { id: payoutId, status: PayoutStatus.PENDING },
     data: { status: PayoutStatus.PROCESSING },
   });
+
+  if (transitioned.count === 0) {
+    throw new Error(
+      `Payout ${payoutId} is no longer PENDING (already being processed or completed).`,
+    );
+  }
 
   try {
     // Gateway dispatch
