@@ -218,7 +218,7 @@ checkout.ts — Enterprise Billing Branch (lines 1714-1751)
 
 | Scenario | Behavior |
 |----------|----------|
-| Billing mode change after first payment | Not allowed. No API endpoint supports changing `billingMode` after creation. |
+| Billing mode change after first payment | Not allowed. `PATCH /api/organizations/[orgId]` guards this with a `payment.count()` **inside** a `$transaction()` so a concurrent webhook cannot land between the count check and the update. See `docs/enterprise/15-concurrency-and-locking.md` §5. |
 | SEAT_PACK credits exhausted mid-checkout | `deductCredits()` raw SQL returns 0 rows -- throws "Insufficient credits" |
 | PREPAID_UNLIMITED contract expired | Checkout checks `contractEndDate > now()` -- returns error message asking admin to renew |
 | Concurrent SEAT_PACK deductions | Atomic `UPDATE ... WHERE balance >= amount` serializes deductions; only one succeeds if balance is tight |

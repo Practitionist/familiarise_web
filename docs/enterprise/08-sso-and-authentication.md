@@ -124,17 +124,22 @@ sequenceDiagram
 
 ### Cross-Org Domain Conflict
 
-Two organizations cannot claim the same email domain. When updating `allowedEmailDomains`, the API checks for conflicts:
+Two organizations cannot claim the same email domain. Domain uniqueness is enforced via the `OrgDomainClaim` model (one row per domain, `domain @unique`). The PATCH handler syncs claims atomically inside a single transaction: deletes stale claims, creates new ones, then upserts SSO settings. A concurrent claim on the same domain hits the `@unique` constraint (Prisma P2002) and is returned as 409.
 
 ```
-Query: OrganizationSSOSettings
-  WHERE organizationProfileId != thisOrg
-    AND allowedEmailDomains hasSome newDomains
+// Inside one $transaction():
+deleteMany  stale OrgDomainClaim rows for this org
+createMany  new  OrgDomainClaim rows  ← P2002 if domain taken by another org
+upsert      OrganizationSSOSettings
 
-Conflict found → 409: "Domain(s) already claimed by another organization: acme.com"
+Conflict → 409: "Domain(s) already claimed by another organization: acme.com"
 ```
 
-**File**: `app/api/organizations/[orgId]/sso/route.ts` (PATCH handler, lines 96-118)
+This replaced an earlier TOCTOU pattern (`findMany` then `upsert`) that allowed two concurrent PATCH requests to both claim the same domain before either committed.
+
+**File**: `app/api/organizations/[orgId]/sso/route.ts` (PATCH handler)
+**Schema**: `OrgDomainClaim` model in `prisma/schema.prisma`
+**See also**: `docs/enterprise/15-concurrency-and-locking.md` §3 (SSO Domain Claim TOCTOU)
 
 ---
 
@@ -258,7 +263,7 @@ Key areas to verify:
 
 | Scenario | Behavior |
 | -------- | -------- |
-| User's email matches two SSO orgs | Cannot happen -- cross-org domain uniqueness enforced (409) |
+| User's email matches two SSO orgs | Cannot happen -- `OrgDomainClaim.domain @unique` prevents concurrent claims; PATCH returns 409 |
 | `enforceSSO = true` + user tries Google OAuth | Personal OAuth should be blocked for domain-matched users (enforcement at middleware level) |
 | Domain claimed by another org | PATCH returns 409 listing conflicting domains |
 | Deleting last SSO provider | Provider deleted; existing sessions remain valid; new SSO logins fail |

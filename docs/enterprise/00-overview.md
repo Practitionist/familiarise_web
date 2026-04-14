@@ -33,6 +33,7 @@ The Enterprise system is a B2B layer built on top of the Familiarise B2C marketp
 | Plan catalog control | `enforceOrganizationPlans` boolean on `OrganizationProfile` | When true, PROVIDER/HYBRID consultants can only use org-created plans |
 | HYBRID = independent flows | BUYER + PROVIDER streams run independently | A HYBRID university's learner purchases and professor payouts don't interfere |
 | earningsRecipient flag | `CONSULTANT` or `ORGANIZATION` on `OrganizationMemberProfile` | Internal/salaried consultants have their share redirected to the org |
+| No Redis locks for enterprise | Prisma `$transaction()` only (Serializable where needed) | Enterprise ops are point-mutations on known rows; Redis adds latency with no benefit. Booking/allocation uses Redis because slot discovery spans many queries. |
 
 ---
 
@@ -179,3 +180,4 @@ graph TB
 3. **[02 -- Billing Modes](./02-billing-modes.md)** -- how each mode affects checkout and refunds
 4. **[03 -- Earnings and Revenue](./03-earnings-and-revenue.md)** -- 2-way vs 3-way split, worked examples
 5. **[04 -- Roles and Permissions](./04-roles-and-permissions.md)** -- 6 roles, API guards, dashboard visibility
+6. **[15 -- Concurrency & Locking](./15-concurrency-and-locking.md)** -- race condition fixes (commit 19da4448): invitation accept, last-owner demotion, SSO domain TOCTOU, duplicate invitations, billing mode webhook, admin verification, credit purchase idempotency

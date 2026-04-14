@@ -66,7 +66,7 @@ Records each credit purchase event. Links to the Razorpay `Payment` record that 
 | `amountPaid` | Int | Gateway charge (paise) -- typically equals `creditsPurchased` |
 | `paymentId` | String? (unique) | FK to Payment (Razorpay transaction) |
 | `status` | `OrgCreditPurchaseStatus` | Purchase lifecycle state (default `PENDING`) |
-| `providerOrderId` | String? | Razorpay order ID stored immediately after order creation |
+| `providerOrderId` | String? **@unique** | Razorpay order ID stored immediately after order creation |
 | `providerPaymentId` | String? | Razorpay payment ID recorded on webhook confirmation |
 | `processedAt` | DateTime? | Timestamp set when status transitions to `PROCESSED` |
 | `cancelledAt` | DateTime? | Timestamp set when status transitions to `CANCELLED` |
@@ -76,6 +76,8 @@ Records each credit purchase event. Links to the Razorpay `Payment` record that 
 - A new purchase is created with `status: PENDING` and `providerOrderId` set after the Razorpay order is created.
 - The webhook handler guards on `status === "PENDING"` before applying pool credits; on success it sets `status: PROCESSED` and `processedAt`.
 - The cleanup cron job queries all `status: "PENDING"` purchases past their expiry window and sets `status: CANCELLED` with `cancelledAt`.
+
+**Webhook idempotency**: `providerOrderId` carries a `@unique` constraint (added in commit 19da4448). A retried Razorpay webhook attempting to create a second `OrgCreditPurchase` with the same order ID hits Prisma P2002 → the handler returns 200 without double-crediting the pool. See `docs/enterprise/15-concurrency-and-locking.md` §7.
 
 ### OrgCreditLedger
 

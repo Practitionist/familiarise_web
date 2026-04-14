@@ -133,6 +133,8 @@ PENDING_VERIFICATION ──────────► ACTIVE ──────
 | APPROVE | status set to ACTIVE |
 | REJECT | status set to DEACTIVATED, reason stored |
 
+Concurrency: Uses atomic `updateMany({ where: { status: "PENDING_VERIFICATION" } })`. If two admins race, the second sees `count = 0` and gets 404. Prevents double-approve/double-reject. See `docs/enterprise/15-concurrency-and-locking.md` §6.
+
 **File**: `app/api/admin/organizations/[orgId]/verify/route.ts`
 
 ---
@@ -167,6 +169,12 @@ Invitee clicks accept link
 Member + OrganizationMemberProfile created
 (role from invitation, status: ACTIVE)
 ```
+
+Concurrency notes:
+- **Sending** (`POST /api/organizations/[orgId]/invitations`): wrapped in a Serializable TX to prevent two concurrent POSTs creating duplicate pending invitations for the same email. PostgreSQL SSI aborts the loser (P2034 → 409).
+- **Accepting** (`POST /api/organizations/invitations/accept`): atomic `updateMany({ where: { status: "pending" } })` at TX start — only one concurrent accept sees `count = 1`; the other gets 409 INVITATION_ALREADY_ACCEPTED.
+
+See `docs/enterprise/15-concurrency-and-locking.md` §§1 and 4.
 
 ### Seat Management (BUYER / HYBRID)
 
@@ -230,3 +238,6 @@ When an org is deactivated:
 | Deactivating org with pending payouts | Payouts remain in PENDING status; manual admin resolution required |
 | User owns 5 orgs and tries to create a 6th | 403: "maximum number of owned organizations (5)" |
 | Creating PROVIDER org with flag off | 501: "PROVIDER organizations are not yet available" |
+| Two concurrent invitation accepts | Second gets 409 INVITATION_ALREADY_ACCEPTED (atomic `updateMany` in TX) |
+| Two owners concurrently demoting each other | Post-update count inside TX: whichever commits last sees 0 owners → 409 LAST_OWNER |
+| Two admins approving the same org simultaneously | Atomic `updateMany` on `PENDING_VERIFICATION`; second gets 404 |
