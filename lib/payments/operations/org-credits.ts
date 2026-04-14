@@ -62,12 +62,16 @@ export async function deductCredits(
 
 /**
  * Refund credits back to the org pool (reverses a prior deduction).
+ *
+ * `memberProfileId` mirrors the param on `deductCredits` — pass it so the
+ * refund ledger row attributes which learner received the credit back.
  */
 export async function creditRefund(
   tx: TxClient,
   organizationProfileId: string,
   amountPaise: number,
   paymentId?: string,
+  memberProfileId?: string,
 ): Promise<{ balanceAfter: number }> {
   if (amountPaise <= 0) throw new Error("Refund amount must be positive");
 
@@ -84,6 +88,7 @@ export async function creditRefund(
       delta: amountPaise,
       reason: "refund",
       paymentId: paymentId ?? null,
+      memberProfileId: memberProfileId ?? null,
       balanceAfter: updated.balance,
     },
   });

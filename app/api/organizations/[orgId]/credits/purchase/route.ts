@@ -86,6 +86,17 @@ export async function POST(
       data: { providerOrderId: order.id },
     });
 
+    // Audit log — fire-and-forget.
+    prisma.orgAuditLog.create({
+      data: {
+        organizationProfileId: access.org.id,
+        actorMemberId: access.member.id,
+        action: "CREDITS_PURCHASED",
+        description: `Credit purchase initiated: ${amountPaise / 100} INR`,
+        details: { purchaseId: purchase.id, amountPaise, orderId: order.id },
+      },
+    }).catch((err) => console.error("[Credits] Failed to write audit log:", err));
+
     return NextResponse.json(
       {
         orderId: order.id,

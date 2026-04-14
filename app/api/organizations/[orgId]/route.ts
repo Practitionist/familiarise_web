@@ -251,9 +251,16 @@ export async function DELETE(
     const access = await requireOrgOwner(orgId);
     if (access.error) return access.error;
 
-    await prisma.organizationProfile.update({
-      where: { id: access.org.id },
-      data: { status: "DEACTIVATED" },
+    // Wrap in a transaction: clear OrgDomainClaim rows so those domains become
+    // available for other orgs to claim, then soft-delete the profile.
+    await prisma.$transaction(async (tx) => {
+      await tx.orgDomainClaim.deleteMany({
+        where: { organizationProfileId: access.org.id },
+      });
+      await tx.organizationProfile.update({
+        where: { id: access.org.id },
+        data: { status: "DEACTIVATED" },
+      });
     });
 
     return NextResponse.json({ success: true });

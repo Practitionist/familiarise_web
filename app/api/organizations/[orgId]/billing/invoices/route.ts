@@ -21,12 +21,18 @@ const lineItemSchema = z.object({
   unitPrice: z.number().int().nonnegative(), // in paise
 });
 
+// Indian GSTIN: 15-char format — 2-digit state code + PAN (10 chars) + entity number + Z + check digit.
+const GSTIN_REGEX = /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+
 const createInvoiceSchema = z.object({
   items: z.array(lineItemSchema).min(1),
   currency: z.string().length(3).default("INR"),
   taxRate: z.number().min(0).max(1).optional(),
   hsnCode: z.string().optional(),
-  gstin: z.string().optional(),
+  gstin: z
+    .string()
+    .regex(GSTIN_REGEX, "Invalid GSTIN format (expected 15-char format, e.g. 27AABCU9603R1ZX)")
+    .optional(),
   dueDate: z.string().datetime().optional(),
   notes: z.string().max(1000).optional(),
 });
