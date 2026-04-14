@@ -35,7 +35,7 @@ interface OrgDetailsResponse {
     id: string;
     kind: "BUYER" | "PROVIDER" | "HYBRID";
     status: string;
-    billingMode: "TAG_ONLY" | "SEAT_PACK" | "INVOICED_MONTHLY" | "PREPAID_UNLIMITED";
+    billingMode: "TAG_ONLY" | "SEAT_PACK" | "INVOICED_MONTHLY" | "PREPAID_UNLIMITED" | null;
   };
   membership: { role: string; status: string };
 }
@@ -125,7 +125,13 @@ export default function OrgLayout({
         path: "credits",
         show: org.profile.billingMode === "SEAT_PACK" && isAtLeast("ORG_MANAGER"),
       },
-      { name: "Billing", icon: CreditCard, path: "billing", show: isAtLeast("ORG_MANAGER") },
+      {
+        name: "Billing",
+        icon: CreditCard,
+        path: "billing",
+        // BUYER/HYBRID only — PROVIDER orgs don't have a billing mode
+        show: isBuyerOrHybrid && isAtLeast("ORG_MANAGER"),
+      },
       {
         name: "Payouts",
         icon: Wallet,

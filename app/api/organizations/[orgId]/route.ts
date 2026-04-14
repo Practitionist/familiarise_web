@@ -119,6 +119,17 @@ export async function PATCH(
       }
     }
 
+    // PROVIDER orgs don't have a billingMode — reject any attempt to set one.
+    if (data.billingMode !== undefined && access.org.kind === "PROVIDER") {
+      return NextResponse.json(
+        {
+          error:
+            "PROVIDER organizations do not have a billing mode. Billing modes apply to BUYER and HYBRID orgs only.",
+        },
+        { status: 400 },
+      );
+    }
+
     // Guard billingMode mutation after first payment. The billing mode is
     // selected at org creation and should be immutable once real payments
     // exist — switching modes mid-stream would leave the ledger in an

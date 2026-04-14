@@ -30,9 +30,9 @@ const createOrgSchema = z.object({
     .max(50)
     .optional(),
   kind: z.nativeEnum(OrganizationKind).default(OrganizationKind.BUYER),
-  billingMode: z
-    .nativeEnum(OrganizationBillingMode)
-    .default(OrganizationBillingMode.TAG_ONLY),
+  // billingMode is required for BUYER/HYBRID, ignored/nulled for PROVIDER.
+  // Validated at handler level based on `kind` — see logic below.
+  billingMode: z.nativeEnum(OrganizationBillingMode).optional(),
   billingEmail: z.string().email(),
   description: z.string().max(2000).optional(),
   industry: z.string().max(100).optional(),
@@ -181,6 +181,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Billing mode semantics by org kind:
+    //   BUYER / HYBRID → billingMode is required (defaults to TAG_ONLY if unspecified)
+    //   PROVIDER        → billingMode is null (PROVIDER orgs earn money, they don't pay)
+    const resolvedBillingMode: OrganizationBillingMode | null =
+      kind === "PROVIDER"
+        ? null
+        : (billingMode ?? OrganizationBillingMode.TAG_ONLY);
+
     // Enforce the 5-org creation limit to mirror BetterAuth's organizationLimit.
     const ownedCount = await prisma.member.count({
       where: {
@@ -215,7 +223,7 @@ export async function POST(req: NextRequest) {
           data: {
             organizationId: organization.id,
             kind,
-            billingMode,
+            billingMode: resolvedBillingMode,
             billingEmail,
             description: description ?? null,
             industry: industry ?? null,
@@ -249,7 +257,7 @@ export async function POST(req: NextRequest) {
 
         // SEAT_PACK orgs get a zeroed credit pool created up front so the
         // dashboard can render without a null check.
-        if (billingMode === "SEAT_PACK") {
+        if (resolvedBillingMode === "SEAT_PACK") {
           await tx.orgCreditPool.create({
             data: {
               organizationProfileId: profile.id,

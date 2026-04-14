@@ -40,7 +40,7 @@ import {
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 interface BillingSummary {
-  billingMode: "TAG_ONLY" | "SEAT_PACK" | "INVOICED_MONTHLY" | "PREPAID_UNLIMITED";
+  billingMode: "TAG_ONLY" | "SEAT_PACK" | "INVOICED_MONTHLY" | "PREPAID_UNLIMITED" | null;
   monthToDate: { gross: number; paymentCount: number };
   outstanding: { amount: number; invoiceCount: number };
   pendingCharges: { amount: number; paymentCount: number } | null;

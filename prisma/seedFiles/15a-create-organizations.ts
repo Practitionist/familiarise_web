@@ -511,7 +511,7 @@ export async function createOrganizations(
           organizationId: organization.id,
           kind: "PROVIDER" as OrganizationKind,
           status: "ACTIVE",
-          billingMode: "TAG_ONLY", // PROVIDER billing is payout-based, not buyer billing
+          billingMode: null, // PROVIDER orgs earn, they don't pay — no billing mode
           billingEmail: faker.internet.email({
             firstName: "finance",
             lastName: baseSlug,

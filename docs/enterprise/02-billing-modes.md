@@ -8,6 +8,8 @@
 
 Every BUYER or HYBRID organization selects one of four billing modes at creation time. The billing mode determines how learners pay for sessions and who receives the gateway charge. Once the org processes its first payment, the billing mode is effectively immutable -- changing it would invalidate existing financial records.
 
+**PROVIDER organizations do not have a billing mode.** `OrganizationProfile.billingMode` is nullable; PROVIDER orgs have it set to `NULL`. PROVIDER orgs earn money (payouts from 3-way earnings split), they don't spend it through billing. The PATCH `/api/organizations/[orgId]` endpoint rejects any attempt to set `billingMode` on a PROVIDER org with a 400. Billing-mode-aware dashboard nav (Billing, Credits) is hidden for PROVIDER orgs.
+
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | 4 modes in one PR | TAG_ONLY through PREPAID_UNLIMITED | Modes share 90% of checkout logic; differ only at the payment-creation branch |

@@ -140,7 +140,7 @@ Start
 
 | Feature | BUYER | PROVIDER | HYBRID |
 |---------|-------|----------|--------|
-| Billing modes (TAG_ONLY, SEAT_PACK, etc.) | All 4 | N/A | All 4 (BUYER stream) |
+| Billing modes (TAG_ONLY, SEAT_PACK, etc.) | All 4 (required) | `billingMode = NULL` (field is nullable in the DB; PROVIDER orgs don't pay, they earn) | All 4 (required for the BUYER stream) |
 | Credit pool / invoicing | Yes | No | Yes |
 | 3-way revenue split | No (standard 80/20) | Yes | Yes (PROVIDER stream) |
 | Org payouts | No | Yes | Yes |

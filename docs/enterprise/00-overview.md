@@ -13,7 +13,7 @@ The Enterprise system is a B2B layer built on top of the Familiarise B2C marketp
 - Allow companies to sponsor and track employee training in bulk (BUYER)
 - Allow consulting agencies to host freelance consultants with revenue sharing (PROVIDER)
 - Support hybrid organizations that both buy and sell (HYBRID)
-- Provide 4 billing modes covering the spectrum from analytics-only to unlimited licenses
+- Provide 4 billing modes for BUYER/HYBRID orgs, spanning the spectrum from analytics-only to unlimited licenses (PROVIDER orgs have `billingMode = NULL` — they earn, they don't pay)
 - Enforce SSO and domain-based auto-join for corporate security
 - Give platform admins full operability over every org without needing membership
 

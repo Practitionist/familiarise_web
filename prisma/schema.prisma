@@ -463,8 +463,10 @@ model OrganizationProfile {
   // Discriminator: BUYER (schools/corporates), PROVIDER (consultant agencies, gated), HYBRID
   kind        OrganizationKind        @default(BUYER)
   status      OrganizationStatus      @default(PENDING_VERIFICATION)
-  // BUYER billing model — selected at org creation, immutable after first payment
-  billingMode OrganizationBillingMode @default(TAG_ONLY)
+  // BUYER/HYBRID billing model — selected at org creation, immutable after first payment.
+  // NULL for PROVIDER orgs (they earn money, they don't pay — billing mode is meaningless).
+  // Required and validated at the API layer for BUYER and HYBRID kinds.
+  billingMode OrganizationBillingMode?
 
   // Org metadata
   billingEmail String
