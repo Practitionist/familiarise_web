@@ -55,6 +55,7 @@ export async function POST(
       select: {
         id: true,
         amount: true,
+        originalAmount: true, // pre-tax base; used as invoice line item so determineTax() isn't applied twice
         createdAt: true,
         appointment: { select: { appointmentType: true } },
         refunds: {
@@ -73,9 +74,19 @@ export async function POST(
     }
 
     // Net out successful refunds from each payment's billable amount.
+    // Use originalAmount (pre-tax base) so determineTax() below produces the
+    // correct GST — using the GST-inclusive `amount` would double-count tax.
+    // Refund amounts are GST-inclusive, so we scale them back to the pre-tax
+    // base proportionally before subtracting.
     const itemsWithNet = unbilled.map((p) => {
-      const refundedTotal = p.refunds.reduce((s, r) => s + r.amount, 0);
-      const netAmount = Math.max(0, (p.amount ?? 0) - refundedTotal);
+      const basePrice = p.originalAmount ?? p.amount ?? 0;
+      const grossPrice = p.amount ?? basePrice;
+      const ratio = grossPrice > 0 ? basePrice / grossPrice : 1;
+      const refundedBase = p.refunds.reduce(
+        (s, r) => s + Math.round(r.amount * ratio),
+        0,
+      );
+      const netAmount = Math.max(0, basePrice - refundedBase);
       return {
         paymentId: p.id,
         description: `Booking (${p.appointment?.appointmentType ?? "UNKNOWN"})`,
