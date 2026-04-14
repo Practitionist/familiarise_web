@@ -150,6 +150,17 @@ export async function POST(req: NextRequest) {
     }
 
     await prisma.$transaction(async (tx) => {
+      // Atomic status claim — prevents double-accept race.
+      // The pre-TX status check is a fast-path for the common case; this guard
+      // is the actual enforcement. Two concurrent accepts both pass the soft
+      // check above; only the first updateMany wins (count=1), the second gets
+      // count=0 and throws INVITATION_ALREADY_ACCEPTED.
+      const claimed = await tx.invitation.updateMany({
+        where: { id: invitation.id, status: "pending" },
+        data: { status: "accepted" },
+      });
+      if (claimed.count === 0) throw new Error("INVITATION_ALREADY_ACCEPTED");
+
       // Atomic seat acquisition — conditional UPDATE prevents oversubscription.
       if (role === "ORG_LEARNER") {
         const acquired = await acquireSeat(tx, orgProfile.id);
@@ -178,13 +189,6 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      // seatsUsed already incremented atomically by acquireSeat() above.
-
-      await tx.invitation.update({
-        where: { id: invitation.id },
-        data: { status: "accepted" },
-      });
-
       // Audit log — actor and target are the same person (self-join via invite).
       await tx.orgAuditLog.create({
         data: {
@@ -206,6 +210,12 @@ export async function POST(req: NextRequest) {
       role,
     });
   } catch (error) {
+    if (error instanceof Error && error.message === "INVITATION_ALREADY_ACCEPTED") {
+      return NextResponse.json(
+        { error: "This invitation has already been accepted." },
+        { status: 409 },
+      );
+    }
     if (error instanceof Error && error.message === "SEAT_LIMIT_REACHED") {
       return NextResponse.json(
         { error: "This organization has reached its seat limit. Contact the org admin." },

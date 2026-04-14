@@ -518,6 +518,7 @@ model OrganizationProfile {
   // Sibling relations
   members         OrganizationMemberProfile[]
   ssoSettings     OrganizationSSOSettings?
+  domainClaims    OrgDomainClaim[]
   invoices        OrganizationInvoice[]
   plans           OrganizationPlan[]
   creditPool      OrgCreditPool?
@@ -657,6 +658,22 @@ model OrganizationSSOSettings {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// Junction table that enforces cross-org email domain uniqueness for SSO routing.
+// The @unique on `domain` is the DB-level guard against concurrent PATCH /sso
+// requests from two different orgs both claiming the same domain (TOCTOU fix).
+// Rows are kept in sync with OrganizationSSOSettings.allowedEmailDomains inside
+// a single transaction; the SSO router can read either source.
+
+model OrgDomainClaim {
+  id                    String              @id @default(uuid())
+  domain                String              @unique
+  organizationProfileId String
+  organizationProfile   OrganizationProfile @relation(fields: [organizationProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  claimedAt             DateTime            @default(now())
+
+  @@map("org_domain_claims")
 }
 
 // FEATURE-FLAGGED: PROVIDER org payout account (where the org's slice goes).
@@ -883,7 +900,10 @@ model OrgCreditPurchase {
   status           OrgCreditPurchaseStatus  @default(PENDING)
 
   // Gateway references — no Payment row is created for credit purchases.
-  providerOrderId   String? // Razorpay order ID (set at creation time)
+  // @unique on providerOrderId prevents two OrgCreditPurchase rows with the
+  // same Razorpay order ID, which would allow duplicate credit grants if the
+  // webhook fired twice against different rows with the same order ID.
+  providerOrderId   String? @unique // Razorpay order ID (set at creation time)
   providerPaymentId String? // Razorpay payment ID (set by webhook on success)
 
   processedAt DateTime? // When the webhook confirmed payment and credited the pool

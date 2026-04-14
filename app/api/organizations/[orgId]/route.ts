@@ -130,30 +130,6 @@ export async function PATCH(
       );
     }
 
-    // Guard billingMode mutation after first payment. The billing mode is
-    // selected at org creation and should be immutable once real payments
-    // exist — switching modes mid-stream would leave the ledger in an
-    // inconsistent state (e.g., credit pool with TAG_ONLY, unbilled
-    // payments after switching away from INVOICED_MONTHLY).
-    if (
-      data.billingMode !== undefined &&
-      data.billingMode !== access.org.billingMode
-    ) {
-      const hasPayments = await prisma.payment.count({
-        where: { organizationProfileId: access.org.id },
-        take: 1,
-      });
-      if (hasPayments > 0) {
-        return NextResponse.json(
-          {
-            error:
-              "Billing mode cannot be changed after the first payment. Contact support for billing mode migration.",
-          },
-          { status: 400 },
-        );
-      }
-    }
-
     // Rate-sum validation for PROVIDER orgs (FEATURE-FLAGGED).
     const ratesTouched =
       data.platformCommissionRate !== undefined ||
@@ -196,22 +172,44 @@ export async function PATCH(
     // OrganizationProfile (everything else).
     const { name, logo, ...profileFields } = data;
 
-    const [updatedOrg, updatedProfile] = await prisma.$transaction([
-      prisma.organization.update({
-        where: { id: orgId },
-        data: {
-          ...(name !== undefined && { name }),
-          ...(logo !== undefined && { logo }),
-        },
-      }),
-      prisma.organizationProfile.update({
-        where: { id: access.org.id },
-        data: {
-          ...profileFields,
-          ...(logo !== undefined && { logo }),
-        },
-      }),
-    ]);
+    const [updatedOrg, updatedProfile] = await prisma.$transaction(
+      async (tx) => {
+        // Guard billingMode mutation after first payment — runs INSIDE the
+        // transaction to close the TOCTOU gap where a payment webhook could
+        // land between the count check and the update if done outside.
+        // The billing mode is selected at org creation and must be immutable
+        // once real payments exist — switching mid-stream leaves the ledger
+        // inconsistent (e.g., credit pool for TAG_ONLY, unbilled payments
+        // after switching away from INVOICED_MONTHLY).
+        if (
+          data.billingMode !== undefined &&
+          data.billingMode !== access.org.billingMode
+        ) {
+          const hasPayments = await tx.payment.count({
+            where: { organizationProfileId: access.org.id },
+            take: 1,
+          });
+          if (hasPayments > 0) throw new Error("BILLING_MODE_LOCKED");
+        }
+
+        return Promise.all([
+          tx.organization.update({
+            where: { id: orgId },
+            data: {
+              ...(name !== undefined && { name }),
+              ...(logo !== undefined && { logo }),
+            },
+          }),
+          tx.organizationProfile.update({
+            where: { id: access.org.id },
+            data: {
+              ...profileFields,
+              ...(logo !== undefined && { logo }),
+            },
+          }),
+        ]);
+      },
+    );
 
     return NextResponse.json({
       organization: {
@@ -223,6 +221,15 @@ export async function PATCH(
       profile: updatedProfile,
     });
   } catch (error) {
+    if (error instanceof Error && error.message === "BILLING_MODE_LOCKED") {
+      return NextResponse.json(
+        {
+          error:
+            "Billing mode cannot be changed after the first payment. Contact support for billing mode migration.",
+        },
+        { status: 400 },
+      );
+    }
     console.error("[API /organizations/[orgId] PATCH] error:", error);
     return NextResponse.json(
       { error: "Failed to update organization" },

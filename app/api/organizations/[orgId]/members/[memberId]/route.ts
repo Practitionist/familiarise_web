@@ -33,16 +33,6 @@ const patchMemberSchema = z.object({
 
 const PROVIDER_GATED_ROLES: OrgMemberRole[] = ["ORG_CONSULTANT", "ORG_SUPPORT"];
 
-async function countActiveOwners(organizationProfileId: string): Promise<number> {
-  return prisma.organizationMemberProfile.count({
-    where: {
-      organizationProfileId,
-      role: "ORG_OWNER",
-      status: "ACTIVE",
-    },
-  });
-}
-
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ orgId: string; memberId: string }> },
@@ -140,20 +130,13 @@ export async function PATCH(
       }
     }
 
-    // Last-owner guard — applies to both role demotion and status removal.
-    if (target.role === "ORG_OWNER" && target.status === "ACTIVE") {
-      const demoting = role !== undefined && role !== "ORG_OWNER";
-      const deactivating = status !== undefined && status !== "ACTIVE";
-      if (demoting || deactivating) {
-        const owners = await countActiveOwners(access.org.id);
-        if (owners <= 1) {
-          return NextResponse.json(
-            { error: "Cannot demote or remove the last organization owner." },
-            { status: 400 },
-          );
-        }
-      }
-    }
+    // Compute whether this request would demote/remove an active owner.
+    // The actual last-owner guard runs INSIDE the transaction (post-update)
+    // to prevent the TOCTOU race where two concurrent requests both pass a
+    // pre-TX check when the org has exactly 2 owners.
+    const wasOwner = target.role === "ORG_OWNER" && target.status === "ACTIVE";
+    const demoting = wasOwner && role !== undefined && role !== "ORG_OWNER";
+    const deactivating = wasOwner && status !== undefined && status !== "ACTIVE";
 
     // Compute seat transition for seatsUsed bookkeeping.
     const oldRole = target.role;
@@ -267,12 +250,34 @@ export async function PATCH(
         });
       }
 
+      // Post-update last-owner guard — runs inside TX so it sees our own
+      // uncommitted changes + any previously committed changes from concurrent
+      // requests. Under READ COMMITTED: if two requests both demote/remove
+      // owners concurrently, whichever commits second will count 0 active
+      // owners here and roll back, preserving at least one owner.
+      if (demoting || deactivating) {
+        const remaining = await tx.organizationMemberProfile.count({
+          where: {
+            organizationProfileId: access.org.id,
+            role: "ORG_OWNER",
+            status: "ACTIVE",
+          },
+        });
+        if (remaining === 0) throw new Error("LAST_OWNER");
+      }
+
       // seatsUsed already updated atomically by acquireSeat/releaseSeat above.
       return [profileUpdate];
     });
 
     return NextResponse.json({ memberProfile: updated });
   } catch (error) {
+    if (error instanceof Error && error.message === "LAST_OWNER") {
+      return NextResponse.json(
+        { error: "Cannot demote or remove the last organization owner." },
+        { status: 400 },
+      );
+    }
     if (error instanceof Error && error.message === "SEAT_LIMIT_REACHED") {
       return NextResponse.json(
         { error: "Organization has reached its seat limit." },
@@ -306,16 +311,8 @@ export async function DELETE(
       return NextResponse.json({ error: "Member not found" }, { status: 404 });
     }
 
-    if (target.role === "ORG_OWNER" && target.status === "ACTIVE") {
-      const owners = await countActiveOwners(access.org.id);
-      if (owners <= 1) {
-        return NextResponse.json(
-          { error: "Cannot remove the last organization owner." },
-          { status: 400 },
-        );
-      }
-    }
-
+    const wasOwnerActive =
+      target.role === "ORG_OWNER" && target.status === "ACTIVE";
     const wasSeatOccupying =
       target.role === "ORG_LEARNER" && target.status === "ACTIVE";
 
@@ -324,6 +321,19 @@ export async function DELETE(
         where: { id: memberId },
         data: { status: "REMOVED" },
       });
+
+      // Post-update last-owner guard — see PATCH handler for the race rationale.
+      if (wasOwnerActive) {
+        const remaining = await tx.organizationMemberProfile.count({
+          where: {
+            organizationProfileId: access.org.id,
+            role: "ORG_OWNER",
+            status: "ACTIVE",
+          },
+        });
+        if (remaining === 0) throw new Error("LAST_OWNER");
+      }
+
       if (wasSeatOccupying) {
         await releaseSeat(tx, access.org.id);
       }
@@ -341,6 +351,12 @@ export async function DELETE(
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (error instanceof Error && error.message === "LAST_OWNER") {
+      return NextResponse.json(
+        { error: "Cannot remove the last organization owner." },
+        { status: 400 },
+      );
+    }
     console.error(
       "[API /organizations/[orgId]/members/[memberId] DELETE] error:",
       error,

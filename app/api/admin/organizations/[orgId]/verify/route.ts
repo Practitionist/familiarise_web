@@ -35,58 +35,41 @@ export async function POST(
     );
   }
 
-  const orgProfile = await prisma.organizationProfile.findFirst({
+  const { action, reason } = parsed.data;
+  const newStatus = action === "APPROVE" ? "ACTIVE" : "DEACTIVATED";
+
+  // Atomic check-and-update — prevents double-approve/reject race where two
+  // admins act on the same org concurrently. The WHERE status='PENDING_VERIFICATION'
+  // clause ensures count=0 if already actioned, and the update is one round-trip.
+  const claimed = await prisma.organizationProfile.updateMany({
     where: {
       organization: { id: orgId },
       status: "PENDING_VERIFICATION",
     },
-    include: {
-      organization: { select: { name: true } },
-      members: {
-        where: { role: "ORG_OWNER" },
-        include: {
-          member: {
-            include: {
-              user: { select: { email: true, name: true } },
-            },
-          },
-        },
-        take: 1,
-      },
-    },
+    data: { status: newStatus },
   });
 
-  if (!orgProfile) {
+  if (claimed.count === 0) {
     return NextResponse.json(
       { error: "Organization not found or not pending verification." },
       { status: 404 },
     );
   }
 
-  const { action, reason } = parsed.data;
+  // Non-critical read for response display — happens after the atomic update.
+  const orgProfile = await prisma.organizationProfile.findFirst({
+    where: { organization: { id: orgId } },
+    include: { organization: { select: { name: true } } },
+  });
+  const orgName = orgProfile?.organization.name ?? "Unknown";
 
-  if (action === "APPROVE") {
-    await prisma.organizationProfile.update({
-      where: { id: orgProfile.id },
-      data: { status: "ACTIVE" },
-    });
-
-    return NextResponse.json({
-      success: true,
-      status: "ACTIVE",
-      message: `Organization "${orgProfile.organization.name}" has been approved.`,
-    });
-  } else {
-    await prisma.organizationProfile.update({
-      where: { id: orgProfile.id },
-      data: { status: "DEACTIVATED" },
-    });
-
-    return NextResponse.json({
-      success: true,
-      status: "DEACTIVATED",
-      message: `Organization "${orgProfile.organization.name}" has been rejected.`,
-      reason: reason || null,
-    });
-  }
+  return NextResponse.json({
+    success: true,
+    status: newStatus,
+    message:
+      action === "APPROVE"
+        ? `Organization "${orgName}" has been approved.`
+        : `Organization "${orgName}" has been rejected.`,
+    ...(action === "REJECT" && { reason: reason || null }),
+  });
 }
