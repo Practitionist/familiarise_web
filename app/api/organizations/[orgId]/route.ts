@@ -192,6 +192,23 @@ export async function PATCH(
           if (hasPayments > 0) throw new Error("BILLING_MODE_LOCKED");
         }
 
+        // When billingMode is set/changed to SEAT_PACK, ensure a credit pool
+        // exists. The POST handler creates the pool only when the org is
+        // created with SEAT_PACK — the two-step wizard creates the org with
+        // TAG_ONLY first (billingMode unknown at step 1), then PATCHes to the
+        // real mode at step 2, so the pool would otherwise never be created.
+        if (data.billingMode === "SEAT_PACK") {
+          await tx.orgCreditPool.upsert({
+            where: { organizationProfileId: access.org.id },
+            create: {
+              organizationProfileId: access.org.id,
+              balance: 0,
+              totalPurchased: 0,
+            },
+            update: {}, // pool already exists — don't reset balance
+          });
+        }
+
         return Promise.all([
           tx.organization.update({
             where: { id: orgId },

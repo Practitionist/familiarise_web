@@ -160,10 +160,10 @@ export function ReviewStep({ onBack, onGoToStep, initialData }: StepProps) {
         <p>
           <strong>Email:</strong> {initialData.billingEmail || "—"}
         </p>
-        <p>
+        <div className="flex items-center gap-1">
           <strong>Type:</strong>{" "}
           <Badge variant="secondary">{kind ?? "BUYER"}</Badge>
-        </p>
+        </div>
         {initialData.description && (
           <p>
             <strong>Description:</strong> {initialData.description}
