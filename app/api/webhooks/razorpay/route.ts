@@ -186,7 +186,10 @@ async function processWebhookEvent(
           capturedNotes.type === "credit_purchase" ||
           capturedNotes.type === "invoice_payment"
         ) {
-          await handleOrgPaymentSuccess(capturedNotes);
+          await handleOrgPaymentSuccess(
+            capturedNotes,
+            capturedEvent.payload.payment.entity.id,
+          );
         } else {
           await handlePaymentSuccess(
             capturedEvent.payload.payment.entity.order_id,

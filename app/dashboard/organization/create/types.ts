@@ -9,7 +9,7 @@ export interface OrgWizardData {
   billingEmail: string;
 
   // Step 1: Billing & Seats (BUYER/HYBRID only)
-  billingMode: "TAG_ONLY" | "SEAT_PACK" | "INVOICED_MONTHLY" | "PREPAID_UNLIMITED";
+  billingMode?: "TAG_ONLY" | "SEAT_PACK" | "INVOICED_MONTHLY" | "PREPAID_UNLIMITED";
   paymentTermsDays: number;
   seatsTotal: number | null;
 
@@ -39,4 +39,74 @@ export interface StepProps {
   onGoToStep?: (step: number) => void;
   initialData: Partial<OrgWizardData>;
   isSubmitting?: boolean;
+}
+
+export type StepKey =
+  | "org-info"
+  | "billing"
+  | "revenue-rates"
+  | "branding"
+  | "invite-team"
+  | "review";
+
+export interface WizardStep {
+  key: StepKey;
+  label: string;
+  subtitle: string;
+}
+
+/**
+ * Returns the ordered list of wizard steps for a given org kind.
+ *
+ * BUYER:   Org Info → Billing & Seats → Branding → Invite Team → Review  (5 steps)
+ * PROVIDER: Org Info → Revenue Rates  → Branding → Invite Team → Review  (5 steps)
+ * HYBRID:  Org Info → Billing & Seats → Revenue Rates → Branding → Invite Team → Review (6 steps)
+ */
+export function getSteps(kind?: string): WizardStep[] {
+  const isProvider = kind === "PROVIDER";
+  const isHybrid = kind === "HYBRID";
+  const isProviderOrHybrid = isProvider || isHybrid;
+  const isBuyerOrHybrid = !isProvider; // BUYER or HYBRID (or undefined → default BUYER layout)
+
+  return [
+    {
+      key: "org-info",
+      label: "Org Info",
+      subtitle: "Tell us about your organization. You can always update this later.",
+    },
+    ...(isBuyerOrHybrid
+      ? [
+          {
+            key: "billing" as const,
+            label: "Billing & Seats",
+            subtitle: "Choose how your learners will be billed for consultations.",
+          },
+        ]
+      : []),
+    ...(isProviderOrHybrid
+      ? [
+          {
+            key: "revenue-rates" as const,
+            label: "Revenue Rates",
+            subtitle:
+              "Configure how earnings are split between the platform, your org, and consultants.",
+          },
+        ]
+      : []),
+    {
+      key: "branding",
+      label: "Branding",
+      subtitle: "Customize your organization's visual identity.",
+    },
+    {
+      key: "invite-team",
+      label: "Invite Team",
+      subtitle: "Invite your team members by email.",
+    },
+    {
+      key: "review",
+      label: "Review",
+      subtitle: "Review everything and launch your organization.",
+    },
+  ];
 }

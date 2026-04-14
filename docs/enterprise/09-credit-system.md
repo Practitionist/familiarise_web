@@ -26,7 +26,10 @@ Organizations using the SEAT_PACK billing mode pre-purchase credits (denominated
 │ balance: Int (paise) │       │ creditsPurchased     │
 │ totalPurchased: Int  │       │ amountPaid           │
 │ currency: "INR"      │       │ paymentId → Payment  │
-│                      │       │ expiresAt (unused)   │
+│                      │       │ status (enum)        │
+│                      │       │ providerOrderId      │
+│                      │       │ processedAt          │
+│                      │       │ cancelledAt          │
 └──────────────────────┘       └──────────────────────┘
           │ 1:many
           ▼
@@ -62,7 +65,17 @@ Records each credit purchase event. Links to the Razorpay `Payment` record that 
 | `creditsPurchased` | Int | Amount added to the pool (paise) |
 | `amountPaid` | Int | Gateway charge (paise) -- typically equals `creditsPurchased` |
 | `paymentId` | String? (unique) | FK to Payment (Razorpay transaction) |
-| `expiresAt` | DateTime? | Optional credit expiry (unused in MVP) |
+| `status` | `OrgCreditPurchaseStatus` | Purchase lifecycle state (default `PENDING`) |
+| `providerOrderId` | String? | Razorpay order ID stored immediately after order creation |
+| `providerPaymentId` | String? | Razorpay payment ID recorded on webhook confirmation |
+| `processedAt` | DateTime? | Timestamp set when status transitions to `PROCESSED` |
+| `cancelledAt` | DateTime? | Timestamp set when status transitions to `CANCELLED` |
+
+**`OrgCreditPurchaseStatus` enum**: `PENDING | PROCESSED | CANCELLED`
+
+- A new purchase is created with `status: PENDING` and `providerOrderId` set after the Razorpay order is created.
+- The webhook handler guards on `status === "PENDING"` before applying pool credits; on success it sets `status: PROCESSED` and `processedAt`.
+- The cleanup cron job queries all `status: "PENDING"` purchases past their expiry window and sets `status: CANCELLED` with `cancelledAt`.
 
 ### OrgCreditLedger
 
@@ -285,4 +298,5 @@ Purchases and refunds use Prisma's `{ increment: N }` and cannot overdraft, so t
 | Refund to a depleted pool (balance = 0) | Always succeeds -- `increment` adds credits back, balance goes positive |
 | Orphaned purchase (payment webhook received but pool update fails) | OrgCreditPurchase row exists without corresponding pool increment; cleanup cron needed |
 | Pool does not exist (non-SEAT_PACK org) | `deductCredits` throws Prisma error (no matching row for UPDATE); caller must check billingMode before calling |
-| Credit expiry | `OrgCreditPurchase.expiresAt` field exists but is unused in MVP; no cron to expire credits |
+| Duplicate webhook delivery for the same payment | Webhook guards on `status === "PENDING"`; a second delivery finds `status: PROCESSED` and is a no-op |
+| Stale PENDING purchase (user abandoned checkout) | Cleanup cron sets `status: CANCELLED` + `cancelledAt`; pool balance is unaffected |

@@ -879,14 +879,19 @@ model OrgCreditPurchase {
 
   creditsPurchased Int // amount added to OrgCreditPool.balance
   amountPaid       Int // in paise (gateway charge)
-  currency         String   @default("INR")
-  paymentId        String?  @unique
-  payment          Payment? @relation("OrgCreditPurchasePayment", fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+  currency         String                   @default("INR")
+  status           OrgCreditPurchaseStatus  @default(PENDING)
 
-  expiresAt   DateTime? // optional credit expiry (unused for MVP)
+  // Gateway references — no Payment row is created for credit purchases.
+  providerOrderId   String? // Razorpay order ID (set at creation time)
+  providerPaymentId String? // Razorpay payment ID (set by webhook on success)
+
+  processedAt DateTime? // When the webhook confirmed payment and credited the pool
+  cancelledAt DateTime? // When the cleanup job marked this row orphaned/abandoned
   purchasedAt DateTime  @default(now())
 
   @@index([organizationProfileId])
+  @@index([status])
 }
 
 // Immutable ledger of every credit grant/debit. One row per state change.
@@ -929,6 +934,12 @@ model OrgAuditLog {
   createdAt DateTime @default(now())
 
   @@index([organizationProfileId, createdAt])
+}
+
+enum OrgCreditPurchaseStatus {
+  PENDING    // Order created, payment not yet received
+  PROCESSED  // Webhook confirmed payment; pool has been credited
+  CANCELLED  // Abandoned/orphaned — marked by the cleanup job
 }
 
 enum OrgAuditAction {
@@ -2131,7 +2142,6 @@ model Payment {
   // Back-relations for org settlement flows
   organizationEarnings       OrganizationEarnings[] // FEATURE-FLAGGED: PROVIDER 3-way split (one per org)
   organizationInvoiceSettled OrganizationInvoice?  @relation("OrgInvoicePayment") // back-relation for OrganizationInvoice.payment
-  orgCreditPurchase          OrgCreditPurchase?    @relation("OrgCreditPurchasePayment") // back-relation for OrgCreditPurchase.payment
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

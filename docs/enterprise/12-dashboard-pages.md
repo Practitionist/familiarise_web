@@ -16,6 +16,8 @@ The org dashboard is a parallel dashboard that lives alongside the personal cons
 
 `/dashboard/organization` lists all organizations the user is a member of. Each card shows the org name, logo, kind, status, and the user's role. Clicking a card navigates to `/dashboard/organization/[orgId]/home`.
 
+The billing mode badge on each card is conditional: it is hidden for PROVIDER orgs, which have `billingMode = null` (PROVIDER orgs have no billing mode — they earn via revenue splits rather than purchasing sessions).
+
 ### OrgSwitcher
 
 A dropdown in `DashboardNavbar` (visible in consultant, consultee, and admin layouts) that lists the user's org memberships. It self-hides when the user has zero memberships. Clicking an org navigates to its dashboard.
@@ -207,7 +209,7 @@ ORG_ADMIN+ access. Sub-sections:
 
 - **Profile**: Name, description, industry, website
 - **Branding**: Logo, banner image, primary/secondary colors
-- **Billing config**: Payment terms, seat budget, credit limit
+- **Billing config**: Payment terms, seat budget, credit limit — this card is hidden for PROVIDER orgs (`billingMode = null`)
 - **PROVIDER/HYBRID specific**: Rate configuration (`platformCommissionRate`, `orgRetainRate`, `consultantPayoutRate` -- must sum to 1.0), payout frequency (`payoutFrequency`: WEEKLY, BIWEEKLY, MONTHLY), `autoApproveConsultants` toggle, `enforceOrganizationPlans` toggle
 - **SSO sub-page**: `/settings/sso` for SAML/OIDC configuration
 
@@ -238,17 +240,24 @@ This pattern ensures the sidebar links can remain visible (for discoverability) 
 
 ## Org Creation Wizard
 
-The org creation flow at `/dashboard/organization/create` is a 5-step wizard:
+The org creation flow at `/dashboard/organization/create` has a variable number of steps depending on org kind:
 
-| Step | Name | Fields |
-|------|------|--------|
-| 1 | OrgInfo | Name, slug, description, industry, size bucket |
-| 2 | Billing | Billing email, billing mode (TAG_ONLY / SEAT_PACK / INVOICED_MONTHLY) |
-| 3 | Branding | Logo upload, primary color, secondary color |
-| 4 | InviteTeam | Email addresses (comma/newline separated), role selector |
-| 5 | Review | Summary of all fields, "Create Organization" button |
+- **BUYER** — 5 steps: Org Info → Billing & Seats → Branding → Invite Team → Review
+- **PROVIDER** — 5 steps: Org Info → Revenue Rates → Branding → Invite Team → Review (`billingMode` is omitted from the POST)
+- **HYBRID** — 6 steps: Org Info → Billing & Seats → Revenue Rates → Branding → Invite Team → Review
 
-For PROVIDER/HYBRID orgs (when `ENABLE_PROVIDER_ORGS=true`): Step 1 includes a kind selector (BUYER / PROVIDER / HYBRID). Step 2 replaces billing mode with rate configuration (platform/org/consultant split). When the flag is off, PROVIDER and HYBRID options are hidden from the kind selector.
+| Step | Kind | Name | Fields |
+|------|------|------|--------|
+| 1 | All | OrgInfo | Name, slug, description, industry, size bucket, kind selector |
+| 2 | BUYER, HYBRID | Billing & Seats | Billing email, billing mode (TAG_ONLY / SEAT_PACK / INVOICED_MONTHLY), seats |
+| 2 (PROVIDER) / 3 (HYBRID) | PROVIDER, HYBRID | Revenue Rates | Platform commission %, org retain %, consultant payout % — must sum to 100% |
+| 3/4 | All | Branding | Logo upload, primary color, secondary color |
+| 4/5 | All | InviteTeam | Email addresses (comma/newline separated), role selector |
+| 5/6 | All | Review | Summary of all fields, "Create Organization" button |
+
+The `RevenueRatesStep` component renders three percentage inputs with a live sum validator; the "Next" button is disabled until all three values sum to exactly 100%.
+
+When `ENABLE_PROVIDER_ORGS=false`, PROVIDER and HYBRID options are hidden from the kind selector in Step 1.
 
 **Types file**: `app/dashboard/organization/create/types.ts`
 

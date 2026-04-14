@@ -26,6 +26,7 @@ import { purchaseCredits } from "@/lib/payments/operations/org-credits";
  */
 export async function handleOrgPaymentSuccess(
   notes: Record<string, string>,
+  razorpayPaymentId?: string,
 ): Promise<void> {
   if (notes.type === "credit_purchase") {
     const { purchaseId, orgProfileId } = notes;
@@ -34,17 +35,18 @@ export async function handleOrgPaymentSuccess(
       return;
     }
 
-    // Idempotency: use a conditional UPDATE on OrgCreditPurchase to claim
-    // the purchase exactly once. The UPDATE only succeeds when expiresAt IS
-    // NULL (unclaimed). We repurpose the nullable expiresAt field as a
-    // "processedAt" marker — set to NOW() on first webhook, subsequent
-    // events see it's already set and the updateMany returns count=0.
-    // NOTE: We do NOT use paymentId because it's a FK to Payment.id and
-    // we don't create a Payment row for credit purchases.
+    // Idempotency: conditional UPDATE on OrgCreditPurchase to claim exactly once.
+    // Guard on status=PENDING — only the first webhook transitions to PROCESSED.
+    // Subsequent events find count=0 and skip. This replaces the previous dual-use
+    // of expiresAt (which falsely matched processed purchases in the cleanup job).
     const settled = await prisma.$transaction(async (tx) => {
       const claimed = await tx.orgCreditPurchase.updateMany({
-        where: { id: purchaseId, expiresAt: null },
-        data: { expiresAt: new Date() },
+        where: { id: purchaseId, status: "PENDING" },
+        data: {
+          status: "PROCESSED",
+          processedAt: new Date(),
+          ...(razorpayPaymentId ? { providerPaymentId: razorpayPaymentId } : {}),
+        },
       });
       if (claimed.count === 0) {
         console.log(`[Webhook] Credit purchase ${purchaseId} already processed — skipping (idempotent)`);

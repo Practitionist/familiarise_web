@@ -26,11 +26,6 @@ export async function GET(
     const [purchases, total] = await Promise.all([
       prisma.orgCreditPurchase.findMany({
         where: { organizationProfileId: access.org.id },
-        include: {
-          payment: {
-            select: { id: true, paymentStatus: true, paymentGateway: true },
-          },
-        },
         orderBy: { purchasedAt: "desc" },
         take: limit,
         skip: offset,

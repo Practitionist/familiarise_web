@@ -346,16 +346,21 @@ export async function createOrganizations(
             ? remaining
             : faker.number.int({ min: Math.floor(remaining * 0.2), max: Math.floor(remaining * 0.6) });
           remaining -= amount;
-          // Simulate a completed Razorpay payment ID
+          // Simulate a confirmed purchase — providerPaymentId is the Razorpay pay_xxx ID.
           const fakePaymentId = `pay_seed_${faker.string.alphanumeric(14)}`;
+          const fakeOrderId = `order_seed_${faker.string.alphanumeric(14)}`;
+          const purchasedAt = faker.date.recent({ days: 90 });
           await prisma.orgCreditPurchase.create({
             data: {
               organizationProfileId: profile.id,
               creditsPurchased: amount,
               amountPaid: amount,
               currency: "INR",
-              paymentId: fakePaymentId,
-              purchasedAt: faker.date.recent({ days: 90 }),
+              status: "PROCESSED",
+              providerOrderId: fakeOrderId,
+              providerPaymentId: fakePaymentId,
+              processedAt: purchasedAt,
+              purchasedAt,
             },
           });
           if (remaining <= 0) break;
@@ -973,16 +978,21 @@ export async function createOrganizations(
           },
         });
 
-        // Purchase history
+        // Purchase history — simulate a confirmed purchase
         const fakePaymentId = `pay_seed_${faker.string.alphanumeric(14)}`;
+        const fakeOrderId = `order_seed_${faker.string.alphanumeric(14)}`;
+        const purchasedAt = faker.date.recent({ days: 60 });
         await prisma.orgCreditPurchase.create({
           data: {
             organizationProfileId: profile.id,
             creditsPurchased: totalPurchased,
             amountPaid: totalPurchased,
             currency: "INR",
-            paymentId: fakePaymentId,
-            purchasedAt: faker.date.recent({ days: 60 }),
+            status: "PROCESSED",
+            providerOrderId: fakeOrderId,
+            providerPaymentId: fakePaymentId,
+            processedAt: purchasedAt,
+            purchasedAt,
           },
         });
       }

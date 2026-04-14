@@ -32,7 +32,7 @@ interface OrgSettings {
     id: string;
     kind: string;
     status: string;
-    billingMode: string;
+    billingMode: string | null;
     billingEmail: string;
     description: string | null;
     industry: string | null;
@@ -275,16 +275,18 @@ export default function OrgSettingsPage({
           </CardContent>
         </Card>
 
-        <Card className="mt-6">
-          <CardHeader>
-            <CardTitle className="text-base">Billing mode</CardTitle>
-            <CardDescription>
-              Currently <strong>{data?.profile.billingMode}</strong>. Billing
-              mode is locked after the first payment to prevent ambiguity in
-              the ledger.
-            </CardDescription>
-          </CardHeader>
-        </Card>
+        {data?.profile.kind !== "PROVIDER" && (
+          <Card className="mt-6">
+            <CardHeader>
+              <CardTitle className="text-base">Billing mode</CardTitle>
+              <CardDescription>
+                Currently <strong>{data?.profile.billingMode ?? "—"}</strong>.
+                Billing mode is locked after the first payment to prevent
+                ambiguity in the ledger.
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        )}
       </DashboardContent>
     </>
   );

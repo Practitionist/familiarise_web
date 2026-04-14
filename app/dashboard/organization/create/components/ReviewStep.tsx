@@ -11,6 +11,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Building2, Pencil, Check, X, Loader2 } from "lucide-react";
+import { getSteps } from "../types";
 import type { StepProps } from "../types";
 
 interface InviteResult {
@@ -29,6 +30,14 @@ export function ReviewStep({ onBack, onGoToStep, initialData }: StepProps) {
 
   const orgId = initialData.orgId;
   const emails = initialData.inviteEmails ?? [];
+  const kind = initialData.kind;
+  const isProvider = kind === "PROVIDER";
+  const isProviderOrHybrid = kind === "PROVIDER" || kind === "HYBRID";
+  const isBuyerOrHybrid = kind !== "PROVIDER";
+
+  // Derive step indices from the same getSteps logic used in page.tsx
+  const steps = getSteps(kind);
+  const idx = (key: string) => steps.findIndex((s) => s.key === key);
 
   const handleLaunch = async () => {
     if (!orgId) {
@@ -46,7 +55,8 @@ export function ReviewStep({ onBack, onGoToStep, initialData }: StepProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           billingEmail: initialData.billingEmail,
-          billingMode: initialData.billingMode,
+          // Only send billingMode for BUYER/HYBRID — PROVIDER orgs don't have one.
+          ...(!isProvider ? { billingMode: initialData.billingMode } : {}),
           description: initialData.description || null,
           industry: initialData.industry || null,
           sizeBucket: initialData.sizeBucket || null,
@@ -55,6 +65,14 @@ export function ReviewStep({ onBack, onGoToStep, initialData }: StepProps) {
           seatsTotal: initialData.seatsTotal ?? null,
           primaryColor: initialData.primaryColor ?? null,
           secondaryColor: initialData.secondaryColor ?? null,
+          // Revenue rates for PROVIDER/HYBRID
+          ...(isProviderOrHybrid
+            ? {
+                platformCommissionRate: initialData.platformCommissionRate,
+                orgRetainRate: initialData.orgRetainRate,
+                consultantPayoutRate: initialData.consultantPayoutRate,
+              }
+            : {}),
         }),
       });
       if (!patchRes.ok) {
@@ -107,11 +125,11 @@ export function ReviewStep({ onBack, onGoToStep, initialData }: StepProps) {
 
   const Section = ({
     title,
-    step,
+    stepKey,
     children,
   }: {
     title: string;
-    step: number;
+    stepKey: string;
     children: React.ReactNode;
   }) => (
     <Card>
@@ -121,7 +139,7 @@ export function ReviewStep({ onBack, onGoToStep, initialData }: StepProps) {
           type="button"
           variant="ghost"
           size="sm"
-          onClick={() => onGoToStep?.(step)}
+          onClick={() => onGoToStep?.(idx(stepKey))}
           disabled={isSubmitting}
         >
           <Pencil className="h-3 w-3 mr-1" /> Edit
@@ -135,12 +153,16 @@ export function ReviewStep({ onBack, onGoToStep, initialData }: StepProps) {
 
   return (
     <div className="space-y-4">
-      <Section title="Organization Info" step={0}>
+      <Section title="Organization Info" stepKey="org-info">
         <p>
           <strong>Name:</strong> {initialData.name || "—"}
         </p>
         <p>
           <strong>Email:</strong> {initialData.billingEmail || "—"}
+        </p>
+        <p>
+          <strong>Type:</strong>{" "}
+          <Badge variant="secondary">{kind ?? "BUYER"}</Badge>
         </p>
         {initialData.description && (
           <p>
@@ -165,26 +187,45 @@ export function ReviewStep({ onBack, onGoToStep, initialData }: StepProps) {
         )}
       </Section>
 
-      <Section title="Billing & Seats" step={1}>
-        <div className="flex items-center gap-2">
-          <strong>Mode:</strong>{" "}
-          <Badge variant="secondary">
-            {initialData.billingMode ?? "TAG_ONLY"}
-          </Badge>
-        </div>
-        {initialData.billingMode === "INVOICED_MONTHLY" && (
+      {isBuyerOrHybrid && (
+        <Section title="Billing & Seats" stepKey="billing">
+          <div className="flex items-center gap-2">
+            <strong>Mode:</strong>{" "}
+            <Badge variant="secondary">
+              {initialData.billingMode ?? "TAG_ONLY"}
+            </Badge>
+          </div>
+          {initialData.billingMode === "INVOICED_MONTHLY" && (
+            <p>
+              <strong>Payment terms:</strong> NET-
+              {initialData.paymentTermsDays ?? 30}
+            </p>
+          )}
           <p>
-            <strong>Payment terms:</strong> NET-
-            {initialData.paymentTermsDays ?? 30}
+            <strong>Seat budget:</strong>{" "}
+            {initialData.seatsTotal ?? "Unlimited"}
           </p>
-        )}
-        <p>
-          <strong>Seat budget:</strong>{" "}
-          {initialData.seatsTotal ?? "Unlimited"}
-        </p>
-      </Section>
+        </Section>
+      )}
 
-      <Section title="Branding" step={2}>
+      {isProviderOrHybrid && (
+        <Section title="Revenue Rates" stepKey="revenue-rates">
+          <p>
+            <strong>Platform:</strong>{" "}
+            {Math.round((initialData.platformCommissionRate ?? 0.1) * 100)}%
+          </p>
+          <p>
+            <strong>Organization:</strong>{" "}
+            {Math.round((initialData.orgRetainRate ?? 0.05) * 100)}%
+          </p>
+          <p>
+            <strong>Consultant:</strong>{" "}
+            {Math.round((initialData.consultantPayoutRate ?? 0.85) * 100)}%
+          </p>
+        </Section>
+      )}
+
+      <Section title="Branding" stepKey="branding">
         <div className="flex items-center gap-3">
           {initialData.logo ? (
             <img
@@ -225,7 +266,7 @@ export function ReviewStep({ onBack, onGoToStep, initialData }: StepProps) {
         </div>
       </Section>
 
-      <Section title="Team Invitations" step={3}>
+      <Section title="Team Invitations" stepKey="invite-team">
         {emails.length > 0 ? (
           <div className="flex flex-wrap gap-1">
             {emails.map((e) => (

@@ -14,28 +14,37 @@ Organizations are the enterprise container on Familiarise. Every org progresses 
 
 ### Wizard Steps
 
-The creation wizard lives at `/dashboard/organization/create` and progresses through five steps:
+The creation wizard lives at `/dashboard/organization/create`. The number of steps varies by org kind:
+
+- **BUYER** — 5 steps: Org Info → Billing & Seats → Branding → Invite Team → Review
+- **PROVIDER** — 5 steps: Org Info → Revenue Rates → Branding → Invite Team → Review (no Billing step; `billingMode` is omitted from the POST)
+- **HYBRID** — 6 steps: Org Info → Billing & Seats → Revenue Rates → Branding → Invite Team → Review
 
 ```
-Step 0          Step 1          Step 2          Step 3          Step 4
-OrgInfo ──────► Billing ──────► Branding ──────► InviteTeam ──► Review
-   │            (BUYER/HYBRID)
-   │            -- or --
-   │            Revenue Rates
-   │            (PROVIDER/HYBRID)
-   │
-   └── Org created on "Next" (POST /api/organizations)
-       because Step 2 file uploads need the org ID
+BUYER (5 steps):
+Step 0      Step 1           Step 2      Step 3       Step 4
+OrgInfo ──► Billing & Seats ──► Branding ──► InviteTeam ──► Review
+
+PROVIDER (5 steps):
+Step 0      Step 1            Step 2      Step 3       Step 4
+OrgInfo ──► Revenue Rates ──► Branding ──► InviteTeam ──► Review
+
+HYBRID (6 steps):
+Step 0      Step 1           Step 2           Step 3      Step 4       Step 5
+OrgInfo ──► Billing & Seats ──► Revenue Rates ──► Branding ──► InviteTeam ──► Review
+
+   └── Org created on Step 0 "Next" (POST /api/organizations)
+       because Step 2/3 file uploads need the org ID
 ```
 
-| Step | Fields | Notes |
-| ---- | ------ | ----- |
-| 0 - OrgInfo | name, kind, description, industry, sizeBucket, website, billingEmail | Org created here (Organization + OrganizationProfile + Member + OrgMemberProfile in one transaction) |
-| 1 - Billing (BUYER/HYBRID) | billingMode, paymentTermsDays, seatsTotal | billingMode options: TAG_ONLY, SEAT_PACK, INVOICED_MONTHLY |
-| 1 alt - Revenue Rates (PROVIDER/HYBRID) | platformCommissionRate, orgRetainRate, consultantPayoutRate | Must sum to 1.0 (validated at API layer) |
-| 2 - Branding | logo, bannerImage, primaryColor, secondaryColor | File uploads require orgId from Step 0 |
-| 3 - InviteTeam | inviteEmails[], inviteRole | Send email invitations via Resend |
-| 4 - Review | (read-only summary) | Final confirmation |
+| Step | Kind | Fields | Notes |
+| ---- | ---- | ------ | ----- |
+| 0 - OrgInfo | All | name, kind, description, industry, sizeBucket, website, billingEmail | Org created here (Organization + OrganizationProfile + Member + OrgMemberProfile in one transaction) |
+| 1 - Billing & Seats | BUYER, HYBRID | billingMode, paymentTermsDays, seatsTotal | billingMode options: TAG_ONLY, SEAT_PACK, INVOICED_MONTHLY |
+| 1/2 - Revenue Rates | PROVIDER (step 1), HYBRID (step 2) | platformCommissionRate, orgRetainRate, consultantPayoutRate | Three percentage inputs; must sum to 100% (validated at API layer). `RevenueRatesStep` component. |
+| - Branding | All | logo, bannerImage, primaryColor, secondaryColor | File uploads require orgId from Step 0 |
+| - InviteTeam | All | inviteEmails[], inviteRole | Send email invitations via Resend |
+| - Review | All | (read-only summary) | Final confirmation |
 
 **File**: `app/dashboard/organization/create/types.ts` (OrgWizardData interface)
 

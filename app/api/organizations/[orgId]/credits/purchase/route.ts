@@ -52,12 +52,14 @@ export async function POST(
 
     const { amountPaise } = parsed.data;
 
+    // Create purchase row first so we have an ID for the order metadata.
     const purchase = await prisma.orgCreditPurchase.create({
       data: {
         organizationProfileId: access.org.id,
         creditsPurchased: amountPaise,
         amountPaid: amountPaise,
         currency: "INR",
+        // status defaults to PENDING
       },
     });
 
@@ -76,6 +78,12 @@ export async function POST(
         type: "credit_purchase",
       },
       paymentGateway: "RAZORPAY",
+    });
+
+    // Store the gateway order ID so we can reconcile without a Payment row.
+    await prisma.orgCreditPurchase.update({
+      where: { id: purchase.id },
+      data: { providerOrderId: order.id },
     });
 
     return NextResponse.json(
