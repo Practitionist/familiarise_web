@@ -71,12 +71,15 @@ export async function handleOrgPaymentSuccess(
       return;
     }
 
-    // Atomic idempotency: updateMany with a status guard eliminates the race
-    // window between concurrent payment.captured + order.paid events (Razorpay
-    // fires both for the same order). The first updateMany wins (count=1); the
-    // second finds count=0 and is a no-op — no duplicate PAID transition.
+    // Atomic idempotency: updateMany with an explicit status allowlist eliminates
+    // the race window between concurrent payment.captured + order.paid events
+    // (Razorpay fires both for the same order). The first updateMany wins
+    // (count=1); the second finds count=0 and is a no-op.
+    // Only SENT/OVERDUE invoices transition to PAID — a stale gateway order
+    // created before a DRAFT-to-CANCELLED state change must not bypass the
+    // invoice lifecycle (mirrors the guard in the /pay route).
     const claimed = await prisma.organizationInvoice.updateMany({
-      where: { id: invoiceId, status: { not: "PAID" } },
+      where: { id: invoiceId, status: { in: ["SENT", "OVERDUE"] } },
       data: {
         status: "PAID",
         paidAt: new Date(),
