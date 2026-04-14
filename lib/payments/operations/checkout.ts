@@ -1011,6 +1011,56 @@ async function revalidateInsideLock(
             user.consulteeProfile.id,
             consultationPlan.consultantProfile.user.id,
           );
+
+          // Consultee-side conflict check.
+          //
+          // validateNoConflicts (SlotValidationService) is scoped to the
+          // consultant's User ID — it ensures the consultant is not double-booked
+          // but says nothing about the learner's own calendar. A learner who is
+          // a member of two orgs (e.g., Org A with SEAT_PACK and Org B with
+          // PREPAID_UNLIMITED) faces zero cost friction on either side, making
+          // it easy to accidentally book overlapping sessions with two different
+          // consultants. Both would pass the consultant-side check because they
+          // involve different consultants, leaving the learner double-booked.
+          //
+          // The same scenario exists on the open marketplace — any consultee can
+          // book overlapping sessions with two different consultants. Enterprise
+          // multi-org membership increases the probability because the learner
+          // has multiple "free" billing paths with no payment step to slow them.
+          //
+          // We run this query inside the distributed lock and inside the
+          // Serializable transaction (TOCTOU-safe). We reuse
+          // buildOccupiedAppointmentFilter so the occupancy definition matches
+          // validateNoConflicts exactly — TENTATIVE and CONFIRMED both block.
+          const consulteeConflict = await tx.appointment.findFirst({
+            where: {
+              AND: [
+                { OR: buildOccupiedAppointmentFilter() },
+                {
+                  slotsOfAppointment: {
+                    some: {
+                      AND: [
+                        { startsAt: { lt: new Date(data.slotEndTimeInUTC!) } },
+                        { endsAt:   { gt: new Date(data.slotStartTimeInUTC!) } },
+                        // userId (User.id) is the right scope — slots are
+                        // connected to User records, not ConsulteeProfile records.
+                        // This catches conflicts regardless of which org the
+                        // conflicting booking came from or whether it was a
+                        // marketplace booking with no org context at all.
+                        { user: { some: { id: userId } } },
+                      ],
+                    },
+                  },
+                },
+              ],
+            },
+            select: { id: true },
+          });
+          if (consulteeConflict) {
+            throw new Error(
+              "You already have a session booked during this time.",
+            );
+          }
         }
         break;
       }
@@ -1030,6 +1080,36 @@ async function revalidateInsideLock(
             user.consulteeProfile.id,
             subscriptionPlan.consultantProfile.user.id,
           );
+
+          // Consultee-side conflict check for direct-slot subscriptions.
+          // Same reasoning as the CONSULTATION case above — a subscription
+          // booked with an explicit slot window must not overlap an existing
+          // consultee appointment, regardless of which org or marketplace
+          // context that prior appointment came from.
+          const subscriptionConsulteeConflict = await tx.appointment.findFirst({
+            where: {
+              AND: [
+                { OR: buildOccupiedAppointmentFilter() },
+                {
+                  slotsOfAppointment: {
+                    some: {
+                      AND: [
+                        { startsAt: { lt: new Date(data.slotEndTimeInUTC!) } },
+                        { endsAt:   { gt: new Date(data.slotStartTimeInUTC!) } },
+                        { user: { some: { id: userId } } },
+                      ],
+                    },
+                  },
+                },
+              ],
+            },
+            select: { id: true },
+          });
+          if (subscriptionConsulteeConflict) {
+            throw new Error(
+              "You already have a session booked during this time.",
+            );
+          }
         }
         break;
       }
