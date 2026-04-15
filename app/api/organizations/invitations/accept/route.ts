@@ -63,19 +63,39 @@ export async function POST(req: NextRequest) {
 
     if (!invitation) {
       return NextResponse.json(
-        { error: "Invitation not found" },
+        { error: "This invitation link is no longer valid. Please ask your organization admin for a new invite." },
         { status: 404 },
       );
     }
+
+    // Special case: invitation already accepted — check whether THIS user is already
+    // a member and give them a helpful dashboard redirect rather than a dead-end error.
+    if (invitation.status === "accepted") {
+      const existing = await prisma.member.findUnique({
+        where: { organizationId_userId: { organizationId: invitation.organizationId, userId: auth.session.user.id } },
+      });
+      if (existing) {
+        return NextResponse.json({
+          organization: { id: invitation.organization.id, name: invitation.organization.name },
+          alreadyMember: true,
+        });
+      }
+      // Accepted by someone else (or admin-forced) — not their invite.
+      return NextResponse.json(
+        { error: "This invitation link is no longer valid. Please ask your organization admin for a new invite." },
+        { status: 400 },
+      );
+    }
+
     if (invitation.status !== "pending") {
       return NextResponse.json(
-        { error: `Invitation is ${invitation.status}` },
+        { error: "This invitation link is no longer valid. Please ask your organization admin for a new invite." },
         { status: 400 },
       );
     }
     if (invitation.expiresAt < new Date()) {
       return NextResponse.json(
-        { error: "Invitation has expired" },
+        { error: "This invitation has expired. Please ask your organization admin for a new invite." },
         { status: 400 },
       );
     }
