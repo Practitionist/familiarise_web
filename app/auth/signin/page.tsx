@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { authClient, signIn, useSession } from "@/lib/auth-client";
+import { signIn, useSession } from "@/lib/auth-client";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
 import Link from "next/link";
@@ -37,7 +37,7 @@ function SignInContent() {
   const [ssoCheck, setSsoCheck] = useState<{
     enforceSSO: boolean;
     organizationName: string;
-    providerId: string;
+    ssoBody: { providerId: string; domain: string; callbackURL: string };
   } | null>(null);
   const [ssoChecking, setSsoChecking] = useState(false);
 
@@ -88,12 +88,32 @@ function SignInContent() {
       const res = await fetch(`/api/auth/sso/domain-check?email=${encodeURIComponent(email)}`);
       if (res.ok) {
         const data = await res.json();
-        setSsoCheck(data.enforceSSO ? data : null);
+        setSsoCheck(data.enforceSSO ? {
+          enforceSSO: true,
+          organizationName: data.organizationName,
+          ssoBody: data.ssoBody,
+        } : null);
       }
     } catch {
       // ignore — fall through to normal login
     } finally {
       setSsoChecking(false);
+    }
+  };
+
+  const handleSSOSignIn = async () => {
+    if (!ssoCheck) return;
+    try {
+      const res = await fetch("/api/auth/sign-in/sso", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(ssoCheck.ssoBody),
+        credentials: "include",
+      });
+      const data = await res.json();
+      if (data.url) window.location.href = data.url;
+    } catch {
+      // fall through
     }
   };
 
@@ -231,12 +251,7 @@ function SignInContent() {
               <Button
                 type="button"
                 className="w-full mt-4 bg-blue-600 hover:bg-blue-500"
-                onClick={() =>
-                  authClient.signIn.sso({
-                    providerId: ssoCheck.providerId,
-                    callbackURL: "/dashboard",
-                  })
-                }
+                onClick={handleSSOSignIn}
               >
                 Sign in with {ssoCheck.organizationName} SSO &rarr;
               </Button>

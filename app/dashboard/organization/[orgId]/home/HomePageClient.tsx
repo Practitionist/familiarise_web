@@ -184,8 +184,6 @@ export function HomePageClient({ orgId }: { orgId: string }) {
   });
   const isProviderOrHybrid =
     orgProfile.data?.kind === "PROVIDER" || orgProfile.data?.kind === "HYBRID";
-  const isBuyerOrHybrid =
-    orgProfile.data?.kind === "BUYER" || orgProfile.data?.kind === "HYBRID";
   const providerStats = useQuery({
     queryKey: ["org-provider-stats", orgId],
     queryFn: () => fetchProviderStats(orgId),
