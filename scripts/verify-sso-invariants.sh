@@ -131,7 +131,22 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Check 7: BetterAuth versions must stay aligned between better-auth and
+# Check 7: Server-side SSO veto must be present — the databaseHooks.session
+#          .create.before hook is what makes enforceSSO non-bypassable by
+#          direct POSTs to BetterAuth's credential endpoints. Without it,
+#          the enforcement collapses back to UI + reactive session flag,
+#          which motivated users can step around with curl. See issue #673.
+# ---------------------------------------------------------------------------
+if ! grep -q "shouldRejectSession" lib/auth.ts 2>/dev/null; then
+  fail "shouldRejectSession not referenced in lib/auth.ts" \
+    "The session.create.before hook is the single server-side chokepoint that closes issue #673. If you removed it, the enforceSSO policy is only enforced by the UI again." \
+    "$(grep -n 'session:' lib/auth.ts | head -5 || echo '(no session hook found)')"
+else
+  pass "session.create.before hook wired via shouldRejectSession"
+fi
+
+# ---------------------------------------------------------------------------
+# Check 8: BetterAuth versions must stay aligned between better-auth and
 #          @better-auth/sso. Drift can cause subtle plugin-API mismatches.
 # ---------------------------------------------------------------------------
 ba=$(node -e "console.log(require('./package.json').dependencies['better-auth'])" 2>/dev/null || echo "")
