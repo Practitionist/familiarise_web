@@ -2,9 +2,10 @@
 
 import { use, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, ArrowLeft } from "lucide-react";
+import { Plus, Trash2, ArrowLeft, Copy, Check } from "lucide-react";
 import Link from "next/link";
 import { useRequireOrgRole } from "../../useOrgRole";
+import { useToast } from "@/hooks/use-toast";
 
 import {
   DashboardHeader,
@@ -50,6 +51,66 @@ interface Provider {
   providerId: string;
   issuer: string;
   domain: string;
+  providerType: "saml" | "oidc" | null;
+}
+
+// BetterAuth auto-mounts these routes from the sso() plugin. Keep this derivation
+// in sync with the plugin's defaults — changing the paths here without a matching
+// plugin-level override will break IdP setup instructions shown to admins.
+function deriveAcsUrl(
+  providerId: string,
+  type: "saml" | "oidc" | null,
+): string {
+  const base = process.env.NEXT_PUBLIC_APP_URL ?? "";
+  const slug = providerId || "<provider-id>";
+  return type === "oidc"
+    ? `${base}/api/auth/sso/callback/${slug}`
+    : `${base}/api/auth/sso/saml2/sp/acs/${slug}`;
+}
+
+function deriveMetadataUrl(providerId: string): string {
+  const base = process.env.NEXT_PUBLIC_APP_URL ?? "";
+  const slug = providerId || "<provider-id>";
+  return `${base}/api/auth/sso/saml2/sp/metadata?providerId=${slug}`;
+}
+
+function CopyableUrl({ label, value }: { label: string; value: string }) {
+  const { toast } = useToast();
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      toast({ title: "Copied", description: label });
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast({ title: "Copy failed", variant: "destructive" });
+    }
+  };
+  return (
+    <div className="space-y-1">
+      <p className="text-xs uppercase tracking-wide text-zinc-500">{label}</p>
+      <div className="flex items-center gap-2 rounded-md bg-white border border-zinc-200 px-2 py-1">
+        <code className="flex-1 text-xs font-mono text-zinc-700 break-all select-all">
+          {value}
+        </code>
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          aria-label={`Copy ${label}`}
+          onClick={handleCopy}
+          className="h-6 w-6 flex-shrink-0"
+        >
+          {copied ? (
+            <Check className="h-3.5 w-3.5 text-green-600" />
+          ) : (
+            <Copy className="h-3.5 w-3.5" />
+          )}
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 interface SsoResponse {
@@ -243,7 +304,7 @@ export default function OrgSsoPage({
     <>
       <DashboardHeader
         title="SSO settings"
-        subtitle="Configure SSO sign-in for this organization (SAML supported; OIDC coming soon)"
+        subtitle="Configure SAML or OIDC sign-in for this organization"
         actions={
           <Link href={`/dashboard/organization/${orgId}/settings`}>
             <Button size="sm" variant="outline">
@@ -325,7 +386,7 @@ export default function OrgSsoPage({
             <div>
               <CardTitle className="text-base">SSO providers</CardTitle>
               <CardDescription>
-                SAML providers registered for this organization. OIDC support coming soon.
+                SAML and OIDC providers registered for this organization.
               </CardDescription>
             </div>
             <Button size="sm" onClick={() => setShowAdd(true)}>
@@ -337,8 +398,9 @@ export default function OrgSsoPage({
               <TableHeader>
                 <TableRow>
                   <TableHead>Provider ID</TableHead>
+                  <TableHead>Type</TableHead>
                   <TableHead>Domain</TableHead>
-                  <TableHead>Issuer</TableHead>
+                  <TableHead>IdP setup URLs</TableHead>
                   <TableHead className="w-12"></TableHead>
                 </TableRow>
               </TableHeader>
@@ -348,9 +410,25 @@ export default function OrgSsoPage({
                     <TableCell>
                       <Badge variant="secondary">{p.providerId}</Badge>
                     </TableCell>
+                    <TableCell className="text-xs uppercase text-zinc-500">
+                      {p.providerType ?? "—"}
+                    </TableCell>
                     <TableCell>{p.domain}</TableCell>
-                    <TableCell className="text-xs text-zinc-500 max-w-xs truncate">
-                      {p.issuer}
+                    <TableCell className="space-y-1.5 py-3">
+                      <CopyableUrl
+                        label={
+                          p.providerType === "oidc"
+                            ? "Redirect URI"
+                            : "ACS URL"
+                        }
+                        value={deriveAcsUrl(p.providerId, p.providerType)}
+                      />
+                      {p.providerType === "saml" && (
+                        <CopyableUrl
+                          label="SP Metadata URL"
+                          value={deriveMetadataUrl(p.providerId)}
+                        />
+                      )}
                     </TableCell>
                     <TableCell>
                       <Button
@@ -367,7 +445,7 @@ export default function OrgSsoPage({
                 {data?.providers && data.providers.length === 0 && (
                   <TableRow>
                     <TableCell
-                      colSpan={4}
+                      colSpan={5}
                       className="text-center text-sm text-zinc-500 py-6"
                     >
                       No providers configured yet.
@@ -422,6 +500,28 @@ export default function OrgSsoPage({
                   <SelectItem value="oidc">OIDC</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div className="rounded-md bg-zinc-50 border border-zinc-200 p-3 space-y-3">
+              <p className="text-sm font-medium text-zinc-700">
+                Configure these values in your IdP
+              </p>
+              <CopyableUrl
+                label={
+                  providerType === "saml" ? "ACS / Callback URL" : "Redirect URI"
+                }
+                value={deriveAcsUrl(providerId, providerType)}
+              />
+              {providerType === "saml" && (
+                <CopyableUrl
+                  label="SP Metadata URL (Entity ID)"
+                  value={deriveMetadataUrl(providerId)}
+                />
+              )}
+              <p className="text-xs text-zinc-500">
+                Paste these into your IdP app configuration (Okta, Auth0, Azure
+                AD, Google Workspace). URLs update when you change the Provider
+                ID above.
+              </p>
             </div>
             {providerType === "saml" ? (
               <>

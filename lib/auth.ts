@@ -372,25 +372,43 @@ export const auth = betterAuth({
           creditBalance:   m.organizationProfile.creditPool?.balance ?? null,
         }));
 
-      // SSO enforcement: mark sessions that bypassed SSO for enforced domains
+      // SSO enforcement: mark sessions that bypassed SSO for enforced domains.
+      //
+      // An account satisfies enforcement only if `account.providerId` matches
+      // one of the `ssoProvider.providerId` rows registered for the enforcing
+      // org. Checking against `providerId != "credential"` is NOT enough —
+      // that would treat a personal Google or GitHub OAuth account as a valid
+      // SSO sign-in, bypassing the policy entirely.
       let ssoEnforcementFailed = false;
       try {
         const email = user.email;
-        if (email) {
-          const domain = email.split("@")[1]?.toLowerCase();
-          if (domain) {
-            const enforcedClaim = await prisma.organizationSSOSettings.findFirst({
-              where: { enforceSSO: true, allowedEmailDomains: { has: domain } },
-              select: { id: true },
+        const domain = email?.split("@")[1]?.toLowerCase();
+        if (domain) {
+          const enforced = await prisma.organizationSSOSettings.findFirst({
+            where: { enforceSSO: true, allowedEmailDomains: { has: domain } },
+            select: {
+              organizationProfile: {
+                select: { organizationId: true },
+              },
+            },
+          });
+          if (enforced?.organizationProfile?.organizationId) {
+            const registeredProviders = await prisma.ssoProvider.findMany({
+              where: { organizationId: enforced.organizationProfile.organizationId },
+              select: { providerId: true },
             });
-            // Only enforce if the session was NOT created via an SSO provider account
-            const isOAuthOrSSOAccount = await prisma.account.findFirst({
-              where: { userId: user.id, providerId: { not: "credential" } },
-              select: { id: true },
-            });
-            if (enforcedClaim && !isOAuthOrSSOAccount) {
-              ssoEnforcementFailed = true;
-            }
+            const validProviderIds = registeredProviders.map((p) => p.providerId);
+            const linkedViaSSO =
+              validProviderIds.length > 0
+                ? await prisma.account.findFirst({
+                    where: {
+                      userId: user.id,
+                      providerId: { in: validProviderIds },
+                    },
+                    select: { id: true },
+                  })
+                : null;
+            if (!linkedViaSSO) ssoEnforcementFailed = true;
           }
         }
       } catch {

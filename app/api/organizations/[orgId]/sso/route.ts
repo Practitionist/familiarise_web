@@ -47,16 +47,26 @@ export async function GET(
       where: { organizationProfileId: access.org.id },
     });
 
-    const providers = await prisma.ssoProvider.findMany({
+    const rows = await prisma.ssoProvider.findMany({
       where: { organizationId: orgId },
       select: {
         id: true,
         providerId: true,
         issuer: true,
         domain: true,
-        userId: true,
+        samlConfig: true,
+        oidcConfig: true,
       },
     });
+
+    // Surface providerType so the UI can render the correct ACS / redirect URL.
+    const providers = rows.map((r) => ({
+      id: r.id,
+      providerId: r.providerId,
+      issuer: r.issuer,
+      domain: r.domain,
+      providerType: r.samlConfig ? "saml" : r.oidcConfig ? "oidc" : null,
+    }));
 
     return NextResponse.json({
       settings: settings ?? {

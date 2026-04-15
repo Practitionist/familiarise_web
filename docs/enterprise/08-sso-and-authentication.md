@@ -154,7 +154,8 @@ Required fields in `samlConfig`:
 | `issuer` | IdP entity ID | `"https://accounts.google.com/o/saml2?idpid=..."` |
 | `entryPoint` | IdP SSO URL | `"https://accounts.google.com/o/saml2/idp?idpid=..."` |
 | `cert` | X.509 certificate (PEM) | `"MIIDdDCCAlygAwIB..."` |
-| `callbackUrl` | (optional) ACS URL | `"https://familiarise.com/api/auth/sso/callback"` |
+
+`callbackUrl` is **not** accepted from the Add Provider form. BetterAuth auto-derives the ACS URL from `baseURL`; letting admins type a custom value is a footgun — any mismatch silently breaks SAML assertion delivery. The derived URL is shown read-only in the UI (see "URLs to configure in your IdP" below).
 
 ### OIDC
 
@@ -170,6 +171,93 @@ Required fields in `oidcConfig`:
 | `scopes` | (optional) Extra scopes | `["profile", "email"]` |
 
 **File**: `app/api/organizations/[orgId]/sso/providers/route.ts`
+
+OIDC PKCE relies on the `ssoClient()` plugin registered in `lib/auth-client.ts` so that `authClient.signIn.sso()` generates and persists the code verifier before the IdP redirect. A raw `fetch` to `/api/auth/sign-in/sso` skips PKCE entirely and will fail at the callback step. Use `signIn.sso({...})` in `app/auth/signin/page.tsx` and `app/auth/signup/page.tsx`.
+
+---
+
+## URLs to configure in your IdP
+
+BetterAuth mounts callback routes deterministically from the Provider ID. The "Add provider" dialog and the provider list both show these values read-only with a copy button. Pattern:
+
+| Purpose | Pattern |
+| ------- | ------- |
+| SAML ACS / Callback URL | `{NEXT_PUBLIC_APP_URL}/api/auth/sso/saml2/sp/acs/{providerId}` |
+| SAML SP Metadata URL (Entity ID) | `{NEXT_PUBLIC_APP_URL}/api/auth/sso/saml2/sp/metadata?providerId={providerId}` |
+| OIDC Redirect URI | `{NEXT_PUBLIC_APP_URL}/api/auth/sso/callback/{providerId}` |
+
+Kept in sync with BetterAuth's plugin defaults. The `deriveAcsUrl` / `deriveMetadataUrl` helpers in `app/dashboard/organization/[orgId]/settings/sso/page.tsx` must match the routes the `sso()` plugin auto-mounts — if BetterAuth's defaults change in a future upgrade, update both sides together.
+
+---
+
+## IdP setup recipes
+
+Only SP-initiated flows are supported today. IdP-initiated SSO is deferred.
+
+### Okta — SAML
+
+1. In Okta Admin → Applications → Create App Integration → **SAML 2.0**.
+2. General Settings: name the app (e.g. "Familiarise — ACME"); keep defaults.
+3. Configure SAML:
+   - **Single sign-on URL** = ACS URL from our "Add provider" dialog.
+   - **Audience URI (SP Entity ID)** = SP Metadata URL from our dialog.
+   - Name ID format: `EmailAddress`. Application username: `Email`.
+   - Attribute statements: `email` (user.email), `name` (user.firstName + " " + user.lastName).
+4. After creation, open the "Sign On" tab → "View SAML setup instructions".
+5. Copy into Familiarise's Add Provider form:
+   - **Issuer** = "Identity Provider Issuer".
+   - **SSO entry point URL** = "Identity Provider Single Sign-On URL".
+   - **X.509 certificate** = the PEM block. Paste **including** `-----BEGIN CERTIFICATE-----` / `-----END CERTIFICATE-----` headers.
+6. Assign users/groups to the Okta app. Done.
+
+### Auth0 — OIDC
+
+1. Auth0 Dashboard → Applications → Create Application → **Regular Web Application**.
+2. Settings → Allowed Callback URLs: paste the OIDC Redirect URI from our dialog. Add the logout URL if you configure logout later.
+3. Advanced Settings → Grant Types: ensure **Authorization Code** is enabled (PKCE is part of this grant; no extra toggle needed).
+4. Save.
+5. In Familiarise's Add Provider form:
+   - **Issuer** = `https://YOUR_TENANT.auth0.com/` (trailing slash matters for OIDC discovery).
+   - **Client ID** and **Client Secret** from the Auth0 Settings tab.
+   - **Discovery URL** = `https://YOUR_TENANT.auth0.com/.well-known/openid-configuration`.
+
+### Azure AD / Entra ID — SAML
+
+1. Entra admin → Enterprise Applications → New application → **Create your own application** → "Integrate any other application you don't find in the gallery".
+2. Open the new app → Single sign-on → **SAML**.
+3. Basic SAML Configuration:
+   - **Identifier (Entity ID)** = SP Metadata URL from our dialog.
+   - **Reply URL (Assertion Consumer Service URL)** = ACS URL from our dialog.
+4. Attributes & Claims: leave defaults; the `emailaddress` claim covers sign-in.
+5. SAML Certificates: download "Certificate (Base64)".
+6. Copy into Familiarise's form:
+   - **Issuer** = "Azure AD Identifier" (Set up section).
+   - **SSO entry point URL** = "Login URL".
+   - **X.509 certificate** = paste the downloaded PEM content (including BEGIN/END headers).
+7. Users and groups → Add user/group.
+
+### Google Workspace — SAML
+
+1. Admin Console → Apps → Web and mobile apps → Add custom SAML app.
+2. App Details: name it "Familiarise".
+3. Google Identity Provider details: download the IdP metadata / certificate. Note the **SSO URL** and **Entity ID**.
+4. Service provider details:
+   - **ACS URL** = ACS URL from our dialog.
+   - **Entity ID** = SP Metadata URL from our dialog.
+   - Name ID format: `EMAIL`. Name ID: `Basic Information > Primary email`.
+5. Attribute mapping (optional): map `First name` → `firstName`, `Last name` → `lastName`.
+6. Copy into Familiarise's form:
+   - **Issuer** = Google's "Entity ID".
+   - **SSO entry point URL** = Google's "SSO URL".
+   - **X.509 certificate** = the downloaded PEM (full block including headers).
+7. Turn the app ON for the right OU / everyone.
+
+### Per-IdP gotchas
+
+- **Okta**: if users see "App Embed Link not available" during test, switch the app's Sign-on method in the "General" tab to "SAML 2.0" (the wizard sometimes leaves it on "SWA").
+- **Auth0**: the trailing slash on `issuer` is load-bearing for discovery — `https://tenant.auth0.com` (no slash) will fail OIDC discovery.
+- **Azure AD**: the downloaded Base64 certificate is raw base64 without headers; our form accepts it either way, but prefer adding the BEGIN/END lines so the stored config matches what BetterAuth expects (`node-saml` is stricter on some Azure responses).
+- **Google Workspace**: assertions carry the user's primary email as Name ID. If your org uses aliases, ensure `allowedEmailDomains` covers the primary domain, not the alias.
 
 ---
 
