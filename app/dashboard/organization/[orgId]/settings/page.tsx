@@ -1,9 +1,10 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { Shield } from "lucide-react";
+import Image from "next/image";
+import { Shield, Upload, X } from "lucide-react";
 
 import { useOrgRole, useRequireOrgRole } from "../useOrgRole";
 import {
@@ -94,6 +95,12 @@ export default function OrgSettingsPage({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
+  // Logo upload state
+  const logoInputRef = useRef<HTMLInputElement>(null);
+  const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [logoError, setLogoError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!data) return;
     setName(data.organization?.name ?? "");
@@ -105,7 +112,40 @@ export default function OrgSettingsPage({
     setSeatsTotal(
       data.profile.seatsTotal != null ? String(data.profile.seatsTotal) : "",
     );
+    // Seed logo preview from existing org logo
+    if (data.organization?.logo) setLogoPreview(data.organization.logo);
   }, [data]);
+
+  const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLogoError(null);
+    const objectUrl = URL.createObjectURL(file);
+    setLogoPreview(objectUrl);
+    uploadLogo(file);
+  };
+
+  const uploadLogo = async (file: File) => {
+    setUploadingLogo(true);
+    setLogoError(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("type", "logo");
+      const res = await fetch(`/api/organizations/${orgId}/images`, {
+        method: "POST",
+        body: formData,
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || "Upload failed");
+      queryClient.invalidateQueries({ queryKey: ["org-settings", orgId] });
+      queryClient.invalidateQueries({ queryKey: ["organization", orgId] });
+    } catch (err) {
+      setLogoError((err as Error).message);
+    } finally {
+      setUploadingLogo(false);
+    }
+  };
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -160,6 +200,73 @@ export default function OrgSettingsPage({
         }
       />
       <DashboardContent>
+        {/* Logo upload */}
+        {isAtLeast("ORG_ADMIN") && (
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>Organization logo</CardTitle>
+              <CardDescription>
+                Shown in the sidebar and on invoices. JPG, PNG, or WebP — max 4 MB.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center gap-5">
+                {/* Preview */}
+                <div className="w-20 h-20 rounded-xl bg-zinc-100 border border-zinc-200 flex items-center justify-center overflow-hidden shrink-0">
+                  {logoPreview ? (
+                    <Image
+                      src={logoPreview}
+                      alt="Org logo"
+                      width={80}
+                      height={80}
+                      className="object-cover w-full h-full"
+                    />
+                  ) : (
+                    <Upload className="w-6 h-6 text-zinc-400" />
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <input
+                    ref={logoInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    className="hidden"
+                    onChange={handleLogoChange}
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => logoInputRef.current?.click()}
+                    disabled={uploadingLogo}
+                  >
+                    {uploadingLogo ? "Uploading…" : "Upload logo"}
+                  </Button>
+                  {logoPreview && !uploadingLogo && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="text-zinc-500 ml-2"
+                      onClick={() => {
+                        setLogoPreview(null);
+                        if (logoInputRef.current) logoInputRef.current.value = "";
+                      }}
+                    >
+                      <X className="w-3.5 h-3.5 mr-1" />
+                      Clear
+                    </Button>
+                  )}
+                  {logoError && (
+                    <p className="text-xs text-red-600">{logoError}</p>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         <Card>
           <CardHeader>
             <CardTitle>Profile</CardTitle>

@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import {
@@ -13,7 +13,6 @@ import {
   Settings,
   Check,
   Rocket,
-  X,
   Clock,
   Wallet,
   UserCog,
@@ -25,7 +24,6 @@ import {
   DashboardGrid,
 } from "@/components/dashboard/DashboardShell";
 import { StatCard, StatCardSkeleton } from "@/components/dashboard/StatCard";
-import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -202,21 +200,9 @@ export default function OrgHomePage({
 
   const isLoading = analytics.isLoading || billing.isLoading;
 
-  // Onboarding checklist (localStorage-persisted dismissal)
-  const [dismissed, setDismissed] = useState(true); // default true to avoid flash
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      setDismissed(
-        localStorage.getItem(`orgOnboardingDismissed_${orgId}`) === "true",
-      );
-    }
-  }, [orgId]);
-
-  const dismiss = () => {
-    localStorage.setItem(`orgOnboardingDismissed_${orgId}`, "true");
-    setDismissed(true);
-  };
-
+  // Onboarding checklist — not dismissable; auto-hides once every item is done.
+  // Admins+owners see this so new orgs are guided through the essential setup
+  // steps without the risk of accidentally dismissing it before completion.
   const checklist = [
     { label: "Create organization", done: true, href: "#" },
     {
@@ -236,11 +222,8 @@ export default function OrgHomePage({
     },
   ];
   const checklistDone = checklist.filter((c) => c.done).length;
-  const showChecklist =
-    !dismissed &&
-    !isLoading &&
-    isAtLeast("ORG_ADMIN") &&
-    checklistDone < checklist.length;
+  const allDone = checklistDone === checklist.length;
+  const showChecklist = !isLoading && isAtLeast("ORG_ADMIN") && !allDone;
 
   // Quick action cards (role-gated)
   const quickActions = [
@@ -281,15 +264,70 @@ export default function OrgHomePage({
         subtitle="Snapshot of your organization"
       />
       <DashboardContent>
-        {/* Stat cards */}
+        {/* Onboarding checklist — hero position, non-dismissable.
+            Auto-hides once every step is complete. */}
+        {showChecklist && (
+          <Card className="mb-6 border-amber-200 bg-amber-50">
+            <CardHeader className="pb-2">
+              <div className="flex items-center gap-2">
+                <Rocket className="h-5 w-5 text-amber-600" />
+                <CardTitle className="text-base text-amber-900">
+                  Get started — {checklistDone}/{checklist.length} done
+                </CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <Progress
+                value={(checklistDone / checklist.length) * 100}
+                className="mb-4 h-2"
+              />
+              <div className="space-y-2">
+                {checklist.map((item) => (
+                  <Link
+                    key={item.label}
+                    href={item.href}
+                    className={`flex items-center gap-3 rounded-lg p-2 text-sm transition-colors ${
+                      item.done
+                        ? "text-zinc-400"
+                        : "text-amber-800 hover:bg-amber-100"
+                    }`}
+                  >
+                    <div
+                      className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                        item.done
+                          ? "border-emerald-500 bg-emerald-500"
+                          : "border-amber-400"
+                      }`}
+                    >
+                      {item.done && (
+                        <Check className="h-3 w-3 text-white" />
+                      )}
+                    </div>
+                    <span className={item.done ? "line-through" : ""}>
+                      {item.label}
+                    </span>
+                  </Link>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Unified stat grid — all cards share one 4-column responsive grid
+            so every card has the same width regardless of how many are
+            visible. On mobile they stack 1-wide, on tablet 2-wide, on
+            desktop 4-wide.  Billing and provider cards are injected inline
+            once their data arrives — no separate stacked sections that leave
+            orphaned cards at different widths. */}
         {isLoading ? (
           <DashboardGrid columns={4}>
-            {[1, 2, 3, 4].map((i) => (
+            {[1, 2, 3, 4, 5, 6].map((i) => (
               <StatCardSkeleton key={i} />
             ))}
           </DashboardGrid>
         ) : (
           <DashboardGrid columns={4}>
+            {/* Primary stats — always shown */}
             <StatCard
               title="Active members"
               value={analytics.data?.members.total ?? 0}
@@ -330,128 +368,75 @@ export default function OrgHomePage({
                   : undefined
               }
             />
-          </DashboardGrid>
-        )}
 
-        {/* Billing-mode-specific secondary cards */}
-        {!isLoading && billing.data && isAtLeast("ORG_MANAGER") && (
-          <div className="mt-4">
-            <DashboardGrid columns={3}>
-              {billing.data.outstanding.invoiceCount > 0 && (
-                <StatCard
-                  title="Outstanding invoices"
-                  value={billing.data.outstanding.invoiceCount}
-                  subtitle={formatCurrencyAmount(
-                    billing.data.outstanding.amount,
-                    "INR",
-                  )}
-                  icon={AlertCircle}
-                  variant="warning"
-                />
-              )}
-              {billing.data.billingMode === "INVOICED_MONTHLY" &&
-                billing.data.pendingCharges && (
+            {/* Billing cards — only for manager+ role, appear once billing data loads */}
+            {billing.data && isAtLeast("ORG_MANAGER") && (
+              <>
+                {billing.data.outstanding.invoiceCount > 0 && (
                   <StatCard
-                    title="Pending charges"
-                    value={formatCurrencyAmount(
-                      billing.data.pendingCharges.amount,
+                    title="Outstanding invoices"
+                    value={billing.data.outstanding.invoiceCount}
+                    subtitle={formatCurrencyAmount(
+                      billing.data.outstanding.amount,
                       "INR",
                     )}
-                    subtitle={`${billing.data.pendingCharges.paymentCount} bookings not yet invoiced`}
                     icon={AlertCircle}
                     variant="warning"
                   />
                 )}
-              {billing.data.billingMode === "SEAT_PACK" &&
-                billing.data.creditPool && (
-                  <StatCard
-                    title="Credit balance"
-                    value={formatCurrencyAmount(
-                      billing.data.creditPool.balance,
-                      "INR",
-                    )}
-                    subtitle={`${formatCurrencyAmount(
-                      billing.data.creditPool.totalPurchased,
-                      "INR",
-                    )} lifetime`}
-                    icon={CreditCard}
-                  />
-                )}
-            </DashboardGrid>
-          </div>
-        )}
-
-        {/* PROVIDER/HYBRID org stats */}
-        {!isLoading && isProviderOrHybrid && providerStats.data && (
-          <div className="mt-4">
-            <DashboardGrid columns={3}>
-              <StatCard
-                title="Active consultants"
-                value={providerStats.data.consultantCount}
-                icon={UserCog}
-                variant="info"
-              />
-              <StatCard
-                title="Total payouts"
-                value={formatCurrencyAmount(
-                  providerStats.data.earnings.paid,
-                  "INR",
-                )}
-                subtitle="Completed payouts"
-                icon={Wallet}
-                variant="success"
-              />
-            </DashboardGrid>
-          </div>
-        )}
-
-        {/* Onboarding checklist */}
-        {showChecklist && (
-          <Card className="mt-6">
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <div className="flex items-center gap-2">
-                <Rocket className="h-5 w-5 text-zinc-600" />
-                <CardTitle className="text-base">Get started</CardTitle>
-              </div>
-              <Button variant="ghost" size="sm" onClick={dismiss}>
-                <X className="h-4 w-4" />
-              </Button>
-            </CardHeader>
-            <CardContent>
-              <Progress
-                value={(checklistDone / checklist.length) * 100}
-                className="mb-4 h-2"
-              />
-              <div className="space-y-2">
-                {checklist.map((item) => (
-                  <Link
-                    key={item.label}
-                    href={item.href}
-                    className={`flex items-center gap-3 rounded-lg p-2 text-sm transition-colors ${
-                      item.done
-                        ? "text-zinc-400"
-                        : "text-zinc-700 hover:bg-zinc-50"
-                    }`}
-                  >
-                    <div
-                      className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${
-                        item.done
-                          ? "border-emerald-500 bg-emerald-500"
-                          : "border-zinc-300"
-                      }`}
-                    >
-                      {item.done && (
-                        <Check className="h-3 w-3 text-white" />
+                {billing.data.billingMode === "INVOICED_MONTHLY" &&
+                  billing.data.pendingCharges && (
+                    <StatCard
+                      title="Pending charges"
+                      value={formatCurrencyAmount(
+                        billing.data.pendingCharges.amount,
+                        "INR",
                       )}
-                    </div>
-                    <span className={item.done ? "line-through" : ""}>
-                      {item.label}
-                    </span>
-                  </Link>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
+                      subtitle={`${billing.data.pendingCharges.paymentCount} not yet invoiced`}
+                      icon={AlertCircle}
+                      variant="warning"
+                    />
+                  )}
+                {billing.data.billingMode === "SEAT_PACK" &&
+                  billing.data.creditPool && (
+                    <StatCard
+                      title="Credit balance"
+                      value={formatCurrencyAmount(
+                        billing.data.creditPool.balance,
+                        "INR",
+                      )}
+                      subtitle={`${formatCurrencyAmount(
+                        billing.data.creditPool.totalPurchased,
+                        "INR",
+                      )} lifetime`}
+                      icon={CreditCard}
+                    />
+                  )}
+              </>
+            )}
+
+            {/* Provider/Hybrid stats — appear once provider data loads */}
+            {isProviderOrHybrid && providerStats.data && (
+              <>
+                <StatCard
+                  title="Active consultants"
+                  value={providerStats.data.consultantCount}
+                  icon={UserCog}
+                  variant="info"
+                />
+                <StatCard
+                  title="Total payouts"
+                  value={formatCurrencyAmount(
+                    providerStats.data.earnings.paid,
+                    "INR",
+                  )}
+                  subtitle="Completed payouts"
+                  icon={Wallet}
+                  variant="success"
+                />
+              </>
+            )}
+          </DashboardGrid>
         )}
 
         {/* Quick actions */}

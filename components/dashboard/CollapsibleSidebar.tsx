@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "@/utils/tailwind";
-import { ChevronLeft, ChevronRight, LogOut, type LucideIcon } from "lucide-react";
+import { ChevronLeft, ChevronRight, LogOut, ChevronsUpDown, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,14 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -45,6 +53,17 @@ export interface CollapsibleSidebarProps {
     image: string | null;
     role: string;
   };
+  /**
+   * When provided alongside `bottomUserChip`, the chip becomes a dropdown
+   * trigger. Each entry is either a labelled action or a visual separator.
+   * Use this to wire up "Personal Dashboard", org-switch links, and Sign Out
+   * so all context-switching lives in one discoverable place.
+   */
+  bottomUserChipActions?: Array<
+    | { type: "item"; label: string; href?: string; onClick?: () => void; icon?: LucideIcon }
+    | { type: "separator" }
+    | { type: "label"; label: string }
+  >;
   /** Current pathname (from `usePathname()`). Used to compute active state. */
   pathname: string;
   /** Sign-out handler invoked when the footer button is clicked. */
@@ -69,6 +88,7 @@ export function CollapsibleSidebar({
   userEmail,
   userImage,
   bottomUserChip,
+  bottomUserChipActions,
   pathname,
   onSignOut,
 }: CollapsibleSidebarProps) {
@@ -181,8 +201,78 @@ export function CollapsibleSidebar({
 
       {/* Footer */}
       <div className="border-t border-zinc-200 dark:border-zinc-800 p-2 space-y-1">
-        {/* Personal user chip (org dashboard mode) */}
-        {bottomUserChip && (
+        {/* Personal user chip — plain or dropdown depending on whether
+            bottomUserChipActions is provided. With actions, the chip becomes a
+            Slack/Linear-style trigger for context-switching (personal dashboard,
+            other orgs, sign out). Without actions it's a static identity strip. */}
+        {bottomUserChip && bottomUserChipActions ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                className={cn(
+                  "flex items-center gap-2.5 w-full px-3 py-2 rounded-lg border border-zinc-900 dark:border-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-900",
+                  collapsed && "justify-center px-0",
+                )}
+              >
+                <Avatar className="h-7 w-7 flex-shrink-0">
+                  <AvatarImage src={bottomUserChip.image || ""} alt={bottomUserChip.name || ""} />
+                  <AvatarFallback className="bg-zinc-700 text-white text-xs font-semibold">
+                    {(bottomUserChip.name ?? "U").charAt(0).toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+                {!collapsed && (
+                  <>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-zinc-900 dark:text-zinc-100 truncate leading-tight">
+                        {bottomUserChip.name}
+                      </p>
+                      <p className="text-[10px] text-zinc-400 dark:text-zinc-500 truncate leading-tight mt-0.5">
+                        {bottomUserChip.role}
+                      </p>
+                    </div>
+                    <ChevronsUpDown className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
+                  </>
+                )}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="top" align="start" className="w-56">
+              {bottomUserChipActions.map((action, i) => {
+                if (action.type === "separator") {
+                  return <DropdownMenuSeparator key={i} />;
+                }
+                if (action.type === "label") {
+                  return (
+                    <DropdownMenuLabel key={i} className="text-xs text-zinc-400 font-normal py-1">
+                      {action.label}
+                    </DropdownMenuLabel>
+                  );
+                }
+                const Icon = action.icon;
+                return (
+                  <DropdownMenuItem
+                    key={i}
+                    asChild={!!action.href}
+                    onClick={!action.href ? action.onClick : undefined}
+                    className="cursor-pointer gap-2"
+                  >
+                    {action.href ? (
+                      <Link href={action.href} className="flex items-center gap-2 w-full">
+                        {Icon && <Icon className="h-4 w-4 text-zinc-500" />}
+                        {action.label}
+                      </Link>
+                    ) : (
+                      <>
+                        {Icon && <Icon className="h-4 w-4 text-zinc-500" />}
+                        {action.label}
+                      </>
+                    )}
+                  </DropdownMenuItem>
+                );
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : bottomUserChip ? (
+          /* Static chip — no actions (admin/staff dashboards) */
           <div
             className={cn(
               "flex items-center gap-2.5 px-3 py-2 rounded-lg",
@@ -206,8 +296,9 @@ export function CollapsibleSidebar({
               </div>
             )}
           </div>
-        )}
+        ) : null}
 
+        {/* Sign Out — always rendered below the chip/dropdown */}
         <TooltipProvider delayDuration={0}>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -227,6 +318,7 @@ export function CollapsibleSidebar({
             )}
           </Tooltip>
         </TooltipProvider>
+
         {!collapsed && footerLabel && (
           <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-3 px-3">
             {footerLabel}

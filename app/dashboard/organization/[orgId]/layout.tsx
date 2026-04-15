@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { use, useEffect, useMemo } from "react";
+import React, { use, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
@@ -17,14 +17,32 @@ import {
   Settings,
   Wallet,
   UserCog,
+  Building2,
+  LayoutDashboard,
   type LucideIcon,
 } from "lucide-react";
+
+// Mobile bottom-tab configuration — 5 most-accessed org pages.
+// Role gating happens at the API layer; the tabs are always visible so the
+// user discovers what exists even before they have elevated permissions.
+const MOBILE_TABS: {
+  label: string;
+  path: string;
+  Icon: LucideIcon;
+}[] = [
+  { label: "Overview", path: "home", Icon: Home },
+  { label: "Members", path: "members", Icon: Users },
+  { label: "Billing", path: "billing", Icon: CreditCard },
+  { label: "Analytics", path: "analytics", Icon: BarChart3 },
+  { label: "Settings", path: "settings", Icon: Settings },
+];
 
 import {
   CollapsibleSidebar,
   CollapsibleSidebarSkeleton,
   type CollapsibleSidebarItem,
 } from "@/components/dashboard/CollapsibleSidebar";
+import { OrgContextBar } from "@/components/dashboard/OrgContextBar";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { signOut, useSession } from "@/lib/auth-client";
 import { disconnectStreamClients } from "@/providers/StreamProvider";
@@ -195,33 +213,152 @@ export default function OrgLayout({
     );
   }
 
+  // Build personal dashboard back-link and org-switcher items for the
+  // bottomUserChip dropdown. All context-switching lives in one place —
+  // the user chip at the bottom of the sidebar — rather than scattered across
+  // a separate context bar.
+  const userExt = session?.user as
+    | (NonNullable<typeof session>["user"] & {
+        consultantProfileId?: string | null;
+        consulteeProfileId?: string | null;
+        organizationMemberships?: Array<{
+          organizationId: string;
+          organizationName: string;
+          organizationLogo: string | null;
+          role: string;
+        }>;
+      })
+    | undefined;
+
+  const personalHref = userExt?.consultantProfileId
+    ? `/dashboard/consultant/${userExt.consultantProfileId}/home`
+    : userExt?.consulteeProfileId
+      ? `/dashboard/consultee/${userExt.consulteeProfileId}/home`
+      : "/dashboard";
+
+  // Other orgs the user belongs to (excluding the current one)
+  const otherOrgs = (userExt?.organizationMemberships ?? []).filter(
+    (m) => m.organizationId !== orgId,
+  );
+
+  const bottomUserChipActions: NonNullable<
+    React.ComponentProps<typeof CollapsibleSidebar>["bottomUserChipActions"]
+  > = [
+    {
+      type: "item",
+      label: "Personal Dashboard",
+      href: personalHref,
+      icon: LayoutDashboard,
+    },
+    ...(otherOrgs.length > 0
+      ? [
+          { type: "separator" as const },
+          { type: "label" as const, label: "Switch organization" },
+          ...otherOrgs.map((m) => ({
+            type: "item" as const,
+            label: m.organizationName,
+            href: `/dashboard/organization/${m.organizationId}/home`,
+            icon: Building2,
+          })),
+        ]
+      : []),
+  ];
+
+  // Map URL segments to human-readable page names so the breadcrumb matches
+  // the heading the user actually sees on the page.
+  const PAGE_LABELS: Record<string, string> = {
+    home:        "Overview",
+    members:     "Members",
+    invitations: "Invitations",
+    learners:    "Learners",
+    consultants: "Consultants",
+    plans:       "Plans",
+    credits:     "Credits",
+    billing:     "Billing",
+    payouts:     "Payouts",
+    analytics:   "Analytics",
+    settings:    "Settings",
+    sso:         "SSO",
+  };
+
+  const rawSegment = pathname
+    .replace(`/dashboard/organization/${orgId}`, "")
+    .split("/")
+    .filter(Boolean)[0];
+  const pageSegment = rawSegment ? (PAGE_LABELS[rawSegment] ?? rawSegment) : undefined;
+
   return (
     <div className="flex h-screen-maintenance bg-zinc-50 dark:bg-zinc-950">
-      <CollapsibleSidebar
-        items={sidebarItems}
-        basePath={`/dashboard/organization/${orgId}`}
-        title={org?.organization.name ?? "Organization"}
-        avatarFallback={(org?.organization.name ?? "O").charAt(0).toUpperCase()}
-        userName={org?.organization.name}
-        userImage={org?.organization.logo}
-        bottomUserChip={
-          session?.user
-            ? {
-                name: session.user.name ?? null,
-                image: session.user.image ?? null,
-                role: org?.membership.role ?? "",
-              }
-            : undefined
-        }
-        pathname={pathname}
-        onSignOut={handleSignOut}
-      />
+      {/* Collapsible sidebar — hidden on mobile, visible on md+ */}
+      <div className="hidden md:block shrink-0">
+        <CollapsibleSidebar
+          items={sidebarItems}
+          basePath={`/dashboard/organization/${orgId}`}
+          title={org?.organization.name ?? "Organization"}
+          avatarFallback={(org?.organization.name ?? "O")
+            .charAt(0)
+            .toUpperCase()}
+          userName={org?.organization.name}
+          userImage={org?.organization.logo}
+          bottomUserChip={
+            session?.user
+              ? {
+                  name: session.user.name ?? null,
+                  image: session.user.image ?? null,
+                  role: org?.membership.role ?? "",
+                }
+              : undefined
+          }
+          pathname={pathname}
+          onSignOut={handleSignOut}
+          bottomUserChipActions={bottomUserChipActions}
+        />
+      </div>
 
-      <main className="flex-1 overflow-y-auto">
-        <div className="p-6">
-          <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
-        </div>
-      </main>
+      {/* Right panel: context bar + page content */}
+      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+        {/* Sticky context bar — always shows org identity + back link */}
+        {org && (
+          <OrgContextBar
+            orgName={org.organization.name}
+            orgLogo={org.organization.logo}
+            kind={org.profile.kind}
+            billingMode={org.profile.billingMode}
+            currentPage={pageSegment}
+          />
+        )}
+
+        <main className="flex-1 overflow-y-auto pb-16 md:pb-0">
+          <div className="p-6">
+            <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
+          </div>
+        </main>
+
+        {/* Mobile bottom tab bar — only visible below md breakpoint */}
+        <nav className="md:hidden fixed bottom-0 left-0 right-0 z-20 bg-white border-t border-zinc-200 flex">
+          {MOBILE_TABS.map(({ label, path, Icon }) => {
+            const isActive = pathname.includes(
+              `/dashboard/organization/${orgId}/${path}`,
+            );
+            return (
+              <Link
+                key={path}
+                href={`/dashboard/organization/${orgId}/${path}`}
+                className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition-colors ${
+                  isActive
+                    ? "text-zinc-900"
+                    : "text-zinc-500 hover:text-zinc-700"
+                }`}
+              >
+                <Icon
+                  className={`h-5 w-5 ${isActive ? "text-zinc-900" : "text-zinc-400"}`}
+                />
+                {label}
+              </Link>
+            );
+          })}
+        </nav>
+      </div>
     </div>
   );
 }
