@@ -1,6 +1,5 @@
 import { getSessionCookie } from "better-auth/cookies";
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
 
 import {
   getMaintenanceState,
@@ -247,15 +246,11 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
       signInUrl.searchParams.set("callbackUrl", pathname + req.nextUrl.search);
       return NextResponse.redirect(signInUrl);
     }
-    // SSO enforcement: redirect users who bypassed SSO for an enforced domain
-    try {
-      const session = await auth.api.getSession({ headers: req.headers });
-      if ((session?.user as Record<string, unknown> | undefined)?.ssoEnforcementFailed) {
-        return NextResponse.redirect(new URL("/auth/signin?sso_required=1", req.url));
-      }
-    } catch {
-      // non-fatal — allow through if session check fails
-    }
+    // SSO enforcement happens in customSession() in lib/auth.ts — it marks
+    // ssoEnforcementFailed: true on the session. Page layouts/server components
+    // check this flag and redirect. We cannot call auth.api.getSession() here
+    // because @better-auth/sso imports node:crypto/node:dns which are not
+    // available in the Edge Runtime that middleware compiles to.
     return NextResponse.next();
   }
 
