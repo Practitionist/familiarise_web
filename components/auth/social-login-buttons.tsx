@@ -10,14 +10,18 @@ interface SocialLoginButtonsProps {
   callbackURL: string;
   newUserCallbackURL?: string;
   isLoading: boolean;
+  ssoEnforced?: boolean;
 }
 
 export function SocialLoginButtons({
   callbackURL,
   newUserCallbackURL,
   isLoading,
+  ssoEnforced,
 }: SocialLoginButtonsProps) {
   const { toast } = useToast();
+
+  if (ssoEnforced) return null;
 
   return (
     <div className="space-y-4">

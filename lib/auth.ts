@@ -372,6 +372,31 @@ export const auth = betterAuth({
           creditBalance:   m.organizationProfile.creditPool?.balance ?? null,
         }));
 
+      // SSO enforcement: mark sessions that bypassed SSO for enforced domains
+      let ssoEnforcementFailed = false;
+      try {
+        const email = user.email;
+        if (email) {
+          const domain = email.split("@")[1]?.toLowerCase();
+          if (domain) {
+            const enforcedClaim = await prisma.orgDomainClaim.findFirst({
+              where: { domain, organizationProfile: { enforceSSO: true } },
+              select: { id: true },
+            });
+            // Only enforce if the session was NOT created via an SSO provider account
+            const isOAuthOrSSOAccount = await prisma.account.findFirst({
+              where: { userId: user.id, providerId: { not: "credential" } },
+              select: { id: true },
+            });
+            if (enforcedClaim && !isOAuthOrSSOAccount) {
+              ssoEnforcementFailed = true;
+            }
+          }
+        }
+      } catch {
+        // non-fatal — don't break session
+      }
+
       return {
         user: {
           ...user,
@@ -385,6 +410,7 @@ export const auth = betterAuth({
           staffProfileId: user.staffProfileId ?? undefined,
           adminProfileId: user.adminProfileId ?? undefined,
           organizationMemberships,
+          ssoEnforcementFailed,
         },
         session,
       };

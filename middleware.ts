@@ -1,5 +1,6 @@
 import { getSessionCookie } from "better-auth/cookies";
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
 
 import {
   getMaintenanceState,
@@ -245,6 +246,15 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
       const signInUrl = new URL(URLS.SIGNIN, req.url);
       signInUrl.searchParams.set("callbackUrl", pathname + req.nextUrl.search);
       return NextResponse.redirect(signInUrl);
+    }
+    // SSO enforcement: redirect users who bypassed SSO for an enforced domain
+    try {
+      const session = await auth.api.getSession({ headers: req.headers });
+      if ((session?.user as Record<string, unknown> | undefined)?.ssoEnforcementFailed) {
+        return NextResponse.redirect(new URL("/auth/signin?sso_required=1", req.url));
+      }
+    } catch {
+      // non-fatal — allow through if session check fails
     }
     return NextResponse.next();
   }

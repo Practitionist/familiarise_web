@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { signIn, useSession } from "@/lib/auth-client";
+import { authClient, signIn, useSession } from "@/lib/auth-client";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
 import Link from "next/link";
@@ -34,6 +34,12 @@ function SignInContent() {
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [callbackUrl, setCallbackUrl] = useState<string | null>(null);
+  const [ssoCheck, setSsoCheck] = useState<{
+    enforceSSO: boolean;
+    organizationName: string;
+    providerId: string;
+  } | null>(null);
+  const [ssoChecking, setSsoChecking] = useState(false);
 
   useEffect(() => {
     const url = searchParams.get("callbackUrl");
@@ -74,6 +80,22 @@ function SignInContent() {
       </div>
     );
   }
+
+  const handleEmailBlur = async () => {
+    if (!email || !email.includes("@")) return;
+    setSsoChecking(true);
+    try {
+      const res = await fetch(`/api/auth/sso/domain-check?email=${encodeURIComponent(email)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSsoCheck(data.enforceSSO ? data : null);
+      }
+    } catch {
+      // ignore — fall through to normal login
+    } finally {
+      setSsoChecking(false);
+    }
+  };
 
   const friendlyAuthError = (raw: string | undefined): string => {
     if (!raw) return "Invalid email or password.";
@@ -157,6 +179,13 @@ function SignInContent() {
           <h2 className="text-2xl md:text-3xl font-semibold mb-4 md:mb-6">
             Sign in to your account
           </h2>
+          {searchParams.get("sso_required") === "1" && (
+            <div className="mb-4 p-3 rounded-md bg-yellow-900/40 border border-yellow-600">
+              <p className="text-sm text-yellow-300">
+                Your organization requires SSO sign-in.
+              </p>
+            </div>
+          )}
           <p className="text-sm md:text-base mb-4 md:mb-6">
             Enter your email and password below to sign in.
           </p>
@@ -172,52 +201,75 @@ function SignInContent() {
                 autoCorrect="off"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                onBlur={handleEmailBlur}
                 required
-                disabled={isLoading}
+                disabled={isLoading || ssoChecking}
               />
             </div>
-            <div className="grid gap-2 mt-4">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="password">Password</Label>
-                <Link
-                  href="/auth/forgot-password"
-                  className="text-sm font-medium text-blue-400 hover:underline"
-                >
-                  Forgot password?
-                </Link>
+            {!ssoCheck?.enforceSSO && (
+              <div className="grid gap-2 mt-4">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="password">Password</Label>
+                  <Link
+                    href="/auth/forgot-password"
+                    className="text-sm font-medium text-blue-400 hover:underline"
+                  >
+                    Forgot password?
+                  </Link>
+                </div>
+                <Input
+                  id="password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  disabled={isLoading}
+                />
               </div>
-              <Input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
+            )}
+            {ssoCheck?.enforceSSO ? (
+              <Button
+                type="button"
+                className="w-full mt-4 bg-blue-600 hover:bg-blue-500"
+                onClick={() =>
+                  authClient.signIn.sso({
+                    providerId: ssoCheck.providerId,
+                    callbackURL: "/dashboard",
+                  })
+                }
+              >
+                Sign in with {ssoCheck.organizationName} SSO &rarr;
+              </Button>
+            ) : (
+              <Button
+                type="submit"
+                className="w-full mt-4 bg-gray-800 hover:bg-gray-700"
                 disabled={isLoading}
-              />
-            </div>
-            <Button
-              type="submit"
-              className="w-full mt-4 bg-gray-800 hover:bg-gray-700"
-              disabled={isLoading}
-            >
-              {isLoading ? "Signing In..." : "Sign In with Email"}
-            </Button>
+              >
+                {isLoading ? "Signing In..." : "Sign In with Email"}
+              </Button>
+            )}
           </form>
-          <div className="relative my-4 md:my-6">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-gray-600" />
-            </div>
-            <div className="relative flex justify-center text-sm">
-              <span className="px-2 bg-gray-900 text-gray-400">
-                OR CONTINUE WITH
-              </span>
-            </div>
-          </div>
-          <SocialLoginButtons
-            callbackURL={callbackUrl || "/dashboard"}
-            newUserCallbackURL="/form/onboarding"
-            isLoading={isLoading}
-          />
+          {!ssoCheck?.enforceSSO && (
+            <>
+              <div className="relative my-4 md:my-6">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-gray-600" />
+                </div>
+                <div className="relative flex justify-center text-sm">
+                  <span className="px-2 bg-gray-900 text-gray-400">
+                    OR CONTINUE WITH
+                  </span>
+                </div>
+              </div>
+              <SocialLoginButtons
+                callbackURL={callbackUrl || "/dashboard"}
+                newUserCallbackURL="/form/onboarding"
+                isLoading={isLoading}
+                ssoEnforced={false}
+              />
+            </>
+          )}
           <p className="text-xs text-gray-400 mt-4 md:mt-6">
             Don't have an account?{" "}
             <Link
