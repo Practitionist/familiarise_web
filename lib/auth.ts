@@ -379,8 +379,8 @@ export const auth = betterAuth({
         if (email) {
           const domain = email.split("@")[1]?.toLowerCase();
           if (domain) {
-            const enforcedClaim = await prisma.orgDomainClaim.findFirst({
-              where: { domain, organizationProfile: { enforceSSO: true } },
+            const enforcedClaim = await prisma.organizationSSOSettings.findFirst({
+              where: { enforceSSO: true, allowedEmailDomains: { has: domain } },
               select: { id: true },
             });
             // Only enforce if the session was NOT created via an SSO provider account
