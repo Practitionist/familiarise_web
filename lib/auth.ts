@@ -1,4 +1,5 @@
 import { betterAuth } from "better-auth";
+import { APIError } from "better-auth/api";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { nextCookies } from "better-auth/next-js";
 import { customSession, organization } from "better-auth/plugins";
@@ -11,6 +12,7 @@ import {
   sendPasswordResetEmail,
 } from "@/lib/email";
 import { syncSubscriber } from "@/lib/novu/subscriber";
+import { shouldRejectSession } from "@/lib/sso/enforce-session";
 
 export const auth = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET,
@@ -183,6 +185,71 @@ export const auth = betterAuth({
             );
           } catch (error) {
             console.error("[AUTH_HOOK] user.create.after error:", error);
+          }
+        },
+      },
+    },
+    // Server-side SSO veto (issue #673). Runs on every session creation path
+    // — credential signin, OAuth signin, SSO signin, signup — just before the
+    // cookie is issued. Reading-time enforcement via `ssoEnforcementFailed`
+    // in `customSession` below is kept for defense-in-depth but is not the
+    // primary gate: a direct POST to `/api/auth/sign-in/email` that bypasses
+    // our signin UI would previously create a valid session and only set the
+    // flag reactively. This hook rejects such requests at the source.
+    //
+    // Legitimate first-time SSO users are allowed because the SSO plugin
+    // creates the `account` row with `providerId = ssoProvider.providerId`
+    // BEFORE the session is created; returning SSO users already have that
+    // account. The hook fails open when the enforcing org has not yet
+    // registered any `ssoProvider` rows — see `lib/sso/enforce-session.ts`.
+    session: {
+      create: {
+        before: async (session) => {
+          const user = await prisma.user.findUnique({
+            where: { id: session.userId },
+            select: { email: true },
+          });
+
+          const decision = await shouldRejectSession({
+            email: user?.email ?? null,
+            userId: session.userId,
+            lookupEnforcedOrg: async (domain) => {
+              const enforced = await prisma.organizationSSOSettings.findFirst({
+                where: {
+                  enforceSSO: true,
+                  allowedEmailDomains: { has: domain },
+                },
+                select: {
+                  organizationProfile: { select: { organizationId: true } },
+                },
+              });
+              const organizationId =
+                enforced?.organizationProfile?.organizationId;
+              if (!organizationId) return null;
+              const rows = await prisma.ssoProvider.findMany({
+                where: { organizationId },
+                select: { providerId: true },
+              });
+              return {
+                organizationId,
+                registeredProviderIds: rows.map((r) => r.providerId),
+              };
+            },
+            hasAccountInProviders: async (userId, providerIds) => {
+              const match = await prisma.account.findFirst({
+                where: { userId, providerId: { in: providerIds } },
+                select: { id: true },
+              });
+              return !!match;
+            },
+          });
+
+          if (decision.reject) {
+            throw new APIError("FORBIDDEN", {
+              message:
+                "This email domain requires SSO sign-in. Please use your organization's SSO provider at /auth/signin.",
+              code: "SSO_REQUIRED",
+            });
           }
         },
       },
@@ -372,25 +439,43 @@ export const auth = betterAuth({
           creditBalance:   m.organizationProfile.creditPool?.balance ?? null,
         }));
 
-      // SSO enforcement: mark sessions that bypassed SSO for enforced domains
+      // SSO enforcement: mark sessions that bypassed SSO for enforced domains.
+      //
+      // An account satisfies enforcement only if `account.providerId` matches
+      // one of the `ssoProvider.providerId` rows registered for the enforcing
+      // org. Checking against `providerId != "credential"` is NOT enough —
+      // that would treat a personal Google or GitHub OAuth account as a valid
+      // SSO sign-in, bypassing the policy entirely.
       let ssoEnforcementFailed = false;
       try {
         const email = user.email;
-        if (email) {
-          const domain = email.split("@")[1]?.toLowerCase();
-          if (domain) {
-            const enforcedClaim = await prisma.organizationSSOSettings.findFirst({
-              where: { enforceSSO: true, allowedEmailDomains: { has: domain } },
-              select: { id: true },
+        const domain = email?.split("@")[1]?.toLowerCase();
+        if (domain) {
+          const enforced = await prisma.organizationSSOSettings.findFirst({
+            where: { enforceSSO: true, allowedEmailDomains: { has: domain } },
+            select: {
+              organizationProfile: {
+                select: { organizationId: true },
+              },
+            },
+          });
+          if (enforced?.organizationProfile?.organizationId) {
+            const registeredProviders = await prisma.ssoProvider.findMany({
+              where: { organizationId: enforced.organizationProfile.organizationId },
+              select: { providerId: true },
             });
-            // Only enforce if the session was NOT created via an SSO provider account
-            const isOAuthOrSSOAccount = await prisma.account.findFirst({
-              where: { userId: user.id, providerId: { not: "credential" } },
-              select: { id: true },
-            });
-            if (enforcedClaim && !isOAuthOrSSOAccount) {
-              ssoEnforcementFailed = true;
-            }
+            const validProviderIds = registeredProviders.map((p) => p.providerId);
+            const linkedViaSSO =
+              validProviderIds.length > 0
+                ? await prisma.account.findFirst({
+                    where: {
+                      userId: user.id,
+                      providerId: { in: validProviderIds },
+                    },
+                    select: { id: true },
+                  })
+                : null;
+            if (!linkedViaSSO) ssoEnforcementFailed = true;
           }
         }
       } catch {

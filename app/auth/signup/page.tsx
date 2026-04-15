@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { signUp, useSession } from "@/lib/auth-client";
+import { signIn, signUp, useSession } from "@/lib/auth-client";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
 import Link from "next/link";
@@ -114,18 +114,13 @@ function SignUpContent() {
    */
   const handleSSOSignIn = async () => {
     if (!ssoCheck) return;
-    try {
-      const res = await fetch("/api/auth/sign-in/sso", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(ssoCheck.ssoBody),
-        credentials: "include",
-      });
-      const data = await res.json();
-      if (data.url) window.location.href = data.url;
-    } catch {
-      // fall through
-    }
+    // Must use signIn.sso() — not a raw fetch — so the ssoClient plugin can
+    // generate and persist the OIDC PKCE verifier before the IdP redirect.
+    await signIn.sso({
+      providerId: ssoCheck.ssoBody.providerId,
+      domain: ssoCheck.ssoBody.domain,
+      callbackURL: ssoCheck.ssoBody.callbackURL,
+    });
   };
 
   const friendlyAuthError = (raw: string | undefined): string => {

@@ -9,9 +9,15 @@
  * table. We tag the row with `organizationId` so the signin domain router in
  * middleware.ts can find the right provider for an incoming domain match.
  *
- * Provider config is now normalized to match BetterAuth's expected shapes:
- *   - SAML: { issuer, entryPoint, cert, callbackUrl? } → JSON.stringify'd into samlConfig
+ * Provider config is normalized to BetterAuth's expected shapes:
+ *   - SAML: { issuer, entryPoint, cert } → JSON.stringify'd into samlConfig
  *   - OIDC: { issuer, clientId, clientSecret, discoveryEndpoint, pkce, scopes? } → JSON.stringify'd into oidcConfig
+ *
+ * `callbackUrl` is intentionally omitted from samlConfig: BetterAuth auto-derives
+ * the ACS URL as `{baseURL}/api/auth/sso/saml2/sp/acs/{providerId}`. Letting the
+ * admin type a custom URL is a footgun — a mismatch with BetterAuth's derived
+ * URL silently breaks SAML assertion delivery. The Add Provider dialog surfaces
+ * the derived URL read-only for the IT admin to paste into their IdP.
  *
  * NOTE: BetterAuth SSO auto-provisioning creates a BetterAuth `member` row
  * but NOT the OrganizationMemberProfile the app requires. The customSession
@@ -21,42 +27,9 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-
-// OIDC config matching BetterAuth's OIDCConfig interface
-const oidcConfigSchema = z.object({
-  issuer: z.string().url(),
-  clientId: z.string().min(1),
-  clientSecret: z.string().min(1),
-  discoveryEndpoint: z.string().url(),
-  pkce: z.boolean().default(true),
-  scopes: z.array(z.string()).optional(),
-});
-
-// SAML config matching BetterAuth's SAMLConfig interface
-const samlConfigSchema = z.object({
-  issuer: z.string().min(1),
-  entryPoint: z.string().url(),
-  cert: z.string().min(1),
-  callbackUrl: z.string().url().optional(),
-});
-
-const createProviderSchema = z.object({
-  providerId: z
-    .string()
-    .trim()
-    .min(2)
-    .max(50)
-    .regex(/^[a-z0-9-]+$/i, "providerId must be alphanumeric"),
-  domain: z.string().trim().min(3).max(255),
-  issuer: z.string().trim().min(1).max(500),
-  providerType: z.enum(["saml", "oidc"]),
-  // Structured config matching BetterAuth plugin expectations
-  samlConfig: samlConfigSchema.optional(),
-  oidcConfig: oidcConfigSchema.optional(),
-});
+import { createProviderSchema } from "@/lib/sso/provider-schemas";
 
 export async function GET(
   _req: NextRequest,
@@ -67,15 +40,26 @@ export async function GET(
     const access = await requireOrgAccess(orgId, "ORG_OWNER");
     if (access.error) return access.error;
 
-    const providers = await prisma.ssoProvider.findMany({
+    const rows = await prisma.ssoProvider.findMany({
       where: { organizationId: orgId },
       select: {
         id: true,
         providerId: true,
         issuer: true,
         domain: true,
+        samlConfig: true,
+        oidcConfig: true,
       },
     });
+
+    // Surface providerType so the UI can show the right ACS / redirect URL.
+    const providers = rows.map((r) => ({
+      id: r.id,
+      providerId: r.providerId,
+      issuer: r.issuer,
+      domain: r.domain,
+      providerType: r.samlConfig ? "saml" : r.oidcConfig ? "oidc" : null,
+    }));
 
     return NextResponse.json({ providers });
   } catch (error) {
@@ -124,6 +108,11 @@ export async function POST(
     }
 
     // Store config as JSON strings matching BetterAuth's expected shapes.
+    // userId is intentionally omitted — this is an org-scoped provider that
+    // must outlive the creating owner. BetterAuth's ssoProvider.userId FK
+    // has onDelete: Cascade; binding it to the owner would cascade-delete the
+    // provider if the owner's account is ever removed, silently killing SSO
+    // for every member of the org.
     const provider = await prisma.ssoProvider.create({
       data: {
         id: crypto.randomUUID(),
@@ -133,7 +122,6 @@ export async function POST(
         organizationId: orgId,
         samlConfig: samlConfig ? JSON.stringify(samlConfig) : null,
         oidcConfig: oidcConfig ? JSON.stringify(oidcConfig) : null,
-        userId: access.session.user.id,
       },
     });
 

@@ -103,6 +103,12 @@ jobs:
       - name: Generate Prisma Client
         run: npx prisma generate
 
+      - name: Verify SSO invariants
+        # Cheap static guard against regressions in the SSO audit fixes
+        # (PR #655 / issue #672). See scripts/verify-sso-invariants.sh
+        # for per-check rationale.
+        run: bash scripts/verify-sso-invariants.sh
+
       - name: Unit Tests
         run: npm run test
 
