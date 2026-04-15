@@ -26,7 +26,11 @@ export async function GET(
     const [
       memberCount,
       learnerCount,
-      planCount,
+      orgPlanCount,
+      catalogConsultation,
+      catalogSubscription,
+      catalogWebinar,
+      catalogClass,
       monthBookings,
       lastMonthBookings,
       monthGross,
@@ -44,11 +48,25 @@ export async function GET(
           status: "ACTIVE",
         },
       }),
+      // Org-owned plan templates
       prisma.organizationPlan.count({
         where: {
           organizationProfileId: access.org.id,
           isActive: true,
         },
+      }),
+      // Catalog: consultant plans linked to this org
+      prisma.consultationPlan.count({
+        where: { organizationProfileId: access.org.id },
+      }),
+      prisma.subscriptionPlan.count({
+        where: { organizationProfileId: access.org.id },
+      }),
+      prisma.webinarPlan.count({
+        where: { organizationProfileId: access.org.id },
+      }),
+      prisma.classPlan.count({
+        where: { organizationProfileId: access.org.id },
       }),
       prisma.payment.count({
         where: {
@@ -73,6 +91,13 @@ export async function GET(
         _sum: { amount: true },
       }),
     ]);
+
+    const planCount =
+      orgPlanCount +
+      catalogConsultation +
+      catalogSubscription +
+      catalogWebinar +
+      catalogClass;
 
     return NextResponse.json({
       members: { total: memberCount, learners: learnerCount },
