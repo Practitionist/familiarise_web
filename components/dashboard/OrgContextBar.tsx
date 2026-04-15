@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { Building2 } from "lucide-react";
+import { Building2, ChevronRight } from "lucide-react";
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
 
 interface OrgContextBarProps {
@@ -14,7 +14,12 @@ interface OrgContextBarProps {
     | "INVOICED_MONTHLY"
     | "PREPAID_UNLIMITED"
     | null;
-  currentPage?: string;
+  /**
+   * Ordered breadcrumb segments from root to current page.
+   * The last entry is highlighted as the active page.
+   * Example: ["Settings", "SSO", "Providers"]
+   */
+  breadcrumbs?: string[];
 }
 
 const KIND_LABELS: Record<string, { label: string; className: string }> = {
@@ -56,13 +61,13 @@ export function OrgContextBar({
   orgLogo,
   kind,
   billingMode,
-  currentPage,
+  breadcrumbs = [],
 }: OrgContextBarProps) {
   const kindBadge = KIND_LABELS[kind];
   const billingBadge = billingMode ? BILLING_LABELS[billingMode] : null;
 
   return (
-    <div className="sticky top-0 z-10 flex items-center gap-3 px-4 py-2 bg-white border-b border-zinc-200 text-sm min-w-0">
+    <div className="sticky top-0 z-10 flex items-center gap-3 h-14 px-4 bg-white border-b border-zinc-200 text-sm min-w-0">
       {/* Org identity — logo always visible; name text hidden on desktop since
           the sidebar header already shows it there. Shown on mobile where the
           sidebar is collapsed out of view. */}
@@ -104,12 +109,33 @@ export function OrgContextBar({
         )}
       </div>
 
-      {/* Current page breadcrumb — matches the page's own heading */}
-      {currentPage && (
-        <>
-          <span className="text-zinc-300 select-none shrink-0">/</span>
-          <span className="text-zinc-600 font-medium truncate">{currentPage}</span>
-        </>
+      {/* Breadcrumbs — chevron-separated path, last segment highlighted
+          as the active page. Forward-compatible with multi-level nested
+          routes (e.g. Settings > SSO > Providers > Add). */}
+      {breadcrumbs.length > 0 && (
+        <nav
+          aria-label="Breadcrumb"
+          className="flex items-center gap-1 min-w-0 shrink"
+        >
+          {breadcrumbs.map((crumb, i) => {
+            const isLast = i === breadcrumbs.length - 1;
+            return (
+              <span key={i} className="flex items-center gap-1 min-w-0">
+                <ChevronRight className="h-3.5 w-3.5 text-zinc-300 shrink-0" />
+                <span
+                  className={
+                    isLast
+                      ? "text-zinc-900 font-semibold truncate"
+                      : "text-zinc-500 truncate"
+                  }
+                  aria-current={isLast ? "page" : undefined}
+                >
+                  {crumb}
+                </span>
+              </span>
+            );
+          })}
+        </nav>
       )}
 
       {/* Right-side actions */}

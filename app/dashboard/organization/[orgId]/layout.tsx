@@ -213,10 +213,11 @@ export default function OrgLayout({
     );
   }
 
-  // Build personal dashboard back-link and org-switcher items for the
-  // bottomUserChip dropdown. All context-switching lives in one place —
-  // the user chip at the bottom of the sidebar — rather than scattered across
-  // a separate context bar.
+  // Split the context-switching surface across TWO dropdowns:
+  //   - Top header (org identity)  → switch between orgs / personal dashboard
+  //   - Bottom user chip (personal) → user identity + sign out
+  // This mirrors the Linear / Agentstack pattern: the top answers "which
+  // context am I in?", the bottom answers "who am I?".
   const userExt = session?.user as
     | (NonNullable<typeof session>["user"] & {
         consultantProfileId?: string | null;
@@ -241,8 +242,14 @@ export default function OrgLayout({
     (m) => m.organizationId !== orgId,
   );
 
-  const bottomUserChipActions: NonNullable<
-    React.ComponentProps<typeof CollapsibleSidebar>["bottomUserChipActions"]
+  // Single top dropdown — context switching, account actions, sign out.
+  // Consolidating into one dropdown avoids the "which dropdown has what"
+  // confusion of the two-dropdown pattern. Bottom strip is pure identity
+  // display (no click target).
+  const settingsHref = `/dashboard/organization/${orgId}/settings`;
+
+  const topDropdownActions: NonNullable<
+    React.ComponentProps<typeof CollapsibleSidebar>["topDropdownActions"]
   > = [
     {
       type: "item",
@@ -262,9 +269,31 @@ export default function OrgLayout({
           })),
         ]
       : []),
+    { type: "separator" },
+    {
+      type: "item",
+      label: "Organization settings",
+      href: settingsHref,
+      icon: Settings,
+    },
   ];
 
-  // Map URL segments to human-readable page names so the breadcrumb matches
+  // Subtitle under the org name: the user's role in THIS org.
+  // Kind + billing mode live in the top-bar badges (non-redundant split —
+  // sidebar subtitle is user-specific, top-bar badges are org-specific).
+  const ROLE_LABELS: Record<string, string> = {
+    ORG_OWNER: "Owner",
+    ORG_ADMIN: "Admin",
+    ORG_MANAGER: "Manager",
+    ORG_CONSULTANT: "Consultant",
+    ORG_SUPPORT: "Support",
+    ORG_LEARNER: "Learner",
+  };
+  const topSubtitle = org
+    ? (ROLE_LABELS[org.membership.role] ?? org.membership.role)
+    : null;
+
+  // Map URL segments to human-readable page names so the breadcrumbs match
   // the heading the user actually sees on the page.
   const PAGE_LABELS: Record<string, string> = {
     home:        "Overview",
@@ -281,11 +310,13 @@ export default function OrgLayout({
     sso:         "SSO",
   };
 
-  const rawSegment = pathname
+  // Full breadcrumb trail — every URL segment after /organization/{orgId}
+  // becomes a crumb. Forward-compatible with nested routes.
+  const breadcrumbs = pathname
     .replace(`/dashboard/organization/${orgId}`, "")
     .split("/")
-    .filter(Boolean)[0];
-  const pageSegment = rawSegment ? (PAGE_LABELS[rawSegment] ?? rawSegment) : undefined;
+    .filter(Boolean)
+    .map((seg) => PAGE_LABELS[seg] ?? seg);
 
   return (
     <div className="flex h-screen-maintenance bg-zinc-50 dark:bg-zinc-950">
@@ -300,6 +331,8 @@ export default function OrgLayout({
             .toUpperCase()}
           userName={org?.organization.name}
           userImage={org?.organization.logo}
+          userSubtitle={topSubtitle}
+          topDropdownActions={topDropdownActions}
           bottomUserChip={
             session?.user
               ? {
@@ -311,7 +344,6 @@ export default function OrgLayout({
           }
           pathname={pathname}
           onSignOut={handleSignOut}
-          bottomUserChipActions={bottomUserChipActions}
         />
       </div>
 
@@ -324,7 +356,7 @@ export default function OrgLayout({
             orgLogo={org.organization.logo}
             kind={org.profile.kind}
             billingMode={org.profile.billingMode}
-            currentPage={pageSegment}
+            breadcrumbs={breadcrumbs}
           />
         )}
 
