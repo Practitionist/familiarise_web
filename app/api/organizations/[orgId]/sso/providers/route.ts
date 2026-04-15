@@ -27,42 +27,9 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-
-// OIDC config matching BetterAuth's OIDCConfig interface
-const oidcConfigSchema = z.object({
-  issuer: z.string().url(),
-  clientId: z.string().min(1),
-  clientSecret: z.string().min(1),
-  discoveryEndpoint: z.string().url(),
-  pkce: z.boolean().default(true),
-  scopes: z.array(z.string()).optional(),
-});
-
-// SAML config matching BetterAuth's SAMLConfig interface.
-// `callbackUrl` is deliberately not accepted — BetterAuth derives the ACS URL.
-const samlConfigSchema = z.object({
-  issuer: z.string().min(1),
-  entryPoint: z.string().url(),
-  cert: z.string().min(1),
-});
-
-const createProviderSchema = z.object({
-  providerId: z
-    .string()
-    .trim()
-    .min(2)
-    .max(50)
-    .regex(/^[a-z0-9-]+$/i, "providerId must be alphanumeric"),
-  domain: z.string().trim().min(3).max(255),
-  issuer: z.string().trim().min(1).max(500),
-  providerType: z.enum(["saml", "oidc"]),
-  // Structured config matching BetterAuth plugin expectations
-  samlConfig: samlConfigSchema.optional(),
-  oidcConfig: oidcConfigSchema.optional(),
-});
+import { createProviderSchema } from "@/lib/sso/provider-schemas";
 
 export async function GET(
   _req: NextRequest,

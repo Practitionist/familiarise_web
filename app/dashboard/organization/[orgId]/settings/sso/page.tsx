@@ -6,6 +6,7 @@ import { Plus, Trash2, ArrowLeft, Copy, Check } from "lucide-react";
 import Link from "next/link";
 import { useRequireOrgRole } from "../../useOrgRole";
 import { useToast } from "@/hooks/use-toast";
+import { deriveAcsUrl, deriveMetadataUrl } from "@/lib/sso/derive-urls";
 
 import {
   DashboardHeader,
@@ -52,26 +53,6 @@ interface Provider {
   issuer: string;
   domain: string;
   providerType: "saml" | "oidc" | null;
-}
-
-// BetterAuth auto-mounts these routes from the sso() plugin. Keep this derivation
-// in sync with the plugin's defaults — changing the paths here without a matching
-// plugin-level override will break IdP setup instructions shown to admins.
-function deriveAcsUrl(
-  providerId: string,
-  type: "saml" | "oidc" | null,
-): string {
-  const base = process.env.NEXT_PUBLIC_APP_URL ?? "";
-  const slug = providerId || "<provider-id>";
-  return type === "oidc"
-    ? `${base}/api/auth/sso/callback/${slug}`
-    : `${base}/api/auth/sso/saml2/sp/acs/${slug}`;
-}
-
-function deriveMetadataUrl(providerId: string): string {
-  const base = process.env.NEXT_PUBLIC_APP_URL ?? "";
-  const slug = providerId || "<provider-id>";
-  return `${base}/api/auth/sso/saml2/sp/metadata?providerId=${slug}`;
 }
 
 function CopyableUrl({ label, value }: { label: string; value: string }) {

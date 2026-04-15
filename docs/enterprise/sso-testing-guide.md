@@ -104,6 +104,19 @@ docker run --name kc -p 8080:8080 \
 
 Open `http://localhost:8080/admin` and log in (admin/admin).
 
+### Trusted-origins env override (required for local Keycloak)
+
+BetterAuth 1.6.3 gates OIDC discovery URLs behind `trustedOrigins`. For production the IdP's host is usually on a public HTTPS domain already allowlisted; for local Keycloak you must add `http://localhost:8080` explicitly, otherwise `POST /api/auth/sign-in/sso` returns `400 discovery_untrusted_origin`.
+
+Start the dev server with:
+
+```bash
+BETTER_AUTH_TRUSTED_ORIGINS="http://localhost:3000,http://localhost:8080" \
+  npm run dev
+```
+
+Or amend the value in `.env` for the duration of the test.
+
 ### Create a test realm + user
 
 1. Top-left realm selector → Create realm → name it `familiarise-test`.
