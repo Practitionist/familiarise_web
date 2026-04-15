@@ -338,6 +338,12 @@ export default function ConsultationCheckoutPage({
           throw new Error("Invalid response format from server");
         }
 
+        // Handle application-level errors returned with HTTP 200 (e.g. expired contract, credit limit)
+        if (!data.success) {
+          handleApiError({ error: data.error, errorType: data.errorType });
+          return;
+        }
+
         // handleCheckout is only invoked by the dev-only Mock Pay button (isMockPayment=true).
         // Real payments go through StripeCheckout/RazorpayCheckout components.
         // FIX #520: Also handle zero-amount payments (credits covered full cost)
@@ -380,6 +386,7 @@ export default function ConsultationCheckoutPage({
       maintenanceBlockReason,
       appliedDiscount,
       useReferralCredits,
+      selectedOrganizationId,
       validatedSearchParams,
       currency,
       handleApiError,

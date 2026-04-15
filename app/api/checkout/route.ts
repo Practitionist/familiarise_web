@@ -63,6 +63,9 @@ export async function POST(req: NextRequest) {
       isMockPayment,
       buyerCountry,
     );
+    if (!result.success) {
+      return NextResponse.json(result, { status: 400 });
+    }
     return NextResponse.json(result);
   } catch (error) {
     // ZodError from checkoutSchema.parse() — extract first human-readable message

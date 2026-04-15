@@ -26,7 +26,7 @@ interface OrgListItem {
   logo: string | null;
   kind: "BUYER" | "PROVIDER" | "HYBRID";
   status: string;
-  billingMode: "TAG_ONLY" | "SEAT_PACK" | "INVOICED_MONTHLY";
+  billingMode: "TAG_ONLY" | "SEAT_PACK" | "INVOICED_MONTHLY" | "PREPAID_UNLIMITED" | null;
   role: string;
   isPlatformAdmin?: boolean;
 }
@@ -94,7 +94,9 @@ export default function OrganizationLandingPage() {
                   </CardHeader>
                   <CardContent className="flex flex-wrap gap-2">
                     <Badge variant="secondary">{org.kind}</Badge>
-                    <Badge variant="outline">{org.billingMode}</Badge>
+                    {org.billingMode && (
+                      <Badge variant="outline">{org.billingMode}</Badge>
+                    )}
                     <Badge>{org.role}</Badge>
                   </CardContent>
                 </Card>

@@ -41,6 +41,12 @@ const BILLING_MODES = [
     description:
       "Learners book freely throughout the month. At month-end, your org receives one consolidated invoice. Pay within your configured NET terms.",
   },
+  {
+    value: "PREPAID_UNLIMITED",
+    label: "Prepaid unlimited",
+    description:
+      "Enterprise flat-fee license. Pay once for unlimited sessions during the contract period. No per-session billing.",
+  },
 ];
 
 const INDUSTRIES = [

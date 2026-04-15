@@ -52,12 +52,14 @@ export async function POST(
 
     const { amountPaise } = parsed.data;
 
+    // Create purchase row first so we have an ID for the order metadata.
     const purchase = await prisma.orgCreditPurchase.create({
       data: {
         organizationProfileId: access.org.id,
         creditsPurchased: amountPaise,
         amountPaid: amountPaise,
         currency: "INR",
+        // status defaults to PENDING
       },
     });
 
@@ -77,6 +79,23 @@ export async function POST(
       },
       paymentGateway: "RAZORPAY",
     });
+
+    // Store the gateway order ID so we can reconcile without a Payment row.
+    await prisma.orgCreditPurchase.update({
+      where: { id: purchase.id },
+      data: { providerOrderId: order.id },
+    });
+
+    // Audit log — fire-and-forget.
+    prisma.orgAuditLog.create({
+      data: {
+        organizationProfileId: access.org.id,
+        actorMemberId: access.member.id,
+        action: "CREDITS_PURCHASED",
+        description: `Credit purchase initiated: ${amountPaise / 100} INR`,
+        details: { purchaseId: purchase.id, amountPaise, orderId: order.id },
+      },
+    }).catch((err) => console.error("[Credits] Failed to write audit log:", err));
 
     return NextResponse.json(
       {

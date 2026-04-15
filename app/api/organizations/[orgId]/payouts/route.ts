@@ -59,9 +59,44 @@ export async function POST(
   const access = await requireOrgAccess(orgId, "ORG_OWNER");
   if (access.error) return access.error;
 
-  // PROVIDER payout batch creation will live here when the flag is flipped.
-  return NextResponse.json(
-    { error: "PROVIDER payout batch creation is pending implementation." },
-    { status: 501 },
-  );
+  if (access.org.kind === "BUYER") {
+    return NextResponse.json(
+      { error: "BUYER orgs do not have payouts." },
+      { status: 400 },
+    );
+  }
+
+  try {
+    const {
+      getOrgPayoutEligibility,
+      createOrgPayoutBatch,
+      PayoutLockError,
+      PayoutValidationError,
+    } = await import("@/lib/payments/payouts/org-payout-service");
+
+    // Pre-check eligibility
+    const eligibility = await getOrgPayoutEligibility(access.org.id);
+    if (!eligibility.eligible) {
+      return NextResponse.json(
+        { error: eligibility.reason },
+        { status: 400 },
+      );
+    }
+
+    const result = await createOrgPayoutBatch(access.org.id);
+    return NextResponse.json(result, { status: 201 });
+  } catch (error) {
+    const { PayoutLockError, PayoutValidationError } = await import(
+      "@/lib/payments/payouts/org-payout-service"
+    );
+    if (error instanceof PayoutLockError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    if (error instanceof PayoutValidationError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    const message =
+      error instanceof Error ? error.message : "Failed to create payout batch.";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }

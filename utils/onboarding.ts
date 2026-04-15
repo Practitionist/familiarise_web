@@ -385,7 +385,7 @@ const orgAdminFormFields = sharedFormFields.extend({
   // Org fields (merged wizard — collected during onboarding step 1)
   orgName: z.string().min(2).max(100),
   orgBillingEmail: z.string().email(),
-  orgBillingMode: z.enum(["TAG_ONLY", "SEAT_PACK", "INVOICED_MONTHLY"]).default("TAG_ONLY"),
+  orgBillingMode: z.enum(["TAG_ONLY", "SEAT_PACK", "INVOICED_MONTHLY", "PREPAID_UNLIMITED"]).default("TAG_ONLY"),
   orgDescription: z.string().max(2000).optional(),
   orgIndustry: z.string().optional(),
   orgSizeBucket: z.string().optional(),

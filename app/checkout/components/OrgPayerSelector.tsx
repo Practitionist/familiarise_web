@@ -2,7 +2,6 @@
 
 import { useSession } from "@/lib/auth-client";
 import { Building2, CreditCard } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 
 interface OrgMembership {
   organizationId: string;
@@ -12,6 +11,13 @@ interface OrgMembership {
   organizationProfileId: string;
   kind: string;
   role: string;
+  // Billing context fields populated by the session query in lib/auth.ts.
+  // Used to render a cost-aware subtitle under each org option so the learner
+  // knows whether selecting this org means "free", "draws from credits", or
+  // "goes on the monthly invoice" before they confirm the booking.
+  billingMode:     string | null;
+  contractEndDate: string | null; // ISO string — Date is not serialisable over the wire
+  creditBalance:   number | null; // paise; only meaningful for SEAT_PACK orgs
 }
 
 interface OrgPayerSelectorProps {
@@ -59,8 +65,6 @@ export function OrgPayerSelector({
       {/* Org payment options */}
       {memberships.map((m) => {
         const isSelected = selectedOrganizationId === m.organizationId;
-        // billingMode is not on the session membership type — we'll show
-        // the org name and let the backend handle billing mode routing.
         return (
           <button
             key={m.organizationId}
@@ -88,14 +92,38 @@ export function OrgPayerSelector({
               <p className="text-sm font-medium text-zinc-900 truncate">
                 Bill to {m.organizationName}
               </p>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <Badge variant="outline" className="text-[10px] h-4 px-1">
-                  {m.kind}
-                </Badge>
-                <Badge variant="secondary" className="text-[10px] h-4 px-1">
-                  {m.role.replace("ORG_", "")}
-                </Badge>
-              </div>
+              {/* Billing-aware subtitle. A learner in two orgs — one on
+                  SEAT_PACK and one on PREPAID_UNLIMITED — needs to know
+                  which option draws from a credit pool and which is free
+                  before selecting. We derive this from billingMode,
+                  creditBalance, and contractEndDate in the session payload
+                  (see lib/auth.ts for where those fields are loaded). */}
+              <p className="text-xs mt-0.5 truncate">
+                {m.billingMode === "PREPAID_UNLIMITED" && (() => {
+                  const expired = m.contractEndDate
+                    ? new Date(m.contractEndDate) < new Date()
+                    : false;
+                  return expired
+                    ? <span className="text-red-500">Contract expired — you will be charged personally</span>
+                    : <span className="text-emerald-600">Free (org contract covers this)</span>;
+                })()}
+                {m.billingMode === "SEAT_PACK" && (
+                  m.creditBalance !== null
+                    ? <span className={m.creditBalance === 0 ? "text-red-500" : "text-zinc-500"}>
+                        Credits: ₹{(m.creditBalance / 100).toLocaleString("en-IN")} remaining
+                      </span>
+                    : <span className="text-zinc-500">Credit pool</span>
+                )}
+                {m.billingMode === "INVOICED_MONTHLY" && (
+                  <span className="text-zinc-500">Added to org&apos;s monthly invoice</span>
+                )}
+                {m.billingMode === "TAG_ONLY" && (
+                  <span className="text-zinc-500">You pay — org receives the report</span>
+                )}
+                {!m.billingMode && (
+                  <span className="text-zinc-500">Organisation billing</span>
+                )}
+              </p>
             </div>
           </button>
         );

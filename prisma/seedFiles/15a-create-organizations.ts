@@ -5,17 +5,31 @@
  * existing consultee/consultant users, org plans, credit pools, SSO settings,
  * and sample invoices. Runs after all other phases so it can reference
  * existing users, payments, and profiles.
+ *
+ * Also creates PROVIDER orgs (consultant agencies) and HYBRID orgs
+ * (dual buyer+provider, e.g. universities) with payout accounts,
+ * ORG_CONSULTANT members, and sample earnings.
  */
 
 import { faker } from "@faker-js/faker";
 import {
+  EarningStatus,
+  EarningsRecipient,
   OrgAuditAction,
   OrganizationBillingMode,
   OrganizationKind,
   OrgMemberRole,
+  PayoutFrequency,
 } from "@prisma/client";
 import prisma from "../../lib/prisma";
-import { sanitizeString } from "./utils";
+import {
+  sanitizeString,
+  INDIAN_BANKS,
+  generateIfscCode,
+  generateRazorpayContactId,
+  generateRazorpayFundAccountId,
+  generateHoldUntilDate,
+} from "./utils";
 import { config, getRandomInRange } from "./config";
 import type { UserWithProfiles } from "./1a-create-users";
 
@@ -63,14 +77,18 @@ export async function createOrganizations(
   users: UserWithProfiles[],
 ): Promise<void> {
   const counts = config.volumes.organizations;
-  const totalOrgs = counts.buyer + counts.seatPack + counts.invoiced;
+  const totalBuyerOrgs = counts.buyer + counts.seatPack + counts.invoiced;
+  const totalOrgs = totalBuyerOrgs + counts.provider + counts.hybrid;
 
   console.log(
-    `  Creating ${totalOrgs} organizations (${counts.buyer} TAG_ONLY, ${counts.seatPack} SEAT_PACK, ${counts.invoiced} INVOICED_MONTHLY)...`,
+    `  Creating ${totalOrgs} organizations (${counts.buyer} TAG_ONLY, ${counts.seatPack} SEAT_PACK, ${counts.invoiced} INVOICED_MONTHLY, ${counts.provider} PROVIDER, ${counts.hybrid} HYBRID)...`,
   );
 
   const consultees = users.filter(
     (u) => u.role === "CONSULTEE" && u.consulteeProfile?.id,
+  );
+  const consultants = users.filter(
+    (u) => u.role === "CONSULTANT" && u.consultantProfile?.id,
   );
   const admins = users.filter((u) => u.role === "ADMIN");
 
@@ -328,16 +346,21 @@ export async function createOrganizations(
             ? remaining
             : faker.number.int({ min: Math.floor(remaining * 0.2), max: Math.floor(remaining * 0.6) });
           remaining -= amount;
-          // Simulate a completed Razorpay payment ID
+          // Simulate a confirmed purchase — providerPaymentId is the Razorpay pay_xxx ID.
           const fakePaymentId = `pay_seed_${faker.string.alphanumeric(14)}`;
+          const fakeOrderId = `order_seed_${faker.string.alphanumeric(14)}`;
+          const purchasedAt = faker.date.recent({ days: 90 });
           await prisma.orgCreditPurchase.create({
             data: {
               organizationProfileId: profile.id,
               creditsPurchased: amount,
               amountPaid: amount,
               currency: "INR",
-              paymentId: fakePaymentId,
-              purchasedAt: faker.date.recent({ days: 90 }),
+              status: "PROCESSED",
+              providerOrderId: fakeOrderId,
+              providerPaymentId: fakePaymentId,
+              processedAt: purchasedAt,
+              purchasedAt,
             },
           });
           if (remaining <= 0) break;
@@ -432,6 +455,575 @@ export async function createOrganizations(
       );
     } catch (error) {
       console.error(`    ✗ Failed to create org "${name}":`, error);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // PROVIDER orgs — consultant agencies
+  // ---------------------------------------------------------------------------
+
+  const providerSpecs: {
+    name: string;
+    payoutFrequency: PayoutFrequency;
+    platformCommissionRate: number;
+    orgRetainRate: number;
+    consultantPayoutRate: number;
+  }[] = [
+    {
+      name: "TechConsult Partners",
+      payoutFrequency: "MONTHLY",
+      platformCommissionRate: 0.10,
+      orgRetainRate: 0.05,
+      consultantPayoutRate: 0.85,
+    },
+    {
+      name: "Design Agency Co",
+      payoutFrequency: "WEEKLY",
+      platformCommissionRate: 0.15,
+      orgRetainRate: 0.10,
+      consultantPayoutRate: 0.75,
+    },
+  ];
+
+  // Use only as many provider orgs as configured
+  const providerCount = Math.min(counts.provider, providerSpecs.length);
+  const shuffledConsultants = faker.helpers.shuffle([...consultants]);
+  let consultantIdx = 0;
+
+  for (let pi = 0; pi < providerCount; pi++) {
+    const spec = providerSpecs[pi];
+    const baseSlug = slugify(spec.name);
+    const slug = `${baseSlug}-${faker.string.alphanumeric(4)}`;
+
+    // Owner is a consultee user (org owners don't have to be consultants)
+    const ownerUser =
+      shuffledConsultees[consulteeIdx % shuffledConsultees.length];
+    consulteeIdx++;
+
+    try {
+      // 1. BetterAuth Organization
+      const organization = await prisma.organization.create({
+        data: {
+          name: spec.name,
+          slug,
+          logo: faker.image.urlPicsumPhotos({ width: 200, height: 200 }),
+        },
+      });
+
+      // 2. OrganizationProfile — PROVIDER kind
+      const profile = await prisma.organizationProfile.create({
+        data: {
+          organizationId: organization.id,
+          kind: "PROVIDER" as OrganizationKind,
+          status: "ACTIVE",
+          billingMode: null, // PROVIDER orgs earn, they don't pay — no billing mode
+          billingEmail: faker.internet.email({
+            firstName: "finance",
+            lastName: baseSlug,
+          }),
+          description: sanitizeString(
+            `${spec.name} — ${faker.company.catchPhrase()}. Leading consulting agency.`,
+          ),
+          industry: "Consulting",
+          sizeBucket: "MEDIUM_51_200",
+          website: faker.internet.url(),
+          logo: faker.image.urlPicsumPhotos({ width: 200, height: 200 }),
+          primaryColor: faker.color.rgb(),
+          platformCommissionRate: spec.platformCommissionRate,
+          orgRetainRate: spec.orgRetainRate,
+          consultantPayoutRate: spec.consultantPayoutRate,
+          payoutFrequency: spec.payoutFrequency,
+          enforceOrganizationPlans: pi === 0, // first provider enforces org plans
+          autoApproveConsultants: pi === 1, // second provider auto-approves
+          paymentTermsDays: 30,
+        },
+      });
+
+      // 3. Owner member
+      const ownerMember = await prisma.member.create({
+        data: {
+          organizationId: organization.id,
+          userId: ownerUser.id,
+          role: "ORG_OWNER",
+        },
+      });
+
+      const ownerMemberProfile = await prisma.organizationMemberProfile.create({
+        data: {
+          memberId: ownerMember.id,
+          organizationProfileId: profile.id,
+          role: "ORG_OWNER",
+          status: "ACTIVE",
+        },
+      });
+
+      // Audit: org created
+      await prisma.orgAuditLog.create({
+        data: {
+          organizationProfileId: profile.id,
+          actorMemberId: ownerMemberProfile.id,
+          targetMemberId: ownerMemberProfile.id,
+          action: OrgAuditAction.MEMBER_ADDED,
+          description: `${ownerUser.email ?? "owner"} added as ORG_OWNER (PROVIDER org creation)`,
+          details: { role: "ORG_OWNER", kind: "PROVIDER" },
+        },
+      });
+
+      // 4. Add ORG_CONSULTANT members (2-3 per provider org)
+      const consultantCount = faker.number.int({ min: 2, max: 3 });
+      const addedConsultantMemberProfiles: {
+        memberProfileId: string;
+        consultantProfileId: string;
+      }[] = [];
+
+      for (
+        let ci = 0;
+        ci < consultantCount && consultantIdx < shuffledConsultants.length;
+        ci++
+      ) {
+        const cUser = shuffledConsultants[consultantIdx];
+        consultantIdx++;
+
+        if (cUser.id === ownerUser.id) continue;
+
+        // Ensure not already a member
+        const existing = await prisma.member.findUnique({
+          where: {
+            organizationId_userId: {
+              organizationId: organization.id,
+              userId: cUser.id,
+            },
+          },
+        });
+        if (existing) continue;
+
+        const member = await prisma.member.create({
+          data: {
+            organizationId: organization.id,
+            userId: cUser.id,
+            role: "ORG_CONSULTANT",
+          },
+        });
+
+        // First consultant: earningsRecipient = ORGANIZATION (internal/salaried)
+        // Second consultant: custom payout rate override
+        const isFirstConsultant = ci === 0;
+        const isSecondConsultant = ci === 1;
+
+        const memberProfile = await prisma.organizationMemberProfile.create({
+          data: {
+            memberId: member.id,
+            organizationProfileId: profile.id,
+            role: "ORG_CONSULTANT",
+            status: "ACTIVE",
+            consultantProfileId: cUser.consultantProfile?.id ?? null,
+            earningsRecipient: isFirstConsultant
+              ? ("ORGANIZATION" as EarningsRecipient)
+              : ("CONSULTANT" as EarningsRecipient),
+            customConsultantPayoutRate: isSecondConsultant ? 0.90 : null,
+            applicationNote: faker.helpers.maybe(
+              () => sanitizeString(faker.lorem.sentence()),
+              { probability: 0.6 },
+            ),
+            appliedAt: faker.date.recent({ days: 60 }),
+            approvedAt: faker.date.recent({ days: 30 }),
+            approvedBy: ownerMemberProfile.id,
+          },
+        });
+
+        addedConsultantMemberProfiles.push({
+          memberProfileId: memberProfile.id,
+          consultantProfileId: cUser.consultantProfile?.id ?? "",
+        });
+
+        // Audit: consultant approved
+        await prisma.orgAuditLog.create({
+          data: {
+            organizationProfileId: profile.id,
+            actorMemberId: ownerMemberProfile.id,
+            targetMemberId: memberProfile.id,
+            action: OrgAuditAction.CONSULTANT_APPROVED,
+            description: `${cUser.email ?? "consultant"} approved as ORG_CONSULTANT`,
+            details: {
+              consultantProfileId: cUser.consultantProfile?.id ?? null,
+              earningsRecipient: isFirstConsultant ? "ORGANIZATION" : "CONSULTANT",
+            },
+          },
+        });
+      }
+
+      // 5. Payout account (VERIFIED, dummy bank details)
+      const bank = faker.helpers.arrayElement([...INDIAN_BANKS]);
+      await prisma.organizationPayoutAccount.create({
+        data: {
+          organizationProfileId: profile.id,
+          accountHolderName: spec.name,
+          accountNumberEncrypted: Buffer.from(
+            faker.finance.accountNumber(12),
+          ).toString("base64"),
+          accountNumberLast4: faker.string.numeric(4),
+          bankName: bank.name,
+          ifscCode: generateIfscCode(bank),
+          razorpayContactId: generateRazorpayContactId(),
+          razorpayFundAccountId: generateRazorpayFundAccountId(),
+          status: "VERIFIED",
+          verifiedAt: faker.date.recent({ days: 60 }),
+        },
+      });
+
+      // 6. Create a few OrganizationEarnings rows.
+      //    We create stub Payment rows to satisfy the FK — using the org owner
+      //    as the paying user (realistic enough for seed data).
+      const earningsCount = faker.number.int({ min: 2, max: 4 });
+      for (let ei = 0; ei < earningsCount; ei++) {
+        const grossAmount = faker.number.int({ min: 10000, max: 200000 });
+        const platformFee = Math.round(
+          grossAmount * spec.platformCommissionRate,
+        );
+        const orgShare = Math.round(grossAmount * spec.orgRetainRate);
+
+        // Create a stub Payment to satisfy the FK
+        const stubPayment = await prisma.payment.create({
+          data: {
+            amount: grossAmount,
+            originalAmount: grossAmount,
+            currency: "INR",
+            paymentMethod: "card",
+            paymentIntent: `pi_seed_provider_${faker.string.alphanumeric(20)}`,
+            paymentGateway: "RAZORPAY",
+            paymentStatus: "SUCCEEDED",
+            userId: ownerUser.id,
+            organizationProfileId: profile.id,
+            isMockPayment: true,
+          },
+        });
+
+        await prisma.organizationEarnings.create({
+          data: {
+            organizationProfileId: profile.id,
+            paymentId: stubPayment.id,
+            grossAmount,
+            platformFee,
+            orgShare,
+            status: faker.helpers.arrayElement([
+              "PENDING",
+              "READY",
+              "PAID",
+            ]) as EarningStatus,
+            holdUntil: generateHoldUntilDate(new Date()),
+            currency: "INR",
+          },
+        });
+      }
+
+      // 7. Audit: settings changed (payout frequency)
+      await prisma.orgAuditLog.create({
+        data: {
+          organizationProfileId: profile.id,
+          actorMemberId: ownerMemberProfile.id,
+          action: OrgAuditAction.SETTINGS_CHANGED,
+          description: `Payout frequency set to ${spec.payoutFrequency}`,
+          details: {
+            field: "payoutFrequency",
+            newValue: spec.payoutFrequency,
+          },
+        },
+      });
+
+      console.log(
+        `    ✓ ${spec.name} (PROVIDER, ${spec.payoutFrequency} payouts, ${addedConsultantMemberProfiles.length} consultants)`,
+      );
+    } catch (error) {
+      console.error(
+        `    ✗ Failed to create PROVIDER org "${spec.name}":`,
+        error,
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // HYBRID org — dual buyer+provider (e.g. university)
+  // ---------------------------------------------------------------------------
+
+  const hybridSpecs: {
+    name: string;
+    payoutFrequency: PayoutFrequency;
+    billingMode: OrganizationBillingMode;
+  }[] = [
+    {
+      name: "EduTech University",
+      payoutFrequency: "MONTHLY",
+      billingMode: "SEAT_PACK",
+    },
+  ];
+
+  const hybridCount = Math.min(counts.hybrid, hybridSpecs.length);
+
+  for (let hi = 0; hi < hybridCount; hi++) {
+    const spec = hybridSpecs[hi];
+    const baseSlug = slugify(spec.name);
+    const slug = `${baseSlug}-${faker.string.alphanumeric(4)}`;
+
+    const ownerUser =
+      shuffledConsultees[consulteeIdx % shuffledConsultees.length];
+    consulteeIdx++;
+
+    try {
+      // 1. BetterAuth Organization
+      const organization = await prisma.organization.create({
+        data: {
+          name: spec.name,
+          slug,
+          logo: faker.image.urlPicsumPhotos({ width: 200, height: 200 }),
+        },
+      });
+
+      // 2. OrganizationProfile — HYBRID kind with SEAT_PACK billing
+      const profile = await prisma.organizationProfile.create({
+        data: {
+          organizationId: organization.id,
+          kind: "HYBRID" as OrganizationKind,
+          status: "ACTIVE",
+          billingMode: spec.billingMode,
+          billingEmail: faker.internet.email({
+            firstName: "admin",
+            lastName: baseSlug,
+          }),
+          description: sanitizeString(
+            `${spec.name} — A leading educational institution offering both courses and consulting services.`,
+          ),
+          industry: "Education",
+          sizeBucket: "LARGE_201_1000",
+          website: faker.internet.url(),
+          logo: faker.image.urlPicsumPhotos({ width: 200, height: 200 }),
+          primaryColor: faker.color.rgb(),
+          platformCommissionRate: 0.10,
+          orgRetainRate: 0.08,
+          consultantPayoutRate: 0.82,
+          payoutFrequency: spec.payoutFrequency,
+          enforceOrganizationPlans: false,
+          seatsTotal: faker.number.int({ min: 50, max: 200 }),
+          paymentTermsDays: 30,
+        },
+      });
+
+      // 3. Owner member
+      const ownerMember = await prisma.member.create({
+        data: {
+          organizationId: organization.id,
+          userId: ownerUser.id,
+          role: "ORG_OWNER",
+        },
+      });
+
+      const ownerMemberProfile = await prisma.organizationMemberProfile.create({
+        data: {
+          memberId: ownerMember.id,
+          organizationProfileId: profile.id,
+          role: "ORG_OWNER",
+          status: "ACTIVE",
+        },
+      });
+
+      // Audit: org created
+      await prisma.orgAuditLog.create({
+        data: {
+          organizationProfileId: profile.id,
+          actorMemberId: ownerMemberProfile.id,
+          targetMemberId: ownerMemberProfile.id,
+          action: OrgAuditAction.MEMBER_ADDED,
+          description: `${ownerUser.email ?? "owner"} added as ORG_OWNER (HYBRID org creation)`,
+          details: { role: "ORG_OWNER", kind: "HYBRID" },
+        },
+      });
+
+      // 4a. Add ORG_LEARNER members (BUYER side) — 2-3 learners
+      const learnerCount = faker.number.int({ min: 2, max: 3 });
+      let seatsUsed = 0;
+
+      for (
+        let li = 0;
+        li < learnerCount && consulteeIdx < shuffledConsultees.length;
+        li++
+      ) {
+        const lUser = shuffledConsultees[consulteeIdx];
+        consulteeIdx++;
+
+        if (lUser.id === ownerUser.id) continue;
+
+        const existing = await prisma.member.findUnique({
+          where: {
+            organizationId_userId: {
+              organizationId: organization.id,
+              userId: lUser.id,
+            },
+          },
+        });
+        if (existing) continue;
+
+        // Respect seatsTotal
+        if (profile.seatsTotal !== null && seatsUsed >= profile.seatsTotal)
+          break;
+
+        const member = await prisma.member.create({
+          data: {
+            organizationId: organization.id,
+            userId: lUser.id,
+            role: "ORG_LEARNER",
+          },
+        });
+
+        await prisma.organizationMemberProfile.create({
+          data: {
+            memberId: member.id,
+            organizationProfileId: profile.id,
+            role: "ORG_LEARNER",
+            status: "ACTIVE",
+            consulteeProfileId: lUser.consulteeProfile?.id ?? null,
+            seatAssignedAt: faker.date.recent({ days: 30 }),
+          },
+        });
+
+        seatsUsed++;
+      }
+
+      // 4b. Add ORG_CONSULTANT members (PROVIDER side) — 1-2 consultants
+      const hybridConsultantCount = faker.number.int({ min: 1, max: 2 });
+
+      for (
+        let ci = 0;
+        ci < hybridConsultantCount &&
+        consultantIdx < shuffledConsultants.length;
+        ci++
+      ) {
+        const cUser = shuffledConsultants[consultantIdx];
+        consultantIdx++;
+
+        if (cUser.id === ownerUser.id) continue;
+
+        const existing = await prisma.member.findUnique({
+          where: {
+            organizationId_userId: {
+              organizationId: organization.id,
+              userId: cUser.id,
+            },
+          },
+        });
+        if (existing) continue;
+
+        const member = await prisma.member.create({
+          data: {
+            organizationId: organization.id,
+            userId: cUser.id,
+            role: "ORG_CONSULTANT",
+          },
+        });
+
+        const memberProfile = await prisma.organizationMemberProfile.create({
+          data: {
+            memberId: member.id,
+            organizationProfileId: profile.id,
+            role: "ORG_CONSULTANT",
+            status: "ACTIVE",
+            consultantProfileId: cUser.consultantProfile?.id ?? null,
+            earningsRecipient: "CONSULTANT" as EarningsRecipient,
+            appliedAt: faker.date.recent({ days: 45 }),
+            approvedAt: faker.date.recent({ days: 20 }),
+            approvedBy: ownerMemberProfile.id,
+          },
+        });
+
+        await prisma.orgAuditLog.create({
+          data: {
+            organizationProfileId: profile.id,
+            actorMemberId: ownerMemberProfile.id,
+            targetMemberId: memberProfile.id,
+            action: OrgAuditAction.CONSULTANT_APPROVED,
+            description: `${cUser.email ?? "consultant"} approved as ORG_CONSULTANT (HYBRID)`,
+            details: {
+              consultantProfileId: cUser.consultantProfile?.id ?? null,
+            },
+          },
+        });
+      }
+
+      // 5. Update seatsUsed
+      if (seatsUsed > 0) {
+        await prisma.organizationProfile.update({
+          where: { id: profile.id },
+          data: { seatsUsed },
+        });
+      }
+
+      // 6. SEAT_PACK credit pool (HYBRID uses SEAT_PACK billing)
+      if (spec.billingMode === "SEAT_PACK") {
+        const balance = faker.number.int(CREDIT_BALANCE_RANGE);
+        const totalPurchased =
+          balance + faker.number.int({ min: 5000, max: 50000 });
+
+        await prisma.orgCreditPool.create({
+          data: {
+            organizationProfileId: profile.id,
+            balance,
+            totalPurchased,
+          },
+        });
+
+        await prisma.orgCreditLedger.create({
+          data: {
+            organizationProfileId: profile.id,
+            delta: totalPurchased,
+            reason: "purchase",
+            balanceAfter: totalPurchased,
+          },
+        });
+
+        // Purchase history — simulate a confirmed purchase
+        const fakePaymentId = `pay_seed_${faker.string.alphanumeric(14)}`;
+        const fakeOrderId = `order_seed_${faker.string.alphanumeric(14)}`;
+        const purchasedAt = faker.date.recent({ days: 60 });
+        await prisma.orgCreditPurchase.create({
+          data: {
+            organizationProfileId: profile.id,
+            creditsPurchased: totalPurchased,
+            amountPaid: totalPurchased,
+            currency: "INR",
+            status: "PROCESSED",
+            providerOrderId: fakeOrderId,
+            providerPaymentId: fakePaymentId,
+            processedAt: purchasedAt,
+            purchasedAt,
+          },
+        });
+      }
+
+      // 7. Payout account for the PROVIDER side
+      const bank = faker.helpers.arrayElement([...INDIAN_BANKS]);
+      await prisma.organizationPayoutAccount.create({
+        data: {
+          organizationProfileId: profile.id,
+          accountHolderName: spec.name,
+          accountNumberEncrypted: Buffer.from(
+            faker.finance.accountNumber(12),
+          ).toString("base64"),
+          accountNumberLast4: faker.string.numeric(4),
+          bankName: bank.name,
+          ifscCode: generateIfscCode(bank),
+          razorpayContactId: generateRazorpayContactId(),
+          razorpayFundAccountId: generateRazorpayFundAccountId(),
+          status: "VERIFIED",
+          verifiedAt: faker.date.recent({ days: 45 }),
+        },
+      });
+
+      console.log(
+        `    ✓ ${spec.name} (HYBRID, ${spec.billingMode}, ${seatsUsed} learners, ${hybridConsultantCount} consultants)`,
+      );
+    } catch (error) {
+      console.error(
+        `    ✗ Failed to create HYBRID org "${spec.name}":`,
+        error,
+      );
     }
   }
 

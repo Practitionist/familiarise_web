@@ -61,6 +61,17 @@ export type {
   ConsultantPayoutEligibility,
 } from "./payout-service";
 
+// Org Payout Service
+export {
+  getOrgPayoutEligibility,
+  createOrgPayoutBatch,
+  processOrgPayout,
+} from "./org-payout-service";
+export type {
+  OrgPayoutEligibility,
+  OrgPayoutBatchResult,
+} from "./org-payout-service";
+
 // Earnings Service
 export {
   createEarningsFromPayment,
@@ -71,8 +82,16 @@ export {
   holdEarnings,
   releaseHeldEarnings,
   getEarningsStats,
+  // Organization earnings (PROVIDER/HYBRID 3-way split)
+  getOrgEarningsSummary,
+  getOrgEarnings,
 } from "./earnings-service";
-export type { EarningsSummary, CreateEarningsParams } from "./earnings-service";
+export type {
+  EarningsSummary,
+  CreateEarningsParams,
+  OrgEarningsSplit,
+  OrgEarningsSummary,
+} from "./earnings-service";
 
 // Invoice Service
 export {

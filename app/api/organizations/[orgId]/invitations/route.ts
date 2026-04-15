@@ -21,7 +21,7 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import { ENABLE_PROVIDER_ORGS } from "@/lib/feature-flags";
 import { sendOrgInvitationEmail } from "@/lib/email";
 import { getAppUrl } from "@/lib/url";
-import { OrgMemberRole } from "@prisma/client";
+import { OrgMemberRole, Prisma } from "@prisma/client";
 
 const inviteSchema = z.object({
   email: z.string().email(),
@@ -99,17 +99,6 @@ export async function POST(
       );
     }
 
-    // Reject duplicate pending invites for the same (org, email) pair.
-    const existing = await prisma.invitation.findFirst({
-      where: { organizationId: orgId, email, status: "pending" },
-    });
-    if (existing) {
-      return NextResponse.json(
-        { error: "An invitation for this email is already pending." },
-        { status: 409 },
-      );
-    }
-
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + INVITATION_TTL_DAYS);
 
@@ -117,17 +106,53 @@ export async function POST(
     // We pass an explicit id so we control the token without an extra column.
     const token = makeInviteToken();
 
-    const invitation = await prisma.invitation.create({
-      data: {
-        id: token,
-        organizationId: orgId,
-        email,
-        role,
-        status: "pending",
-        expiresAt,
-        inviterId: access.session.user.id,
-      },
-    });
+    // Wrap duplicate-check + create in a Serializable transaction to close the
+    // TOCTOU race where two concurrent POST requests both see no pending invite
+    // and both successfully create one. Under Serializable SSI, PostgreSQL
+    // detects the overlapping read-write and aborts the loser with P2034
+    // (serialization failure), which we surface as 409.
+    let invitation;
+    try {
+      invitation = await prisma.$transaction(
+        async (tx) => {
+          const existing = await tx.invitation.findFirst({
+            where: { organizationId: orgId, email, status: "pending" },
+          });
+          if (existing) throw new Error("DUPLICATE_INVITATION");
+
+          return tx.invitation.create({
+            data: {
+              id: token,
+              organizationId: orgId,
+              email,
+              role,
+              status: "pending",
+              expiresAt,
+              inviterId: access.session.user.id,
+            },
+          });
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+    } catch (txError) {
+      if (
+        txError instanceof Error &&
+        txError.message === "DUPLICATE_INVITATION"
+      ) {
+        return NextResponse.json(
+          { error: "An invitation for this email is already pending." },
+          { status: 409 },
+        );
+      }
+      // P2034 = serialization failure — concurrent request won the race.
+      if ((txError as { code?: string })?.code === "P2034") {
+        return NextResponse.json(
+          { error: "An invitation for this email is already pending." },
+          { status: 409 },
+        );
+      }
+      throw txError;
+    }
 
     // Send invitation email (fire-and-forget — failure doesn't roll back the invitation).
     const org = await prisma.organization.findUnique({

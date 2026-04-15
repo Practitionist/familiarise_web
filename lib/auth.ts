@@ -329,6 +329,24 @@ export const auth = betterAuth({
             select: {
               kind: true,
               status: true,
+              // billingMode, contractEndDate, and the SEAT_PACK credit balance
+              // are included here so the OrgPayerSelector on the checkout page
+              // can show the learner what each "Bill to org" option actually
+              // costs them before they confirm. Without this context, a learner
+              // who is a member of two orgs — e.g., Org A on SEAT_PACK with
+              // ₹200 of credits left and Org B on PREPAID_UNLIMITED (free) —
+              // would see two identical "Bill to [Org Name]" buttons with no
+              // way to distinguish one from the other. They could unknowingly
+              // drain a credit pool that was meant for a different cohort by
+              // picking the wrong option. Surfacing the billing mode and
+              // remaining balance at session load time (rather than at checkout
+              // submit) keeps the UX clear and avoids a round-trip to the API
+              // each time the selector is rendered.
+              billingMode: true,
+              contractEndDate: true,
+              creditPool: {
+                select: { balance: true },
+              },
               organization: {
                 select: { id: true, name: true, slug: true, logo: true },
               },
@@ -340,13 +358,18 @@ export const auth = betterAuth({
       const organizationMemberships = memberships
         .filter((m) => m.organizationProfile.status === "ACTIVE")
         .map((m) => ({
-          organizationId: m.organizationProfile.organization.id,
-          organizationName: m.organizationProfile.organization.name,
-          organizationSlug: m.organizationProfile.organization.slug,
-          organizationLogo: m.organizationProfile.organization.logo,
+          organizationId:        m.organizationProfile.organization.id,
+          organizationName:      m.organizationProfile.organization.name,
+          organizationSlug:      m.organizationProfile.organization.slug,
+          organizationLogo:      m.organizationProfile.organization.logo,
           organizationProfileId: m.organizationProfileId,
-          kind: m.organizationProfile.kind,
-          role: m.role,
+          kind:                  m.organizationProfile.kind,
+          role:                  m.role,
+          // Billing context fields — consumed by OrgPayerSelector at checkout.
+          billingMode:     m.organizationProfile.billingMode   ?? null,
+          contractEndDate: m.organizationProfile.contractEndDate ?? null,
+          // creditBalance is only meaningful for SEAT_PACK orgs; null otherwise.
+          creditBalance:   m.organizationProfile.creditPool?.balance ?? null,
         }));
 
       return {

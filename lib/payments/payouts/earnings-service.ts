@@ -1,13 +1,31 @@
 /**
  * Earnings Service
- * Manages consultant earnings from payments
+ * Manages consultant and organization earnings from payments.
+ *
+ * For PROVIDER/HYBRID orgs, implements a 3-way revenue split:
+ *   Payment (100%) = Platform fee (configurable, default 10%)
+ *                   + Org retain (configurable, default 5%)
+ *                   + Consultant payout (configurable, default 85%)
+ *
+ * The split is controlled by OrganizationProfile rates and can be overridden
+ * per-consultant via OrganizationMemberProfile.customConsultantPayoutRate.
+ *
+ * When earningsRecipient = ORGANIZATION, the consultant's share is redirected
+ * to the org (internal/salaried consultant case).
  */
 
 import prisma from "@/lib/prisma";
-import { EarningRole, EarningStatus, Payment, Prisma } from "@prisma/client";
+import {
+  EarningRole,
+  EarningStatus,
+  EarningsRecipient,
+  Payment,
+  Prisma,
+} from "@prisma/client";
 import { PAYOUT_CONSTANTS, AppointmentType } from "./constants";
 import { calculateRevenueSplit } from "@/lib/collaborators/service";
 import { getIndianFYQuarter } from "@/lib/payments/tax/tds-service";
+import { ENABLE_PROVIDER_ORGS } from "@/lib/feature-flags";
 import type { RevenueSplit } from "@/types/collaborators";
 
 // ============================================
@@ -16,6 +34,25 @@ import type { RevenueSplit } from "@/types/collaborators";
 
 export interface EarningsSummary {
   consultantProfileId: string;
+  totalEarnings: number;
+  pendingEarnings: number;
+  readyEarnings: number;
+  paidEarnings: number;
+  heldEarnings: number;
+}
+
+/** Resolved 3-way split for a PROVIDER/HYBRID org consultant */
+export interface OrgEarningsSplit {
+  organizationProfileId: string;
+  platformFee: number; // in paise
+  orgShare: number; // in paise (org retains this)
+  consultantShare: number; // in paise (goes to consultant, or 0 if internal)
+  earningsRecipient: EarningsRecipient;
+}
+
+/** Summary of an org's earnings across all statuses */
+export interface OrgEarningsSummary {
+  organizationProfileId: string;
   totalEarnings: number;
   pendingEarnings: number;
   readyEarnings: number;
@@ -38,6 +75,108 @@ export interface CreateEarningsParams {
     } | null;
   };
   appointmentType: AppointmentType;
+}
+
+// ============================================
+// Org Split Resolution
+// ============================================
+
+type PrismaTransaction = Prisma.TransactionClient;
+
+/**
+ * Determine if a consultant's payment should use a 3-way org split.
+ *
+ * Returns an OrgEarningsSplit if the consultant is an active ORG_CONSULTANT
+ * in a PROVIDER/HYBRID org. Returns null for independent consultants or
+ * when the PROVIDER feature flag is off.
+ *
+ * For multi-org consultants, uses the first active PROVIDER/HYBRID membership.
+ * (Future: allow consultant to select which org gets credit per-booking.)
+ */
+async function resolveOrgSplit(
+  tx: PrismaTransaction,
+  consultantProfileId: string,
+  grossAmount: number,
+): Promise<OrgEarningsSplit | null> {
+  if (!ENABLE_PROVIDER_ORGS) return null;
+
+  // Deterministic ordering: oldest membership wins. This ensures earnings
+  // always route to the same org for multi-org consultants. The badge query
+  // in explore-experts.ts uses the same orderBy for consistency.
+  const orgMembership = await tx.organizationMemberProfile.findFirst({
+    where: {
+      consultantProfileId,
+      role: "ORG_CONSULTANT",
+      status: "ACTIVE",
+      organizationProfile: {
+        kind: { in: ["PROVIDER", "HYBRID"] },
+        status: "ACTIVE",
+      },
+    },
+    orderBy: { createdAt: "asc" },
+    include: {
+      organizationProfile: {
+        select: {
+          id: true,
+          platformCommissionRate: true,
+          orgRetainRate: true,
+          consultantPayoutRate: true,
+        },
+      },
+    },
+  });
+
+  if (!orgMembership) return null;
+
+  const org = orgMembership.organizationProfile;
+  const earningsRecipient = orgMembership.earningsRecipient;
+
+  // Determine effective consultant rate (per-member override or org default)
+  const effectiveConsultantRate =
+    orgMembership.customConsultantPayoutRate ?? org.consultantPayoutRate;
+
+  // Calculate splits in paise (integer arithmetic to avoid float rounding)
+  const platformFee = Math.round(grossAmount * org.platformCommissionRate);
+
+  if (earningsRecipient === "ORGANIZATION") {
+    // Internal/salaried consultant: org captures everything except platform fee
+    return {
+      organizationProfileId: org.id,
+      platformFee,
+      orgShare: grossAmount - platformFee,
+      consultantShare: 0,
+      earningsRecipient,
+    };
+  }
+
+  // Standard PROVIDER split: platform + org retain + consultant
+  const consultantShare = Math.round(grossAmount * effectiveConsultantRate);
+  const orgShare = grossAmount - platformFee - consultantShare;
+
+  // Guard: customConsultantPayoutRate can push platform + consultant > 100%,
+  // making orgShare negative. Clamp to 0 and log the misconfiguration.
+  if (orgShare < 0) {
+    console.error(
+      `[Earnings] Negative orgShare (${orgShare}) for org ${org.id}: ` +
+        `platform=${org.platformCommissionRate}, consultant=${effectiveConsultantRate}. ` +
+        `Clamping orgShare to 0. Fix the rate configuration.`,
+    );
+    return {
+      organizationProfileId: org.id,
+      platformFee,
+      orgShare: 0,
+      consultantShare: grossAmount - platformFee, // consultant gets the remainder
+      earningsRecipient,
+    };
+  }
+
+  return {
+    organizationProfileId: org.id,
+    platformFee,
+    orgShare,
+    consultantShare,
+    earningsRecipient,
+  };
 }
 
 // ============================================
@@ -65,10 +204,6 @@ export async function createEarningsFromPayment({
   // Calculate revenue split using original plan price (before platform-funded discounts/credits/tax)
   // Payment.originalAmount is stored in paise (smallest unit) — same as earnings
   const grossAmount = payment.originalAmount;
-  const platformFee = Math.round(
-    (grossAmount * PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE) / 100,
-  );
-  const totalConsultantPool = grossAmount - platformFee;
 
   // Calculate hold period
   const holdHours =
@@ -88,34 +223,58 @@ export async function createEarningsFromPayment({
     planId = payment.appointment.class.classPlanId;
   }
 
-  // Calculate collaborator splits if applicable
-  let splits: RevenueSplit[] = [];
-  if (planType && planId) {
-    splits = await calculateRevenueSplit(planType, planId, totalConsultantPool);
-  }
-
   // FIX #9: Wrap earnings creation + balance updates in a transaction for atomicity.
   // Also handles P2002 unique constraint violations gracefully for idempotency.
   try {
-    if (splits.length > 0) {
-      // Multi-party payment: create earnings for owner and each collaborator atomically
-      const ownerEarningsId = await prisma.$transaction(async (tx) => {
-        // Idempotency check inside transaction to prevent races
-        const existingEarnings = await tx.consultantEarnings.findFirst({
-          where: { paymentId: payment.id, consultantProfileId },
-        });
-        if (existingEarnings) {
-          console.warn(
-            `Earnings already exist for payment ${payment.id}. Skipping.`,
+    return await prisma.$transaction(async (tx) => {
+      // Idempotency check inside transaction to prevent races
+      const existingEarnings = await tx.consultantEarnings.findFirst({
+        where: { paymentId: payment.id, consultantProfileId },
+      });
+      if (existingEarnings) {
+        console.warn(
+          `Earnings already exist for payment ${payment.id}. Skipping.`,
+        );
+        return existingEarnings.id;
+      }
+
+      // Check if this consultant belongs to a PROVIDER/HYBRID org (3-way split)
+      const orgSplit = await resolveOrgSplit(
+        tx,
+        consultantProfileId,
+        grossAmount,
+      );
+
+      // Determine platform fee and consultant pool based on whether org split applies
+      const platformFee = orgSplit
+        ? orgSplit.platformFee
+        : Math.round(
+            (grossAmount * PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE) / 100,
           );
-          return existingEarnings.id;
-        }
+      const totalConsultantPool = orgSplit
+        ? orgSplit.consultantShare
+        : grossAmount - platformFee;
 
-        let ownerId: string | null = null;
+      // Calculate collaborator splits if applicable
+      let splits: RevenueSplit[] = [];
+      if (planType && planId) {
+        splits = await calculateRevenueSplit(
+          planType,
+          planId,
+          totalConsultantPool,
+        );
+      }
 
+      let ownerId: string | null = null;
+
+      if (splits.length > 0) {
+        // Multi-party payment: create earnings for owner and each collaborator
         for (const split of splits) {
           const isOwner = split.role === "OWNER";
-          const sharePercentage = (split.share / totalConsultantPool) * 100;
+          const sharePercentage =
+            totalConsultantPool > 0
+              ? (split.share / totalConsultantPool) * 100
+              : 0;
 
           const earnings = await tx.consultantEarnings.create({
             data: {
@@ -128,44 +287,29 @@ export async function createEarningsFromPayment({
               sharePercentage: Math.round(sharePercentage * 100) / 100,
               status: EarningStatus.PENDING,
               holdUntil,
-              currency: "INR", // Explicit — all earnings in INR for MVP
+              currency: "INR",
             },
           });
 
-          await tx.consultantProfile.update({
-            where: { id: split.consultantProfileId },
-            data: {
-              pendingRevenue: { increment: split.share },
-            },
-          });
+          if (split.share > 0) {
+            await tx.consultantProfile.update({
+              where: { id: split.consultantProfileId },
+              data: {
+                pendingRevenue: { increment: split.share },
+              },
+            });
+          }
 
           if (split.role === "OWNER") {
             ownerId = earnings.id;
           }
 
           console.log(
-            `💰 Earnings created for ${split.role} (${split.consultantProfileId}): ₹${split.share / 100} from payment ${payment.id}`,
+            `Earnings created for ${split.role} (${split.consultantProfileId}): ${split.share / 100} from payment ${payment.id}${orgSplit ? " [PROVIDER 3-way split]" : ""}`,
           );
         }
-
-        return ownerId;
-      });
-
-      return ownerEarningsId;
-    } else {
-      // Single-owner payment (no collaborators or not a webinar/class)
-      return await prisma.$transaction(async (tx) => {
-        // Idempotency check inside transaction to prevent races
-        const existingEarnings = await tx.consultantEarnings.findFirst({
-          where: { paymentId: payment.id, consultantProfileId },
-        });
-        if (existingEarnings) {
-          console.warn(
-            `Earnings already exist for payment ${payment.id}. Skipping.`,
-          );
-          return existingEarnings.id;
-        }
-
+      } else {
+        // Single-owner payment (no collaborators or not a webinar/class)
         const earnings = await tx.consultantEarnings.create({
           data: {
             consultantProfileId,
@@ -175,20 +319,51 @@ export async function createEarningsFromPayment({
             consultantShare: totalConsultantPool,
             status: EarningStatus.PENDING,
             holdUntil,
-            currency: "INR", // Explicit — all earnings in INR for MVP
+            currency: "INR",
           },
         });
 
-        await tx.consultantProfile.update({
-          where: { id: consultantProfileId },
+        if (totalConsultantPool > 0) {
+          await tx.consultantProfile.update({
+            where: { id: consultantProfileId },
+            data: {
+              pendingRevenue: { increment: totalConsultantPool },
+            },
+          });
+        }
+
+        ownerId = earnings.id;
+      }
+
+      // Create OrganizationEarnings row for the PROVIDER/HYBRID org (3-way split).
+      // Skip when orgShare is 0 (Platform-only mode: platformCommissionRate = 1.0)
+      // — creating 0-value rows adds noise without value.
+      if (orgSplit && orgSplit.orgShare > 0) {
+        await tx.organizationEarnings.create({
           data: {
-            pendingRevenue: { increment: totalConsultantPool },
+            organizationProfileId: orgSplit.organizationProfileId,
+            paymentId: payment.id,
+            grossAmount,
+            platformFee: orgSplit.platformFee,
+            orgShare: orgSplit.orgShare,
+            refundedAmount: 0,
+            status: EarningStatus.PENDING,
+            holdUntil,
+            currency: "INR",
           },
         });
 
-        return earnings.id;
-      });
-    }
+        console.log(
+          `Org earnings created for ${orgSplit.organizationProfileId}: org=${orgSplit.orgShare / 100} consultant=${orgSplit.consultantShare / 100} (recipient=${orgSplit.earningsRecipient}) from payment ${payment.id}`,
+        );
+      } else if (orgSplit && orgSplit.orgShare === 0) {
+        console.log(
+          `Platform-only mode for ${orgSplit.organizationProfileId}: skipping 0-value org earnings for payment ${payment.id}`,
+        );
+      }
+
+      return ownerId;
+    });
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -214,8 +389,8 @@ export async function createEarningsFromPayment({
 export async function releaseEarningsFromHold(): Promise<number> {
   const now = new Date();
 
-  // Find all earnings that are past their hold period
-  const result = await prisma.consultantEarnings.updateMany({
+  // Release consultant earnings
+  const consultantResult = await prisma.consultantEarnings.updateMany({
     where: {
       status: EarningStatus.PENDING,
       holdUntil: { lte: now },
@@ -225,8 +400,22 @@ export async function releaseEarningsFromHold(): Promise<number> {
     },
   });
 
-  console.log(`Released ${result.count} earnings from hold`);
-  return result.count;
+  // Release org earnings in parallel
+  const orgResult = await prisma.organizationEarnings.updateMany({
+    where: {
+      status: EarningStatus.PENDING,
+      holdUntil: { lte: now },
+    },
+    data: {
+      status: EarningStatus.READY,
+    },
+  });
+
+  const total = consultantResult.count + orgResult.count;
+  console.log(
+    `Released ${consultantResult.count} consultant + ${orgResult.count} org earnings from hold`,
+  );
+  return total;
 }
 
 /**
@@ -378,6 +567,37 @@ export async function refundEarnings(
   if (isPartialRefund) {
     console.log(
       `Partial refund: ${options!.refundAmount}/${options!.paymentAmount} = ${(refundRatio * 100).toFixed(1)}% reversal for payment ${paymentId}`,
+    );
+  }
+
+  // Also refund any org earnings for this payment (PROVIDER 3-way split)
+  const orgEarnings = await prisma.organizationEarnings.findMany({
+    where: { paymentId },
+  });
+
+  for (const orgEarning of orgEarnings) {
+    if (orgEarning.status === EarningStatus.REFUNDED) continue;
+
+    const alreadyRefunded = orgEarning.refundedAmount ?? 0;
+    const maxReversible = Math.max(0, orgEarning.orgShare - alreadyRefunded);
+    const rawOrgRefund = Math.round(orgEarning.orgShare * refundRatio);
+    const orgRefundAmount = Math.min(rawOrgRefund, maxReversible);
+
+    if (orgRefundAmount <= 0) continue;
+
+    const isOrgFullyRefunded =
+      alreadyRefunded + orgRefundAmount >= orgEarning.orgShare;
+
+    await prisma.organizationEarnings.update({
+      where: { id: orgEarning.id },
+      data: {
+        refundedAmount: { increment: orgRefundAmount },
+        ...(isOrgFullyRefunded && { status: EarningStatus.REFUNDED }),
+      },
+    });
+
+    console.log(
+      `Org earnings ${orgEarning.id} refunded: ${orgRefundAmount} paise (${isOrgFullyRefunded ? "full" : "partial"})`,
     );
   }
 
@@ -613,5 +833,112 @@ export async function getEarningsStats() {
     },
     totalPlatformRevenue:
       (paid._sum.platformFee || 0) + (ready._sum.platformFee || 0),
+  };
+}
+
+// ============================================
+// Organization Earnings Functions
+// ============================================
+
+/**
+ * Get org earnings summary (parallels getConsultantEarningsSummary)
+ */
+export async function getOrgEarningsSummary(
+  organizationProfileId: string,
+): Promise<OrgEarningsSummary> {
+  const [pending, ready, paid, held] = await Promise.all([
+    prisma.organizationEarnings.aggregate({
+      where: { organizationProfileId, status: EarningStatus.PENDING },
+      _sum: { orgShare: true },
+    }),
+    prisma.organizationEarnings.aggregate({
+      where: { organizationProfileId, status: EarningStatus.READY },
+      _sum: { orgShare: true },
+    }),
+    prisma.organizationEarnings.aggregate({
+      where: { organizationProfileId, status: EarningStatus.PAID },
+      _sum: { orgShare: true },
+    }),
+    prisma.organizationEarnings.aggregate({
+      where: { organizationProfileId, status: EarningStatus.HELD },
+      _sum: { orgShare: true },
+    }),
+  ]);
+
+  const pendingEarnings = pending._sum.orgShare || 0;
+  const readyEarnings = ready._sum.orgShare || 0;
+  const paidEarnings = paid._sum.orgShare || 0;
+  const heldEarnings = held._sum.orgShare || 0;
+
+  return {
+    organizationProfileId,
+    totalEarnings:
+      pendingEarnings + readyEarnings + paidEarnings + heldEarnings,
+    pendingEarnings,
+    readyEarnings,
+    paidEarnings,
+    heldEarnings,
+  };
+}
+
+/**
+ * Get paginated org earnings list
+ */
+export async function getOrgEarnings(
+  organizationProfileId: string,
+  options?: {
+    status?: EarningStatus;
+    limit?: number;
+    offset?: number;
+  },
+) {
+  const { status, limit = 20, offset = 0 } = options || {};
+
+  const [earnings, total] = await Promise.all([
+    prisma.organizationEarnings.findMany({
+      where: {
+        organizationProfileId,
+        ...(status ? { status } : {}),
+      },
+      include: {
+        payment: {
+          select: {
+            id: true,
+            amount: true,
+            originalAmount: true,
+            currency: true,
+            createdAt: true,
+            appointment: {
+              select: {
+                id: true,
+                appointmentType: true,
+              },
+            },
+          },
+        },
+        orgPayout: {
+          select: {
+            id: true,
+            status: true,
+            processedAt: true,
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+      skip: offset,
+    }),
+    prisma.organizationEarnings.count({
+      where: {
+        organizationProfileId,
+        ...(status ? { status } : {}),
+      },
+    }),
+  ]);
+
+  return {
+    earnings,
+    total,
+    hasMore: offset + limit < total,
   };
 }

@@ -1011,6 +1011,56 @@ async function revalidateInsideLock(
             user.consulteeProfile.id,
             consultationPlan.consultantProfile.user.id,
           );
+
+          // Consultee-side conflict check.
+          //
+          // validateNoConflicts (SlotValidationService) is scoped to the
+          // consultant's User ID — it ensures the consultant is not double-booked
+          // but says nothing about the learner's own calendar. A learner who is
+          // a member of two orgs (e.g., Org A with SEAT_PACK and Org B with
+          // PREPAID_UNLIMITED) faces zero cost friction on either side, making
+          // it easy to accidentally book overlapping sessions with two different
+          // consultants. Both would pass the consultant-side check because they
+          // involve different consultants, leaving the learner double-booked.
+          //
+          // The same scenario exists on the open marketplace — any consultee can
+          // book overlapping sessions with two different consultants. Enterprise
+          // multi-org membership increases the probability because the learner
+          // has multiple "free" billing paths with no payment step to slow them.
+          //
+          // We run this query inside the distributed lock and inside the
+          // Serializable transaction (TOCTOU-safe). We reuse
+          // buildOccupiedAppointmentFilter so the occupancy definition matches
+          // validateNoConflicts exactly — TENTATIVE and CONFIRMED both block.
+          const consulteeConflict = await tx.appointment.findFirst({
+            where: {
+              AND: [
+                { OR: buildOccupiedAppointmentFilter() },
+                {
+                  slotsOfAppointment: {
+                    some: {
+                      AND: [
+                        { startsAt: { lt: new Date(data.slotEndTimeInUTC!) } },
+                        { endsAt:   { gt: new Date(data.slotStartTimeInUTC!) } },
+                        // userId (User.id) is the right scope — slots are
+                        // connected to User records, not ConsulteeProfile records.
+                        // This catches conflicts regardless of which org the
+                        // conflicting booking came from or whether it was a
+                        // marketplace booking with no org context at all.
+                        { user: { some: { id: userId } } },
+                      ],
+                    },
+                  },
+                },
+              ],
+            },
+            select: { id: true },
+          });
+          if (consulteeConflict) {
+            throw new Error(
+              "You already have a session booked during this time.",
+            );
+          }
         }
         break;
       }
@@ -1030,6 +1080,36 @@ async function revalidateInsideLock(
             user.consulteeProfile.id,
             subscriptionPlan.consultantProfile.user.id,
           );
+
+          // Consultee-side conflict check for direct-slot subscriptions.
+          // Same reasoning as the CONSULTATION case above — a subscription
+          // booked with an explicit slot window must not overlap an existing
+          // consultee appointment, regardless of which org or marketplace
+          // context that prior appointment came from.
+          const subscriptionConsulteeConflict = await tx.appointment.findFirst({
+            where: {
+              AND: [
+                { OR: buildOccupiedAppointmentFilter() },
+                {
+                  slotsOfAppointment: {
+                    some: {
+                      AND: [
+                        { startsAt: { lt: new Date(data.slotEndTimeInUTC!) } },
+                        { endsAt:   { gt: new Date(data.slotStartTimeInUTC!) } },
+                        { user: { some: { id: userId } } },
+                      ],
+                    },
+                  },
+                },
+              ],
+            },
+            select: { id: true },
+          });
+          if (subscriptionConsulteeConflict) {
+            throw new Error(
+              "You already have a session booked during this time.",
+            );
+          }
         }
         break;
       }
@@ -1568,10 +1648,11 @@ export async function handleCheckout(
   // will read `orgBillingMode` to decide whether to skip the gateway.
   let organizationProfileId: string | null = null;
   let orgBillingMode: string | null = null;
+  let orgContractEndDate: Date | null = null;
   if (validatedData.organizationId) {
     const orgProfile = await prisma.organizationProfile.findUnique({
       where: { organizationId: validatedData.organizationId },
-      select: { id: true, billingMode: true, status: true, orgInvoiceCreditLimit: true },
+      select: { id: true, billingMode: true, status: true, orgInvoiceCreditLimit: true, contractEndDate: true },
     });
     if (!orgProfile || orgProfile.status !== "ACTIVE") {
       throw new Error("Organization not found or deactivated.");
@@ -1645,6 +1726,7 @@ export async function handleCheckout(
 
     organizationProfileId = orgProfile.id;
     orgBillingMode = orgProfile.billingMode;
+    orgContractEndDate = orgProfile.contractEndDate;
 
     // Block personal referral credits on org-funded bookings. Mixing a
     // personal-wallet incentive with employer-funded spend creates murky
@@ -1718,15 +1800,33 @@ export async function handleCheckout(
     // accumulated and invoiced at month-end. Marked as succeeded immediately.
     const isOrgInvoicedPayment = orgBillingMode === "INVOICED_MONTHLY" && !!organizationProfileId;
 
+    // Enterprise: PREPAID_UNLIMITED orgs have a flat-fee license — no per-session billing.
+    // Sessions are free for learners. Payment is synthetic with amount 0.
+    const isOrgPrepaidUnlimited = orgBillingMode === "PREPAID_UNLIMITED" && !!organizationProfileId;
+
     // FIX #520: Detect zero-amount payments (credits fully cover cost)
     // Both Stripe and Razorpay reject amount <= 0, so we skip the gateway
     // entirely and treat this like a "free" payment that succeeds immediately.
     const isZeroAmountPayment = amount === 0 && creditsApplied > 0;
 
     // STEP 4: Create payment intent (INSIDE LOCK)
+    // PREPAID_UNLIMITED: verify the license hasn't expired before proceeding.
+    if (isOrgPrepaidUnlimited) {
+      if (orgContractEndDate && new Date() > orgContractEndDate) {
+        return {
+          success: false,
+          error: "Your organization's prepaid license has expired. Please contact your admin to renew.",
+        };
+      }
+    }
+
     // Enterprise org billing modes skip the gateway entirely.
-    if (isOrgCreditPayment || isOrgInvoicedPayment) {
-      const prefix = isOrgCreditPayment ? "org_credit" : "org_invoiced";
+    if (isOrgCreditPayment || isOrgInvoicedPayment || isOrgPrepaidUnlimited) {
+      const prefix = isOrgCreditPayment
+        ? "org_credit"
+        : isOrgPrepaidUnlimited
+          ? "org_prepaid"
+          : "org_invoiced";
       const syntheticId = `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
       paymentResponse = { id: syntheticId, client_secret: null };
     } else if (isZeroAmountPayment) {
@@ -1768,7 +1868,7 @@ export async function handleCheckout(
           // FIX #520: Zero-amount payments (credits cover full cost) skip the
           // gateway, so slots should be confirmed immediately just like mock payments.
           // Enterprise: org credit and invoiced payments also skip the gateway.
-          const skipPayment = isMockPayment || isZeroAmountPayment || isOrgCreditPayment || isOrgInvoicedPayment;
+          const skipPayment = isMockPayment || isZeroAmountPayment || isOrgCreditPayment || isOrgInvoicedPayment || isOrgPrepaidUnlimited;
 
           // Create appointment based on type (with isTentative flag)
           switch (validatedData.appointmentType) {
@@ -1839,16 +1939,18 @@ export async function handleCheckout(
                 ? "ORG_CREDIT"
                 : isOrgInvoicedPayment
                   ? "ORG_INVOICED"
-                  : isZeroAmountPayment
-                    ? "CREDITS"
-                    : "CARD",
+                  : isOrgPrepaidUnlimited
+                    ? "ORG_PREPAID"
+                    : isZeroAmountPayment
+                      ? "CREDITS"
+                      : "CARD",
               paymentIntent: paymentResponse!.id,
               paymentGateway: validatedData.paymentGateway,
               // FIX #520: Zero-amount and mock payments succeed immediately (no webhook)
               paymentStatus: skipPayment
                 ? PaymentStatus.SUCCEEDED
                 : PaymentStatus.PENDING,
-              isMockPayment: isMockPayment || isZeroAmountPayment || isOrgCreditPayment || isOrgInvoicedPayment,
+              isMockPayment: isMockPayment || isZeroAmountPayment || isOrgCreditPayment || isOrgInvoicedPayment || isOrgPrepaidUnlimited,
               userId: userId,
               appointmentId: createdAppointment?.id || null,
               discountCodeId,
@@ -1976,7 +2078,7 @@ export async function handleCheckout(
       // Mock/zero-amount/org-billing payment post-processing: referral qualifying
       // action + waitlist. Real payments handle this via handlePaymentSuccess()
       // in the webhook, but these flows bypass webhooks entirely.
-      if (isMockPayment || isZeroAmountPayment || isOrgCreditPayment || isOrgInvoicedPayment) {
+      if (isMockPayment || isZeroAmountPayment || isOrgCreditPayment || isOrgInvoicedPayment || isOrgPrepaidUnlimited) {
         // Trigger referral reward if this is the user's first paid booking
         try {
           await processQualifyingAction(userId, "first_paid_booking");

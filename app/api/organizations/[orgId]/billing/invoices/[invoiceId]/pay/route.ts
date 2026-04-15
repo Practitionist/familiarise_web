@@ -32,15 +32,21 @@ export async function POST(
         { status: 404 },
       );
     }
-    if (invoice.status === "PAID") {
+    // Only SENT and OVERDUE invoices are payable — enforce the same state
+    // machine the dashboard UI already implies. DRAFT invoices must be
+    // finalized first; PAID/CANCELLED invoices cannot be re-paid.
+    if (invoice.status !== "SENT" && invoice.status !== "OVERDUE") {
+      const messages: Record<string, string> = {
+        DRAFT: "Invoice is still a draft. Finalize it before accepting payment.",
+        PAID: "Invoice has already been paid.",
+        CANCELLED: "Invoice has been cancelled.",
+      };
       return NextResponse.json(
-        { error: "Invoice has already been paid." },
-        { status: 400 },
-      );
-    }
-    if (invoice.status === "CANCELLED") {
-      return NextResponse.json(
-        { error: "Invoice has been cancelled." },
+        {
+          error:
+            messages[invoice.status] ??
+            `Invoice cannot be paid in its current state (${invoice.status}).`,
+        },
         { status: 400 },
       );
     }

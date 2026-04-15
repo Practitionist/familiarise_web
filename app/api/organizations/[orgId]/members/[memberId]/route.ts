@@ -15,24 +15,23 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { ENABLE_PROVIDER_ORGS } from "@/lib/feature-flags";
 import { acquireSeat, releaseSeat } from "@/lib/api/organizations/seat-helpers";
-import { OrgAuditAction, OrgMemberRole, OrgMemberStatus, Prisma } from "@prisma/client";
+import {
+  EarningsRecipient,
+  OrgAuditAction,
+  OrgMemberRole,
+  OrgMemberStatus,
+  Prisma,
+} from "@prisma/client";
 
 const patchMemberSchema = z.object({
   role: z.nativeEnum(OrgMemberRole).optional(),
   status: z.nativeEnum(OrgMemberStatus).optional(),
+  // PROVIDER-only: per-consultant payout controls
+  customConsultantPayoutRate: z.number().min(0).max(1).nullable().optional(),
+  earningsRecipient: z.nativeEnum(EarningsRecipient).optional(),
 });
 
 const PROVIDER_GATED_ROLES: OrgMemberRole[] = ["ORG_CONSULTANT", "ORG_SUPPORT"];
-
-async function countActiveOwners(organizationProfileId: string): Promise<number> {
-  return prisma.organizationMemberProfile.count({
-    where: {
-      organizationProfileId,
-      role: "ORG_OWNER",
-      status: "ACTIVE",
-    },
-  });
-}
 
 export async function PATCH(
   req: NextRequest,
@@ -52,7 +51,21 @@ export async function PATCH(
       );
     }
 
-    const { role, status } = parsed.data;
+    const { role, status, customConsultantPayoutRate, earningsRecipient } =
+      parsed.data;
+
+    // Gate per-consultant payout controls behind ENABLE_PROVIDER_ORGS.
+    const payoutControlsTouched =
+      customConsultantPayoutRate !== undefined || earningsRecipient !== undefined;
+    if (payoutControlsTouched && !ENABLE_PROVIDER_ORGS) {
+      return NextResponse.json(
+        {
+          error: "Per-consultant payout controls require PROVIDER orgs.",
+          flag: "ENABLE_PROVIDER_ORGS",
+        },
+        { status: 501 },
+      );
+    }
 
     if (!ENABLE_PROVIDER_ORGS && role && PROVIDER_GATED_ROLES.includes(role)) {
       return NextResponse.json(
@@ -71,20 +84,59 @@ export async function PATCH(
       return NextResponse.json({ error: "Member not found" }, { status: 404 });
     }
 
-    // Last-owner guard — applies to both role demotion and status removal.
-    if (target.role === "ORG_OWNER" && target.status === "ACTIVE") {
-      const demoting = role !== undefined && role !== "ORG_OWNER";
-      const deactivating = status !== undefined && status !== "ACTIVE";
-      if (demoting || deactivating) {
-        const owners = await countActiveOwners(access.org.id);
-        if (owners <= 1) {
+    // Domain validation for per-consultant payout controls:
+    //   - target must become (or already be) an ORG_CONSULTANT
+    //   - the org must be PROVIDER or HYBRID kind
+    //   - the effective rate combination must not exceed 1.0
+    if (payoutControlsTouched) {
+      const effectiveRole = role ?? target.role;
+      if (effectiveRole !== "ORG_CONSULTANT") {
+        return NextResponse.json(
+          {
+            error:
+              "Payout controls (customConsultantPayoutRate, earningsRecipient) can only be set on ORG_CONSULTANT members.",
+          },
+          { status: 400 },
+        );
+      }
+      if (access.org.kind !== "PROVIDER" && access.org.kind !== "HYBRID") {
+        return NextResponse.json(
+          {
+            error: `Payout controls are only available on PROVIDER/HYBRID orgs (this org is ${access.org.kind}).`,
+          },
+          { status: 400 },
+        );
+      }
+      // Validate effective rate combination if a custom rate is being set.
+      // customConsultantPayoutRate = null is valid (clears the override).
+      if (
+        customConsultantPayoutRate !== undefined &&
+        customConsultantPayoutRate !== null
+      ) {
+        const platform = access.org.platformCommissionRate;
+        const orgRetain = access.org.orgRetainRate;
+        const effectiveSum = platform + orgRetain + customConsultantPayoutRate;
+        // Hard-fail when override + fixed rates exceed 100% (would produce
+        // negative orgShare at earnings time). Under 100% is valid — the org
+        // just captures more than its default retain rate.
+        if (effectiveSum > 1.0001) {
           return NextResponse.json(
-            { error: "Cannot demote or remove the last organization owner." },
+            {
+              error: `customConsultantPayoutRate (${customConsultantPayoutRate}) + platform (${platform}) + orgRetain (${orgRetain}) = ${effectiveSum.toFixed(4)} exceeds 1.0. Reduce the override or adjust the org's fixed rates.`,
+            },
             { status: 400 },
           );
         }
       }
     }
+
+    // Compute whether this request would demote/remove an active owner.
+    // The actual last-owner guard runs INSIDE the transaction (post-update)
+    // to prevent the TOCTOU race where two concurrent requests both pass a
+    // pre-TX check when the org has exactly 2 owners.
+    const wasOwner = target.role === "ORG_OWNER" && target.status === "ACTIVE";
+    const demoting = wasOwner && role !== undefined && role !== "ORG_OWNER";
+    const deactivating = wasOwner && status !== undefined && status !== "ACTIVE";
 
     // Compute seat transition for seatsUsed bookkeeping.
     const oldRole = target.role;
@@ -146,6 +198,10 @@ export async function PATCH(
         data: {
           ...(role !== undefined && { role }),
           ...(status !== undefined && { status }),
+          ...(customConsultantPayoutRate !== undefined && {
+            customConsultantPayoutRate,
+          }),
+          ...(earningsRecipient !== undefined && { earningsRecipient }),
           consulteeProfileId,
           consultantProfileId,
           seatAssignedAt: isSeatOccupying && !wasSeatOccupying
@@ -194,12 +250,34 @@ export async function PATCH(
         });
       }
 
+      // Post-update last-owner guard — runs inside TX so it sees our own
+      // uncommitted changes + any previously committed changes from concurrent
+      // requests. Under READ COMMITTED: if two requests both demote/remove
+      // owners concurrently, whichever commits second will count 0 active
+      // owners here and roll back, preserving at least one owner.
+      if (demoting || deactivating) {
+        const remaining = await tx.organizationMemberProfile.count({
+          where: {
+            organizationProfileId: access.org.id,
+            role: "ORG_OWNER",
+            status: "ACTIVE",
+          },
+        });
+        if (remaining === 0) throw new Error("LAST_OWNER");
+      }
+
       // seatsUsed already updated atomically by acquireSeat/releaseSeat above.
       return [profileUpdate];
     });
 
     return NextResponse.json({ memberProfile: updated });
   } catch (error) {
+    if (error instanceof Error && error.message === "LAST_OWNER") {
+      return NextResponse.json(
+        { error: "Cannot demote or remove the last organization owner." },
+        { status: 400 },
+      );
+    }
     if (error instanceof Error && error.message === "SEAT_LIMIT_REACHED") {
       return NextResponse.json(
         { error: "Organization has reached its seat limit." },
@@ -233,16 +311,8 @@ export async function DELETE(
       return NextResponse.json({ error: "Member not found" }, { status: 404 });
     }
 
-    if (target.role === "ORG_OWNER" && target.status === "ACTIVE") {
-      const owners = await countActiveOwners(access.org.id);
-      if (owners <= 1) {
-        return NextResponse.json(
-          { error: "Cannot remove the last organization owner." },
-          { status: 400 },
-        );
-      }
-    }
-
+    const wasOwnerActive =
+      target.role === "ORG_OWNER" && target.status === "ACTIVE";
     const wasSeatOccupying =
       target.role === "ORG_LEARNER" && target.status === "ACTIVE";
 
@@ -251,6 +321,19 @@ export async function DELETE(
         where: { id: memberId },
         data: { status: "REMOVED" },
       });
+
+      // Post-update last-owner guard — see PATCH handler for the race rationale.
+      if (wasOwnerActive) {
+        const remaining = await tx.organizationMemberProfile.count({
+          where: {
+            organizationProfileId: access.org.id,
+            role: "ORG_OWNER",
+            status: "ACTIVE",
+          },
+        });
+        if (remaining === 0) throw new Error("LAST_OWNER");
+      }
+
       if (wasSeatOccupying) {
         await releaseSeat(tx, access.org.id);
       }
@@ -268,6 +351,12 @@ export async function DELETE(
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (error instanceof Error && error.message === "LAST_OWNER") {
+      return NextResponse.json(
+        { error: "Cannot remove the last organization owner." },
+        { status: 400 },
+      );
+    }
     console.error(
       "[API /organizations/[orgId]/members/[memberId] DELETE] error:",
       error,

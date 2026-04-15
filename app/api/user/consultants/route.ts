@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
-import { consultantListInclude } from "@/lib/data/explore-experts";
+import { consultantListInclude, orgMembershipInclude } from "@/lib/data/explore-experts";
 import { apiError } from "@/lib/errors";
 
 export async function GET(request: NextRequest) {
@@ -171,15 +171,34 @@ export async function GET(request: NextRequest) {
       orderBy,
       skip,
       take: limit,
-      include: consultantListInclude,
+      include: { ...consultantListInclude, ...orgMembershipInclude },
     });
 
     // Get total count for pagination
     const total = await prisma.consultantProfile.count({ where });
 
+    // Map organizationMemberProfiles -> organizationBadge for frontend
+    const mappedConsultants = consultants.map((c: Record<string, unknown>) => {
+      const orgProfiles = c.organizationMemberProfiles as
+        | Array<{
+            organizationProfile: {
+              organization: { name: string; slug: string; logo: string | null };
+            };
+          }>
+        | undefined;
+      const firstOrg = orgProfiles?.[0]?.organizationProfile?.organization;
+      return {
+        ...c,
+        organizationBadge: firstOrg
+          ? { name: firstOrg.name, slug: firstOrg.slug, logo: firstOrg.logo }
+          : null,
+        organizationMemberProfiles: undefined,
+      };
+    });
+
     return NextResponse.json(
       {
-        data: consultants,
+        data: mappedConsultants,
         meta: {
           total,
           page,

@@ -318,6 +318,7 @@ export default function WebinarCheckoutPage({
       toast,
       appliedDiscount,
       useReferralCredits,
+      selectedOrganizationId,
       validatedSearchParams,
       currency,
     ],

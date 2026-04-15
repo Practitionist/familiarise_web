@@ -93,41 +93,56 @@ export async function PATCH(
       );
     }
 
-    // Cross-org uniqueness check: no two orgs may claim the same email domain.
-    // Without this, the SSO domain router would silently pick one org over another.
-    if (parsed.data.allowedEmailDomains && parsed.data.allowedEmailDomains.length > 0) {
-      const conflicts = await prisma.organizationSSOSettings.findMany({
-        where: {
-          organizationProfileId: { not: access.org.id },
-          allowedEmailDomains: { hasSome: parsed.data.allowedEmailDomains },
-        },
-        select: { allowedEmailDomains: true },
+    // Domain-claim sync + settings upsert run in a single transaction so the
+    // cross-org uniqueness check is atomic. The OrgDomainClaim table has a
+    // @unique on `domain`, so concurrent PATCH requests from two orgs claiming
+    // the same domain will race at createMany: the loser gets P2002 → 409.
+    // This eliminates the TOCTOU gap in the old findMany → check → upsert flow.
+    let settings;
+    try {
+      settings = await prisma.$transaction(async (tx) => {
+        if (parsed.data.allowedEmailDomains !== undefined) {
+          // Delete this org's existing claims, then re-insert the new set.
+          // If another org already holds a domain in the new set, createMany
+          // throws P2002 (unique constraint on OrgDomainClaim.domain) and the
+          // whole transaction rolls back.
+          await tx.orgDomainClaim.deleteMany({
+            where: { organizationProfileId: access.org.id },
+          });
+          if (parsed.data.allowedEmailDomains.length > 0) {
+            await tx.orgDomainClaim.createMany({
+              data: parsed.data.allowedEmailDomains.map((domain) => ({
+                organizationProfileId: access.org.id,
+                domain,
+              })),
+            });
+          }
+        }
+
+        return tx.organizationSSOSettings.upsert({
+          where: { organizationProfileId: access.org.id },
+          create: {
+            organizationProfileId: access.org.id,
+            allowedEmailDomains: parsed.data.allowedEmailDomains ?? [],
+            enforceSSO: parsed.data.enforceSSO ?? false,
+            defaultRoleForAutoJoin:
+              parsed.data.defaultRoleForAutoJoin ?? "ORG_LEARNER",
+          },
+          update: parsed.data,
+        });
       });
-      if (conflicts.length > 0) {
-        const claimed = conflicts.flatMap((c) => c.allowedEmailDomains);
-        const overlapping = parsed.data.allowedEmailDomains.filter((d) =>
-          claimed.includes(d),
-        );
+    } catch (txError) {
+      if ((txError as { code?: string })?.code === "P2002") {
         return NextResponse.json(
           {
-            error: `Domain(s) already claimed by another organization: ${overlapping.join(", ")}`,
+            error:
+              "One or more of the specified domains are already claimed by another organization.",
           },
           { status: 409 },
         );
       }
+      throw txError;
     }
-
-    const settings = await prisma.organizationSSOSettings.upsert({
-      where: { organizationProfileId: access.org.id },
-      create: {
-        organizationProfileId: access.org.id,
-        allowedEmailDomains: parsed.data.allowedEmailDomains ?? [],
-        enforceSSO: parsed.data.enforceSSO ?? false,
-        defaultRoleForAutoJoin:
-          parsed.data.defaultRoleForAutoJoin ?? "ORG_LEARNER",
-      },
-      update: parsed.data,
-    });
 
     return NextResponse.json({ settings });
   } catch (error) {

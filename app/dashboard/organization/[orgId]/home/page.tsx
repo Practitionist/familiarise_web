@@ -15,6 +15,8 @@ import {
   Rocket,
   X,
   Clock,
+  Wallet,
+  UserCog,
 } from "lucide-react";
 
 import {
@@ -59,6 +61,20 @@ interface OrgBilling {
   creditPool: { balance: number; totalPurchased: number } | null;
 }
 
+interface OrgProfileInfo {
+  kind: "BUYER" | "PROVIDER" | "HYBRID";
+  status: string;
+}
+
+interface ProviderStats {
+  consultantCount: number;
+  earnings: {
+    pending: number;
+    ready: number;
+    paid: number;
+  };
+}
+
 interface ActivityItem {
   type: "member_joined" | "payment" | "invoice_generated" | "invitation_sent";
   description: string;
@@ -87,6 +103,42 @@ async function fetchActivity(
   const res = await fetch(`/api/organizations/${orgId}/activity?limit=5`);
   if (!res.ok) return { activity: [] };
   return res.json();
+}
+
+async function fetchOrgProfile(orgId: string): Promise<OrgProfileInfo> {
+  const res = await fetch(`/api/organizations/${orgId}`);
+  if (!res.ok) return { kind: "BUYER", status: "ACTIVE" };
+  const data = await res.json();
+  return { kind: data.profile.kind, status: data.profile.status };
+}
+
+async function fetchProviderStats(
+  orgId: string,
+): Promise<ProviderStats | null> {
+  try {
+    const [consultantsRes, payoutsRes] = await Promise.all([
+      fetch(`/api/organizations/${orgId}/consultants`),
+      fetch(`/api/organizations/${orgId}/payouts`),
+    ]);
+    const consultants = consultantsRes.ok
+      ? await consultantsRes.json()
+      : { consultants: [] };
+    const payouts = payoutsRes.ok
+      ? await payoutsRes.json()
+      : { payouts: [] };
+
+    // Sum payout amounts by status for a rough earnings view
+    const paid = (payouts.payouts ?? [])
+      .filter((p: { status: string }) => p.status === "COMPLETED")
+      .reduce((s: number, p: { netPayout: number }) => s + p.netPayout, 0);
+
+    return {
+      consultantCount: consultants.consultants?.length ?? 0,
+      earnings: { pending: 0, ready: 0, paid },
+    };
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -133,6 +185,19 @@ export default function OrgHomePage({
   const activity = useQuery({
     queryKey: ["org-activity", orgId],
     queryFn: () => fetchActivity(orgId),
+  });
+  const orgProfile = useQuery({
+    queryKey: ["org-profile-info", orgId],
+    queryFn: () => fetchOrgProfile(orgId),
+  });
+  const isProviderOrHybrid =
+    orgProfile.data?.kind === "PROVIDER" || orgProfile.data?.kind === "HYBRID";
+  const isBuyerOrHybrid =
+    orgProfile.data?.kind === "BUYER" || orgProfile.data?.kind === "HYBRID";
+  const providerStats = useQuery({
+    queryKey: ["org-provider-stats", orgId],
+    queryFn: () => fetchProviderStats(orgId),
+    enabled: isProviderOrHybrid,
   });
 
   const isLoading = analytics.isLoading || billing.isLoading;
@@ -312,6 +377,30 @@ export default function OrgHomePage({
                     icon={CreditCard}
                   />
                 )}
+            </DashboardGrid>
+          </div>
+        )}
+
+        {/* PROVIDER/HYBRID org stats */}
+        {!isLoading && isProviderOrHybrid && providerStats.data && (
+          <div className="mt-4">
+            <DashboardGrid columns={3}>
+              <StatCard
+                title="Active consultants"
+                value={providerStats.data.consultantCount}
+                icon={UserCog}
+                variant="info"
+              />
+              <StatCard
+                title="Total payouts"
+                value={formatCurrencyAmount(
+                  providerStats.data.earnings.paid,
+                  "INR",
+                )}
+                subtitle="Completed payouts"
+                icon={Wallet}
+                variant="success"
+              />
             </DashboardGrid>
           </div>
         )}

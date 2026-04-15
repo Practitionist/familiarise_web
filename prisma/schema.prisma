@@ -463,8 +463,10 @@ model OrganizationProfile {
   // Discriminator: BUYER (schools/corporates), PROVIDER (consultant agencies, gated), HYBRID
   kind        OrganizationKind        @default(BUYER)
   status      OrganizationStatus      @default(PENDING_VERIFICATION)
-  // BUYER billing model — selected at org creation, immutable after first payment
-  billingMode OrganizationBillingMode @default(TAG_ONLY)
+  // BUYER/HYBRID billing model — selected at org creation, immutable after first payment.
+  // NULL for PROVIDER orgs (they earn money, they don't pay — billing mode is meaningless).
+  // Required and validated at the API layer for BUYER and HYBRID kinds.
+  billingMode OrganizationBillingMode?
 
   // Org metadata
   billingEmail String
@@ -495,11 +497,20 @@ model OrganizationProfile {
   // INVOICED_MONTHLY: payment terms (NET-7, NET-15, NET-30, etc.)
   paymentTermsDays      Int  @default(30)
 
+  // PREPAID_UNLIMITED: enterprise license contract period
+  contractStartDate DateTime?
+  contractEndDate   DateTime?
+
   // Policies
   defaultCancellationPolicy String? @db.Text
   defaultRefundPolicy       String? @db.Text
   // FEATURE-FLAGGED: only consulted for PROVIDER orgs (auto-approve consultants joining the agency)
   autoApproveConsultants    Boolean @default(false)
+
+  // FEATURE-FLAGGED: payout cadence for PROVIDER/HYBRID orgs
+  payoutFrequency PayoutFrequency @default(MONTHLY)
+  // When true, PROVIDER/HYBRID org consultants can only use org-created plans (no personal plans)
+  enforceOrganizationPlans Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -507,6 +518,7 @@ model OrganizationProfile {
   // Sibling relations
   members         OrganizationMemberProfile[]
   ssoSettings     OrganizationSSOSettings?
+  domainClaims    OrgDomainClaim[]
   invoices        OrganizationInvoice[]
   plans           OrganizationPlan[]
   creditPool      OrgCreditPool?
@@ -547,6 +559,7 @@ enum OrganizationBillingMode {
   TAG_ONLY // Learner pays at checkout; payment is tagged with org for reporting only
   SEAT_PACK // Org pre-purchases credits; learner checkouts decrement the credit pool
   INVOICED_MONTHLY // Learners book freely; org gets a NET-X invoice at month-end
+  PREPAID_UNLIMITED // Flat-fee enterprise license; no per-session billing; sessions free for learners
 }
 
 enum OrgSizeBucket {
@@ -582,6 +595,17 @@ model OrganizationMemberProfile {
   // FEATURE-FLAGGED: per-consultant rate override for PROVIDER orgs.
   // null = use org's consultantPayoutRate.
   customConsultantPayoutRate Float?
+
+  // FEATURE-FLAGGED: controls who receives the consultant's share of earnings.
+  // CONSULTANT = consultant receives their share directly (default)
+  // ORGANIZATION = internal/salaried consultant; org captures consultant's share too
+  earningsRecipient EarningsRecipient @default(CONSULTANT)
+
+  // Consultant application metadata (PROVIDER orgs)
+  applicationNote String? @db.Text // free-text note from consultant application
+  appliedAt       DateTime?
+  approvedAt      DateTime?
+  approvedBy      String? // OrganizationMemberProfile.id of approver
 
   // BUYER seat metadata
   seatAssignedAt DateTime? // when an ORG_LEARNER was assigned a seat (for invoiced/seat-pack reporting)
@@ -634,6 +658,22 @@ model OrganizationSSOSettings {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// Junction table that enforces cross-org email domain uniqueness for SSO routing.
+// The @unique on `domain` is the DB-level guard against concurrent PATCH /sso
+// requests from two different orgs both claiming the same domain (TOCTOU fix).
+// Rows are kept in sync with OrganizationSSOSettings.allowedEmailDomains inside
+// a single transaction; the SSO router can read either source.
+
+model OrgDomainClaim {
+  id                    String              @id @default(uuid())
+  domain                String              @unique
+  organizationProfileId String
+  organizationProfile   OrganizationProfile @relation(fields: [organizationProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  claimedAt             DateTime            @default(now())
+
+  @@map("org_domain_claims")
 }
 
 // FEATURE-FLAGGED: PROVIDER org payout account (where the org's slice goes).
@@ -699,6 +739,9 @@ model OrganizationPayout {
   failureReason   String?
   processedAt     DateTime?
 
+  // Linked earnings included in this payout batch
+  earnings OrganizationEarnings[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -716,7 +759,7 @@ model OrganizationEarnings {
   organizationProfileId String
   organizationProfile   OrganizationProfile @relation(fields: [organizationProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
 
-  paymentId String  @unique
+  paymentId String
   payment   Payment @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
 
   grossAmount    Int // in paise — same as Payment.originalAmount
@@ -728,11 +771,17 @@ model OrganizationEarnings {
   holdUntil DateTime
   currency  String        @default("INR")
 
+  // Payout batch this earning was included in (null until batched)
+  orgPayoutId String?
+  orgPayout   OrganizationPayout? @relation(fields: [orgPayoutId], references: [id])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([paymentId, organizationProfileId]) // one org earning per payment per org
   @@index([organizationProfileId])
   @@index([status])
+  @@index([orgPayoutId])
 }
 
 // Org-level invoices. Used by:
@@ -767,6 +816,11 @@ model OrganizationInvoice {
   billingCycleStart DateTime?
   billingCycleEnd   DateTime?
   autoGenerated     Boolean   @default(false) // true = generated by monthly cron, false = manual
+
+  // Gateway transaction reference — stored when the invoice is paid via Razorpay/Stripe.
+  // Distinct from `paymentId` (FK to Payment): invoice settlements currently don't create
+  // a Payment row, so this string field is the primary reconciliation handle.
+  providerPaymentId String?
 
   // Status timestamps
   dueDate DateTime?
@@ -847,14 +901,22 @@ model OrgCreditPurchase {
 
   creditsPurchased Int // amount added to OrgCreditPool.balance
   amountPaid       Int // in paise (gateway charge)
-  currency         String   @default("INR")
-  paymentId        String?  @unique
-  payment          Payment? @relation("OrgCreditPurchasePayment", fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+  currency         String                   @default("INR")
+  status           OrgCreditPurchaseStatus  @default(PENDING)
 
-  expiresAt   DateTime? // optional credit expiry (unused for MVP)
+  // Gateway references — no Payment row is created for credit purchases.
+  // @unique on providerOrderId prevents two OrgCreditPurchase rows with the
+  // same Razorpay order ID, which would allow duplicate credit grants if the
+  // webhook fired twice against different rows with the same order ID.
+  providerOrderId   String? @unique // Razorpay order ID (set at creation time)
+  providerPaymentId String? // Razorpay payment ID (set by webhook on success)
+
+  processedAt DateTime? // When the webhook confirmed payment and credited the pool
+  cancelledAt DateTime? // When the cleanup job marked this row orphaned/abandoned
   purchasedAt DateTime  @default(now())
 
   @@index([organizationProfileId])
+  @@index([status])
 }
 
 // Immutable ledger of every credit grant/debit. One row per state change.
@@ -899,11 +961,37 @@ model OrgAuditLog {
   @@index([organizationProfileId, createdAt])
 }
 
+enum OrgCreditPurchaseStatus {
+  PENDING    // Order created, payment not yet received
+  PROCESSED  // Webhook confirmed payment; pool has been credited
+  CANCELLED  // Abandoned/orphaned — marked by the cleanup job
+}
+
 enum OrgAuditAction {
   MEMBER_ADDED
   MEMBER_REMOVED
   ROLE_CHANGE
   STATUS_CHANGE
+  CONSULTANT_APPLIED
+  CONSULTANT_APPROVED
+  CONSULTANT_REJECTED
+  PAYOUT_INITIATED
+  PAYOUT_PROCESSED
+  SETTINGS_CHANGED
+  INVOICE_GENERATED  // Manual or auto-generated invoice
+  CREDITS_PURCHASED  // SEAT_PACK credit purchase initiated
+  INVOICE_PAID       // Invoice payment confirmed via webhook
+}
+
+enum PayoutFrequency {
+  WEEKLY
+  BI_WEEKLY
+  MONTHLY
+}
+
+enum EarningsRecipient {
+  CONSULTANT   // Consultant receives their share directly (default)
+  ORGANIZATION // Internal/salaried consultant: org captures consultant's share too
 }
 
 //////////////////////////////////////////////////// USER PROFILES and SLOTTING MECHANISM ////////////////////////////////////////////////////
@@ -2080,9 +2168,8 @@ model Payment {
   billableToOrgInvoiceId String?
 
   // Back-relations for org settlement flows
-  organizationEarnings       OrganizationEarnings? // FEATURE-FLAGGED: PROVIDER 3-way split
+  organizationEarnings       OrganizationEarnings[] // FEATURE-FLAGGED: PROVIDER 3-way split (one per org)
   organizationInvoiceSettled OrganizationInvoice?  @relation("OrgInvoicePayment") // back-relation for OrganizationInvoice.payment
-  orgCreditPurchase          OrgCreditPurchase?    @relation("OrgCreditPurchasePayment") // back-relation for OrgCreditPurchase.payment
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
