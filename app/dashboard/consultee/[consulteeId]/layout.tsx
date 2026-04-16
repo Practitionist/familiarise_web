@@ -208,11 +208,27 @@ function ConsulteeNav({
               <Skeleton className="h-8 w-8 rounded-full" />
             ) : (
               <div className="flex items-center gap-2">
-                {userName && (
-                  <span className="hidden lg:block text-sm text-zinc-500 whitespace-nowrap">
-                    {getGreeting()}, {userName.split(" ")[0]}
-                  </span>
-                )}
+                {/*
+                  "Good evening, <firstName>" greeting removed from the
+                  consultee navbar for the same reason as the Familiarise
+                  wordmark above: the enterprise OrganizationSwitcher
+                  ("🏢 TestCorp TAG ⌄") now occupies the slot this greeting
+                  used to share. With 8 nav items + greeting + switcher +
+                  bell + avatar, the row overflowed on 1280-1366px laptops
+                  and produced a horizontal scrollbar. The greeting is
+                  purely decorative — the user's name is still reachable via
+                  the UserDropdown avatar on the far right. Keep this block
+                  so the greeting can be restored once the navbar is
+                  redesigned to have more horizontal room (e.g., collapse
+                  nav to hamburger at xl, two-row header, or shortened nav
+                  labels).
+
+                  {userName && (
+                    <span className="hidden lg:block text-sm text-zinc-500 whitespace-nowrap">
+                      {getGreeting()}, {userName.split(" ")[0]}
+                    </span>
+                  )}
+                */}
                 <OrganizationSwitcher />
                 <NotificationInbox />
                 <UserDropdown
