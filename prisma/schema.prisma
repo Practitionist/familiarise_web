@@ -2209,6 +2209,7 @@ model Refund {
   reason               String? // Reason for refund
   status               RefundStatus
   refundId             String         @unique // Gateway-specific refund ID (Stripe/Razorpay)
+  clientRefundId       String?        @unique // For idempotency and two-phase commit reconciliation
   paymentGateway       PaymentGateway
   metadata             Json? // Additional gateway-specific metadata
   exchangeRateAtRefund Float? // INR→displayCurrency rate snapshot at refund time
@@ -2217,12 +2218,13 @@ model Refund {
   payment   Payment @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   paymentId String
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@index([paymentId])
   @@index([status])
   @@index([refundId])
+  @@index([clientRefundId])
   @@index([paymentId, status])
 }
 
