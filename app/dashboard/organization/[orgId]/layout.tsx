@@ -235,7 +235,7 @@ export default function OrgLayout({
     ? `/dashboard/consultant/${userExt.consultantProfileId}/home`
     : userExt?.consulteeProfileId
       ? `/dashboard/consultee/${userExt.consulteeProfileId}/home`
-      : "/dashboard";
+      : null;
 
   // Other orgs the user belongs to (excluding the current one)
   const otherOrgs = (userExt?.organizationMemberships ?? []).filter(
@@ -251,12 +251,14 @@ export default function OrgLayout({
   const topDropdownActions: NonNullable<
     React.ComponentProps<typeof CollapsibleSidebar>["topDropdownActions"]
   > = [
-    {
-      type: "item",
-      label: "Personal Dashboard",
-      href: personalHref,
-      icon: LayoutDashboard,
-    },
+    ...(personalHref
+      ? [{
+          type: "item" as const,
+          label: "Personal Dashboard",
+          href: personalHref,
+          icon: LayoutDashboard,
+        }]
+      : []),
     ...(otherOrgs.length > 0
       ? [
           { type: "separator" as const },
@@ -357,6 +359,7 @@ export default function OrgLayout({
             kind={org.profile.kind}
             billingMode={org.profile.billingMode}
             breadcrumbs={breadcrumbs}
+            personalHref={personalHref}
           />
         )}
 

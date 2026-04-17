@@ -1,7 +1,8 @@
 "use client";
 
 import Image from "next/image";
-import { Building2, ChevronRight } from "lucide-react";
+import Link from "next/link";
+import { ArrowLeft, Building2, ChevronRight } from "lucide-react";
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
 
 interface OrgContextBarProps {
@@ -20,6 +21,12 @@ interface OrgContextBarProps {
    * Example: ["Settings", "SSO", "Providers"]
    */
   breadcrumbs?: string[];
+  /**
+   * Link back to the user's personal dashboard. When provided, renders a
+   * prominent "← Personal" affordance at the far left of the bar. Hidden
+   * when null/undefined.
+   */
+  personalHref?: string | null;
 }
 
 const KIND_LABELS: Record<string, { label: string; className: string }> = {
@@ -62,12 +69,26 @@ export function OrgContextBar({
   kind,
   billingMode,
   breadcrumbs = [],
+  personalHref,
 }: OrgContextBarProps) {
   const kindBadge = KIND_LABELS[kind];
   const billingBadge = billingMode ? BILLING_LABELS[billingMode] : null;
 
   return (
     <div className="sticky top-0 z-10 flex items-center gap-3 h-14 px-4 bg-white border-b border-zinc-200 text-sm min-w-0">
+      {/* Back-link to personal dashboard — primary "escape" affordance so
+          users don't get stuck in org context. Divider visually separates
+          "escape" from "current org identity". */}
+      {personalHref && (
+        <Link
+          href={personalHref}
+          className="text-xs text-zinc-500 hover:text-zinc-900 flex items-center gap-1 shrink-0 border-r border-zinc-200 pr-3 mr-1"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Personal
+        </Link>
+      )}
+
       {/* Org identity — logo always visible; name text hidden on desktop since
           the sidebar header already shows it there. Shown on mobile where the
           sidebar is collapsed out of view. */}

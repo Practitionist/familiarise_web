@@ -163,7 +163,7 @@ export function CollapsibleSidebar({
                           </p>
                         )}
                       </div>
-                      <ChevronDown className="h-4 w-4 text-zinc-400 shrink-0" />
+                      <ChevronDown className="h-4 w-4 text-zinc-500 shrink-0" />
                     </>
                   )}
                 </button>
