@@ -286,7 +286,8 @@ Tentative appointments handle two scenarios: pending payment and rescheduling.
 stateDiagram-v2
     [*] --> Tentative: Checkout creates appointment
     Tentative --> Confirmed: Payment succeeds
-    Tentative --> CleanedUp: Abandoned (30 min)
+    Tentative --> CleanedUp: cron sweep after 7 days
+      (see 13-cron-jobs-and-background-tasks.md §cleanup-tentative-slots)
 
     [*] --> Tentative2: Reschedule marks slots tentative
     Tentative2 --> Confirmed: Consultant approves new slots
