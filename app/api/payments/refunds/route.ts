@@ -180,6 +180,13 @@ export async function POST(req: NextRequest) {
 
     const { payment, pendingRefund, refundAmount } = phase1Result;
 
+    // B1 FIX: Pass our internal clientRefundId to the gateway if supported,
+    // or store it in metadata so the webhook can reconcile abandoned PENDING rows.
+    const refundMetadata = {
+      forceRefund: forceRefund ?? false,
+      clientRefundId: pendingRefund.clientRefundId,
+    };
+
     // PHASE 2: Route refund based on payment method
     //
     // Enterprise org billing modes:
@@ -249,6 +256,7 @@ export async function POST(req: NextRequest) {
           paymentIntentId: payment.paymentIntent,
           amount: refundAmount,
           reason,
+          metadata: refundMetadata,
         });
       } catch (gatewayError) {
         // Gateway call failed - mark refund as FAILED

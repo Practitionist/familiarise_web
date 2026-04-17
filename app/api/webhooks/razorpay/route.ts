@@ -256,6 +256,7 @@ async function processWebhookEvent(
           refundEvent.currency || "INR",
           refundEvent.status,
           "RAZORPAY",
+          refundEvent.notes,
         );
         break;
       }
@@ -287,6 +288,7 @@ async function processWebhookEvent(
           failedRefundEvent.currency || "INR",
           "failed",
           "RAZORPAY",
+          failedRefundEvent.notes,
         );
         break;
       }

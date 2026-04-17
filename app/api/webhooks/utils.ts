@@ -192,6 +192,7 @@ export async function handleRefundCreated(
   currency: string,
   status: string,
   gateway: "STRIPE" | "RAZORPAY",
+  eventMetadata?: unknown,
 ) {
   return await prisma.$transaction(async (tx) => {
     // Find the payment
@@ -204,9 +205,15 @@ export async function handleRefundCreated(
       return;
     }
 
-    // Check if refund already exists
-    const existingRefund = await tx.refund.findUnique({
-      where: { refundId },
+    // B1 FIX: Attempt reconciliation by clientRefundId if the gateway's
+    // refundId doesn't match an existing row. This recovers orphaned
+    // PENDING rows from the two-phase commit.
+    const clientRefundId = (eventMetadata as any)?.clientRefundId;
+
+    const existingRefund = await tx.refund.findFirst({
+      where: {
+        OR: [{ refundId }, ...(clientRefundId ? [{ clientRefundId }] : [])],
+      },
     });
 
     // FIX #4: Extract refund side effects into a helper so they run on BOTH
