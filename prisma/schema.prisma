@@ -768,7 +768,7 @@ model OrganizationEarnings {
   refundedAmount Int @default(0)
 
   status    EarningStatus @default(PENDING) // reuses existing EarningStatus enum
-  holdUntil DateTime
+  holdUntil DateTime      @db.Timestamptz
   currency  String        @default("INR")
 
   // Payout batch this earning was included in (null until batched)
@@ -2132,7 +2132,7 @@ model Payment {
   paymentIntent  String         @unique
   paymentGateway PaymentGateway
   paymentStatus  PaymentStatus
-  expiresAt      DateTime? // For tracking payment intent expiration
+  expiresAt      DateTime? @db.Timestamptz // For tracking payment intent expiration
   isMockPayment  Boolean        @default(false) // For development: mock payments skip gateway calls
 
   // International payment tracking
@@ -2320,14 +2320,14 @@ model ConsultantEarnings {
 
   // Status tracking
   status    EarningStatus @default(PENDING)
-  holdUntil DateTime // Release after hold period
-  paidAt    DateTime?
+  holdUntil DateTime      @db.Timestamptz // Release after hold period
+  paidAt    DateTime?     @db.Timestamptz
 
   // Currency (always INR for MVP, extensible for multi-currency)
   currency String @default("INR")
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   consultantProfile ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   payment           Payment           @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
@@ -2360,15 +2360,15 @@ model Payout {
   // Processing
   failureReason String?
   retryCount    Int       @default(0)
-  processedAt   DateTime?
-  approvedAt    DateTime?
+  processedAt   DateTime? @db.Timestamptz
+  approvedAt    DateTime? @db.Timestamptz
   approvedBy    String?
 
   // Idempotency (required by Razorpay from March 2025)
   idempotencyKey String? @unique
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   consultantProfile ConsultantProfile    @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   earnings          ConsultantEarnings[]
