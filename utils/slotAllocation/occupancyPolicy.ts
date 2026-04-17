@@ -43,6 +43,7 @@ export const OCCUPIED_EVENT_STATUSES = ["SCHEDULED", "IN_PROGRESS"] as const;
  */
 export function buildOccupiedAppointmentFilter(
   consultantProfileId?: string,
+  userId?: string,
 ): Prisma.AppointmentWhereInput[] {
   const filters: Prisma.AppointmentWhereInput[] = [
     {
@@ -50,6 +51,7 @@ export function buildOccupiedAppointmentFilter(
         ...(consultantProfileId
           ? { consultationPlan: { consultantProfileId } }
           : {}),
+        ...(userId ? { requestedBy: { userId } } : {}),
         requestStatus: { in: OCCUPIED_REQUEST_STATUSES },
       },
     },
@@ -58,6 +60,7 @@ export function buildOccupiedAppointmentFilter(
         ...(consultantProfileId
           ? { subscriptionPlan: { consultantProfileId } }
           : {}),
+        ...(userId ? { requestedBy: { userId } } : {}),
         requestStatus: { in: OCCUPIED_REQUEST_STATUSES },
       },
     },
@@ -78,11 +81,12 @@ export function buildOccupiedAppointmentFilter(
   ];
 
   // Add trial session filter
-  if (consultantProfileId) {
+  if (consultantProfileId || userId) {
     filters.push({
       trialSession: {
         is: {
-          consultantProfileId,
+          ...(consultantProfileId ? { consultantProfileId } : {}),
+          ...(userId ? { consulteeProfile: { userId } } : {}),
           status: TrialSessionStatus.SCHEDULED,
         },
       },

@@ -41,11 +41,14 @@ export class SlotValidationService {
     slots: Date[],
     consultantUserId: string,
     slotDurationMinutes: number = 30,
+    consulteeUserId?: string,
   ): Promise<ValidationResult> {
     return await this.validateNoConflicts(
       slots,
       consultantUserId,
       slotDurationMinutes,
+      undefined,
+      consulteeUserId,
     );
   }
 
@@ -56,6 +59,7 @@ export class SlotValidationService {
    * @param excludeAppointmentIds - Appointment IDs to exclude from conflict checks.
    *   Used in "use requested slots" flow so an event's own tentative appointments
    *   are not flagged as conflicts with themselves.
+   * @param consulteeUserId - Optional consultee user ID to check for conflicts on the buyer side
    */
   async validate(
     eventType: EventType,
@@ -64,6 +68,7 @@ export class SlotValidationService {
     consultant: ConsultantAllocationData,
     config: EventConfig,
     excludeAppointmentIds?: string[],
+    consulteeUserId?: string,
   ): Promise<ValidationResult> {
     // Universal validations (apply to all event types)
     const futureCheck = this.validateSlotsInFuture(slots);
@@ -84,6 +89,7 @@ export class SlotValidationService {
       consultant.userId,
       slotDurationMinutes,
       excludeAppointmentIds,
+      consulteeUserId,
     );
     if (!conflictCheck.isValid) return conflictCheck;
 
@@ -199,6 +205,7 @@ export class SlotValidationService {
     consultantUserId: string,
     slotDurationMinutes: number = 30,
     excludeAppointmentIds?: string[],
+    consulteeUserId?: string,
   ): Promise<ValidationResult> {
     const errors: string[] = [];
 
@@ -230,7 +237,7 @@ export class SlotValidationService {
         where: {
           AND: [
             // FIX Bug #15: Use centralized occupancy policy for consistent conflict detection
-            { OR: buildOccupiedAppointmentFilter() },
+            { OR: buildOccupiedAppointmentFilter(undefined, consulteeUserId) },
             // Exclude the event's own appointments from conflict detection.
             // Required for "use requested slots" flow: the event's tentative
             // appointments must not be flagged as conflicts with themselves.
@@ -247,7 +254,18 @@ export class SlotValidationService {
                   AND: [
                     { startsAt: { lt: new Date(latestEnd) } },
                     { endsAt: { gt: new Date(earliestStart) } },
-                    { user: { some: { id: consultantUserId } } },
+                    {
+                      user: {
+                        some: {
+                          id: {
+                            in: [
+                              consultantUserId,
+                              ...(consulteeUserId ? [consulteeUserId] : []),
+                            ],
+                          },
+                        },
+                      },
+                    },
                   ],
                 },
               },
