@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "@/utils/tailwind";
-import { ChevronLeft, ChevronRight, ChevronDown, LogOut, type LucideIcon } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, ChevronsUpDown, LogOut, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -292,11 +292,80 @@ export function CollapsibleSidebar({
 
       {/* Footer */}
       <div className="border-t border-zinc-200 dark:border-zinc-800 p-2 space-y-1">
-        {/* Personal identity strip — always static, always non-clickable.
-            All context-switching + sign-out lives in the top dropdown
-            (single source of truth). This strip is pure visual reinforcement
-            of "who am I right now". */}
-        {bottomUserChip ? (
+        {/* Personal chip — clickable dropdown when `bottomUserChipActions`
+            is provided (org switcher lives here), otherwise a static strip.
+            Sign Out remains as a separate standalone red button below. */}
+        {bottomUserChip && bottomUserChipActions ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                className={cn(
+                  "flex items-center gap-2.5 w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-900/40 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-300",
+                  collapsed && "justify-center px-0 border-transparent bg-transparent",
+                )}
+                aria-label="Switch context"
+              >
+                <Avatar className="h-7 w-7 flex-shrink-0">
+                  <AvatarImage src={bottomUserChip.image || ""} alt={bottomUserChip.name || ""} />
+                  <AvatarFallback className="bg-zinc-700 text-white text-xs font-semibold">
+                    {(bottomUserChip.name ?? "U").charAt(0).toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+                {!collapsed && (
+                  <>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-zinc-900 dark:text-zinc-100 truncate leading-tight">
+                        {bottomUserChip.name}
+                      </p>
+                      <p className="text-[10px] text-zinc-400 dark:text-zinc-500 truncate leading-tight mt-0.5">
+                        {bottomUserChip.role}
+                      </p>
+                    </div>
+                    <ChevronsUpDown className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
+                  </>
+                )}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="top" align="start" className="w-60">
+              {bottomUserChipActions.map((action, i) => {
+                if (action.type === "separator") {
+                  return <DropdownMenuSeparator key={i} />;
+                }
+                if (action.type === "label") {
+                  return (
+                    <DropdownMenuLabel
+                      key={i}
+                      className="text-xs text-zinc-400 font-normal py-1"
+                    >
+                      {action.label}
+                    </DropdownMenuLabel>
+                  );
+                }
+                const Icon = action.icon;
+                return (
+                  <DropdownMenuItem
+                    key={i}
+                    asChild={!!action.href}
+                    onClick={!action.href ? action.onClick : undefined}
+                    className="cursor-pointer gap-2"
+                  >
+                    {action.href ? (
+                      <Link href={action.href} className="flex items-center gap-2 w-full">
+                        {Icon && <Icon className="h-4 w-4 text-zinc-500" />}
+                        {action.label}
+                      </Link>
+                    ) : (
+                      <>
+                        {Icon && <Icon className="h-4 w-4 text-zinc-500" />}
+                        {action.label}
+                      </>
+                    )}
+                  </DropdownMenuItem>
+                );
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : bottomUserChip ? (
           <div
             className={cn(
               "flex items-center gap-2.5 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-900/40",

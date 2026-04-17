@@ -242,14 +242,13 @@ export default function OrgLayout({
     (m) => m.organizationId !== orgId,
   );
 
-  // Single top dropdown — context switching, account actions, sign out.
-  // Consolidating into one dropdown avoids the "which dropdown has what"
-  // confusion of the two-dropdown pattern. Bottom strip is pure identity
-  // display (no click target).
+  // Bottom chip dropdown — context switching + account actions.
+  // Top header stays static (org identity + collapse arrow). Single dropdown
+  // at the bottom keeps the "which dropdown has what" confusion at zero.
   const settingsHref = `/dashboard/organization/${orgId}/settings`;
 
-  const topDropdownActions: NonNullable<
-    React.ComponentProps<typeof CollapsibleSidebar>["topDropdownActions"]
+  const bottomUserChipActions: NonNullable<
+    React.ComponentProps<typeof CollapsibleSidebar>["bottomUserChipActions"]
   > = [
     ...(personalHref
       ? [{
@@ -334,7 +333,7 @@ export default function OrgLayout({
           userName={org?.organization.name}
           userImage={org?.organization.logo}
           userSubtitle={topSubtitle}
-          topDropdownActions={topDropdownActions}
+          bottomUserChipActions={bottomUserChipActions}
           bottomUserChip={
             session?.user
               ? {
