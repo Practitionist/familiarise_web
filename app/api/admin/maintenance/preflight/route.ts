@@ -12,7 +12,6 @@ import prisma from "@/lib/prisma";
 export async function GET() {
   const auth = await requireAdminAuth();
   if (auth.error) return auth.error;
-  const session = auth.session;
 
   const now = new Date();
   const fourHoursFromNow = new Date(now.getTime() + 4 * 60 * 60 * 1000);

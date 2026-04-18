@@ -93,7 +93,6 @@ export async function POST(req: NextRequest) {
   try {
     const auth = await requireAdminAuth();
     if (auth.error) return auth.error;
-    const session = auth.session;
 
     const body = await req.json();
     const { financialYear, quarter, filingDate } = body;

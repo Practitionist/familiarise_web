@@ -6,7 +6,6 @@ export async function GET(req: NextRequest) {
   try {
     const auth = await requirePrivilegedAuth();
     if (auth.error) return auth.error;
-    const session = auth.session;
 
     // Parse query parameters
     const searchParams = req.nextUrl.searchParams;
