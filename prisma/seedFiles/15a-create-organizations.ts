@@ -1,65 +1,67 @@
 /**
- * Phase 15: Enterprise Organizations
+ * Phase 15: Enterprise Organizations — Arch 4-Modified (Issue #681)
  *
- * Creates organizations with all three billing modes, org members drawn from
- * existing consultee/consultant users, org plans, credit pools, SSO settings,
- * and sample invoices. Runs after all other phases so it can reference
- * existing users, payments, and profiles.
+ * Seeds FOUR representative org shapes covering every capability pair + the
+ * two v1 Program types:
  *
- * Also creates PROVIDER orgs (consultant agencies) and HYBRID orgs
- * (dual buyer+provider, e.g. universities) with payout accounts,
- * ORG_CONSULTANT members, and sample earnings.
+ *   1. Wipro           canSponsor=true,  canHost=false  (pure BUYER)
+ *                      → BillingAccount(INVOICE) + Program(LICENSED_SEAT)
+ *                        + PurchaseOrder + OrganizationInvoice (DRAFT)
+ *
+ *   2. LearnPro Agency canSponsor=false, canHost=true   (pure PROVIDER)
+ *                      → OrganizationPayoutAccount + RateCard(10/10/80)
+ *                        + 5 CONSULTANT memberships
+ *
+ *   3. IIT Madras      canSponsor=true,  canHost=true   (HYBRID)
+ *                      → BillingAccount(WALLET) with WalletEntry ledger
+ *                        + Program(CREDIT_POOL)
+ *                        + OrganizationPayoutAccount + RateCard
+ *                        + 3 internal consultants (payoutRecipient=ORGANIZATION)
+ *                        + 2 external consultants (payoutRecipient=SELF)
+ *
+ *   4. Rahul           canSponsor=false, canHost=true   (solo consultant)
+ *                      → personal org, depth=0, no contracts
+ *
+ * Plus ancillary rows:
+ *   - 1 ConsentArtifact per seeded user (DPDP demo)
+ *   - 1 HrisEmployeeMap on Wipro (CSV provider)
+ *   - 3 top-ups + 5 booking debits in IIT's WalletEntry ledger
+ *   - 1 DRAFT OrganizationInvoice on Wipro with `irn=null, irpStatus=PENDING`
  */
 
 import { faker } from "@faker-js/faker";
 import {
-  EarningStatus,
-  EarningsRecipient,
+  Currency,
+  FundingSource,
+  MemberRole,
+  MemberStatus,
   OrgAuditAction,
-  OrganizationBillingMode,
-  OrganizationKind,
-  OrgMemberRole,
-  PayoutFrequency,
+  OrgStatus,
+  ProgramStatus,
+  ProgramType,
+  BillingCycle,
+  OverageBehavior,
+  ContractStatus,
+  WalletReason,
+  OrgInvoiceStatus,
+  IrpStatus,
+  PayoutRecipient,
+  HrisProvider,
+  HrisSyncStatus,
+  PayoutArrangement,
+  EarningStatus,
+  PaymentGateway,
+  ResidencyStatus,
+  MsmeStatus,
+  PoStatus,
 } from "@prisma/client";
 import prisma from "../../lib/prisma";
-import {
-  sanitizeString,
-  INDIAN_BANKS,
-  generateIfscCode,
-  generateRazorpayContactId,
-  generateRazorpayFundAccountId,
-  generateHoldUntilDate,
-} from "./utils";
-import { config, getRandomInRange } from "./config";
+import { buildConsentArtifact } from "../../lib/compliance/dpdp";
 import type { UserWithProfiles } from "./1a-create-users";
 
 // ---------------------------------------------------------------------------
-// Volume scaling
+// Helpers
 // ---------------------------------------------------------------------------
-
-// Volume config is read from the central config system.
-// Fallback constants here only guard against an incomplete config merge.
-const CREDIT_BALANCE_RANGE = { min: 10000, max: 500000 }; // in paise
-
-// ---------------------------------------------------------------------------
-// Org name generation
-// ---------------------------------------------------------------------------
-
-const ORG_NAME_TEMPLATES = [
-  () => `${faker.company.name()} Academy`,
-  () => `${faker.company.name()} School`,
-  () => `${faker.company.name()} Institute`,
-  () => `${faker.company.name()} Training Center`,
-  () => `${faker.company.name()} University`,
-  () => `${faker.company.name()} Learning Hub`,
-  () => `${faker.company.name()} Corp Training`,
-];
-
-function generateOrgName(): string {
-  return sanitizeString(
-    faker.helpers.arrayElement(ORG_NAME_TEMPLATES)(),
-  ).slice(0, 100);
-}
 
 function slugify(name: string): string {
   return name
@@ -69,990 +71,644 @@ function slugify(name: string): string {
     .slice(0, 40);
 }
 
+/**
+ * After an Organization is created with rootId = "" (placeholder), backfill
+ * rootId = id so queries work. Prisma requires rootId non-null; this
+ * two-step dance is unavoidable for root nodes.
+ */
+async function backfillRootId(orgId: string): Promise<void> {
+  await prisma.organization.update({
+    where: { id: orgId },
+    data: { rootId: orgId },
+  });
+}
+
+async function createRootOrg(params: {
+  name: string;
+  slug: string;
+  canSponsor: boolean;
+  canHost: boolean;
+  status?: OrgStatus;
+  gstin?: string;
+  gstStateCode?: string;
+  pan?: string;
+  billingEmail?: string;
+  industry?: string;
+  website?: string;
+  description?: string;
+}) {
+  const org = await prisma.organization.create({
+    data: {
+      name: params.name,
+      slug: params.slug,
+      rootId: "placeholder", // overwritten below
+      canSponsor: params.canSponsor,
+      canHost: params.canHost,
+      status: params.status ?? OrgStatus.ACTIVE,
+      gstin: params.gstin ?? null,
+      gstStateCode: params.gstStateCode ?? null,
+      pan: params.pan ?? null,
+      billingEmail: params.billingEmail ?? null,
+      industry: params.industry ?? null,
+      website: params.website ?? null,
+      description: params.description ?? null,
+      paymentTermsDays: 60,
+      requiresPO: params.canSponsor ? true : false,
+      dataResidencyRegion: "IN",
+      contractCurrency: Currency.INR,
+      reportingCurrency: Currency.INR,
+    },
+  });
+  await backfillRootId(org.id);
+  return await prisma.organization.findUniqueOrThrow({ where: { id: org.id } });
+}
+
 // ---------------------------------------------------------------------------
-// Main
+// Seeding entry point
 // ---------------------------------------------------------------------------
 
 export async function createOrganizations(
   users: UserWithProfiles[],
 ): Promise<void> {
-  const counts = config.volumes.organizations;
-  const totalBuyerOrgs = counts.buyer + counts.seatPack + counts.invoiced;
-  const totalOrgs = totalBuyerOrgs + counts.provider + counts.hybrid;
+  console.log("[15a] Seeding Arch 4-Modified organizations");
 
-  console.log(
-    `  Creating ${totalOrgs} organizations (${counts.buyer} TAG_ONLY, ${counts.seatPack} SEAT_PACK, ${counts.invoiced} INVOICED_MONTHLY, ${counts.provider} PROVIDER, ${counts.hybrid} HYBRID)...`,
-  );
+  if (users.length < 10) {
+    console.warn(
+      "[15a] Fewer than 10 users available; enterprise seed expects a richer user set. Continuing with what exists.",
+    );
+  }
 
-  const consultees = users.filter(
-    (u) => u.role === "CONSULTEE" && u.consulteeProfile?.id,
-  );
-  const consultants = users.filter(
-    (u) => u.role === "CONSULTANT" && u.consultantProfile?.id,
-  );
-  const admins = users.filter((u) => u.role === "ADMIN");
+  // Partition users: first 6 learners, next 5 consultants, etc.
+  const consultees = users
+    .filter((u) => u.consulteeProfile)
+    .slice(0, Math.min(users.length, 15));
+  const consultants = users
+    .filter((u) => u.consultantProfile)
+    .slice(0, Math.min(users.length, 10));
 
-  if (consultees.length < 3) {
-    console.log("  ⚠️  Not enough consultees for org seeding. Skipping.");
+  if (consultees.length < 4 || consultants.length < 5) {
+    console.warn(
+      "[15a] Skipping enterprise seed — need ≥4 consultees + ≥5 consultants; got",
+      consultees.length,
+      consultants.length,
+    );
     return;
   }
 
-  // Build the list of orgs to create (mode × billing)
-  const orgSpecs: { billingMode: OrganizationBillingMode }[] = [
-    ...Array(counts.buyer).fill({ billingMode: "TAG_ONLY" as const }),
-    ...Array(counts.seatPack).fill({ billingMode: "SEAT_PACK" as const }),
-    ...Array(counts.invoiced).fill({ billingMode: "INVOICED_MONTHLY" as const }),
-  ];
+  // --------------------------------------------------------------------- WIPRO
+  await seedWipro(consultees.slice(0, 3));
 
-  // Shuffle consultees so each org gets different members
-  const shuffledConsultees = faker.helpers.shuffle([...consultees]);
-  let consulteeIdx = 0;
+  // ------------------------------------------------------------------ LEARNPRO
+  await seedLearnPro(consultants.slice(0, 5));
 
-  const industries = [
-    "Education",
-    "Software",
-    "Healthcare",
-    "Finance",
-    "Manufacturing",
-    "Consulting",
-    "Government",
-    "Non-profit",
-  ];
+  // --------------------------------------------------------------------- IIT
+  await seedIit({
+    internalProfessors: consultants.slice(5, 7),
+    externalConsultants: consultants.slice(7, 10),
+    students: consultees.slice(3, 7),
+  });
 
-  const sizeBuckets = [
-    "SMALL_1_50",
-    "MEDIUM_51_200",
-    "LARGE_201_1000",
-    "ENTERPRISE_1000_PLUS",
-  ] as const;
-
-  for (let i = 0; i < orgSpecs.length; i++) {
-    const spec = orgSpecs[i];
-    const name = generateOrgName();
-    const baseSlug = slugify(name);
-    const slug = `${baseSlug}-${faker.string.alphanumeric(4)}`;
-
-    // Pick an owner — use a consultee (they can also be an org owner)
-    const ownerUser =
-      shuffledConsultees[consulteeIdx % shuffledConsultees.length];
-    consulteeIdx++;
-
-    try {
-      // 1. Create Organization (BetterAuth table)
-      const organization = await prisma.organization.create({
-        data: {
-          name,
-          slug,
-          logo: faker.image.urlPicsumPhotos({ width: 200, height: 200 }),
-        },
-      });
-
-      // 2. Create OrganizationProfile
-      const profile = await prisma.organizationProfile.create({
-        data: {
-          organizationId: organization.id,
-          kind: "BUYER" as OrganizationKind,
-          status: "ACTIVE",
-          billingMode: spec.billingMode,
-          billingEmail: faker.internet.email({
-            firstName: "billing",
-            lastName: slug,
-          }),
-          description: sanitizeString(
-            faker.company.catchPhrase() + ". " + faker.lorem.sentence(),
-          ),
-          industry: faker.helpers.arrayElement(industries),
-          sizeBucket: faker.helpers.arrayElement(sizeBuckets),
-          website: faker.internet.url(),
-          logo: faker.image.urlPicsumPhotos({ width: 200, height: 200 }),
-          primaryColor: faker.color.rgb(),
-          seatsTotal: faker.helpers.maybe(() =>
-            faker.number.int({ min: 10, max: 200 }),
-          ),
-          paymentTermsDays: faker.helpers.arrayElement([7, 15, 30]),
-        },
-      });
-
-      // 3. Create owner Member + OrganizationMemberProfile
-      const ownerMember = await prisma.member.create({
-        data: {
-          organizationId: organization.id,
-          userId: ownerUser.id,
-          role: "ORG_OWNER",
-        },
-      });
-
-      const ownerMemberProfile = await prisma.organizationMemberProfile.create({
-        data: {
-          memberId: ownerMember.id,
-          organizationProfileId: profile.id,
-          role: "ORG_OWNER",
-          status: "ACTIVE",
-        },
-      });
-
-      // 4. Add additional members (mix of ORG_ADMIN, ORG_MANAGER, ORG_LEARNER)
-      const memberCount = getRandomInRange(config.volumes.membersPerOrg);
-      const memberRoles: OrgMemberRole[] = [
-        "ORG_ADMIN",
-        "ORG_MANAGER",
-        ...Array(Math.max(0, memberCount - 2)).fill("ORG_LEARNER"),
-      ];
-
-      let seatsUsed = 0;
-
-      for (let m = 0; m < memberCount && consulteeIdx < shuffledConsultees.length; m++) {
-        const memberUser = shuffledConsultees[consulteeIdx];
-        consulteeIdx++;
-        const role = memberRoles[m] ?? "ORG_LEARNER";
-
-        // Skip if this user is already the owner
-        if (memberUser.id === ownerUser.id) continue;
-
-        // Check if already a member of this org
-        const existing = await prisma.member.findUnique({
-          where: {
-            organizationId_userId: {
-              organizationId: organization.id,
-              userId: memberUser.id,
-            },
-          },
-        });
-        if (existing) continue;
-
-        // Respect seatsTotal: if this slot would be ORG_LEARNER and the org is
-        // already at capacity, downgrade to ORG_MANAGER so the DB CHECK
-        // constraint (seatsUsed <= seatsTotal) is never violated by seed data.
-        let effectiveRole = role;
-        if (
-          effectiveRole === "ORG_LEARNER" &&
-          profile.seatsTotal !== null &&
-          seatsUsed >= profile.seatsTotal
-        ) {
-          effectiveRole = "ORG_MANAGER";
-        }
-
-        const member = await prisma.member.create({
-          data: {
-            organizationId: organization.id,
-            userId: memberUser.id,
-            role: effectiveRole,
-          },
-        });
-
-        await prisma.organizationMemberProfile.create({
-          data: {
-            memberId: member.id,
-            organizationProfileId: profile.id,
-            role: effectiveRole,
-            status: "ACTIVE",
-            consulteeProfileId:
-              effectiveRole === "ORG_LEARNER"
-                ? memberUser.consulteeProfile?.id ?? null
-                : null,
-            seatAssignedAt:
-              effectiveRole === "ORG_LEARNER"
-                ? faker.date.recent({ days: 30 })
-                : null,
-          },
-        });
-
-        if (effectiveRole === "ORG_LEARNER") seatsUsed++;
-      }
-
-      // Update seatsUsed
-      if (seatsUsed > 0) {
-        await prisma.organizationProfile.update({
-          where: { id: profile.id },
-          data: { seatsUsed },
-        });
-      }
-
-      // 5. Create org plans
-      const planCount = getRandomInRange(config.volumes.plansPerOrg);
-      const planTypes = ["CONSULTATION", "WEBINAR", "CLASS"] as const;
-
-      for (let p = 0; p < planCount; p++) {
-        const planType = faker.helpers.arrayElement(planTypes);
-        await prisma.organizationPlan.create({
-          data: {
-            organizationProfileId: profile.id,
-            planType,
-            title: sanitizeString(
-              `${faker.commerce.productName()} — ${planType.toLowerCase()}`,
-            ),
-            description: sanitizeString(faker.commerce.productDescription()),
-            price: faker.number.int({ min: 5000, max: 200000 }),
-            priceCurrency: "INR",
-            isActive: true,
-            config: {},
-          },
-        });
-      }
-
-      // 6. SEAT_PACK: create credit pool with seeded balance
-      if (spec.billingMode === "SEAT_PACK") {
-        const balance = faker.number.int(CREDIT_BALANCE_RANGE);
-        await prisma.orgCreditPool.create({
-          data: {
-            organizationProfileId: profile.id,
-            balance,
-            totalPurchased: balance + faker.number.int({ min: 0, max: 100000 }),
-          },
-        });
-
-        // Seed a few ledger entries
-        let runningBalance = 0;
-        const totalPurchased = balance + faker.number.int({ min: 5000, max: 50000 });
-        runningBalance = totalPurchased;
-
-        await prisma.orgCreditLedger.create({
-          data: {
-            organizationProfileId: profile.id,
-            delta: totalPurchased,
-            reason: "purchase",
-            balanceAfter: runningBalance,
-          },
-        });
-
-        // A few deductions
-        const deductionCount = faker.number.int({ min: 1, max: 4 });
-        for (let d = 0; d < deductionCount; d++) {
-          const deduct = faker.number.int({ min: 2000, max: 20000 });
-          if (runningBalance - deduct < 0) break;
-          runningBalance -= deduct;
-          await prisma.orgCreditLedger.create({
-            data: {
-              organizationProfileId: profile.id,
-              delta: -deduct,
-              reason: "booking",
-              balanceAfter: runningBalance,
-            },
-          });
-        }
-
-        // Reconcile pool balance to match ledger
-        await prisma.orgCreditPool.update({
-          where: { organizationProfileId: profile.id },
-          data: { balance: runningBalance, totalPurchased },
-        });
-
-        // 6b. OrgCreditPurchase history — 1-3 confirmed purchases matching the pool total
-        let remaining = totalPurchased;
-        const purchaseCount = faker.number.int({ min: 1, max: 3 });
-        for (let p = 0; p < purchaseCount; p++) {
-          const isLast = p === purchaseCount - 1;
-          const amount = isLast
-            ? remaining
-            : faker.number.int({ min: Math.floor(remaining * 0.2), max: Math.floor(remaining * 0.6) });
-          remaining -= amount;
-          // Simulate a confirmed purchase — providerPaymentId is the Razorpay pay_xxx ID.
-          const fakePaymentId = `pay_seed_${faker.string.alphanumeric(14)}`;
-          const fakeOrderId = `order_seed_${faker.string.alphanumeric(14)}`;
-          const purchasedAt = faker.date.recent({ days: 90 });
-          await prisma.orgCreditPurchase.create({
-            data: {
-              organizationProfileId: profile.id,
-              creditsPurchased: amount,
-              amountPaid: amount,
-              currency: "INR",
-              status: "PROCESSED",
-              providerOrderId: fakeOrderId,
-              providerPaymentId: fakePaymentId,
-              processedAt: purchasedAt,
-              purchasedAt,
-            },
-          });
-          if (remaining <= 0) break;
-        }
-      }
-
-      // 7. INVOICED_MONTHLY: create a sample invoice
-      if (spec.billingMode === "INVOICED_MONTHLY") {
-        const invoiceAmount = faker.number.int({ min: 50000, max: 500000 });
-        const yyyymm = new Date().toISOString().slice(0, 7).replace("-", "");
-        const rand = faker.string.alphanumeric(4).toUpperCase();
-
-        await prisma.organizationInvoice.create({
-          data: {
-            organizationProfileId: profile.id,
-            invoiceNumber: `INV-${slug.slice(0, 8).toUpperCase()}-${yyyymm}-${rand}`,
-            amount: invoiceAmount,
-            currency: "INR",
-            status: faker.helpers.arrayElement(["DRAFT", "SENT", "PAID"]),
-            items: [
-              {
-                description: "Monthly consultation bookings",
-                quantity: faker.number.int({ min: 3, max: 15 }),
-                unitPrice: faker.number.int({ min: 5000, max: 50000 }),
-              },
-            ],
-            billingCycleStart: new Date(
-              new Date().getFullYear(),
-              new Date().getMonth() - 1,
-              1,
-            ),
-            billingCycleEnd: new Date(
-              new Date().getFullYear(),
-              new Date().getMonth(),
-              0,
-            ),
-            autoGenerated: true,
-            dueDate: faker.date.soon({ days: 30 }),
-            paidAt: faker.helpers.maybe(() => faker.date.recent({ days: 15 })),
-            hsnCode: "999293",
-          },
-        });
-      }
-
-      // 8. Create SSO settings for ~30% of orgs
-      if (faker.datatype.boolean(0.3)) {
-        const domain = `${slug}.test`;
-        await prisma.organizationSSOSettings.create({
-          data: {
-            organizationProfileId: profile.id,
-            allowedEmailDomains: [domain],
-            enforceSSO: faker.datatype.boolean(0.5),
-            defaultRoleForAutoJoin: "ORG_LEARNER",
-          },
-        });
-      }
-
-      // 9. Create invitations (1-2 pending per org)
-      const invitationCount = faker.number.int({ min: 0, max: 2 });
-      for (let inv = 0; inv < invitationCount; inv++) {
-        const expiresAt = new Date();
-        expiresAt.setDate(expiresAt.getDate() + 14);
-
-        await prisma.invitation.create({
-          data: {
-            organizationId: organization.id,
-            email: faker.internet.email(),
-            role: "ORG_LEARNER",
-            status: "pending",
-            expiresAt,
-            inviterId: ownerUser.id,
-          },
-        });
-      }
-
-      // 10. OrgAuditLog — seed initial MEMBER_ADDED entries for the owner
-      // (member additions for other members bypass the API in seeding, so we
-      //  only log the org creation / owner addition here for realism)
-      await prisma.orgAuditLog.create({
-        data: {
-          organizationProfileId: profile.id,
-          actorMemberId: ownerMemberProfile.id,
-          targetMemberId: ownerMemberProfile.id,
-          action: OrgAuditAction.MEMBER_ADDED,
-          description: `${ownerUser.email ?? "owner"} added as ORG_OWNER (org creation)`,
-          details: { role: "ORG_OWNER", email: ownerUser.email ?? null, viaOrgCreation: true },
-        },
-      });
-
-      console.log(
-        `    ✓ ${name} (${spec.billingMode}, ${memberCount + 1} members)`,
-      );
-    } catch (error) {
-      console.error(`    ✗ Failed to create org "${name}":`, error);
-    }
+  // ---------------------------------------------------------------- RAHUL SOLO
+  if (consultants.length >= 8) {
+    await seedSoloConsultant(consultants[7]);
   }
 
-  // ---------------------------------------------------------------------------
-  // PROVIDER orgs — consultant agencies
-  // ---------------------------------------------------------------------------
+  // -------------------------------------------------------- CONSENT ARTIFACTS
+  await seedConsentArtifacts(users.slice(0, 10));
 
-  const providerSpecs: {
-    name: string;
-    payoutFrequency: PayoutFrequency;
-    platformCommissionRate: number;
-    orgRetainRate: number;
-    consultantPayoutRate: number;
-  }[] = [
-    {
-      name: "TechConsult Partners",
-      payoutFrequency: "MONTHLY",
-      platformCommissionRate: 0.10,
-      orgRetainRate: 0.05,
-      consultantPayoutRate: 0.85,
+  console.log("[15a] ✓ Enterprise seed complete");
+}
+
+// ---------------------------------------------------------------------------
+// Shape 1: Wipro — pure BUYER with INVOICE funding + LICENSED_SEAT program
+// ---------------------------------------------------------------------------
+
+async function seedWipro(learners: UserWithProfiles[]) {
+  const org = await createRootOrg({
+    name: "Wipro Limited",
+    slug: "wipro",
+    canSponsor: true,
+    canHost: false,
+    gstin: "29AABCW1234K1Z5",
+    gstStateCode: "KA",
+    pan: "AABCW1234K",
+    billingEmail: "ap@wipro.com",
+    industry: "IT Services",
+    website: "https://wipro.com",
+    description: "Indian multinational corporation for IT services.",
+  });
+
+  // BillingAccount with INVOICE funding (NET-60 India default)
+  const billingAccount = await prisma.billingAccount.create({
+    data: {
+      ownerOrgId: org.id,
+      billingEmail: "ap@wipro.com",
+      currency: Currency.INR,
+      fundingSource: FundingSource.INVOICE,
+      creditLimit: 1_00_00_000 * 100, // ₹1 Cr in paise
     },
-    {
-      name: "Design Agency Co",
-      payoutFrequency: "WEEKLY",
-      platformCommissionRate: 0.15,
-      orgRetainRate: 0.10,
-      consultantPayoutRate: 0.75,
+  });
+  await prisma.organization.update({
+    where: { id: org.id },
+    data: { billingAccountId: billingAccount.id },
+  });
+
+  // PurchaseOrder (India AP 3-way match)
+  const po = await prisma.purchaseOrder.create({
+    data: {
+      organizationId: org.id,
+      poNumber: "WIP-PO-2026-0042",
+      poDate: faker.date.recent({ days: 30 }),
+      validUntil: faker.date.future({ years: 1 }),
+      totalAmountPaise: 50_00_000 * 100, // ₹50L
+      remainingAmountPaise: 50_00_000 * 100,
+      currency: Currency.INR,
+      status: PoStatus.ACTIVE,
     },
-  ];
+  });
 
-  // Use only as many provider orgs as configured
-  const providerCount = Math.min(counts.provider, providerSpecs.length);
-  const shuffledConsultants = faker.helpers.shuffle([...consultants]);
-  let consultantIdx = 0;
-
-  for (let pi = 0; pi < providerCount; pi++) {
-    const spec = providerSpecs[pi];
-    const baseSlug = slugify(spec.name);
-    const slug = `${baseSlug}-${faker.string.alphanumeric(4)}`;
-
-    // Owner is a consultee user (org owners don't have to be consultants)
-    const ownerUser =
-      shuffledConsultees[consulteeIdx % shuffledConsultees.length];
-    consulteeIdx++;
-
-    try {
-      // 1. BetterAuth Organization
-      const organization = await prisma.organization.create({
-        data: {
-          name: spec.name,
-          slug,
-          logo: faker.image.urlPicsumPhotos({ width: 200, height: 200 }),
-        },
-      });
-
-      // 2. OrganizationProfile — PROVIDER kind
-      const profile = await prisma.organizationProfile.create({
-        data: {
-          organizationId: organization.id,
-          kind: "PROVIDER" as OrganizationKind,
-          status: "ACTIVE",
-          billingMode: null, // PROVIDER orgs earn, they don't pay — no billing mode
-          billingEmail: faker.internet.email({
-            firstName: "finance",
-            lastName: baseSlug,
-          }),
-          description: sanitizeString(
-            `${spec.name} — ${faker.company.catchPhrase()}. Leading consulting agency.`,
-          ),
-          industry: "Consulting",
-          sizeBucket: "MEDIUM_51_200",
-          website: faker.internet.url(),
-          logo: faker.image.urlPicsumPhotos({ width: 200, height: 200 }),
-          primaryColor: faker.color.rgb(),
-          platformCommissionRate: spec.platformCommissionRate,
-          orgRetainRate: spec.orgRetainRate,
-          consultantPayoutRate: spec.consultantPayoutRate,
-          payoutFrequency: spec.payoutFrequency,
-          enforceOrganizationPlans: pi === 0, // first provider enforces org plans
-          autoApproveConsultants: pi === 1, // second provider auto-approves
-          paymentTermsDays: 30,
-        },
-      });
-
-      // 3. Owner member
-      const ownerMember = await prisma.member.create({
-        data: {
-          organizationId: organization.id,
-          userId: ownerUser.id,
-          role: "ORG_OWNER",
-        },
-      });
-
-      const ownerMemberProfile = await prisma.organizationMemberProfile.create({
-        data: {
-          memberId: ownerMember.id,
-          organizationProfileId: profile.id,
-          role: "ORG_OWNER",
-          status: "ACTIVE",
-        },
-      });
-
-      // Audit: org created
-      await prisma.orgAuditLog.create({
-        data: {
-          organizationProfileId: profile.id,
-          actorMemberId: ownerMemberProfile.id,
-          targetMemberId: ownerMemberProfile.id,
-          action: OrgAuditAction.MEMBER_ADDED,
-          description: `${ownerUser.email ?? "owner"} added as ORG_OWNER (PROVIDER org creation)`,
-          details: { role: "ORG_OWNER", kind: "PROVIDER" },
-        },
-      });
-
-      // 4. Add ORG_CONSULTANT members (2-3 per provider org)
-      const consultantCount = faker.number.int({ min: 2, max: 3 });
-      const addedConsultantMemberProfiles: {
-        memberProfileId: string;
-        consultantProfileId: string;
-      }[] = [];
-
-      for (
-        let ci = 0;
-        ci < consultantCount && consultantIdx < shuffledConsultants.length;
-        ci++
-      ) {
-        const cUser = shuffledConsultants[consultantIdx];
-        consultantIdx++;
-
-        if (cUser.id === ownerUser.id) continue;
-
-        // Ensure not already a member
-        const existing = await prisma.member.findUnique({
-          where: {
-            organizationId_userId: {
-              organizationId: organization.id,
-              userId: cUser.id,
-            },
-          },
-        });
-        if (existing) continue;
-
-        const member = await prisma.member.create({
-          data: {
-            organizationId: organization.id,
-            userId: cUser.id,
-            role: "ORG_CONSULTANT",
-          },
-        });
-
-        // First consultant: earningsRecipient = ORGANIZATION (internal/salaried)
-        // Second consultant: custom payout rate override
-        const isFirstConsultant = ci === 0;
-        const isSecondConsultant = ci === 1;
-
-        const memberProfile = await prisma.organizationMemberProfile.create({
-          data: {
-            memberId: member.id,
-            organizationProfileId: profile.id,
-            role: "ORG_CONSULTANT",
-            status: "ACTIVE",
-            consultantProfileId: cUser.consultantProfile?.id ?? null,
-            earningsRecipient: isFirstConsultant
-              ? ("ORGANIZATION" as EarningsRecipient)
-              : ("CONSULTANT" as EarningsRecipient),
-            customConsultantPayoutRate: isSecondConsultant ? 0.90 : null,
-            applicationNote: faker.helpers.maybe(
-              () => sanitizeString(faker.lorem.sentence()),
-              { probability: 0.6 },
-            ),
-            appliedAt: faker.date.recent({ days: 60 }),
-            approvedAt: faker.date.recent({ days: 30 }),
-            approvedBy: ownerMemberProfile.id,
-          },
-        });
-
-        addedConsultantMemberProfiles.push({
-          memberProfileId: memberProfile.id,
-          consultantProfileId: cUser.consultantProfile?.id ?? "",
-        });
-
-        // Audit: consultant approved
-        await prisma.orgAuditLog.create({
-          data: {
-            organizationProfileId: profile.id,
-            actorMemberId: ownerMemberProfile.id,
-            targetMemberId: memberProfile.id,
-            action: OrgAuditAction.CONSULTANT_APPROVED,
-            description: `${cUser.email ?? "consultant"} approved as ORG_CONSULTANT`,
-            details: {
-              consultantProfileId: cUser.consultantProfile?.id ?? null,
-              earningsRecipient: isFirstConsultant ? "ORGANIZATION" : "CONSULTANT",
-            },
-          },
-        });
-      }
-
-      // 5. Payout account (VERIFIED, dummy bank details)
-      const bank = faker.helpers.arrayElement([...INDIAN_BANKS]);
-      await prisma.organizationPayoutAccount.create({
-        data: {
-          organizationProfileId: profile.id,
-          accountHolderName: spec.name,
-          accountNumberEncrypted: Buffer.from(
-            faker.finance.accountNumber(12),
-          ).toString("base64"),
-          accountNumberLast4: faker.string.numeric(4),
-          bankName: bank.name,
-          ifscCode: generateIfscCode(bank),
-          razorpayContactId: generateRazorpayContactId(),
-          razorpayFundAccountId: generateRazorpayFundAccountId(),
-          status: "VERIFIED",
-          verifiedAt: faker.date.recent({ days: 60 }),
-        },
-      });
-
-      // 6. Create a few OrganizationEarnings rows.
-      //    We create stub Payment rows to satisfy the FK — using the org owner
-      //    as the paying user (realistic enough for seed data).
-      const earningsCount = faker.number.int({ min: 2, max: 4 });
-      for (let ei = 0; ei < earningsCount; ei++) {
-        const grossAmount = faker.number.int({ min: 10000, max: 200000 });
-        const platformFee = Math.round(
-          grossAmount * spec.platformCommissionRate,
-        );
-        const orgShare = Math.round(grossAmount * spec.orgRetainRate);
-
-        // Create a stub Payment to satisfy the FK
-        const stubPayment = await prisma.payment.create({
-          data: {
-            amount: grossAmount,
-            originalAmount: grossAmount,
-            currency: "INR",
-            paymentMethod: "card",
-            paymentIntent: `pi_seed_provider_${faker.string.alphanumeric(20)}`,
-            paymentGateway: "RAZORPAY",
-            paymentStatus: "SUCCEEDED",
-            userId: ownerUser.id,
-            organizationProfileId: profile.id,
-            isMockPayment: true,
-          },
-        });
-
-        await prisma.organizationEarnings.create({
-          data: {
-            organizationProfileId: profile.id,
-            paymentId: stubPayment.id,
-            grossAmount,
-            platformFee,
-            orgShare,
-            status: faker.helpers.arrayElement([
-              "PENDING",
-              "READY",
-              "PAID",
-            ]) as EarningStatus,
-            holdUntil: generateHoldUntilDate(new Date()),
-            currency: "INR",
-          },
-        });
-      }
-
-      // 7. Audit: settings changed (payout frequency)
-      await prisma.orgAuditLog.create({
-        data: {
-          organizationProfileId: profile.id,
-          actorMemberId: ownerMemberProfile.id,
-          action: OrgAuditAction.SETTINGS_CHANGED,
-          description: `Payout frequency set to ${spec.payoutFrequency}`,
-          details: {
-            field: "payoutFrequency",
-            newValue: spec.payoutFrequency,
-          },
-        },
-      });
-
-      console.log(
-        `    ✓ ${spec.name} (PROVIDER, ${spec.payoutFrequency} payouts, ${addedConsultantMemberProfiles.length} consultants)`,
-      );
-    } catch (error) {
-      console.error(
-        `    ✗ Failed to create PROVIDER org "${spec.name}":`,
-        error,
-      );
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // HYBRID org — dual buyer+provider (e.g. university)
-  // ---------------------------------------------------------------------------
-
-  const hybridSpecs: {
-    name: string;
-    payoutFrequency: PayoutFrequency;
-    billingMode: OrganizationBillingMode;
-  }[] = [
-    {
-      name: "EduTech University",
-      payoutFrequency: "MONTHLY",
-      billingMode: "SEAT_PACK",
+  // Contract with annual license
+  const contract = await prisma.contract.create({
+    data: {
+      organizationId: org.id,
+      billingAccountId: billingAccount.id,
+      purchaseOrderId: po.id,
+      status: ContractStatus.ACTIVE,
+      signedAt: faker.date.recent({ days: 45 }),
+      effectiveFrom: faker.date.recent({ days: 30 }),
+      effectiveTo: faker.date.future({ years: 1 }),
+      paymentTermsDays: 60,
+      autoRenew: true,
+      terms: {
+        notes: "Annual training license for 200 engineers",
+        cap: "₹50L FY26",
+      },
     },
-  ];
+  });
 
-  const hybridCount = Math.min(counts.hybrid, hybridSpecs.length);
-
-  for (let hi = 0; hi < hybridCount; hi++) {
-    const spec = hybridSpecs[hi];
-    const baseSlug = slugify(spec.name);
-    const slug = `${baseSlug}-${faker.string.alphanumeric(4)}`;
-
-    const ownerUser =
-      shuffledConsultees[consulteeIdx % shuffledConsultees.length];
-    consulteeIdx++;
-
-    try {
-      // 1. BetterAuth Organization
-      const organization = await prisma.organization.create({
-        data: {
-          name: spec.name,
-          slug,
-          logo: faker.image.urlPicsumPhotos({ width: 200, height: 200 }),
+  // Program: LICENSED_SEAT, 200 seats, 12 covered sessions per annual cycle
+  const program = await prisma.program.create({
+    data: {
+      contractId: contract.id,
+      type: ProgramType.LICENSED_SEAT,
+      name: "Wipro Engineer Leadership Program",
+      status: ProgramStatus.ACTIVE,
+      coveredPlanTypes: ["CONSULTATION", "CLASS"],
+      licensedSeatConfig: {
+        create: {
+          ratePerSeatPaise: 25_000 * 100, // ₹25K per seat/year
+          cycle: BillingCycle.ANNUAL,
+          coveredSessionsPerCycle: 12,
+          overageBehavior: OverageBehavior.CHARGE_ORG,
+          activeSeatCount: 0,
+          priceCapPerSessionPaise: 10_000 * 100, // ₹10K/session cap
         },
-      });
+      },
+    },
+  });
 
-      // 2. OrganizationProfile — HYBRID kind with SEAT_PACK billing
-      const profile = await prisma.organizationProfile.create({
-        data: {
-          organizationId: organization.id,
-          kind: "HYBRID" as OrganizationKind,
-          status: "ACTIVE",
-          billingMode: spec.billingMode,
-          billingEmail: faker.internet.email({
-            firstName: "admin",
-            lastName: baseSlug,
-          }),
-          description: sanitizeString(
-            `${spec.name} — A leading educational institution offering both courses and consulting services.`,
-          ),
-          industry: "Education",
-          sizeBucket: "LARGE_201_1000",
-          website: faker.internet.url(),
-          logo: faker.image.urlPicsumPhotos({ width: 200, height: 200 }),
-          primaryColor: faker.color.rgb(),
-          platformCommissionRate: 0.10,
-          orgRetainRate: 0.08,
-          consultantPayoutRate: 0.82,
-          payoutFrequency: spec.payoutFrequency,
-          enforceOrganizationPlans: false,
-          seatsTotal: faker.number.int({ min: 50, max: 200 }),
-          paymentTermsDays: 30,
-        },
-      });
+  // Memberships for 3 learners + assignments
+  const now = new Date();
+  const periodStart = new Date(now.getFullYear(), 0, 1);
+  const periodEnd = new Date(now.getFullYear() + 1, 0, 1);
 
-      // 3. Owner member
-      const ownerMember = await prisma.member.create({
-        data: {
-          organizationId: organization.id,
-          userId: ownerUser.id,
-          role: "ORG_OWNER",
-        },
-      });
-
-      const ownerMemberProfile = await prisma.organizationMemberProfile.create({
-        data: {
-          memberId: ownerMember.id,
-          organizationProfileId: profile.id,
-          role: "ORG_OWNER",
-          status: "ACTIVE",
-        },
-      });
-
-      // Audit: org created
-      await prisma.orgAuditLog.create({
-        data: {
-          organizationProfileId: profile.id,
-          actorMemberId: ownerMemberProfile.id,
-          targetMemberId: ownerMemberProfile.id,
-          action: OrgAuditAction.MEMBER_ADDED,
-          description: `${ownerUser.email ?? "owner"} added as ORG_OWNER (HYBRID org creation)`,
-          details: { role: "ORG_OWNER", kind: "HYBRID" },
-        },
-      });
-
-      // 4a. Add ORG_LEARNER members (BUYER side) — 2-3 learners
-      const learnerCount = faker.number.int({ min: 2, max: 3 });
-      let seatsUsed = 0;
-
-      for (
-        let li = 0;
-        li < learnerCount && consulteeIdx < shuffledConsultees.length;
-        li++
-      ) {
-        const lUser = shuffledConsultees[consulteeIdx];
-        consulteeIdx++;
-
-        if (lUser.id === ownerUser.id) continue;
-
-        const existing = await prisma.member.findUnique({
-          where: {
-            organizationId_userId: {
-              organizationId: organization.id,
-              userId: lUser.id,
-            },
-          },
-        });
-        if (existing) continue;
-
-        // Respect seatsTotal
-        if (profile.seatsTotal !== null && seatsUsed >= profile.seatsTotal)
-          break;
-
-        const member = await prisma.member.create({
-          data: {
-            organizationId: organization.id,
-            userId: lUser.id,
-            role: "ORG_LEARNER",
-          },
-        });
-
-        await prisma.organizationMemberProfile.create({
-          data: {
-            memberId: member.id,
-            organizationProfileId: profile.id,
-            role: "ORG_LEARNER",
-            status: "ACTIVE",
-            consulteeProfileId: lUser.consulteeProfile?.id ?? null,
-            seatAssignedAt: faker.date.recent({ days: 30 }),
-          },
-        });
-
-        seatsUsed++;
-      }
-
-      // 4b. Add ORG_CONSULTANT members (PROVIDER side) — 1-2 consultants
-      const hybridConsultantCount = faker.number.int({ min: 1, max: 2 });
-
-      for (
-        let ci = 0;
-        ci < hybridConsultantCount &&
-        consultantIdx < shuffledConsultants.length;
-        ci++
-      ) {
-        const cUser = shuffledConsultants[consultantIdx];
-        consultantIdx++;
-
-        if (cUser.id === ownerUser.id) continue;
-
-        const existing = await prisma.member.findUnique({
-          where: {
-            organizationId_userId: {
-              organizationId: organization.id,
-              userId: cUser.id,
-            },
-          },
-        });
-        if (existing) continue;
-
-        const member = await prisma.member.create({
-          data: {
-            organizationId: organization.id,
-            userId: cUser.id,
-            role: "ORG_CONSULTANT",
-          },
-        });
-
-        const memberProfile = await prisma.organizationMemberProfile.create({
-          data: {
-            memberId: member.id,
-            organizationProfileId: profile.id,
-            role: "ORG_CONSULTANT",
-            status: "ACTIVE",
-            consultantProfileId: cUser.consultantProfile?.id ?? null,
-            earningsRecipient: "CONSULTANT" as EarningsRecipient,
-            appliedAt: faker.date.recent({ days: 45 }),
-            approvedAt: faker.date.recent({ days: 20 }),
-            approvedBy: ownerMemberProfile.id,
-          },
-        });
-
-        await prisma.orgAuditLog.create({
-          data: {
-            organizationProfileId: profile.id,
-            actorMemberId: ownerMemberProfile.id,
-            targetMemberId: memberProfile.id,
-            action: OrgAuditAction.CONSULTANT_APPROVED,
-            description: `${cUser.email ?? "consultant"} approved as ORG_CONSULTANT (HYBRID)`,
-            details: {
-              consultantProfileId: cUser.consultantProfile?.id ?? null,
-            },
-          },
-        });
-      }
-
-      // 5. Update seatsUsed
-      if (seatsUsed > 0) {
-        await prisma.organizationProfile.update({
-          where: { id: profile.id },
-          data: { seatsUsed },
-        });
-      }
-
-      // 6. SEAT_PACK credit pool (HYBRID uses SEAT_PACK billing)
-      if (spec.billingMode === "SEAT_PACK") {
-        const balance = faker.number.int(CREDIT_BALANCE_RANGE);
-        const totalPurchased =
-          balance + faker.number.int({ min: 5000, max: 50000 });
-
-        await prisma.orgCreditPool.create({
-          data: {
-            organizationProfileId: profile.id,
-            balance,
-            totalPurchased,
-          },
-        });
-
-        await prisma.orgCreditLedger.create({
-          data: {
-            organizationProfileId: profile.id,
-            delta: totalPurchased,
-            reason: "purchase",
-            balanceAfter: totalPurchased,
-          },
-        });
-
-        // Purchase history — simulate a confirmed purchase
-        const fakePaymentId = `pay_seed_${faker.string.alphanumeric(14)}`;
-        const fakeOrderId = `order_seed_${faker.string.alphanumeric(14)}`;
-        const purchasedAt = faker.date.recent({ days: 60 });
-        await prisma.orgCreditPurchase.create({
-          data: {
-            organizationProfileId: profile.id,
-            creditsPurchased: totalPurchased,
-            amountPaid: totalPurchased,
-            currency: "INR",
-            status: "PROCESSED",
-            providerOrderId: fakeOrderId,
-            providerPaymentId: fakePaymentId,
-            processedAt: purchasedAt,
-            purchasedAt,
-          },
-        });
-      }
-
-      // 7. Payout account for the PROVIDER side
-      const bank = faker.helpers.arrayElement([...INDIAN_BANKS]);
-      await prisma.organizationPayoutAccount.create({
-        data: {
-          organizationProfileId: profile.id,
-          accountHolderName: spec.name,
-          accountNumberEncrypted: Buffer.from(
-            faker.finance.accountNumber(12),
-          ).toString("base64"),
-          accountNumberLast4: faker.string.numeric(4),
-          bankName: bank.name,
-          ifscCode: generateIfscCode(bank),
-          razorpayContactId: generateRazorpayContactId(),
-          razorpayFundAccountId: generateRazorpayFundAccountId(),
-          status: "VERIFIED",
-          verifiedAt: faker.date.recent({ days: 45 }),
-        },
-      });
-
-      console.log(
-        `    ✓ ${spec.name} (HYBRID, ${spec.billingMode}, ${seatsUsed} learners, ${hybridConsultantCount} consultants)`,
-      );
-    } catch (error) {
-      console.error(
-        `    ✗ Failed to create HYBRID org "${spec.name}":`,
-        error,
-      );
-    }
+  for (const [idx, user] of learners.entries()) {
+    const membership = await prisma.membership.create({
+      data: {
+        userId: user.id,
+        organizationId: org.id,
+        role: MemberRole.MEMBER,
+        status: MemberStatus.ACTIVE,
+        departmentLabel: idx === 0 ? "EMEA-Product" : "India-Engineering",
+        consulteeProfileId: user.consulteeProfile?.id ?? null,
+      },
+    });
+    await prisma.programAssignment.create({
+      data: {
+        programId: program.id,
+        membershipId: membership.id,
+        periodStart,
+        periodEnd,
+        sessionsUsed: idx === 0 ? 3 : 1,
+      },
+    });
   }
 
-  // Create one admin-accessible org for testing the platform admin bypass
-  if (admins.length > 0) {
-    try {
-      const adminOrg = await prisma.organization.create({
-        data: {
-          name: "Platform Admin Test Org",
-          slug: `admin-test-org-${faker.string.alphanumeric(4)}`,
-        },
-      });
+  await prisma.licensedSeatConfig.update({
+    where: { programId: program.id },
+    data: { activeSeatCount: learners.length },
+  });
 
-      await prisma.organizationProfile.create({
-        data: {
-          organizationId: adminOrg.id,
-          kind: "BUYER",
-          status: "ACTIVE",
-          billingMode: "TAG_ONLY",
-          billingEmail: "admin-test@familiarise.com",
-          description: "Test org for verifying admin bypass in requireOrgAccess",
-        },
-      });
-
-      console.log(`    ✓ Platform Admin Test Org (no members — admin bypass testing)`);
-    } catch (error) {
-      console.error("    ✗ Failed to create admin test org:", error);
-    }
+  // HRIS CSV map entry (schema-final; no live connector in v1)
+  const hris = await prisma.hrisConfig.create({
+    data: {
+      organizationId: org.id,
+      provider: HrisProvider.CSV,
+      tenantKey: "wipro-csv-tenant",
+      active: true,
+      lastSyncedAt: faker.date.recent({ days: 7 }),
+    },
+  });
+  await prisma.hrisSyncJob.create({
+    data: {
+      hrisConfigId: hris.id,
+      startedAt: faker.date.recent({ days: 7 }),
+      completedAt: faker.date.recent({ days: 6 }),
+      status: HrisSyncStatus.COMPLETED,
+      recordsProcessed: learners.length,
+    },
+  });
+  if (learners.length > 0) {
+    await prisma.hrisEmployeeMap.create({
+      data: {
+        hrisConfigId: hris.id,
+        organizationId: org.id,
+        externalEmployeeId: "WIP-EMP-00001",
+        externalDepartment: "Product Engineering",
+        externalLocation: "Bangalore",
+        externalEmail: learners[0].email,
+        syncedAt: faker.date.recent({ days: 7 }),
+      },
+    });
   }
 
-  console.log(`  ✓ Enterprise organizations seeded`);
+  // DRAFT OrganizationInvoice (awaiting IRN)
+  await prisma.organizationInvoice.create({
+    data: {
+      billingAccountId: billingAccount.id,
+      organizationId: org.id,
+      purchaseOrderId: po.id,
+      invoiceNumber: "INV-WIP-2026-0001",
+      status: OrgInvoiceStatus.DRAFT,
+      displayCurrency: Currency.INR,
+      inrEquivalentPaise: 1_00_000 * 100,
+      subtotalPaise: 1_00_000 * 100,
+      igstPaise: 18_000 * 100,
+      totalPaise: 1_18_000 * 100,
+      taxRate: 0.18,
+      hsnCode: "999293",
+      placeOfSupply: "KA",
+      reverseCharge: false,
+      gstin: "29AABCW1234K1Z5",
+      irn: null,
+      irpStatus: IrpStatus.PENDING,
+      dueDate: faker.date.future({ years: 0.25 }),
+      billingCycleStart: periodStart,
+      billingCycleEnd: periodEnd,
+      autoGenerated: false,
+      items: [
+        {
+          description: "Wipro Engineer Leadership — January bookings",
+          quantity: 10,
+          unitPrice: 10_000 * 100,
+        },
+      ],
+    },
+  });
+
+  await prisma.orgAuditLog.create({
+    data: {
+      organizationId: org.id,
+      action: OrgAuditAction.CONTRACT_CREATED,
+      description: "Wipro contract signed; Engineer Leadership Program active.",
+      details: { contractId: contract.id, programId: program.id },
+    },
+  });
+
+  console.log(
+    `[15a]   ✓ Wipro (BUYER, INVOICE, LICENSED_SEAT): ${learners.length} learners`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shape 2: LearnPro Agency — pure PROVIDER with RateCard + payout account
+// ---------------------------------------------------------------------------
+
+async function seedLearnPro(agencyConsultants: UserWithProfiles[]) {
+  const org = await createRootOrg({
+    name: "LearnPro Academy",
+    slug: "learnpro-academy",
+    canSponsor: false,
+    canHost: true,
+    industry: "Education Services",
+    website: "https://learnpro.example",
+    description: "Coaching agency aggregating independent experts.",
+  });
+
+  const rateCard = await prisma.rateCard.create({
+    data: {
+      ownerOrgId: org.id,
+      platformBps: 1000, // 10%
+      orgBps: 1000, // 10%
+      consultantBps: 8000, // 80%
+    },
+  });
+
+  await prisma.organizationPayoutAccount.create({
+    data: {
+      organizationId: org.id,
+      accountHolderName: "LearnPro Academy Pvt Ltd",
+      accountNumberEncrypted: Buffer.from("LP-1234567890").toString("base64"),
+      accountNumberLast4: "7890",
+      bankName: "HDFC Bank",
+      ifscCode: "HDFC0001234",
+      razorpayContactId: "cont_" + faker.string.alphanumeric(14),
+      razorpayFundAccountId: "fa_" + faker.string.alphanumeric(14),
+      status: "VERIFIED",
+      verifiedAt: faker.date.recent({ days: 60 }),
+    },
+  });
+
+  for (const [idx, user] of agencyConsultants.entries()) {
+    if (!user.consultantProfile) continue;
+    await prisma.consultantProfile.update({
+      where: { id: user.consultantProfile.id },
+      data: {
+        panNumber: `ABCDE${String(1000 + idx)}F`,
+        residencyStatus: ResidencyStatus.RESIDENT,
+        tdsSection: "194J",
+        tdsRate: 0.1,
+        msmeStatus: idx < 2 ? MsmeStatus.MICRO : MsmeStatus.NONE,
+        udyamNumber:
+          idx < 2 ? `UDYAM-KA-01-000000${idx + 1}` : null,
+        writtenAgreementWithFamiliarise: true,
+        providerCountry: "IN",
+        payoutArrangement: PayoutArrangement.DIRECT,
+      },
+    });
+    await prisma.membership.create({
+      data: {
+        userId: user.id,
+        organizationId: org.id,
+        role: MemberRole.CONSULTANT,
+        status: MemberStatus.ACTIVE,
+        consultantProfileId: user.consultantProfile.id,
+        payoutRecipient: PayoutRecipient.SELF,
+        applicationNote: "Experienced senior coach; accepted to panel.",
+        appliedAt: faker.date.recent({ days: 120 }),
+        approvedAt: faker.date.recent({ days: 100 }),
+        rateCardOverrideId: idx === 0 ? rateCard.id : null,
+      },
+    });
+  }
+
+  await prisma.orgAuditLog.create({
+    data: {
+      organizationId: org.id,
+      action: OrgAuditAction.CONSULTANT_APPROVED,
+      description: `${agencyConsultants.length} consultants approved on LearnPro panel`,
+    },
+  });
+
+  console.log(
+    `[15a]   ✓ LearnPro (PROVIDER): ${agencyConsultants.length} consultants, RateCard 10/10/80`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shape 3: IIT Madras — HYBRID with WALLET funding + CREDIT_POOL program
+// ---------------------------------------------------------------------------
+
+async function seedIit(params: {
+  internalProfessors: UserWithProfiles[];
+  externalConsultants: UserWithProfiles[];
+  students: UserWithProfiles[];
+}) {
+  const org = await createRootOrg({
+    name: "Indian Institute of Technology Madras",
+    slug: "iit-madras",
+    canSponsor: true,
+    canHost: true,
+    gstin: "33AAACT5678M1Z9",
+    gstStateCode: "TN",
+    pan: "AAACT5678M",
+    billingEmail: "dean-academics@iitm.ac.in",
+    industry: "Higher Education",
+    website: "https://iitm.ac.in",
+    description: "Public research university; hybrid buyer+provider.",
+  });
+
+  // BillingAccount with WALLET funding (GLG-style)
+  const billingAccount = await prisma.billingAccount.create({
+    data: {
+      ownerOrgId: org.id,
+      billingEmail: "dean-academics@iitm.ac.in",
+      currency: Currency.INR,
+      fundingSource: FundingSource.WALLET,
+      walletBalance: 0,
+    },
+  });
+  await prisma.organization.update({
+    where: { id: org.id },
+    data: { billingAccountId: billingAccount.id },
+  });
+
+  // Contract with credit-pool program
+  const contract = await prisma.contract.create({
+    data: {
+      organizationId: org.id,
+      billingAccountId: billingAccount.id,
+      status: ContractStatus.ACTIVE,
+      effectiveFrom: faker.date.recent({ days: 30 }),
+      effectiveTo: faker.date.future({ years: 1 }),
+      paymentTermsDays: 0, // wallet is prepaid
+      terms: {
+        notes: "Student coaching credit pool, 1 credit = ₹1",
+      },
+    },
+  });
+
+  const program = await prisma.program.create({
+    data: {
+      contractId: contract.id,
+      type: ProgramType.CREDIT_POOL,
+      name: "IIT Student Coaching Pool",
+      status: ProgramStatus.ACTIVE,
+      coveredPlanTypes: ["CONSULTATION", "SUBSCRIPTION"],
+      creditPoolConfig: {
+        create: {
+          creditValuePaise: 100, // ₹1 per credit
+          minimumCreditsPerPeriod: 10_000,
+        },
+      },
+    },
+  });
+
+  // Seed WalletEntry ledger: 3 top-ups then 5 booking debits.
+  const now = new Date();
+  let running = 0;
+
+  for (let i = 0; i < 3; i++) {
+    const top = 5_00_000 * 100; // ₹5L
+    running += top;
+    await prisma.walletEntry.create({
+      data: {
+        billingAccountId: billingAccount.id,
+        deltaPaise: top,
+        reason: WalletReason.TOPUP,
+        balanceAfter: running,
+        notes: `Razorpay top-up #${i + 1}`,
+        providerOrderId: `order_iit_topup_${i + 1}_${faker.string.alphanumeric(8)}`,
+        providerPaymentId: `pay_${faker.string.alphanumeric(14)}`,
+      },
+    });
+    await prisma.fundingLedgerEntry.create({
+      data: {
+        billingAccountId: billingAccount.id,
+        deltaPaise: top,
+        reason: "TOPUP",
+        balanceAfterPaise: running,
+      },
+    });
+  }
+
+  for (let i = 0; i < 5; i++) {
+    const debit = 5_000 * 100; // ₹5K
+    running -= debit;
+    await prisma.walletEntry.create({
+      data: {
+        billingAccountId: billingAccount.id,
+        deltaPaise: -debit,
+        reason: WalletReason.BOOKING,
+        balanceAfter: running,
+        notes: `Sample booking debit #${i + 1}`,
+      },
+    });
+    await prisma.fundingLedgerEntry.create({
+      data: {
+        billingAccountId: billingAccount.id,
+        deltaPaise: -debit,
+        reason: "BOOKING_DEBIT",
+        balanceAfterPaise: running,
+      },
+    });
+  }
+
+  await prisma.billingAccount.update({
+    where: { id: billingAccount.id },
+    data: { walletBalance: running },
+  });
+
+  // Internal professors (payoutRecipient=ORGANIZATION → salaried)
+  for (const prof of params.internalProfessors) {
+    if (!prof.consultantProfile) continue;
+    await prisma.membership.create({
+      data: {
+        userId: prof.id,
+        organizationId: org.id,
+        role: MemberRole.CONSULTANT,
+        status: MemberStatus.ACTIVE,
+        consultantProfileId: prof.consultantProfile.id,
+        payoutRecipient: PayoutRecipient.ORGANIZATION,
+        departmentLabel: "Academic-Faculty",
+      },
+    });
+  }
+
+  // External consultants (payoutRecipient=SELF)
+  for (const ext of params.externalConsultants) {
+    if (!ext.consultantProfile) continue;
+    await prisma.membership.create({
+      data: {
+        userId: ext.id,
+        organizationId: org.id,
+        role: MemberRole.CONSULTANT,
+        status: MemberStatus.ACTIVE,
+        consultantProfileId: ext.consultantProfile.id,
+        payoutRecipient: PayoutRecipient.SELF,
+        departmentLabel: "External-Panel",
+      },
+    });
+  }
+
+  // Students (MEMBER role) + program assignments
+  const periodStart = new Date(now.getFullYear(), 0, 1);
+  const periodEnd = new Date(now.getFullYear() + 1, 0, 1);
+
+  for (const student of params.students) {
+    const membership = await prisma.membership.create({
+      data: {
+        userId: student.id,
+        organizationId: org.id,
+        role: MemberRole.MEMBER,
+        status: MemberStatus.ACTIVE,
+        consulteeProfileId: student.consulteeProfile?.id ?? null,
+        departmentLabel: "CSE-UG-2026",
+      },
+    });
+    await prisma.programAssignment.create({
+      data: {
+        programId: program.id,
+        membershipId: membership.id,
+        periodStart,
+        periodEnd,
+      },
+    });
+  }
+
+  // Payout account (hosting side)
+  await prisma.organizationPayoutAccount.create({
+    data: {
+      organizationId: org.id,
+      accountHolderName: "IIT Madras Research Funds",
+      accountNumberEncrypted: Buffer.from("IIT-98765432100").toString("base64"),
+      accountNumberLast4: "2100",
+      bankName: "State Bank of India",
+      ifscCode: "SBIN0001234",
+      status: "VERIFIED",
+      verifiedAt: faker.date.recent({ days: 90 }),
+    },
+  });
+
+  console.log(
+    `[15a]   ✓ IIT Madras (HYBRID, WALLET, CREDIT_POOL): wallet ₹${(running / 100).toLocaleString("en-IN")} remaining`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shape 4: Rahul (solo consultant) — personal org, canHost=true only
+// ---------------------------------------------------------------------------
+
+async function seedSoloConsultant(user: UserWithProfiles) {
+  if (!user.consultantProfile) return;
+
+  const org = await createRootOrg({
+    name: `${user.name}'s Coaching`,
+    slug: `${slugify(user.name)}-coaching-${faker.string.alphanumeric(4).toLowerCase()}`,
+    canSponsor: false,
+    canHost: true,
+    status: OrgStatus.ACTIVE,
+    industry: "Independent Coaching",
+  });
+
+  await prisma.membership.create({
+    data: {
+      userId: user.id,
+      organizationId: org.id,
+      role: MemberRole.OWNER,
+      status: MemberStatus.ACTIVE,
+      consultantProfileId: user.consultantProfile.id,
+      payoutRecipient: PayoutRecipient.SELF,
+    },
+  });
+
+  console.log(`[15a]   ✓ Solo consultant org: ${org.name}`);
+}
+
+// ---------------------------------------------------------------------------
+// DPDP consent artifacts
+// ---------------------------------------------------------------------------
+
+async function seedConsentArtifacts(users: UserWithProfiles[]) {
+  for (const u of users) {
+    const draft = buildConsentArtifact({
+      userId: u.id,
+      dataFiduciary: "Familiarise Pvt Ltd",
+      purposeCodes: ["account-management", "session-booking", "analytics"],
+      language: "en",
+      version: 1,
+    });
+    await prisma.consentArtifact.create({ data: draft });
+  }
+  console.log(`[15a]   ✓ ConsentArtifact seeded for ${users.length} users`);
 }

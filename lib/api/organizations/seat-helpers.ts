@@ -1,45 +1,41 @@
 /**
- * Atomic seat acquisition / release for organizations.
+ * @deprecated since Arch 4-Modified (Issue #681).
  *
- * Uses conditional raw SQL UPDATEs that only succeed when the capacity
- * constraint is met. This eliminates the read-check-write race where
- * concurrent requests could both pass a pre-check and both increment.
+ * Seat-based entitlement was replaced by `Program` + `ProgramAssignment`
+ * — see `lib/api/organizations/program-helpers.ts`. The
+ * `OrganizationProfile.seatsTotal` / `seatsUsed` pair no longer exists.
+ *
+ * This shim is intentionally NOT a working implementation — any remaining
+ * caller hits a thrown error and must be migrated to
+ * `claimProgramAssignment` / `recordBookingUtilization` from
+ * `./program-helpers.ts`.
+ *
+ * The file will be deleted at the end of Phase 2 once all callers are
+ * rewritten.
  */
 
-import { Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 
 type TxClient = Prisma.TransactionClient;
 
-/**
- * Atomically acquire one learner seat. Returns true if acquired, false
- * if the org is at capacity. Must be called inside a transaction.
- *
- * The UPDATE's WHERE clause prevents execution when the org is full,
- * so two concurrent calls cannot both succeed.
- */
-export async function acquireSeat(
-  tx: TxClient,
-  organizationProfileId: string,
-): Promise<boolean> {
-  const rows: number = await tx.$executeRaw`
-    UPDATE "OrganizationProfile"
-    SET "seatsUsed" = "seatsUsed" + 1, "updatedAt" = NOW()
-    WHERE id = ${organizationProfileId}
-      AND ("seatsTotal" IS NULL OR "seatsUsed" < "seatsTotal")
-  `;
-  return rows > 0;
+function notImplemented(name: string): never {
+  throw new Error(
+    `[arch4-migration] ${name} has been removed. Use program-helpers.ts instead.`,
+  );
 }
 
-/**
- * Release one learner seat (decrement seatsUsed, floor at 0).
- */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export async function acquireSeat(
+  _tx: TxClient,
+  _billingAccountId: string,
+): Promise<boolean> {
+  notImplemented("acquireSeat");
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function releaseSeat(
-  tx: TxClient,
-  organizationProfileId: string,
+  _tx: TxClient,
+  _billingAccountId: string,
 ): Promise<void> {
-  await tx.$executeRaw`
-    UPDATE "OrganizationProfile"
-    SET "seatsUsed" = GREATEST("seatsUsed" - 1, 0), "updatedAt" = NOW()
-    WHERE id = ${organizationProfileId}
-  `;
+  notImplemented("releaseSeat");
 }

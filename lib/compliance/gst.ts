@@ -1,0 +1,102 @@
+/**
+ * GST (Goods and Services Tax) derivation — INDIA COMPLIANCE STUB.
+ *
+ * STATUS: stub. Returns zero tax / IGST-only defaults so downstream code
+ * doesn't null-crash. Live derivation lands in a follow-up PR.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * LIVE IMPLEMENTATION REQUIREMENTS (follow-up PR)
+ * ─────────────────────────────────────────────────────────────────────────
+ *
+ * 1. Place-of-supply resolution (Sec 12 & 13 IGST Act):
+ *      - B2B (both parties registered): place-of-supply = buyer's GSTIN state.
+ *      - B2C: place-of-supply = buyer's registered address state.
+ *      - Cross-border export of services (supplier IN → buyer foreign):
+ *          * Zero-rated under IGST Act s.16 if payment in convertible forex.
+ *          * Requires LUT (Letter of Undertaking) filed with GST authorities
+ *            — captured in `OrganizationInvoice.lutNumber`.
+ *      - Imports of services (foreign supplier → buyer IN): reverse charge
+ *          mechanism (RCM) — `reverseCharge = true`, buyer pays GST.
+ *
+ * 2. IGST vs CGST+SGST split:
+ *      - If place-of-supply state == supplier state → CGST (9%) + SGST (9%)
+ *        = 18% total. Split 50/50.
+ *      - If place-of-supply state != supplier state → IGST 18% only.
+ *      - For services, default HSN/SAC code is 999293 (educational services).
+ *      - Reclassify for consultancy: 998399 (other professional services).
+ *
+ * 3. GSTIN format: 15 characters. First 2 = state code. Characters 3-12 =
+ *    PAN. Character 13 = entity number. Character 14 = 'Z' literal.
+ *    Character 15 = checksum.
+ *    Regex: /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.
+ *
+ * 4. Regular vs composition scheme (`gstRegStatus`):
+ *      - REGULAR: normal 18% with ITC.
+ *      - COMPOSITION: 6% flat, no ITC (unlikely for B2B SaaS; flagged only).
+ *      - UNREGISTERED: no GST, but buyer may apply RCM.
+ *
+ * 5. Invoice numbering: sequential per financial year per billing account,
+ *    must be continuous. Use a DB sequence or row-lock helper — never
+ *    regenerate after issue.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+
+export interface GstBreakdown {
+  subtotalPaise: number;
+  igstPaise: number;
+  cgstPaise: number;
+  sgstPaise: number;
+  totalPaise: number;
+  hsnCode: string;
+  placeOfSupply: string | null;
+  reverseCharge: boolean;
+  reason: string;
+}
+
+/**
+ * STUB: Derives GST breakdown for an invoice line subtotal.
+ *
+ * TODO: replace with live derivation per the header docblock.
+ */
+export function deriveGstBreakdown(params: {
+  subtotalPaise: number;
+  supplierStateCode: string | null; // ISO-like 2-char code, e.g. "KA"
+  buyerStateCode: string | null;
+  buyerCountry: string; // ISO 3166 alpha-2
+  hsnCode?: string;
+}): GstBreakdown {
+  // STUB: returns zero tax. Live impl computes per the docblock rules.
+  return {
+    subtotalPaise: params.subtotalPaise,
+    igstPaise: 0,
+    cgstPaise: 0,
+    sgstPaise: 0,
+    totalPaise: params.subtotalPaise,
+    hsnCode: params.hsnCode ?? "999293",
+    placeOfSupply: params.buyerStateCode,
+    reverseCharge: false,
+    reason: "STUB: GST derivation deferred; see lib/compliance/gst.ts TODO",
+  };
+}
+
+/**
+ * STUB: Validates a GSTIN format. Real impl includes checksum verification.
+ */
+export function isValidGstin(g: string | null | undefined): boolean {
+  if (!g) return false;
+  return /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(g);
+}
+
+/**
+ * STUB: Resolves place-of-supply for a transaction. Returns null for
+ * export/import scenarios.
+ */
+export function resolvePlaceOfSupply(params: {
+  supplierStateCode: string | null;
+  buyerStateCode: string | null;
+  buyerCountry: string;
+}): string | null {
+  if (params.buyerCountry !== "IN") return null; // export
+  return params.buyerStateCode ?? params.supplierStateCode ?? null;
+}

@@ -1,132 +1,67 @@
 /**
- * SEAT_PACK credit operations for org billing.
+ * @deprecated since Arch 4-Modified (Issue #681).
  *
- * Credits are stored in paise (1 credit unit = 1 paise) in OrgCreditPool.
- * Every mutation writes an immutable OrgCreditLedger row, maintaining a
- * running balance for audit.
+ * SEAT_PACK / OrgCreditPool was replaced by `BillingAccount.fundingSource =
+ * WALLET` + a unified `WalletEntry` ledger. This file is a compatibility
+ * shim that delegates to `lib/api/organizations/wallet.ts`. Callers should
+ * migrate to the wallet helpers directly.
  *
- * All balance mutations use Prisma's atomic `increment`/`decrement` operators
- * to prevent read-then-write races under concurrent transactions.
+ * Parameter mapping:
+ *   - `organizationProfileId` → `billingAccountId`
+ *   - `memberProfileId`       → `membershipId`
+ *
+ * The shim expects callers to already pass a BillingAccount id; do NOT
+ * pass the legacy OrganizationProfile id. API-route rewrites in Phase 2
+ * resolve the BillingAccount before calling this.
  */
 
-import { Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
+import { walletCredit, walletDebit } from "../../api/organizations/wallet";
 
 type TxClient = Prisma.TransactionClient;
 
-/**
- * Deduct credits from the org pool. Uses a conditional raw SQL UPDATE to
- * prevent overdraft under concurrency — same pattern as acquireSeat().
- */
 export async function deductCredits(
   tx: TxClient,
-  organizationProfileId: string,
+  billingAccountId: string,
   amountPaise: number,
   paymentId?: string,
-  memberProfileId?: string,
+  membershipId?: string,
 ): Promise<{ balanceAfter: number }> {
-  if (amountPaise <= 0) throw new Error("Deduction amount must be positive");
-
-  // Atomic conditional decrement — only succeeds if balance >= amountPaise.
-  const rows: number = await tx.$executeRaw`
-    UPDATE "OrgCreditPool"
-    SET balance = balance - ${amountPaise}, "updatedAt" = NOW()
-    WHERE "organizationProfileId" = ${organizationProfileId}
-      AND balance >= ${amountPaise}
-  `;
-  if (rows === 0) {
-    throw new Error(
-      `Insufficient credits: need ${amountPaise} paise`,
-    );
-  }
-
-  // Read back the updated balance for the ledger row.
-  const pool = await tx.orgCreditPool.findUnique({
-    where: { organizationProfileId },
-    select: { balance: true },
+  return walletDebit(tx, {
+    billingAccountId,
+    amountPaise,
+    reason: "BOOKING",
+    paymentId,
+    membershipId,
   });
-  const balanceAfter = pool?.balance ?? 0;
-
-  await tx.orgCreditLedger.create({
-    data: {
-      organizationProfileId,
-      delta: -amountPaise,
-      reason: "booking",
-      paymentId: paymentId ?? null,
-      memberProfileId: memberProfileId ?? null,
-      balanceAfter,
-    },
-  });
-
-  return { balanceAfter };
 }
 
-/**
- * Refund credits back to the org pool (reverses a prior deduction).
- *
- * `memberProfileId` mirrors the param on `deductCredits` — pass it so the
- * refund ledger row attributes which learner received the credit back.
- */
 export async function creditRefund(
   tx: TxClient,
-  organizationProfileId: string,
+  billingAccountId: string,
   amountPaise: number,
   paymentId?: string,
-  memberProfileId?: string,
+  membershipId?: string,
 ): Promise<{ balanceAfter: number }> {
-  if (amountPaise <= 0) throw new Error("Refund amount must be positive");
-
-  // Atomic increment — no race possible.
-  const updated = await tx.orgCreditPool.update({
-    where: { organizationProfileId },
-    data: { balance: { increment: amountPaise } },
-    select: { balance: true },
+  return walletCredit(tx, {
+    billingAccountId,
+    amountPaise,
+    reason: "REFUND",
+    paymentId,
+    membershipId,
   });
-
-  await tx.orgCreditLedger.create({
-    data: {
-      organizationProfileId,
-      delta: amountPaise,
-      reason: "refund",
-      paymentId: paymentId ?? null,
-      memberProfileId: memberProfileId ?? null,
-      balanceAfter: updated.balance,
-    },
-  });
-
-  return { balanceAfter: updated.balance };
 }
 
-/**
- * Grant purchased credits to the org pool (called after gateway webhook
- * confirms the credit-pack payment).
- */
 export async function purchaseCredits(
   tx: TxClient,
-  organizationProfileId: string,
+  billingAccountId: string,
   creditsPaise: number,
   paymentId?: string,
 ): Promise<{ balanceAfter: number }> {
-  if (creditsPaise <= 0) throw new Error("Purchase amount must be positive");
-
-  // Atomic increment — no race possible.
-  const updated = await tx.orgCreditPool.update({
-    where: { organizationProfileId },
-    data: {
-      balance: { increment: creditsPaise },
-      totalPurchased: { increment: creditsPaise },
-    },
-    select: { balance: true },
+  return walletCredit(tx, {
+    billingAccountId,
+    amountPaise: creditsPaise,
+    reason: "TOPUP",
+    paymentId,
   });
-
-  await tx.orgCreditLedger.create({
-    data: {
-      organizationProfileId,
-      delta: creditsPaise,
-      reason: "purchase",
-      paymentId: paymentId ?? null,
-      balanceAfter: updated.balance,
-    },
-  });
-
-  return { balanceAfter: updated.balance };
 }
