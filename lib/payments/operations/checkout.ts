@@ -1642,55 +1642,65 @@ export async function handleCheckout(
   let paymentResponse: { id: string; client_secret: string | null } | null =
     null;
 
-  // Enterprise: resolve org context early so it is available when building
-  // the Payment row. For TAG_ONLY orgs this is purely a tag — the gateway
-  // flow is unchanged. SEAT_PACK and INVOICED_MONTHLY branching (Phases J/K)
-  // will read `orgBillingMode` to decide whether to skip the gateway.
+  // Enterprise (Arch 4-Modified): resolve org context early.
+  //
+  // Billing-mode mapping used here:
+  //   fundingSource=PERSONAL → no-op (TAG_ONLY equivalent)
+  //   fundingSource=WALLET   → deduct from WalletEntry ledger
+  //   fundingSource=INVOICE  → billed on the next invoice cycle
+  //   fundingSource=LICENSE  → enterprise flat-fee; no per-session billing
+  //
+  // NOTE: The Phase-2 rewrite is partial. The branches below read the new
+  // shape (BillingAccount.fundingSource) but still flow through the same
+  // downstream checkout code — any deeper integration lands in Phase 2b.
   let organizationProfileId: string | null = null;
   let orgBillingMode: string | null = null;
   let orgContractEndDate: Date | null = null;
+  let billingAccountId: string | null = null;
   if (validatedData.organizationId) {
-    const orgProfile = await prisma.organizationProfile.findUnique({
-      where: { organizationId: validatedData.organizationId },
-      select: { id: true, billingMode: true, status: true, orgInvoiceCreditLimit: true, contractEndDate: true },
+    const org = await prisma.organization.findUnique({
+      where: { id: validatedData.organizationId },
+      select: {
+        id: true,
+        status: true,
+        canSponsor: true,
+        billingAccount: {
+          select: {
+            id: true,
+            fundingSource: true,
+            creditLimit: true,
+            walletBalance: true,
+          },
+        },
+      },
     });
-    if (!orgProfile || orgProfile.status !== "ACTIVE") {
+    if (!org || org.status !== "ACTIVE") {
       throw new Error("Organization not found or deactivated.");
     }
-
-    // SECURITY: Verify the caller is an active member of this org before
-    // allowing any org-funded billing. Without this check, any user could
-    // pass another org's ID and drain their credit pool or push bookings
-    // onto their invoice. Fail closed — reject if not a member.
-    // NOTE: Any active member may spend org budget (role-blind). This is
-    // intentional — learners, managers, and admins all book on behalf of
-    // the org. If role-based spending restrictions are needed later, add
-    // them here by checking callerMembership.role.
-    const callerMembership =
-      await prisma.organizationMemberProfile.findFirst({
-        where: {
-          organizationProfileId: orgProfile.id,
-          status: "ACTIVE",
-          member: { userId },
-        },
-        select: { role: true, seatAssignedAt: true },
-      });
-    if (!callerMembership) {
+    if (!org.canSponsor) {
       throw new Error(
-        "You are not an active member of this organization.",
+        "This organization is not configured to sponsor bookings (canSponsor=false).",
       );
     }
 
-    // INVOICED_MONTHLY: enforce orgInvoiceCreditLimit. Calculate net
-    // exposure (unbilled payments minus their refunds + outstanding invoices).
+    // SECURITY: Verify the caller is an active Membership of this org.
+    const callerMembership = await prisma.membership.findUnique({
+      where: { userId_organizationId: { userId, organizationId: org.id } },
+      select: { role: true, status: true, id: true },
+    });
+    if (!callerMembership || callerMembership.status !== "ACTIVE") {
+      throw new Error("You are not an active member of this organization.");
+    }
+
+    // INVOICE fundingSource: enforce creditLimit if configured.
     if (
-      orgProfile.billingMode === "INVOICED_MONTHLY" &&
-      orgProfile.orgInvoiceCreditLimit !== null
+      org.billingAccount?.fundingSource === "INVOICE" &&
+      org.billingAccount.creditLimit !== null
     ) {
       const [unbilledPayments, outstandingAgg] = await Promise.all([
         prisma.payment.findMany({
           where: {
-            organizationProfileId: orgProfile.id,
+            organizationId: org.id,
             paymentStatus: "SUCCEEDED",
             paymentMethod: "ORG_INVOICED",
             billableToOrgInvoiceId: null,
@@ -1705,36 +1715,44 @@ export async function handleCheckout(
         }),
         prisma.organizationInvoice.aggregate({
           where: {
-            organizationProfileId: orgProfile.id,
-            status: { in: ["SENT", "OVERDUE"] },
+            organizationId: org.id,
+            status: { in: ["ISSUED", "OVERDUE"] },
           },
-          _sum: { amount: true },
+          _sum: { totalPaise: true },
         }),
       ]);
-      // Net unbilled = sum of (payment.amount - refunded) for each payment
       const netUnbilled = unbilledPayments.reduce((sum, p) => {
         const refunded = p.refunds.reduce((s, r) => s + r.amount, 0);
         return sum + Math.max(0, (p.amount ?? 0) - refunded);
       }, 0);
-      const exposure = netUnbilled + (outstandingAgg._sum.amount ?? 0);
-      if (exposure >= orgProfile.orgInvoiceCreditLimit) {
+      const exposure = netUnbilled + (outstandingAgg._sum.totalPaise ?? 0);
+      if (exposure >= org.billingAccount.creditLimit) {
         throw new Error(
           "Organization has reached its invoice credit limit. Outstanding invoices must be paid before new bookings.",
         );
       }
     }
 
-    organizationProfileId = orgProfile.id;
-    orgBillingMode = orgProfile.billingMode;
-    orgContractEndDate = orgProfile.contractEndDate;
+    organizationProfileId = org.id; // legacy variable name preserved for compat
+    billingAccountId = org.billingAccount?.id ?? null;
+    // Map fundingSource → legacy billingMode label for downstream switch blocks.
+    orgBillingMode =
+      org.billingAccount?.fundingSource === "WALLET"
+        ? "SEAT_PACK"
+        : org.billingAccount?.fundingSource === "INVOICE"
+          ? "INVOICED_MONTHLY"
+          : org.billingAccount?.fundingSource === "LICENSE"
+            ? "PREPAID_UNLIMITED"
+            : "TAG_ONLY";
+    orgContractEndDate = null; // Contract-level end date read in Phase 2b.
 
-    // Block personal referral credits on org-funded bookings. Mixing a
-    // personal-wallet incentive with employer-funded spend creates murky
-    // reimbursement/accounting and reward economics.
+    // Block personal referral credits on org-funded bookings.
     if (validatedData.useReferralCredits) {
       validatedData = { ...validatedData, useReferralCredits: false };
     }
   }
+  // Suppress unused-warning for billingAccountId until Phase 2b consumes it.
+  void billingAccountId;
 
   try {
     // STEP 1: Calculate amount and fetch plan data (OUTSIDE LOCK - just pricing)
@@ -1810,9 +1828,13 @@ export async function handleCheckout(
     const isZeroAmountPayment = amount === 0 && creditsApplied > 0;
 
     // STEP 4: Create payment intent (INSIDE LOCK)
-    // PREPAID_UNLIMITED: verify the license hasn't expired before proceeding.
+    // LICENSE fundingSource: contract-end-date enforcement moves to Phase 2b.
+    // orgContractEndDate is set to `null` today (Arch 4-Modified) — once
+    // Contract.effectiveTo is read at checkout we can re-enable the expiry
+    // check here.
     if (isOrgPrepaidUnlimited) {
-      if (orgContractEndDate && new Date() > orgContractEndDate) {
+      const contractEnd = orgContractEndDate as Date | null;
+      if (contractEnd && new Date() > contractEnd) {
         return {
           success: false,
           error: "Your organization's prepaid license has expired. Please contact your admin to renew.",
@@ -1961,18 +1983,16 @@ export async function handleCheckout(
               isInternational,
               displayCurrencyAtCheckout,
               exchangeRateAtCheckout,
-              // Enterprise: org tag for reporting / billing. For TAG_ONLY this
-              // is purely a tag; SEAT_PACK and INVOICED_MONTHLY branching will
-              // set additional fields here in Phases J/K.
-              organizationProfileId,
+              // Enterprise (Arch 4): org tag for reporting / billing.
+              organizationId: organizationProfileId, // renamed FK on Payment
+              billingAccountId,
             },
           });
 
-          // Enterprise: SEAT_PACK credit deduction inside the Serializable TX.
-          // The pool balance check + decrement is atomic with the Payment creation,
-          // so concurrent checkouts can't overdraw.
-          if (isOrgCreditPayment && organizationProfileId) {
-            await deductCredits(tx, organizationProfileId, amount, payment.id);
+          // Enterprise: WALLET fundingSource — debit from BillingAccount.walletBalance
+          // atomically via the wallet helper (raw-SQL conditional UPDATE).
+          if (isOrgCreditPayment && billingAccountId) {
+            await deductCredits(tx, billingAccountId, amount, payment.id);
           }
 
           // Increment discount code usage count atomically (only after payment is created)

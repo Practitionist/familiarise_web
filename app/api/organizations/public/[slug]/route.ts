@@ -1,115 +1,29 @@
 /**
- * Public organization profile API.
+ * @arch4-stub Pending Arch 4-Modified rewrite (Issue #681).
  *
- * GET /api/organizations/public/[slug]
+ * The original implementation relied on OrganizationProfile /
+ * OrganizationMemberProfile / OrgCreditPool — all removed. The new model
+ * uses Organization / Membership / BillingAccount / WalletEntry / Program.
  *
- * Returns public-facing org data for PROVIDER/HYBRID orgs.
- * No authentication required.
+ * This route is currently a 501 placeholder. See:
+ *   docs/enterprise/phase-2-api-rewrite-checklist.md
+ * for the per-route migration plan.
+ *
+ * File: app/api/organizations/public/[slug]/route.ts
  */
 
-import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import { NextResponse } from "next/server";
 
-export async function GET(
-  _req: NextRequest,
-  { params }: { params: Promise<{ slug: string }> },
-) {
-  const { slug } = await params;
-
-  const org = await prisma.organization.findUnique({
-    where: { slug },
-    select: {
-      id: true,
-      name: true,
-      slug: true,
-      logo: true,
-      organizationProfile: {
-        select: {
-          id: true,
-          kind: true,
-          status: true,
-          description: true,
-          industry: true,
-          website: true,
-          logo: true,
-          bannerImage: true,
-          primaryColor: true,
-          secondaryColor: true,
-          members: {
-            where: { role: "ORG_CONSULTANT", status: "ACTIVE" },
-            include: {
-              member: {
-                include: {
-                  user: {
-                    select: {
-                      id: true,
-                      name: true,
-                      image: true,
-                    },
-                  },
-                },
-              },
-              consultantProfile: {
-                select: {
-                  id: true,
-                  headline: true,
-                  rating: true,
-                  isVerified: true,
-                  experience: true,
-                },
-              },
-            },
-          },
-        },
-      },
+function notImplemented(method: string) {
+  return NextResponse.json(
+    {
+      error: "Not implemented",
+      detail: `${method} app/api/organizations/public/[slug]/route.ts is awaiting Arch 4-Modified rewrite; see Issue #681.`,
     },
-  });
+    { status: 501 },
+  );
+}
 
-  if (!org?.organizationProfile) {
-    return NextResponse.json(
-      { error: "Organization not found" },
-      { status: 404 },
-    );
-  }
-
-  const profile = org.organizationProfile;
-
-  // Only show PROVIDER/HYBRID orgs that are ACTIVE
-  if (
-    (profile.kind !== "PROVIDER" && profile.kind !== "HYBRID") ||
-    profile.status !== "ACTIVE"
-  ) {
-    return NextResponse.json(
-      { error: "Organization not found" },
-      { status: 404 },
-    );
-  }
-
-  return NextResponse.json({
-    organization: {
-      id: org.id,
-      name: org.name,
-      slug: org.slug,
-      logo: org.logo,
-    },
-    profile: {
-      description: profile.description,
-      industry: profile.industry,
-      website: profile.website,
-      logo: profile.logo,
-      bannerImage: profile.bannerImage,
-      primaryColor: profile.primaryColor,
-      secondaryColor: profile.secondaryColor,
-    },
-    consultants: profile.members.map((m: typeof profile.members[number]) => ({
-      id: m.consultantProfile?.id,
-      name: m.member.user.name,
-      image: m.member.user.image,
-      headline: m.consultantProfile?.headline,
-      rating: m.consultantProfile?.rating,
-      isVerified: m.consultantProfile?.isVerified,
-      experience: m.consultantProfile?.experience,
-    })),
-    consultantCount: profile.members.length,
-  });
+export async function GET() {
+  return notImplemented("GET");
 }

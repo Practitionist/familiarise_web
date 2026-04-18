@@ -746,61 +746,87 @@ async function createOrgInTransaction(
     orgSeatsTotal?: number | null;
   },
 ): Promise<{ orgId: string; orgProfileId: string }> {
-  const billingMode = (data.orgBillingMode ?? "TAG_ONLY") as
+  // Arch 4-Modified (Issue #681): mode → FundingSource mapping.
+  //   TAG_ONLY          → PERSONAL
+  //   SEAT_PACK         → WALLET
+  //   INVOICED_MONTHLY  → INVOICE
+  //   PREPAID_UNLIMITED → LICENSE
+  const legacyMode = (data.orgBillingMode ?? "TAG_ONLY") as
     | "TAG_ONLY"
     | "SEAT_PACK"
     | "INVOICED_MONTHLY"
     | "PREPAID_UNLIMITED";
+  const fundingSource =
+    legacyMode === "SEAT_PACK"
+      ? "WALLET"
+      : legacyMode === "INVOICED_MONTHLY"
+        ? "INVOICE"
+        : legacyMode === "PREPAID_UNLIMITED"
+          ? "LICENSE"
+          : "PERSONAL";
+
   const slug = `${slugify(data.orgName)}-${Math.random().toString(36).slice(2, 8)}`;
 
   const organization = await tx.organization.create({
-    data: { name: data.orgName, slug },
-  });
-
-  const profile = await tx.organizationProfile.create({
     data: {
-      organizationId: organization.id,
-      kind: "BUYER",
+      name: data.orgName,
+      slug,
+      rootId: "placeholder", // backfilled below
       status: "ACTIVE",
-      billingMode,
+      canSponsor: true,
+      canHost: false,
       billingEmail: data.orgBillingEmail,
       description: data.orgDescription ?? null,
       industry: data.orgIndustry ?? null,
-      sizeBucket: (data.orgSizeBucket as "SMALL_1_50" | "MEDIUM_51_200" | "LARGE_201_1000" | "ENTERPRISE_1000_PLUS") ?? null,
+      sizeBucket:
+        (data.orgSizeBucket as
+          | "SMALL_1_50"
+          | "MEDIUM_51_200"
+          | "LARGE_201_1000"
+          | "ENTERPRISE_1000_PLUS") ?? null,
       website: data.orgWebsite ?? null,
-      paymentTermsDays: data.orgPaymentTermsDays ?? 30,
-      seatsTotal: data.orgSeatsTotal ?? null,
+      paymentTermsDays: data.orgPaymentTermsDays ?? 60,
     },
+  });
+  await tx.organization.update({
+    where: { id: organization.id },
+    data: { rootId: organization.id },
+  });
+
+  // BillingAccount (sponsorship funding source)
+  const billingAccount = await tx.billingAccount.create({
+    data: {
+      ownerOrgId: organization.id,
+      billingEmail: data.orgBillingEmail,
+      currency: "INR",
+      fundingSource,
+      walletBalance: fundingSource === "WALLET" ? 0 : null,
+    },
+  });
+  await tx.organization.update({
+    where: { id: organization.id },
+    data: { billingAccountId: billingAccount.id },
   });
 
   const member = await tx.member.create({
     data: {
       organizationId: organization.id,
       userId,
-      role: "ORG_OWNER",
+      role: "OWNER",
     },
   });
 
-  await tx.organizationMemberProfile.create({
+  await tx.membership.create({
     data: {
-      memberId: member.id,
-      organizationProfileId: profile.id,
-      role: "ORG_OWNER",
+      organizationId: organization.id,
+      userId,
+      role: "OWNER",
       status: "ACTIVE",
+      betterAuthMemberId: member.id,
     },
   });
 
-  if (billingMode === "SEAT_PACK") {
-    await tx.orgCreditPool.create({
-      data: {
-        organizationProfileId: profile.id,
-        balance: 0,
-        totalPurchased: 0,
-      },
-    });
-  }
-
-  return { orgId: organization.id, orgProfileId: profile.id };
+  return { orgId: organization.id, orgProfileId: organization.id };
 }
 
 /**

@@ -1,76 +1,29 @@
 /**
- * SSO domain check — public endpoint.
+ * @arch4-stub Pending Arch 4-Modified rewrite (Issue #681).
  *
- * GET ?email=alice@acme.com
+ * The original implementation relied on OrganizationProfile /
+ * OrganizationMemberProfile / OrgCreditPool — all removed. The new model
+ * uses Organization / Membership / BillingAccount / WalletEntry / Program.
  *
- * Returns whether the email's domain has an SSO provider with enforceSSO=true.
- * The signin page calls this when the user enters their email to decide
- * whether to redirect them to the IdP instead of showing the password form.
+ * This route is currently a 501 placeholder. See:
+ *   docs/enterprise/phase-2-api-rewrite-checklist.md
+ * for the per-route migration plan.
  *
- * This replaces the middleware-level domain router because Prisma queries are
- * not edge-compatible. If latency matters, cache the result in Upstash Redis.
+ * File: app/api/auth/sso/domain-check/route.ts
  */
 
-import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import { NextResponse } from "next/server";
 
-export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const email = searchParams.get("email")?.trim().toLowerCase();
-  if (!email || !email.includes("@")) {
-    return NextResponse.json({ enforceSSO: false });
-  }
-
-  const domain = email.split("@")[1];
-
-  // Find an org whose SSO settings claim this domain and enforce SSO.
-  const ssoSettings = await prisma.organizationSSOSettings.findFirst({
-    where: {
-      enforceSSO: true,
-      allowedEmailDomains: { has: domain },
+function notImplemented(method: string) {
+  return NextResponse.json(
+    {
+      error: "Not implemented",
+      detail: `${method} app/api/auth/sso/domain-check/route.ts is awaiting Arch 4-Modified rewrite; see Issue #681.`,
     },
-    select: {
-      organizationProfile: {
-        select: {
-          organizationId: true,
-          organization: { select: { name: true, slug: true } },
-        },
-      },
-    },
-  });
+    { status: 501 },
+  );
+}
 
-  if (!ssoSettings) {
-    return NextResponse.json({ enforceSSO: false });
-  }
-
-  // Look up the SSO provider for this org + domain.
-  const provider = await prisma.ssoProvider.findFirst({
-    where: {
-      organizationId: ssoSettings.organizationProfile.organizationId,
-      domain,
-    },
-    select: { id: true, providerId: true, issuer: true },
-  });
-
-  if (!provider) {
-    return NextResponse.json({ enforceSSO: false });
-  }
-
-  // BetterAuth SSO uses POST /api/auth/sign-in/sso with body params.
-  // Return the endpoint + required body fields so the signin page can
-  // construct the correct request.
-  return NextResponse.json({
-    enforceSSO: true,
-    organizationName:
-      ssoSettings.organizationProfile.organization.name,
-    organizationSlug:
-      ssoSettings.organizationProfile.organization.slug,
-    providerId: provider.providerId,
-    ssoEndpoint: "/api/auth/sign-in/sso",
-    ssoBody: {
-      providerId: provider.providerId,
-      domain,
-      callbackURL: "/dashboard",
-    },
-  });
+export async function GET() {
+  return notImplemented("GET");
 }

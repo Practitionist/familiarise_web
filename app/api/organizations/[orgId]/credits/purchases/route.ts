@@ -1,49 +1,29 @@
 /**
- * SEAT_PACK credit purchase history.
+ * @arch4-stub Pending Arch 4-Modified rewrite (Issue #681).
  *
- * GET — ORG_MANAGER+. Lists past credit pack purchases regardless of payment
- * status. The dashboard uses this for the "Purchase history" tab on the
- * credits page.
+ * The original implementation relied on OrganizationProfile /
+ * OrganizationMemberProfile / OrgCreditPool — all removed. The new model
+ * uses Organization / Membership / BillingAccount / WalletEntry / Program.
+ *
+ * This route is currently a 501 placeholder. See:
+ *   docs/enterprise/phase-2-api-rewrite-checklist.md
+ * for the per-route migration plan.
+ *
+ * File: app/api/organizations/[orgId]/credits/purchases/route.ts
  */
 
-import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-import { requireOrgAccess } from "@/lib/auth-helpers";
+import { NextResponse } from "next/server";
 
-export async function GET(
-  req: NextRequest,
-  { params }: { params: Promise<{ orgId: string }> },
-) {
-  try {
-    const { orgId } = await params;
-    const access = await requireOrgAccess(orgId, "ORG_MANAGER");
-    if (access.error) return access.error;
+function notImplemented(method: string) {
+  return NextResponse.json(
+    {
+      error: "Not implemented",
+      detail: `${method} app/api/organizations/[orgId]/credits/purchases/route.ts is awaiting Arch 4-Modified rewrite; see Issue #681.`,
+    },
+    { status: 501 },
+  );
+}
 
-    const url = new URL(req.url);
-    const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "20"), 100);
-    const offset = Math.max(parseInt(url.searchParams.get("offset") ?? "0"), 0);
-
-    const [purchases, total] = await Promise.all([
-      prisma.orgCreditPurchase.findMany({
-        where: { organizationProfileId: access.org.id },
-        orderBy: { purchasedAt: "desc" },
-        take: limit,
-        skip: offset,
-      }),
-      prisma.orgCreditPurchase.count({
-        where: { organizationProfileId: access.org.id },
-      }),
-    ]);
-
-    return NextResponse.json({ purchases, total, limit, offset });
-  } catch (error) {
-    console.error(
-      "[API /organizations/[orgId]/credits/purchases GET] error:",
-      error,
-    );
-    return NextResponse.json(
-      { error: "Failed to fetch purchases" },
-      { status: 500 },
-    );
-  }
+export async function GET() {
+  return notImplemented("GET");
 }

@@ -1,62 +1,33 @@
 /**
- * Mark overdue org invoices.
+ * @arch4-stub Pending Arch 4-Modified rewrite (Issue #681).
  *
- * Finds all SENT OrganizationInvoice rows whose dueDate has passed and
- * flips them to OVERDUE. Keeps the billing dashboard and invoice list
- * accurate without requiring manual admin intervention.
+ * The original implementation relied on OrganizationProfile /
+ * OrganizationMemberProfile / OrgCreditPool — all removed. The new model
+ * uses Organization / Membership / BillingAccount / WalletEntry / Program.
  *
- * Schedule: Daily at 01:00 UTC (via GitHub Actions or external cron).
+ * This route is currently a 501 placeholder. See:
+ *   docs/enterprise/phase-2-api-rewrite-checklist.md
+ * for the per-route migration plan.
+ *
+ * File: app/api/cleanup/mark-overdue-invoices/route.ts
  */
 
-import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import { NextResponse } from "next/server";
 
-export async function GET(req: NextRequest): Promise<NextResponse> {
-  return handler(req);
+function notImplemented(method: string) {
+  return NextResponse.json(
+    {
+      error: "Not implemented",
+      detail: `${method} app/api/cleanup/mark-overdue-invoices/route.ts is awaiting Arch 4-Modified rewrite; see Issue #681.`,
+    },
+    { status: 501 },
+  );
 }
 
-export async function POST(req: NextRequest): Promise<NextResponse> {
-  return handler(req);
+export async function GET() {
+  return notImplemented("GET");
 }
 
-async function handler(req: NextRequest): Promise<NextResponse> {
-  const authHeader = req.headers.get("authorization");
-  const cronSecret = process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
-
-  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
-    console.warn("[Cron mark-overdue-invoices] Unauthorized attempt");
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  try {
-    const now = new Date();
-
-    // Bulk-flip all SENT invoices past their dueDate in a single UPDATE.
-    const result = await prisma.organizationInvoice.updateMany({
-      where: {
-        status: "SENT",
-        dueDate: { lt: now },
-      },
-      data: { status: "OVERDUE" },
-    });
-
-    console.log(
-      `[Cron mark-overdue-invoices] Marked ${result.count} invoice(s) as OVERDUE`,
-    );
-
-    return NextResponse.json({
-      success: true,
-      overdueCount: result.count,
-      processedAt: now.toISOString(),
-    });
-  } catch (error) {
-    console.error("[Cron mark-overdue-invoices] Error:", error);
-    return NextResponse.json(
-      {
-        error: "Failed to mark overdue invoices",
-        details: error instanceof Error ? error.message : String(error),
-      },
-      { status: 500 },
-    );
-  }
+export async function POST() {
+  return notImplemented("POST");
 }

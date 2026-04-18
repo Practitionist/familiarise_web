@@ -220,11 +220,10 @@ export const auth = betterAuth({
                   allowedEmailDomains: { has: domain },
                 },
                 select: {
-                  organizationProfile: { select: { organizationId: true } },
+                  organization: { select: { id: true } },
                 },
               });
-              const organizationId =
-                enforced?.organizationProfile?.organizationId;
+              const organizationId = enforced?.organization?.id;
               if (!organizationId) return null;
               const rows = await prisma.ssoProvider.findMany({
                 where: { organizationId },
@@ -284,11 +283,13 @@ export const auth = betterAuth({
 
   plugins: [
     // Enterprise: BetterAuth Organization plugin.
-    // Pre-MVP cap of 5 orgs per user. Default creator role is ORG_OWNER —
-    // mirrored at the typed sibling layer (OrganizationMemberProfile).
+    // Arch 4-Modified: BetterAuth Member.role is a free-form string; the
+    // source of truth is our Membership model (linked via
+    // Membership.betterAuthMemberId). On creator-role assignment we pass the
+    // new enum name "OWNER" which our auth-helpers normalize.
     organization({
       organizationLimit: 5,
-      creatorRole: "ORG_OWNER",
+      creatorRole: "OWNER",
     }),
 
     // Enterprise: SSO plugin (SAML / OIDC).
@@ -313,109 +314,68 @@ export const auth = betterAuth({
         adminProfileId?: string | null;
       };
 
-      // SSO membership sync: BetterAuth SSO auto-provisioning creates a
-      // BetterAuth `member` row but NOT the typed `OrganizationMemberProfile`
-      // sibling the app requires. Auto-repair missing profiles here so
-      // SSO-provisioned users get access on first session load.
+      // SSO membership sync: BetterAuth auto-provisioning creates a BetterAuth
+      // Member row; we need a typed Membership sibling. Auto-repair any
+      // missing Membership rows so SSO-provisioned users get access on first
+      // session load.
       const bareMembers = await prisma.member.findMany({
-        where: {
-          userId: user.id,
-          organizationMemberProfile: null, // no typed sibling yet
-        },
+        where: { userId: user.id, membership: null },
         select: {
           id: true,
           organizationId: true,
           role: true,
           organization: {
             select: {
-              organizationProfile: {
-                select: {
-                  id: true,
-                  ssoSettings: { select: { defaultRoleForAutoJoin: true } },
-                },
-              },
+              id: true,
+              ssoSettings: { select: { defaultRoleForAutoJoin: true } },
             },
           },
         },
       });
       for (const bm of bareMembers) {
-        const orgProfile = bm.organization?.organizationProfile;
-        if (!orgProfile) continue;
-        const defaultRole =
-          orgProfile.ssoSettings?.defaultRoleForAutoJoin ?? "ORG_LEARNER";
+        if (!bm.organization) continue;
+        const defaultRole = bm.organization.ssoSettings?.defaultRoleForAutoJoin ?? "MEMBER";
+        const consulteeProfileId =
+          ((user as Record<string, unknown>).consulteeProfileId as string | undefined) ?? null;
         try {
-          await prisma.$transaction(async (tx) => {
-            // For ORG_LEARNER, acquire a seat atomically + link consultee profile.
-            if (defaultRole === "ORG_LEARNER") {
-              const { acquireSeat } = await import(
-                "@/lib/api/organizations/seat-helpers"
-              );
-              const acquired = await acquireSeat(tx, orgProfile.id);
-              if (!acquired) {
-                console.warn(
-                  `[SSO sync] Seat limit reached for org ${orgProfile.id} — skipping learner creation`,
-                );
-                return; // Don't create a learner membership without a seat
-              }
-            }
-
-            await tx.organizationMemberProfile.create({
-              data: {
-                memberId: bm.id,
-                organizationProfileId: orgProfile.id,
-                role: defaultRole,
-                status: "ACTIVE",
-                consulteeProfileId:
-                  defaultRole === "ORG_LEARNER"
-                    ? (user as Record<string, unknown>).consulteeProfileId as string ?? null
-                    : null,
-                seatAssignedAt:
-                  defaultRole === "ORG_LEARNER" ? new Date() : null,
-              },
-            });
+          await prisma.membership.create({
+            data: {
+              userId: user.id,
+              organizationId: bm.organizationId,
+              role: defaultRole,
+              status: "ACTIVE",
+              consulteeProfileId: defaultRole === "MEMBER" ? consulteeProfileId : null,
+              betterAuthMemberId: bm.id,
+            },
           });
         } catch {
-          // Unique constraint race — profile was created between the check
-          // and now (concurrent session loads). Safe to ignore.
+          // Unique-constraint race — safe to ignore.
         }
       }
 
-      // Enterprise: load the user's active org memberships so the OrgSwitcher
-      // and any org-aware route can read them from the session without an
-      // extra DB roundtrip. Cheap query — joined to the typed sibling profile
-      // for the role enum and the parent OrganizationProfile/Organization.
-      const memberships = await prisma.organizationMemberProfile.findMany({
-        where: {
-          status: "ACTIVE",
-          member: { userId: user.id },
-        },
+      // Load active org memberships so OrgSwitcher + checkout can render
+      // without an extra roundtrip.
+      const memberships = await prisma.membership.findMany({
+        where: { status: "ACTIVE", userId: user.id },
         select: {
           role: true,
-          organizationProfileId: true,
-          organizationProfile: {
+          organizationId: true,
+          departmentLabel: true,
+          organization: {
             select: {
-              kind: true,
+              id: true,
+              name: true,
+              slug: true,
+              logo: true,
               status: true,
-              // billingMode, contractEndDate, and the SEAT_PACK credit balance
-              // are included here so the OrgPayerSelector on the checkout page
-              // can show the learner what each "Bill to org" option actually
-              // costs them before they confirm. Without this context, a learner
-              // who is a member of two orgs — e.g., Org A on SEAT_PACK with
-              // ₹200 of credits left and Org B on PREPAID_UNLIMITED (free) —
-              // would see two identical "Bill to [Org Name]" buttons with no
-              // way to distinguish one from the other. They could unknowingly
-              // drain a credit pool that was meant for a different cohort by
-              // picking the wrong option. Surfacing the billing mode and
-              // remaining balance at session load time (rather than at checkout
-              // submit) keeps the UX clear and avoids a round-trip to the API
-              // each time the selector is rendered.
-              billingMode: true,
-              contractEndDate: true,
-              creditPool: {
-                select: { balance: true },
-              },
-              organization: {
-                select: { id: true, name: true, slug: true, logo: true },
+              canSponsor: true,
+              canHost: true,
+              billingAccount: {
+                select: {
+                  id: true,
+                  fundingSource: true,
+                  walletBalance: true,
+                },
               },
             },
           },
@@ -423,20 +383,29 @@ export const auth = betterAuth({
       });
 
       const organizationMemberships = memberships
-        .filter((m) => m.organizationProfile.status === "ACTIVE")
+        .filter((m) => m.organization.status === "ACTIVE")
         .map((m) => ({
-          organizationId:        m.organizationProfile.organization.id,
-          organizationName:      m.organizationProfile.organization.name,
-          organizationSlug:      m.organizationProfile.organization.slug,
-          organizationLogo:      m.organizationProfile.organization.logo,
-          organizationProfileId: m.organizationProfileId,
-          kind:                  m.organizationProfile.kind,
-          role:                  m.role,
-          // Billing context fields — consumed by OrgPayerSelector at checkout.
-          billingMode:     m.organizationProfile.billingMode   ?? null,
-          contractEndDate: m.organizationProfile.contractEndDate ?? null,
-          // creditBalance is only meaningful for SEAT_PACK orgs; null otherwise.
-          creditBalance:   m.organizationProfile.creditPool?.balance ?? null,
+          organizationId: m.organization.id,
+          organizationName: m.organization.name,
+          organizationSlug: m.organization.slug,
+          organizationLogo: m.organization.logo,
+          role: m.role,
+          departmentLabel: m.departmentLabel,
+          canSponsor: m.organization.canSponsor,
+          canHost: m.organization.canHost,
+          fundingSource: m.organization.billingAccount?.fundingSource ?? null,
+          walletBalance: m.organization.billingAccount?.walletBalance ?? null,
+          // Legacy shape kept for downstream compatibility during Phase 2
+          // rewrite — they'll be removed once UI reads the new fields.
+          kind: (m.organization.canSponsor && m.organization.canHost
+            ? "HYBRID"
+            : m.organization.canHost
+              ? "PROVIDER"
+              : "BUYER") as "BUYER" | "PROVIDER" | "HYBRID",
+          billingMode: m.organization.billingAccount?.fundingSource ?? null,
+          contractEndDate: null,
+          creditBalance: m.organization.billingAccount?.walletBalance ?? null,
+          organizationProfileId: m.organizationId,
         }));
 
       // SSO enforcement: mark sessions that bypassed SSO for enforced domains.
@@ -453,15 +422,11 @@ export const auth = betterAuth({
         if (domain) {
           const enforced = await prisma.organizationSSOSettings.findFirst({
             where: { enforceSSO: true, allowedEmailDomains: { has: domain } },
-            select: {
-              organizationProfile: {
-                select: { organizationId: true },
-              },
-            },
+            select: { organization: { select: { id: true } } },
           });
-          if (enforced?.organizationProfile?.organizationId) {
+          if (enforced?.organization?.id) {
             const registeredProviders = await prisma.ssoProvider.findMany({
-              where: { organizationId: enforced.organizationProfile.organizationId },
+              where: { organizationId: enforced.organization.id },
               select: { providerId: true },
             });
             const validProviderIds = registeredProviders.map((p) => p.providerId);

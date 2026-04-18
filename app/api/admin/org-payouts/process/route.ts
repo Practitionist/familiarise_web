@@ -1,70 +1,29 @@
 /**
- * Admin Org Payout Processing
+ * @arch4-stub Pending Arch 4-Modified rewrite (Issue #681).
  *
- * POST /api/admin/org-payouts/process
+ * The original implementation relied on OrganizationProfile /
+ * OrganizationMemberProfile / OrgCreditPool — all removed. The new model
+ * uses Organization / Membership / BillingAccount / WalletEntry / Program.
  *
- * Processes all PENDING organization payouts via their configured payment gateway.
- * Admin-only endpoint.
+ * This route is currently a 501 placeholder. See:
+ *   docs/enterprise/phase-2-api-rewrite-checklist.md
+ * for the per-route migration plan.
+ *
+ * File: app/api/admin/org-payouts/process/route.ts
  */
 
-import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-import { requireAdminAuth } from "@/lib/auth-helpers";
-import { ENABLE_PROVIDER_ORGS } from "@/lib/feature-flags";
-import { processOrgPayout } from "@/lib/payments/payouts/org-payout-service";
-import { PayoutStatus } from "@prisma/client";
+import { NextResponse } from "next/server";
 
-export async function POST(_req: NextRequest) {
-  if (!ENABLE_PROVIDER_ORGS) {
-    return NextResponse.json(
-      { error: "PROVIDER orgs not enabled.", flag: "ENABLE_PROVIDER_ORGS" },
-      { status: 501 },
-    );
-  }
+function notImplemented(method: string) {
+  return NextResponse.json(
+    {
+      error: "Not implemented",
+      detail: `${method} app/api/admin/org-payouts/process/route.ts is awaiting Arch 4-Modified rewrite; see Issue #681.`,
+    },
+    { status: 501 },
+  );
+}
 
-  const auth = await requireAdminAuth();
-  if (auth.error) return auth.error;
-
-  const pendingPayouts = await prisma.organizationPayout.findMany({
-    where: { status: PayoutStatus.PENDING },
-    orderBy: { createdAt: "asc" },
-  });
-
-  if (pendingPayouts.length === 0) {
-    return NextResponse.json({
-      success: true,
-      processed: 0,
-      message: "No pending org payouts to process.",
-    });
-  }
-
-  const results: Array<{
-    payoutId: string;
-    success: boolean;
-    error?: string;
-  }> = [];
-
-  for (const payout of pendingPayouts) {
-    try {
-      await processOrgPayout(payout.id);
-      results.push({ payoutId: payout.id, success: true });
-    } catch (error) {
-      results.push({
-        payoutId: payout.id,
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
-    }
-  }
-
-  const successful = results.filter((r) => r.success).length;
-  const failed = results.filter((r) => !r.success).length;
-
-  return NextResponse.json({
-    success: true,
-    processed: results.length,
-    successful,
-    failed,
-    results,
-  });
+export async function POST() {
+  return notImplemented("POST");
 }

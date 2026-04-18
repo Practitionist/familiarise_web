@@ -1,125 +1,29 @@
 /**
- * Org analytics — high-level stat cards for the dashboard analytics page.
+ * @arch4-stub Pending Arch 4-Modified rewrite (Issue #681).
  *
- * GET — ORG_MANAGER+. Returns counts and aggregates that the analytics page
- * needs without expensive joins. Charting data (timeseries) lives in a future
- * deeper analytics endpoint deferred to a separate PR.
+ * The original implementation relied on OrganizationProfile /
+ * OrganizationMemberProfile / OrgCreditPool — all removed. The new model
+ * uses Organization / Membership / BillingAccount / WalletEntry / Program.
+ *
+ * This route is currently a 501 placeholder. See:
+ *   docs/enterprise/phase-2-api-rewrite-checklist.md
+ * for the per-route migration plan.
+ *
+ * File: app/api/organizations/[orgId]/analytics/route.ts
  */
 
-import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-import { requireOrgAccess } from "@/lib/auth-helpers";
+import { NextResponse } from "next/server";
 
-export async function GET(
-  _req: NextRequest,
-  { params }: { params: Promise<{ orgId: string }> },
-) {
-  try {
-    const { orgId } = await params;
-    const access = await requireOrgAccess(orgId, "ORG_MANAGER");
-    if (access.error) return access.error;
+function notImplemented(method: string) {
+  return NextResponse.json(
+    {
+      error: "Not implemented",
+      detail: `${method} app/api/organizations/[orgId]/analytics/route.ts is awaiting Arch 4-Modified rewrite; see Issue #681.`,
+    },
+    { status: 501 },
+  );
+}
 
-    const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-
-    const [
-      memberCount,
-      learnerCount,
-      orgPlanCount,
-      catalogConsultation,
-      catalogSubscription,
-      catalogWebinar,
-      catalogClass,
-      monthBookings,
-      lastMonthBookings,
-      monthGross,
-    ] = await Promise.all([
-      prisma.organizationMemberProfile.count({
-        where: {
-          organizationProfileId: access.org.id,
-          status: "ACTIVE",
-        },
-      }),
-      prisma.organizationMemberProfile.count({
-        where: {
-          organizationProfileId: access.org.id,
-          role: "ORG_LEARNER",
-          status: "ACTIVE",
-        },
-      }),
-      // Org-owned plan templates
-      prisma.organizationPlan.count({
-        where: {
-          organizationProfileId: access.org.id,
-          isActive: true,
-        },
-      }),
-      // Catalog: consultant plans linked to this org
-      prisma.consultationPlan.count({
-        where: { organizationProfileId: access.org.id },
-      }),
-      prisma.subscriptionPlan.count({
-        where: { organizationProfileId: access.org.id },
-      }),
-      prisma.webinarPlan.count({
-        where: { organizationProfileId: access.org.id },
-      }),
-      prisma.classPlan.count({
-        where: { organizationProfileId: access.org.id },
-      }),
-      prisma.payment.count({
-        where: {
-          organizationProfileId: access.org.id,
-          paymentStatus: "SUCCEEDED",
-          createdAt: { gte: monthStart },
-        },
-      }),
-      prisma.payment.count({
-        where: {
-          organizationProfileId: access.org.id,
-          paymentStatus: "SUCCEEDED",
-          createdAt: { gte: lastMonthStart, lt: monthStart },
-        },
-      }),
-      prisma.payment.aggregate({
-        where: {
-          organizationProfileId: access.org.id,
-          paymentStatus: "SUCCEEDED",
-          createdAt: { gte: monthStart },
-        },
-        _sum: { amount: true },
-      }),
-    ]);
-
-    const planCount =
-      orgPlanCount +
-      catalogConsultation +
-      catalogSubscription +
-      catalogWebinar +
-      catalogClass;
-
-    return NextResponse.json({
-      members: { total: memberCount, learners: learnerCount },
-      plans: { active: planCount },
-      bookings: {
-        monthToDate: monthBookings,
-        lastMonth: lastMonthBookings,
-        deltaPct: lastMonthBookings
-          ? ((monthBookings - lastMonthBookings) / lastMonthBookings) * 100
-          : null,
-      },
-      revenue: {
-        monthToDateGross: monthGross._sum.amount ?? 0,
-      },
-      seatsTotal: access.org.seatsTotal,
-      seatsUsed: access.org.seatsUsed,
-    });
-  } catch (error) {
-    console.error("[API /organizations/[orgId]/analytics GET] error:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch analytics" },
-      { status: 500 },
-    );
-  }
+export async function GET() {
+  return notImplemented("GET");
 }

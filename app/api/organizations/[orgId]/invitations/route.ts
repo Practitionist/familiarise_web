@@ -1,184 +1,33 @@
 /**
- * Organization invitations — GET (list) / POST (create).
+ * @arch4-stub Pending Arch 4-Modified rewrite (Issue #681).
  *
- * Invitations target an email address that may or may not have a platform
- * account yet. The invited user accepts via /api/organizations/invitations/accept
- * which creates the Member + OrganizationMemberProfile rows.
+ * The original implementation relied on OrganizationProfile /
+ * OrganizationMemberProfile / OrgCreditPool — all removed. The new model
+ * uses Organization / Membership / BillingAccount / WalletEntry / Program.
  *
- * Auth:
- *   GET  — any active org member
- *   POST — ORG_ADMIN+
+ * This route is currently a 501 placeholder. See:
+ *   docs/enterprise/phase-2-api-rewrite-checklist.md
+ * for the per-route migration plan.
  *
- * ORG_CONSULTANT and ORG_SUPPORT roles in the invite are gated by
- * ENABLE_PROVIDER_ORGS. Email delivery is fire-and-forget — failure to send
- * does not roll back the invitation row (the org admin can resend).
+ * File: app/api/organizations/[orgId]/invitations/route.ts
  */
 
-import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
-import prisma from "@/lib/prisma";
-import { requireOrgAccess } from "@/lib/auth-helpers";
-import { ENABLE_PROVIDER_ORGS } from "@/lib/feature-flags";
-import { sendOrgInvitationEmail } from "@/lib/email";
-import { getAppUrl } from "@/lib/url";
-import { OrgMemberRole, Prisma } from "@prisma/client";
+import { NextResponse } from "next/server";
 
-const inviteSchema = z.object({
-  email: z.string().email(),
-  role: z.nativeEnum(OrgMemberRole).default("ORG_LEARNER"),
-});
-
-const PROVIDER_GATED_ROLES: OrgMemberRole[] = ["ORG_CONSULTANT", "ORG_SUPPORT"];
-
-const INVITATION_TTL_DAYS = 14;
-
-function makeInviteToken(): string {
-  // Cryptographically random 32-byte token, hex-encoded.
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+function notImplemented(method: string) {
+  return NextResponse.json(
+    {
+      error: "Not implemented",
+      detail: `${method} app/api/organizations/[orgId]/invitations/route.ts is awaiting Arch 4-Modified rewrite; see Issue #681.`,
+    },
+    { status: 501 },
+  );
 }
 
-export async function GET(
-  _req: NextRequest,
-  { params }: { params: Promise<{ orgId: string }> },
-) {
-  try {
-    const { orgId } = await params;
-    const access = await requireOrgAccess(orgId);
-    if (access.error) return access.error;
-
-    const invitations = await prisma.invitation.findMany({
-      where: { organizationId: orgId },
-      include: {
-        inviter: { select: { id: true, name: true, email: true } },
-      },
-      orderBy: { createdAt: "desc" },
-    });
-
-    return NextResponse.json({ invitations });
-  } catch (error) {
-    console.error(
-      "[API /organizations/[orgId]/invitations GET] error:",
-      error,
-    );
-    return NextResponse.json(
-      { error: "Failed to fetch invitations" },
-      { status: 500 },
-    );
-  }
+export async function GET() {
+  return notImplemented("GET");
 }
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ orgId: string }> },
-) {
-  try {
-    const { orgId } = await params;
-    const access = await requireOrgAccess(orgId, "ORG_ADMIN");
-    if (access.error) return access.error;
-
-    const body = await req.json();
-    const parsed = inviteSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: "Invalid request body", details: parsed.error.flatten() },
-        { status: 400 },
-      );
-    }
-
-    const { email, role } = parsed.data;
-
-    if (!ENABLE_PROVIDER_ORGS && PROVIDER_GATED_ROLES.includes(role)) {
-      return NextResponse.json(
-        {
-          error: `${role} role is gated behind PROVIDER orgs.`,
-          flag: "ENABLE_PROVIDER_ORGS",
-        },
-        { status: 501 },
-      );
-    }
-
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + INVITATION_TTL_DAYS);
-
-    // BetterAuth Invitation.id is a CUID — we use it as the accept token.
-    // We pass an explicit id so we control the token without an extra column.
-    const token = makeInviteToken();
-
-    // Wrap duplicate-check + create in a Serializable transaction to close the
-    // TOCTOU race where two concurrent POST requests both see no pending invite
-    // and both successfully create one. Under Serializable SSI, PostgreSQL
-    // detects the overlapping read-write and aborts the loser with P2034
-    // (serialization failure), which we surface as 409.
-    let invitation;
-    try {
-      invitation = await prisma.$transaction(
-        async (tx) => {
-          const existing = await tx.invitation.findFirst({
-            where: { organizationId: orgId, email, status: "pending" },
-          });
-          if (existing) throw new Error("DUPLICATE_INVITATION");
-
-          return tx.invitation.create({
-            data: {
-              id: token,
-              organizationId: orgId,
-              email,
-              role,
-              status: "pending",
-              expiresAt,
-              inviterId: access.session.user.id,
-            },
-          });
-        },
-        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-      );
-    } catch (txError) {
-      if (
-        txError instanceof Error &&
-        txError.message === "DUPLICATE_INVITATION"
-      ) {
-        return NextResponse.json(
-          { error: "An invitation for this email is already pending." },
-          { status: 409 },
-        );
-      }
-      // P2034 = serialization failure — concurrent request won the race.
-      if ((txError as { code?: string })?.code === "P2034") {
-        return NextResponse.json(
-          { error: "An invitation for this email is already pending." },
-          { status: 409 },
-        );
-      }
-      throw txError;
-    }
-
-    // Send invitation email (fire-and-forget — failure doesn't roll back the invitation).
-    const org = await prisma.organization.findUnique({
-      where: { id: orgId },
-      select: { name: true },
-    });
-    sendOrgInvitationEmail({
-      email,
-      inviterName: access.session.user.name ?? "An administrator",
-      orgName: org?.name ?? "an organization",
-      role,
-      inviteUrl: `${getAppUrl()}/organizations/invite/${invitation.id}`,
-      expiresAt: expiresAt.toISOString(),
-    }).catch((err) =>
-      console.error("[Invitations] Failed to send email:", err),
-    );
-
-    return NextResponse.json({ invitation }, { status: 201 });
-  } catch (error) {
-    console.error(
-      "[API /organizations/[orgId]/invitations POST] error:",
-      error,
-    );
-    return NextResponse.json(
-      { error: "Failed to create invitation" },
-      { status: 500 },
-    );
-  }
+export async function POST() {
+  return notImplemented("POST");
 }

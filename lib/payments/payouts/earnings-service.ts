@@ -18,7 +18,6 @@ import prisma from "@/lib/prisma";
 import {
   EarningRole,
   EarningStatus,
-  EarningsRecipient,
   Payment,
   Prisma,
 } from "@prisma/client";
@@ -41,18 +40,18 @@ export interface EarningsSummary {
   heldEarnings: number;
 }
 
-/** Resolved 3-way split for a PROVIDER/HYBRID org consultant */
+/** Resolved 3-way split for a canHost=true org consultant */
 export interface OrgEarningsSplit {
-  organizationProfileId: string;
+  organizationId: string;
   platformFee: number; // in paise
   orgShare: number; // in paise (org retains this)
   consultantShare: number; // in paise (goes to consultant, or 0 if internal)
-  earningsRecipient: EarningsRecipient;
+  payoutRecipient: "SELF" | "ORGANIZATION";
 }
 
 /** Summary of an org's earnings across all statuses */
 export interface OrgEarningsSummary {
-  organizationProfileId: string;
+  organizationId: string;
   totalEarnings: number;
   pendingEarnings: number;
   readyEarnings: number;
@@ -100,82 +99,91 @@ async function resolveOrgSplit(
 ): Promise<OrgEarningsSplit | null> {
   if (!ENABLE_PROVIDER_ORGS) return null;
 
-  // Deterministic ordering: oldest membership wins. This ensures earnings
-  // always route to the same org for multi-org consultants. The badge query
-  // in explore-experts.ts uses the same orderBy for consistency.
-  const orgMembership = await tx.organizationMemberProfile.findFirst({
+  // Arch 4-Modified: Membership where role=CONSULTANT and the parent org
+  // canHost=true. RateCard resolves via:
+  //   membership.rateCardOverride → ownerOrgId match → ownerContractId match
+  //   → default 10/10/80 basis points.
+  // Deterministic ordering: oldest membership wins (same policy as before).
+  const membership = await tx.membership.findFirst({
     where: {
       consultantProfileId,
-      role: "ORG_CONSULTANT",
+      role: "CONSULTANT",
       status: "ACTIVE",
-      organizationProfile: {
-        kind: { in: ["PROVIDER", "HYBRID"] },
-        status: "ACTIVE",
-      },
+      organization: { canHost: true, status: "ACTIVE" },
     },
     orderBy: { createdAt: "asc" },
     include: {
-      organizationProfile: {
-        select: {
-          id: true,
-          platformCommissionRate: true,
-          orgRetainRate: true,
-          consultantPayoutRate: true,
-        },
-      },
+      organization: { select: { id: true } },
+      rateCardOverride: true,
     },
   });
 
-  if (!orgMembership) return null;
+  if (!membership) return null;
 
-  const org = orgMembership.organizationProfile;
-  const earningsRecipient = orgMembership.earningsRecipient;
+  const orgId = membership.organization.id;
+  const payoutRecipient = membership.payoutRecipient;
 
-  // Determine effective consultant rate (per-member override or org default)
-  const effectiveConsultantRate =
-    orgMembership.customConsultantPayoutRate ?? org.consultantPayoutRate;
+  // Resolve rate card: explicit override → org default card → 10/10/80 default.
+  const DEFAULT_PLATFORM_BPS = 1000; // 10%
+  const DEFAULT_ORG_BPS = 1000; // 10%
+  const DEFAULT_CONSULTANT_BPS = 8000; // 80%
 
-  // Calculate splits in paise (integer arithmetic to avoid float rounding)
-  const platformFee = Math.round(grossAmount * org.platformCommissionRate);
+  let platformBps = DEFAULT_PLATFORM_BPS;
+  let orgBps = DEFAULT_ORG_BPS;
+  let consultantBps = DEFAULT_CONSULTANT_BPS;
 
-  if (earningsRecipient === "ORGANIZATION") {
-    // Internal/salaried consultant: org captures everything except platform fee
+  if (membership.rateCardOverride) {
+    platformBps = membership.rateCardOverride.platformBps;
+    orgBps = membership.rateCardOverride.orgBps;
+    consultantBps = membership.rateCardOverride.consultantBps;
+  } else {
+    const orgCard = await tx.rateCard.findFirst({
+      where: { ownerOrgId: orgId, planType: null, planId: null },
+      orderBy: { createdAt: "asc" },
+    });
+    if (orgCard) {
+      platformBps = orgCard.platformBps;
+      orgBps = orgCard.orgBps;
+      consultantBps = orgCard.consultantBps;
+    }
+  }
+
+  // Integer paise × basis-point math, no float drift.
+  const platformFee = Math.floor((grossAmount * platformBps) / 10_000);
+  const consultantShare = Math.floor((grossAmount * consultantBps) / 10_000);
+  const orgShare = grossAmount - platformFee - consultantShare;
+
+  if (payoutRecipient === "ORGANIZATION") {
+    // Internal/salaried consultant: org absorbs the consultant slice.
     return {
-      organizationProfileId: org.id,
+      organizationId: orgId,
       platformFee,
       orgShare: grossAmount - platformFee,
       consultantShare: 0,
-      earningsRecipient,
+      payoutRecipient,
     };
   }
 
-  // Standard PROVIDER split: platform + org retain + consultant
-  const consultantShare = Math.round(grossAmount * effectiveConsultantRate);
-  const orgShare = grossAmount - platformFee - consultantShare;
-
-  // Guard: customConsultantPayoutRate can push platform + consultant > 100%,
-  // making orgShare negative. Clamp to 0 and log the misconfiguration.
   if (orgShare < 0) {
     console.error(
-      `[Earnings] Negative orgShare (${orgShare}) for org ${org.id}: ` +
-        `platform=${org.platformCommissionRate}, consultant=${effectiveConsultantRate}. ` +
-        `Clamping orgShare to 0. Fix the rate configuration.`,
+      `[Earnings] Negative orgShare (${orgShare}) for org ${orgId}: ` +
+        `platformBps=${platformBps}, consultantBps=${consultantBps}. Clamping.`,
     );
     return {
-      organizationProfileId: org.id,
+      organizationId: orgId,
       platformFee,
       orgShare: 0,
-      consultantShare: grossAmount - platformFee, // consultant gets the remainder
-      earningsRecipient,
+      consultantShare: grossAmount - platformFee,
+      payoutRecipient,
     };
   }
 
   return {
-    organizationProfileId: org.id,
+    organizationId: orgId,
     platformFee,
     orgShare,
     consultantShare,
-    earningsRecipient,
+    payoutRecipient,
   };
 }
 
@@ -341,12 +349,13 @@ export async function createEarningsFromPayment({
       if (orgSplit && orgSplit.orgShare > 0) {
         await tx.organizationEarnings.create({
           data: {
-            organizationProfileId: orgSplit.organizationProfileId,
+            organizationId: orgSplit.organizationId,
             paymentId: payment.id,
-            grossAmount,
-            platformFee: orgSplit.platformFee,
-            orgShare: orgSplit.orgShare,
-            refundedAmount: 0,
+            grossAmountPaise: grossAmount,
+            platformFeePaise: orgSplit.platformFee,
+            orgSharePaise: orgSplit.orgShare,
+            consultantSharePaise: orgSplit.consultantShare,
+            refundedAmountPaise: 0,
             status: EarningStatus.PENDING,
             holdUntil,
             currency: "INR",
@@ -354,11 +363,11 @@ export async function createEarningsFromPayment({
         });
 
         console.log(
-          `Org earnings created for ${orgSplit.organizationProfileId}: org=${orgSplit.orgShare / 100} consultant=${orgSplit.consultantShare / 100} (recipient=${orgSplit.earningsRecipient}) from payment ${payment.id}`,
+          `Org earnings created for ${orgSplit.organizationId}: org=${orgSplit.orgShare / 100} consultant=${orgSplit.consultantShare / 100} (recipient=${orgSplit.payoutRecipient}) from payment ${payment.id}`,
         );
       } else if (orgSplit && orgSplit.orgShare === 0) {
         console.log(
-          `Platform-only mode for ${orgSplit.organizationProfileId}: skipping 0-value org earnings for payment ${payment.id}`,
+          `Platform-only mode for ${orgSplit.organizationId}: skipping 0-value org earnings for payment ${payment.id}`,
         );
       }
 
@@ -578,20 +587,20 @@ export async function refundEarnings(
   for (const orgEarning of orgEarnings) {
     if (orgEarning.status === EarningStatus.REFUNDED) continue;
 
-    const alreadyRefunded = orgEarning.refundedAmount ?? 0;
-    const maxReversible = Math.max(0, orgEarning.orgShare - alreadyRefunded);
-    const rawOrgRefund = Math.round(orgEarning.orgShare * refundRatio);
+    const alreadyRefunded = orgEarning.refundedAmountPaise ?? 0;
+    const maxReversible = Math.max(0, orgEarning.orgSharePaise - alreadyRefunded);
+    const rawOrgRefund = Math.round(orgEarning.orgSharePaise * refundRatio);
     const orgRefundAmount = Math.min(rawOrgRefund, maxReversible);
 
     if (orgRefundAmount <= 0) continue;
 
     const isOrgFullyRefunded =
-      alreadyRefunded + orgRefundAmount >= orgEarning.orgShare;
+      alreadyRefunded + orgRefundAmount >= orgEarning.orgSharePaise;
 
     await prisma.organizationEarnings.update({
       where: { id: orgEarning.id },
       data: {
-        refundedAmount: { increment: orgRefundAmount },
+        refundedAmountPaise: { increment: orgRefundAmount },
         ...(isOrgFullyRefunded && { status: EarningStatus.REFUNDED }),
       },
     });
@@ -844,34 +853,34 @@ export async function getEarningsStats() {
  * Get org earnings summary (parallels getConsultantEarningsSummary)
  */
 export async function getOrgEarningsSummary(
-  organizationProfileId: string,
+  organizationId: string,
 ): Promise<OrgEarningsSummary> {
   const [pending, ready, paid, held] = await Promise.all([
     prisma.organizationEarnings.aggregate({
-      where: { organizationProfileId, status: EarningStatus.PENDING },
-      _sum: { orgShare: true },
+      where: { organizationId, status: EarningStatus.PENDING },
+      _sum: { orgSharePaise: true },
     }),
     prisma.organizationEarnings.aggregate({
-      where: { organizationProfileId, status: EarningStatus.READY },
-      _sum: { orgShare: true },
+      where: { organizationId, status: EarningStatus.READY },
+      _sum: { orgSharePaise: true },
     }),
     prisma.organizationEarnings.aggregate({
-      where: { organizationProfileId, status: EarningStatus.PAID },
-      _sum: { orgShare: true },
+      where: { organizationId, status: EarningStatus.PAID },
+      _sum: { orgSharePaise: true },
     }),
     prisma.organizationEarnings.aggregate({
-      where: { organizationProfileId, status: EarningStatus.HELD },
-      _sum: { orgShare: true },
+      where: { organizationId, status: EarningStatus.HELD },
+      _sum: { orgSharePaise: true },
     }),
   ]);
 
-  const pendingEarnings = pending._sum.orgShare || 0;
-  const readyEarnings = ready._sum.orgShare || 0;
-  const paidEarnings = paid._sum.orgShare || 0;
-  const heldEarnings = held._sum.orgShare || 0;
+  const pendingEarnings = pending._sum.orgSharePaise ?? 0;
+  const readyEarnings = ready._sum.orgSharePaise ?? 0;
+  const paidEarnings = paid._sum.orgSharePaise ?? 0;
+  const heldEarnings = held._sum.orgSharePaise ?? 0;
 
   return {
-    organizationProfileId,
+    organizationId,
     totalEarnings:
       pendingEarnings + readyEarnings + paidEarnings + heldEarnings,
     pendingEarnings,
@@ -885,7 +894,7 @@ export async function getOrgEarningsSummary(
  * Get paginated org earnings list
  */
 export async function getOrgEarnings(
-  organizationProfileId: string,
+  organizationId: string,
   options?: {
     status?: EarningStatus;
     limit?: number;
@@ -897,7 +906,7 @@ export async function getOrgEarnings(
   const [earnings, total] = await Promise.all([
     prisma.organizationEarnings.findMany({
       where: {
-        organizationProfileId,
+        organizationId,
         ...(status ? { status } : {}),
       },
       include: {
@@ -930,7 +939,7 @@ export async function getOrgEarnings(
     }),
     prisma.organizationEarnings.count({
       where: {
-        organizationProfileId,
+        organizationId,
         ...(status ? { status } : {}),
       },
     }),

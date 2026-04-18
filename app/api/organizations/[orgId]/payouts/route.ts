@@ -1,102 +1,33 @@
 /**
- * Org payouts (PROVIDER feature).
+ * @arch4-stub Pending Arch 4-Modified rewrite (Issue #681).
  *
- * GET / POST — gated behind ENABLE_PROVIDER_ORGS. Returns 501 with the flag
- * name when disabled. When the flag is flipped on, the handlers below will be
- * fleshed out to query OrganizationPayout / OrganizationEarnings and create
- * batch payouts via the same payout pipeline used by ConsultantPayouts.
+ * The original implementation relied on OrganizationProfile /
+ * OrganizationMemberProfile / OrgCreditPool — all removed. The new model
+ * uses Organization / Membership / BillingAccount / WalletEntry / Program.
  *
- * See Issue #646 for the deferred PROVIDER work.
+ * This route is currently a 501 placeholder. See:
+ *   docs/enterprise/phase-2-api-rewrite-checklist.md
+ * for the per-route migration plan.
+ *
+ * File: app/api/organizations/[orgId]/payouts/route.ts
  */
 
-import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-import { requireOrgAccess } from "@/lib/auth-helpers";
-import { ENABLE_PROVIDER_ORGS } from "@/lib/feature-flags";
+import { NextResponse } from "next/server";
 
-function notImplemented() {
+function notImplemented(method: string) {
   return NextResponse.json(
     {
-      error:
-        "PROVIDER organization payouts are not yet available.",
-      flag: "ENABLE_PROVIDER_ORGS",
+      error: "Not implemented",
+      detail: `${method} app/api/organizations/[orgId]/payouts/route.ts is awaiting Arch 4-Modified rewrite; see Issue #681.`,
     },
     { status: 501 },
   );
 }
 
-export async function GET(
-  _req: NextRequest,
-  { params }: { params: Promise<{ orgId: string }> },
-) {
-  if (!ENABLE_PROVIDER_ORGS) return notImplemented();
-
-  const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "ORG_MANAGER");
-  if (access.error) return access.error;
-
-  if (access.org.kind === "BUYER") {
-    return NextResponse.json(
-      { error: "BUYER orgs do not have payouts." },
-      { status: 400 },
-    );
-  }
-
-  const payouts = await prisma.organizationPayout.findMany({
-    where: { organizationProfileId: access.org.id },
-    orderBy: { createdAt: "desc" },
-  });
-  return NextResponse.json({ payouts });
+export async function GET() {
+  return notImplemented("GET");
 }
 
-export async function POST(
-  _req: NextRequest,
-  { params }: { params: Promise<{ orgId: string }> },
-) {
-  if (!ENABLE_PROVIDER_ORGS) return notImplemented();
-
-  const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "ORG_OWNER");
-  if (access.error) return access.error;
-
-  if (access.org.kind === "BUYER") {
-    return NextResponse.json(
-      { error: "BUYER orgs do not have payouts." },
-      { status: 400 },
-    );
-  }
-
-  try {
-    const {
-      getOrgPayoutEligibility,
-      createOrgPayoutBatch,
-      PayoutLockError,
-      PayoutValidationError,
-    } = await import("@/lib/payments/payouts/org-payout-service");
-
-    // Pre-check eligibility
-    const eligibility = await getOrgPayoutEligibility(access.org.id);
-    if (!eligibility.eligible) {
-      return NextResponse.json(
-        { error: eligibility.reason },
-        { status: 400 },
-      );
-    }
-
-    const result = await createOrgPayoutBatch(access.org.id);
-    return NextResponse.json(result, { status: 201 });
-  } catch (error) {
-    const { PayoutLockError, PayoutValidationError } = await import(
-      "@/lib/payments/payouts/org-payout-service"
-    );
-    if (error instanceof PayoutLockError) {
-      return NextResponse.json({ error: error.message }, { status: 409 });
-    }
-    if (error instanceof PayoutValidationError) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    }
-    const message =
-      error instanceof Error ? error.message : "Failed to create payout batch.";
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
+export async function POST() {
+  return notImplemented("POST");
 }

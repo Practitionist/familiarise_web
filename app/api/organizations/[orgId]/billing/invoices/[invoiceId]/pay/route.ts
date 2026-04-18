@@ -1,93 +1,29 @@
 /**
- * Initiate gateway payment for an outstanding org invoice.
+ * @arch4-stub Pending Arch 4-Modified rewrite (Issue #681).
  *
- * POST — ORG_OWNER. Returns the gateway intent / order ID for the client SDK.
+ * The original implementation relied on OrganizationProfile /
+ * OrganizationMemberProfile / OrgCreditPool — all removed. The new model
+ * uses Organization / Membership / BillingAccount / WalletEntry / Program.
  *
- * Phase K replaces the stub return below with a real gateway intent
- * (Razorpay/Stripe) and a webhook handler that flips the invoice to PAID.
- * For now we 200 with `pendingPhaseK` so the dashboard can wire up the button
- * without blocking on payment plumbing.
+ * This route is currently a 501 placeholder. See:
+ *   docs/enterprise/phase-2-api-rewrite-checklist.md
+ * for the per-route migration plan.
+ *
+ * File: app/api/organizations/[orgId]/billing/invoices/[invoiceId]/pay/route.ts
  */
 
-import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-import { requireOrgAccess } from "@/lib/auth-helpers";
-import { createRazorpayOrder } from "@/lib/payments/core/razorpay";
+import { NextResponse } from "next/server";
 
-export async function POST(
-  _req: NextRequest,
-  { params }: { params: Promise<{ orgId: string; invoiceId: string }> },
-) {
-  try {
-    const { orgId, invoiceId } = await params;
-    const access = await requireOrgAccess(orgId, "ORG_OWNER");
-    if (access.error) return access.error;
+function notImplemented(method: string) {
+  return NextResponse.json(
+    {
+      error: "Not implemented",
+      detail: `${method} app/api/organizations/[orgId]/billing/invoices/[invoiceId]/pay/route.ts is awaiting Arch 4-Modified rewrite; see Issue #681.`,
+    },
+    { status: 501 },
+  );
+}
 
-    const invoice = await prisma.organizationInvoice.findFirst({
-      where: { id: invoiceId, organizationProfileId: access.org.id },
-    });
-    if (!invoice) {
-      return NextResponse.json(
-        { error: "Invoice not found" },
-        { status: 404 },
-      );
-    }
-    // Only SENT and OVERDUE invoices are payable — enforce the same state
-    // machine the dashboard UI already implies. DRAFT invoices must be
-    // finalized first; PAID/CANCELLED invoices cannot be re-paid.
-    if (invoice.status !== "SENT" && invoice.status !== "OVERDUE") {
-      const messages: Record<string, string> = {
-        DRAFT: "Invoice is still a draft. Finalize it before accepting payment.",
-        PAID: "Invoice has already been paid.",
-        CANCELLED: "Invoice has been cancelled.",
-      };
-      return NextResponse.json(
-        {
-          error:
-            messages[invoice.status] ??
-            `Invoice cannot be paid in its current state (${invoice.status}).`,
-        },
-        { status: 400 },
-      );
-    }
-
-    // Create a Razorpay order for the invoice amount. The webhook
-    // (payment.captured / order.paid) matches by metadata.type=invoice_payment
-    // + metadata.invoiceId to flip the invoice to PAID.
-    const order = await createRazorpayOrder({
-      amount: invoice.amount,
-      currency: invoice.currency,
-      metadata: {
-        appointmentId: invoiceId,
-        appointmentType: "ORG_INVOICE_PAYMENT",
-        orgId,
-        invoiceId,
-        orgProfileId: access.org.id,
-        type: "invoice_payment",
-      },
-      paymentGateway: "RAZORPAY",
-    });
-
-    return NextResponse.json({
-      orderId: order.id,
-      invoiceId: invoice.id,
-      amount: order.amount,
-      currency: order.currency,
-      key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
-    });
-  } catch (error) {
-    console.error(
-      "[API /organizations/[orgId]/billing/invoices/[invoiceId]/pay POST] error:",
-      error,
-    );
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to initiate payment",
-      },
-      { status: 500 },
-    );
-  }
+export async function POST() {
+  return notImplemented("POST");
 }

@@ -272,7 +272,8 @@ async function seedWipro(learners: UserWithProfiles[]) {
   const periodStart = new Date(now.getFullYear(), 0, 1);
   const periodEnd = new Date(now.getFullYear() + 1, 0, 1);
 
-  for (const [idx, user] of learners.entries()) {
+  for (let idx = 0; idx < learners.length; idx++) {
+    const user = learners[idx];
     const membership = await prisma.membership.create({
       data: {
         userId: user.id,
@@ -419,7 +420,8 @@ async function seedLearnPro(agencyConsultants: UserWithProfiles[]) {
     },
   });
 
-  for (const [idx, user] of agencyConsultants.entries()) {
+  for (let idx = 0; idx < agencyConsultants.length; idx++) {
+    const user = agencyConsultants[idx];
     if (!user.consultantProfile) continue;
     await prisma.consultantProfile.update({
       where: { id: user.consultantProfile.id },

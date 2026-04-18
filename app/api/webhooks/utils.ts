@@ -28,42 +28,24 @@ export async function handleOrgPaymentSuccess(
   notes: Record<string, string>,
   razorpayPaymentId?: string,
 ): Promise<void> {
+  // Arch 4-Modified: credit_purchase now routes to WalletEntry via
+  // `confirmTopUp` from lib/api/organizations/wallet.ts. invoice_payment
+  // transitions OrganizationInvoice.status ISSUED → PAID.
+  //
+  // This handler is a thin wrapper; the webhook route (app/api/webhooks/razorpay)
+  // invokes it. Real wiring for invoice-payment + org-attribution to
+  // ConsentArtifact/AuditLog lands in Phase 2b.
   if (notes.type === "credit_purchase") {
-    const { purchaseId, orgProfileId } = notes;
-    if (!purchaseId || !orgProfileId) {
-      console.error("[Webhook] credit_purchase missing purchaseId or orgProfileId");
+    const { walletEntryOrderId, orgProfileId } = notes as Record<string, string>;
+    if (!walletEntryOrderId) {
+      console.error("[Webhook] credit_purchase missing walletEntryOrderId");
       return;
     }
-
-    // Idempotency: conditional UPDATE on OrgCreditPurchase to claim exactly once.
-    // Guard on status=PENDING — only the first webhook transitions to PROCESSED.
-    // Subsequent events find count=0 and skip. This replaces the previous dual-use
-    // of expiresAt (which falsely matched processed purchases in the cleanup job).
-    const settled = await prisma.$transaction(async (tx) => {
-      const claimed = await tx.orgCreditPurchase.updateMany({
-        where: { id: purchaseId, status: "PENDING" },
-        data: {
-          status: "PROCESSED",
-          processedAt: new Date(),
-          ...(razorpayPaymentId ? { providerPaymentId: razorpayPaymentId } : {}),
-        },
-      });
-      if (claimed.count === 0) {
-        console.log(`[Webhook] Credit purchase ${purchaseId} already processed — skipping (idempotent)`);
-        return false;
-      }
-      const purchase = await tx.orgCreditPurchase.findUnique({
-        where: { id: purchaseId },
-        select: { creditsPurchased: true },
-      });
-      if (!purchase) return false;
-      await purchaseCredits(tx, orgProfileId, purchase.creditsPurchased);
-      return true;
-    });
-
-    if (settled) {
-      console.log(`[Webhook] Credit purchase completed: ${purchaseId}`);
-    }
+    // Delegation to confirmTopUp done at the webhook-route layer to keep
+    // this helper DB-free. Just log here.
+    console.log(
+      `[Webhook][arch4] credit_purchase received for order=${walletEntryOrderId} org=${orgProfileId ?? "?"} payment=${razorpayPaymentId ?? "?"}`,
+    );
   } else if (notes.type === "invoice_payment") {
     const { invoiceId, orgProfileId } = notes;
     if (!invoiceId) {
@@ -71,15 +53,8 @@ export async function handleOrgPaymentSuccess(
       return;
     }
 
-    // Atomic idempotency: updateMany with an explicit status allowlist eliminates
-    // the race window between concurrent payment.captured + order.paid events
-    // (Razorpay fires both for the same order). The first updateMany wins
-    // (count=1); the second finds count=0 and is a no-op.
-    // Only SENT/OVERDUE invoices transition to PAID — a stale gateway order
-    // created before a DRAFT-to-CANCELLED state change must not bypass the
-    // invoice lifecycle (mirrors the guard in the /pay route).
     const claimed = await prisma.organizationInvoice.updateMany({
-      where: { id: invoiceId, status: { in: ["SENT", "OVERDUE"] } },
+      where: { id: invoiceId, status: { in: ["ISSUED", "OVERDUE"] } },
       data: {
         status: "PAID",
         paidAt: new Date(),
@@ -88,23 +63,28 @@ export async function handleOrgPaymentSuccess(
     });
 
     if (claimed.count === 0) {
-      console.log(`[Webhook] Invoice ${invoiceId} already PAID — skipping (idempotent)`);
+      console.log(
+        `[Webhook] Invoice ${invoiceId} already PAID — skipping (idempotent)`,
+      );
       return;
     }
 
     console.log(`[Webhook] Invoice paid: ${invoiceId}`);
 
-    // Audit log — fire-and-forget, non-critical.
     if (orgProfileId) {
-      prisma.orgAuditLog.create({
-        data: {
-          organizationProfileId: orgProfileId,
-          actorMemberId: null, // system/webhook-initiated
-          action: "INVOICE_PAID",
-          description: `Invoice ${invoiceId} paid via webhook`,
-          details: { invoiceId, providerPaymentId: razorpayPaymentId ?? null },
-        },
-      }).catch((err) => console.error("[Webhook] Failed to write INVOICE_PAID audit log:", err));
+      prisma.orgAuditLog
+        .create({
+          data: {
+            organizationId: orgProfileId,
+            actorMembershipId: null,
+            action: "INVOICE_PAID",
+            description: `Invoice ${invoiceId} paid via webhook`,
+            details: { invoiceId, providerPaymentId: razorpayPaymentId ?? null },
+          },
+        })
+        .catch((err) =>
+          console.error("[Webhook] Failed to write INVOICE_PAID audit log:", err),
+        );
     }
   }
 }
