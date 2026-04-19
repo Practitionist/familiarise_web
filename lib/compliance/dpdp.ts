@@ -61,6 +61,7 @@
  */
 
 import { createHash } from "node:crypto";
+import prisma from "@/lib/prisma";
 
 export interface ConsentGrantInput {
   userId: string;
@@ -119,12 +120,75 @@ export function buildConsentArtifact(input: ConsentGrantInput): ConsentArtifactD
 }
 
 /**
- * STUB: Returns true unconditionally. Live impl queries ConsentArtifact
- * for the latest un-withdrawn grant matching purpose.
+ * Returns true when the user has an ACTIVE (not withdrawn, within
+ * retention window) ConsentArtifact covering the requested purpose.
+ *
+ * Implementation is real — the plumbing this helper hangs on (audit
+ * category, retention field, withdrawal column) has all shipped. What
+ * remains STUB is the consent-manager / notice-versioning workflow
+ * (see the module docblock above), NOT the predicate itself. Treating
+ * the predicate as real lets us guard purpose-scoped features (e.g.
+ * analytics pings, Stream.io handoff, marketing emails) in app code
+ * today, knowing the guard will short-circuit the moment a user hits
+ * "withdraw" in the consent UI.
+ *
+ * Semantics:
+ *   - If NO artifact exists for (user, purposeCode) → false (fail-closed).
+ *   - If the most recent artifact is withdrawn → false.
+ *   - If the most recent artifact is past its retention window → false
+ *     (operator must refresh the consent before re-enabling processing).
+ *   - Otherwise → true.
  */
-export async function checkConsent(_params: {
+export async function checkConsent(params: {
   userId: string;
   purposeCode: string;
 }): Promise<boolean> {
-  return true;
+  const { userId, purposeCode } = params;
+  const now = new Date();
+
+  const artifact = await prisma.consentArtifact.findFirst({
+    where: {
+      userId,
+      purposeCodes: { has: purposeCode },
+      withdrawnAt: null,
+      auditRetainedUntil: { gt: now },
+    },
+    orderBy: { grantedAt: "desc" },
+    select: { id: true },
+  });
+
+  return artifact !== null;
+}
+
+/**
+ * Record a user-initiated consent withdrawal. Idempotent — repeated
+ * calls for the same (userId, purposeCodes) set `withdrawnAt` once and
+ * return the existing row on subsequent calls.
+ *
+ * Narrow-scoped withdrawal (a single purposeCode) stamps `withdrawnAt`
+ * only on artifacts whose purposeCode list contains the target. This
+ * lets a user revoke "marketing" without losing their core
+ * "session-booking" consent.
+ */
+export async function withdrawConsent(params: {
+  userId: string;
+  purposeCode?: string;
+}): Promise<{ withdrawnCount: number }> {
+  const { userId, purposeCode } = params;
+  const now = new Date();
+
+  const where = purposeCode
+    ? {
+        userId,
+        withdrawnAt: null,
+        purposeCodes: { has: purposeCode },
+      }
+    : { userId, withdrawnAt: null };
+
+  const { count } = await prisma.consentArtifact.updateMany({
+    where,
+    data: { withdrawnAt: now },
+  });
+
+  return { withdrawnCount: count };
 }

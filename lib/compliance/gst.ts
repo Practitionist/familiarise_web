@@ -54,29 +54,75 @@ export interface GstBreakdown {
   reason: string;
 }
 
+const GST_RATE = 0.18; // 18% standard rate for SAC 999293 / 998399
+
 /**
- * STUB: Derives GST breakdown for an invoice line subtotal.
+ * Derives GST breakdown for an invoice line subtotal.
  *
- * TODO: replace with live derivation per the header docblock.
+ * Rules (Sec 12 & 13 IGST Act):
+ *  - Export (buyerCountry !== "IN"): zero-rated under IGST Act s.16
+ *  - Intra-state (buyerState === supplierState): CGST 9% + SGST 9%
+ *  - Inter-state (buyerState !== supplierState): IGST 18%
+ *  - Unknown buyer state → falls back to IGST (conservative)
  */
 export function deriveGstBreakdown(params: {
   subtotalPaise: number;
-  supplierStateCode: string | null; // ISO-like 2-char code, e.g. "KA"
+  supplierStateCode: string | null;
   buyerStateCode: string | null;
-  buyerCountry: string; // ISO 3166 alpha-2
+  buyerCountry: string;
   hsnCode?: string;
 }): GstBreakdown {
-  // STUB: returns zero tax. Live impl computes per the docblock rules.
+  const hsnCode = params.hsnCode ?? "999293";
+  const placeOfSupply = params.buyerStateCode ?? params.supplierStateCode ?? null;
+
+  // Zero-rated export
+  if (params.buyerCountry !== "IN") {
+    return {
+      subtotalPaise: params.subtotalPaise,
+      igstPaise: 0,
+      cgstPaise: 0,
+      sgstPaise: 0,
+      totalPaise: params.subtotalPaise,
+      hsnCode,
+      placeOfSupply,
+      reverseCharge: false,
+      reason: "ZERO_RATED_EXPORT",
+    };
+  }
+
+  const taxPaise = Math.round(params.subtotalPaise * GST_RATE);
+
+  // Intra-state: CGST + SGST split 50/50
+  if (
+    params.buyerStateCode &&
+    params.supplierStateCode &&
+    params.buyerStateCode === params.supplierStateCode
+  ) {
+    const half = Math.round(taxPaise / 2);
+    return {
+      subtotalPaise: params.subtotalPaise,
+      igstPaise: 0,
+      cgstPaise: half,
+      sgstPaise: half,
+      totalPaise: params.subtotalPaise + half + half,
+      hsnCode,
+      placeOfSupply,
+      reverseCharge: false,
+      reason: "INTRA_STATE_CGST_SGST",
+    };
+  }
+
+  // Inter-state (or unknown buyer state): IGST only
   return {
     subtotalPaise: params.subtotalPaise,
-    igstPaise: 0,
+    igstPaise: taxPaise,
     cgstPaise: 0,
     sgstPaise: 0,
-    totalPaise: params.subtotalPaise,
-    hsnCode: params.hsnCode ?? "999293",
-    placeOfSupply: params.buyerStateCode,
+    totalPaise: params.subtotalPaise + taxPaise,
+    hsnCode,
+    placeOfSupply,
     reverseCharge: false,
-    reason: "STUB: GST derivation deferred; see lib/compliance/gst.ts TODO",
+    reason: "INTER_STATE_IGST",
   };
 }
 

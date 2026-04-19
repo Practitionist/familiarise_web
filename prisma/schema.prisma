@@ -1221,6 +1221,14 @@ model OrganizationInvoice {
   signedQrPayload String?   @db.Text
   irpStatus       IrpStatus @default(PENDING)
   irpUploadedAt   DateTime?
+  // Retry telemetry for the IRP uploader cron. `irpLastError` carries
+  // the provider's failure reason (truncated to 500 chars), and
+  // `irpRetryCount` is incremented on each failed attempt. Once
+  // `irpRetryCount` reaches the cron's cap, `irpStatus` flips from
+  // PENDING → FAILED and operators are paged via the admin dashboard.
+  irpLastError     String?   @db.VarChar(500)
+  irpLastAttemptAt DateTime?
+  irpRetryCount    Int       @default(0)
 
   // Lifecycle
   billingCycleStart DateTime?

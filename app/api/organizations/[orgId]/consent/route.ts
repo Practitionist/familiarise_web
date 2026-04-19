@@ -22,7 +22,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
-import { buildConsentArtifact } from "@/lib/compliance/dpdp";
+import { buildConsentArtifact, withdrawConsent } from "@/lib/compliance/dpdp";
 
 // Schedule VIII of the Indian Constitution enumerates 22 languages.
 // Plus English as the lingua franca for enterprise UIs. Accept ISO 639-1
@@ -158,4 +158,94 @@ export async function POST(
   ]);
 
   return NextResponse.json({ consent }, { status: 201 });
+}
+
+/**
+ * DELETE /api/organizations/[orgId]/consent?userId=<uuid>&purposeCode=<code>
+ *
+ * Stamps `withdrawnAt=now()` on the user's active ConsentArtifacts.
+ *
+ *  - Withdrawal is irreversible in our model: a subsequent "re-grant"
+ *    goes through `POST` and produces a NEW artifact with a fresh hash.
+ *    That keeps the chain-of-custody intact for DPDP auditors.
+ *
+ *  - `purposeCode` scopes the withdrawal to artifacts whose purpose-code
+ *    list contains that value. Omit it to withdraw ALL active consents
+ *    for the user (full DPDP §12 opt-out).
+ *
+ *  - Admins (MANAGER+) can trigger withdrawal on behalf of a member —
+ *    this is the org-side of the data principal's right to withdraw.
+ *    Self-service withdrawal from the user's own account settings goes
+ *    through a different route (to be added) that requires the
+ *    authenticated user to match `userId` rather than MANAGER access.
+ */
+const DeleteQuerySchema = z.object({
+  userId: z.string().uuid(),
+  purposeCode: z.string().min(1).max(64).optional(),
+});
+
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ orgId: string }> },
+) {
+  const { orgId } = await params;
+  const access = await requireOrgAccess(orgId, "MANAGER");
+  if (access.error) return access.error;
+
+  const url = new URL(req.url);
+  const parsed = DeleteQuerySchema.safeParse(
+    Object.fromEntries(url.searchParams.entries()),
+  );
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid query", detail: parsed.error.flatten() },
+      { status: 400 },
+    );
+  }
+  const { userId, purposeCode } = parsed.data;
+
+  // Cross-org guard: same logic as POST — only members of this org can
+  // have their consent withdrawn through this endpoint.
+  const member = await prisma.membership.findUnique({
+    where: {
+      userId_organizationId: { userId, organizationId: orgId },
+    },
+    select: { id: true },
+  });
+  if (!member) {
+    return NextResponse.json(
+      { error: "User is not a member of this organization" },
+      { status: 404 },
+    );
+  }
+
+  const { withdrawnCount } = await withdrawConsent({ userId, purposeCode });
+
+  if (withdrawnCount > 0) {
+    await prisma.orgAuditLog
+      .create({
+        data: {
+          organizationId: orgId,
+          actorMembershipId: access.member.id,
+          targetMembershipId: member.id,
+          category: "CONSENT",
+          action: AUDIT_ACTIONS.CONSENT.CONSENT_WITHDRAWN,
+          // Same PII-hygiene rule as CONSENT_GRANTED: no raw userId
+          // in the description; the membership FK is the pivot.
+          description: purposeCode
+            ? `Consent withdrawn (purpose=${purposeCode}) for member ${member.id}`
+            : `All consents withdrawn for member ${member.id}`,
+          details: {
+            membershipId: member.id,
+            purposeCode: purposeCode ?? null,
+            withdrawnCount,
+          },
+        },
+      })
+      .catch((err) =>
+        console.error("[consent DELETE] audit write failed", err),
+      );
+  }
+
+  return NextResponse.json({ withdrawnCount });
 }
