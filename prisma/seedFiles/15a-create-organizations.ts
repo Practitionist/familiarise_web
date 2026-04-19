@@ -35,7 +35,6 @@ import {
   FundingSource,
   MemberRole,
   MemberStatus,
-  OrgAuditAction,
   OrgStatus,
   ProgramStatus,
   ProgramType,
@@ -49,8 +48,6 @@ import {
   HrisProvider,
   HrisSyncStatus,
   PayoutArrangement,
-  EarningStatus,
-  PaymentGateway,
   ResidencyStatus,
   MsmeStatus,
   PoStatus,
@@ -144,11 +141,11 @@ export async function createOrganizations(
     .slice(0, Math.min(users.length, 15));
   const consultants = users
     .filter((u) => u.consultantProfile)
-    .slice(0, Math.min(users.length, 10));
+    .slice(0, Math.min(users.length, 12)); // 12 = 5 LearnPro + 5 IIT + 1 solo + 1 IIT owner
 
-  if (consultees.length < 4 || consultants.length < 5) {
+  if (consultees.length < 8 || consultants.length < 5) {
     console.warn(
-      "[15a] Skipping enterprise seed — need ≥4 consultees + ≥5 consultants; got",
+      "[15a] Skipping enterprise seed — need ≥8 consultees + ≥5 consultants; got",
       consultees.length,
       consultants.length,
     );
@@ -156,13 +153,15 @@ export async function createOrganizations(
   }
 
   // --------------------------------------------------------------------- WIPRO
-  await seedWipro(consultees.slice(0, 3));
+  // consultees[7] is the dedicated org owner; consultees[0..2] are learners
+  await seedWipro(consultees.slice(0, 3), consultees[7]);
 
   // ------------------------------------------------------------------ LEARNPRO
   await seedLearnPro(consultants.slice(0, 5));
 
   // --------------------------------------------------------------------- IIT
   await seedIit({
+    owner: consultants[10] ?? consultants[5], // dedicated org owner; fallback to first professor
     internalProfessors: consultants.slice(5, 7),
     externalConsultants: consultants.slice(7, 10),
     students: consultees.slice(3, 7),
@@ -183,7 +182,7 @@ export async function createOrganizations(
 // Shape 1: Wipro — pure BUYER with INVOICE funding + LICENSED_SEAT program
 // ---------------------------------------------------------------------------
 
-async function seedWipro(learners: UserWithProfiles[]) {
+async function seedWipro(learners: UserWithProfiles[], owner: UserWithProfiles) {
   const org = await createRootOrg({
     name: "Wipro Limited",
     slug: "wipro",
@@ -267,6 +266,19 @@ async function seedWipro(learners: UserWithProfiles[]) {
     },
   });
 
+  // OWNER membership (org admin; no program assignment needed)
+  await prisma.membership.create({
+    data: {
+      userId: owner.id,
+      organizationId: org.id,
+      role: MemberRole.OWNER,
+      status: MemberStatus.ACTIVE,
+      departmentLabel: "Corporate-Ops",
+      consulteeProfileId: owner.consulteeProfile?.id ?? null,
+      payoutRecipient: PayoutRecipient.SELF,
+    },
+  });
+
   // Memberships for 3 learners + assignments
   const now = new Date();
   const periodStart = new Date(now.getFullYear(), 0, 1);
@@ -278,7 +290,7 @@ async function seedWipro(learners: UserWithProfiles[]) {
       data: {
         userId: user.id,
         organizationId: org.id,
-        role: MemberRole.MEMBER,
+        role: MemberRole.LEARNER,
         status: MemberStatus.ACTIVE,
         departmentLabel: idx === 0 ? "EMEA-Product" : "India-Engineering",
         consulteeProfileId: user.consulteeProfile?.id ?? null,
@@ -370,7 +382,8 @@ async function seedWipro(learners: UserWithProfiles[]) {
   await prisma.orgAuditLog.create({
     data: {
       organizationId: org.id,
-      action: OrgAuditAction.CONTRACT_CREATED,
+      category: "CONTRACT",
+      action: "CONTRACT_CREATED",
       description: "Wipro contract signed; Engineer Leadership Program active.",
       details: { contractId: contract.id, programId: program.id },
     },
@@ -442,7 +455,7 @@ async function seedLearnPro(agencyConsultants: UserWithProfiles[]) {
       data: {
         userId: user.id,
         organizationId: org.id,
-        role: MemberRole.CONSULTANT,
+        role: MemberRole.EXPERT,
         status: MemberStatus.ACTIVE,
         consultantProfileId: user.consultantProfile.id,
         payoutRecipient: PayoutRecipient.SELF,
@@ -457,7 +470,11 @@ async function seedLearnPro(agencyConsultants: UserWithProfiles[]) {
   await prisma.orgAuditLog.create({
     data: {
       organizationId: org.id,
-      action: OrgAuditAction.CONSULTANT_APPROVED,
+      // OrgAuditCategory.MEMBER is unrelated to MemberRole.LEARNER — this
+      // category bucket describes "membership lifecycle events" across all
+      // roles, not just learners.
+      category: "MEMBER",
+      action: "EXPERT_APPROVED",
       description: `${agencyConsultants.length} consultants approved on LearnPro panel`,
     },
   });
@@ -472,6 +489,7 @@ async function seedLearnPro(agencyConsultants: UserWithProfiles[]) {
 // ---------------------------------------------------------------------------
 
 async function seedIit(params: {
+  owner: UserWithProfiles;
   internalProfessors: UserWithProfiles[];
   externalConsultants: UserWithProfiles[];
   students: UserWithProfiles[];
@@ -591,6 +609,21 @@ async function seedIit(params: {
     data: { walletBalance: running },
   });
 
+  // OWNER membership (dean / org admin; payoutRecipient=ORGANIZATION for internal salaried)
+  if (params.owner.consultantProfile) {
+    await prisma.membership.create({
+      data: {
+        userId: params.owner.id,
+        organizationId: org.id,
+        role: MemberRole.OWNER,
+        status: MemberStatus.ACTIVE,
+        departmentLabel: "Academic-Leadership",
+        consultantProfileId: params.owner.consultantProfile.id,
+        payoutRecipient: PayoutRecipient.ORGANIZATION,
+      },
+    });
+  }
+
   // Internal professors (payoutRecipient=ORGANIZATION → salaried)
   for (const prof of params.internalProfessors) {
     if (!prof.consultantProfile) continue;
@@ -598,7 +631,7 @@ async function seedIit(params: {
       data: {
         userId: prof.id,
         organizationId: org.id,
-        role: MemberRole.CONSULTANT,
+        role: MemberRole.EXPERT,
         status: MemberStatus.ACTIVE,
         consultantProfileId: prof.consultantProfile.id,
         payoutRecipient: PayoutRecipient.ORGANIZATION,
@@ -614,7 +647,7 @@ async function seedIit(params: {
       data: {
         userId: ext.id,
         organizationId: org.id,
-        role: MemberRole.CONSULTANT,
+        role: MemberRole.EXPERT,
         status: MemberStatus.ACTIVE,
         consultantProfileId: ext.consultantProfile.id,
         payoutRecipient: PayoutRecipient.SELF,
@@ -632,7 +665,7 @@ async function seedIit(params: {
       data: {
         userId: student.id,
         organizationId: org.id,
-        role: MemberRole.MEMBER,
+        role: MemberRole.LEARNER,
         status: MemberStatus.ACTIVE,
         consulteeProfileId: student.consulteeProfile?.id ?? null,
         departmentLabel: "CSE-UG-2026",

@@ -1,0 +1,87 @@
+/**
+ * Well-known OrgAuditLog.action strings grouped by category.
+ *
+ * The DB stores `action` as a free-form `String` so new events can be
+ * emitted without a migration. This file is the IDE-facing source of
+ * truth: callers import a constant to get autocomplete + typo safety
+ * without the schema having to enumerate every possible event.
+ *
+ * Adding a new event: just add a string literal here. Anything unknown
+ * at write time still persists — this collection is a convention, not a
+ * constraint.
+ */
+
+import type { OrgAuditCategory } from "@prisma/client";
+
+export const AUDIT_ACTIONS = {
+  MEMBER: {
+    MEMBER_ADDED: "MEMBER_ADDED",
+    MEMBER_REMOVED: "MEMBER_REMOVED",
+    ROLE_CHANGE: "ROLE_CHANGE",
+    STATUS_CHANGE: "STATUS_CHANGE",
+    EXPERT_APPLIED: "EXPERT_APPLIED",
+    EXPERT_APPROVED: "EXPERT_APPROVED",
+    EXPERT_REJECTED: "EXPERT_REJECTED",
+    INVITE_SENT: "INVITE_SENT",
+    INVITE_RESENT: "INVITE_RESENT",
+    INVITE_ACCEPTED: "INVITE_ACCEPTED",
+    INVITE_REVOKED: "INVITE_REVOKED",
+  },
+  CONTRACT: {
+    CONTRACT_CREATED: "CONTRACT_CREATED",
+    CONTRACT_SIGNED: "CONTRACT_SIGNED",
+    CONTRACT_TERMINATED: "CONTRACT_TERMINATED",
+    CONTRACT_EXPIRED: "CONTRACT_EXPIRED",
+  },
+  PROGRAM: {
+    PROGRAM_CREATED: "PROGRAM_CREATED",
+    PROGRAM_PAUSED: "PROGRAM_PAUSED",
+    PROGRAM_ASSIGNED: "PROGRAM_ASSIGNED",
+    PROGRAM_UNASSIGNED: "PROGRAM_UNASSIGNED",
+    RATE_CARD_BUMPED: "RATE_CARD_BUMPED",
+  },
+  WALLET: {
+    WALLET_TOPUP: "WALLET_TOPUP",
+    WALLET_REFUND: "WALLET_REFUND",
+    WALLET_DEBIT_FAILED: "WALLET_DEBIT_FAILED",
+  },
+  INVOICE: {
+    PURCHASE_ORDER_CREATED: "PURCHASE_ORDER_CREATED",
+    INVOICE_GENERATED: "INVOICE_GENERATED",
+    INVOICE_ISSUED: "INVOICE_ISSUED",
+    INVOICE_PAID: "INVOICE_PAID",
+    INVOICE_CANCELLED: "INVOICE_CANCELLED",
+    REFUND_DENIED: "REFUND_DENIED",
+  },
+  PAYOUT: {
+    PAYOUT_INITIATED: "PAYOUT_INITIATED",
+    PAYOUT_PROCESSED: "PAYOUT_PROCESSED",
+    PAYOUT_FAILED: "PAYOUT_FAILED",
+    EARNINGS_HELD: "EARNINGS_HELD",
+    EARNINGS_RELEASED: "EARNINGS_RELEASED",
+  },
+  SETTINGS: {
+    SETTINGS_CHANGED: "SETTINGS_CHANGED",
+    SSO_ENABLED: "SSO_ENABLED",
+    SSO_DISABLED: "SSO_DISABLED",
+    DOMAIN_CLAIMED: "DOMAIN_CLAIMED",
+    DOMAIN_RELEASED: "DOMAIN_RELEASED",
+  },
+  CONSENT: {
+    CONSENT_GRANTED: "CONSENT_GRANTED",
+    CONSENT_WITHDRAWN: "CONSENT_WITHDRAWN",
+    DATA_BREACH_REPORTED: "DATA_BREACH_REPORTED",
+  },
+  SYSTEM: {
+    VERIFIED: "VERIFIED",
+    SUSPENDED: "SUSPENDED",
+    REACTIVATED: "REACTIVATED",
+    DEACTIVATED: "DEACTIVATED",
+    HRIS_SYNC_STARTED: "HRIS_SYNC_STARTED",
+    HRIS_SYNC_COMPLETED: "HRIS_SYNC_COMPLETED",
+  },
+} as const satisfies Record<OrgAuditCategory, Record<string, string>>;
+
+export type AuditCategory = keyof typeof AUDIT_ACTIONS;
+export type AuditAction<C extends AuditCategory> =
+  (typeof AUDIT_ACTIONS)[C][keyof (typeof AUDIT_ACTIONS)[C]];

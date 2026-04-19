@@ -429,6 +429,15 @@ model Organization {
   canSponsor Boolean @default(true)
   canHost    Boolean @default(false)
 
+  // Escape hatch for future capabilities without a migration. The two
+  // columns above (canSponsor, canHost) cover the 90% path; this blob is
+  // for the long tail — e.g. { "RESELL": true } for an org that also
+  // resells third-party content. The UI derives capability labels via
+  // lib/labels/org-labels.ts which consumes both the typed booleans and
+  // this blob so a new capability can ship without altering every
+  // session-reader.
+  capabilitiesExtra Json?
+
   // Hierarchy — schema-only in v1. No subtree UI/walks; columns kept so future
   // multi-BU (Wipro-style) support lands without a migration.
   parentId String?
@@ -618,12 +627,25 @@ model Membership {
   @@index([departmentLabel])
 }
 
+/// Per-organization membership role. Every value here is intentionally
+/// disjoint from UserRole so a grep, log line, or audit entry never
+/// has to disambiguate which namespace it belongs to.
+///
+///   MAINTAINER  — org admin (below owner). Was ADMIN; renamed to
+///                 avoid the collision with UserRole.ADMIN (platform
+///                 admin). GitHub/GitLab use the same term.
+///   EXPERT      — delivers services on behalf of the org. Was
+///                 CONSULTANT; renamed to avoid the collision with
+///                 UserRole.CONSULTANT (platform user type). Matches
+///                 the industry term used by GLG / Catalant / Toptal.
+///   LEARNER     — consumes services through the org. Explicit
+///                 "receives sessions" semantics.
 enum MemberRole {
   OWNER
-  ADMIN
+  MAINTAINER
   MANAGER
-  MEMBER
-  CONSULTANT
+  EXPERT
+  LEARNER
   SUPPORT
 }
 
@@ -738,10 +760,16 @@ model Contract {
 
   rateCardId String?
   rateCard   RateCard? @relation("ContractRateCard", fields: [rateCardId], references: [id])
+  // Back-relation for RateCard.ownerContractId — rate cards owned by this
+  // contract (negotiated, contract-specific splits).
+  ownedRateCards RateCard[] @relation("RateCardOwnerContract")
 
   terms        Json? // NET-X, caps, custom clauses
   programs     Program[]
   subscription BillingSubscription?
+  // Back-relation for OrganizationInvoice.contract — optional linkage so
+  // an invoice knows which contract governed its billing terms.
+  invoices     OrganizationInvoice[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -842,6 +870,14 @@ model Program {
   licensedSeatConfig LicensedSeatConfig?
   creditPoolConfig   CreditPoolConfig?
 
+  // Escape hatch for non-typed compensation models. LICENSED_SEAT and
+  // CREDIT_POOL handle the common cases; anything exotic (e.g. bonus
+  // tiers on top of a rev-share, retainer + usage hybrid) lives here as
+  // a JSON blob. Contract: if this is non-null, checkout defers to a
+  // custom resolver and skips the typed config tables. Keeps the schema
+  // stable when a one-off enterprise asks for a bespoke split.
+  customConfig Json?
+
   assignments ProgramAssignment[]
 
   createdAt DateTime @default(now())
@@ -901,6 +937,21 @@ model BookingUtilization {
   priceAtBookingPaise Int
   wasOverage          Boolean           @default(false)
 
+  // Rate-card snapshot at booking time. Settlement reads these values,
+  // NOT the current RateCard — so a retroactively-changed rate card
+  // doesn't rewrite history. A booking made yesterday at 85/10/5 still
+  // settles at 85/10/5 even if the card was bumped to 80/15/5 today.
+  platformBpsAtBooking   Int?
+  orgBpsAtBooking        Int?
+  consultantBpsAtBooking Int?
+
+  // Reversal marker — set on refund. The row is never deleted; reversal
+  // is expressed as an opposing UsageLedgerEntry plus this timestamp.
+  // This keeps history queryable ("was this member using a seat on
+  // 2026-04-10?") and makes partial reversals auditable.
+  reversedAt     DateTime?
+  reversalReason String?
+
   createdAt DateTime @default(now())
 
   @@index([programAssignmentId])
@@ -939,6 +990,7 @@ model RateCard {
   id              String           @id @default(uuid())
   ownerOrgId      String?
   ownerContractId String?
+  ownerContract   Contract?        @relation("RateCardOwnerContract", fields: [ownerContractId], references: [id], onDelete: Cascade)
   planType        CoveredPlanType?
   planId          String?
 
@@ -950,12 +1002,24 @@ model RateCard {
   orgBps        Int
   consultantBps Int
 
+  // Time-scoping: rate changes are modeled as a NEW RateCard row with
+  // `effectiveFrom = now()` and a closing UPDATE on the previous card's
+  // `effectiveTo`. Settlement picks the card where `effectiveFrom <= at
+  // < effectiveTo`, so history is preserved: old earnings settle at the
+  // old split, new earnings at the new one. See
+  // lib/api/organizations/rate-card.ts#resolveEffectiveRateCard for the
+  // lookup and #bumpRateCard for the atomic two-step rotation.
+  effectiveFrom DateTime  @default(now())
+  effectiveTo   DateTime?
+
   membershipOverrides Membership[] @relation("MembershipRateCardOverride")
   contracts           Contract[]   @relation("ContractRateCard")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([ownerOrgId, effectiveFrom])
+  @@index([ownerContractId, effectiveFrom])
   @@index([ownerOrgId, planType])
   @@index([ownerContractId, planType])
 }
@@ -1007,6 +1071,16 @@ model OrganizationEarnings {
   consultantSharePaise Int
   refundedAmountPaise  Int      @default(0)
   currency             Currency @default(INR)
+
+  // Rate-card snapshot applied at earnings creation. We persist both the
+  // rate-card id and the exact bps used, so that a later bump to the card
+  // (or a card deletion) cannot rewrite the split that was actually
+  // applied. Payout reconciliation reads these fields, never the live
+  // RateCard table.
+  rateCardIdApplied    String?
+  platformBpsApplied   Int?
+  orgBpsApplied        Int?
+  consultantBpsApplied Int?
 
   status    EarningStatus
   holdUntil DateTime?
@@ -1094,6 +1168,12 @@ model OrganizationInvoice {
   organization     Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   purchaseOrderId  String?
   purchaseOrder    PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
+  // Optional link to the Contract that governed this invoice. Lets the
+  // audit trail read "invoice X was billed under contract Y" even after
+  // contracts are terminated; SetNull keeps historical invoices when a
+  // contract is eventually deleted (DRAFT-only, but still).
+  contractId       String?
+  contract         Contract?      @relation(fields: [contractId], references: [id], onDelete: SetNull)
 
   invoiceNumber String           @unique
   status        OrgInvoiceStatus @default(DRAFT)
@@ -1205,7 +1285,7 @@ model OrganizationSSOSettings {
 
   allowedEmailDomains    String[]   @default([])
   enforceSSO             Boolean    @default(false)
-  defaultRoleForAutoJoin MemberRole @default(MEMBER)
+  defaultRoleForAutoJoin MemberRole @default(LEARNER)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1229,15 +1309,38 @@ model OrgAuditLog {
   actorMembershipId  String?
   targetMembershipId String?
 
-  action      OrgAuditAction
+  // `action` is intentionally a free-form string so new event types (e.g.
+  // REFUND_DENIED, CONSENT_WITHDRAWN, OVERAGE_CHARGED) can be emitted
+  // without a migration. `category` is the stable coarse bucket that
+  // drives dashboard filters and retention rules — keep it small and
+  // stable. lib/enterprise/audit-actions.ts exports a constant-object
+  // of the well-known action strings for autocomplete.
+  category    OrgAuditCategory
+  action      String
   description String
   details     Json?
 
   createdAt DateTime @default(now())
 
   @@index([organizationId, createdAt])
+  @@index([organizationId, category, createdAt])
 }
 
+enum OrgAuditCategory {
+  MEMBER // add/remove/role/status changes
+  CONTRACT // contract lifecycle
+  PROGRAM // program crud + assignment
+  WALLET // top-ups, debits, refunds
+  INVOICE // generation, payment, dispute
+  PAYOUT // earnings & settlement
+  SETTINGS // SSO, branding, policies
+  CONSENT // DPDP events
+  SYSTEM // anything platform-triggered
+}
+
+/// @deprecated — kept as a TypeScript-facing constant object in
+/// lib/enterprise/audit-actions.ts for autocomplete. The DB column is
+/// `action: String` now; use any string literal from AUDIT_ACTIONS.
 enum OrgAuditAction {
   MEMBER_ADDED
   MEMBER_REMOVED
@@ -2645,6 +2748,13 @@ model Payment {
   organizationInvoiceSettled OrganizationInvoice?   @relation("OrgInvoicePayment") // back-relation for OrganizationInvoice.payment
   bookingUtilization         BookingUtilization?    @relation("PaymentBookingUtilization") // Program entitlement usage
 
+  // Stackable funding. A Payment may be split across multiple sources
+  // — e.g. ₹500 referral credit + ₹1,500 card. When `legs.length > 0`,
+  // sum(legs.amountPaise) MUST equal `amount`. Single-source checkouts
+  // leave `legs` empty (back-compat: old Payments had no legs and worked
+  // off `amount` + `paymentMethod` alone).
+  legs PaymentLeg[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -2659,6 +2769,33 @@ model Payment {
   @@index([paymentStatus, createdAt])
   @@index([organizationId])
   @@index([billableToOrgInvoiceId])
+}
+
+// Stackable funding leg. Each row captures one source contribution to a
+// Payment. Examples:
+//   - { source: CARD,            amountPaise: 150000, sourceRef: pay_xyz }
+//   - { source: REFERRAL_CREDIT, amountPaise:  50000, sourceRef: <ReferralCredit.id> }
+//   - { source: WALLET,          amountPaise: 100000, sourceRef: <WalletEntry.id> }
+// Invariant: sum(legs.amountPaise) == Payment.amount when legs are present.
+model PaymentLeg {
+  id          String           @id @default(uuid())
+  paymentId   String
+  payment     Payment          @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  source      PaymentLegSource
+  amountPaise Int
+  sourceRef   String? // wallet-entry id | referral-credit id | gateway txn id
+  createdAt   DateTime         @default(now())
+
+  @@index([paymentId])
+  @@index([source])
+}
+
+enum PaymentLegSource {
+  CARD // external gateway charge
+  WALLET // BillingAccount wallet debit (was SEAT_PACK)
+  REFERRAL_CREDIT // platform-issued personal credit
+  INVOICE_ACCRUAL // rolled into an OrganizationInvoice at month-end
+  LICENSE // absorbed by a LICENSED_SEAT program (no money moves)
 }
 
 enum PaymentGateway {
