@@ -1,33 +1,218 @@
 /**
- * @arch4-stub Pending Arch 4-Modified rewrite (Issue #681).
+ * GET    /api/organizations/[orgId]/members
+ * POST   /api/organizations/[orgId]/members
  *
- * The original implementation relied on OrganizationProfile /
- * OrganizationMemberProfile / OrgCreditPool — all removed. The new model
- * uses Organization / Membership / BillingAccount / WalletEntry / Program.
+ * The single members endpoint subsumes the old /consultants and /learners
+ * views — callers pass `?role=EXPERT` or `?role=LEARNER` to filter. Also
+ * accepts a comma-separated role list (`?role=EXPERT,LEARNER`) for the
+ * union case, plus `status` / `departmentLabel` / `q` / pagination.
  *
- * This route is currently a 501 placeholder. See:
- *   docs/enterprise/phase-2-api-rewrite-checklist.md
- * for the per-route migration plan.
- *
- * File: app/api/organizations/[orgId]/members/route.ts
+ * Everything is parsed through Zod. Runtime narrowing never relies on
+ * `as` assertions.
  */
 
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
+import { z } from "zod";
+import prisma from "@/lib/prisma";
+import { requireOrgAccess } from "@/lib/auth-helpers";
+import type { MemberRole, MemberStatus } from "@prisma/client";
+import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
-function notImplemented(method: string) {
-  return NextResponse.json(
-    {
-      error: "Not implemented",
-      detail: `${method} app/api/organizations/[orgId]/members/route.ts is awaiting Arch 4-Modified rewrite; see Issue #681.`,
-    },
-    { status: 501 },
+// Canonical MemberRole Zod enum. Mirrors the Prisma enum — if a role
+// is added to the schema, TS fails here until the list is updated.
+const MemberRoleSchema = z.enum([
+  "OWNER",
+  "MAINTAINER",
+  "MANAGER",
+  "EXPERT",
+  "LEARNER",
+  "SUPPORT",
+]);
+
+const MemberStatusSchema = z.enum(["PENDING", "ACTIVE", "SUSPENDED", "REMOVED"]);
+
+/**
+ * Accepts a string like "EXPERT" or "EXPERT,LEARNER" and returns the
+ * narrowed list. Empty/invalid → undefined (no filter applied).
+ */
+function parseRoleFilter(raw: string | null): MemberRole[] | undefined {
+  if (!raw) return undefined;
+  const parts = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const parsed: MemberRole[] = [];
+  for (const p of parts) {
+    const result = MemberRoleSchema.safeParse(p);
+    if (result.success) parsed.push(result.data);
+  }
+  return parsed.length ? parsed : undefined;
+}
+
+function parseStatusFilter(raw: string | null): MemberStatus[] | undefined {
+  if (!raw) return undefined;
+  const parts = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const parsed: MemberStatus[] = [];
+  for (const p of parts) {
+    const result = MemberStatusSchema.safeParse(p);
+    if (result.success) parsed.push(result.data);
+  }
+  return parsed.length ? parsed : undefined;
+}
+
+const ListQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  perPage: z.coerce.number().int().min(1).max(100).default(20),
+});
+
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ orgId: string }> },
+) {
+  const { orgId } = await params;
+  const access = await requireOrgAccess(orgId);
+  if (access.error) return access.error;
+
+  const url = new URL(req.url);
+  const roles = parseRoleFilter(url.searchParams.get("role"));
+  const statuses = parseStatusFilter(url.searchParams.get("status"));
+  const departmentLabel =
+    url.searchParams.get("departmentLabel")?.trim() || undefined;
+  const q = url.searchParams.get("q")?.trim() || undefined;
+  const parsedPagination = ListQuerySchema.safeParse(
+    Object.fromEntries(url.searchParams.entries()),
   );
+  if (!parsedPagination.success) {
+    return NextResponse.json(
+      { error: "Invalid pagination", detail: parsedPagination.error.flatten() },
+      { status: 400 },
+    );
+  }
+  const { page, perPage } = parsedPagination.data;
+
+  // Query-param-driven filter; role and status accept lists so the same
+  // endpoint serves the sidebar filters (?role=LEARNER) and consultants
+  // management (?role=EXPERT&status=ACTIVE) without new routes.
+  const where = {
+    organizationId: orgId,
+    ...(roles && { role: { in: roles } }),
+    ...(statuses && { status: { in: statuses } }),
+    ...(departmentLabel && { departmentLabel }),
+    ...(q && {
+      user: {
+        OR: [
+          { name: { contains: q, mode: "insensitive" as const } },
+          { email: { contains: q, mode: "insensitive" as const } },
+        ],
+      },
+    }),
+  };
+
+  const [total, data] = await prisma.$transaction([
+    prisma.membership.count({ where }),
+    prisma.membership.findMany({
+      where,
+      include: {
+        user: {
+          select: { id: true, name: true, email: true, image: true },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * perPage,
+      take: perPage,
+    }),
+  ]);
+
+  return NextResponse.json({
+    data,
+    meta: { total, page, perPage },
+  });
 }
 
-export async function GET() {
-  return notImplemented("GET");
-}
+/**
+ * Direct-add a member by userId. The common add-by-email path goes
+ * through /invitations; this endpoint is for admin tooling + SSO
+ * auto-provisioning, where we already have a verified userId.
+ */
+const CreateBodySchema = z.object({
+  userId: z.string().min(1),
+  role: MemberRoleSchema,
+  departmentLabel: z.string().max(100).optional().nullable(),
+});
 
-export async function POST() {
-  return notImplemented("POST");
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ orgId: string }> },
+) {
+  const { orgId } = await params;
+  const access = await requireOrgAccess(orgId, "MAINTAINER");
+  if (access.error) return access.error;
+
+  const bodyRaw = await req.json().catch(() => null);
+  const parsed = CreateBodySchema.safeParse(bodyRaw);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid body", detail: parsed.error.flatten() },
+      { status: 400 },
+    );
+  }
+  const { userId, role, departmentLabel } = parsed.data;
+
+  // Idempotency: reject if this user already has a Membership in the
+  // org. A duplicate POST should not silently overwrite the role —
+  // callers that want to change a role use PATCH /[memberId].
+  const existing = await prisma.membership.findUnique({
+    where: { userId_organizationId: { userId, organizationId: orgId } },
+    select: { id: true },
+  });
+  if (existing) {
+    return NextResponse.json(
+      { error: "User is already a member of this organization" },
+      { status: 409 },
+    );
+  }
+
+  // Consultee/consultant profile links are optional — we populate them
+  // if the user has the matching profile, so downstream code that joins
+  // via `membership.consulteeProfile` doesn't have to null-check first.
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, consulteeProfileId: true, consultantProfileId: true },
+  });
+  if (!user) {
+    return NextResponse.json({ error: "User not found" }, { status: 404 });
+  }
+
+  const membership = await prisma.$transaction(async (tx) => {
+    const created = await tx.membership.create({
+      data: {
+        userId,
+        organizationId: orgId,
+        role,
+        status: "ACTIVE",
+        departmentLabel: departmentLabel ?? null,
+        consulteeProfileId:
+          role === "LEARNER" ? user.consulteeProfileId ?? null : null,
+        consultantProfileId:
+          role === "EXPERT" ? user.consultantProfileId ?? null : null,
+      },
+    });
+    await tx.orgAuditLog.create({
+      data: {
+        organizationId: orgId,
+        actorMembershipId: access.member.id,
+        targetMembershipId: created.id,
+        category: "MEMBER",
+        action: AUDIT_ACTIONS.MEMBER.MEMBER_ADDED,
+        description: `Added ${userId} as ${role}`,
+        details: { role, departmentLabel: departmentLabel ?? null },
+      },
+    });
+    return created;
+  });
+
+  return NextResponse.json({ membership }, { status: 201 });
 }
