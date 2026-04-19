@@ -1,0 +1,245 @@
+/**
+ * GET  /api/organizations/[orgId]/billing-account/invoices
+ * POST /api/organizations/[orgId]/billing-account/invoices
+ *
+ * POST manually generates an invoice (vs the daily cron at
+ * jobs/billing/generate-subscription-invoices.ts which auto-generates
+ * from BillingSubscription.nextInvoiceDate). Useful for one-off line
+ * items or for re-issuing a voided invoice.
+ *
+ * Every invoice carries its GST breakdown + IRN placeholder. The IRN
+ * stays PENDING until the IRP uploader cron (stubbed) populates it.
+ */
+
+import { NextResponse, type NextRequest } from "next/server";
+import { z } from "zod";
+import prisma from "@/lib/prisma";
+import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
+import { deriveGstBreakdown } from "@/lib/compliance/gst";
+import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+
+const CurrencySchema = z.enum(["INR", "USD", "EUR", "GBP"]);
+
+const InvoiceStatusSchema = z.enum([
+  "DRAFT",
+  "ISSUED",
+  "PAID",
+  "OVERDUE",
+  "VOID",
+  "CANCELLED",
+]);
+
+const LineItemSchema = z.object({
+  description: z.string().min(1).max(500),
+  quantity: z.coerce.number().int().min(1),
+  unitPrice: z.coerce.number().int().min(0),
+  paymentId: z.string().optional(),
+});
+
+const CreateBodySchema = z.object({
+  purchaseOrderId: z.string().min(1).nullable().optional(),
+  contractId: z.string().min(1).nullable().optional(),
+  displayCurrency: CurrencySchema.default("INR"),
+  items: z.array(LineItemSchema).min(1),
+  // Due date is caller-provided so the /billing page can render NET-60
+  // or NET-30 depending on contract terms. Server uses it verbatim.
+  dueDate: z.coerce.date(),
+  billingCycleStart: z.coerce.date().nullable().optional(),
+  billingCycleEnd: z.coerce.date().nullable().optional(),
+  // Issued-vs-draft is explicit: a DRAFT invoice isn't billed, an
+  // ISSUED one is. We don't auto-transition on POST because some
+  // callers want to review before sending.
+  issueImmediately: z.coerce.boolean().default(false),
+});
+
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ orgId: string }> },
+) {
+  const { orgId } = await params;
+  const access = await requireOrgAccess(orgId, "MANAGER");
+  if (access.error) return access.error;
+
+  const url = new URL(req.url);
+  const rawStatus = url.searchParams.get("status");
+  const status = rawStatus ? InvoiceStatusSchema.safeParse(rawStatus) : null;
+  const page = Math.max(1, Number(url.searchParams.get("page") ?? 1));
+  const perPage = Math.min(
+    100,
+    Math.max(1, Number(url.searchParams.get("perPage") ?? 20)),
+  );
+
+  const where = {
+    organizationId: orgId,
+    ...(status?.success ? { status: status.data } : {}),
+  };
+
+  const [total, invoices] = await prisma.$transaction([
+    prisma.organizationInvoice.count({ where }),
+    prisma.organizationInvoice.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * perPage,
+      take: perPage,
+      include: {
+        purchaseOrder: { select: { id: true, poNumber: true } },
+      },
+    }),
+  ]);
+
+  return NextResponse.json({ data: invoices, meta: { total, page, perPage } });
+}
+
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ orgId: string }> },
+) {
+  const { orgId } = await params;
+  const access = await requireOrgOwner(orgId);
+  if (access.error) return access.error;
+
+  const raw = await req.json().catch(() => null);
+  const parsed = CreateBodySchema.safeParse(raw);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid body", detail: parsed.error.flatten() },
+      { status: 400 },
+    );
+  }
+  const body = parsed.data;
+
+  const org = await prisma.organization.findUnique({
+    where: { id: orgId },
+    select: {
+      id: true,
+      gstStateCode: true,
+      gstin: true,
+      hsnDefault: true,
+      dataResidencyRegion: true,
+      billingAccountId: true,
+    },
+  });
+  if (!org?.billingAccountId) {
+    return NextResponse.json(
+      { error: "Organization does not have a BillingAccount" },
+      { status: 404 },
+    );
+  }
+
+  if (body.purchaseOrderId) {
+    const po = await prisma.purchaseOrder.findUnique({
+      where: { id: body.purchaseOrderId },
+      select: { organizationId: true, status: true },
+    });
+    if (!po || po.organizationId !== orgId) {
+      return NextResponse.json(
+        { error: "PurchaseOrder does not belong to this organization" },
+        { status: 400 },
+      );
+    }
+    if (po.status !== "ACTIVE") {
+      return NextResponse.json(
+        { error: `PurchaseOrder is ${po.status}; only ACTIVE POs can be invoiced against` },
+        { status: 409 },
+      );
+    }
+  }
+  if (body.contractId) {
+    const contract = await prisma.contract.findUnique({
+      where: { id: body.contractId },
+      select: { organizationId: true },
+    });
+    if (!contract || contract.organizationId !== orgId) {
+      return NextResponse.json(
+        { error: "Contract does not belong to this organization" },
+        { status: 400 },
+      );
+    }
+  }
+
+  const subtotal = body.items.reduce(
+    (sum, item) => sum + item.quantity * item.unitPrice,
+    0,
+  );
+
+  // GST breakdown delegates to the compliance stub. In production the
+  // stub is replaced with the live resolver (place-of-supply + IGST
+  // vs CGST+SGST split); either way we store the numbers at invoice
+  // creation so retroactive tax-rule changes don't rewrite history.
+  const gst = deriveGstBreakdown({
+    subtotalPaise: subtotal,
+    supplierStateCode: "KA",
+    buyerStateCode: org.gstStateCode,
+    buyerCountry: org.dataResidencyRegion === "IN" ? "IN" : "US",
+    hsnCode: org.hsnDefault,
+  });
+
+  // Invoice numbers are per-year-per-org sequences. Kept simple here
+  // (timestamp-based) — a production run would use a lookup-table
+  // counter so numbers stay continuous even after deletions.
+  const invoiceNumber = `INV-${orgId.slice(0, 6)}-${Date.now()}`;
+
+  const invoice = await prisma.$transaction(async (tx) => {
+    const created = await tx.organizationInvoice.create({
+      data: {
+        billingAccountId: org.billingAccountId!,
+        organizationId: orgId,
+        purchaseOrderId: body.purchaseOrderId ?? null,
+        contractId: body.contractId ?? null,
+        invoiceNumber,
+        status: body.issueImmediately ? "ISSUED" : "DRAFT",
+        displayCurrency: body.displayCurrency,
+        inrEquivalentPaise: gst.totalPaise,
+        subtotalPaise: gst.subtotalPaise,
+        igstPaise: gst.igstPaise,
+        cgstPaise: gst.cgstPaise,
+        sgstPaise: gst.sgstPaise,
+        totalPaise: gst.totalPaise,
+        taxRate: gst.igstPaise + gst.cgstPaise + gst.sgstPaise > 0 ? 0.18 : 0,
+        hsnCode: gst.hsnCode,
+        placeOfSupply: gst.placeOfSupply,
+        reverseCharge: gst.reverseCharge,
+        gstin: org.gstin,
+        irpStatus: "PENDING",
+        autoGenerated: false,
+        issuedAt: body.issueImmediately ? new Date() : null,
+        dueDate: body.dueDate,
+        billingCycleStart: body.billingCycleStart ?? null,
+        billingCycleEnd: body.billingCycleEnd ?? null,
+        items: JSON.parse(JSON.stringify(body.items)),
+      },
+    });
+
+    if (body.issueImmediately) {
+      await tx.settlementLedgerEntry.create({
+        data: {
+          organizationId: orgId,
+          invoiceId: created.id,
+          kind: "INVOICE_ISSUED",
+          amountPaise: created.totalPaise,
+          currency: body.displayCurrency,
+        },
+      });
+    }
+
+    await tx.orgAuditLog.create({
+      data: {
+        organizationId: orgId,
+        actorMembershipId: access.member.id,
+        category: "INVOICE",
+        action: AUDIT_ACTIONS.INVOICE.INVOICE_GENERATED,
+        description: `${body.issueImmediately ? "Issued" : "Drafted"} invoice ${invoiceNumber}`,
+        details: {
+          invoiceId: created.id,
+          invoiceNumber,
+          totalPaise: created.totalPaise,
+          status: created.status,
+        },
+      },
+    });
+
+    return created;
+  });
+
+  return NextResponse.json({ invoice }, { status: 201 });
+}
