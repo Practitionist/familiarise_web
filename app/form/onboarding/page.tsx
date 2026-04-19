@@ -30,7 +30,6 @@ import StaffAgreementForm from "./components/StaffAgreementForm";
 import StaffProfileForm from "./components/StaffProfileForm";
 import StaffReviewForm from "./components/StaffReviewForm";
 import { CreateOrganizationWizard } from "@/components/organization/create-wizard/Wizard";
-import { setOnboardingRoleAction } from "@/actions/forms/onboarding.action";
 
 // Step labels for progress indicator
 const STEP_LABELS = {
