@@ -1,60 +1,155 @@
-# Three-Ledger Discipline
+# Three-ledger discipline
 
-**Status:** Schema-final, enforcement pending (Arch 4-Modified, Issue #681)
+The enterprise schema carries three immutable ledgers:
 
-The Arch 4-Modified schema carries three immutable ledgers:
-
-- `UsageLedgerEntry` — every consumed entitlement (sessions, minutes)
+- `UsageLedgerEntry` — every consumed entitlement (sessions, minutes).
 - `FundingLedgerEntry` — every money-like allocation (wallet top-ups,
-  booking debits, refund credits, grants)
+  booking debits, refund credits, adjustments, grants).
 - `SettlementLedgerEntry` — every real financial settlement (invoice
-  issued/paid, payment received, payout sent, refund issued, chargeback,
-  credit note)
+  issued/paid, payment received, payout sent, refund issued,
+  chargeback, credit note).
 
 ## Why three?
 
 The three ledgers answer three different questions:
 
-1. **"What did this member consume?"** → Usage
-2. **"Where did the money go inside the platform?"** → Funding
-3. **"How did the platform settle with external parties?"** → Settlement
+1. **"What did this member consume?"** → Usage.
+2. **"Where did the money go inside the platform?"** → Funding.
+3. **"How did the platform settle with external parties?"** →
+   Settlement.
 
-Historically these were mixed into a single `OrgCreditLedger` + ad-hoc
-`Payment` + `ConsultantEarnings` rows. Reconciling across them required
-JSON joins and date heuristics.
+Pre-Arch-4 these were mixed into a single `OrgCreditLedger` + ad-hoc
+`Payment` + `ConsultantEarnings` rows. Reconciling across them
+required JSON joins and date heuristics.
+
+## Schema
+
+```prisma
+model UsageLedgerEntry {
+  id                  String @id @default(uuid())
+  programAssignmentId String?
+  membershipId        String
+  paymentId           String?
+  sessionsConsumed    Int        // signed (negative on reversal)
+  minutesConsumed     Int?
+  priceAtBookingPaise Int
+  wasOverage          Boolean @default(false)
+  notes               String?
+  createdAt           DateTime @default(now())
+  @@index([membershipId, createdAt])
+  @@index([programAssignmentId, createdAt])
+}
+
+model FundingLedgerEntry {
+  id                String @id @default(uuid())
+  billingAccountId  String
+  deltaPaise        Int           // signed
+  reason            FundingReason
+  balanceAfterPaise Int
+  paymentId         String?
+  walletEntryId     String? @unique
+  notes             String?
+  createdAt         DateTime @default(now())
+  @@index([billingAccountId, createdAt])
+}
+
+model SettlementLedgerEntry {
+  id             String @id @default(uuid())
+  organizationId String?
+  paymentId      String?
+  invoiceId      String?
+  payoutId       String?
+  kind           SettlementKind
+  amountPaise    Int           // signed
+  currency       Currency
+  notes          String?
+  createdAt      DateTime @default(now())
+  @@index([organizationId, createdAt])
+  @@index([kind, createdAt])
+}
+```
 
 ## Invariants
 
 1. **Rows are immutable.** No UPDATEs; corrections are posted as
    counter-entries.
-2. **Every mutation to running-balance state writes a ledger row in the
-   same transaction.** `walletDebit` writes both a `WalletEntry` and a
-   `FundingLedgerEntry`. `recordBookingUtilization` writes a
-   `BookingUtilization` + `UsageLedgerEntry`. The
-   `generate-subscription-invoices` cron writes a `SettlementLedgerEntry`
-   on INVOICE_ISSUED.
-3. **Ledger rows carry `balanceAfter`** where applicable (Funding) so
+2. **Every mutation to running-balance state writes a ledger row in
+   the same transaction.** `walletDebit()` writes both a `WalletEntry`
+   and a `FundingLedgerEntry`. `recordBookingUtilization()` writes a
+   `BookingUtilization` + `UsageLedgerEntry`. The invoice issuance
+   path writes a `SettlementLedgerEntry(kind=INVOICE_ISSUED)`.
+3. **Ledger rows carry `balanceAfter` where applicable** (Funding) so
    point-in-time reconciliation doesn't require a running sum.
+4. **Reversals are new rows, not updates.** A refund writes an
+   opposing `UsageLedgerEntry` with negative `sessionsConsumed` and a
+   `SettlementLedgerEntry(kind=REFUND_ISSUED)`. The original rows
+   are untouched — `BookingUtilization.reversedAt` is the marker.
 
-## Reconciliation identities (enforced in follow-up cron)
+## Reconciliation identities
 
-- **Wallet identity:** Sum of `FundingLedgerEntry.deltaPaise` for a
-  BillingAccount should equal `BillingAccount.walletBalance`.
-- **Usage identity:** For a ProgramAssignment, sum of
-  `UsageLedgerEntry.sessionsConsumed` should equal
+Enforced by a nightly cron stub (see `19-harness-verdict.md`):
+
+- **Wallet identity:** `sum(FundingLedgerEntry.deltaPaise)` for a
+  billing account equals `BillingAccount.walletBalance`.
+- **Usage identity:** For a ProgramAssignment,
+  `sum(UsageLedgerEntry.sessionsConsumed)` equals
   `ProgramAssignment.sessionsUsed`.
 - **Settlement identity:** For an OrganizationInvoice, the
-  `SettlementLedgerEntry(kind=INVOICE_PAID)` amount should match
+  `SettlementLedgerEntry(kind=INVOICE_PAID)` amount matches
   `OrganizationInvoice.totalPaise`.
 
-A `jobs/billing/reconcile-ledgers.ts` cron (not shipped in v1) will assert
-these identities nightly and surface drift to an admin dashboard.
+A `jobs/billing/reconcile-ledgers.ts` cron (not shipped in v1) will
+assert these identities nightly and surface drift to an admin
+dashboard.
+
+## `FundingReason` vs `WalletReason`
+
+| `WalletReason` | `FundingReason` |
+|----------------|------------------|
+| `TOPUP`        | `TOPUP`          |
+| `BOOKING`      | `BOOKING_DEBIT`  |
+| `REFUND`       | `REFUND_CREDIT`  |
+| `ADJUSTMENT`   | `ADJUSTMENT`     |
+| —              | `GRANT`          |
+
+The wallet enum is user-facing (shows up on the wallet history page);
+the funding enum is ledger-facing. Every `WalletEntry` has exactly
+one `FundingLedgerEntry`, joined via
+`FundingLedgerEntry.walletEntryId @unique`.
+
+## `SettlementKind`
+
+```
+INVOICE_ISSUED
+INVOICE_PAID
+PAYMENT_RECEIVED
+REFUND_ISSUED
+PAYOUT_SENT
+CHARGEBACK
+CREDIT_NOTE
+```
+
+Each kind maps to one real-world event that moves money across the
+platform boundary. `PAYMENT_RECEIVED` is written at the gateway-
+webhook level (Razorpay/Stripe succeeded), `PAYOUT_SENT` when the
+payout provider confirms. Both are cron-driven in v1; the rows
+themselves can be inserted by hand via the payout/invoice endpoints.
 
 ## What NOT to write
 
 - Don't write a ledger row for read operations.
-- Don't write a Funding entry for a booking without a Wallet debit (they
-  should be 1:1).
+- Don't write a Funding entry for a booking without a Wallet debit
+  (they should be 1:1).
 - Don't write a Settlement entry for a refund without reversing the
-  corresponding Usage and Funding rows (via `reverseBookingUtilization`
-  + `walletCredit`).
+  corresponding Usage and Funding rows (via
+  `reverseBookingUtilization()` + `walletCredit()`).
+- Don't delete a ledger row. Ever. If a row is wrong, post a counter
+  entry.
+
+## Related docs
+
+- `09-wallet-and-ledger.md` — the Funding ledger in action.
+- `16-programs.md` — the Usage ledger in action.
+- `10-invoicing.md` / `07-payout-pipeline.md` — the Settlement ledger
+  in action.
+- `19-harness-verdict.md` — reconciliation cron status.
