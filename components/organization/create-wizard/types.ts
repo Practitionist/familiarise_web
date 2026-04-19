@@ -50,6 +50,14 @@ export interface StepProps {
   initialData: Partial<OrgWizardData>;
   isSubmitting?: boolean;
   /**
+   * Whether a Back action is meaningful at the current step. True on all
+   * steps beyond the first; true on the first step only when the caller
+   * provided an `onCancel` to exit the wizard. The first-step component
+   * (`OrgInfoStep`) reads this to decide whether to render its own Back
+   * button.
+   */
+  canGoBack?: boolean;
+  /**
    * Optional hook for the Review step: runs after the final PATCH and
    * invitations succeed, before navigation. The onboarding caller uses
    * this to flip `user.onboardingCompleted = true` atomically with the

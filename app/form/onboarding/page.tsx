@@ -430,6 +430,7 @@ const MultiStepForm: React.FC = () => {
     const userId = session?.user?.id;
     return (
       <CreateOrganizationWizard
+        onCancel={() => setStep(0)}
         afterLaunch={async () => {
           if (!userId) return;
           await completeOrgAdminOnboardingAction(userId);

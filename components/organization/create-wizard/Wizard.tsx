@@ -24,6 +24,13 @@ export interface CreateOrganizationWizardProps {
    */
   cancelHref?: string;
   /**
+   * Called when the user hits Back on the first wizard step (Org Info).
+   * The onboarding caller uses this to pop back to the role picker so the
+   * user can change their mind — the dashboard caller leaves it undefined
+   * and relies on `cancelHref` instead.
+   */
+  onCancel?: () => void;
+  /**
    * Called after the wizard's final Review step finishes. The onboarding
    * caller uses this to mark `user.onboardingCompleted = true`.
    */
@@ -34,6 +41,7 @@ export interface CreateOrganizationWizardProps {
 
 export function CreateOrganizationWizard({
   cancelHref,
+  onCancel,
   afterLaunch,
   finalRedirectPath,
 }: CreateOrganizationWizardProps = {}) {
@@ -134,7 +142,16 @@ export function CreateOrganizationWizard({
     setStep((s) => Math.min(s + 1, steps.length - 1));
   };
 
-  const handleBack = () => setStep((s) => Math.max(s - 1, 0));
+  // On step 0, "Back" exits the wizard via `onCancel` (onboarding caller
+  // uses this to return to the role picker). Subsequent steps just
+  // decrement within the wizard.
+  const handleBack = () => {
+    if (step === 0) {
+      onCancel?.();
+      return;
+    }
+    setStep((s) => Math.max(s - 1, 0));
+  };
   const handleGoToStep = (target: number) => setStep(target);
 
   const stepProps = {
@@ -145,6 +162,9 @@ export function CreateOrganizationWizard({
     isSubmitting,
     afterLaunch,
     finalRedirectPath,
+    // Expose whether Back is meaningful on this step. OrgInfoStep reads
+    // this to decide if its Back button should render.
+    canGoBack: step > 0 || !!onCancel,
   };
 
   const currentStep = steps[step];

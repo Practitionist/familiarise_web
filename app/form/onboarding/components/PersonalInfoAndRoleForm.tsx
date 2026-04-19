@@ -338,8 +338,8 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
             )}
             {selectedRole === "ORG_ADMIN" && (
               <>
-                As an <strong>Organization Administrator</strong>, you'll be
-                able to create and manage an organization, invite team members,
+                As an <strong>Organization Owner</strong>, you&apos;ll be able
+                to create and manage an organization, invite team members,
                 sponsor consultations, and access analytics for your school or
                 company.
               </>

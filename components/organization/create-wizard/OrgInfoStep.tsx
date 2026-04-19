@@ -36,7 +36,13 @@ const SIZE_BUCKETS = [
   { value: "ENTERPRISE_1000_PLUS", label: "1000+ employees" },
 ];
 
-export function OrgInfoStep({ onNext, initialData, isSubmitting }: StepProps) {
+export function OrgInfoStep({
+  onNext,
+  onBack,
+  canGoBack,
+  initialData,
+  isSubmitting,
+}: StepProps) {
   const {
     register,
     handleSubmit,
@@ -199,7 +205,19 @@ export function OrgInfoStep({ onNext, initialData, isSubmitting }: StepProps) {
         )}
       </div>
 
-      <div className="flex justify-end pt-4">
+      <div className="flex justify-between pt-4">
+        {canGoBack ? (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onBack}
+            disabled={isSubmitting}
+          >
+            Back
+          </Button>
+        ) : (
+          <span />
+        )}
         <Button type="submit" disabled={isSubmitting}>
           {isSubmitting ? "Creating organization…" : "Next"}
         </Button>
