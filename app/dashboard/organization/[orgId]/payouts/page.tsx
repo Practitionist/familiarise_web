@@ -62,13 +62,17 @@ function defaultPayoutWindow(): { periodStart: Date; periodEnd: Date } {
   return { periodStart, periodEnd };
 }
 
+// Mirrors prisma `enum PayoutStatus`. Keep in sync if new states are
+// added — defaulting an unknown status to PENDING below means a missing
+// entry here would silently mis-label payouts.
 const STATUS_CONFIG: Record<
   string,
   { label: string; variant: "default" | "secondary" | "destructive" | "outline"; icon: typeof Clock }
 > = {
-  INITIATED: { label: "Initiated", variant: "secondary", icon: Clock },
+  PENDING: { label: "Pending approval", variant: "secondary", icon: Clock },
+  APPROVED: { label: "Approved", variant: "secondary", icon: CheckCircle2 },
   PROCESSING: { label: "Processing", variant: "outline", icon: Loader2 },
-  SUCCEEDED: { label: "Completed", variant: "default", icon: CheckCircle2 },
+  COMPLETED: { label: "Completed", variant: "default", icon: CheckCircle2 },
   FAILED: { label: "Failed", variant: "destructive", icon: XCircle },
   CANCELLED: { label: "Cancelled", variant: "outline", icon: AlertCircle },
 };
@@ -121,14 +125,23 @@ export default function OrgPayoutsPage({
 
   const payouts = data?.data ?? [];
 
-  // Statuses reported by the payouts API: INITIATED / PROCESSING /
-  // SUCCEEDED / FAILED. We map SUCCEEDED → "completed" for the user-
-  // facing summary since that's the term admins expect on the dashboard.
-  const totalPaid = payouts
-    .filter((p) => p.status === "SUCCEEDED")
-    .reduce((s, p) => s + p.netPayoutPaise, 0);
+  // Statuses come from prisma `enum PayoutStatus`: PENDING / APPROVED /
+  // PROCESSING / COMPLETED / FAILED / CANCELLED. "Total paid out"
+  // counts only fully-disbursed COMPLETED payouts; "Pending" rolls up
+  // everything in flight (PENDING approval, APPROVED but not sent,
+  // and PROCESSING).
+  const completedPayouts = payouts.filter((p) => p.status === "COMPLETED");
+  const totalPaid = completedPayouts.reduce(
+    (s, p) => s + p.netPayoutPaise,
+    0,
+  );
   const pendingAmount = payouts
-    .filter((p) => p.status === "INITIATED" || p.status === "PROCESSING")
+    .filter(
+      (p) =>
+        p.status === "PENDING" ||
+        p.status === "APPROVED" ||
+        p.status === "PROCESSING",
+    )
     .reduce((s, p) => s + p.netPayoutPaise, 0);
 
   if (!allowed) return null;
@@ -153,7 +166,7 @@ export default function OrgPayoutsPage({
               <StatCard
                 title="Total paid out"
                 value={formatCurrencyAmount(totalPaid, "INR")}
-                subtitle={`${payouts.filter((p) => p.status === "SUCCEEDED").length} payouts`}
+                subtitle={`${completedPayouts.length} payouts`}
                 icon={Wallet}
                 variant="success"
               />
@@ -216,7 +229,7 @@ export default function OrgPayoutsPage({
                         {payouts.map((payout) => {
                           const cfg =
                             STATUS_CONFIG[payout.status] ??
-                            STATUS_CONFIG.INITIATED;
+                            STATUS_CONFIG.PENDING;
                           return (
                             <tr key={payout.id} className="border-b last:border-0">
                               <td className="py-3 text-zinc-700">

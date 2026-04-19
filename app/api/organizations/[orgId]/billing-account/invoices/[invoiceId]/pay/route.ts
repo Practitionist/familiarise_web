@@ -1,22 +1,30 @@
 /**
  * POST /api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pay
  *
- * Initiates an invoice-payment Razorpay order. The order carries
- * `notes.type = "invoice_payment"` so the webhook handler at
- * /api/webhooks/razorpay routes it to the invoice-settle path (see
- * app/api/webhooks/utils.ts#handleOrgPaymentSuccess), which transitions
- * the invoice ISSUED → PAID atomically.
+ * Mints a real Razorpay order for an issued invoice and returns the
+ * order id + publishable key + amount so the dashboard can open
+ * Razorpay's hosted checkout. The order's `notes.type =
+ * "invoice_payment"` routes the webhook handler at
+ * /api/webhooks/razorpay (see app/api/webhooks/utils.ts#handleOrgPaymentSuccess)
+ * to transition the invoice ISSUED → PAID atomically.
  *
- * This endpoint does NOT settle the invoice itself — doing so client-
+ * This endpoint never settles the invoice itself — doing so client-
  * side would leave a race where the client thinks it's paid before
  * Razorpay confirms. The webhook is the only path that mutates
  * invoice.status to PAID.
+ *
+ * If RAZORPAY_KEY_ID/SECRET are missing (preview / CI / dev), the
+ * route returns 503 so the client surfaces a "payment gateway not
+ * configured" error instead of opening a popup that can never
+ * resolve.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { createRazorpayOrder } from "@/lib/payments/core/razorpay";
+import { PaymentError } from "@/lib/payments/core/types";
 
 export async function POST(
   _req: NextRequest,
@@ -64,12 +72,50 @@ export async function POST(
     );
   }
 
-  // Razorpay order creation is stubbed — returning an order id shape
-  // that the client can feed into the Razorpay SDK. A production build
-  // would call `razorpay.orders.create` and persist the real ID on
-  // the invoice. The webhook at /api/webhooks/razorpay reads the
-  // `notes.invoiceId` + `notes.organizationId` metadata to settle.
-  const providerOrderId = `order_invpay_${invoiceId.slice(0, 8)}_${Date.now()}`;
+  let razorpayOrderId: string;
+  try {
+    const order = await createRazorpayOrder({
+      amount: invoice.totalPaise,
+      currency: invoice.displayCurrency,
+      paymentGateway: "RAZORPAY",
+      // PaymentIntentParams.metadata insists on appointmentId/Type for
+      // booking flows; invoice payments don't have an appointment so
+      // we pass empty strings. The webhook routes purely off
+      // `notes.type === "invoice_payment"` + `notes.invoiceId`.
+      metadata: {
+        appointmentId: "",
+        appointmentType: "",
+        type: "invoice_payment",
+        invoiceId,
+        organizationId: orgId,
+        invoiceNumber: invoice.invoiceNumber,
+      },
+    });
+    razorpayOrderId = order.id;
+  } catch (err) {
+    if (err instanceof PaymentError && err.code === "RAZORPAY_NOT_INITIALIZED") {
+      return NextResponse.json(
+        {
+          error:
+            "Payment gateway not configured. Set RAZORPAY_KEY_ID and RAZORPAY_SECRET to enable invoice payments.",
+          errorType: err.code,
+        },
+        { status: 503 },
+      );
+    }
+    console.error("[invoice/pay] createRazorpayOrder failed:", err);
+    return NextResponse.json(
+      {
+        error:
+          err instanceof Error
+            ? err.message
+            : "Failed to initiate Razorpay order",
+        errorType:
+          err instanceof PaymentError ? err.code : "RAZORPAY_ORDER_FAILED",
+      },
+      { status: 502 },
+    );
+  }
 
   await prisma.orgAuditLog.create({
     data: {
@@ -80,28 +126,25 @@ export async function POST(
       description: `Payment initiated for invoice ${invoice.invoiceNumber}`,
       details: {
         invoiceId,
-        providerOrderId,
+        razorpayOrderId,
         totalPaise: invoice.totalPaise,
       },
     },
   });
 
   return NextResponse.json({
-    providerOrderId,
+    // `razorpayOrderId` (`order_<…>`) drives Razorpay checkout
+    // (`new Razorpay({ order_id })`); Razorpay echoes the order's
+    // `notes` back on capture so the webhook can route the
+    // confirmation without the client forwarding anything itself.
+    razorpayOrderId,
+    keyId: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
     amountPaise: invoice.totalPaise,
     currency: invoice.displayCurrency,
     invoice: {
       id: invoice.id,
       invoiceNumber: invoice.invoiceNumber,
       status: invoice.status,
-    },
-    // The webhook payload needs these notes to route the confirmation;
-    // included in the response so the client can forward them to
-    // Razorpay's checkout.
-    razorpayNotes: {
-      type: "invoice_payment",
-      invoiceId,
-      organizationId: orgId,
     },
   });
 }

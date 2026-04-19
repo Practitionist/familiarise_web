@@ -3,8 +3,11 @@
 import { use, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Coins, Plus } from "lucide-react";
+import { z } from "zod";
 
 import { useRequireOrgAccess } from "../useOrgRole";
+import { useToast } from "@/hooks/use-toast";
+import { loadScript } from "@/app/checkout/plans/utils";
 import {
   DashboardHeader,
   DashboardContent,
@@ -39,58 +42,77 @@ import {
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 // ---------------------------------------------------------------------------
-// Types — match GET /api/organizations/[orgId]/billing-account/wallet
+// Zod schemas — narrow API responses at the network boundary so the rest
+// of the component can rely on inferred types instead of `as`/`unknown`
+// casts. Mirrors the pattern in `app/checkout/plans/utils.ts`
+// (`checkoutResponseSchema`).
 // ---------------------------------------------------------------------------
 
-interface WalletResponse {
-  billingAccount: {
-    id: string;
-    currency: string;
-    walletBalance: number;
-  };
-  ledger: Array<{
-    id: string;
-    deltaPaise: number;
-    reason: string;
-    balanceAfter: number;
-    notes: string | null;
-    createdAt: string;
-  }>;
-  meta: { total: number; page: number; perPage: number };
-}
+const walletResponseSchema = z.object({
+  billingAccount: z.object({
+    id: z.string(),
+    currency: z.string(),
+    walletBalance: z.number(),
+  }),
+  ledger: z.array(
+    z.object({
+      id: z.string(),
+      deltaPaise: z.number(),
+      reason: z.string(),
+      balanceAfter: z.number(),
+      notes: z.string().nullable(),
+      createdAt: z.string(),
+    }),
+  ),
+  meta: z.object({
+    total: z.number(),
+    page: z.number(),
+    perPage: z.number(),
+  }),
+});
+type WalletResponse = z.infer<typeof walletResponseSchema>;
 
-interface WalletErrorResponse {
-  error: string;
-  currentFundingSource?: string;
-}
+const walletErrorResponseSchema = z.object({
+  error: z.string(),
+  currentFundingSource: z.string().optional(),
+});
 
-interface InitiateTopUpResponse {
-  providerOrderId: string;
-  amountPaise: number;
-  status: string;
-  reused: boolean;
-}
+const walletFetchResultSchema = z.union([
+  walletResponseSchema,
+  walletErrorResponseSchema,
+]);
+type WalletFetchResult = z.infer<typeof walletFetchResultSchema>;
 
-async function fetchWallet(
-  orgId: string,
-): Promise<WalletResponse | WalletErrorResponse> {
+const topUpInitiateResponseSchema = z.object({
+  topUpId: z.string().min(1),
+  razorpayOrderId: z.string().startsWith("order_"),
+  keyId: z.string().min(1),
+  amountPaise: z.number().int().positive(),
+  currency: z.string().length(3),
+  status: z.literal("pending"),
+  reused: z.boolean(),
+});
+type TopUpInitiateResponse = z.infer<typeof topUpInitiateResponseSchema>;
+
+const apiErrorSchema = z.object({
+  error: z.string().optional(),
+  errorType: z.string().optional(),
+});
+
+async function fetchWallet(orgId: string): Promise<WalletFetchResult> {
   const res = await fetch(
     `/api/organizations/${orgId}/billing-account/wallet`,
   );
-  const body = (await res.json()) as WalletResponse | WalletErrorResponse;
-  if (!res.ok) {
-    // 404 + 409 carry an `error` + optional `currentFundingSource` — hand
-    // them back to the component so it can render a "not on WALLET" card
-    // instead of throwing.
-    return body;
-  }
-  return body;
+  // 404 + 409 carry an `error` + optional `currentFundingSource` — hand
+  // them back to the component so it can render a "not on WALLET" card
+  // instead of throwing.
+  return walletFetchResultSchema.parse(await res.json());
 }
 
 async function initiateTopUp(
   orgId: string,
   amountPaise: number,
-): Promise<InitiateTopUpResponse> {
+): Promise<TopUpInitiateResponse> {
   const res = await fetch(
     `/api/organizations/${orgId}/billing-account/wallet/top-ups`,
     {
@@ -99,16 +121,19 @@ async function initiateTopUp(
       body: JSON.stringify({ amountPaise }),
     },
   );
-  const body = await res.json();
+  const raw = await res.json();
   if (!res.ok) {
-    throw new Error((body as { error?: string }).error ?? "Failed to start top-up");
+    const parsedError = apiErrorSchema.safeParse(raw);
+    throw new Error(
+      parsedError.success
+        ? (parsedError.data.error ?? "Failed to start top-up")
+        : "Failed to start top-up",
+    );
   }
-  return body as InitiateTopUpResponse;
+  return topUpInitiateResponseSchema.parse(raw);
 }
 
-function isWalletResponse(
-  r: WalletResponse | WalletErrorResponse,
-): r is WalletResponse {
+function isWalletResponse(r: WalletFetchResult): r is WalletResponse {
   return "billingAccount" in r;
 }
 
@@ -132,24 +157,58 @@ export default function OrgCreditsPage({
 
   const [showBuy, setShowBuy] = useState(false);
   const [amountMajor, setAmountMajor] = useState("1000");
+  const { toast } = useToast();
 
   const topUpMutation = useMutation({
-    mutationFn: () =>
-      initiateTopUp(
-        orgId,
-        Math.round(parseFloat(amountMajor || "0") * 100),
-      ),
-    onSuccess: (result) => {
-      // The API stubs Razorpay order creation (returns a providerOrderId
-      // without a live Razorpay `key` yet). When the real gateway step
-      // lands the client will open Razorpay checkout here; for now we
-      // just close the dialog + refresh so the pending WalletEntry shows
-      // up in the ledger.
+    mutationFn: async () => {
+      const amountPaise = Math.round(parseFloat(amountMajor || "0") * 100);
+      const result = await initiateTopUp(orgId, amountPaise);
+
+      const loaded = await loadScript(
+        "https://checkout.razorpay.com/v1/checkout.js",
+      ).catch(() => false);
+      if (!loaded || !window.Razorpay) {
+        throw new Error(
+          "Razorpay checkout failed to load. Please disable ad-blockers and retry.",
+        );
+      }
+      await new Promise<void>((resolve) => {
+        const rzp = new window.Razorpay({
+          key: result.keyId,
+          amount: result.amountPaise,
+          currency: result.currency,
+          name: "Familiarise",
+          description: "Wallet top-up",
+          order_id: result.razorpayOrderId,
+          handler: () => {
+            // Webhook is the source of truth for crediting the wallet
+            // (idempotent on `WalletEntry.providerOrderId`). The popup
+            // handler just signals "checkout finished" so we can
+            // refresh the ledger; the actual balance update arrives
+            // when Razorpay POSTs to /api/webhooks/razorpay.
+            resolve();
+          },
+          theme: { color: "#2563EB" },
+        });
+        rzp.on("payment.failed", () => {
+          // Surface the error and resolve so React Query records
+          // the success of the *order* call but the user sees the
+          // payment failure via toast.
+          toast({
+            title: "Payment failed",
+            description:
+              "Your card was declined or the payment timed out. Please try again.",
+            variant: "destructive",
+          });
+          resolve();
+        });
+        rzp.open();
+      });
+      return result;
+    },
+    onSuccess: () => {
       setShowBuy(false);
       queryClient.invalidateQueries({ queryKey: ["org-wallet", orgId] });
-      console.log(
-        `[wallet] top-up initiated: ${result.providerOrderId} (${result.amountPaise} paise)`,
-      );
     },
   });
 
@@ -293,13 +352,15 @@ export default function OrgCreditsPage({
                 onChange={(e) => setAmountMajor(e.target.value)}
               />
               <p className="text-xs text-zinc-500">
-                Minimum ₹100. You&apos;ll be redirected to Razorpay to
-                complete the payment when the gateway integration ships.
+                Minimum ₹100. Razorpay checkout will open in a popup;
+                your wallet credit is added once payment is captured.
               </p>
             </div>
             {topUpMutation.isError && (
               <p className="text-sm text-red-600">
-                {(topUpMutation.error as Error).message}
+                {topUpMutation.error instanceof Error
+                  ? topUpMutation.error.message
+                  : "Failed to start top-up"}
               </p>
             )}
           </div>

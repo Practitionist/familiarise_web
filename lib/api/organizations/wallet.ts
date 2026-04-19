@@ -30,6 +30,8 @@
 
 import type { Prisma, PrismaClient, WalletReason } from "@prisma/client";
 
+import prisma from "@/lib/prisma";
+
 export class WalletInsufficientFundsError extends Error {
   constructor(
     public billingAccountId: string,
@@ -184,7 +186,7 @@ export async function walletCredit(
  * idempotency guarantee — a second POST with the same order id fails fast.
  */
 export async function initiateTopUp(
-  prisma: PrismaClient,
+  db: Prisma.TransactionClient | typeof prisma,
   params: {
     billingAccountId: string;
     amountPaise: number;
@@ -192,7 +194,7 @@ export async function initiateTopUp(
     notes?: string;
   },
 ): Promise<void> {
-  await prisma.walletEntry.create({
+  await db.walletEntry.create({
     data: {
       billingAccountId: params.billingAccountId,
       deltaPaise: 0, // placeholder until webhook confirms

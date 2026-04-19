@@ -11,6 +11,8 @@ import {
 } from "@/lib/novu";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { getAppUrl } from "@/lib/url";
+import { confirmTopUp } from "@/lib/api/organizations/wallet";
+import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
 // Re-export payment handlers from lib (architectural fix)
 export {
@@ -34,19 +36,70 @@ export async function handleOrgPaymentSuccess(
   razorpayPaymentId?: string,
 ): Promise<void> {
   // credit_purchase routes to WalletEntry via `confirmTopUp` from
-  // lib/api/organizations/wallet.ts. invoice_payment transitions
-  // OrganizationInvoice.status ISSUED → PAID. Delegation to confirmTopUp
-  // happens at the webhook-route layer to keep this helper DB-free for
-  // the credit-purchase branch.
+  // lib/api/organizations/wallet.ts (idempotent on providerOrderId).
+  // invoice_payment transitions OrganizationInvoice.status ISSUED → PAID.
   if (notes.type === "credit_purchase") {
-    const { walletEntryOrderId, organizationId } = notes;
+    const { walletEntryOrderId, organizationId, amountPaise } = notes;
     if (!walletEntryOrderId) {
       console.error("[Webhook] credit_purchase missing walletEntryOrderId");
       return;
     }
-    console.log(
-      `[Webhook][arch4] credit_purchase received for order=${walletEntryOrderId} org=${organizationId ?? "?"} payment=${razorpayPaymentId ?? "?"}`,
-    );
+    if (!razorpayPaymentId) {
+      // order.paid carries the order-level event without a payment id
+      // on this entity; we still need a payment id to record on the
+      // WalletEntry. Skip — payment.captured (which DOES include the
+      // payment id) handles the same logical event idempotently.
+      console.log(
+        `[Webhook] credit_purchase ${walletEntryOrderId} order-level event skipped; awaiting payment.captured`,
+      );
+      return;
+    }
+    const paise = Number(amountPaise);
+    if (!Number.isFinite(paise) || paise <= 0) {
+      console.error(
+        `[Webhook] credit_purchase ${walletEntryOrderId} has invalid amountPaise notes value: ${amountPaise}`,
+      );
+      return;
+    }
+    try {
+      const result = await confirmTopUp(prisma, {
+        providerOrderId: walletEntryOrderId,
+        providerPaymentId: razorpayPaymentId,
+        amountPaise: paise,
+      });
+      console.log(
+        `[Webhook] credit_purchase confirmed=${result.confirmed} order=${walletEntryOrderId} org=${organizationId ?? "?"} balanceAfter=${result.balanceAfter ?? "?"}`,
+      );
+      if (organizationId && result.confirmed) {
+        prisma.orgAuditLog
+          .create({
+            data: {
+              organizationId,
+              actorMembershipId: null,
+              category: "WALLET",
+              action: AUDIT_ACTIONS.WALLET.WALLET_TOPUP_CONFIRMED,
+              description: `Top-up confirmed: ₹${(paise / 100).toLocaleString("en-IN")}`,
+              details: {
+                walletEntryOrderId,
+                providerPaymentId: razorpayPaymentId,
+                amountPaise: paise,
+              },
+            },
+          })
+          .catch((err) =>
+            console.error(
+              "[Webhook] Failed to write WALLET_TOPUP_CONFIRMED audit log:",
+              err,
+            ),
+          );
+      }
+    } catch (err) {
+      console.error(
+        `[Webhook] confirmTopUp failed for ${walletEntryOrderId}:`,
+        err,
+      );
+      throw err; // bubble so the webhook record retains the error for retry
+    }
   } else if (notes.type === "invoice_payment") {
     const { invoiceId, organizationId } = notes;
     if (!invoiceId) {

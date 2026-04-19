@@ -1,9 +1,15 @@
 /**
  * GET /api/organizations/[orgId]/billing-account/wallet/top-ups/[topUpId]
  *
- * Fetch a single top-up WalletEntry by its providerOrderId. Used by the
- * client post-checkout to poll for "did the webhook confirm my top-up
- * yet?" without exposing the whole ledger.
+ * `topUpId` is the wallet-entry idempotency key (`we_<uuid>`) returned
+ * by `POST /top-ups` as `topUpId` and persisted as
+ * `WalletEntry.providerOrderId @unique` — NOT the Razorpay order id
+ * (`order_<…>`). The two ids are minted in the same POST and share
+ * `notes.walletEntryOrderId` on the gateway side, but only the wallet-
+ * entry id is safe to expose in URLs (the Razorpay id is gateway state).
+ *
+ * Used by the client post-checkout to poll for "did the webhook
+ * confirm my top-up yet?" without exposing the whole ledger.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -22,8 +28,9 @@ export async function GET(
   const access = await requireOrgAccess(orgId, { minimumRole: "MANAGER", canSponsor: true });
   if (access.error) return access.error;
 
-  // topUpId is the providerOrderId; scope by billing account ownership
-  // so a stolen order id from another tenant doesn't leak state.
+  // `topUpId` is stored as WalletEntry.providerOrderId (see the file
+  // header). Scope the lookup by billing-account ownership so a stolen
+  // id from another tenant can't leak state.
   const entry = await prisma.walletEntry.findFirst({
     where: {
       providerOrderId: topUpId,
@@ -40,7 +47,7 @@ export async function GET(
   const status = entry.deltaPaise === 0 ? "pending" : "confirmed";
   return NextResponse.json({
     topUp: {
-      providerOrderId: entry.providerOrderId,
+      topUpId: entry.providerOrderId,
       providerPaymentId: entry.providerPaymentId,
       status,
       amountPaise: entry.deltaPaise,

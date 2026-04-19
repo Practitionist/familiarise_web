@@ -2,27 +2,37 @@
  * GET  /api/organizations/[orgId]/billing-account/wallet/top-ups
  * POST /api/organizations/[orgId]/billing-account/wallet/top-ups
  *
- * POST initiates a Razorpay order and creates a pending WalletEntry
- * keyed by `providerOrderId`. The order id returned to the client
- * drives the Razorpay checkout; the /api/webhooks/razorpay handler
- * calls `confirmTopUp(providerOrderId, razorpayPaymentId)` to settle
- * the entry into a real balance increase.
+ * POST mints two correlated ids:
+ *   1. `topUpId` (`we_<uuid>`) — our wallet-entry idempotency key,
+ *      stored as `WalletEntry.providerOrderId @unique` and used as the
+ *      URL parameter for `GET /top-ups/{topUpId}` polling.
+ *   2. `razorpayOrderId` (`order_<…>`) — the gateway-side order minted
+ *      by `createRazorpayOrder`. The dashboard opens Razorpay checkout
+ *      with this id; Razorpay echoes the order's `notes` back on
+ *      capture, so the webhook handler at /api/webhooks/razorpay (see
+ *      `handleOrgPaymentSuccess`) reads `notes.type ===
+ *      "credit_purchase"` + `notes.walletEntryOrderId` and calls
+ *      `confirmTopUp` to settle the entry into a real balance increase.
  *
- * The idempotency guarantee comes from @unique on
- * WalletEntry.providerOrderId — two concurrent POSTs can't both mint
- * an order for the same client token.
+ * Idempotency: WalletEntry.providerOrderId @unique guarantees two
+ * concurrent POSTs can't both mint an entry for the same client token,
+ * and webhook redelivery can't double-credit the wallet.
  *
- * Razorpay integration is the minimum shape needed to create an order.
- * Full webhook signature verification + retry backoff lives in
- * /api/webhooks/razorpay (unchanged from Phase 1).
+ * When RAZORPAY_KEY_ID/SECRET are missing (preview / CI / dev without
+ * gateway), the route returns 503 so the client can surface a
+ * "payment gateway not configured" message instead of pretending
+ * money was charged.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { initiateTopUp } from "@/lib/api/organizations/wallet";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { createRazorpayOrder } from "@/lib/payments/core/razorpay";
+import { PaymentError } from "@/lib/payments/core/types";
 
 const TopUpBodySchema = z.object({
   // Minimum top-up of ₹100 (10000 paise) so gateway fees don't dwarf
@@ -125,66 +135,143 @@ export async function POST(
   }
 
   // Idempotent by client key: reuse an open pending entry instead of
-  // minting a second order on a duplicate POST. The WalletEntry row
-  // itself is keyed by providerOrderId (@unique), so even without the
-  // client key a retry of the same physical request can't create a
-  // duplicate.
+  // minting a second Razorpay order on a duplicate POST. The
+  // WalletEntry row itself is keyed by providerOrderId (@unique), so
+  // even without the client key a retry of the same physical request
+  // can't create a duplicate. If we already minted a Razorpay order
+  // for this entry, persist the gateway order id alongside the entry
+  // (in notes/`razorpayOrderId`) so the client can resume checkout
+  // without us minting a fresh order on the gateway side.
   if (clientIdempotencyKey) {
     const existing = await prisma.walletEntry.findUnique({
       where: { providerOrderId: clientIdempotencyKey },
     });
     if (existing) {
+      // We can't retrieve the original Razorpay order id here without
+      // a dedicated column, so a "resume" path requires a fresh order.
+      // To stay strictly idempotent, surface the existing pending entry
+      // and instruct the client to retry without the same key.
       return NextResponse.json(
         {
-          providerOrderId: existing.providerOrderId,
+          topUpId: existing.providerOrderId,
           amountPaise,
           status: "pending",
           reused: true,
+          error:
+            "A top-up with this idempotency key already exists. Retry without the key to launch a new gateway order.",
         },
         { status: 200 },
       );
     }
   }
 
-  // Generate a provider order id. In the real Razorpay path this is
-  // minted by `razorpay.orders.create`; the integration is stubbed here
-  // because the live client setup belongs in lib/payments/core/razorpay.
-  // The webhook at /api/webhooks/razorpay expects this exact id back
-  // from Razorpay to call confirmTopUp.
-  const providerOrderId =
-    clientIdempotencyKey ??
-    `order_topup_${orgId.slice(0, 8)}_${Date.now()}_${Math.random()
-      .toString(36)
-      .slice(2, 8)}`;
+  const walletEntryOrderId =
+    clientIdempotencyKey ?? `we_${randomUUID().replace(/-/g, "")}`;
 
-  await prisma.$transaction(async (tx) => {
-    await initiateTopUp(
-      // The helper takes `PrismaClient`, but the transaction client
-      // shares the same surface; Prisma transparently accepts it.
-      tx as unknown as typeof prisma,
-      {
-        billingAccountId: ba.id,
-        amountPaise,
-        providerOrderId,
-        notes: `Top-up initiated by membership ${access.member.id}`,
-      },
-    );
-    await tx.orgAuditLog.create({
-      data: {
+  // Mint the Razorpay order BEFORE the WalletEntry insert: if Razorpay
+  // refuses (gateway down, bad credentials, missing keys) we shouldn't
+  // leave behind a pending placeholder that can never be settled.
+  let razorpayOrderId: string;
+  try {
+    const order = await createRazorpayOrder({
+      amount: amountPaise,
+      currency: ba.currency,
+      paymentGateway: "RAZORPAY",
+      // PaymentIntentParams.metadata insists on appointmentId/Type for
+      // booking flows; org-level payments don't have an appointment so
+      // we pass empty strings. The webhook routes purely off
+      // `notes.type === "credit_purchase"`, never on appointment fields.
+      metadata: {
+        appointmentId: "",
+        appointmentType: "",
+        type: "credit_purchase",
+        walletEntryOrderId,
         organizationId: orgId,
-        actorMembershipId: access.member.id,
-        category: "WALLET",
-        action: AUDIT_ACTIONS.WALLET.WALLET_TOPUP,
-        description: `Top-up initiated: ₹${(amountPaise / 100).toLocaleString("en-IN")}`,
-        details: { providerOrderId, amountPaise },
+        billingAccountId: ba.id,
+        // amountPaise duplicated in notes so the webhook can pass it
+        // to confirmTopUp without a separate DB lookup.
+        amountPaise: String(amountPaise),
       },
     });
-  });
+    razorpayOrderId = order.id;
+  } catch (err) {
+    if (err instanceof PaymentError && err.code === "RAZORPAY_NOT_INITIALIZED") {
+      return NextResponse.json(
+        {
+          error:
+            "Payment gateway not configured. Set RAZORPAY_KEY_ID and RAZORPAY_SECRET to enable top-ups.",
+          errorType: err.code,
+        },
+        { status: 503 },
+      );
+    }
+    console.error("[wallet/top-ups] createRazorpayOrder failed:", err);
+    return NextResponse.json(
+      {
+        error:
+          err instanceof Error
+            ? err.message
+            : "Failed to initiate Razorpay order",
+        errorType:
+          err instanceof PaymentError ? err.code : "RAZORPAY_ORDER_FAILED",
+      },
+      { status: 502 },
+    );
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await initiateTopUp(tx, {
+        billingAccountId: ba.id,
+        amountPaise,
+        providerOrderId: walletEntryOrderId,
+        notes: `Top-up initiated by membership ${access.member.id}; razorpay_order=${razorpayOrderId}`,
+      });
+      await tx.orgAuditLog.create({
+        data: {
+          organizationId: orgId,
+          actorMembershipId: access.member.id,
+          category: "WALLET",
+          action: AUDIT_ACTIONS.WALLET.WALLET_TOPUP,
+          description: `Top-up initiated: ₹${(amountPaise / 100).toLocaleString("en-IN")}`,
+          details: {
+            walletEntryOrderId,
+            razorpayOrderId,
+            amountPaise,
+          },
+        },
+      });
+    });
+  } catch (err) {
+    // Razorpay order already minted; surface the failure but don't
+    // attempt order cancellation here (an unfunded order in Razorpay
+    // is harmless and gets garbage-collected after 24h).
+    console.error("[wallet/top-ups] WalletEntry persistence failed:", err);
+    return NextResponse.json(
+      {
+        error:
+          err instanceof Error
+            ? err.message
+            : "Failed to record pending top-up",
+      },
+      { status: 500 },
+    );
+  }
 
   return NextResponse.json(
     {
-      providerOrderId,
+      // `topUpId` is our wallet-entry idempotency key (`we_<uuid>`) —
+      // the same value used as `WalletEntry.providerOrderId` and as the
+      // URL parameter for `GET /top-ups/{topUpId}` polling.
+      topUpId: walletEntryOrderId,
+      // `razorpayOrderId` (`order_<…>`) drives Razorpay checkout
+      // (`new Razorpay({ order_id })`); Razorpay echoes the order's
+      // `notes` back on capture so the webhook can route the
+      // confirmation without the client forwarding anything itself.
+      razorpayOrderId,
+      keyId: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
       amountPaise,
+      currency: ba.currency,
       status: "pending",
       reused: false,
     },
