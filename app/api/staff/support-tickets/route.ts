@@ -10,7 +10,6 @@ import {
   SupportTicketStatus,
   SupportPriority,
   SupportIssueType,
-  UserRole,
   Prisma,
 } from "@prisma/client";
 
@@ -22,7 +21,6 @@ export async function GET(req: NextRequest) {
   try {
     const auth = await requirePrivilegedAuth();
     if (auth.error) return auth.error;
-    const session = auth.session;
 
     // Parse query parameters
     const { searchParams } = new URL(req.url);

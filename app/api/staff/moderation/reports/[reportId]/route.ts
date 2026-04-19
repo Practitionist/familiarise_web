@@ -19,7 +19,6 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
     const auth = await requirePrivilegedAuth();
     if (auth.error) return auth.error;
-    const session = auth.session;
 
     const { reportId } = await params;
 
