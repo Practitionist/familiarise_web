@@ -42,7 +42,11 @@ import {
   createEarningsFromPayment,
   type AppointmentType,
 } from "@/lib/payments/payouts";
-import { deductCredits } from "@/lib/payments/operations/org-credits";
+import { walletDebit } from "@/lib/api/organizations/wallet";
+import {
+  recordBookingUtilization,
+  ProgramAssignmentLimitError,
+} from "@/lib/api/organizations/program-helpers";
 import {
   determineTax,
   appointmentTypeToServiceType,
@@ -1642,21 +1646,35 @@ export async function handleCheckout(
   let paymentResponse: { id: string; client_secret: string | null } | null =
     null;
 
-  // Enterprise (Arch 4-Modified): resolve org context early.
+  // Enterprise (Arch 4-Modified): resolve org + Program context up-front.
   //
-  // Billing-mode mapping used here:
-  //   fundingSource=PERSONAL → no-op (TAG_ONLY equivalent)
-  //   fundingSource=WALLET   → deduct from WalletEntry ledger
-  //   fundingSource=INVOICE  → billed on the next invoice cycle
-  //   fundingSource=LICENSE  → enterprise flat-fee; no per-session billing
+  //   fundingSource=PERSONAL → org is tagged for reporting only; learner pays.
+  //   fundingSource=WALLET   → debit BillingAccount.walletBalance atomically.
+  //   fundingSource=INVOICE  → accrue to the org's monthly invoice.
+  //   fundingSource=LICENSE  → absorbed by a LICENSED_SEAT program, amount=0.
   //
-  // NOTE: The Phase-2 rewrite is partial. The branches below read the new
-  // shape (BillingAccount.fundingSource) but still flow through the same
-  // downstream checkout code — any deeper integration lands in Phase 2b.
-  let organizationProfileId: string | null = null;
-  let orgBillingMode: string | null = null;
-  let orgContractEndDate: Date | null = null;
+  // Every non-PERSONAL path also requires an ACTIVE `ProgramAssignment`
+  // whose Program covers the current `appointmentType` — that's the source
+  // of truth for "is this booking sponsored?". A missing assignment on a
+  // WALLET/INVOICE/LICENSE org fails closed: we refuse rather than
+  // silently bill the learner's card.
+  const appointmentType = validatedData.appointmentType as
+    | "CONSULTATION"
+    | "SUBSCRIPTION"
+    | "WEBINAR"
+    | "CLASS";
+
+  let organizationId: string | null = null;
   let billingAccountId: string | null = null;
+  let fundingSource:
+    | "PERSONAL"
+    | "WALLET"
+    | "INVOICE"
+    | "LICENSE"
+    | null = null;
+  let programAssignmentId: string | null = null;
+  let callerMembershipId: string | null = null;
+
   if (validatedData.organizationId) {
     const org = await prisma.organization.findUnique({
       where: { id: validatedData.organizationId },
@@ -1683,6 +1701,14 @@ export async function handleCheckout(
       );
     }
 
+    // PROJECT is a schema-reserved v2 value — fail fast before anything
+    // else so ops can spot the misconfiguration.
+    if (org.billingAccount?.fundingSource === "PROJECT") {
+      throw new Error(
+        "PROJECT funding source is not yet supported — reserved for the v2 project-billing workflow.",
+      );
+    }
+
     // SECURITY: Verify the caller is an active Membership of this org.
     const callerMembership = await prisma.membership.findUnique({
       where: { userId_organizationId: { userId, organizationId: org.id } },
@@ -1692,26 +1718,34 @@ export async function handleCheckout(
       throw new Error("You are not an active member of this organization.");
     }
 
-    // INVOICE fundingSource: enforce creditLimit if configured.
+    organizationId = org.id;
+    callerMembershipId = callerMembership.id;
+    billingAccountId = org.billingAccount?.id ?? null;
+    fundingSource = org.billingAccount?.fundingSource ?? "PERSONAL";
+
+    // Block personal referral credits on org-funded bookings.
+    if (validatedData.useReferralCredits && fundingSource !== "PERSONAL") {
+      validatedData = { ...validatedData, useReferralCredits: false };
+    }
+
+    // INVOICE fundingSource: enforce creditLimit if configured. Look at
+    // outstanding PaymentLeg(source=INVOICE_ACCRUAL) + open invoices.
     if (
-      org.billingAccount?.fundingSource === "INVOICE" &&
-      org.billingAccount.creditLimit !== null
+      fundingSource === "INVOICE" &&
+      org.billingAccount?.creditLimit !== null &&
+      org.billingAccount?.creditLimit !== undefined
     ) {
-      const [unbilledPayments, outstandingAgg] = await Promise.all([
-        prisma.payment.findMany({
+      const [accrualAgg, outstandingAgg] = await Promise.all([
+        prisma.paymentLeg.aggregate({
           where: {
-            organizationId: org.id,
-            paymentStatus: "SUCCEEDED",
-            paymentMethod: "ORG_INVOICED",
-            billableToOrgInvoiceId: null,
-          },
-          select: {
-            amount: true,
-            refunds: {
-              where: { status: "SUCCEEDED" },
-              select: { amount: true },
+            source: "INVOICE_ACCRUAL",
+            payment: {
+              organizationId: org.id,
+              paymentStatus: "SUCCEEDED",
+              billableToOrgInvoiceId: null,
             },
           },
+          _sum: { amountPaise: true },
         }),
         prisma.organizationInvoice.aggregate({
           where: {
@@ -1721,11 +1755,9 @@ export async function handleCheckout(
           _sum: { totalPaise: true },
         }),
       ]);
-      const netUnbilled = unbilledPayments.reduce((sum, p) => {
-        const refunded = p.refunds.reduce((s, r) => s + r.amount, 0);
-        return sum + Math.max(0, (p.amount ?? 0) - refunded);
-      }, 0);
-      const exposure = netUnbilled + (outstandingAgg._sum.totalPaise ?? 0);
+      const exposure =
+        (accrualAgg._sum.amountPaise ?? 0) +
+        (outstandingAgg._sum.totalPaise ?? 0);
       if (exposure >= org.billingAccount.creditLimit) {
         throw new Error(
           "Organization has reached its invoice credit limit. Outstanding invoices must be paid before new bookings.",
@@ -1733,36 +1765,47 @@ export async function handleCheckout(
       }
     }
 
-    // PROJECT is a schema-reserved v2 value. Accepting it at checkout
-    // would fall through to the TAG_ONLY branch and silently let the
-    // learner pay their own card — effectively a config downgrade. Fail
-    // fast so operations can spot the misconfiguration.
-    if (org.billingAccount?.fundingSource === "PROJECT") {
-      throw new Error(
-        "PROJECT funding source is not yet supported — reserved for the v2 project-billing workflow.",
-      );
-    }
+    // Resolve a currently-active ProgramAssignment for this member that
+    // covers the appointment type. The assignment's Program must be
+    // ACTIVE and attached to an ACTIVE contract still within its
+    // effectiveFrom..effectiveTo window. The Program's
+    // `coveredPlanTypes` array filters which appointment types it
+    // sponsors (empty array = covers everything).
+    if (fundingSource !== "PERSONAL") {
+      const now = new Date();
+      const assignment = await prisma.programAssignment.findFirst({
+        where: {
+          membershipId: callerMembership.id,
+          periodStart: { lte: now },
+          periodEnd: { gte: now },
+          program: {
+            status: "ACTIVE",
+            OR: [
+              { coveredPlanTypes: { isEmpty: true } },
+              { coveredPlanTypes: { has: appointmentType } },
+            ],
+            contract: {
+              organizationId: org.id,
+              status: "ACTIVE",
+              effectiveFrom: { lte: now },
+              OR: [{ effectiveTo: null }, { effectiveTo: { gte: now } }],
+            },
+          },
+        },
+        orderBy: { periodEnd: "desc" },
+        select: { id: true },
+      });
 
-    organizationProfileId = org.id; // legacy variable name preserved for compat
-    billingAccountId = org.billingAccount?.id ?? null;
-    // Map fundingSource → legacy billingMode label for downstream switch blocks.
-    orgBillingMode =
-      org.billingAccount?.fundingSource === "WALLET"
-        ? "SEAT_PACK"
-        : org.billingAccount?.fundingSource === "INVOICE"
-          ? "INVOICED_MONTHLY"
-          : org.billingAccount?.fundingSource === "LICENSE"
-            ? "PREPAID_UNLIMITED"
-            : "TAG_ONLY";
-    orgContractEndDate = null; // Contract-level end date read with the checkout/program wiring rewrite.
-
-    // Block personal referral credits on org-funded bookings.
-    if (validatedData.useReferralCredits) {
-      validatedData = { ...validatedData, useReferralCredits: false };
+      if (!assignment) {
+        throw new Error(
+          "No active program assignment covers this booking. Ask your organization admin to assign you to a Program that covers " +
+            appointmentType +
+            ".",
+        );
+      }
+      programAssignmentId = assignment.id;
     }
   }
-  // Suppress unused-warning for billingAccountId until Phase 2b consumes it.
-  void billingAccountId;
 
   try {
     // STEP 1: Calculate amount and fetch plan data (OUTSIDE LOCK - just pricing)
@@ -1819,18 +1862,15 @@ export async function handleCheckout(
       }),
     );
 
-    // Enterprise: SEAT_PACK orgs pay via the credit pool, not the gateway.
-    // Treat like a zero-amount flow — skip PaymentIntent, succeed immediately,
-    // and deduct from the pool inside the Serializable transaction below.
-    const isOrgCreditPayment = orgBillingMode === "SEAT_PACK" && !!organizationProfileId;
-
-    // Enterprise: INVOICED_MONTHLY orgs also skip the gateway — bookings are
-    // accumulated and invoiced at month-end. Marked as succeeded immediately.
-    const isOrgInvoicedPayment = orgBillingMode === "INVOICED_MONTHLY" && !!organizationProfileId;
-
-    // Enterprise: PREPAID_UNLIMITED orgs have a flat-fee license — no per-session billing.
-    // Sessions are free for learners. Payment is synthetic with amount 0.
-    const isOrgPrepaidUnlimited = orgBillingMode === "PREPAID_UNLIMITED" && !!organizationProfileId;
+    // Enterprise funding derived from BillingAccount.fundingSource +
+    // ProgramAssignment (both resolved above). These booleans gate the
+    // "skip the gateway entirely" path — org-funded bookings never go
+    // through Stripe/Razorpay at checkout time.
+    const isOrgWalletPayment = fundingSource === "WALLET" && !!programAssignmentId;
+    const isOrgInvoicedPayment = fundingSource === "INVOICE" && !!programAssignmentId;
+    const isOrgLicensedPayment = fundingSource === "LICENSE" && !!programAssignmentId;
+    const isOrgSponsoredPayment =
+      isOrgWalletPayment || isOrgInvoicedPayment || isOrgLicensedPayment;
 
     // FIX #520: Detect zero-amount payments (credits fully cover cost)
     // Both Stripe and Razorpay reject amount <= 0, so we skip the gateway
@@ -1838,27 +1878,14 @@ export async function handleCheckout(
     const isZeroAmountPayment = amount === 0 && creditsApplied > 0;
 
     // STEP 4: Create payment intent (INSIDE LOCK)
-    // LICENSE fundingSource: contract-end-date enforcement moves to Phase 2b.
-    // orgContractEndDate is set to `null` today (Arch 4-Modified) — once
-    // Contract.effectiveTo is read at checkout we can re-enable the expiry
-    // check here.
-    if (isOrgPrepaidUnlimited) {
-      const contractEnd = orgContractEndDate as Date | null;
-      if (contractEnd && new Date() > contractEnd) {
-        return {
-          success: false,
-          error: "Your organization's prepaid license has expired. Please contact your admin to renew.",
-        };
-      }
-    }
 
-    // Enterprise org billing modes skip the gateway entirely.
-    if (isOrgCreditPayment || isOrgInvoicedPayment || isOrgPrepaidUnlimited) {
-      const prefix = isOrgCreditPayment
-        ? "org_credit"
-        : isOrgPrepaidUnlimited
-          ? "org_prepaid"
-          : "org_invoiced";
+    // Enterprise org funding skips the gateway entirely.
+    if (isOrgSponsoredPayment) {
+      const prefix = isOrgWalletPayment
+        ? "org_wallet"
+        : isOrgLicensedPayment
+          ? "org_license"
+          : "org_invoice";
       const syntheticId = `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
       paymentResponse = { id: syntheticId, client_secret: null };
     } else if (isZeroAmountPayment) {
@@ -1899,8 +1926,9 @@ export async function handleCheckout(
 
           // FIX #520: Zero-amount payments (credits cover full cost) skip the
           // gateway, so slots should be confirmed immediately just like mock payments.
-          // Enterprise: org credit and invoiced payments also skip the gateway.
-          const skipPayment = isMockPayment || isZeroAmountPayment || isOrgCreditPayment || isOrgInvoicedPayment || isOrgPrepaidUnlimited;
+          // Enterprise: org-sponsored payments also skip the gateway.
+          const skipPayment =
+            isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment;
 
           // Create appointment based on type (with isTentative flag)
           switch (validatedData.appointmentType) {
@@ -1967,12 +1995,12 @@ export async function handleCheckout(
               originalAmount,
               taxAmount,
               currency,
-              paymentMethod: isOrgCreditPayment
-                ? "ORG_CREDIT"
+              paymentMethod: isOrgWalletPayment
+                ? "WALLET"
                 : isOrgInvoicedPayment
-                  ? "ORG_INVOICED"
-                  : isOrgPrepaidUnlimited
-                    ? "ORG_PREPAID"
+                  ? "INVOICE"
+                  : isOrgLicensedPayment
+                    ? "LICENSE"
                     : isZeroAmountPayment
                       ? "CREDITS"
                       : "CARD",
@@ -1982,7 +2010,8 @@ export async function handleCheckout(
               paymentStatus: skipPayment
                 ? PaymentStatus.SUCCEEDED
                 : PaymentStatus.PENDING,
-              isMockPayment: isMockPayment || isZeroAmountPayment || isOrgCreditPayment || isOrgInvoicedPayment || isOrgPrepaidUnlimited,
+              isMockPayment:
+                isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment,
               userId: userId,
               appointmentId: createdAppointment?.id || null,
               discountCodeId,
@@ -1994,15 +2023,62 @@ export async function handleCheckout(
               displayCurrencyAtCheckout,
               exchangeRateAtCheckout,
               // Enterprise (Arch 4): org tag for reporting / billing.
-              organizationId: organizationProfileId, // renamed FK on Payment
+              organizationId,
               billingAccountId,
             },
           });
 
-          // Enterprise: WALLET fundingSource — debit from BillingAccount.walletBalance
+          // Enterprise: WALLET fundingSource — debit from BillingAccount
           // atomically via the wallet helper (raw-SQL conditional UPDATE).
-          if (isOrgCreditPayment && billingAccountId) {
-            await deductCredits(tx, billingAccountId, amount, payment.id);
+          // Triggered only when we also have a resolved program assignment,
+          // which guarantees the booking is actually sponsored.
+          if (isOrgWalletPayment && billingAccountId) {
+            await walletDebit(tx, {
+              billingAccountId,
+              amountPaise: amount,
+              reason: "BOOKING",
+              paymentId: payment.id,
+              membershipId: callerMembershipId ?? undefined,
+            });
+          }
+
+          // Enterprise: write the Program utilization row + a PaymentLeg
+          // that describes where the money (or commitment) actually came
+          // from. This is the runtime source of truth for sponsorship
+          // attribution — analytics / invoicing / cap enforcement all read
+          // these rows rather than back-deriving from `paymentMethod`.
+          if (programAssignmentId && isOrgSponsoredPayment) {
+            try {
+              await recordBookingUtilization(tx, {
+                programAssignmentId,
+                paymentId: payment.id,
+                sessionsConsumed: 1,
+                priceAtBookingPaise: amount,
+              });
+            } catch (err) {
+              if (err instanceof ProgramAssignmentLimitError) {
+                throw new Error(
+                  "Your program has hit its session cap for this cycle. Ask your organization admin to upgrade the program or wait for the next cycle.",
+                );
+              }
+              throw err;
+            }
+
+            await tx.paymentLeg.create({
+              data: {
+                paymentId: payment.id,
+                source: isOrgWalletPayment
+                  ? "WALLET"
+                  : isOrgLicensedPayment
+                    ? "LICENSE"
+                    : "INVOICE_ACCRUAL",
+                // LICENSE absorbs the cost entirely at the contract level
+                // — the per-booking leg is zero so totals across all legs
+                // still reconcile to the Payment amount.
+                amountPaise: isOrgLicensedPayment ? 0 : amount,
+                sourceRef: programAssignmentId,
+              },
+            });
           }
 
           // Increment discount code usage count atomically (only after payment is created)
@@ -2105,10 +2181,11 @@ export async function handleCheckout(
         }),
       );
 
-      // Mock/zero-amount/org-billing payment post-processing: referral qualifying
-      // action + waitlist. Real payments handle this via handlePaymentSuccess()
-      // in the webhook, but these flows bypass webhooks entirely.
-      if (isMockPayment || isZeroAmountPayment || isOrgCreditPayment || isOrgInvoicedPayment || isOrgPrepaidUnlimited) {
+      // Mock/zero-amount/org-sponsored payment post-processing: referral
+      // qualifying action + waitlist. Real payments handle this via
+      // handlePaymentSuccess() in the webhook, but these flows bypass
+      // webhooks entirely.
+      if (isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment) {
         // Trigger referral reward if this is the user's first paid booking
         try {
           await processQualifyingAction(userId, "first_paid_booking");

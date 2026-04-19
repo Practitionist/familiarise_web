@@ -37,37 +37,78 @@ import {
 } from "@/components/ui/dialog";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
-interface CreditsResponse {
-  billingMode: string;
-  pool: {
-    balance: number;
-    totalPurchased: number;
+// ---------------------------------------------------------------------------
+// Types — match GET /api/organizations/[orgId]/billing-account/wallet
+// ---------------------------------------------------------------------------
+
+interface WalletResponse {
+  billingAccount: {
+    id: string;
     currency: string;
-  } | null;
+    walletBalance: number;
+  };
   ledger: Array<{
     id: string;
-    delta: number;
+    deltaPaise: number;
     reason: string;
     balanceAfter: number;
+    notes: string | null;
     createdAt: string;
   }>;
+  meta: { total: number; page: number; perPage: number };
 }
 
-async function fetchCredits(orgId: string): Promise<CreditsResponse> {
-  const res = await fetch(`/api/organizations/${orgId}/credits`);
-  if (!res.ok) throw new Error("Failed to load credits");
-  return res.json();
+interface WalletErrorResponse {
+  error: string;
+  currentFundingSource?: string;
 }
 
-async function purchaseCredits(orgId: string, amountPaise: number) {
-  const res = await fetch(`/api/organizations/${orgId}/credits/purchase`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ amountPaise }),
-  });
-  const body = await res.json();
-  if (!res.ok) throw new Error(body.error || "Failed to purchase credits");
+interface InitiateTopUpResponse {
+  providerOrderId: string;
+  amountPaise: number;
+  status: string;
+  reused: boolean;
+}
+
+async function fetchWallet(
+  orgId: string,
+): Promise<WalletResponse | WalletErrorResponse> {
+  const res = await fetch(
+    `/api/organizations/${orgId}/billing-account/wallet`,
+  );
+  const body = (await res.json()) as WalletResponse | WalletErrorResponse;
+  if (!res.ok) {
+    // 404 + 409 carry an `error` + optional `currentFundingSource` — hand
+    // them back to the component so it can render a "not on WALLET" card
+    // instead of throwing.
+    return body;
+  }
   return body;
+}
+
+async function initiateTopUp(
+  orgId: string,
+  amountPaise: number,
+): Promise<InitiateTopUpResponse> {
+  const res = await fetch(
+    `/api/organizations/${orgId}/billing-account/wallet/top-ups`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ amountPaise }),
+    },
+  );
+  const body = await res.json();
+  if (!res.ok) {
+    throw new Error((body as { error?: string }).error ?? "Failed to start top-up");
+  }
+  return body as InitiateTopUpResponse;
+}
+
+function isWalletResponse(
+  r: WalletResponse | WalletErrorResponse,
+): r is WalletResponse {
+  return "billingAccount" in r;
 }
 
 export default function OrgCreditsPage({
@@ -78,72 +119,67 @@ export default function OrgCreditsPage({
   const { orgId } = use(params);
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
-    queryKey: ["org-credits", orgId],
-    queryFn: () => fetchCredits(orgId),
+    queryKey: ["org-wallet", orgId],
+    queryFn: () => fetchWallet(orgId),
   });
 
   const [showBuy, setShowBuy] = useState(false);
   const [amountMajor, setAmountMajor] = useState("1000");
 
-  const purchaseMutation = useMutation({
+  const topUpMutation = useMutation({
     mutationFn: () =>
-      purchaseCredits(orgId, Math.round(parseFloat(amountMajor || "0") * 100)),
-    onSuccess: (result: {
-      orderId?: string;
-      key?: string;
-      amount?: number;
-    }) => {
-      if (result.orderId && result.key && result.amount && typeof window !== "undefined") {
-        // Open Razorpay checkout popup
-        const options: RazorpayOptions = {
-          key: result.key,
-          amount: result.amount,
-          currency: "INR",
-          name: "Familiarise",
-          description: "Credit Pack Purchase",
-          order_id: result.orderId,
-          handler: () => {
-            setShowBuy(false);
-            queryClient.invalidateQueries({ queryKey: ["org-credits", orgId] });
-          },
-        };
-        const rzp = new window.Razorpay(options);
-        rzp.open();
-      } else {
-        setShowBuy(false);
-        queryClient.invalidateQueries({ queryKey: ["org-credits", orgId] });
-      }
+      initiateTopUp(
+        orgId,
+        Math.round(parseFloat(amountMajor || "0") * 100),
+      ),
+    onSuccess: (result) => {
+      // The API stubs Razorpay order creation (returns a providerOrderId
+      // without a live Razorpay `key` yet). When the real gateway step
+      // lands the client will open Razorpay checkout here; for now we
+      // just close the dialog + refresh so the pending WalletEntry shows
+      // up in the ledger.
+      setShowBuy(false);
+      queryClient.invalidateQueries({ queryKey: ["org-wallet", orgId] });
+      console.log(
+        `[wallet] top-up initiated: ${result.providerOrderId} (${result.amountPaise} paise)`,
+      );
     },
   });
 
-  const wrongMode = data && data.billingMode !== "SEAT_PACK";
+  const walletResponse = data && isWalletResponse(data) ? data : null;
+  const walletError = data && !isWalletResponse(data) ? data : null;
 
   return (
     <>
       <DashboardHeader
-        title="Credits"
-        subtitle="Pre-purchased credit pool used by SEAT_PACK billing"
+        title="Wallet"
+        subtitle="Pre-funded credit pool used by WALLET-funded organizations."
         actions={
-          !wrongMode && (
+          walletResponse && (
             <Button size="sm" onClick={() => setShowBuy(true)}>
-              <Plus className="h-4 w-4 mr-1" /> Buy credits
+              <Plus className="h-4 w-4 mr-1" /> Top up
             </Button>
           )
         }
       />
       <DashboardContent>
-        {wrongMode ? (
+        {walletError ? (
           <Card>
             <CardHeader>
-              <CardTitle>Not on Seat Pack billing</CardTitle>
+              <CardTitle>Wallet unavailable</CardTitle>
               <CardDescription>
-                This page is only relevant for organizations using SEAT_PACK
-                billing mode. Billing mode is set during organization
-                creation and cannot be changed after the first payment.
+                {walletError.error}
+                {walletError.currentFundingSource && (
+                  <>
+                    {" "}Current funding source:{" "}
+                    <code>{walletError.currentFundingSource}</code>. Wallets
+                    only apply to <code>WALLET</code>-funded organizations.
+                  </>
+                )}
               </CardDescription>
             </CardHeader>
           </Card>
-        ) : isLoading ? (
+        ) : isLoading || !walletResponse ? (
           <p className="text-sm text-zinc-500">Loading…</p>
         ) : (
           <>
@@ -151,18 +187,15 @@ export default function OrgCreditsPage({
               <StatCard
                 title="Current balance"
                 value={formatCurrencyAmount(
-                  data?.pool?.balance ?? 0,
-                  data?.pool?.currency ?? "INR",
+                  walletResponse.billingAccount.walletBalance,
+                  walletResponse.billingAccount.currency,
                 )}
                 icon={Coins}
                 variant="success"
               />
               <StatCard
-                title="Lifetime purchased"
-                value={formatCurrencyAmount(
-                  data?.pool?.totalPurchased ?? 0,
-                  data?.pool?.currency ?? "INR",
-                )}
+                title="Ledger entries"
+                value={walletResponse.meta.total.toLocaleString()}
                 icon={Coins}
               />
             </DashboardGrid>
@@ -182,26 +215,41 @@ export default function OrgCreditsPage({
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {data?.ledger.map((row) => (
+                    {walletResponse.ledger.map((row) => (
                       <TableRow key={row.id}>
                         <TableCell className="text-xs text-zinc-500">
                           {new Date(row.createdAt).toLocaleString()}
                         </TableCell>
-                        <TableCell className="text-sm">{row.reason}</TableCell>
+                        <TableCell className="text-sm">
+                          {row.reason}
+                          {row.notes && (
+                            <span className="text-xs text-zinc-400 block">
+                              {row.notes}
+                            </span>
+                          )}
+                        </TableCell>
                         <TableCell
                           className={`text-right font-mono ${
-                            row.delta >= 0 ? "text-emerald-600" : "text-red-600"
+                            row.deltaPaise >= 0
+                              ? "text-emerald-600"
+                              : "text-red-600"
                           }`}
                         >
-                          {row.delta >= 0 ? "+" : ""}
-                          {formatCurrencyAmount(row.delta, "INR")}
+                          {row.deltaPaise >= 0 ? "+" : ""}
+                          {formatCurrencyAmount(
+                            row.deltaPaise,
+                            walletResponse.billingAccount.currency,
+                          )}
                         </TableCell>
                         <TableCell className="text-right font-mono text-sm">
-                          {formatCurrencyAmount(row.balanceAfter, "INR")}
+                          {formatCurrencyAmount(
+                            row.balanceAfter,
+                            walletResponse.billingAccount.currency,
+                          )}
                         </TableCell>
                       </TableRow>
                     ))}
-                    {data && data.ledger.length === 0 && (
+                    {walletResponse.ledger.length === 0 && (
                       <TableRow>
                         <TableCell
                           colSpan={4}
@@ -222,7 +270,7 @@ export default function OrgCreditsPage({
       <Dialog open={showBuy} onOpenChange={setShowBuy}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Buy credits</DialogTitle>
+            <DialogTitle>Top up wallet</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
@@ -236,20 +284,25 @@ export default function OrgCreditsPage({
                 onChange={(e) => setAmountMajor(e.target.value)}
               />
               <p className="text-xs text-zinc-500">
-                You will be redirected to the payment gateway to complete the
-                purchase.
+                Minimum ₹100. You&apos;ll be redirected to Razorpay to
+                complete the payment when the gateway integration ships.
               </p>
             </div>
+            {topUpMutation.isError && (
+              <p className="text-sm text-red-600">
+                {(topUpMutation.error as Error).message}
+              </p>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowBuy(false)}>
               Cancel
             </Button>
             <Button
-              onClick={() => purchaseMutation.mutate()}
-              disabled={purchaseMutation.isPending}
+              onClick={() => topUpMutation.mutate()}
+              disabled={topUpMutation.isPending}
             >
-              {purchaseMutation.isPending ? "Initiating…" : "Continue"}
+              {topUpMutation.isPending ? "Initiating…" : "Continue"}
             </Button>
           </DialogFooter>
         </DialogContent>
