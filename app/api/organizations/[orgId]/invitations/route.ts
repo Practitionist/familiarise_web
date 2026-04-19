@@ -85,7 +85,13 @@ export async function POST(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "MAINTAINER");
+  // Invitations require an ACTIVE org. Pre-verification we return
+  // 409 ORG_NOT_VERIFIED instead of spawning orphan tokens that
+  // would never get an email sent. The UI banner explains the state.
+  const access = await requireOrgAccess(orgId, {
+    minimumRole: "MAINTAINER",
+    requireActive: true,
+  });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);

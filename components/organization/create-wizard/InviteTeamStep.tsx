@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/select";
 import { X, Plus } from "lucide-react";
 import { z } from "zod";
-import type { StepProps } from "../types";
+import type { StepProps } from "./types";
 import {
   MEMBER_ROLE_LABEL,
   SELF_SERVICE_MEMBER_ROLES,

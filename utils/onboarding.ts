@@ -184,24 +184,9 @@ export const OnboardingDataSchema = z.discriminatedUnion("role", [
     consultantProfile: z.undefined().optional(),
     consulteeProfile: z.undefined().optional(),
     staffProfile: z.undefined().optional(),
-    // Org fields carried through to processOnboardingData.
-    // New taxonomy: capability booleans + funding source + unified role enum.
-    orgName: z.string().min(2).max(100).optional(),
-    orgBillingEmail: z.string().email().optional(),
-    orgFundingSource: z
-      .enum(["PERSONAL", "WALLET", "INVOICE", "LICENSE"])
-      .optional(),
-    orgCanSponsor: z.coerce.boolean().optional(),
-    orgCanHost: z.coerce.boolean().optional(),
-    orgDescription: z.string().optional(),
-    orgIndustry: z.string().optional(),
-    orgSizeBucket: z.string().optional(),
-    orgWebsite: z.string().optional(),
-    orgPaymentTermsDays: z.coerce.number().optional(),
-    orgInviteEmails: z.array(z.string().email()).optional(),
-    orgInviteRole: z
-      .enum(["OWNER", "MAINTAINER", "MANAGER", "LEARNER"])
-      .optional(),
+    // ORG_ADMIN onboarding no longer collects org fields — the user is
+    // marked onboarded as ORG_ADMIN and redirected to
+    // /dashboard/organization/create where the full wizard runs.
   }),
 ]);
 
@@ -386,29 +371,11 @@ const adminFormFields = sharedFormFields.extend({
   adminNotes: z.string().optional(),
 });
 
+// ORG_ADMIN onboarding collects only personal info + agreement. The full
+// organization-creation wizard lives at /dashboard/organization/create and
+// runs after onboarding completes.
 const orgAdminFormFields = sharedFormFields.extend({
   role: z.literal("ORG_ADMIN" as const),
-  // Org fields (merged wizard — collected during onboarding step 1).
-  // New taxonomy: funding source replaces billing mode; capability
-  // booleans replace the single kind enum; role values align with the
-  // unified MemberRole enum (OWNER/ADMIN/MANAGER/MEMBER/...).
-  orgName: z.string().min(2).max(100),
-  orgBillingEmail: z.string().email(),
-  orgFundingSource: z
-    .enum(["PERSONAL", "WALLET", "INVOICE", "LICENSE"])
-    .default("PERSONAL"),
-  orgCanSponsor: z.coerce.boolean().default(true),
-  orgCanHost: z.coerce.boolean().default(false),
-  orgDescription: z.string().max(2000).optional(),
-  orgIndustry: z.string().optional(),
-  orgSizeBucket: z.string().optional(),
-  orgWebsite: z.string().optional(),
-  orgPaymentTermsDays: z.coerce.number().int().min(1).max(120).default(60),
-  // Invite team (collected during onboarding step 1)
-  orgInviteEmails: z.array(z.string().email()).default([]),
-  orgInviteRole: z
-    .enum(["OWNER", "MAINTAINER", "MANAGER", "LEARNER"])
-    .default("LEARNER"),
 });
 
 // Combined mega-schema: discriminated union on role to prevent
@@ -657,18 +624,6 @@ export function transformOnboardingFormToServerData(
         consultantProfile: undefined,
         consulteeProfile: undefined,
         staffProfile: undefined,
-        orgName: formData.orgName,
-        orgBillingEmail: formData.orgBillingEmail,
-        orgFundingSource: formData.orgFundingSource,
-        orgCanSponsor: formData.orgCanSponsor,
-        orgCanHost: formData.orgCanHost,
-        orgDescription: formData.orgDescription,
-        orgIndustry: formData.orgIndustry,
-        orgSizeBucket: formData.orgSizeBucket,
-        orgWebsite: formData.orgWebsite,
-        orgPaymentTermsDays: formData.orgPaymentTermsDays,
-        orgInviteEmails: formData.orgInviteEmails,
-        orgInviteRole: formData.orgInviteRole,
       } as OnboardingData;
 
     default:

@@ -309,6 +309,15 @@ export type OrgCapabilityGate = {
   canSponsor?: true;
   canHost?: true;
   fundingSource?: FundingSource;
+  /**
+   * Require `Organization.status === "ACTIVE"`. A newly created org sits
+   * in PENDING_VERIFICATION until a platform admin runs the verify action;
+   * setting this on side-effecting routes (invite send, wallet top-up,
+   * contract submit) keeps the graceful pre-verification UX while still
+   * blocking spam surfaces. Returns 409 ORG_NOT_VERIFIED so the UI can
+   * distinguish this from plain 403.
+   */
+  requireActive?: true;
 };
 
 /**
@@ -328,7 +337,8 @@ export async function requireOrgAccess(
 ): Promise<({ error?: never } & OrgAccessGrant) | { error: NextResponse }> {
   const options: OrgCapabilityGate =
     typeof opts === "string" ? { minimumRole: opts } : (opts ?? {});
-  const { minimumRole, canSponsor, canHost, fundingSource } = options;
+  const { minimumRole, canSponsor, canHost, fundingSource, requireActive } =
+    options;
 
   const auth = await requireApiAuth();
   if (auth.error) return { error: auth.error };
@@ -359,6 +369,20 @@ export async function requireOrgAccess(
       error: NextResponse.json(
         { error: "Organization has been deactivated" },
         { status: 403 },
+      ),
+    };
+  }
+
+  if (requireActive && org.status !== "ACTIVE") {
+    return {
+      error: NextResponse.json(
+        {
+          error: "ORG_NOT_VERIFIED",
+          message:
+            "This action is paused until a platform admin verifies your organization.",
+          status: org.status,
+        },
+        { status: 409 },
       ),
     };
   }
@@ -459,9 +483,12 @@ export async function requireOrgAccess(
 
 /**
  * Convenience wrapper around {@link requireOrgAccess} for owner-only operations.
+ * Accepts the same capability gate as `requireOrgAccess` (sans `minimumRole`,
+ * which is always OWNER here).
  */
 export async function requireOrgOwner(
   organizationId: string,
+  opts?: Omit<OrgCapabilityGate, "minimumRole">,
 ): Promise<({ error?: never } & OrgAccessGrant) | { error: NextResponse }> {
-  return requireOrgAccess(organizationId, "OWNER");
+  return requireOrgAccess(organizationId, { ...(opts ?? {}), minimumRole: "OWNER" });
 }

@@ -93,9 +93,12 @@ export async function POST(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
+  // Contracts are commercial agreements — nothing should bind the
+  // platform to an org that hasn't cleared verification yet.
   const access = await requireOrgAccess(orgId, {
     minimumRole: "OWNER",
     canSponsor: true,
+    requireActive: true,
   });
   if (access.error) return access.error;
 

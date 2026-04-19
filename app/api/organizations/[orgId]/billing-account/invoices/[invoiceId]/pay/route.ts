@@ -27,7 +27,11 @@ export async function POST(
   },
 ) {
   const { orgId, invoiceId } = await params;
-  const access = await requireOrgAccess(orgId, { minimumRole: "OWNER", canSponsor: true });
+  const access = await requireOrgAccess(orgId, {
+    minimumRole: "OWNER",
+    canSponsor: true,
+    requireActive: true,
+  });
   if (access.error) return access.error;
 
   const invoice = await prisma.organizationInvoice.findFirst({

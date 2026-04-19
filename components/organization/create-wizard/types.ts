@@ -49,6 +49,18 @@ export interface StepProps {
   onGoToStep?: (step: number) => void;
   initialData: Partial<OrgWizardData>;
   isSubmitting?: boolean;
+  /**
+   * Optional hook for the Review step: runs after the final PATCH and
+   * invitations succeed, before navigation. The onboarding caller uses
+   * this to flip `user.onboardingCompleted = true` atomically with the
+   * launch; dashboard (Nth-time) callers leave it undefined.
+   */
+  afterLaunch?: (orgId: string) => Promise<void> | void;
+  /**
+   * Optional override for the post-launch redirect target. Defaults to
+   * `/dashboard/organization/{orgId}/home`.
+   */
+  finalRedirectPath?: (orgId: string) => string;
 }
 
 export type StepKey =

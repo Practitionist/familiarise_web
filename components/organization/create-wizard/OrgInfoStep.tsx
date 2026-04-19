@@ -13,8 +13,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { orgInfoSchema, type OrgInfoFormData } from "../schemas";
-import type { StepProps } from "../types";
+import { orgInfoSchema, type OrgInfoFormData } from "./schemas";
+import type { StepProps } from "./types";
 
 const INDUSTRIES = [
   "Education",

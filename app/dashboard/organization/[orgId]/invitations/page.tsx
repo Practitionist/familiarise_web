@@ -56,7 +56,7 @@ interface Invitation {
 const ROLE_OPTIONS = [
   { value: "LEARNER", label: "Learner" },
   { value: "MANAGER", label: "Manager" },
-  { value: "MAINTAINER", label: "Admin" },
+  { value: "MAINTAINER", label: "Maintainer" },
   { value: "OWNER", label: "Owner" },
 ];
 

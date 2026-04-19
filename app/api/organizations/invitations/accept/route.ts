@@ -111,6 +111,10 @@ export async function POST(req: NextRequest) {
 
       // Profile FK hydration — if the user has a consultee or consultant
       // profile we link it so downstream joins don't have to null-check.
+      // The same profile may be linked to memberships at several orgs
+      // concurrently; the schema is deliberately many-to-many and
+      // docs/enterprise/14-scenarios-and-examples.md lists multi-org
+      // experts and learners as first-class cases.
       const profiles = await tx.user.findUnique({
         where: { id: userId },
         select: { consulteeProfileId: true, consultantProfileId: true },

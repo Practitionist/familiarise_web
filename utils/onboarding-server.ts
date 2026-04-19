@@ -553,7 +553,7 @@ export async function processOnboardingData(
   // (consultantProfile, consulteeProfile, slots, domain, etc.). Typing it
   // precisely would require a shared Prisma payload type across server/action/client
   // layers — not worth the coupling. Callers only read a few string IDs from it.
-): Promise<{ success: boolean; user?: Record<string, unknown>; error?: string; verificationWarning?: string; orgId?: string }> {
+): Promise<{ success: boolean; user?: Record<string, unknown>; error?: string; verificationWarning?: string }> {
   const { validateOnboardingData } = await import("./onboarding");
 
   try {
@@ -579,53 +579,13 @@ export async function processOnboardingData(
 
     await assertUserExists(userId);
 
-    // ORG_ADMIN: validate org fields BEFORE the transaction so bad payloads
-    // are rejected before any DB state is mutated. Uses the same enum values
-    // and gates as the org API routes.
-    const isOrgAdmin =
-      validatedBody.role === UserRole.ORG_ADMIN &&
-      "orgName" in validatedBody &&
-      validatedBody.orgName;
-    if (isOrgAdmin) {
-      const orgData = validatedBody as Record<string, unknown>;
+    // ORG_ADMIN onboarding no longer flows through this transaction. The
+    // role + personal info are committed by `setOnboardingRoleAction` at
+    // step 0, the org is created via `POST /api/organizations` during the
+    // shared wizard, and `completeOrgAdminOnboardingAction` flips the
+    // onboardingCompleted flag at launch. This path now only handles
+    // CONSULTANT / CONSULTEE / STAFF / ADMIN profiles.
 
-      // Validate the funding source. PROJECT is reserved for v2 and is
-      // not exposed to self-service onboarding — only an admin can set
-      // that up because project billing requires a milestone workflow
-      // that does not exist yet.
-      const validFundingSources = ["PERSONAL", "WALLET", "INVOICE", "LICENSE"];
-      if (
-        orgData.orgFundingSource &&
-        !validFundingSources.includes(orgData.orgFundingSource as string)
-      ) {
-        return {
-          success: false,
-          error: `Invalid funding source: ${orgData.orgFundingSource}`,
-        };
-      }
-
-      // Restrict the invite-role surface on onboarding. CONSULTANT is a
-      // role that requires org.canHost=true and typically goes through
-      // the provider-side apply flow, not a bulk invite-on-signup input.
-      // SUPPORT is an operator role assigned later by admins; allowing
-      // it here would let a founder invite contractors into a privileged
-      // ticket-reading role with no audit path.
-      const onboardingAllowedRoles = ["OWNER", "MAINTAINER", "MANAGER", "LEARNER"];
-      if (
-        orgData.orgInviteRole &&
-        !onboardingAllowedRoles.includes(orgData.orgInviteRole as string)
-      ) {
-        return {
-          success: false,
-          error: `${orgData.orgInviteRole} role cannot be assigned via onboarding. Invite members first, then promote via Settings.`,
-        };
-      }
-    }
-
-    // Single transaction: user update + profile + org creation (for ORG_ADMIN).
-    // This guarantees atomicity — if org creation fails, the user is NOT left
-    // in a partial ORG_ADMIN state with no org.
-    let orgId: string | undefined;
     const updatedUser = await prisma.$transaction(
       async (tx) => {
         const baseUserData: Prisma.UserUpdateInput = {
@@ -672,29 +632,10 @@ export async function processOnboardingData(
           },
         });
 
-        // ORG_ADMIN: create the org inside the same transaction.
-        if (isOrgAdmin) {
-          const orgResult = await createOrgInTransaction(
-            tx,
-            userId,
-            validatedBody as Parameters<typeof createOrgInTransaction>[2],
-          );
-          orgId = orgResult.orgId;
-        }
-
         return user;
       },
       { maxWait: 15000, timeout: 45000 },
     );
-
-    // Post-transaction: fire-and-forget org invitations for ORG_ADMIN.
-    // Only email delivery is out-of-band — the org + owner are already committed.
-    if (isOrgAdmin && orgId) {
-      const orgData = validatedBody as Record<string, unknown>;
-      const emails = (orgData.orgInviteEmails as string[] | undefined) ?? [];
-      const invRole = (orgData.orgInviteRole as string) ?? "LEARNER";
-      sendOrgInvitationsAsync(orgId, userId, emails, invRole);
-    }
 
     // Post-transaction: consultant verification
     let verificationWarning: string | undefined;
@@ -720,7 +661,7 @@ export async function processOnboardingData(
       }
     }
 
-    return { success: true, user: updatedUser, verificationWarning, orgId };
+    return { success: true, user: updatedUser, verificationWarning };
   } catch (error: unknown) {
     console.error("Error in processOnboardingData:", error);
     const errorMessage =
@@ -737,175 +678,3 @@ export async function processOnboardingData(
   }
 }
 
-// ============================================================================
-// ORG_ADMIN: Create organization during onboarding
-// ============================================================================
-
-function slugify(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40);
-}
-
-/**
- * Creates the organization inside an existing Prisma transaction.
- * Called from processOnboardingData so user + org are atomic.
- * Invitations are fire-and-forget AFTER the TX commits (email delivery
- * is best-effort, not part of the atomicity contract).
- */
-async function createOrgInTransaction(
-  tx: Prisma.TransactionClient,
-  userId: string,
-  data: {
-    orgName: string;
-    orgBillingEmail: string;
-    orgFundingSource?: "PERSONAL" | "WALLET" | "INVOICE" | "LICENSE";
-    orgCanSponsor?: boolean;
-    orgCanHost?: boolean;
-    orgDescription?: string;
-    orgIndustry?: string;
-    orgSizeBucket?: string;
-    orgWebsite?: string;
-    orgPaymentTermsDays?: number;
-  },
-): Promise<{ orgId: string; orgProfileId: string }> {
-  // Form posts the funding source directly — no legacy-mode mapping.
-  // Default = PERSONAL (learner pays own card, no org billing) so an
-  // org admin who hasn't picked a funding mode gets the safest option.
-  const fundingSource = data.orgFundingSource ?? "PERSONAL";
-
-  // Capabilities default to the buyer-only shape (canSponsor=true).
-  // ORG_ADMIN onboarding currently collects these two booleans;
-  // switching on `canHost` requires admin verification, so we force
-  // canHost=false from self-service and defer activation to the admin
-  // verify API (see /api/admin/organizations/[orgId]).
-  const canSponsor = data.orgCanSponsor ?? true;
-  const canHost = data.orgCanHost ?? false;
-
-  const slug = `${slugify(data.orgName)}-${Math.random().toString(36).slice(2, 8)}`;
-
-  const organization = await tx.organization.create({
-    data: {
-      name: data.orgName,
-      slug,
-      rootId: "placeholder", // backfilled below
-      status: canHost ? "PENDING_VERIFICATION" : "ACTIVE",
-      canSponsor,
-      canHost,
-      billingEmail: data.orgBillingEmail,
-      description: data.orgDescription ?? null,
-      industry: data.orgIndustry ?? null,
-      sizeBucket:
-        (data.orgSizeBucket as
-          | "SMALL_1_50"
-          | "MEDIUM_51_200"
-          | "LARGE_201_1000"
-          | "ENTERPRISE_1000_PLUS") ?? null,
-      website: data.orgWebsite ?? null,
-      paymentTermsDays: data.orgPaymentTermsDays ?? 60,
-    },
-  });
-  await tx.organization.update({
-    where: { id: organization.id },
-    data: { rootId: organization.id },
-  });
-
-  // BillingAccount is created only when the org actually sponsors bookings.
-  // For a pure HOST org (canSponsor=false, canHost=true) there is nothing
-  // to bill against — the org earns, it doesn't pay. Keeping this table
-  // absent in that case avoids a dangling zero-balance row that would
-  // otherwise confuse the dashboard into showing a "wallet" card.
-  if (canSponsor) {
-    const billingAccount = await tx.billingAccount.create({
-      data: {
-        ownerOrgId: organization.id,
-        billingEmail: data.orgBillingEmail,
-        currency: "INR",
-        fundingSource,
-        walletBalance: fundingSource === "WALLET" ? 0 : null,
-      },
-    });
-    await tx.organization.update({
-      where: { id: organization.id },
-      data: { billingAccountId: billingAccount.id },
-    });
-  }
-
-  const member = await tx.member.create({
-    data: {
-      organizationId: organization.id,
-      userId,
-      role: "OWNER",
-    },
-  });
-
-  await tx.membership.create({
-    data: {
-      organizationId: organization.id,
-      userId,
-      role: "OWNER",
-      status: "ACTIVE",
-      betterAuthMemberId: member.id,
-    },
-  });
-
-  return { orgId: organization.id, orgProfileId: organization.id };
-}
-
-/**
- * Fire-and-forget invitations after the main TX commits.
- * Called from processOnboardingData only for ORG_ADMIN onboarding.
- */
-async function sendOrgInvitationsAsync(
-  orgId: string,
-  userId: string,
-  emails: string[],
-  role: string,
-) {
-  if (emails.length === 0) return;
-  const expiresAt = new Date();
-  expiresAt.setDate(expiresAt.getDate() + 14);
-
-  // Look up org name + inviter name for the email
-  const [org, inviter] = await Promise.all([
-    prisma.organization.findUnique({
-      where: { id: orgId },
-      select: { name: true },
-    }),
-    prisma.user.findUnique({
-      where: { id: userId },
-      select: { name: true },
-    }),
-  ]);
-
-  const { sendOrgInvitationEmail } = await import("@/lib/email");
-  const { getAppUrl } = await import("@/lib/url");
-
-  Promise.allSettled(
-    emails.map(async (email) => {
-      const invitation = await prisma.invitation.create({
-        data: {
-          organizationId: orgId,
-          email,
-          role,
-          status: "pending",
-          expiresAt,
-          inviterId: userId,
-        },
-      });
-      // Fire-and-forget email
-      sendOrgInvitationEmail({
-        email,
-        inviterName: inviter?.name ?? "An administrator",
-        orgName: org?.name ?? "an organization",
-        role,
-        inviteUrl: `${getAppUrl()}/organizations/invite/${invitation.id}`,
-        expiresAt: expiresAt.toISOString(),
-      }).catch((err) =>
-        console.error("[ORG_ADMIN onboarding] email error:", err),
-      );
-    }),
-  ).catch((err) => console.error("[ORG_ADMIN onboarding] invite error:", err));
-}

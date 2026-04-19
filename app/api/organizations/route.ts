@@ -126,6 +126,21 @@ export async function POST(req: NextRequest) {
   const auth = await requireApiAuth();
   if (auth.error) return auth.error;
 
+  // Only UserRole.ORG_ADMIN can create organizations. Platform ADMIN can
+  // also seed orgs (used by fixtures and back-office tooling). CONSULTANT
+  // and CONSULTEE are distinct user types — they join orgs via invitation,
+  // they don't create them. Blocks UI-bypass attempts via direct API.
+  const creatorRole = auth.session.user.role;
+  if (creatorRole !== "ORG_ADMIN" && creatorRole !== "ADMIN") {
+    return NextResponse.json(
+      {
+        error:
+          "Only organization administrators can create organizations. Sign up with the Organization Owner role to continue.",
+      },
+      { status: 403 },
+    );
+  }
+
   const raw = await req.json().catch(() => null);
   const parsed = CreateBodySchema.safeParse(raw);
   if (!parsed.success) {

@@ -5,8 +5,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { billingSchema, type BillingFormData } from "../schemas";
-import type { StepProps } from "../types";
+import { billingSchema, type BillingFormData } from "./schemas";
+import type { StepProps } from "./types";
 import {
   FUNDING_SOURCE_LABEL,
   FUNDING_SOURCE_TAGLINE,

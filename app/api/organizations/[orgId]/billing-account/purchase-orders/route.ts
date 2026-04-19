@@ -64,7 +64,11 @@ export async function POST(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { minimumRole: "OWNER", canSponsor: true });
+  const access = await requireOrgAccess(orgId, {
+    minimumRole: "OWNER",
+    canSponsor: true,
+    requireActive: true,
+  });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);

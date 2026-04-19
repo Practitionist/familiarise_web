@@ -114,7 +114,7 @@ export default function InviteAcceptPage({
     fetch("/api/organizations/invitations/accept", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token }),
+      body: JSON.stringify({ invitationId: token }),
     })
       .then(async (res) => {
         const body = await res.json();

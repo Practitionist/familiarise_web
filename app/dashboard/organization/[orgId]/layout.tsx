@@ -19,6 +19,7 @@ import {
   UserCog,
   Building2,
   LayoutDashboard,
+  Clock,
   type LucideIcon,
 } from "lucide-react";
 
@@ -82,6 +83,48 @@ async function fetchOrg(orgId: string): Promise<OrgDetailsResponse> {
     throw new Error(body.error || "Failed to load organization");
   }
   return res.json();
+}
+
+/**
+ * Banner rendered across the org dashboard when `Organization.status !== ACTIVE`.
+ * A newly created org sits in PENDING_VERIFICATION until a platform admin
+ * runs the verify action. OWNER can still configure branding, draft programs,
+ * and explore the product — but invitations, wallet top-ups, and contracts
+ * are paused server-side. The banner explains why the write surfaces are
+ * returning 409 ORG_NOT_VERIFIED.
+ */
+function OrgStatusBanner({ status }: { status: OrgStatus }) {
+  const copy: Record<OrgStatus, { title: string; body: string; tone: string } | null> = {
+    PENDING_VERIFICATION: {
+      title: "Awaiting platform review",
+      body: "You can set up branding and draft programs now. Inviting members and moving money unlocks as soon as an admin verifies your organization.",
+      tone: "bg-amber-50 border-amber-200 text-amber-900",
+    },
+    SUSPENDED: {
+      title: "Organization suspended",
+      body: "Invitations and payments are paused. Contact support to restore access.",
+      tone: "bg-rose-50 border-rose-200 text-rose-900",
+    },
+    ACTIVE: null,
+    DEACTIVATED: {
+      title: "Organization deactivated",
+      body: "This organization is no longer operational.",
+      tone: "bg-zinc-100 border-zinc-300 text-zinc-800",
+    },
+  };
+  const message = copy[status];
+  if (!message) return null;
+  return (
+    <div
+      className={`border-b px-4 sm:px-6 py-2.5 flex items-start gap-3 text-sm ${message.tone}`}
+    >
+      <Clock className="w-4 h-4 mt-0.5 shrink-0" />
+      <div className="flex-1">
+        <span className="font-semibold">{message.title}.</span>{" "}
+        <span>{message.body}</span>
+      </div>
+    </div>
+  );
 }
 
 function AccessDenied({ title, message }: { title: string; message: string }) {
@@ -382,6 +425,10 @@ export default function OrgLayout({
             breadcrumbs={breadcrumbs}
             personalHref={personalHref}
           />
+        )}
+
+        {org && org.organization.status !== "ACTIVE" && (
+          <OrgStatusBanner status={org.organization.status} />
         )}
 
         <main className="flex-1 overflow-y-auto pb-16 md:pb-0">

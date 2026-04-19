@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Building2 } from "lucide-react";
-import type { StepProps } from "../types";
+import type { StepProps } from "./types";
 import {
   FUNDING_SOURCE_LABEL,
   narrowFundingSource,

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import type { StepProps } from "../types";
+import type { StepProps } from "./types";
 
 // Defaults: 1000 / 1000 / 8000 basis points (10 / 10 / 80 %).
 // These mirror `DEFAULT_RATE_CARD` in lib/api/organizations/rate-card.ts

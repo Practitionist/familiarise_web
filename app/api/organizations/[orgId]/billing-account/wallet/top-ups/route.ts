@@ -89,7 +89,13 @@ export async function POST(
   // OWNER-only: top-up moves real money. A MAINTAINER can queue
   // invites and edit programs, but spinning up an external Razorpay
   // charge should live with the person who pays the bill.
-  const access = await requireOrgAccess(orgId, { minimumRole: "OWNER", canSponsor: true });
+  // Also gated on org status=ACTIVE — a pre-verification org cannot
+  // charge a card, so we reject before minting a Razorpay order.
+  const access = await requireOrgAccess(orgId, {
+    minimumRole: "OWNER",
+    canSponsor: true,
+    requireActive: true,
+  });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);

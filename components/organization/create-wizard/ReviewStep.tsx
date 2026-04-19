@@ -11,8 +11,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Building2, Pencil, Check, X, Loader2 } from "lucide-react";
-import { getSteps } from "../types";
-import type { StepProps } from "../types";
+import { getSteps } from "./types";
+import type { StepProps } from "./types";
 import {
   deriveCapabilityKind,
   CAPABILITY_LABEL,
@@ -30,7 +30,13 @@ interface InviteResult {
   error?: string;
 }
 
-export function ReviewStep({ onBack, onGoToStep, initialData }: StepProps) {
+export function ReviewStep({
+  onBack,
+  onGoToStep,
+  initialData,
+  afterLaunch,
+  finalRedirectPath,
+}: StepProps) {
   const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [inviteResults, setInviteResults] = useState<InviteResult[] | null>(
@@ -133,7 +139,18 @@ export function ReviewStep({ onBack, onGoToStep, initialData }: StepProps) {
         await new Promise((r) => setTimeout(r, 1500));
       }
 
-      router.push(`/dashboard/organization/${orgId}/home`);
+      // Onboarding caller uses this to flip `user.onboardingCompleted`
+      // atomically with the launch. Throwing here aborts the redirect so
+      // the user can retry — org + invitations are already persisted and
+      // the retry is idempotent.
+      if (afterLaunch) {
+        await afterLaunch(orgId);
+      }
+
+      const target = finalRedirectPath
+        ? finalRedirectPath(orgId)
+        : `/dashboard/organization/${orgId}/home`;
+      router.push(target);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Something went wrong",

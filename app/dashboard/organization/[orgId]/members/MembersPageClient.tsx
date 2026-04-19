@@ -59,7 +59,7 @@ interface MemberRow {
 
 const SELECTABLE_ROLES = [
   { value: "OWNER", label: "Owner" },
-  { value: "MAINTAINER", label: "Admin" },
+  { value: "MAINTAINER", label: "Maintainer" },
   { value: "MANAGER", label: "Manager" },
   { value: "LEARNER", label: "Learner" },
 ];
