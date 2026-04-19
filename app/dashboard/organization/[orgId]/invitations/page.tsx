@@ -3,9 +3,10 @@
 import { use, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Mail, Trash2, Copy } from "lucide-react";
-import type { MemberRole } from "@prisma/client";
+import type { MemberRole, OrgStatus } from "@prisma/client";
 import { useRequireOrgRole } from "../useOrgRole";
 import { MEMBER_ROLE_LABEL } from "@/lib/labels/org-labels";
+import { humanizeOrgError } from "@/lib/labels/org-errors";
 import {
   CreateInvitationPayloadSchema,
   CreateInvitationResponseSchema,
@@ -71,6 +72,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 // `InvitationRow` lives in `@/schemas/organizations` so the same shape
 // powers the wizard, this page, and any future operator tooling.
@@ -143,6 +150,19 @@ export default function OrgInvitationsPage({
     enabled: allowed,
   });
 
+  // Mirror of the query the org layout owns; `enabled: false` keeps us
+  // from racing a second fetch against it. Layout blocks rendering
+  // children until this cache is warm, so `data` is effectively always
+  // present by the time this page mounts.
+  const { data: orgSnapshot } = useQuery<{
+    organization: { status: OrgStatus };
+  }>({
+    queryKey: ["organization", orgId],
+    enabled: false,
+  });
+  const orgStatus = orgSnapshot?.organization.status;
+  const isPendingVerification = orgStatus === "PENDING_VERIFICATION";
+
   const [showCreate, setShowCreate] = useState(false);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<SelfServiceRole>("LEARNER");
@@ -161,7 +181,7 @@ export default function OrgInvitationsPage({
       setEmail("");
       setError(null);
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => setError(humanizeOrgError(err.message)),
   });
 
   const revokeMutation = useMutation({
@@ -185,9 +205,29 @@ export default function OrgInvitationsPage({
         title="Invitations"
         subtitle="Pending invitations to join this organization"
         actions={
-          <Button size="sm" onClick={() => setShowCreate(true)}>
-            <Mail className="h-4 w-4 mr-1" /> Invite by email
-          </Button>
+          isPendingVerification ? (
+            // Pre-empt the server's 409 ORG_NOT_VERIFIED — the banner at
+            // the top of the dashboard already explains the state, so we
+            // just disable the entry point and point back to it on hover.
+            <TooltipProvider delayDuration={150}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span tabIndex={0}>
+                    <Button size="sm" disabled aria-disabled="true">
+                      <Mail className="h-4 w-4 mr-1" /> Invite by email
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Available after your organization is verified.
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : (
+            <Button size="sm" onClick={() => setShowCreate(true)}>
+              <Mail className="h-4 w-4 mr-1" /> Invite by email
+            </Button>
+          )
         }
       />
       <DashboardContent>

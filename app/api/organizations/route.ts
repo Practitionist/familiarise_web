@@ -240,6 +240,21 @@ export async function POST(req: NextRequest) {
         },
       });
 
+      // Lazy-create the operator-side profile for this user. Idempotent
+      // across the creator's 2nd+ org — they already have one
+      // OrgAdminProfile row pinned by `userId @unique`. The user.update
+      // via updateMany keeps the call cheap when the link is already set.
+      const orgAdmin = await tx.orgAdminProfile.upsert({
+        where: { userId: auth.session.user.id },
+        create: { userId: auth.session.user.id },
+        update: {},
+        select: { id: true },
+      });
+      await tx.user.updateMany({
+        where: { id: auth.session.user.id, orgAdminProfileId: null },
+        data: { orgAdminProfileId: orgAdmin.id },
+      });
+
       await tx.orgAuditLog.create({
         data: {
           organizationId: org.id,
@@ -261,6 +276,7 @@ export async function POST(req: NextRequest) {
         organization: org,
         billingAccountId,
         membership,
+        orgAdminProfileId: orgAdmin.id,
       };
     });
 

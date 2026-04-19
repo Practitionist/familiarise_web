@@ -459,9 +459,6 @@ async function seedLearnPro(agencyConsultants: UserWithProfiles[]) {
         status: MemberStatus.ACTIVE,
         consultantProfileId: user.consultantProfile.id,
         payoutRecipient: PayoutRecipient.SELF,
-        applicationNote: "Experienced senior coach; accepted to panel.",
-        appliedAt: faker.date.recent({ days: 120 }),
-        approvedAt: faker.date.recent({ days: 100 }),
         rateCardOverrideId: idx === 0 ? rateCard.id : null,
       },
     });
@@ -474,8 +471,8 @@ async function seedLearnPro(agencyConsultants: UserWithProfiles[]) {
       // category bucket describes "membership lifecycle events" across all
       // roles, not just learners.
       category: "MEMBER",
-      action: "EXPERT_APPROVED",
-      description: `${agencyConsultants.length} consultants approved on LearnPro panel`,
+      action: "MEMBER_ADDED",
+      description: `${agencyConsultants.length} consultants added to LearnPro panel`,
     },
   });
 

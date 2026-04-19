@@ -16,6 +16,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess, orgRoleSatisfies } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { isBlockedRoleTransition } from "@/lib/enterprise/role-transitions";
 
 const MemberRoleSchema = z.enum([
   "OWNER",
@@ -113,6 +114,23 @@ export async function PATCH(
       });
       if (!current) {
         throw Object.assign(new Error("Member not found"), { httpStatus: 404 });
+      }
+
+      // Disjoint LEARNER/EXPERT boundary. These two roles imply
+      // different platform profiles (ConsulteeProfile vs ConsultantProfile)
+      // and different billing postures (consumer vs provider), so the
+      // product rule is to force a remove + re-invite instead of
+      // mutating in place. Returning the machine-readable code lets the
+      // dashboard surface the humanized copy via humanizeOrgError.
+      if (
+        patch.role !== undefined &&
+        patch.role !== current.role &&
+        isBlockedRoleTransition(current.role, patch.role)
+      ) {
+        throw Object.assign(
+          new Error("ROLE_TRANSITION_BLOCKED"),
+          { httpStatus: 409 },
+        );
       }
 
       // OWNER role gate: only OWNERs can assign or revoke the OWNER role.

@@ -136,6 +136,11 @@ export const auth = betterAuth({
         required: false,
         input: false,
       },
+      orgAdminProfileId: {
+        type: "string",
+        required: false,
+        input: false,
+      },
     },
   },
 
@@ -144,16 +149,13 @@ export const auth = betterAuth({
       create: {
         after: async (user) => {
           try {
-            // Create ConsulteeProfile
-            const consulteeProfile = await prisma.consulteeProfile.create({
-              data: { userId: user.id },
-            });
-
-            // Update user with consulteeProfileId
-            await prisma.user.update({
-              where: { id: user.id },
-              data: { consulteeProfileId: consulteeProfile.id },
-            });
+            // NOTE: ConsulteeProfile used to be auto-created here for every
+            // signup. It is now lazy — created on the first consumer action
+            // (booking, trial, invite-accept as LEARNER, onboarding when
+            // role=CONSULTEE) via `ensureConsulteeProfile` in
+            // lib/profiles/ensure-consultee-profile.ts. This prevents
+            // org-operators (UserRole.ORG_ADMIN) and consultants from
+            // carrying a dangling consumer profile they never use.
 
             // Create CookiePreference
             await prisma.cookiePreference.create({
@@ -338,6 +340,7 @@ export const auth = betterAuth({
         consulteeProfileId?: string | null;
         staffProfileId?: string | null;
         adminProfileId?: string | null;
+        orgAdminProfileId?: string | null;
       };
 
       // SSO membership sync: BetterAuth auto-provisioning creates a BetterAuth
@@ -509,6 +512,7 @@ export const auth = betterAuth({
           consulteeProfileId: user.consulteeProfileId ?? undefined,
           staffProfileId: user.staffProfileId ?? undefined,
           adminProfileId: user.adminProfileId ?? undefined,
+          orgAdminProfileId: user.orgAdminProfileId ?? undefined,
           organizationMemberships,
           ssoEnforcementFailed,
         },

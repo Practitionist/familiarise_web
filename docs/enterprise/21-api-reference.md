@@ -33,7 +33,7 @@ in parentheses. Constants live in `lib/enterprise/audit-actions.ts`.
 | `/api/organizations/[orgId]/members` | `GET` | active member | Paginated list; `?role=` / `?status=` / `?q=` | — |
 | `/api/organizations/[orgId]/members` | `POST` | MAINTAINER | Direct add (idempotent on userId) | `MEMBER_ADDED` (MEMBER) |
 | `/api/organizations/[orgId]/members/[memberId]` | `GET` | MAINTAINER | Full member record | — |
-| `/api/organizations/[orgId]/members/[memberId]` | `PATCH` | MAINTAINER | Role / status / departmentLabel / payoutRecipient | `ROLE_CHANGE` / `STATUS_CHANGE` / `EXPERT_APPROVED` / `EXPERT_REJECTED` (MEMBER) |
+| `/api/organizations/[orgId]/members/[memberId]` | `PATCH` | MAINTAINER | Role / status / departmentLabel / payoutRecipient | `ROLE_CHANGE` / `STATUS_CHANGE` (MEMBER) |
 | `/api/organizations/[orgId]/members/[memberId]` | `DELETE` | MAINTAINER | Set `status = REMOVED` | `MEMBER_REMOVED` (MEMBER) |
 | `/api/organizations/[orgId]/invitations` | `GET` | MAINTAINER | Pending + accepted + revoked invites | — |
 | `/api/organizations/[orgId]/invitations` | `POST` | MAINTAINER | Send invite | `INVITE_SENT` (MEMBER) |

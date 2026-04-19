@@ -47,6 +47,7 @@ import { OrgContextBar } from "@/components/dashboard/OrgContextBar";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { signOut, useSession } from "@/lib/auth-client";
 import { MEMBER_ROLE_LABEL } from "@/lib/labels/org-labels";
+import { resolvePersonalDashboardHref } from "@/lib/labels/personal-dashboard";
 import { disconnectStreamClients } from "@/providers/StreamProvider";
 import type {
   FundingSource,
@@ -82,7 +83,19 @@ async function fetchOrg(orgId: string): Promise<OrgDetailsResponse> {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || "Failed to load organization");
   }
-  return res.json();
+  const raw = await res.json() as OrgDetailsResponse & {
+    organization: { billingAccount?: { fundingSource: FundingSource } | null };
+  };
+  // `fundingSource` is nested in the API response under `billingAccount`;
+  // flatten it to the top-level organization object so sidebar gating and
+  // useOrgRole's fundingSource check both see the right value.
+  return {
+    ...raw,
+    organization: {
+      ...raw.organization,
+      fundingSource: raw.organization.billingAccount?.fundingSource ?? null,
+    },
+  };
 }
 
 /**
@@ -294,6 +307,7 @@ export default function OrgLayout({
   // context am I in?", the bottom answers "who am I?".
   const userExt = session?.user as
     | (NonNullable<typeof session>["user"] & {
+        orgAdminProfileId?: string | null;
         consultantProfileId?: string | null;
         consulteeProfileId?: string | null;
         organizationMemberships?: Array<{
@@ -305,11 +319,11 @@ export default function OrgLayout({
       })
     | undefined;
 
-  const personalHref = userExt?.consultantProfileId
-    ? `/dashboard/consultant/${userExt.consultantProfileId}/home`
-    : userExt?.consulteeProfileId
-      ? `/dashboard/consultee/${userExt.consulteeProfileId}/home`
-      : null;
+  const personalHref = resolvePersonalDashboardHref({
+    orgAdminProfileId: userExt?.orgAdminProfileId,
+    consultantProfileId: userExt?.consultantProfileId,
+    consulteeProfileId: userExt?.consulteeProfileId,
+  });
 
   // Other orgs the user belongs to (excluding the current one)
   const otherOrgs = (userExt?.organizationMemberships ?? []).filter(

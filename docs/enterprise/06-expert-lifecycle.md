@@ -20,31 +20,35 @@ The `Membership.consultantProfileId` foreign key links to that
 profile, so the org side can read the expert's domain, reviews, and
 availability without duplicating data.
 
-## Application workflow
+## How experts join an org
 
-When an org is configured with
-`Organization.autoApproveConsultants = false` (the default), an expert
-applies rather than being added directly:
+EXPERT and LEARNER are **disjoint roles** — a member cannot flip between
+them on the same Membership (see `lib/enterprise/role-transitions.ts`).
+That boundary removed the in-org "apply to deliver" workflow that used
+to live on `Membership.applicationNote / appliedAt / approvedAt /
+approvedBy`; those columns were dropped in
+`prisma/migrations/20260420100000_drop_membership_application_fields`.
 
-1. The expert clicks "Apply to join" on the org's public page.
-2. The server inserts a `Membership` row with:
-   - `role = EXPERT`
-   - `status = PENDING`
-   - `appliedAt = now()`
-   - `applicationNote = <free-form text>`
-3. OrgAuditLog row emitted in the `MEMBER` category, action
-   `EXPERT_APPLIED` (from `lib/enterprise/audit-actions.ts`).
-4. A MAINTAINER approves or rejects via
-   `PATCH /api/organizations/[orgId]/members/[memberId]`:
-   - Approve → `status = ACTIVE`, `approvedAt = now()`,
-     `approvedBy = <approver Membership.id>`.
-   - Reject → `status = REMOVED`. The row is retained so re-application
-     has a paper trail.
-5. Approval/rejection emits `EXPERT_APPROVED` or `EXPERT_REJECTED`.
+Today there are two entry points to EXPERT membership:
 
-If `autoApproveConsultants = true`, the Membership is created directly
-with `status = ACTIVE` and the EXPERT_APPROVED action is logged
-automatically.
+1. **Invitation** — an OWNER/MAINTAINER sends an EXPERT invite; on
+   acceptance (`app/api/organizations/invitations/accept/route.ts`) the
+   server creates a `Membership` row with `status = ACTIVE`, and
+   auto-provisions a `ConsultantProfile` (placeholder `Domain "General"`,
+   `scheduleType = WEEKLY`, `verificationStatus = PENDING_VERIFICATION`)
+   if the user doesn't already have one. The org EXPERT completes
+   their real domain + schedule selection from the consultant profile
+   editor, and platform verification still gates their visibility in
+   `/explore/experts`.
+2. **Direct admin add** — a MAINTAINER posts to
+   `POST /api/organizations/[orgId]/members` with `role = EXPERT`. This
+   path requires the target user to already have a `ConsultantProfile`.
+
+If the product decides later to bring back an in-org application queue,
+build it around a dedicated model (e.g. `ExpertApplication`) rather than
+re-adding fields to `Membership` — keeping join state separate from
+membership state avoids the LEARNER↔EXPERT ambiguity this refactor
+fixed.
 
 ## `PayoutRecipient`
 

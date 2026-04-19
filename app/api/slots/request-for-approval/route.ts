@@ -7,6 +7,7 @@ import { SlotValidationService } from "@/utils/slotAllocation/SlotValidationServ
 import { notifyNewBookingRequest } from "@/lib/novu";
 import { RequestForApprovalSchema } from "@/schemas/slots";
 import { requestApprovalLimiter, applyRateLimit } from "@/lib/rate-limit";
+import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 
 import { getSession } from "@/lib/auth-server";
 export async function POST(req: NextRequest) {
@@ -44,7 +45,9 @@ export async function POST(req: NextRequest) {
     const startTime = new Date(slotStartTimeInUTC);
     const endTime = new Date(slotEndTimeInUTC);
 
-    // Get the consultee profile
+    // Lazy-create ConsulteeProfile on first consumer action — org-admins
+    // and consultants who book approvals will otherwise 404 here.
+    await ensureConsulteeProfile(prisma, session.user.id);
     const consulteeProfile = await prisma.consulteeProfile.findUnique({
       where: { userId: session.user.id },
       include: { user: true },

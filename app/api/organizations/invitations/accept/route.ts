@@ -18,6 +18,7 @@ import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { MemberRoleSchema } from "@/lib/labels/org-labels";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 
 const AcceptBodySchema = z.object({
   invitationId: z.string().min(1),
@@ -122,16 +123,65 @@ export async function POST(req: NextRequest) {
         return { membership: existing, organization: org, alreadyMember: true };
       }
 
-      // Profile FK hydration — if the user has a consultee or consultant
-      // profile we link it so downstream joins don't have to null-check.
+      // Profile FK hydration. The rules are role-specific:
+      //   LEARNER — ensure ConsulteeProfile exists (lazy-create if not),
+      //             link via Membership.consulteeProfileId.
+      //   EXPERT  — ensure ConsultantProfile exists (lazy-create with
+      //             verificationStatus=PENDING if not), link via
+      //             Membership.consultantProfileId. The org-issued
+      //             ConsultantProfile mirrors the posture of the self-
+      //             service apply flow: the profile is hidden from
+      //             /explore/experts until a platform admin verifies.
+      //   Other roles — no profile linkage (MAINTAINER, MANAGER, etc.).
+      //
       // The same profile may be linked to memberships at several orgs
       // concurrently; the schema is deliberately many-to-many and
       // docs/enterprise/14-scenarios-and-examples.md lists multi-org
       // experts and learners as first-class cases.
-      const profiles = await tx.user.findUnique({
-        where: { id: userId },
-        select: { consulteeProfileId: true, consultantProfileId: true },
-      });
+      let consulteeProfileId: string | null = null;
+      let consultantProfileId: string | null = null;
+
+      if (normalizedRole === "LEARNER") {
+        consulteeProfileId = await ensureConsulteeProfile(tx, userId);
+      } else if (normalizedRole === "EXPERT") {
+        const existing = await tx.user.findUnique({
+          where: { id: userId },
+          select: { consultantProfileId: true },
+        });
+        if (existing?.consultantProfileId) {
+          consultantProfileId = existing.consultantProfileId;
+        } else {
+          // Org-invited EXPERTs don't pick a domain / schedule at
+          // invitation accept time the way self-service apply-to-consult
+          // does. Seed a minimal-but-valid profile with the "General"
+          // placeholder domain + WEEKLY schedule so the Membership FK
+          // can be satisfied. The user completes real domain + schedule
+          // selection from the expert profile editor.
+          //
+          // verificationStatus defaults to PENDING_VERIFICATION, which
+          // keeps the profile hidden from /explore/experts until a
+          // platform admin reviews — matching the apply-flow posture.
+          const placeholderDomain = await tx.domain.upsert({
+            where: { name: "General" },
+            create: { name: "General" },
+            update: {},
+            select: { id: true },
+          });
+          const created = await tx.consultantProfile.create({
+            data: {
+              userId,
+              domainId: placeholderDomain.id,
+              scheduleType: "WEEKLY",
+            },
+            select: { id: true },
+          });
+          await tx.user.updateMany({
+            where: { id: userId, consultantProfileId: null },
+            data: { consultantProfileId: created.id },
+          });
+          consultantProfileId = created.id;
+        }
+      }
 
       // BetterAuth Member row is kept for org-scoped session flows.
       // Membership.betterAuthMemberId preserves the linkage even after
@@ -153,14 +203,8 @@ export async function POST(req: NextRequest) {
           organizationId: invitation.organizationId,
           role: normalizedRole,
           status: "ACTIVE",
-          consulteeProfileId:
-            normalizedRole === "LEARNER"
-              ? profiles?.consulteeProfileId ?? null
-              : null,
-          consultantProfileId:
-            normalizedRole === "EXPERT"
-              ? profiles?.consultantProfileId ?? null
-              : null,
+          consulteeProfileId,
+          consultantProfileId,
           betterAuthMemberId: betterAuthMember.id,
         },
       });

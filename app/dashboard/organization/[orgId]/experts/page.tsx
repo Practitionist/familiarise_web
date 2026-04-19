@@ -1,19 +1,16 @@
 "use client";
 
 import { use } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 
 import {
   DashboardHeader,
   DashboardContent,
 } from "@/components/dashboard/DashboardShell";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -25,7 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
+import { useRequireOrgAccess } from "../useOrgRole";
 import type { MemberStatus } from "@prisma/client";
 
 // ---------------------------------------------------------------------------
@@ -35,9 +32,6 @@ import type { MemberStatus } from "@prisma/client";
 interface ExpertRow {
   id: string;
   status: MemberStatus;
-  applicationNote: string | null;
-  appliedAt: string | null;
-  approvedAt: string | null;
   payoutRecipient: "SELF" | "ORGANIZATION";
   departmentLabel: string | null;
   createdAt: string;
@@ -61,77 +55,36 @@ async function fetchExperts(
   return res.json();
 }
 
-async function updateMemberStatus(
-  orgId: string,
-  memberId: string,
-  status: MemberStatus,
-): Promise<void> {
-  const res = await fetch(
-    `/api/organizations/${orgId}/members/${memberId}`,
-    {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
-    },
-  );
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(
-      (body as { error?: string }).error ?? "Failed to update status",
-    );
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
+// The LEARNER<->EXPERT disjoint-roles rule means EXPERT Memberships are
+// always ACTIVE on creation (they come from invites or direct admin
+// adds that immediately grant the role). There is no PENDING application
+// queue for experts anymore — this page is purely a read view of the
+// active roster. If we bring back an in-org apply flow later, rebuild
+// it around a dedicated model, not a MemberStatus.PENDING.
 export default function OrgExpertsPage({
   params,
 }: {
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = use(params);
-  const { isAtLeast } = useOrgRole(orgId);
   const { allowed } = useRequireOrgAccess(orgId, {
     minRole: "MANAGER",
     canHost: true,
   });
-  const queryClient = useQueryClient();
 
   const active = useQuery({
     queryKey: ["org-experts", orgId, "ACTIVE"],
     queryFn: () => fetchExperts(orgId, "ACTIVE"),
     enabled: allowed,
   });
-  const pending = useQuery({
-    queryKey: ["org-experts", orgId, "PENDING"],
-    queryFn: () => fetchExperts(orgId, "PENDING"),
-    enabled: allowed && isAtLeast("MAINTAINER"),
-  });
-
-  const approvalAction = useMutation({
-    mutationFn: async (args: {
-      memberId: string;
-      action: "APPROVE" | "REJECT";
-    }) => {
-      // APPROVE moves PENDING → ACTIVE; REJECT moves PENDING → REMOVED.
-      // The members PATCH route handles the audit log + transition guards.
-      await updateMemberStatus(
-        orgId,
-        args.memberId,
-        args.action === "APPROVE" ? "ACTIVE" : "REMOVED",
-      );
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["org-experts", orgId] });
-    },
-  });
 
   if (!allowed) return null;
 
   const activeRows = active.data?.data ?? [];
-  const pendingRows = pending.data?.data ?? [];
 
   return (
     <>
@@ -140,99 +93,6 @@ export default function OrgExpertsPage({
         subtitle="Experts providing services under this organization"
       />
       <DashboardContent>
-        {/* Pending applications (MAINTAINER+) */}
-        {isAtLeast("MAINTAINER") && pendingRows.length > 0 && (
-          <Card className="mb-6 border-amber-200">
-            <CardHeader>
-              <CardTitle className="text-base">
-                Pending applications ({pendingRows.length})
-              </CardTitle>
-              <CardDescription>
-                Review and approve expert applications.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {approvalAction.error && (
-                <p className="text-sm text-red-600 mb-3">
-                  {(approvalAction.error as Error).message}
-                </p>
-              )}
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Applicant</TableHead>
-                    <TableHead>Note</TableHead>
-                    <TableHead>Applied</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {pendingRows.map((row) => (
-                    <TableRow key={row.id}>
-                      <TableCell>
-                        <div className="flex flex-col">
-                          <span className="font-medium text-zinc-900">
-                            {row.user.name ?? "—"}
-                          </span>
-                          <span className="text-xs text-zinc-500">
-                            {row.user.email}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm text-zinc-600 max-w-xs truncate">
-                        {row.applicationNote || "—"}
-                      </TableCell>
-                      <TableCell className="text-sm text-zinc-500">
-                        {row.appliedAt
-                          ? new Date(row.appliedAt).toLocaleDateString()
-                          : "—"}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() =>
-                              approvalAction.mutate({
-                                memberId: row.id,
-                                action: "APPROVE",
-                              })
-                            }
-                            disabled={approvalAction.isPending}
-                          >
-                            {approvalAction.isPending ? (
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                            ) : (
-                              <CheckCircle2 className="h-3 w-3 mr-1" />
-                            )}
-                            Approve
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="text-red-600 hover:text-red-700"
-                            onClick={() =>
-                              approvalAction.mutate({
-                                memberId: row.id,
-                                action: "REJECT",
-                              })
-                            }
-                            disabled={approvalAction.isPending}
-                          >
-                            <XCircle className="h-3 w-3 mr-1" />
-                            Reject
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Active experts */}
         <Card>
           <CardHeader>
             <CardTitle className="text-base">
@@ -306,8 +166,7 @@ export default function OrgExpertsPage({
                         colSpan={5}
                         className="text-center text-sm text-zinc-500 py-6"
                       >
-                        No experts yet. Invite experts or wait for
-                        applications.
+                        No experts yet. Invite an expert to get started.
                       </TableCell>
                     </TableRow>
                   )}

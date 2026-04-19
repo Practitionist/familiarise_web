@@ -17,6 +17,7 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import type { MemberRole, MemberStatus } from "@prisma/client";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { isBlockedRoleTransition } from "@/lib/enterprise/role-transitions";
 
 // Canonical MemberRole Zod enum. Mirrors the Prisma enum — if a role
 // is added to the schema, TS fails here until the list is updated.
@@ -194,7 +195,7 @@ export async function POST(
   // the tombstone first).
   const existing = await prisma.membership.findUnique({
     where: { userId_organizationId: { userId, organizationId: orgId } },
-    select: { id: true, status: true },
+    select: { id: true, status: true, role: true },
   });
 
   if (existing && existing.status !== "REMOVED") {
@@ -209,8 +210,27 @@ export async function POST(
   const consultantProfileId =
     role === "EXPERT" ? user.consultantProfileId ?? null : null;
 
-  const membership = await prisma.$transaction(async (tx) => {
+  let membership;
+  try {
+    membership = await prisma.$transaction(async (tx) => {
     if (existing) {
+      // Reactivation keeps the same Membership row (preserves downstream
+      // FKs on ProgramAssignment / audit trail). That means the LEARNER
+      // <-> EXPERT boundary applies here too: a previously-LEARNER user
+      // can't be re-added as EXPERT on the same Membership. They need a
+      // brand-new Membership, which (given we soft-delete rather than
+      // hard-delete) effectively means they can't swap roles inside
+      // this org.
+      if (
+        existing.status === "REMOVED" &&
+        isBlockedRoleTransition(existing.role, role)
+      ) {
+        throw Object.assign(
+          new Error("ROLE_TRANSITION_BLOCKED"),
+          { httpStatus: 409 },
+        );
+      }
+
       // REMOVED → ACTIVE reactivation. Keep the same membership row so
       // downstream FKs (ProgramAssignment, audit trail, etc.) stay intact.
       const reactivated = await tx.membership.update({
@@ -260,7 +280,15 @@ export async function POST(
       },
     });
     return created;
-  });
+    });
+  } catch (err) {
+    if (err instanceof Error && "httpStatus" in err) {
+      const status =
+        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      return NextResponse.json({ error: err.message }, { status });
+    }
+    throw err;
+  }
 
   return NextResponse.json(
     { membership },

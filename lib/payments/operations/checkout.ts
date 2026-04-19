@@ -23,6 +23,7 @@ import {
   ApprovalLock,
 } from "@/utils/appointmentlock";
 import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
+import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import { isMinuteWithinWeeklySlot } from "@/utils/slotAllocation/slotTimeUtils";
 import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
 import {
@@ -200,7 +201,12 @@ export async function calculateAmountAndValidate(
     let plan;
     let priceCurrency = "INR";
 
-    // Get user profile
+    // Lazy-create ConsulteeProfile if this is the user's first
+    // consumer action. ORG_ADMIN / CONSULTANT users who also book
+    // personal sessions (valid, if rare) would hit "User profile not
+    // found" before this helper existed — now we seed the profile on
+    // demand inside the checkout tx.
+    await ensureConsulteeProfile(tx, userId);
     const user = await tx.user.findUnique({
       where: { id: userId },
       include: {
@@ -960,6 +966,7 @@ async function revalidateInsideLock(
   // Re-run the same validation as calculateAmountAndValidate
   // but this time we're inside the lock, so it's safe
   await prisma.$transaction(async (tx) => {
+    await ensureConsulteeProfile(tx, userId);
     const user = await tx.user.findUnique({
       where: { id: userId },
       include: { consulteeProfile: true },
