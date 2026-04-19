@@ -60,6 +60,12 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import type { Ticket, TicketCounts, TicketListResponse } from "@/types/tickets";
 
+// /api/payments/refunds is a 501 stub until the Arch 4-Modified rewrite
+// ports it onto WalletEntry + SettlementLedgerEntry (Issue #681). Keep
+// the button rendered so operators can see the action exists, but
+// disable it so it can't fire against the dead endpoint.
+const REFUND_ACTION_ENABLED = false;
+
 const getStatusColor = (status: string) => {
   switch (status.toUpperCase()) {
     case "OPEN":
@@ -777,7 +783,14 @@ export default function SupportTicketsPage() {
                               size="sm"
                               variant="destructive"
                               onClick={handleInitiateRefund}
-                              disabled={initiatingRefund}
+                              disabled={
+                                initiatingRefund || !REFUND_ACTION_ENABLED
+                              }
+                              title={
+                                REFUND_ACTION_ENABLED
+                                  ? undefined
+                                  : "Refunds temporarily unavailable — pending Arch 4 port (Issue #681)."
+                              }
                             >
                               {initiatingRefund ? (
                                 <Loader2 className="h-4 w-4 animate-spin mr-2" />

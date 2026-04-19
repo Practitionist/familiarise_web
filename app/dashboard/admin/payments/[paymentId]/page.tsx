@@ -17,6 +17,13 @@ import type {
   PaymentDetailDispute,
 } from "@/types/payments";
 
+// /api/payments/refunds is a 501 stub until the Arch 4-Modified rewrite
+// ports it onto the new WalletEntry + SettlementLedgerEntry flows
+// (tracked in Issue #681). Surfacing the refund action while the
+// endpoint is dead would just produce failed toasts — gate it here and
+// flip to `true` when the route goes live.
+const REFUND_ACTION_ENABLED = false;
+
 // Fetch payment details
 async function fetchPaymentDetails(paymentId: string): Promise<PaymentDetail> {
   const response = await fetch(`/api/admin/payments/${paymentId}`);
@@ -150,7 +157,16 @@ export default function PaymentDetailsPage({ params }: PageProps) {
           <h1 className="text-3xl font-bold text-gray-900">Payment Details</h1>
         </div>
         {payment.paymentStatus === "SUCCEEDED" && !showRefundForm && (
-          <Button onClick={() => setShowRefundForm(true)} variant="destructive">
+          <Button
+            onClick={() => setShowRefundForm(true)}
+            variant="destructive"
+            disabled={!REFUND_ACTION_ENABLED}
+            title={
+              REFUND_ACTION_ENABLED
+                ? undefined
+                : "Refunds temporarily unavailable — pending Arch 4 port (Issue #681)."
+            }
+          >
             Issue Refund
           </Button>
         )}

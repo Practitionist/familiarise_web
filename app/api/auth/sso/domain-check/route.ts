@@ -1,29 +1,97 @@
 /**
- * @arch4-stub Pending Arch 4-Modified rewrite (Issue #681).
+ * GET /api/auth/sso/domain-check?email=<email>
  *
- * The original implementation relied on OrganizationProfile /
- * OrganizationMemberProfile / OrgCreditPool — all removed. The new model
- * uses Organization / Membership / BillingAccount / WalletEntry / Program.
+ * Pre-auth discovery endpoint. The signin/signup pages call this on
+ * email blur so an enforce-SSO domain can short-circuit the credentials
+ * form and redirect to the IdP via BetterAuth's `signIn.sso()`.
  *
- * This route is currently a 501 placeholder. See:
- *   docs/enterprise/phase-2-api-rewrite-checklist.md
- * for the per-route migration plan.
+ * Lookup chain (all Arch 4-Modified — no legacy org profile tables):
+ *   1. Parse + narrow the email query param (Zod).
+ *   2. Match the email's domain against `OrgDomainClaim`.
+ *   3. For the owning org, read `OrganizationSSOSettings` + the first
+ *      active `SsoProvider`.
+ *   4. Return `{ enforceSSO, organizationName?, ssoBody? }`. If the
+ *      domain isn't claimed, or the org doesn't enforce SSO, or no
+ *      provider is configured, return `{ enforceSSO: false }` so the
+ *      client falls through to the normal credentials flow.
  *
- * File: app/api/auth/sso/domain-check/route.ts
+ * Intentionally does NOT use `requireApiAuth` — this runs before login.
+ * The response payload is shaped to be minimal (no PII, no provider
+ * internals) so leaking it to unauthenticated callers is safe.
  */
 
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
+import { z } from "zod";
+import prisma from "@/lib/prisma";
 
-function notImplemented(method: string) {
-  return NextResponse.json(
-    {
-      error: "Not implemented",
-      detail: `${method} app/api/auth/sso/domain-check/route.ts is awaiting Arch 4-Modified rewrite; see Issue #681.`,
+const QuerySchema = z.object({
+  email: z.string().email(),
+});
+
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "";
+
+export async function GET(req: NextRequest) {
+  const url = new URL(req.url);
+  const parsed = QuerySchema.safeParse({
+    email: url.searchParams.get("email"),
+  });
+  if (!parsed.success) {
+    return NextResponse.json({ enforceSSO: false });
+  }
+
+  const domain = parsed.data.email.split("@")[1]?.toLowerCase();
+  if (!domain) return NextResponse.json({ enforceSSO: false });
+
+  const claim = await prisma.orgDomainClaim.findUnique({
+    where: { domain },
+    select: {
+      organization: {
+        select: {
+          name: true,
+          status: true,
+          ssoSettings: {
+            select: { enforceSSO: true, allowedEmailDomains: true },
+          },
+        },
+      },
     },
-    { status: 501 },
-  );
-}
+  });
 
-export async function GET() {
-  return notImplemented("GET");
+  if (
+    !claim ||
+    !claim.organization ||
+    claim.organization.status !== "ACTIVE" ||
+    !claim.organization.ssoSettings?.enforceSSO
+  ) {
+    return NextResponse.json({ enforceSSO: false });
+  }
+
+  // A `domainClaim` row exists, but if the org also curates an allowlist
+  // we honour it so a caught-in-transition domain (owned by the org but
+  // temporarily excluded) can't force SSO on someone.
+  const allowed = claim.organization.ssoSettings.allowedEmailDomains;
+  if (allowed.length > 0 && !allowed.includes(domain)) {
+    return NextResponse.json({ enforceSSO: false });
+  }
+
+  // First provider on this domain wins. Multi-provider orgs send users
+  // to their own BetterAuth configured route — one provider per domain
+  // is the common case.
+  const provider = await prisma.ssoProvider.findFirst({
+    where: { domain },
+    select: { providerId: true },
+  });
+  if (!provider) {
+    return NextResponse.json({ enforceSSO: false });
+  }
+
+  return NextResponse.json({
+    enforceSSO: true,
+    organizationName: claim.organization.name,
+    ssoBody: {
+      providerId: provider.providerId,
+      domain,
+      callbackURL: `${APP_URL}/auth/signin?ssoCallback=1`,
+    },
+  });
 }
