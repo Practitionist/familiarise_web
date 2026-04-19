@@ -6,11 +6,13 @@ import { useRequireOrgRole } from "../useOrgRole";
 import {
   Users,
   Briefcase,
-  Calendar,
-  CreditCard,
-  GraduationCap,
+  Wallet,
+  AlertCircle,
+  FileText,
   TrendingUp,
+  UserCheck,
 } from "lucide-react";
+import type { FundingSource, MemberRole } from "@prisma/client";
 
 import {
   DashboardHeader,
@@ -20,23 +22,58 @@ import {
 import { StatCard, StatCardSkeleton } from "@/components/dashboard/StatCard";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
+// ---------------------------------------------------------------------------
+// Types — match GET /api/organizations/[orgId]/analytics
+// ---------------------------------------------------------------------------
+
 interface OrgAnalytics {
-  members: { total: number; learners: number };
-  plans: { active: number };
-  bookings: {
-    monthToDate: number;
-    lastMonth: number;
-    deltaPct: number | null;
+  capabilities: {
+    canSponsor: boolean;
+    canHost: boolean;
+    fundingSource: FundingSource | null;
+    walletBalance: number | null;
+    currency: string | null;
   };
-  revenue: { monthToDateGross: number };
-  seatsTotal: number | null;
-  seatsUsed: number;
+  members: {
+    total: number;
+    active: number;
+    byRole: Array<{ role: MemberRole; count: number }>;
+  };
+  programs: {
+    total: number;
+    active: number;
+    activeAssignments: number;
+  };
+  wallet: {
+    balancePaise: number;
+    recent: Array<{ reason: string; count: number; deltaPaise: number }>;
+  } | null;
+  invoices: {
+    outstandingCount: number;
+    outstandingPaise: number;
+    pastDueCount: number;
+    paidLast30dCount: number;
+    paidLast30dPaise: number;
+  } | null;
+  earnings: Array<{
+    status: string;
+    count: number;
+    orgSharePaise: number;
+    refundedPaise: number;
+  }> | null;
 }
 
 async function fetchAnalytics(orgId: string): Promise<OrgAnalytics> {
   const res = await fetch(`/api/organizations/${orgId}/analytics`);
   if (!res.ok) throw new Error("Failed to load analytics");
   return res.json();
+}
+
+function countByRole(
+  byRole: OrgAnalytics["members"]["byRole"],
+  role: MemberRole,
+): number {
+  return byRole.find((r) => r.role === role)?.count ?? 0;
 }
 
 export default function OrgAnalyticsPage({
@@ -49,11 +86,12 @@ export default function OrgAnalyticsPage({
   const { data, isLoading } = useQuery({
     queryKey: ["org-analytics", orgId],
     queryFn: () => fetchAnalytics(orgId),
+    enabled: allowed,
   });
 
   if (!allowed) return null;
 
-  if (isLoading) {
+  if (isLoading || !data) {
     return (
       <>
         <DashboardHeader title="Analytics" subtitle="Activity at a glance" />
@@ -68,6 +106,18 @@ export default function OrgAnalyticsPage({
     );
   }
 
+  const currency = data.capabilities.currency ?? "INR";
+  const learners = countByRole(data.members.byRole, "LEARNER");
+  const experts = countByRole(data.members.byRole, "EXPERT");
+
+  // Earnings "paid" cell: sum the orgShare of PAID rows, net of refunds.
+  const paidEarnings =
+    data.earnings?.find((e) => e.status === "PAID")?.orgSharePaise ?? 0;
+  const refundedEarnings = (data.earnings ?? []).reduce(
+    (sum, e) => sum + e.refundedPaise,
+    0,
+  );
+
   return (
     <>
       <DashboardHeader title="Analytics" subtitle="Activity at a glance" />
@@ -75,52 +125,85 @@ export default function OrgAnalyticsPage({
         <DashboardGrid columns={3}>
           <StatCard
             title="Members"
-            value={data?.members.total ?? 0}
+            value={data.members.total}
+            subtitle={`${data.members.active} active`}
             icon={Users}
+            variant="info"
           />
+          {data.capabilities.canSponsor && (
+            <StatCard
+              title="Learners"
+              value={learners}
+              subtitle={
+                data.programs.activeAssignments > 0
+                  ? `${data.programs.activeAssignments} active assignments`
+                  : "No active assignments"
+              }
+              icon={UserCheck}
+            />
+          )}
+          {data.capabilities.canHost && (
+            <StatCard title="Experts" value={experts} icon={UserCheck} />
+          )}
           <StatCard
-            title="Learners"
-            value={data?.members.learners ?? 0}
-            subtitle={
-              data?.seatsTotal
-                ? `${data.seatsUsed} / ${data.seatsTotal} seats`
-                : "Unlimited seats"
-            }
-            icon={GraduationCap}
-          />
-          <StatCard
-            title="Active plans"
-            value={data?.plans.active ?? 0}
+            title="Active programs"
+            value={data.programs.active}
+            subtitle={`${data.programs.total} total`}
             icon={Briefcase}
           />
-          <StatCard
-            title="Bookings (this month)"
-            value={data?.bookings.monthToDate ?? 0}
-            icon={Calendar}
-            trend={
-              data?.bookings.deltaPct !== null &&
-              data?.bookings.deltaPct !== undefined
-                ? {
-                    value: Math.round(data.bookings.deltaPct),
-                    isPositive: data.bookings.deltaPct >= 0,
-                  }
-                : undefined
-            }
-          />
-          <StatCard
-            title="Bookings (last month)"
-            value={data?.bookings.lastMonth ?? 0}
-            icon={TrendingUp}
-          />
-          <StatCard
-            title="Revenue (this month)"
-            value={formatCurrencyAmount(
-              data?.revenue.monthToDateGross ?? 0,
-              "INR",
-            )}
-            icon={CreditCard}
-            variant="success"
-          />
+          {data.wallet && (
+            <StatCard
+              title="Wallet balance"
+              value={formatCurrencyAmount(data.wallet.balancePaise, currency)}
+              icon={Wallet}
+              variant="success"
+            />
+          )}
+          {data.invoices && (
+            <>
+              <StatCard
+                title="Outstanding invoices"
+                value={data.invoices.outstandingCount}
+                subtitle={formatCurrencyAmount(
+                  data.invoices.outstandingPaise,
+                  currency,
+                )}
+                icon={FileText}
+                variant={data.invoices.pastDueCount > 0 ? "warning" : "info"}
+              />
+              <StatCard
+                title="Paid (last 30 days)"
+                value={data.invoices.paidLast30dCount}
+                subtitle={formatCurrencyAmount(
+                  data.invoices.paidLast30dPaise,
+                  currency,
+                )}
+                icon={TrendingUp}
+                variant="success"
+              />
+              {data.invoices.pastDueCount > 0 && (
+                <StatCard
+                  title="Past-due invoices"
+                  value={data.invoices.pastDueCount}
+                  icon={AlertCircle}
+                  variant="warning"
+                />
+              )}
+            </>
+          )}
+          {data.earnings && data.earnings.length > 0 && (
+            <StatCard
+              title="Earnings — paid"
+              value={formatCurrencyAmount(paidEarnings, currency)}
+              subtitle={
+                refundedEarnings > 0
+                  ? `${formatCurrencyAmount(refundedEarnings, currency)} refunded`
+                  : undefined
+              }
+              icon={Wallet}
+              variant="success"
+            />
+          )}
         </DashboardGrid>
       </DashboardContent>
     </>

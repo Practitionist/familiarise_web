@@ -108,7 +108,10 @@ export async function GET(
     );
   }
 
-  return NextResponse.json({ organization: org });
+  return NextResponse.json({
+    organization: org,
+    membership: { role: access.member.role, status: access.member.status },
+  });
 }
 
 export async function PATCH(

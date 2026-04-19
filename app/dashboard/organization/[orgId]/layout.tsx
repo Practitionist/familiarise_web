@@ -157,12 +157,7 @@ export default function OrgLayout({
       // "Members" view; hosts see "Consultants" alongside.
       { name: "Learners", icon: GraduationCap, path: "members?role=LEARNER", show: canSponsor },
       { name: "Experts", icon: UserCog, path: "members?role=EXPERT", show: canHost },
-      // Programs nav hidden until the dashboard CRUD UI ships on top of
-      // the (already live) /api/organizations/[id]/programs routes —
-      // today the page is a scaffold, so exposing it in the sidebar sends
-      // admins to a "pending rewrite" shell. Flip `show` back to the
-      // capability check once the real UI lands.
-      { name: "Programs", icon: Briefcase, path: "programs", show: false },
+      { name: "Programs", icon: Briefcase, path: "programs", show: canSponsor && isAtLeast("MANAGER") },
       // Catalog nav has no page today (deleted alongside the legacy
       // OrganizationPlan-based curated catalog). Hidden until the
       // capability-driven replacement ships. Leaving the entry here so

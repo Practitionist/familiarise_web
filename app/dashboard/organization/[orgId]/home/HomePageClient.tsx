@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import {
   Users,
-  GraduationCap,
+  UserCheck,
   Briefcase,
   CreditCard,
   AlertCircle,
@@ -14,10 +14,11 @@ import {
   Rocket,
   Clock,
   Wallet,
+  FileText,
   UserCog,
   type LucideIcon,
 } from "lucide-react";
-import type { MemberRole } from "@prisma/client";
+import type { FundingSource, MemberRole } from "@prisma/client";
 
 import {
   DashboardHeader,
@@ -37,47 +38,59 @@ import { formatCurrencyAmount } from "@/utils/formatting";
 import { useOrgRole } from "../useOrgRole";
 
 // ---------------------------------------------------------------------------
-// Types
+// Types — shaped to match the actual analytics + activity APIs
 // ---------------------------------------------------------------------------
 
 interface OrgAnalytics {
-  members: { total: number; learners: number };
-  plans: { active: number };
-  bookings: {
-    monthToDate: number;
-    lastMonth: number;
-    deltaPct: number | null;
+  capabilities: {
+    canSponsor: boolean;
+    canHost: boolean;
+    fundingSource: FundingSource | null;
+    walletBalance: number | null;
+    currency: string | null;
   };
-  revenue: { monthToDateGross: number };
-  seatsTotal: number | null;
-  seatsUsed: number;
-}
-
-interface OrgBilling {
-  billingMode: "TAG_ONLY" | "SEAT_PACK" | "INVOICED_MONTHLY";
-  outstanding: { amount: number; invoiceCount: number };
-  pendingCharges: { amount: number; paymentCount: number } | null;
-  creditPool: { balance: number; totalPurchased: number } | null;
-}
-
-interface OrgProfileInfo {
-  kind: "BUYER" | "PROVIDER" | "HYBRID";
-  status: string;
-}
-
-interface ProviderStats {
-  consultantCount: number;
-  earnings: {
-    pending: number;
-    ready: number;
-    paid: number;
+  members: {
+    total: number;
+    active: number;
+    byRole: Array<{ role: MemberRole; count: number }>;
   };
+  programs: {
+    total: number;
+    active: number;
+    activeAssignments: number;
+  };
+  wallet: {
+    balancePaise: number;
+    recent: Array<{ reason: string; count: number; deltaPaise: number }>;
+  } | null;
+  invoices: {
+    outstandingCount: number;
+    outstandingPaise: number;
+    pastDueCount: number;
+    paidLast30dCount: number;
+    paidLast30dPaise: number;
+  } | null;
+  earnings: Array<{
+    status: string;
+    count: number;
+    orgSharePaise: number;
+    refundedPaise: number;
+  }> | null;
 }
 
 interface ActivityItem {
-  type: "member_joined" | "payment" | "invoice_generated" | "invitation_sent";
+  category:
+    | "MEMBER"
+    | "CONTRACT"
+    | "PROGRAM"
+    | "WALLET"
+    | "INVOICE"
+    | "PAYOUT"
+    | "SETTINGS"
+    | "CONSENT"
+    | "SYSTEM";
   description: string;
-  timestamp: string;
+  createdAt: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -90,54 +103,13 @@ async function fetchAnalytics(orgId: string): Promise<OrgAnalytics> {
   return res.json();
 }
 
-async function fetchBilling(orgId: string): Promise<OrgBilling> {
-  const res = await fetch(`/api/organizations/${orgId}/billing`);
-  if (!res.ok) throw new Error("Failed to load billing");
-  return res.json();
-}
-
 async function fetchActivity(
   orgId: string,
 ): Promise<{ activity: ActivityItem[] }> {
   const res = await fetch(`/api/organizations/${orgId}/activity?limit=5`);
   if (!res.ok) return { activity: [] };
-  return res.json();
-}
-
-async function fetchOrgProfile(orgId: string): Promise<OrgProfileInfo> {
-  const res = await fetch(`/api/organizations/${orgId}`);
-  if (!res.ok) return { kind: "BUYER", status: "ACTIVE" };
-  const data = await res.json();
-  return { kind: data.profile.kind, status: data.profile.status };
-}
-
-async function fetchProviderStats(
-  orgId: string,
-): Promise<ProviderStats | null> {
-  try {
-    const [consultantsRes, payoutsRes] = await Promise.all([
-      fetch(`/api/organizations/${orgId}/consultants`),
-      fetch(`/api/organizations/${orgId}/payouts`),
-    ]);
-    const consultants = consultantsRes.ok
-      ? await consultantsRes.json()
-      : { consultants: [] };
-    const payouts = payoutsRes.ok
-      ? await payoutsRes.json()
-      : { payouts: [] };
-
-    // Sum payout amounts by status for a rough earnings view
-    const paid = (payouts.payouts ?? [])
-      .filter((p: { status: string }) => p.status === "COMPLETED")
-      .reduce((s: number, p: { netPayout: number }) => s + p.netPayout, 0);
-
-    return {
-      consultantCount: consultants.consultants?.length ?? 0,
-      earnings: { pending: 0, ready: 0, paid },
-    };
-  } catch {
-    return null;
-  }
+  const json = await res.json();
+  return { activity: json.data ?? [] };
 }
 
 // ---------------------------------------------------------------------------
@@ -154,12 +126,21 @@ function timeAgo(iso: string): string {
   return `${days}d ago`;
 }
 
-const ACTIVITY_ICONS: Record<ActivityItem["type"], typeof Users> = {
-  member_joined: Users,
-  payment: CreditCard,
-  invoice_generated: Briefcase,
-  invitation_sent: Mail,
+const ACTIVITY_ICONS: Partial<Record<ActivityItem["category"], LucideIcon>> = {
+  MEMBER: Users,
+  WALLET: CreditCard,
+  INVOICE: Briefcase,
+  PAYOUT: Wallet,
+  CONTRACT: Briefcase,
+  SETTINGS: Settings,
 };
+
+function countByRole(
+  byRole: OrgAnalytics["members"]["byRole"],
+  role: MemberRole,
+): number {
+  return byRole.find((r) => r.role === role)?.count ?? 0;
+}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -172,93 +153,89 @@ export function HomePageClient({ orgId }: { orgId: string }) {
     queryKey: ["org-analytics", orgId],
     queryFn: () => fetchAnalytics(orgId),
   });
-  const billing = useQuery({
-    queryKey: ["org-billing", orgId],
-    queryFn: () => fetchBilling(orgId),
-  });
   const activity = useQuery({
     queryKey: ["org-activity", orgId],
     queryFn: () => fetchActivity(orgId),
   });
-  const orgProfile = useQuery({
-    queryKey: ["org-profile-info", orgId],
-    queryFn: () => fetchOrgProfile(orgId),
-  });
-  const isProviderOrHybrid =
-    orgProfile.data?.kind === "PROVIDER" || orgProfile.data?.kind === "HYBRID";
-  const providerStats = useQuery({
-    queryKey: ["org-provider-stats", orgId],
-    queryFn: () => fetchProviderStats(orgId),
-    enabled: isProviderOrHybrid,
-  });
 
-  const isLoading = analytics.isLoading || billing.isLoading;
+  const isLoading = analytics.isLoading;
+  const data = analytics.data;
 
-  // Onboarding checklist — not dismissable; auto-hides once every item is done.
-  // Admins+owners see this so new orgs are guided through the essential setup
-  // steps without the risk of accidentally dismissing it before completion.
+  const canSponsor = data?.capabilities.canSponsor ?? false;
+  const canHost = data?.capabilities.canHost ?? false;
+  const currency = data?.capabilities.currency ?? "INR";
+  const learners = data ? countByRole(data.members.byRole, "LEARNER") : 0;
+  const experts = data ? countByRole(data.members.byRole, "EXPERT") : 0;
+
+  // Onboarding checklist — auto-hides once every item is done.
   const checklist = [
     { label: "Create organization", done: true, href: "#" },
     {
       label: "Invite your first team member",
-      done: (analytics.data?.members.total ?? 0) > 1,
+      done: (data?.members.total ?? 0) > 1,
       href: `/dashboard/organization/${orgId}/invitations`,
     },
     {
-      label: "Create your first plan",
-      done: (analytics.data?.plans.active ?? 0) > 0,
-      href: `/dashboard/organization/${orgId}/plans`,
+      label: "Create your first Program",
+      done: (data?.programs.active ?? 0) > 0,
+      href: `/dashboard/organization/${orgId}/programs`,
     },
     {
       label: "Configure billing settings",
-      done: billing.data !== null && billing.data !== undefined,
-      href: `/dashboard/organization/${orgId}/settings`,
+      done:
+        (data?.wallet !== null && data?.wallet !== undefined) ||
+        (data?.invoices !== null && data?.invoices !== undefined),
+      href: `/dashboard/organization/${orgId}/billing`,
     },
   ];
   const checklistDone = checklist.filter((c) => c.done).length;
   const allDone = checklistDone === checklist.length;
   const showChecklist = !isLoading && isAtLeast("MAINTAINER") && !allDone;
 
-  // Quick action cards (role-gated). Typing `minRole` with `satisfies`
-  // keeps each card literal-typed to MemberRole without having to write
-  // an explicit annotation on the array — we get compile-time safety
-  // that every `minRole` value is a real role.
-  const quickActions = ([
-    {
-      title: "Invite member",
-      description: "Add team members by email",
-      icon: Mail,
-      href: `/dashboard/organization/${orgId}/invitations`,
-      minRole: "MAINTAINER",
-    },
-    {
-      title: "Create plan",
-      description: "Set up a new service plan",
-      icon: Briefcase,
-      href: `/dashboard/organization/${orgId}/plans`,
-      minRole: "MAINTAINER",
-    },
-    {
-      title: "View billing",
-      description: "Invoices and payment summary",
-      icon: CreditCard,
-      href: `/dashboard/organization/${orgId}/billing`,
-      minRole: "MANAGER",
-    },
-    {
-      title: "Org settings",
-      description: "Profile, branding, and configuration",
-      icon: Settings,
-      href: `/dashboard/organization/${orgId}/settings`,
-      minRole: "MAINTAINER",
-    },
-  ] as const satisfies readonly {
-    title: string;
-    description: string;
-    icon: LucideIcon;
-    href: string;
-    minRole: MemberRole;
-  }[]).filter((a) => isAtLeast(a.minRole));
+  // Earnings summary for host orgs — sum of PAID orgShare, net refunds.
+  const paidEarnings =
+    data?.earnings?.find((e) => e.status === "PAID")?.orgSharePaise ?? 0;
+
+  // Quick action cards (role-gated). `satisfies` keeps every `minRole`
+  // compile-time-checked against the real `MemberRole` enum.
+  const quickActions = (
+    [
+      {
+        title: "Invite member",
+        description: "Add team members by email",
+        icon: Mail,
+        href: `/dashboard/organization/${orgId}/invitations`,
+        minRole: "MAINTAINER",
+      },
+      {
+        title: "Create Program",
+        description: "Set up a new licensed-seat or credit-pool program",
+        icon: Briefcase,
+        href: `/dashboard/organization/${orgId}/programs`,
+        minRole: "MAINTAINER",
+      },
+      {
+        title: "View billing",
+        description: "Invoices and payment summary",
+        icon: CreditCard,
+        href: `/dashboard/organization/${orgId}/billing`,
+        minRole: "MANAGER",
+      },
+      {
+        title: "Org settings",
+        description: "Profile, branding, and configuration",
+        icon: Settings,
+        href: `/dashboard/organization/${orgId}/settings`,
+        minRole: "MAINTAINER",
+      },
+    ] as const satisfies readonly {
+      title: string;
+      description: string;
+      icon: LucideIcon;
+      href: string;
+      minRole: MemberRole;
+    }[]
+  ).filter((a) => isAtLeast(a.minRole));
 
   return (
     <>
@@ -267,8 +244,8 @@ export function HomePageClient({ orgId }: { orgId: string }) {
         subtitle="Snapshot of your organization"
       />
       <DashboardContent>
-        {/* Onboarding checklist — hero position, non-dismissable.
-            Auto-hides once every step is complete. */}
+        {/* Onboarding checklist — non-dismissable; auto-hides once every
+            step is complete. */}
         {showChecklist && (
           <Card className="mb-6 border-amber-200 bg-amber-50">
             <CardHeader className="pb-2">
@@ -302,9 +279,7 @@ export function HomePageClient({ orgId }: { orgId: string }) {
                           : "border-amber-400"
                       }`}
                     >
-                      {item.done && (
-                        <Check className="h-3 w-3 text-white" />
-                      )}
+                      {item.done && <Check className="h-3 w-3 text-white" />}
                     </div>
                     <span className={item.done ? "line-through" : ""}>
                       {item.label}
@@ -318,127 +293,93 @@ export function HomePageClient({ orgId }: { orgId: string }) {
 
         {/* Unified stat grid — all cards share one 4-column responsive grid
             so every card has the same width regardless of how many are
-            visible. On mobile they stack 1-wide, on tablet 2-wide, on
-            desktop 4-wide.  Billing and provider cards are injected inline
-            once their data arrives — no separate stacked sections that leave
-            orphaned cards at different widths. */}
-        {isLoading ? (
+            visible. Capability-dependent cards (wallet, invoices, earnings)
+            are rendered inline once their section of the analytics payload
+            is non-null. */}
+        {isLoading || !data ? (
           <DashboardGrid columns={4}>
-            {[1, 2, 3, 4, 5, 6].map((i) => (
+            {[1, 2, 3, 4].map((i) => (
               <StatCardSkeleton key={i} />
             ))}
           </DashboardGrid>
         ) : (
           <DashboardGrid columns={4}>
-            {/* Primary stats — always shown */}
             <StatCard
-              title="Active members"
-              value={analytics.data?.members.total ?? 0}
-              subtitle={`${analytics.data?.members.learners ?? 0} learners`}
+              title="Members"
+              value={data.members.total}
+              subtitle={`${data.members.active} active`}
               icon={Users}
               variant="info"
             />
+            {canSponsor && (
+              <StatCard
+                title="Learners"
+                value={learners}
+                subtitle={
+                  data.programs.activeAssignments > 0
+                    ? `${data.programs.activeAssignments} assignments`
+                    : "No active assignments"
+                }
+                icon={UserCheck}
+              />
+            )}
+            {canHost && (
+              <StatCard title="Experts" value={experts} icon={UserCog} />
+            )}
             <StatCard
-              title="Learners"
-              value={analytics.data?.members.learners ?? 0}
-              subtitle={
-                analytics.data?.seatsTotal
-                  ? `${analytics.data.seatsUsed} / ${analytics.data.seatsTotal} seats`
-                  : "Unlimited seats"
-              }
-              icon={GraduationCap}
-            />
-            <StatCard
-              title="Active plans"
-              value={analytics.data?.plans.active ?? 0}
+              title="Active programs"
+              value={data.programs.active}
+              subtitle={`${data.programs.total} total`}
               icon={Briefcase}
             />
-            <StatCard
-              title="This month"
-              value={formatCurrencyAmount(
-                analytics.data?.revenue.monthToDateGross ?? 0,
-                "INR",
-              )}
-              subtitle={`${analytics.data?.bookings.monthToDate ?? 0} bookings`}
-              icon={CreditCard}
-              variant="success"
-              trend={
-                analytics.data?.bookings.deltaPct !== null &&
-                analytics.data?.bookings.deltaPct !== undefined
-                  ? {
-                      value: Math.round(analytics.data.bookings.deltaPct),
-                      isPositive: analytics.data.bookings.deltaPct >= 0,
-                    }
-                  : undefined
-              }
-            />
 
-            {/* Billing cards — only for manager+ role, appear once billing data loads */}
-            {billing.data && isAtLeast("MANAGER") && (
+            {/* Wallet — only shown when BillingAccount.fundingSource=WALLET */}
+            {data.wallet && isAtLeast("MANAGER") && (
+              <StatCard
+                title="Wallet balance"
+                value={formatCurrencyAmount(data.wallet.balancePaise, currency)}
+                icon={Wallet}
+                variant="success"
+              />
+            )}
+
+            {/* Invoices — only for INVOICE-funded orgs */}
+            {data.invoices && isAtLeast("MANAGER") && (
               <>
-                {billing.data.outstanding.invoiceCount > 0 && (
+                {data.invoices.outstandingCount > 0 && (
                   <StatCard
                     title="Outstanding invoices"
-                    value={billing.data.outstanding.invoiceCount}
+                    value={data.invoices.outstandingCount}
                     subtitle={formatCurrencyAmount(
-                      billing.data.outstanding.amount,
-                      "INR",
+                      data.invoices.outstandingPaise,
+                      currency,
                     )}
+                    icon={FileText}
+                    variant={
+                      data.invoices.pastDueCount > 0 ? "warning" : "info"
+                    }
+                  />
+                )}
+                {data.invoices.pastDueCount > 0 && (
+                  <StatCard
+                    title="Past-due invoices"
+                    value={data.invoices.pastDueCount}
                     icon={AlertCircle}
                     variant="warning"
                   />
                 )}
-                {billing.data.billingMode === "INVOICED_MONTHLY" &&
-                  billing.data.pendingCharges && (
-                    <StatCard
-                      title="Pending charges"
-                      value={formatCurrencyAmount(
-                        billing.data.pendingCharges.amount,
-                        "INR",
-                      )}
-                      subtitle={`${billing.data.pendingCharges.paymentCount} not yet invoiced`}
-                      icon={AlertCircle}
-                      variant="warning"
-                    />
-                  )}
-                {billing.data.billingMode === "SEAT_PACK" &&
-                  billing.data.creditPool && (
-                    <StatCard
-                      title="Credit balance"
-                      value={formatCurrencyAmount(
-                        billing.data.creditPool.balance,
-                        "INR",
-                      )}
-                      subtitle={`${formatCurrencyAmount(
-                        billing.data.creditPool.totalPurchased,
-                        "INR",
-                      )} lifetime`}
-                      icon={CreditCard}
-                    />
-                  )}
               </>
             )}
 
-            {/* Provider/Hybrid stats — appear once provider data loads */}
-            {isProviderOrHybrid && providerStats.data && (
-              <>
-                <StatCard
-                  title="Active consultants"
-                  value={providerStats.data.consultantCount}
-                  icon={UserCog}
-                  variant="info"
-                />
-                <StatCard
-                  title="Total payouts"
-                  value={formatCurrencyAmount(
-                    providerStats.data.earnings.paid,
-                    "INR",
-                  )}
-                  subtitle="Completed payouts"
-                  icon={Wallet}
-                  variant="success"
-                />
-              </>
+            {/* Host-side earnings summary */}
+            {canHost && data.earnings && data.earnings.length > 0 && (
+              <StatCard
+                title="Paid out"
+                value={formatCurrencyAmount(paidEarnings, currency)}
+                subtitle="Completed payouts"
+                icon={Wallet}
+                variant="success"
+              />
             )}
           </DashboardGrid>
         )}
@@ -483,10 +424,10 @@ export function HomePageClient({ orgId }: { orgId: string }) {
             ) : activity.data && activity.data.activity.length > 0 ? (
               <div className="space-y-3">
                 {activity.data.activity.map((item, i) => {
-                  const Icon = ACTIVITY_ICONS[item.type] ?? Clock;
+                  const Icon = ACTIVITY_ICONS[item.category] ?? Clock;
                   return (
                     <div
-                      key={`${item.type}-${i}`}
+                      key={`${item.category}-${item.createdAt}-${i}`}
                       className="flex items-center gap-3 text-sm"
                     >
                       <div className="w-8 h-8 rounded-full bg-zinc-100 flex items-center justify-center shrink-0">
@@ -498,7 +439,7 @@ export function HomePageClient({ orgId }: { orgId: string }) {
                         </p>
                       </div>
                       <span className="text-xs text-zinc-400 shrink-0">
-                        {timeAgo(item.timestamp)}
+                        {timeAgo(item.createdAt)}
                       </span>
                     </div>
                   );

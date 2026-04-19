@@ -67,7 +67,8 @@ const SELECTABLE_ROLES = [
 async function fetchMembers(orgId: string): Promise<{ members: MemberRow[] }> {
   const res = await fetch(`/api/organizations/${orgId}/members`);
   if (!res.ok) throw new Error("Failed to load members");
-  return res.json();
+  const json = await res.json();
+  return { members: json.data ?? [] };
 }
 
 async function addMember(
