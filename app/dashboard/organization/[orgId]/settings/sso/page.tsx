@@ -12,6 +12,18 @@ import {
   MEMBER_ROLE_LABEL,
   MemberRoleSchema,
 } from "@/lib/labels/org-labels";
+import {
+  CreateSsoProviderPayloadSchema,
+  PatchSsoSettingsPayloadSchema,
+  SsoSettingsResponseSchema,
+  type CreateSsoProviderPayload,
+  type SsoSettingsResponse,
+} from "@/schemas/organizations";
+import {
+  parseJsonResponse,
+  validateOutboundPayload,
+  errorMessageFromBody,
+} from "@/lib/fetch-helpers";
 
 import {
   DashboardHeader,
@@ -52,13 +64,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-interface Provider {
-  id: string;
-  providerId: string;
-  issuer: string;
-  domain: string;
-  providerType: "saml" | "oidc" | null;
-}
+// Provider + SsoResponse shapes are imported from `@/schemas/organizations`
+// so the same definitions back the UI, the payload validators, and any
+// future operator/admin tooling.
+type Provider = SsoSettingsResponse["providers"][number];
 
 function CopyableUrl({ label, value }: { label: string; value: string }) {
   const { toast } = useToast();
@@ -99,61 +108,51 @@ function CopyableUrl({ label, value }: { label: string; value: string }) {
   );
 }
 
-interface SsoResponse {
-  settings: {
-    allowedEmailDomains: string[];
-    enforceSSO: boolean;
-    defaultRoleForAutoJoin: MemberRole;
-  };
-  providers: Provider[];
-}
-
-async function fetchSso(orgId: string): Promise<SsoResponse> {
+async function fetchSso(orgId: string): Promise<SsoSettingsResponse> {
   const res = await fetch(`/api/organizations/${orgId}/sso`);
-  if (!res.ok) throw new Error("Failed to load SSO settings");
-  return res.json();
+  return parseJsonResponse(
+    res,
+    SsoSettingsResponseSchema,
+    "Failed to load SSO settings",
+  );
 }
 
-interface PatchPayload {
+type PatchPayload = {
   allowedEmailDomains?: string[];
   enforceSSO?: boolean;
   defaultRoleForAutoJoin?: MemberRole;
-}
+};
 
 async function patchSso(orgId: string, payload: PatchPayload) {
+  const validated = validateOutboundPayload(
+    PatchSsoSettingsPayloadSchema,
+    payload,
+  );
   const res = await fetch(`/api/organizations/${orgId}/sso`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(validated),
   });
-  const body = await res.json();
-  if (!res.ok) throw new Error(body.error || "Failed to update SSO settings");
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(errorMessageFromBody(body, "Failed to update SSO settings"));
   return body;
 }
 
-interface ProviderPayload {
-  providerId: string;
-  domain: string;
-  issuer: string;
-  providerType: "saml" | "oidc";
-  samlConfig?: { issuer: string; entryPoint: string; cert: string };
-  oidcConfig?: {
-    issuer: string;
-    clientId: string;
-    clientSecret: string;
-    discoveryEndpoint: string;
-    pkce: boolean;
-  };
-}
-
-async function createProvider(orgId: string, payload: ProviderPayload) {
+async function createProvider(orgId: string, payload: CreateSsoProviderPayload) {
+  // Discriminated union enforces "providerType: 'saml' ⇒ samlConfig" and
+  // "providerType: 'oidc' ⇒ oidcConfig" — flipping the radio without
+  // re-validating the matching config block fails before we hit the wire.
+  const validated = validateOutboundPayload(
+    CreateSsoProviderPayloadSchema,
+    payload,
+  );
   const res = await fetch(`/api/organizations/${orgId}/sso/providers`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(validated),
   });
-  const body = await res.json();
-  if (!res.ok) throw new Error(body.error || "Failed to register provider");
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(errorMessageFromBody(body, "Failed to register provider"));
   return body;
 }
 
@@ -163,8 +162,8 @@ async function deleteProvider(orgId: string, providerId: string) {
     { method: "DELETE" },
   );
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || "Failed to delete provider");
+    const body = await res.json().catch(() => null);
+    throw new Error(errorMessageFromBody(body, "Failed to delete provider"));
   }
 }
 
@@ -189,6 +188,9 @@ export default function OrgSsoPage({
   const { data, isLoading } = useQuery({
     queryKey: ["org-sso", orgId],
     queryFn: () => fetchSso(orgId),
+    // SSO settings are OWNER-only. Gate the fetch so non-owners who
+    // land here via direct URL don't trigger a 403 before the redirect.
+    enabled: allowed,
   });
 
   const [domains, setDomains] = useState("");
@@ -238,14 +240,16 @@ export default function OrgSsoPage({
   const [providerError, setProviderError] = useState<string | null>(null);
 
   const createProviderMutation = useMutation({
-    mutationFn: () =>
-      createProvider(orgId, {
-        providerId: providerId.trim(),
-        domain: domain.trim(),
-        issuer: issuer.trim(),
-        providerType,
-        ...(providerType === "saml"
+    mutationFn: () => {
+      // Build the discriminated payload up-front so TS narrows correctly
+      // and the schema's union sees a complete object.
+      const payload: CreateSsoProviderPayload =
+        providerType === "saml"
           ? {
+              providerId: providerId.trim(),
+              domain: domain.trim(),
+              issuer: issuer.trim(),
+              providerType: "saml",
               samlConfig: {
                 issuer: issuer.trim(),
                 entryPoint: samlEntryPoint.trim(),
@@ -253,6 +257,10 @@ export default function OrgSsoPage({
               },
             }
           : {
+              providerId: providerId.trim(),
+              domain: domain.trim(),
+              issuer: issuer.trim(),
+              providerType: "oidc",
               oidcConfig: {
                 issuer: issuer.trim(),
                 clientId: oidcClientId.trim(),
@@ -260,8 +268,9 @@ export default function OrgSsoPage({
                 discoveryEndpoint: oidcDiscoveryUrl.trim(),
                 pkce: true,
               },
-            }),
-      }),
+            };
+      return createProvider(orgId, payload);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["org-sso", orgId] });
       setShowAdd(false);

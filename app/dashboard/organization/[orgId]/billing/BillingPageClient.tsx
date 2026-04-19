@@ -8,6 +8,10 @@ import { z } from "zod";
 import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import { useToast } from "@/hooks/use-toast";
 import { loadScript } from "@/app/checkout/plans/utils";
+import {
+  errorMessageFromBody,
+  parseJsonResponse,
+} from "@/lib/fetch-helpers";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -120,10 +124,6 @@ const invoiceStatusPollSchema = z.object({
   }),
 });
 
-const apiErrorSchema = z.object({
-  error: z.string().optional(),
-});
-
 // Same poll budget as the wallet flow (see credits/page.tsx) — 20s
 // total, then we fall back to "awaiting confirmation" so the UI never
 // stalls if Razorpay's webhook is slow.
@@ -140,26 +140,24 @@ type InvoicePayMutationResult =
   | { result: InvoicePayResponse; outcome: "pending" }
   | { result: InvoicePayResponse; outcome: "not_paid" };
 
-function errorMessageFromBody(
-  raw: z.input<typeof apiErrorSchema>,
-  fallback: string,
-): string {
-  const parsed = apiErrorSchema.safeParse(raw);
-  return parsed.success && parsed.data.error ? parsed.data.error : fallback;
-}
-
 async function fetchBilling(orgId: string): Promise<BillingSummary> {
   const res = await fetch(`/api/organizations/${orgId}/billing`);
-  if (!res.ok) throw new Error("Failed to load billing summary");
-  return billingSummarySchema.parse(await res.json());
+  return parseJsonResponse(
+    res,
+    billingSummarySchema,
+    "Failed to load billing summary",
+  );
 }
 
 async function fetchInvoices(orgId: string) {
   const res = await fetch(
     `/api/organizations/${orgId}/billing-account/invoices?perPage=50`,
   );
-  if (!res.ok) throw new Error("Failed to load invoices");
-  const parsed = invoicesListResponseSchema.parse(await res.json());
+  const parsed = await parseJsonResponse(
+    res,
+    invoicesListResponseSchema,
+    "Failed to load invoices",
+  );
   return { invoices: parsed.data };
 }
 
@@ -168,7 +166,7 @@ async function generateInvoice(orgId: string) {
     `/api/organizations/${orgId}/billing/generate-invoice`,
     { method: "POST" },
   );
-  const body = await res.json();
+  const body = await res.json().catch(() => null);
   if (!res.ok) throw new Error(errorMessageFromBody(body, "Failed to generate invoice"));
   return body;
 }
@@ -181,11 +179,11 @@ async function payInvoice(
     `/api/organizations/${orgId}/billing-account/invoices/${invoiceId}/pay`,
     { method: "POST" },
   );
-  const raw = await res.json();
-  if (!res.ok) {
-    throw new Error(errorMessageFromBody(raw, "Failed to initiate payment"));
-  }
-  return invoicePayResponseSchema.parse(raw);
+  return parseJsonResponse(
+    res,
+    invoicePayResponseSchema,
+    "Failed to initiate payment",
+  );
 }
 
 async function fetchInvoiceStatus(
@@ -196,7 +194,11 @@ async function fetchInvoiceStatus(
     `/api/organizations/${orgId}/billing-account/invoices/${invoiceId}`,
   );
   if (!res.ok) return null;
-  return invoiceStatusPollSchema.parse(await res.json()).invoice.status;
+  // Status poll runs in a tight loop; tolerate a transient
+  // contract-drift parse failure rather than throwing the loop —
+  // worst case we keep polling until the budget elapses.
+  const parsed = invoiceStatusPollSchema.safeParse(await res.json());
+  return parsed.success ? parsed.data.invoice.status : null;
 }
 
 /**
@@ -229,10 +231,14 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
   const summary = useQuery({
     queryKey: ["org-billing", orgId],
     queryFn: () => fetchBilling(orgId),
+    // Gate on role+capability so non-billable or non-MANAGER users
+    // don't trigger a 403 before the redirect.
+    enabled: allowed,
   });
   const invoices = useQuery({
     queryKey: ["org-billing-invoices", orgId],
     queryFn: () => fetchInvoices(orgId),
+    enabled: allowed,
   });
 
   const generateMutation = useMutation({

@@ -4,7 +4,23 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { UserPlus, Trash2, Pencil } from "lucide-react";
 
+import type { MemberRole, MemberStatus } from "@prisma/client";
 import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
+import {
+  MEMBER_ROLE_LABEL,
+  MEMBER_STATUS_LABEL,
+} from "@/lib/labels/org-labels";
+import {
+  AddMemberPayloadSchema,
+  MembersListResponseSchema,
+  UpdateMemberPayloadSchema,
+  type MemberRow,
+} from "@/schemas/organizations";
+import {
+  parseJsonResponse,
+  validateOutboundPayload,
+  errorMessageFromBody,
+} from "@/lib/fetch-helpers";
 import {
   DashboardHeader,
   DashboardContent,
@@ -43,21 +59,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-interface MemberRow {
-  id: string;
-  memberId: string;
-  role: string;
-  status: string;
-  createdAt: string;
-  user: {
-    id: string;
-    name: string | null;
-    email: string;
-    image: string | null;
-  };
-}
+// `MemberRow` (and the response shape) live in `@/schemas/organizations`
+// so the dashboard and any other consumer (e.g. operator tools) share the
+// same runtime contract.
 
-const SELECTABLE_ROLES = [
+const SELECTABLE_ROLES: Array<{ value: MemberRole; label: string }> = [
   { value: "OWNER", label: "Owner" },
   { value: "MAINTAINER", label: "Maintainer" },
   { value: "MANAGER", label: "Manager" },
@@ -66,40 +72,53 @@ const SELECTABLE_ROLES = [
 
 async function fetchMembers(orgId: string): Promise<{ members: MemberRow[] }> {
   const res = await fetch(`/api/organizations/${orgId}/members`);
-  if (!res.ok) throw new Error("Failed to load members");
-  const json = await res.json();
-  return { members: json.data ?? [] };
+  const parsed = await parseJsonResponse(
+    res,
+    MembersListResponseSchema,
+    "Failed to load members",
+  );
+  return { members: parsed.data };
 }
 
 async function addMember(
   orgId: string,
-  payload: { email: string; role: string },
+  payload: { email: string; role: MemberRole },
 ) {
+  // The server's `POST /members` only accepts the self-service subset
+  // (OWNER/MAINTAINER/MANAGER/LEARNER) — the schema enforces that union
+  // before we even open the connection.
+  const validated = validateOutboundPayload(AddMemberPayloadSchema, payload);
   const res = await fetch(`/api/organizations/${orgId}/members`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(validated),
   });
-  const body = await res.json();
-  if (!res.ok) throw new Error(body.error || "Failed to add member");
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(errorMessageFromBody(body, "Failed to add member"));
   return body;
 }
 
 async function updateMember(
   orgId: string,
   memberId: string,
-  payload: { role?: string; status?: string },
+  payload: { role?: MemberRole; status?: MemberStatus },
 ) {
+  // Schema enforces "at least one of role or status" so an empty PATCH
+  // never leaves the client (would 400 on the server anyway).
+  const validated = validateOutboundPayload(
+    UpdateMemberPayloadSchema,
+    payload,
+  );
   const res = await fetch(
     `/api/organizations/${orgId}/members/${memberId}`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(validated),
     },
   );
-  const body = await res.json();
-  if (!res.ok) throw new Error(body.error || "Failed to update member");
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(errorMessageFromBody(body, "Failed to update member"));
   return body;
 }
 
@@ -109,8 +128,8 @@ async function removeMember(orgId: string, memberId: string) {
     { method: "DELETE" },
   );
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || "Failed to remove member");
+    const body = await res.json().catch(() => null);
+    throw new Error(errorMessageFromBody(body, "Failed to remove member"));
   }
 }
 
@@ -127,7 +146,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
 
   const [showInvite, setShowInvite] = useState(false);
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState("LEARNER");
+  const [role, setRole] = useState<MemberRole>("LEARNER");
   const [error, setError] = useState<string | null>(null);
 
   const addMutation = useMutation({
@@ -142,22 +161,33 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
     onError: (err: Error) => setError(err.message),
   });
 
+  // Destructive removals are gated through a confirm dialog rather than
+  // the raw browser confirm() because (a) it matches the rest of the
+  // dashboard styling, and (b) it gives us room to show the target
+  // member's name + email so the user can't mis-click on the wrong row.
+  const [memberToRemove, setMemberToRemove] = useState<MemberRow | null>(null);
+
   const removeMutation = useMutation({
     mutationFn: (memberId: string) => removeMember(orgId, memberId),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["org-members", orgId] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["org-members", orgId] });
+      setMemberToRemove(null);
+    },
   });
 
-  // Edit member state
+  // Edit member state. We narrow to the MemberRole / MemberStatus unions
+  // so the Select onValueChange handlers can't push a typo into the
+  // outbound payload — the schema would reject it but this catches it
+  // at compile time.
   const [editMember, setEditMember] = useState<MemberRow | null>(null);
-  const [editRole, setEditRole] = useState("");
-  const [editStatus, setEditStatus] = useState("");
+  const [editRole, setEditRole] = useState<MemberRole>("LEARNER");
+  const [editStatus, setEditStatus] = useState<MemberStatus>("ACTIVE");
   const [editError, setEditError] = useState<string | null>(null);
 
   const openEdit = (m: MemberRow) => {
     setEditMember(m);
     setEditRole(m.role);
-    setEditStatus(m.status);
+    setEditStatus(m.status as MemberStatus);
     setEditError(null);
   };
 
@@ -228,7 +258,9 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
                         </div>
                       </TableCell>
                       <TableCell>
-                        <Badge variant="secondary">{m.role}</Badge>
+                        <Badge variant="secondary">
+                          {MEMBER_ROLE_LABEL[m.role as MemberRole] ?? m.role}
+                        </Badge>
                       </TableCell>
                       <TableCell>
                         <Badge
@@ -236,7 +268,8 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
                             m.status === "ACTIVE" ? "default" : "outline"
                           }
                         >
-                          {m.status}
+                          {MEMBER_STATUS_LABEL[m.status as MemberStatus] ??
+                            m.status}
                         </Badge>
                       </TableCell>
                       {isAtLeast("MAINTAINER") && (
@@ -254,7 +287,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
                               variant="ghost"
                               size="icon"
                               aria-label="Remove member"
-                              onClick={() => removeMutation.mutate(m.id)}
+                              onClick={() => setMemberToRemove(m)}
                               disabled={removeMutation.isPending}
                             >
                               <Trash2 className="h-4 w-4 text-red-500" />
@@ -304,7 +337,10 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
             </div>
             <div className="space-y-2">
               <Label htmlFor="add-role">Role</Label>
-              <Select value={role} onValueChange={setRole}>
+              <Select
+                value={role}
+                onValueChange={(v) => setRole(v as MemberRole)}
+              >
                 <SelectTrigger id="add-role">
                   <SelectValue />
                 </SelectTrigger>
@@ -359,7 +395,10 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
           <div className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="edit-role">Role</Label>
-              <Select value={editRole} onValueChange={setEditRole}>
+              <Select
+                value={editRole}
+                onValueChange={(v) => setEditRole(v as MemberRole)}
+              >
                 <SelectTrigger id="edit-role">
                   <SelectValue />
                 </SelectTrigger>
@@ -374,7 +413,10 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
             </div>
             <div className="space-y-2">
               <Label htmlFor="edit-status">Status</Label>
-              <Select value={editStatus} onValueChange={setEditStatus}>
+              <Select
+                value={editStatus}
+                onValueChange={(v) => setEditStatus(v as MemberStatus)}
+              >
                 <SelectTrigger id="edit-status">
                   <SelectValue />
                 </SelectTrigger>
@@ -395,6 +437,44 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
               disabled={editMutation.isPending}
             >
               {editMutation.isPending ? "Saving…" : "Save changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Remove-member confirm dialog. Styled to match the rest of the
+          dashboard instead of using window.confirm() so the user sees
+          which row they're about to destroy. */}
+      <Dialog
+        open={!!memberToRemove}
+        onOpenChange={(open) => !open && setMemberToRemove(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove member?</DialogTitle>
+            <DialogDescription>
+              {memberToRemove?.user.name ?? memberToRemove?.user.email}
+              {" "}
+              will lose access to this organization immediately. You can
+              re-invite them later.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setMemberToRemove(null)}
+              disabled={removeMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() =>
+                memberToRemove && removeMutation.mutate(memberToRemove.id)
+              }
+              disabled={removeMutation.isPending}
+            >
+              {removeMutation.isPending ? "Removing…" : "Remove member"}
             </Button>
           </DialogFooter>
         </DialogContent>

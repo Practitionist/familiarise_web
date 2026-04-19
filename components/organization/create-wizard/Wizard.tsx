@@ -47,10 +47,13 @@ export function CreateOrganizationWizard({
 }: CreateOrganizationWizardProps = {}) {
   const [step, setStep] = useState(0);
   const [wizardData, setWizardData] = useState<Partial<OrgWizardData>>({});
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  // Retained for backwards compatibility with `stepProps.isSubmitting`; the
+  // final POST now happens in ReviewStep, so no mid-flight submits here.
+  const [isSubmitting] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
-  // Steps are recomputed whenever capabilities change (after step 0 submits).
+  // Steps are recomputed whenever capabilities change so the stepper only
+  // renders the billing/rate-card steps when the org actually sponsors/hosts.
   // An org with `canSponsor=false, canHost=false` is a configuration error;
   // OrgInfoStep rejects it before `handleNext` fires.
   const steps = getSteps({
@@ -58,87 +61,14 @@ export function CreateOrganizationWizard({
     canHost: wizardData.canHost ?? false,
   });
 
-  const handleNext = async (stepData: Partial<OrgWizardData>) => {
-    const merged = { ...wizardData, ...stepData };
-    setWizardData(merged);
-
-    const currentKey = steps[step].key;
-
-    // Step 0: create the org on "Next" so we have an orgId for file uploads.
-    // The initial POST carries just enough to satisfy the API's zod schema;
-    // everything else is PATCHed step-by-step as the user moves forward.
-    // That keeps each network call small and lets the review step do one
-    // final consolidated PATCH.
-    if (currentKey === "org-info" && !merged.orgId) {
-      setIsSubmitting(true);
-      setCreateError(null);
-      try {
-        const res = await fetch("/api/organizations", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: merged.name,
-            billingEmail: merged.billingEmail,
-            canSponsor: merged.canSponsor ?? true,
-            canHost: merged.canHost ?? false,
-            // Funding source is only required when the org sponsors.
-            // Default = PERSONAL keeps the first POST successful even if
-            // the user hasn't reached the billing step yet.
-            ...(merged.canSponsor !== false
-              ? { fundingSource: merged.fundingSource ?? "PERSONAL" }
-              : {}),
-            description: merged.description || undefined,
-            industry: merged.industry || undefined,
-            sizeBucket: merged.sizeBucket || undefined,
-            website: merged.website || undefined,
-          }),
-        });
-        const body = await res.json();
-        if (!res.ok) {
-          throw new Error(body.error || "Failed to create organization");
-        }
-        setWizardData((prev) => ({
-          ...prev,
-          ...stepData,
-          orgId: body.organization.id,
-        }));
-      } catch (err) {
-        setCreateError(
-          err instanceof Error ? err.message : "Failed to create organization",
-        );
-        setIsSubmitting(false);
-        return; // Don't advance
-      }
-      setIsSubmitting(false);
-    }
-
-    // Billing step: PATCH funding source when the org sponsors.
-    if (currentKey === "billing" && merged.orgId) {
-      await fetch(`/api/organizations/${merged.orgId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fundingSource: merged.fundingSource,
-          paymentTermsDays: merged.paymentTermsDays,
-        }),
-      }).catch(() => null); // Non-blocking — review step will re-patch
-    }
-
-    // Revenue rates step: PATCH the bps split when the org hosts. Stored
-    // as a new RateCard with `effectiveFrom=now()` so that subsequent
-    // rate bumps don't rewrite earnings already accrued against this card.
-    if (currentKey === "revenue-rates" && merged.orgId) {
-      await fetch(`/api/organizations/${merged.orgId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          platformBps: merged.platformBps,
-          orgBps: merged.orgBps,
-          consultantBps: merged.consultantBps,
-        }),
-      }).catch(() => null); // Non-blocking — review step will re-patch
-    }
-
+  // Org creation is deferred to the Review step. Earlier steps are pure
+  // state mutations on `wizardData` — that avoids orphan Organization rows
+  // if a user drops out mid-wizard and makes the "Create Organization"
+  // action happen at the point the user actually commits (review), not on
+  // step 1. See docs/onboarding/onboarding-system-reference.md.
+  const handleNext = (stepData: Partial<OrgWizardData>) => {
+    setCreateError(null);
+    setWizardData((prev) => ({ ...prev, ...stepData }));
     setStep((s) => Math.min(s + 1, steps.length - 1));
   };
 

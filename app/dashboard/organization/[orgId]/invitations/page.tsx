@@ -3,7 +3,36 @@
 import { use, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Mail, Trash2, Copy } from "lucide-react";
+import type { MemberRole } from "@prisma/client";
 import { useRequireOrgRole } from "../useOrgRole";
+import { MEMBER_ROLE_LABEL } from "@/lib/labels/org-labels";
+import {
+  CreateInvitationPayloadSchema,
+  CreateInvitationResponseSchema,
+  InvitationsListResponseSchema,
+  type InvitationRow,
+} from "@/schemas/organizations";
+import {
+  parseJsonResponse,
+  validateOutboundPayload,
+  errorMessageFromBody,
+} from "@/lib/fetch-helpers";
+import type { z } from "zod";
+
+type SelfServiceRole = z.infer<
+  typeof CreateInvitationPayloadSchema
+>["role"];
+
+// Invitation.status is stored as a free-form string to stay aligned with
+// BetterAuth's `member_invitations` bridge table. The three states the
+// dashboard emits are lower-case; keep the label map scoped to those
+// and fall back to the raw value for anything we don't recognise.
+const INVITATION_STATUS_LABEL: Record<string, string> = {
+  pending: "Pending",
+  accepted: "Accepted",
+  revoked: "Revoked",
+  expired: "Expired",
+};
 
 import {
   DashboardHeader,
@@ -43,17 +72,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-interface Invitation {
-  id: string;
-  email: string;
-  role: string;
-  status: string;
-  expiresAt: string;
-  createdAt: string;
-  inviterId: string | null;
-}
+// `InvitationRow` lives in `@/schemas/organizations` so the same shape
+// powers the wizard, this page, and any future operator tooling.
 
-const ROLE_OPTIONS = [
+const ROLE_OPTIONS: Array<{ value: SelfServiceRole; label: string }> = [
   { value: "LEARNER", label: "Learner" },
   { value: "MANAGER", label: "Manager" },
   { value: "MAINTAINER", label: "Maintainer" },
@@ -62,25 +84,34 @@ const ROLE_OPTIONS = [
 
 async function fetchInvitations(
   orgId: string,
-): Promise<{ invitations: Invitation[] }> {
+): Promise<{ invitations: InvitationRow[] }> {
   const res = await fetch(`/api/organizations/${orgId}/invitations`);
-  if (!res.ok) throw new Error("Failed to load invitations");
-  const json = await res.json();
-  return { invitations: json.data ?? [] };
+  const parsed = await parseJsonResponse(
+    res,
+    InvitationsListResponseSchema,
+    "Failed to load invitations",
+  );
+  return { invitations: parsed.data };
 }
 
 async function createInvitation(
   orgId: string,
-  payload: { email: string; role: string },
+  payload: { email: string; role: SelfServiceRole },
 ) {
+  const validated = validateOutboundPayload(
+    CreateInvitationPayloadSchema,
+    payload,
+  );
   const res = await fetch(`/api/organizations/${orgId}/invitations`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(validated),
   });
-  const body = await res.json();
-  if (!res.ok) throw new Error(body.error || "Failed to create invitation");
-  return body;
+  return parseJsonResponse(
+    res,
+    CreateInvitationResponseSchema,
+    "Failed to create invitation",
+  );
 }
 
 async function revokeInvitation(orgId: string, invitationId: string) {
@@ -89,8 +120,8 @@ async function revokeInvitation(orgId: string, invitationId: string) {
     { method: "DELETE" },
   );
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || "Failed to revoke invitation");
+    const body = await res.json().catch(() => null);
+    throw new Error(errorMessageFromBody(body, "Failed to revoke invitation"));
   }
 }
 
@@ -106,12 +137,21 @@ export default function OrgInvitationsPage({
   const { data, isLoading } = useQuery({
     queryKey: ["org-invitations", orgId],
     queryFn: () => fetchInvitations(orgId),
+    // Don't fire the fetch until we know the caller passes the MAINTAINER
+    // gate — otherwise non-privileged users who deep-link here get a 403
+    // in the network tab before the redirect kicks in.
+    enabled: allowed,
   });
 
   const [showCreate, setShowCreate] = useState(false);
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState("LEARNER");
+  const [role, setRole] = useState<SelfServiceRole>("LEARNER");
   const [error, setError] = useState<string | null>(null);
+  // Confirm-before-revoke so a mis-click doesn't nuke a pending invite
+  // and force the user to re-send it. Using the same dialog primitives
+  // as the rest of the dashboard rather than window.confirm() keeps the
+  // styling consistent and shows which email is about to be revoked.
+  const [invToRevoke, setInvToRevoke] = useState<InvitationRow | null>(null);
 
   const createMutation = useMutation({
     mutationFn: () => createInvitation(orgId, { email: email.trim(), role }),
@@ -126,8 +166,10 @@ export default function OrgInvitationsPage({
 
   const revokeMutation = useMutation({
     mutationFn: (id: string) => revokeInvitation(orgId, id),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["org-invitations", orgId] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["org-invitations", orgId] });
+      setInvToRevoke(null);
+    },
   });
 
   if (!allowed) return null;
@@ -176,7 +218,10 @@ export default function OrgInvitationsPage({
                     <TableRow key={inv.id}>
                       <TableCell>{inv.email}</TableCell>
                       <TableCell>
-                        <Badge variant="secondary">{inv.role}</Badge>
+                        <Badge variant="secondary">
+                          {MEMBER_ROLE_LABEL[inv.role as MemberRole] ??
+                            inv.role}
+                        </Badge>
                       </TableCell>
                       <TableCell>
                         <Badge
@@ -184,7 +229,7 @@ export default function OrgInvitationsPage({
                             inv.status === "pending" ? "default" : "outline"
                           }
                         >
-                          {inv.status}
+                          {INVITATION_STATUS_LABEL[inv.status] ?? inv.status}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-xs text-zinc-500">
@@ -205,7 +250,7 @@ export default function OrgInvitationsPage({
                               variant="ghost"
                               size="icon"
                               aria-label="Revoke invitation"
-                              onClick={() => revokeMutation.mutate(inv.id)}
+                              onClick={() => setInvToRevoke(inv)}
                             >
                               <Trash2 className="h-4 w-4 text-red-500" />
                             </Button>
@@ -254,7 +299,10 @@ export default function OrgInvitationsPage({
             </div>
             <div className="space-y-2">
               <Label htmlFor="inv-role">Role</Label>
-              <Select value={role} onValueChange={setRole}>
+              <Select
+                value={role}
+                onValueChange={(v) => setRole(v as SelfServiceRole)}
+              >
                 <SelectTrigger id="inv-role">
                   <SelectValue />
                 </SelectTrigger>
@@ -279,6 +327,39 @@ export default function OrgInvitationsPage({
               disabled={createMutation.isPending || !email.includes("@")}
             >
               {createMutation.isPending ? "Sending…" : "Send invitation"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!invToRevoke}
+        onOpenChange={(open) => !open && setInvToRevoke(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Revoke invitation?</DialogTitle>
+            <DialogDescription>
+              {invToRevoke?.email} will no longer be able to use their invite
+              link. You can send a fresh invitation at any time.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setInvToRevoke(null)}
+              disabled={revokeMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() =>
+                invToRevoke && revokeMutation.mutate(invToRevoke.id)
+              }
+              disabled={revokeMutation.isPending}
+            >
+              {revokeMutation.isPending ? "Revoking…" : "Revoke invitation"}
             </Button>
           </DialogFooter>
         </DialogContent>

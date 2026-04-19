@@ -23,6 +23,17 @@ import {
   narrowFundingSource,
   narrowSelfServiceRole,
 } from "@/lib/labels/org-labels";
+import {
+  CreateOrganizationPayloadSchema,
+  CreateOrganizationResponseSchema,
+  PatchOrganizationPayloadSchema,
+  CreateInvitationPayloadSchema,
+  CreateInvitationResponseSchema,
+} from "@/schemas/organizations";
+import {
+  parseJsonResponse,
+  validateOutboundPayload,
+} from "@/lib/fetch-helpers";
 
 interface InviteResult {
   email: string;
@@ -44,7 +55,10 @@ export function ReviewStep({
   );
   const [error, setError] = useState<string | null>(null);
 
-  const orgId = initialData.orgId;
+  // `initialData.orgId` only exists if the user previously hit Launch and
+  // failed before afterLaunch completed — we reuse it for retry idempotency
+  // (POST would 409 on slug otherwise).
+  const existingOrgId = initialData.orgId;
   const emails = initialData.inviteEmails ?? [];
   const canSponsor = initialData.canSponsor ?? true;
   const canHost = initialData.canHost ?? false;
@@ -55,8 +69,8 @@ export function ReviewStep({
   const idx = (key: string) => steps.findIndex((s) => s.key === key);
 
   const handleLaunch = async () => {
-    if (!orgId) {
-      setError("Organization was not created. Please go back to step 1.");
+    if (!initialData.name || !initialData.billingEmail) {
+      setError("Missing organization name or billing email. Please go back to step 1.");
       return;
     }
 
@@ -64,66 +78,118 @@ export function ReviewStep({
     setError(null);
 
     try {
-      // Final PATCH to persist settings. Split cleanly by capability:
-      // sponsor-only fields don't flow to host-only orgs and vice versa.
-      // This keeps the API payload minimal and avoids the server having
-      // to ignore fields that don't apply.
-      const patchRes = await fetch(`/api/organizations/${orgId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          billingEmail: initialData.billingEmail,
-          canSponsor,
-          canHost,
-          description: initialData.description || null,
-          industry: initialData.industry || null,
-          sizeBucket: initialData.sizeBucket || null,
-          website: initialData.website || null,
-          primaryColor: initialData.primaryColor ?? null,
-          secondaryColor: initialData.secondaryColor ?? null,
-          // Sponsorship configuration (only when the org sponsors)
-          ...(canSponsor
-            ? {
-                fundingSource: initialData.fundingSource ?? "PERSONAL",
-                paymentTermsDays: initialData.paymentTermsDays ?? 60,
-              }
-            : {}),
-          // Hosting configuration (only when the org hosts). Basis-point
-          // rate card becomes the org's default RateCard row; settlement
-          // reads it via resolveEffectiveRateCard at booking time.
-          ...(canHost
-            ? {
-                platformBps: initialData.platformBps ?? 1000,
-                orgBps: initialData.orgBps ?? 1000,
-                consultantBps: initialData.consultantBps ?? 8000,
-              }
-            : {}),
-        }),
-      });
-      if (!patchRes.ok) {
-        const body = await patchRes.json().catch(() => ({}));
-        throw new Error(body.error || "Failed to save organization settings.");
+      // Step 1 — create the organization. Deferred from step 0 of the
+      // wizard so a user who drops out mid-flow doesn't leave an orphan
+      // Organization row; the commitment happens here at launch.
+      let orgId = existingOrgId ?? null;
+      if (!orgId) {
+        // Validate the outbound body before opening the network connection —
+        // catches malformed wizard state (missing email, name too long, etc)
+        // before the server returns a generic 400.
+        const createPayload = validateOutboundPayload(
+          CreateOrganizationPayloadSchema,
+          {
+            name: initialData.name,
+            billingEmail: initialData.billingEmail,
+            canSponsor,
+            canHost,
+            description: initialData.description || undefined,
+            industry: initialData.industry || undefined,
+            sizeBucket: initialData.sizeBucket || undefined,
+            website: initialData.website || undefined,
+            ...(canSponsor
+              ? {
+                  fundingSource: initialData.fundingSource ?? "PERSONAL",
+                  paymentTermsDays: initialData.paymentTermsDays ?? 60,
+                }
+              : {}),
+          },
+        );
+        const createRes = await fetch("/api/organizations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(createPayload),
+        });
+        const created = await parseJsonResponse(
+          createRes,
+          CreateOrganizationResponseSchema,
+          "Failed to create organization",
+        );
+        orgId = created.organization.id;
       }
 
-      // Send invitations in parallel
+      // Step 2 — PATCH settings that the create endpoint doesn't accept
+      // (branding colors + bps rate card). Split cleanly by capability:
+      // sponsor-only fields don't flow to host-only orgs and vice versa.
+      const hasBranding =
+        initialData.primaryColor != null ||
+        initialData.secondaryColor != null;
+      const hasRateCard =
+        canHost &&
+        (initialData.platformBps != null ||
+          initialData.orgBps != null ||
+          initialData.consultantBps != null);
+      if (hasBranding || hasRateCard) {
+        const patchPayload = validateOutboundPayload(
+          PatchOrganizationPayloadSchema,
+          {
+            ...(hasBranding
+              ? {
+                  primaryColor: initialData.primaryColor ?? null,
+                  secondaryColor: initialData.secondaryColor ?? null,
+                }
+              : {}),
+            ...(hasRateCard
+              ? {
+                  platformBps: initialData.platformBps ?? 1000,
+                  orgBps: initialData.orgBps ?? 1000,
+                  consultantBps: initialData.consultantBps ?? 8000,
+                }
+              : {}),
+          },
+        );
+        const patchRes = await fetch(`/api/organizations/${orgId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patchPayload),
+        });
+        // Server returns the updated org (or `{ ok: true }` for some
+        // shapes); we don't rely on the body here, only on `res.ok`.
+        if (!patchRes.ok) {
+          const body = await patchRes.json().catch(() => ({}));
+          throw new Error(
+            (body && typeof body === "object" && "error" in body
+              ? String((body as { error?: unknown }).error ?? "")
+              : "") || "Failed to save organization settings.",
+          );
+        }
+      }
+
+      // Step 3 — send invitations in parallel. Individual failures surface
+      // via the per-row InviteResult without blocking launch.
       if (emails.length > 0) {
+        const inviteRoleNarrowed = narrowSelfServiceRole(
+          initialData.inviteRole,
+        );
         const results = await Promise.allSettled(
           emails.map(async (email) => {
+            const invitePayload = validateOutboundPayload(
+              CreateInvitationPayloadSchema,
+              { email, role: inviteRoleNarrowed },
+            );
             const res = await fetch(
               `/api/organizations/${orgId}/invitations`,
               {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  email,
-                  role: initialData.inviteRole ?? "LEARNER",
-                }),
+                body: JSON.stringify(invitePayload),
               },
             );
-            if (!res.ok) {
-              const body = await res.json().catch(() => ({}));
-              throw new Error(body.error || `Failed to invite ${email}`);
-            }
+            await parseJsonResponse(
+              res,
+              CreateInvitationResponseSchema,
+              `Failed to invite ${email}`,
+            );
             return email;
           }),
         );

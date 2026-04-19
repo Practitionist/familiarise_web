@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
@@ -65,6 +66,7 @@ export function OrgInfoStep({
 
   const canSponsor = watch("canSponsor");
   const canHost = watch("canHost");
+  const [capabilityError, setCapabilityError] = useState<string | null>(null);
 
   const onSubmit = (data: OrgInfoFormData) => {
     // Belt-and-braces: the zod schema doesn't enforce "at least one
@@ -73,11 +75,12 @@ export function OrgInfoStep({
     // wizard would skip both billing and revenue-rates steps and land
     // on a useless inert org.
     if (!data.canSponsor && !data.canHost) {
-      alert(
+      setCapabilityError(
         "Pick at least one capability. An organization that neither sponsors members nor hosts consultants has nothing to do.",
       );
       return;
     }
+    setCapabilityError(null);
     onNext(data);
   };
 
@@ -119,6 +122,11 @@ export function OrgInfoStep({
             </div>
           </label>
         </div>
+        {capabilityError && (
+          <p className="text-sm text-red-500" role="alert">
+            {capabilityError}
+          </p>
+        )}
       </div>
 
       <div className="space-y-2">
