@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import type { Session } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import type {
+  FundingSource,
   Organization,
   Membership,
   MemberRole,
@@ -292,21 +293,57 @@ export type OrgAccessGrant = {
 };
 
 /**
+ * Capability gate for {@link requireOrgAccess}. All fields are optional;
+ * any field that is set must match for the request to proceed.
+ *
+ * - `canSponsor: true` — require the org to sponsor bookings
+ *   (BillingAccount present, sponsor-side APIs). A host-only org gets a
+ *   404 (the page / API endpoint "doesn't exist" for that org shape).
+ * - `canHost: true` — mirror for host-side APIs.
+ * - `fundingSource` — require the org's BillingAccount to be in a
+ *   specific funding mode. Used by WALLET-only endpoints like
+ *   /billing-account/wallet. 404 on mismatch.
+ */
+export type OrgCapabilityGate = {
+  minimumRole?: MemberRole;
+  canSponsor?: true;
+  canHost?: true;
+  fundingSource?: FundingSource;
+};
+
+/**
  * Require that the session user is an active Membership of the specified
  * organization.
  *
- * Optionally require a minimum role. Platform admins (UserRole.ADMIN)
- * bypass org membership checks and get a synthesized OWNER-rank stub.
+ * Accepts either a bare `MemberRole` (legacy single-arg callers) or an
+ * options object that also enforces capability + funding-source gates.
+ * Platform admins (`UserRole.ADMIN`) bypass membership + role checks and
+ * get a synthesized OWNER-rank stub; capability checks still apply so
+ * an admin hitting a WALLET-only endpoint on an INVOICE org still gets
+ * the structural 404.
  */
 export async function requireOrgAccess(
   organizationId: string,
-  minimumRole?: MemberRole,
+  opts?: MemberRole | OrgCapabilityGate,
 ): Promise<({ error?: never } & OrgAccessGrant) | { error: NextResponse }> {
+  const options: OrgCapabilityGate =
+    typeof opts === "string" ? { minimumRole: opts } : (opts ?? {});
+  const { minimumRole, canSponsor, canHost, fundingSource } = options;
+
   const auth = await requireApiAuth();
   if (auth.error) return { error: auth.error };
 
+  // Pull the billingAccount alongside the org so fundingSource gates
+  // don't need a second round-trip. Non-capability callers pay the same
+  // (cheap) cost — this read is LEFT JOIN one row keyed on a unique
+  // index.
   const org = await prisma.organization.findUnique({
     where: { id: organizationId },
+    include: {
+      billingAccount: {
+        select: { id: true, fundingSource: true },
+      },
+    },
   });
   if (!org) {
     return {
@@ -326,10 +363,43 @@ export async function requireOrgAccess(
     };
   }
 
-  const userId = auth.session.user.id;
-  const minRole = minimumRole ?? null;
+  // Capability guards are structural, not authorization — a host-only
+  // org doesn't have sponsor APIs at all, so "404 not found" is the
+  // honest response (rather than 403, which implies "you're allowed
+  // elsewhere"). Mirrors how filesystems surface missing paths.
+  if (canSponsor === true && !org.canSponsor) {
+    return {
+      error: NextResponse.json(
+        { error: "This organization does not sponsor bookings" },
+        { status: 404 },
+      ),
+    };
+  }
+  if (canHost === true && !org.canHost) {
+    return {
+      error: NextResponse.json(
+        { error: "This organization does not host consultants" },
+        { status: 404 },
+      ),
+    };
+  }
+  if (fundingSource && org.billingAccount?.fundingSource !== fundingSource) {
+    return {
+      error: NextResponse.json(
+        {
+          error: `This endpoint requires ${fundingSource} funding`,
+          currentFundingSource: org.billingAccount?.fundingSource ?? null,
+        },
+        { status: 404 },
+      ),
+    };
+  }
 
-  // Platform admins bypass org membership checks.
+  const userId = auth.session.user.id;
+
+  // Platform admins bypass org membership checks. Capability guards
+  // above still apply so the admin gets the same structural 404 as a
+  // regular user — the endpoint genuinely doesn't exist on that org.
   if (auth.session.user.role === "ADMIN") {
     const stub: Membership = {
       id: `__admin_stub_${userId}`,
@@ -375,10 +445,10 @@ export async function requireOrgAccess(
     };
   }
 
-  if (minRole && !orgRoleSatisfies(member.role, minRole)) {
+  if (minimumRole && !orgRoleSatisfies(member.role, minimumRole)) {
     return {
       error: NextResponse.json(
-        { error: `Forbidden — ${minRole} or higher required` },
+        { error: `Forbidden — ${minimumRole} or higher required` },
         { status: 403 },
       ),
     };

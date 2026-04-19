@@ -3,7 +3,6 @@
 import { use, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  Lock,
   Wallet,
   Clock,
   CheckCircle2,
@@ -23,20 +22,19 @@ import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
 import { formatCurrencyAmount } from "@/utils/formatting";
-import { useOrgRole } from "../useOrgRole";
+import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 
 interface PayoutItem {
   id: string;
-  amount: number;
-  netPayout: number;
-  grossRevenue: number;
-  platformFee: number;
-  refunds: number;
+  amountPaise: number;
+  netPayoutPaise: number;
+  grossRevenuePaise: number;
+  platformFeePaise: number;
+  refundsPaise: number;
   currency: string;
   status: string;
   periodStart: string;
@@ -45,28 +43,34 @@ interface PayoutItem {
   createdAt: string;
 }
 
-interface PayoutsResponse {
-  payouts?: PayoutItem[];
-  error?: string;
-  flag?: string;
-}
-
-async function fetchPayouts(orgId: string): Promise<PayoutsResponse> {
+async function fetchPayouts(
+  orgId: string,
+): Promise<{ data: PayoutItem[] }> {
   const res = await fetch(`/api/organizations/${orgId}/payouts`);
-  if (res.status === 501) return res.json();
   if (!res.ok) throw new Error("Failed to load payouts");
   return res.json();
+}
+
+// POST /payouts expects `{ periodStart, periodEnd }`. The dashboard
+// "Create batch" button rolls up everything earned in the last 30 days
+// since that matches the default cron cadence; admins running catch-up
+// payouts can adjust via the API directly.
+function defaultPayoutWindow(): { periodStart: Date; periodEnd: Date } {
+  const periodEnd = new Date();
+  const periodStart = new Date(periodEnd);
+  periodStart.setDate(periodStart.getDate() - 30);
+  return { periodStart, periodEnd };
 }
 
 const STATUS_CONFIG: Record<
   string,
   { label: string; variant: "default" | "secondary" | "destructive" | "outline"; icon: typeof Clock }
 > = {
-  PENDING: { label: "Pending", variant: "secondary", icon: Clock },
+  INITIATED: { label: "Initiated", variant: "secondary", icon: Clock },
   PROCESSING: { label: "Processing", variant: "outline", icon: Loader2 },
-  COMPLETED: { label: "Completed", variant: "default", icon: CheckCircle2 },
+  SUCCEEDED: { label: "Completed", variant: "default", icon: CheckCircle2 },
   FAILED: { label: "Failed", variant: "destructive", icon: XCircle },
-  ON_HOLD: { label: "On Hold", variant: "outline", icon: AlertCircle },
+  CANCELLED: { label: "Cancelled", variant: "outline", icon: AlertCircle },
 };
 
 export default function OrgPayoutsPage({
@@ -76,18 +80,29 @@ export default function OrgPayoutsPage({
 }) {
   const { orgId } = use(params);
   const { isAtLeast } = useOrgRole(orgId);
+  const { allowed } = useRequireOrgAccess(orgId, {
+    minRole: "MANAGER",
+    canHost: true,
+  });
   const queryClient = useQueryClient();
   const [createError, setCreateError] = useState<string | null>(null);
 
   const { data, isPending } = useQuery({
     queryKey: ["org-payouts", orgId],
     queryFn: () => fetchPayouts(orgId),
+    enabled: allowed,
   });
 
   const createBatch = useMutation({
     mutationFn: async () => {
+      const { periodStart, periodEnd } = defaultPayoutWindow();
       const res = await fetch(`/api/organizations/${orgId}/payouts`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          periodStart: periodStart.toISOString(),
+          periodEnd: periodEnd.toISOString(),
+        }),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -104,15 +119,19 @@ export default function OrgPayoutsPage({
     },
   });
 
-  const isGated = !!data?.flag;
-  const payouts = data?.payouts ?? [];
+  const payouts = data?.data ?? [];
 
+  // Statuses reported by the payouts API: INITIATED / PROCESSING /
+  // SUCCEEDED / FAILED. We map SUCCEEDED → "completed" for the user-
+  // facing summary since that's the term admins expect on the dashboard.
   const totalPaid = payouts
-    .filter((p) => p.status === "COMPLETED")
-    .reduce((s, p) => s + p.netPayout, 0);
+    .filter((p) => p.status === "SUCCEEDED")
+    .reduce((s, p) => s + p.netPayoutPaise, 0);
   const pendingAmount = payouts
-    .filter((p) => p.status === "PENDING" || p.status === "PROCESSING")
-    .reduce((s, p) => s + p.netPayout, 0);
+    .filter((p) => p.status === "INITIATED" || p.status === "PROCESSING")
+    .reduce((s, p) => s + p.netPayoutPaise, 0);
+
+  if (!allowed) return null;
 
   return (
     <>
@@ -127,19 +146,6 @@ export default function OrgPayoutsPage({
               <StatCardSkeleton key={i} />
             ))}
           </DashboardGrid>
-        ) : isGated ? (
-          <Card>
-            <CardHeader>
-              <div className="flex items-center gap-2">
-                <Lock className="h-5 w-5 text-zinc-500" />
-                <CardTitle>Provider tier required</CardTitle>
-              </div>
-              <CardDescription>
-                Payouts are available once your organization joins the
-                Provider tier. Contact us to enable it.
-              </CardDescription>
-            </CardHeader>
-          </Card>
         ) : (
           <>
             {/* Summary cards */}
@@ -147,7 +153,7 @@ export default function OrgPayoutsPage({
               <StatCard
                 title="Total paid out"
                 value={formatCurrencyAmount(totalPaid, "INR")}
-                subtitle={`${payouts.filter((p) => p.status === "COMPLETED").length} payouts`}
+                subtitle={`${payouts.filter((p) => p.status === "SUCCEEDED").length} payouts`}
                 icon={Wallet}
                 variant="success"
               />
@@ -208,7 +214,9 @@ export default function OrgPayoutsPage({
                       </thead>
                       <tbody>
                         {payouts.map((payout) => {
-                          const cfg = STATUS_CONFIG[payout.status] ?? STATUS_CONFIG.PENDING;
+                          const cfg =
+                            STATUS_CONFIG[payout.status] ??
+                            STATUS_CONFIG.INITIATED;
                           return (
                             <tr key={payout.id} className="border-b last:border-0">
                               <td className="py-3 text-zinc-700">
@@ -216,10 +224,16 @@ export default function OrgPayoutsPage({
                                 {new Date(payout.periodEnd).toLocaleDateString()}
                               </td>
                               <td className="py-3 text-right text-zinc-500">
-                                {formatCurrencyAmount(payout.grossRevenue, payout.currency)}
+                                {formatCurrencyAmount(
+                                  payout.grossRevenuePaise,
+                                  payout.currency,
+                                )}
                               </td>
                               <td className="py-3 text-right font-medium text-zinc-900">
-                                {formatCurrencyAmount(payout.netPayout, payout.currency)}
+                                {formatCurrencyAmount(
+                                  payout.netPayoutPaise,
+                                  payout.currency,
+                                )}
                               </td>
                               <td className="py-3 text-center">
                                 <Badge variant={cfg.variant}>{cfg.label}</Badge>

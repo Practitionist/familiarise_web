@@ -1,11 +1,12 @@
 /**
- * @arch4-scaffold DPDP ConsentArtifact management page (Issue #681).
- *
- * View and manage DPDP consent records for the org's members. 7-year
- * retention required by the DPDP Act 2023 Rules (notified 13 Nov 2025).
+ * DPDP ConsentArtifact management page — scaffold until the dashboard
+ * UI ships on top of the live /api/organizations/[id]/consent routes.
+ * 7-year retention required by the DPDP Act 2023 Rules.
  */
 
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { requireOrgAccess } from "@/lib/auth-helpers";
 
 export default async function ConsentPage({
   params,
@@ -13,6 +14,11 @@ export default async function ConsentPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = await params;
+  const access = await requireOrgAccess(orgId, { minimumRole: "MANAGER" });
+  if (access.error) {
+    redirect(`/dashboard/organization/${orgId}/home`);
+  }
+
   return (
     <div className="space-y-6">
       <header>
@@ -24,10 +30,10 @@ export default async function ConsentPage({
       </header>
 
       <div className="rounded-lg border bg-card p-6">
-        <h2 className="font-medium">Pending Phase 2b rewrite</h2>
+        <h2 className="font-medium">Consent dashboard UI coming soon</h2>
         <p className="text-sm text-muted-foreground mt-2">
-          Consent grant, withdrawal, and audit UI is not yet implemented.
-          See{" "}
+          The API surface at <code>/api/organizations/{orgId}/consent</code>{" "}
+          is live. The dashboard UI ships in a follow-up PR. See{" "}
           <Link
             href="https://github.com/Practitionist/familiarise_web/issues/681"
             className="underline text-primary"
@@ -35,9 +41,6 @@ export default async function ConsentPage({
             Issue #681
           </Link>
           .
-        </p>
-        <p className="text-xs text-muted-foreground mt-4">
-          Organization ID: <code>{orgId}</code>
         </p>
       </div>
     </div>

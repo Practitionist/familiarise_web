@@ -119,6 +119,21 @@ export async function GET(
         user: {
           select: { id: true, name: true, email: true, image: true },
         },
+        // ConsultantProfile + ConsulteeProfile are 1:1 optionals. Always
+        // including them here means the consultants page gets
+        // `headline / rating / isVerified` in one round-trip without
+        // needing a separate /consultants endpoint.
+        consultantProfile: {
+          select: {
+            id: true,
+            headline: true,
+            rating: true,
+            isVerified: true,
+          },
+        },
+        consulteeProfile: {
+          select: { id: true },
+        },
       },
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * perPage,

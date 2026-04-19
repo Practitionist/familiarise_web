@@ -4,6 +4,7 @@ import { use, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { Shield } from "lucide-react";
+import type { FundingSource, OrgStatus } from "@prisma/client";
 
 import { useOrgRole, useRequireOrgRole } from "../useOrgRole";
 import {
@@ -20,8 +21,21 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import {
+  FUNDING_SOURCE_LABEL,
+  CAPABILITY_BADGE_CLASS,
+  CAPABILITY_LABEL,
+  deriveCapabilityKind,
+} from "@/lib/labels/org-labels";
 
-interface OrgSettings {
+// ---------------------------------------------------------------------------
+// Types — GET /api/organizations/[orgId]/settings returns
+//   { organization: { id, name, slug, logo }, profile: Organization }
+// where `profile` is the Prisma Organization row (Arch 4 shape).
+// ---------------------------------------------------------------------------
+
+interface SettingsResponse {
   organization: {
     id: string;
     name: string;
@@ -30,19 +44,19 @@ interface OrgSettings {
   } | null;
   profile: {
     id: string;
-    kind: string;
-    status: string;
-    billingMode: string | null;
-    billingEmail: string;
+    status: OrgStatus;
+    canSponsor: boolean;
+    canHost: boolean;
+    billingEmail: string | null;
     description: string | null;
     industry: string | null;
     website: string | null;
     paymentTermsDays: number;
-    seatsTotal: number | null;
+    billingAccount?: { fundingSource: FundingSource } | null;
   };
 }
 
-async function fetchSettings(orgId: string): Promise<OrgSettings> {
+async function fetchSettings(orgId: string): Promise<SettingsResponse> {
   const res = await fetch(`/api/organizations/${orgId}/settings`);
   if (!res.ok) throw new Error("Failed to load settings");
   return res.json();
@@ -50,12 +64,11 @@ async function fetchSettings(orgId: string): Promise<OrgSettings> {
 
 interface PatchPayload {
   name?: string;
-  billingEmail?: string;
+  billingEmail?: string | null;
   description?: string | null;
   industry?: string | null;
   website?: string | null;
   paymentTermsDays?: number;
-  seatsTotal?: number | null;
 }
 
 async function patchSettings(orgId: string, payload: PatchPayload) {
@@ -82,6 +95,7 @@ export default function OrgSettingsPage({
   const { data, isLoading } = useQuery({
     queryKey: ["org-settings", orgId],
     queryFn: () => fetchSettings(orgId),
+    enabled: allowed,
   });
 
   const [name, setName] = useState("");
@@ -90,35 +104,28 @@ export default function OrgSettingsPage({
   const [industry, setIndustry] = useState("");
   const [website, setWebsite] = useState("");
   const [paymentTermsDays, setPaymentTermsDays] = useState("60");
-  const [seatsTotal, setSeatsTotal] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
     if (!data) return;
     setName(data.organization?.name ?? "");
-    setBillingEmail(data.profile.billingEmail);
+    setBillingEmail(data.profile.billingEmail ?? "");
     setDescription(data.profile.description ?? "");
     setIndustry(data.profile.industry ?? "");
     setWebsite(data.profile.website ?? "");
     setPaymentTermsDays(String(data.profile.paymentTermsDays));
-    setSeatsTotal(
-      data.profile.seatsTotal !== null && data.profile.seatsTotal !== undefined
-        ? String(data.profile.seatsTotal)
-        : "",
-    );
   }, [data]);
 
   const mutation = useMutation({
     mutationFn: () =>
       patchSettings(orgId, {
         name: name.trim(),
-        billingEmail: billingEmail.trim(),
+        billingEmail: billingEmail.trim() || null,
         description: description.trim() || null,
         industry: industry.trim() || null,
         website: website.trim() || null,
         paymentTermsDays: parseInt(paymentTermsDays, 10),
-        seatsTotal: seatsTotal ? parseInt(seatsTotal, 10) : null,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["org-settings", orgId] });
@@ -135,7 +142,7 @@ export default function OrgSettingsPage({
 
   if (!allowed) return null;
 
-  if (isLoading) {
+  if (isLoading || !data) {
     return (
       <>
         <DashboardHeader title="Settings" />
@@ -145,6 +152,12 @@ export default function OrgSettingsPage({
       </>
     );
   }
+
+  const capabilityKind = deriveCapabilityKind(
+    data.profile.canSponsor,
+    data.profile.canHost,
+  );
+  const fundingSource = data.profile.billingAccount?.fundingSource;
 
   return (
     <>
@@ -162,6 +175,34 @@ export default function OrgSettingsPage({
         }
       />
       <DashboardContent>
+        {/* Capability + funding summary — read-only snapshot so admins
+            can see the org's shape without having to dig through docs.
+            Capability changes happen via PATCH to the org resource;
+            funding source changes go through the billing-account route. */}
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="text-base">Organization shape</CardTitle>
+            <CardDescription>
+              Capability + funding source determine what checkout does when
+              members book. Change them via the billing or capability flows.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-3">
+            <Badge
+              variant="secondary"
+              className={CAPABILITY_BADGE_CLASS[capabilityKind]}
+            >
+              {CAPABILITY_LABEL[capabilityKind]}
+            </Badge>
+            {fundingSource && (
+              <Badge variant="outline">
+                Funding: {FUNDING_SOURCE_LABEL[fundingSource]}
+              </Badge>
+            )}
+            <Badge variant="outline">Status: {data.profile.status}</Badge>
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader>
             <CardTitle>Profile</CardTitle>
@@ -246,18 +287,10 @@ export default function OrgSettingsPage({
                     onChange={(e) => setPaymentTermsDays(e.target.value)}
                     disabled={!isAtLeast("MAINTAINER")}
                   />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="seats">Seat budget (optional)</Label>
-                  <Input
-                    id="seats"
-                    type="number"
-                    min="0"
-                    value={seatsTotal}
-                    onChange={(e) => setSeatsTotal(e.target.value)}
-                    placeholder="Leave blank for unlimited"
-                    disabled={!isAtLeast("MAINTAINER")}
-                  />
+                  <p className="text-xs text-zinc-500">
+                    India default is NET-60. Only applies when funding
+                    source is INVOICE.
+                  </p>
                 </div>
               </div>
 
@@ -276,19 +309,6 @@ export default function OrgSettingsPage({
             </form>
           </CardContent>
         </Card>
-
-        {data?.profile.kind !== "PROVIDER" && (
-          <Card className="mt-6">
-            <CardHeader>
-              <CardTitle className="text-base">Billing mode</CardTitle>
-              <CardDescription>
-                Currently <strong>{data?.profile.billingMode ?? "—"}</strong>.
-                Billing mode is locked after the first payment to prevent
-                ambiguity in the ledger.
-              </CardDescription>
-            </CardHeader>
-          </Card>
-        )}
       </DashboardContent>
     </>
   );

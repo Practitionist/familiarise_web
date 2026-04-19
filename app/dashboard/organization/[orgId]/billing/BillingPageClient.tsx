@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CreditCard, AlertCircle, Sparkles, Plus, Trash2 } from "lucide-react";
-import { useOrgRole, useRequireOrgRole } from "../useOrgRole";
+import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -96,7 +96,10 @@ async function payInvoice(orgId: string, invoiceId: string) {
 
 export function BillingPageClient({ orgId }: { orgId: string }) {
   const { isAtLeast } = useOrgRole(orgId);
-  const { allowed } = useRequireOrgRole(orgId, "MANAGER");
+  const { allowed } = useRequireOrgAccess(orgId, {
+    minRole: "MANAGER",
+    canSponsor: true,
+  });
   const queryClient = useQueryClient();
 
   const summary = useQuery({

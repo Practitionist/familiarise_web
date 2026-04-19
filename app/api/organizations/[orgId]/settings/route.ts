@@ -16,16 +16,30 @@ export async function GET(
 ) {
   try {
     const { orgId } = await params;
-    const access = await requireOrgAccess(orgId);
+    const access = await requireOrgAccess(orgId, { minimumRole: "LEARNER" });
     if (access.error) return access.error;
 
-    const organization = await prisma.organization.findUnique({
-      where: { id: orgId },
-      select: { id: true, name: true, slug: true, logo: true },
-    });
+    // `profile` mirrors the Organization row — callers need the
+    // capability booleans + paymentTermsDays + description/website/etc.
+    // BillingAccount is included so the settings page can show the
+    // funding source without a second round-trip.
+    const [organization, billingAccount] = await Promise.all([
+      prisma.organization.findUnique({
+        where: { id: orgId },
+        select: { id: true, name: true, slug: true, logo: true },
+      }),
+      prisma.billingAccount.findFirst({
+        where: { ownerOrgId: orgId },
+        select: { fundingSource: true, currency: true, creditLimit: true },
+      }),
+    ]);
+
     return NextResponse.json({
       organization,
-      profile: access.org,
+      profile: {
+        ...access.org,
+        billingAccount,
+      },
     });
   } catch (error) {
     console.error("[API /organizations/[orgId]/settings GET] error:", error);

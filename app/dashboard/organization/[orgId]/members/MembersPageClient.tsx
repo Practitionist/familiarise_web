@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { UserPlus, Trash2, Pencil } from "lucide-react";
 
-import { useOrgRole } from "../useOrgRole";
+import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import {
   DashboardHeader,
   DashboardContent,
@@ -116,11 +116,13 @@ async function removeMember(orgId: string, memberId: string) {
 
 export function MembersPageClient({ orgId }: { orgId: string }) {
   const { isAtLeast } = useOrgRole(orgId);
+  const { allowed } = useRequireOrgAccess(orgId, { minRole: "MANAGER" });
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
     queryKey: ["org-members", orgId],
     queryFn: () => fetchMembers(orgId),
+    enabled: allowed,
   });
 
   const [showInvite, setShowInvite] = useState(false);
@@ -172,6 +174,8 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
     },
     onError: (err: Error) => setEditError(err.message),
   });
+
+  if (!allowed) return null;
 
   return (
     <>

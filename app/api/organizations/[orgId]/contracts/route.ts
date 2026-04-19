@@ -12,7 +12,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
+import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
 const ContractStatusSchema = z.enum([
@@ -53,7 +53,10 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "MAINTAINER");
+  const access = await requireOrgAccess(orgId, {
+    minimumRole: "MAINTAINER",
+    canSponsor: true,
+  });
   if (access.error) return access.error;
 
   const url = new URL(req.url);
@@ -90,7 +93,10 @@ export async function POST(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgOwner(orgId);
+  const access = await requireOrgAccess(orgId, {
+    minimumRole: "OWNER",
+    canSponsor: true,
+  });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);

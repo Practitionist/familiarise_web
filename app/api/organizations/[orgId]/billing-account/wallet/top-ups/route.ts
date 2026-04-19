@@ -20,7 +20,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
+import { requireOrgAccess } from "@/lib/auth-helpers";
 import { initiateTopUp } from "@/lib/api/organizations/wallet";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
@@ -40,7 +40,7 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "MANAGER");
+  const access = await requireOrgAccess(orgId, { minimumRole: "MANAGER", canSponsor: true });
   if (access.error) return access.error;
 
   const ba = await prisma.billingAccount.findFirst({
@@ -89,7 +89,7 @@ export async function POST(
   // OWNER-only: top-up moves real money. A MAINTAINER can queue
   // invites and edit programs, but spinning up an external Razorpay
   // charge should live with the person who pays the bill.
-  const access = await requireOrgOwner(orgId);
+  const access = await requireOrgAccess(orgId, { minimumRole: "OWNER", canSponsor: true });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);

@@ -15,7 +15,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
-import { requireOrgOwner } from "@/lib/auth-helpers";
+import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
 export async function POST(
@@ -27,7 +27,7 @@ export async function POST(
   },
 ) {
   const { orgId, invoiceId } = await params;
-  const access = await requireOrgOwner(orgId);
+  const access = await requireOrgAccess(orgId, { minimumRole: "OWNER", canSponsor: true });
   if (access.error) return access.error;
 
   const invoice = await prisma.organizationInvoice.findFirst({

@@ -48,7 +48,10 @@ export async function GET(
   },
 ) {
   const { orgId, programId } = await params;
-  const access = await requireOrgAccess(orgId);
+  const access = await requireOrgAccess(orgId, {
+    minimumRole: "MANAGER",
+    canSponsor: true,
+  });
   if (access.error) return access.error;
 
   const program = await prisma.program.findFirst({
@@ -77,7 +80,10 @@ export async function PATCH(
   },
 ) {
   const { orgId, programId } = await params;
-  const access = await requireOrgAccess(orgId, "MAINTAINER");
+  const access = await requireOrgAccess(orgId, {
+    minimumRole: "MAINTAINER",
+    canSponsor: true,
+  });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);
@@ -157,7 +163,10 @@ export async function DELETE(
   },
 ) {
   const { orgId, programId } = await params;
-  const access = await requireOrgAccess(orgId, "MAINTAINER");
+  const access = await requireOrgAccess(orgId, {
+    minimumRole: "MAINTAINER",
+    canSponsor: true,
+  });
   if (access.error) return access.error;
 
   try {

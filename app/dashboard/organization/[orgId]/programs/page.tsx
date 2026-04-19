@@ -10,7 +10,7 @@ import type {
   ProgramType,
 } from "@prisma/client";
 
-import { useOrgRole, useRequireOrgRole } from "../useOrgRole";
+import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import {
   DashboardHeader,
   DashboardContent,
@@ -541,7 +541,10 @@ export default function OrgProgramsPage({
 }) {
   const { orgId } = use(params);
   const { isAtLeast } = useOrgRole(orgId);
-  const { allowed } = useRequireOrgRole(orgId, "MANAGER");
+  const { allowed } = useRequireOrgAccess(orgId, {
+    minRole: "MAINTAINER",
+    canSponsor: true,
+  });
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const programs = useQuery({

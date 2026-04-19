@@ -17,7 +17,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
+import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
 const PatchStatusSchema = z.enum(["ISSUED", "CANCELLED", "VOID"]);
@@ -41,7 +41,7 @@ export async function GET(
   },
 ) {
   const { orgId, invoiceId } = await params;
-  const access = await requireOrgAccess(orgId, "MANAGER");
+  const access = await requireOrgAccess(orgId, { minimumRole: "MANAGER", canSponsor: true });
   if (access.error) return access.error;
 
   const invoice = await prisma.organizationInvoice.findFirst({
@@ -70,7 +70,7 @@ export async function PATCH(
   },
 ) {
   const { orgId, invoiceId } = await params;
-  const access = await requireOrgOwner(orgId);
+  const access = await requireOrgAccess(orgId, { minimumRole: "OWNER", canSponsor: true });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);

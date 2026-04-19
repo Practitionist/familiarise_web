@@ -19,7 +19,7 @@ export async function GET(
   },
 ) {
   const { orgId, topUpId } = await params;
-  const access = await requireOrgAccess(orgId, "MANAGER");
+  const access = await requireOrgAccess(orgId, { minimumRole: "MANAGER", canSponsor: true });
   if (access.error) return access.error;
 
   // topUpId is the providerOrderId; scope by billing account ownership

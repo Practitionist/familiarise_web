@@ -26,7 +26,7 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "MANAGER");
+  const access = await requireOrgAccess(orgId, { minimumRole: "MANAGER", canSponsor: true });
   if (access.error) return access.error;
 
   const ba = await prisma.billingAccount.findFirst({

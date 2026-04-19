@@ -38,7 +38,7 @@ export async function GET(
 ) {
   const { orgId } = await params;
   // Members (LEARNER+) can search their own org's catalog.
-  const access = await requireOrgAccess(orgId);
+  const access = await requireOrgAccess(orgId, { canSponsor: true });
   if (access.error) return access.error;
 
   const url = new URL(req.url);

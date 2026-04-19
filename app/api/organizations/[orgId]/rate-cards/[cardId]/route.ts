@@ -15,7 +15,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
+import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
 const PatchBodySchema = z
@@ -39,7 +39,7 @@ export async function GET(
   },
 ) {
   const { orgId, cardId } = await params;
-  const access = await requireOrgAccess(orgId, "MANAGER");
+  const access = await requireOrgAccess(orgId, { minimumRole: "MANAGER", canHost: true });
   if (access.error) return access.error;
 
   const card = await prisma.rateCard.findFirst({
@@ -77,7 +77,7 @@ export async function PATCH(
   },
 ) {
   const { orgId, cardId } = await params;
-  const access = await requireOrgOwner(orgId);
+  const access = await requireOrgAccess(orgId, { minimumRole: "OWNER", canHost: true });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);

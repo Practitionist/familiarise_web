@@ -10,7 +10,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
+import { requireOrgAccess } from "@/lib/auth-helpers";
 
 const PoStatusSchema = z.enum(["ACTIVE", "CLOSED", "CANCELLED"]);
 
@@ -36,7 +36,7 @@ export async function GET(
   },
 ) {
   const { orgId, poId } = await params;
-  const access = await requireOrgAccess(orgId, "MANAGER");
+  const access = await requireOrgAccess(orgId, { minimumRole: "MANAGER", canSponsor: true });
   if (access.error) return access.error;
 
   const po = await prisma.purchaseOrder.findFirst({
@@ -65,7 +65,7 @@ export async function PATCH(
   },
 ) {
   const { orgId, poId } = await params;
-  const access = await requireOrgOwner(orgId);
+  const access = await requireOrgAccess(orgId, { minimumRole: "OWNER", canSponsor: true });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);
@@ -126,7 +126,7 @@ export async function DELETE(
   },
 ) {
   const { orgId, poId } = await params;
-  const access = await requireOrgOwner(orgId);
+  const access = await requireOrgAccess(orgId, { minimumRole: "OWNER", canSponsor: true });
   if (access.error) return access.error;
 
   try {

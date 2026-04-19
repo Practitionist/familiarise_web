@@ -4,6 +4,7 @@ import { use, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Coins, Plus } from "lucide-react";
 
+import { useRequireOrgAccess } from "../useOrgRole";
 import {
   DashboardHeader,
   DashboardContent,
@@ -117,10 +118,16 @@ export default function OrgCreditsPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = use(params);
+  const { allowed } = useRequireOrgAccess(orgId, {
+    minRole: "MANAGER",
+    canSponsor: true,
+    fundingSource: "WALLET",
+  });
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ["org-wallet", orgId],
     queryFn: () => fetchWallet(orgId),
+    enabled: allowed,
   });
 
   const [showBuy, setShowBuy] = useState(false);
@@ -148,6 +155,8 @@ export default function OrgCreditsPage({
 
   const walletResponse = data && isWalletResponse(data) ? data : null;
   const walletError = data && !isWalletResponse(data) ? data : null;
+
+  if (!allowed) return null;
 
   return (
     <>

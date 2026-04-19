@@ -2,6 +2,7 @@
 
 import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useRequireOrgAccess } from "../useOrgRole";
 
 import {
   DashboardHeader,
@@ -26,7 +27,7 @@ import {
 interface Learner {
   id: string;
   status: string;
-  seatAssignedAt: string | null;
+  createdAt: string;
   user: {
     id: string;
     name: string | null;
@@ -38,9 +39,12 @@ interface Learner {
 async function fetchLearners(
   orgId: string,
 ): Promise<{ learners: Learner[]; total: number }> {
-  const res = await fetch(`/api/organizations/${orgId}/learners?limit=100`);
+  const res = await fetch(
+    `/api/organizations/${orgId}/members?role=LEARNER&perPage=100`,
+  );
   if (!res.ok) throw new Error("Failed to load learners");
-  return res.json();
+  const json = await res.json();
+  return { learners: json.data ?? [], total: json.meta?.total ?? 0 };
 }
 
 export default function OrgLearnersPage({
@@ -49,11 +53,18 @@ export default function OrgLearnersPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = use(params);
+  const { allowed } = useRequireOrgAccess(orgId, {
+    minRole: "MANAGER",
+    canSponsor: true,
+  });
 
   const { data, isLoading } = useQuery({
     queryKey: ["org-learners", orgId],
     queryFn: () => fetchLearners(orgId),
+    enabled: allowed,
   });
+
+  if (!allowed) return null;
 
   return (
     <>
@@ -77,7 +88,7 @@ export default function OrgLearnersPage({
                   <TableRow>
                     <TableHead>Learner</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Seat assigned</TableHead>
+                    <TableHead>Member since</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -103,9 +114,7 @@ export default function OrgLearnersPage({
                         </Badge>
                       </TableCell>
                       <TableCell className="text-xs text-zinc-500">
-                        {l.seatAssignedAt
-                          ? new Date(l.seatAssignedAt).toLocaleDateString()
-                          : "—"}
+                        {new Date(l.createdAt).toLocaleDateString()}
                       </TableCell>
                     </TableRow>
                   ))}

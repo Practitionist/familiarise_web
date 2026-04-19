@@ -150,14 +150,15 @@ export default function OrgLayout({
 
     const items: { name: string; icon: LucideIcon; path: string; show?: boolean }[] = [
       { name: "Overview", icon: Home, path: "home" },
-      { name: "Members", icon: Users, path: "members" },
+      { name: "Members", icon: Users, path: "members", show: isAtLeast("MANAGER") },
       { name: "Invitations", icon: Mail, path: "invitations", show: isAtLeast("MAINTAINER") },
-      // Members filtered by role — MEMBER role carries the "learner"
-      // semantics in Arch 4-Modified. A sponsor-only org gets the
-      // "Members" view; hosts see "Consultants" alongside.
-      { name: "Learners", icon: GraduationCap, path: "members?role=LEARNER", show: canSponsor },
-      { name: "Experts", icon: UserCog, path: "members?role=EXPERT", show: canHost },
-      { name: "Programs", icon: Briefcase, path: "programs", show: canSponsor && isAtLeast("MANAGER") },
+      // Members filtered by role — a sponsor-only org gets the
+      // "Learners" view; hosts see "Experts" alongside. The canonical
+      // role names come straight from `MemberRole` so nothing here
+      // carries the legacy "consultant" vocabulary.
+      { name: "Learners", icon: GraduationCap, path: "learners", show: canSponsor },
+      { name: "Experts", icon: UserCog, path: "experts", show: canHost },
+      { name: "Programs", icon: Briefcase, path: "programs", show: canSponsor && isAtLeast("MAINTAINER") },
       // Catalog nav has no page today (deleted alongside the legacy
       // OrganizationPlan-based curated catalog). Hidden until the
       // capability-driven replacement ships. Leaving the entry here so
@@ -321,8 +322,8 @@ export default function OrgLayout({
     members:     "Members",
     invitations: "Invitations",
     learners:    "Learners",
-    consultants: "Consultants",
-    plans:       "Plans",
+    experts:     "Experts",
+    programs:    "Programs",
     credits:     "Credits",
     billing:     "Billing",
     payouts:     "Payouts",

@@ -50,7 +50,7 @@ interface Invitation {
   status: string;
   expiresAt: string;
   createdAt: string;
-  inviter: { id: string; name: string | null; email: string };
+  inviterId: string | null;
 }
 
 const ROLE_OPTIONS = [
@@ -65,7 +65,8 @@ async function fetchInvitations(
 ): Promise<{ invitations: Invitation[] }> {
   const res = await fetch(`/api/organizations/${orgId}/invitations`);
   if (!res.ok) throw new Error("Failed to load invitations");
-  return res.json();
+  const json = await res.json();
+  return { invitations: json.data ?? [] };
 }
 
 async function createInvitation(
