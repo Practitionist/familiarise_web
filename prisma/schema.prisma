@@ -2819,18 +2819,36 @@ model Payment {
 }
 
 // Stackable funding leg. Each row captures one source contribution to a
-// Payment. Examples:
-//   - { source: CARD,            amountPaise: 150000, sourceRef: pay_xyz }
-//   - { source: REFERRAL_CREDIT, amountPaise:  50000, sourceRef: <ReferralCredit.id> }
-//   - { source: WALLET,          amountPaise: 100000, sourceRef: <WalletEntry.id> }
-// Invariant: sum(legs.amountPaise) == Payment.amount when legs are present.
+// Payment. `sourceRef` carries a different foreign key depending on
+// `source` — the mapping is authoritative in
+// `lib/payments/payment-legs.ts` (see `makeLeg()`) and summarised here:
+//
+//   CARD             → sourceRef = gateway payment id (pay_xxx / ch_xxx)
+//   REFERRAL_CREDIT  → sourceRef = ReferralCreditUsage.id
+//   WALLET           → sourceRef = ProgramAssignment.id (the assignment
+//                      the leg was billed to; the wallet debit itself
+//                      lives on WalletEntry keyed on
+//                      (billingAccountId, appointmentId))
+//   INVOICE_ACCRUAL  → sourceRef = ProgramAssignment.id (rolled into
+//                      month-end OrganizationInvoice by assignment)
+//   LICENSE          → sourceRef = ProgramAssignment.id (amountPaise=0;
+//                      leg exists solely to preserve the
+//                      "every Payment has ≥1 leg" invariant)
+//
+// Examples:
+//   { source: CARD,            amountPaise: 150000, sourceRef: pay_xyz }
+//   { source: REFERRAL_CREDIT, amountPaise:  50000, sourceRef: <ReferralCreditUsage.id> }
+//   { source: WALLET,          amountPaise: 100000, sourceRef: <ProgramAssignment.id> }
+//
+// Invariant: sum(legs.amountPaise) == Payment.amount when legs are
+// present (LICENSE legs contribute 0 so they don't skew the total).
 model PaymentLeg {
   id          String           @id @default(uuid())
   paymentId   String
   payment     Payment          @relation(fields: [paymentId], references: [id], onDelete: Cascade)
   source      PaymentLegSource
   amountPaise Int
-  sourceRef   String? // wallet-entry id | referral-credit id | gateway txn id
+  sourceRef   String? // see header — kind depends on `source`
   createdAt   DateTime         @default(now())
 
   @@index([paymentId])

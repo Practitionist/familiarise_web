@@ -55,7 +55,7 @@ export class RecordingService {
 
       // Get the call and start recording
       const call = client.video.call(callType, callId);
-      await call.startRecording();
+      await call.startRecording({ recording_type: "default" });
 
       streamLogger.info("Recording started via API", {
         streamCallId: callId,
@@ -90,7 +90,7 @@ export class RecordingService {
         : streamCallId;
 
       const call = client.video.call(callType, callId);
-      await call.stopRecording();
+      await call.stopRecording({ recording_type: "default" });
 
       streamLogger.info("Recording stopped via API", {
         streamCallId: callId,

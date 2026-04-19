@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
+import crypto from "node:crypto";
 import {
   handlePaymentFailure,
   handlePaymentSuccess,
   handleOrgPaymentSuccess,
+  handleOrgPaymentFailure,
   handleRefundCreated,
   handleDisputeCreated,
   handleDisputeUpdated,
@@ -13,6 +15,7 @@ import {
   handleRazorpayPayoutWebhook,
   isDbHealthy,
 } from "../utils";
+import { scrubWebhookPayload } from "@/lib/logging/webhook-scrub";
 import {
   razorpayWebhookEnvelopeSchema,
   razorpayPaymentCapturedEventSchema,
@@ -162,6 +165,10 @@ export async function POST(req: NextRequest) {
 
   // Composite key prevents collisions between different lifecycle events
   // for the same entity (e.g., payment.captured vs refund.created).
+  // When no entity is present (malformed payload) we fall back to a
+  // SHA-256 hash of the raw body so the eventId stays deterministic —
+  // two identical replayed bodies collapse to the same id, which is what
+  // we want for dedup.
   const entityId =
     event.payload?.payment?.entity?.id ||
     event.payload?.order?.entity?.id ||
@@ -169,7 +176,7 @@ export async function POST(req: NextRequest) {
     event.payload?.dispute?.entity?.id ||
     event.payload?.payout?.entity?.id ||
     event.account_id ||
-    `noid_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    `body_${crypto.createHash("sha256").update(body).digest("hex").slice(0, 16)}`;
   const eventId = `${eventType}:${entityId}`;
 
   // Idempotency check (synchronous — must complete before returning 200)
@@ -203,8 +210,13 @@ async function processWebhookEvent(
   eventType: string,
   eventId: string,
 ): Promise<void> {
+  // PII-scrub the payload before logging — Razorpay payloads can carry
+  // payer email/phone/contact, partial card/UPI fingerprints, and any
+  // `notes.*` fields the app populated (referrerEmail etc). See
+  // lib/logging/webhook-scrub.ts for the redaction rules.
   console.log(`🔔 Razorpay Webhook Event: ${eventType}`, {
-    payload: event.payload,
+    eventId,
+    payload: scrubWebhookPayload(event.payload),
   });
 
   let processingError: string | undefined;
@@ -251,9 +263,20 @@ async function processWebhookEvent(
 
       case "payment.failed": {
         const failedEvent = razorpayPaymentFailedEventSchema.parse(event);
-        await handlePaymentFailure(
-          failedEvent.payload.payment.entity.order_id,
-        );
+        const failedEntity = failedEvent.payload.payment.entity;
+        const failedNotes = failedEntity.notes ?? {};
+        // Org-level top-ups and invoice payments do NOT have a `Payment`
+        // row (they live on WalletEntry / OrganizationInvoice), so the
+        // legacy handlePaymentFailure would silently no-op for them.
+        // Route by notes.type first; fall back to the B2C path.
+        if (
+          failedNotes.type === "credit_purchase" ||
+          failedNotes.type === "invoice_payment"
+        ) {
+          await handleOrgPaymentFailure(failedNotes, failedEntity.id);
+        } else {
+          await handlePaymentFailure(failedEntity.order_id);
+        }
         break;
       }
 

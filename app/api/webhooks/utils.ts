@@ -242,6 +242,119 @@ export async function handleOrgPaymentSuccess(
 }
 
 /**
+ * Handle org-specific payment FAILURE (credit_purchase or invoice_payment).
+ *
+ * The legacy `handlePaymentFailure` path only knows about the B2C
+ * `Payment` table — when a user's wallet top-up or invoice-payment fails
+ * at the gateway, there is no `Payment` row for it. Without this
+ * handler, a `payment.failed` webhook for an org top-up would silently
+ * log "Payment record not found" and leave the pending `WalletEntry`
+ * placeholder stuck in the DB forever (the cleanup cron would GC it
+ * eventually, but we want to flip state immediately for a snappy UX).
+ *
+ * For top-ups: the placeholder WalletEntry (deltaPaise=0, status
+ * expressed via notes + absence of providerPaymentId) is deleted so the
+ * caller sees an immediate "payment failed — please retry" state on
+ * next refresh. `confirmTopUp` is the only path that converts a
+ * placeholder to a live wallet credit, so deleting here is safe.
+ *
+ * For invoices: we clear `providerPaymentOrderId` so the next "Pay"
+ * click at the UI creates a fresh Razorpay order (the idempotency
+ * guard we introduced in Phase 1 reused the old order id; a failed
+ * order must be discarded before retry).
+ */
+export async function handleOrgPaymentFailure(
+  notes: Record<string, string>,
+  providerPaymentId?: string,
+): Promise<void> {
+  if (notes.type === "credit_purchase") {
+    const { walletEntryOrderId, organizationId } = notes;
+    if (!walletEntryOrderId) {
+      console.error("[Webhook] credit_purchase.failed missing walletEntryOrderId");
+      return;
+    }
+    // Only delete placeholders that were never confirmed. A confirmed
+    // top-up has deltaPaise > 0 and a providerPaymentId set; a
+    // placeholder has deltaPaise === 0.
+    const deleted = await prisma.walletEntry.deleteMany({
+      where: {
+        providerOrderId: walletEntryOrderId,
+        reason: "TOPUP",
+        deltaPaise: 0,
+        providerPaymentId: null,
+      },
+    });
+    console.log(
+      `[Webhook] credit_purchase.failed placeholder deleted (count=${deleted.count}) order=${walletEntryOrderId}`,
+    );
+    if (organizationId && deleted.count > 0) {
+      prisma.orgAuditLog
+        .create({
+          data: {
+            organizationId,
+            actorMembershipId: null,
+            category: "WALLET",
+            action: AUDIT_ACTIONS.WALLET.WALLET_TOPUP,
+            description: `Top-up failed at gateway: order ${walletEntryOrderId}`,
+            details: {
+              walletEntryOrderId,
+              providerPaymentId: providerPaymentId ?? null,
+              outcome: "failed",
+            },
+          },
+        })
+        .catch((err) =>
+          console.error(
+            "[Webhook] Failed to write WALLET_TOPUP failure audit log:",
+            err,
+          ),
+        );
+    }
+  } else if (notes.type === "invoice_payment") {
+    const { invoiceId, organizationId } = notes;
+    if (!invoiceId) {
+      console.error("[Webhook] invoice_payment.failed missing invoiceId");
+      return;
+    }
+    // Clear the stored order id so the UI retry creates a fresh one.
+    // Leave the invoice status untouched (still ISSUED/OVERDUE).
+    await prisma.organizationInvoice.updateMany({
+      where: {
+        id: invoiceId,
+        status: { in: ["ISSUED", "OVERDUE"] },
+      },
+      data: { providerPaymentOrderId: null },
+    });
+    console.log(
+      `[Webhook] invoice_payment.failed cleared provider order id for invoice ${invoiceId}`,
+    );
+    if (organizationId) {
+      prisma.orgAuditLog
+        .create({
+          data: {
+            organizationId,
+            actorMembershipId: null,
+            category: "INVOICE",
+            action: AUDIT_ACTIONS.INVOICE.INVOICE_PAYMENT_INITIATED,
+            description: `Invoice ${invoiceId} payment failed at gateway`,
+            details: {
+              invoiceId,
+              providerPaymentId: providerPaymentId ?? null,
+              outcome: "failed",
+            },
+          },
+        })
+        .catch((err) =>
+          console.error(
+            "[Webhook] Failed to write invoice-payment-failed audit log:",
+            err,
+          ),
+        );
+    }
+  }
+}
+
+/**
  * Lightweight DB health check for webhook handlers.
  *
  * Returns false when the DB is unreachable or mid-migration.
@@ -403,16 +516,38 @@ export async function handleRefundCreated(
             SET "walletBalance" = COALESCE("walletBalance", 0) - ${refundAmt}
             WHERE "id" = ${topUpEntry.billingAccountId}
           `;
-          await tx.walletEntry.create({
-            data: {
-              billingAccountId: topUpEntry.billingAccountId,
-              deltaPaise: -refundAmt,
-              reason: "REFUND",
-              balanceAfter: newBalance,
-              providerPaymentId,
-              notes: `Refund for top-up ${topUpEntry.providerOrderId ?? ""} (gateway refund ${refundId})`,
-            },
-          });
+          // The `already` guard above handles the common case, but two
+          // webhook workers racing can still both pass the guard under
+          // READ COMMITTED isolation. We intentionally don't bump the
+          // outer tx to Serializable (this function is shared with the
+          // B2C refund path which has its own lock footprint). Instead,
+          // we re-read inside a P2002 catch — if a unique constraint on
+          // WalletEntry is ever added for REFUND rows, the catch
+          // converts the duplicate into a no-op. Today the catch is
+          // belt-and-suspenders; tomorrow it becomes the real enforcer.
+          try {
+            await tx.walletEntry.create({
+              data: {
+                billingAccountId: topUpEntry.billingAccountId,
+                deltaPaise: -refundAmt,
+                reason: "REFUND",
+                balanceAfter: newBalance,
+                providerPaymentId,
+                notes: `Refund for top-up ${topUpEntry.providerOrderId ?? ""} (gateway refund ${refundId})`,
+              },
+            });
+          } catch (e) {
+            if (
+              e instanceof Prisma.PrismaClientKnownRequestError &&
+              e.code === "P2002"
+            ) {
+              console.log(
+                `💸 Top-up refund for payment ${providerPaymentId} already booked by concurrent worker, skipping`,
+              );
+              return;
+            }
+            throw e;
+          }
           await tx.fundingLedgerEntry.create({
             data: {
               billingAccountId: topUpEntry.billingAccountId,

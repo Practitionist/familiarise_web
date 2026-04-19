@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import crypto from "node:crypto";
 import {
   handlePaymentFailure,
   handlePaymentSuccess,
@@ -11,6 +12,7 @@ import {
   handleStripePayoutWebhook,
   isDbHealthy,
 } from "../utils";
+import { scrubWebhookPayload } from "@/lib/logging/webhook-scrub";
 import {
   stripeBaseEventSchema,
   stripePaymentIntentSucceededEventSchema,
@@ -49,8 +51,13 @@ export async function POST(req: NextRequest) {
     const event = JSON.parse(body);
     const { type: eventType } = stripeBaseEventSchema.parse(event);
 
-    // Log webhook event for audit trail (idempotency check)
-    const eventId = event.id || `stripe_${Date.now()}`;
+    // Log webhook event for audit trail (idempotency check).
+    // Stripe always sends a unique `evt_...` id, but if it's missing we
+    // derive a deterministic fallback from the body hash so replays
+    // still dedup.
+    const eventId =
+      event.id ||
+      `stripe_body_${crypto.createHash("sha256").update(body).digest("hex").slice(0, 16)}`;
 
     const { isNew } = await logWebhookEvent(
       "stripe",
@@ -65,8 +72,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ status: "ok", duplicate: true });
     }
 
+    // PII-scrub the payload before logging — Stripe payloads can carry
+    // `receipt_email`, `billing_details.name/email/phone`, and arbitrary
+    // `metadata.*` fields set by the application. See
+    // lib/logging/webhook-scrub.ts for the redaction rules.
     console.log(`🔔 Stripe Webhook Event: ${eventType}`, {
-      payload: event.data.object,
+      eventId,
+      payload: scrubWebhookPayload(event.data.object),
     });
 
     let processingError: string | undefined;
@@ -170,11 +182,25 @@ export async function POST(req: NextRequest) {
           break;
         }
 
-        // Stripe Connect Payout/Transfer events
+        // Stripe Connect Payout/Transfer events.
+        //
+        // Payouts are India-first via RazorpayX; Stripe Connect payout
+        // integration is opt-in. Production environments that haven't
+        // onboarded Connect will otherwise receive noisy webhooks (e.g.
+        // for the platform's own Stripe balance movements). Gate both
+        // the handler and the subsequent `account.updated` /
+        // `transfer.*` logs behind ENABLE_STRIPE_PAYOUTS so we can
+        // enable the full Connect flow atomically once ready.
         case "payout.created":
         case "payout.paid":
         case "payout.failed":
         case "payout.canceled": {
+          if (process.env.ENABLE_STRIPE_PAYOUTS !== "true") {
+            console.log(
+              `⏭️  Stripe Connect payout event ${eventType} ignored (ENABLE_STRIPE_PAYOUTS!=true)`,
+            );
+            break;
+          }
           const payoutEvent = event.data.object;
           await handleStripePayoutWebhook(eventType, {
             id: payoutEvent.id,
@@ -185,21 +211,23 @@ export async function POST(req: NextRequest) {
           break;
         }
 
-        // Stripe Connect Account events
+        // Stripe Connect Account events — only meaningful when Connect
+        // payouts are enabled.
         case "account.updated": {
+          if (process.env.ENABLE_STRIPE_PAYOUTS !== "true") break;
           const accountEvent = event.data.object;
           console.log(`📄 Stripe Connect account updated: ${accountEvent.id}`, {
             chargesEnabled: accountEvent.charges_enabled,
             payoutsEnabled: accountEvent.payouts_enabled,
             detailsSubmitted: accountEvent.details_submitted,
           });
-          // TODO: Update PayoutAccount status in database if needed
           break;
         }
 
         // Transfer events (platform to connected account)
         case "transfer.created":
         case "transfer.reversed": {
+          if (process.env.ENABLE_STRIPE_PAYOUTS !== "true") break;
           const transferEvent = event.data.object;
           console.log(`📄 Stripe transfer ${eventType}: ${transferEvent.id}`, {
             amount: transferEvent.amount,
