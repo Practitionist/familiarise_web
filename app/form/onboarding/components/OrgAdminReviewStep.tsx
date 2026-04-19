@@ -10,6 +10,16 @@ import {
 } from "@/components/ui/card";
 import { Pencil } from "lucide-react";
 import type { OnboardingFormData } from "@/utils/onboarding";
+import {
+  FUNDING_SOURCE_LABEL,
+  MEMBER_ROLE_LABEL,
+  deriveCapabilityKind,
+  CAPABILITY_LABEL,
+  FUNDING_SOURCE_BADGE_CLASS,
+  CAPABILITY_BADGE_CLASS,
+  narrowFundingSource,
+  narrowSelfServiceRole,
+} from "@/lib/labels/org-labels";
 
 interface Props {
   onSubmit: (data: Partial<OnboardingFormData>) => void;
@@ -70,11 +80,45 @@ export default function OrgAdminReviewStep({
         <p><strong>Name:</strong> {formData.orgName ?? "—"}</p>
         <p><strong>Billing email:</strong> {formData.orgBillingEmail ?? "—"}</p>
         <p>
-          <strong>Billing mode:</strong>{" "}
-          <Badge variant="secondary">
-            {formData.orgBillingMode ?? "TAG_ONLY"}
+          <strong>Capability:</strong>{" "}
+          <Badge
+            variant="secondary"
+            className={
+              CAPABILITY_BADGE_CLASS[
+                deriveCapabilityKind(
+                  formData.orgCanSponsor ?? true,
+                  formData.orgCanHost ?? false,
+                )
+              ]
+            }
+          >
+            {
+              CAPABILITY_LABEL[
+                deriveCapabilityKind(
+                  formData.orgCanSponsor ?? true,
+                  formData.orgCanHost ?? false,
+                )
+              ]
+            }
           </Badge>
         </p>
+        {formData.orgCanSponsor && (() => {
+          // Re-narrow through the Zod schema so the same fallback logic
+          // the edit step uses also runs here — keeps the review screen
+          // consistent with what the server will actually receive.
+          const fs = narrowFundingSource(formData.orgFundingSource);
+          return (
+            <p>
+              <strong>Funding:</strong>{" "}
+              <Badge
+                variant="secondary"
+                className={FUNDING_SOURCE_BADGE_CLASS[fs]}
+              >
+                {FUNDING_SOURCE_LABEL[fs]}
+              </Badge>
+            </p>
+          );
+        })()}
         {formData.orgDescription && (
           <p><strong>Description:</strong> {formData.orgDescription}</p>
         )}
@@ -90,14 +134,17 @@ export default function OrgAdminReviewStep({
         {formData.orgWebsite && (
           <p><strong>Website:</strong> {formData.orgWebsite}</p>
         )}
-        {formData.orgBillingMode === "INVOICED_MONTHLY" && (
+        {formData.orgFundingSource === "INVOICE" && (
           <p>
             <strong>Payment terms:</strong> NET-
-            {formData.orgPaymentTermsDays ?? 30}
+            {formData.orgPaymentTermsDays ?? 60}
           </p>
         )}
-        {formData.orgSeatsTotal && (
-          <p><strong>Seat budget:</strong> {formData.orgSeatsTotal}</p>
+        {formData.orgCanHost && (
+          <p className="text-xs text-amber-700 mt-2">
+            Hosting requires admin verification before the first booking.
+            We&apos;ll notify you when your organization is approved.
+          </p>
         )}
       </Section>
 
@@ -109,7 +156,7 @@ export default function OrgAdminReviewStep({
             ))}
           </div>
           <p className="text-xs text-zinc-500 mt-1">
-            Role: {(formData.orgInviteRole ?? "ORG_LEARNER").replace("ORG_", "")}
+            Role: {MEMBER_ROLE_LABEL[narrowSelfServiceRole(formData.orgInviteRole)]}
           </p>
         </Section>
       )}

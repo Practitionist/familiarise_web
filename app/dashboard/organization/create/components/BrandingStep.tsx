@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Building2, Upload, X } from "lucide-react";
@@ -121,10 +122,18 @@ export function BrandingStep({
         <div className="flex items-center gap-4">
           <div className="w-20 h-20 rounded-xl border border-zinc-200 bg-zinc-50 flex items-center justify-center overflow-hidden">
             {logoPreview ? (
-              <img
+              // `logoPreview` can be a blob: URL (client-side createObjectURL)
+              // or a remote https URL once the file has been uploaded. Both
+              // work with next/image as long as we supply explicit width +
+              // height, which we do below. For the blob URL case the
+              // optimizer is bypassed automatically.
+              <Image
                 src={logoPreview}
                 alt="Logo preview"
+                width={80}
+                height={80}
                 className="w-full h-full object-cover"
+                unoptimized={logoPreview.startsWith("blob:")}
               />
             ) : (
               <Building2 className="w-8 h-8 text-zinc-400" />
@@ -173,14 +182,21 @@ export function BrandingStep({
       <div className="space-y-2">
         <Label>Banner image</Label>
         <div
-          className="w-full h-32 rounded-lg border border-zinc-200 bg-zinc-50 flex items-center justify-center overflow-hidden cursor-pointer hover:bg-zinc-100 transition-colors"
+          className="relative w-full h-32 rounded-lg border border-zinc-200 bg-zinc-50 flex items-center justify-center overflow-hidden cursor-pointer hover:bg-zinc-100 transition-colors"
           onClick={() => bannerRef.current?.click()}
         >
           {bannerPreview ? (
-            <img
+            // Banner container is flexible width + fixed height, so
+            // `fill` with `sizes` is the right next/image shape.
+            // `relative` was just added to the parent so fill can
+            // absolute-position inside it.
+            <Image
               src={bannerPreview}
               alt="Banner preview"
-              className="w-full h-full object-cover"
+              fill
+              sizes="(max-width: 768px) 100vw, 512px"
+              className="object-cover"
+              unoptimized={bannerPreview.startsWith("blob:")}
             />
           ) : (
             <div className="text-center">
@@ -262,10 +278,13 @@ export function BrandingStep({
         <div className="p-4 flex items-center gap-3">
           <div className="w-10 h-10 rounded-lg bg-zinc-100 flex items-center justify-center overflow-hidden shrink-0">
             {logoPreview ? (
-              <img
+              <Image
                 src={logoPreview}
                 alt=""
+                width={40}
+                height={40}
                 className="w-full h-full object-cover"
+                unoptimized={logoPreview.startsWith("blob:")}
               />
             ) : (
               <Building2 className="w-5 h-5 text-zinc-400" />
@@ -280,7 +299,7 @@ export function BrandingStep({
               style={{ color: secondaryColor }}
             >
               {initialData.industry || "Industry"} &middot;{" "}
-              {initialData.billingMode || "TAG_ONLY"}
+              {initialData.fundingSource || "Personal"}
             </p>
           </div>
         </div>

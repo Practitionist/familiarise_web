@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Check, X } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,14 +16,18 @@ import { InviteTeamStep } from "./components/InviteTeamStep";
 import { ReviewStep } from "./components/ReviewStep";
 
 export default function CreateOrganizationWizard() {
-  const router = useRouter();
   const [step, setStep] = useState(0);
   const [wizardData, setWizardData] = useState<Partial<OrgWizardData>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
-  // Steps are recomputed whenever kind changes (after step 0 is submitted).
-  const steps = getSteps(wizardData.kind);
+  // Steps are recomputed whenever capabilities change (after step 0 submits).
+  // An org with `canSponsor=false, canHost=false` is a configuration error;
+  // OrgInfoStep rejects it before `handleNext` fires.
+  const steps = getSteps({
+    canSponsor: wizardData.canSponsor ?? true,
+    canHost: wizardData.canHost ?? false,
+  });
 
   const handleNext = async (stepData: Partial<OrgWizardData>) => {
     const merged = { ...wizardData, ...stepData };
@@ -32,7 +35,11 @@ export default function CreateOrganizationWizard() {
 
     const currentKey = steps[step].key;
 
-    // Step 0: create the org on "Next" so we have an orgId for file uploads
+    // Step 0: create the org on "Next" so we have an orgId for file uploads.
+    // The initial POST carries just enough to satisfy the API's zod schema;
+    // everything else is PATCHed step-by-step as the user moves forward.
+    // That keeps each network call small and lets the review step do one
+    // final consolidated PATCH.
     if (currentKey === "org-info" && !merged.orgId) {
       setIsSubmitting(true);
       setCreateError(null);
@@ -43,10 +50,13 @@ export default function CreateOrganizationWizard() {
           body: JSON.stringify({
             name: merged.name,
             billingEmail: merged.billingEmail,
-            kind: merged.kind || "BUYER",
-            // PROVIDER orgs have no billing mode — omit the field entirely.
-            ...(merged.kind !== "PROVIDER"
-              ? { billingMode: merged.billingMode ?? "TAG_ONLY" }
+            canSponsor: merged.canSponsor ?? true,
+            canHost: merged.canHost ?? false,
+            // Funding source is only required when the org sponsors.
+            // Default = PERSONAL keeps the first POST successful even if
+            // the user hasn't reached the billing step yet.
+            ...(merged.canSponsor !== false
+              ? { fundingSource: merged.fundingSource ?? "PERSONAL" }
               : {}),
             description: merged.description || undefined,
             industry: merged.industry || undefined,
@@ -62,7 +72,6 @@ export default function CreateOrganizationWizard() {
           ...prev,
           ...stepData,
           orgId: body.organization.id,
-          orgProfileId: body.profile.id,
         }));
       } catch (err) {
         setCreateError(
@@ -74,28 +83,29 @@ export default function CreateOrganizationWizard() {
       setIsSubmitting(false);
     }
 
-    // Billing step: PATCH billing settings for BUYER/HYBRID
+    // Billing step: PATCH funding source when the org sponsors.
     if (currentKey === "billing" && merged.orgId) {
       await fetch(`/api/organizations/${merged.orgId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          billingMode: merged.billingMode,
+          fundingSource: merged.fundingSource,
           paymentTermsDays: merged.paymentTermsDays,
-          seatsTotal: merged.seatsTotal,
         }),
       }).catch(() => null); // Non-blocking — review step will re-patch
     }
 
-    // Revenue rates step: PATCH rate split for PROVIDER/HYBRID
+    // Revenue rates step: PATCH the bps split when the org hosts. Stored
+    // as a new RateCard with `effectiveFrom=now()` so that subsequent
+    // rate bumps don't rewrite earnings already accrued against this card.
     if (currentKey === "revenue-rates" && merged.orgId) {
       await fetch(`/api/organizations/${merged.orgId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          platformCommissionRate: merged.platformCommissionRate,
-          orgRetainRate: merged.orgRetainRate,
-          consultantPayoutRate: merged.consultantPayoutRate,
+          platformBps: merged.platformBps,
+          orgBps: merged.orgBps,
+          consultantBps: merged.consultantBps,
         }),
       }).catch(() => null); // Non-blocking — review step will re-patch
     }

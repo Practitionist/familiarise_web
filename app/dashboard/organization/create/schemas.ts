@@ -7,12 +7,21 @@ export const orgInfoSchema = z.object({
   industry: z.string(),
   sizeBucket: z.string(),
   website: z.string(),
+  // Capability booleans replace the old `kind` enum. Submit validates
+  // that at least one is true — an org that neither sponsors nor hosts
+  // has no purpose to exist.
+  canSponsor: z.boolean(),
+  canHost: z.boolean(),
 });
 
 export const billingSchema = z.object({
-  billingMode: z.enum(["TAG_ONLY", "SEAT_PACK", "INVOICED_MONTHLY", "PREPAID_UNLIMITED"]),
+  // PERSONAL / WALLET / INVOICE / LICENSE — PROJECT is admin-only and
+  // not exposed in the self-service wizard (milestone workflow missing).
+  fundingSource: z.enum(["PERSONAL", "WALLET", "INVOICE", "LICENSE"]),
+  // paymentTermsDays is only meaningful when fundingSource = INVOICE.
+  // We accept it in all cases so the form can retain the value if the
+  // user flips back and forth across funding sources.
   paymentTermsDays: z.coerce.number().int().min(1).max(120),
-  seatsTotal: z.coerce.number().int().positive().nullable(),
 });
 
 export const brandingSchema = z.object({
@@ -30,21 +39,23 @@ export const brandingSchema = z.object({
 
 export const inviteSchema = z.object({
   inviteEmails: z.array(z.string().email()).default([]),
-  inviteRole: z.string().default("ORG_LEARNER"),
+  inviteRole: z
+    .enum(["OWNER", "ADMIN", "MANAGER", "MEMBER"])
+    .default("MEMBER"),
 });
 
+// Basis points (integers summing to 10000) replace float percentages.
+// Integer math keeps rounding deterministic across high-volume settlements
+// and removes the need to chase drift between `SUM(splits) - grossAmount`.
 export const revenueRatesSchema = z
   .object({
-    platformCommissionRate: z.number().min(0).max(1),
-    orgRetainRate: z.number().min(0).max(1),
-    consultantPayoutRate: z.number().min(0).max(1),
+    platformBps: z.coerce.number().int().min(0).max(10000),
+    orgBps: z.coerce.number().int().min(0).max(10000),
+    consultantBps: z.coerce.number().int().min(0).max(10000),
   })
   .refine(
-    (d) =>
-      Math.abs(
-        d.platformCommissionRate + d.orgRetainRate + d.consultantPayoutRate - 1.0,
-      ) < 0.001,
-    { message: "Rates must sum to exactly 100%" },
+    (d) => d.platformBps + d.orgBps + d.consultantBps === 10000,
+    { message: "Basis points must sum to exactly 10000 (100%)" },
   );
 
 export type OrgInfoFormData = z.infer<typeof orgInfoSchema>;

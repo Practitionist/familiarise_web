@@ -5,42 +5,14 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { billingSchema, type BillingFormData } from "../schemas";
 import type { StepProps } from "../types";
-
-const BILLING_MODES = [
-  {
-    value: "TAG_ONLY",
-    label: "Tag-only",
-    description:
-      "Learners pay at checkout with their own card. Payments are tagged to your organization for reporting and analytics. No org-level billing.",
-  },
-  {
-    value: "SEAT_PACK",
-    label: "Seat pack",
-    description:
-      "Your organization pre-purchases a credit pool. When learners book, credits are deducted automatically. Top up anytime from the dashboard.",
-  },
-  {
-    value: "INVOICED_MONTHLY",
-    label: "Invoiced monthly",
-    description:
-      "Learners book freely throughout the month. At month-end, your org receives one consolidated invoice. Pay within your configured NET terms.",
-  },
-  {
-    value: "PREPAID_UNLIMITED",
-    label: "Prepaid unlimited",
-    description:
-      "Enterprise flat-fee license. Pay once for unlimited sessions during the contract period. No per-session billing — all bookings are free for learners.",
-  },
-];
+import {
+  FUNDING_SOURCE_LABEL,
+  FUNDING_SOURCE_TAGLINE,
+  SELF_SERVICE_FUNDING_SOURCES,
+  narrowFundingSource,
+} from "@/lib/labels/org-labels";
 
 export function BillingStep({ onNext, onBack, initialData }: StepProps) {
   const {
@@ -52,51 +24,52 @@ export function BillingStep({ onNext, onBack, initialData }: StepProps) {
   } = useForm<BillingFormData>({
     resolver: zodResolver(billingSchema),
     defaultValues: {
-      billingMode: (initialData.billingMode as BillingFormData["billingMode"]) ?? "TAG_ONLY",
-      paymentTermsDays: initialData.paymentTermsDays ?? 30,
-      seatsTotal: initialData.seatsTotal ?? null,
+      // Parse through the Zod enum so a prior-session hydration can't
+      // seed the wizard with a PROJECT value the zod resolver would then
+      // reject on submit with a confusing error.
+      fundingSource: narrowFundingSource(initialData.fundingSource),
+      paymentTermsDays: initialData.paymentTermsDays ?? 60,
     },
   });
 
-  const billingMode = watch("billingMode");
+  const fundingSource = watch("fundingSource");
 
   const onSubmit = (data: BillingFormData) => onNext(data);
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
       <div className="space-y-2">
-        <Label>Billing mode</Label>
+        <Label>Funding source</Label>
+        <p className="text-xs text-zinc-500">
+          How your organization pays when a member books a session.
+        </p>
         <div className="space-y-2">
-          {BILLING_MODES.map((mode) => (
+          {SELF_SERVICE_FUNDING_SOURCES.map((fs) => (
             <button
-              key={mode.value}
+              key={fs}
               type="button"
-              onClick={() =>
-                setValue("billingMode", mode.value as BillingFormData["billingMode"])
-              }
+              onClick={() => setValue("fundingSource", fs)}
               className={`w-full flex items-start gap-3 p-3 rounded-lg border text-left transition-colors ${
-                billingMode === mode.value
+                fundingSource === fs
                   ? "border-zinc-900 bg-zinc-50 ring-1 ring-zinc-900"
                   : "border-zinc-200 hover:border-zinc-300"
               }`}
             >
               <div
                 className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
-                  billingMode === mode.value
-                    ? "border-zinc-900"
-                    : "border-zinc-300"
+                  fundingSource === fs ? "border-zinc-900" : "border-zinc-300"
                 }`}
               >
-                {billingMode === mode.value && (
+                {fundingSource === fs && (
                   <div className="w-2 h-2 rounded-full bg-zinc-900" />
                 )}
               </div>
               <div>
                 <p className="text-sm font-medium text-zinc-900">
-                  {mode.label}
+                  {FUNDING_SOURCE_LABEL[fs]}
                 </p>
                 <p className="text-xs text-zinc-500 mt-0.5">
-                  {mode.description}
+                  {FUNDING_SOURCE_TAGLINE[fs]}
                 </p>
               </div>
             </button>
@@ -104,7 +77,7 @@ export function BillingStep({ onNext, onBack, initialData }: StepProps) {
         </div>
       </div>
 
-      {billingMode === "INVOICED_MONTHLY" && (
+      {fundingSource === "INVOICE" && (
         <div className="space-y-2">
           <Label htmlFor="paymentTermsDays">Payment terms (days)</Label>
           <Input
@@ -120,24 +93,11 @@ export function BillingStep({ onNext, onBack, initialData }: StepProps) {
             </p>
           )}
           <p className="text-xs text-zinc-500">
-            e.g., 30 = NET-30 (invoice due within 30 days)
+            NET-{watch("paymentTermsDays") || 60} — monthly invoices are due
+            within this window. India Net-60 is the default.
           </p>
         </div>
       )}
-
-      <div className="space-y-2">
-        <Label htmlFor="seatsTotal">Seat budget (optional)</Label>
-        <Input
-          id="seatsTotal"
-          type="number"
-          min={1}
-          {...register("seatsTotal")}
-          placeholder="Leave blank for unlimited"
-        />
-        <p className="text-xs text-zinc-500">
-          Maximum number of learners who can join the org.
-        </p>
-      </div>
 
       <div className="flex justify-between pt-4">
         <Button type="button" variant="outline" onClick={onBack}>

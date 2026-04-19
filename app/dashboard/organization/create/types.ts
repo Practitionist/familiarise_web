@@ -1,22 +1,35 @@
+// Self-service-facing subsets of FundingSource and MemberRole are defined
+// as Zod enums in lib/labels/org-labels.ts
+// (SelfServiceFundingSource / SelfServiceMemberRole). The wizard reuses
+// those directly rather than redeclaring them here — single source of
+// truth for the subset.
+import type {
+  SelfServiceFundingSource,
+  SelfServiceMemberRole,
+} from "@/lib/labels/org-labels";
+
 export interface OrgWizardData {
   // Step 0: Org Info
   name: string;
-  kind: "BUYER" | "PROVIDER" | "HYBRID";
+  // Capabilities replace the old kind enum. An org either sponsors
+  // bookings, hosts consultants, or both (HYBRID is just both true).
+  canSponsor: boolean;
+  canHost: boolean;
   description: string;
   industry: string;
   sizeBucket: string;
   website: string;
   billingEmail: string;
 
-  // Step 1: Billing & Seats (BUYER/HYBRID only)
-  billingMode?: "TAG_ONLY" | "SEAT_PACK" | "INVOICED_MONTHLY" | "PREPAID_UNLIMITED";
-  paymentTermsDays: number;
-  seatsTotal: number | null;
+  // Step 1: Billing (only when canSponsor = true)
+  fundingSource?: SelfServiceFundingSource;
+  paymentTermsDays: number; // meaningful when fundingSource = INVOICE
 
-  // Step 1 alt: Revenue Rates (PROVIDER/HYBRID only)
-  platformCommissionRate: number;
-  orgRetainRate: number;
-  consultantPayoutRate: number;
+  // Step 1 alt: Revenue Rates (only when canHost = true). Stored as basis
+  // points to avoid float drift; sum must equal 10000 at submit.
+  platformBps: number;
+  orgBps: number;
+  consultantBps: number;
 
   // Step 2: Branding
   logo: string | null;
@@ -26,11 +39,10 @@ export interface OrgWizardData {
 
   // Step 3: Invite Team
   inviteEmails: string[];
-  inviteRole: string;
+  inviteRole: SelfServiceMemberRole;
 
   // Internal (set after step 0 creates the org)
   orgId: string | null;
-  orgProfileId: string | null;
 }
 
 export interface StepProps {
@@ -56,17 +68,20 @@ export interface WizardStep {
 }
 
 /**
- * Returns the ordered list of wizard steps for a given org kind.
+ * Returns the ordered list of wizard steps for a given capability shape.
  *
- * BUYER:   Org Info → Billing & Seats → Branding → Invite Team → Review  (5 steps)
- * PROVIDER: Org Info → Revenue Rates  → Branding → Invite Team → Review  (5 steps)
- * HYBRID:  Org Info → Billing & Seats → Revenue Rates → Branding → Invite Team → Review (6 steps)
+ * canSponsor-only: Org Info → Billing → Branding → Invite Team → Review    (5 steps)
+ * canHost-only:    Org Info → Revenue Rates → Branding → Invite Team → Review (5 steps)
+ * both (HYBRID):   Org Info → Billing → Revenue Rates → Branding → Invite Team → Review (6 steps)
+ *
+ * An org that has neither capability is a misconfiguration — the wizard
+ * submit button validates at least one is set before advancing.
  */
-export function getSteps(kind?: string): WizardStep[] {
-  const isProvider = kind === "PROVIDER";
-  const isHybrid = kind === "HYBRID";
-  const isProviderOrHybrid = isProvider || isHybrid;
-  const isBuyerOrHybrid = !isProvider; // BUYER or HYBRID (or undefined → default BUYER layout)
+export function getSteps(capabilities: {
+  canSponsor: boolean;
+  canHost: boolean;
+}): WizardStep[] {
+  const { canSponsor, canHost } = capabilities;
 
   return [
     {
@@ -74,22 +89,22 @@ export function getSteps(kind?: string): WizardStep[] {
       label: "Org Info",
       subtitle: "Tell us about your organization. You can always update this later.",
     },
-    ...(isBuyerOrHybrid
+    ...(canSponsor
       ? [
           {
             key: "billing" as const,
-            label: "Billing & Seats",
-            subtitle: "Choose how your learners will be billed for consultations.",
+            label: "Billing",
+            subtitle: "Choose how your organization pays for its members' sessions.",
           },
         ]
       : []),
-    ...(isProviderOrHybrid
+    ...(canHost
       ? [
           {
             key: "revenue-rates" as const,
             label: "Revenue Rates",
             subtitle:
-              "Configure how earnings are split between the platform, your org, and consultants.",
+              "Configure how earnings are split between the platform, your organization, and consultants.",
           },
         ]
       : []),

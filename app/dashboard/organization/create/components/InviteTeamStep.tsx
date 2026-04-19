@@ -14,19 +14,21 @@ import {
 import { X, Plus } from "lucide-react";
 import { z } from "zod";
 import type { StepProps } from "../types";
-
-const ROLE_OPTIONS = [
-  { value: "ORG_LEARNER", label: "Learner" },
-  { value: "ORG_MANAGER", label: "Manager" },
-  { value: "ORG_ADMIN", label: "Admin" },
-];
+import {
+  MEMBER_ROLE_LABEL,
+  SELF_SERVICE_MEMBER_ROLES,
+  narrowSelfServiceRole,
+  type SelfServiceMemberRole,
+} from "@/lib/labels/org-labels";
 
 export function InviteTeamStep({ onNext, onBack, initialData }: StepProps) {
   const [rawInput, setRawInput] = useState("");
   const [emails, setEmails] = useState<string[]>(
     initialData.inviteEmails ?? [],
   );
-  const [role, setRole] = useState(initialData.inviteRole ?? "ORG_LEARNER");
+  const [role, setRole] = useState<SelfServiceMemberRole>(
+    narrowSelfServiceRole(initialData.inviteRole),
+  );
   const [parseError, setParseError] = useState<string | null>(null);
 
   const addEmails = () => {
@@ -121,14 +123,21 @@ export function InviteTeamStep({ onNext, onBack, initialData }: StepProps) {
 
       <div className="space-y-2">
         <Label>Default role for invitees</Label>
-        <Select value={role} onValueChange={setRole}>
+        <Select
+          value={role}
+          // shadcn hands a raw string; narrowSelfServiceRole parses via
+          // the shared Zod enum. We only render SELF_SERVICE_MEMBER_ROLES
+          // below, so the fallback branch is effectively dead — but the
+          // parse still protects us from future regressions.
+          onValueChange={(v) => setRole(narrowSelfServiceRole(v))}
+        >
           <SelectTrigger className="w-48">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {ROLE_OPTIONS.map((r) => (
-              <SelectItem key={r.value} value={r.value}>
-                {r.label}
+            {SELF_SERVICE_MEMBER_ROLES.map((r) => (
+              <SelectItem key={r} value={r}>
+                {MEMBER_ROLE_LABEL[r]}
               </SelectItem>
             ))}
           </SelectContent>

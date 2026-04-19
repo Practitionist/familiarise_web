@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -13,6 +14,16 @@ import {
 import { Building2, Pencil, Check, X, Loader2 } from "lucide-react";
 import { getSteps } from "../types";
 import type { StepProps } from "../types";
+import {
+  deriveCapabilityKind,
+  CAPABILITY_LABEL,
+  CAPABILITY_BADGE_CLASS,
+  FUNDING_SOURCE_LABEL,
+  FUNDING_SOURCE_BADGE_CLASS,
+  MEMBER_ROLE_LABEL,
+  narrowFundingSource,
+  narrowSelfServiceRole,
+} from "@/lib/labels/org-labels";
 
 interface InviteResult {
   email: string;
@@ -30,13 +41,12 @@ export function ReviewStep({ onBack, onGoToStep, initialData }: StepProps) {
 
   const orgId = initialData.orgId;
   const emails = initialData.inviteEmails ?? [];
-  const kind = initialData.kind;
-  const isProvider = kind === "PROVIDER";
-  const isProviderOrHybrid = kind === "PROVIDER" || kind === "HYBRID";
-  const isBuyerOrHybrid = kind !== "PROVIDER";
+  const canSponsor = initialData.canSponsor ?? true;
+  const canHost = initialData.canHost ?? false;
+  const capability = deriveCapabilityKind(canSponsor, canHost);
 
   // Derive step indices from the same getSteps logic used in page.tsx
-  const steps = getSteps(kind);
+  const steps = getSteps({ canSponsor, canHost });
   const idx = (key: string) => steps.findIndex((s) => s.key === key);
 
   const handleLaunch = async () => {
@@ -49,28 +59,38 @@ export function ReviewStep({ onBack, onGoToStep, initialData }: StepProps) {
     setError(null);
 
     try {
-      // Final PATCH to ensure all data is persisted. Fail closed on error.
+      // Final PATCH to persist settings. Split cleanly by capability:
+      // sponsor-only fields don't flow to host-only orgs and vice versa.
+      // This keeps the API payload minimal and avoids the server having
+      // to ignore fields that don't apply.
       const patchRes = await fetch(`/api/organizations/${orgId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           billingEmail: initialData.billingEmail,
-          // Only send billingMode for BUYER/HYBRID — PROVIDER orgs don't have one.
-          ...(!isProvider ? { billingMode: initialData.billingMode } : {}),
+          canSponsor,
+          canHost,
           description: initialData.description || null,
           industry: initialData.industry || null,
           sizeBucket: initialData.sizeBucket || null,
           website: initialData.website || null,
-          paymentTermsDays: initialData.paymentTermsDays ?? 30,
-          seatsTotal: initialData.seatsTotal ?? null,
           primaryColor: initialData.primaryColor ?? null,
           secondaryColor: initialData.secondaryColor ?? null,
-          // Revenue rates for PROVIDER/HYBRID
-          ...(isProviderOrHybrid
+          // Sponsorship configuration (only when the org sponsors)
+          ...(canSponsor
             ? {
-                platformCommissionRate: initialData.platformCommissionRate,
-                orgRetainRate: initialData.orgRetainRate,
-                consultantPayoutRate: initialData.consultantPayoutRate,
+                fundingSource: initialData.fundingSource ?? "PERSONAL",
+                paymentTermsDays: initialData.paymentTermsDays ?? 60,
+              }
+            : {}),
+          // Hosting configuration (only when the org hosts). Basis-point
+          // rate card becomes the org's default RateCard row; settlement
+          // reads it via resolveEffectiveRateCard at booking time.
+          ...(canHost
+            ? {
+                platformBps: initialData.platformBps ?? 1000,
+                orgBps: initialData.orgBps ?? 1000,
+                consultantBps: initialData.consultantBps ?? 8000,
               }
             : {}),
         }),
@@ -91,7 +111,7 @@ export function ReviewStep({ onBack, onGoToStep, initialData }: StepProps) {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   email,
-                  role: initialData.inviteRole ?? "ORG_LEARNER",
+                  role: initialData.inviteRole ?? "MEMBER",
                 }),
               },
             );
@@ -151,6 +171,11 @@ export function ReviewStep({ onBack, onGoToStep, initialData }: StepProps) {
     </Card>
   );
 
+  // Narrow through the Zod enums — same path the edit steps use — so
+  // the review screen matches what the server will accept verbatim.
+  const fundingSource = narrowFundingSource(initialData.fundingSource);
+  const inviteRole = narrowSelfServiceRole(initialData.inviteRole);
+
   return (
     <div className="space-y-4">
       <Section title="Organization Info" stepKey="org-info">
@@ -161,8 +186,10 @@ export function ReviewStep({ onBack, onGoToStep, initialData }: StepProps) {
           <strong>Email:</strong> {initialData.billingEmail || "—"}
         </p>
         <div className="flex items-center gap-1">
-          <strong>Type:</strong>{" "}
-          <Badge variant="secondary">{kind ?? "BUYER"}</Badge>
+          <strong>Capability:</strong>{" "}
+          <Badge variant="secondary" className={CAPABILITY_BADGE_CLASS[capability]}>
+            {CAPABILITY_LABEL[capability]}
+          </Badge>
         </div>
         {initialData.description && (
           <p>
@@ -187,40 +214,43 @@ export function ReviewStep({ onBack, onGoToStep, initialData }: StepProps) {
         )}
       </Section>
 
-      {isBuyerOrHybrid && (
-        <Section title="Billing & Seats" stepKey="billing">
+      {canSponsor && (
+        <Section title="Billing" stepKey="billing">
           <div className="flex items-center gap-2">
-            <strong>Mode:</strong>{" "}
-            <Badge variant="secondary">
-              {initialData.billingMode ?? "TAG_ONLY"}
+            <strong>Funding:</strong>{" "}
+            <Badge
+              variant="secondary"
+              className={FUNDING_SOURCE_BADGE_CLASS[fundingSource]}
+            >
+              {FUNDING_SOURCE_LABEL[fundingSource]}
             </Badge>
           </div>
-          {initialData.billingMode === "INVOICED_MONTHLY" && (
+          {fundingSource === "INVOICE" && (
             <p>
               <strong>Payment terms:</strong> NET-
-              {initialData.paymentTermsDays ?? 30}
+              {initialData.paymentTermsDays ?? 60}
             </p>
           )}
-          <p>
-            <strong>Seat budget:</strong>{" "}
-            {initialData.seatsTotal ?? "Unlimited"}
-          </p>
         </Section>
       )}
 
-      {isProviderOrHybrid && (
+      {canHost && (
         <Section title="Revenue Rates" stepKey="revenue-rates">
           <p>
             <strong>Platform:</strong>{" "}
-            {Math.round((initialData.platformCommissionRate ?? 0.1) * 100)}%
+            {((initialData.platformBps ?? 1000) / 100).toFixed(2)}%
           </p>
           <p>
             <strong>Organization:</strong>{" "}
-            {Math.round((initialData.orgRetainRate ?? 0.05) * 100)}%
+            {((initialData.orgBps ?? 1000) / 100).toFixed(2)}%
           </p>
           <p>
             <strong>Consultant:</strong>{" "}
-            {Math.round((initialData.consultantPayoutRate ?? 0.85) * 100)}%
+            {((initialData.consultantBps ?? 8000) / 100).toFixed(2)}%
+          </p>
+          <p className="text-xs text-zinc-500 mt-2">
+            Stored as basis points (integer math). Rate changes create a new
+            effective rate card so historical earnings keep their original split.
           </p>
         </Section>
       )}
@@ -228,9 +258,11 @@ export function ReviewStep({ onBack, onGoToStep, initialData }: StepProps) {
       <Section title="Branding" stepKey="branding">
         <div className="flex items-center gap-3">
           {initialData.logo ? (
-            <img
+            <Image
               src={initialData.logo}
               alt="Logo"
+              width={40}
+              height={40}
               className="w-10 h-10 rounded-lg object-cover"
             />
           ) : (
@@ -275,7 +307,7 @@ export function ReviewStep({ onBack, onGoToStep, initialData }: StepProps) {
               </Badge>
             ))}
             <p className="text-xs text-zinc-500 mt-1">
-              Role: {(initialData.inviteRole ?? "ORG_LEARNER").replace("ORG_", "")}
+              Role: {MEMBER_ROLE_LABEL[inviteRole]}
             </p>
           </div>
         ) : (

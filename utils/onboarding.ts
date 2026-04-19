@@ -184,18 +184,24 @@ export const OnboardingDataSchema = z.discriminatedUnion("role", [
     consultantProfile: z.undefined().optional(),
     consulteeProfile: z.undefined().optional(),
     staffProfile: z.undefined().optional(),
-    // Org fields carried through to processOnboardingData
+    // Org fields carried through to processOnboardingData.
+    // New taxonomy: capability booleans + funding source + unified role enum.
     orgName: z.string().min(2).max(100).optional(),
     orgBillingEmail: z.string().email().optional(),
-    orgBillingMode: z.string().optional(),
+    orgFundingSource: z
+      .enum(["PERSONAL", "WALLET", "INVOICE", "LICENSE"])
+      .optional(),
+    orgCanSponsor: z.coerce.boolean().optional(),
+    orgCanHost: z.coerce.boolean().optional(),
     orgDescription: z.string().optional(),
     orgIndustry: z.string().optional(),
     orgSizeBucket: z.string().optional(),
     orgWebsite: z.string().optional(),
     orgPaymentTermsDays: z.coerce.number().optional(),
-    orgSeatsTotal: z.coerce.number().nullable().optional(),
     orgInviteEmails: z.array(z.string().email()).optional(),
-    orgInviteRole: z.string().optional(),
+    orgInviteRole: z
+      .enum(["OWNER", "MAINTAINER", "MANAGER", "LEARNER"])
+      .optional(),
   }),
 ]);
 
@@ -382,19 +388,27 @@ const adminFormFields = sharedFormFields.extend({
 
 const orgAdminFormFields = sharedFormFields.extend({
   role: z.literal("ORG_ADMIN" as const),
-  // Org fields (merged wizard — collected during onboarding step 1)
+  // Org fields (merged wizard — collected during onboarding step 1).
+  // New taxonomy: funding source replaces billing mode; capability
+  // booleans replace the single kind enum; role values align with the
+  // unified MemberRole enum (OWNER/ADMIN/MANAGER/MEMBER/...).
   orgName: z.string().min(2).max(100),
   orgBillingEmail: z.string().email(),
-  orgBillingMode: z.enum(["TAG_ONLY", "SEAT_PACK", "INVOICED_MONTHLY", "PREPAID_UNLIMITED"]).default("TAG_ONLY"),
+  orgFundingSource: z
+    .enum(["PERSONAL", "WALLET", "INVOICE", "LICENSE"])
+    .default("PERSONAL"),
+  orgCanSponsor: z.coerce.boolean().default(true),
+  orgCanHost: z.coerce.boolean().default(false),
   orgDescription: z.string().max(2000).optional(),
   orgIndustry: z.string().optional(),
   orgSizeBucket: z.string().optional(),
   orgWebsite: z.string().optional(),
-  orgPaymentTermsDays: z.coerce.number().int().min(1).max(120).default(30),
-  orgSeatsTotal: z.coerce.number().int().positive().nullable().optional(),
+  orgPaymentTermsDays: z.coerce.number().int().min(1).max(120).default(60),
   // Invite team (collected during onboarding step 1)
   orgInviteEmails: z.array(z.string().email()).default([]),
-  orgInviteRole: z.string().default("ORG_LEARNER"),
+  orgInviteRole: z
+    .enum(["OWNER", "MAINTAINER", "MANAGER", "LEARNER"])
+    .default("LEARNER"),
 });
 
 // Combined mega-schema: discriminated union on role to prevent
@@ -645,13 +659,14 @@ export function transformOnboardingFormToServerData(
         staffProfile: undefined,
         orgName: formData.orgName,
         orgBillingEmail: formData.orgBillingEmail,
-        orgBillingMode: formData.orgBillingMode,
+        orgFundingSource: formData.orgFundingSource,
+        orgCanSponsor: formData.orgCanSponsor,
+        orgCanHost: formData.orgCanHost,
         orgDescription: formData.orgDescription,
         orgIndustry: formData.orgIndustry,
         orgSizeBucket: formData.orgSizeBucket,
         orgWebsite: formData.orgWebsite,
         orgPaymentTermsDays: formData.orgPaymentTermsDays,
-        orgSeatsTotal: formData.orgSeatsTotal,
         orgInviteEmails: formData.orgInviteEmails,
         orgInviteRole: formData.orgInviteRole,
       } as OnboardingData;

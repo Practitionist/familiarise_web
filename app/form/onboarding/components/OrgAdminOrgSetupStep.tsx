@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -15,39 +16,23 @@ import {
 import { Plus, X } from "lucide-react";
 import { z } from "zod";
 import type { OnboardingFormData } from "@/utils/onboarding";
+import {
+  FUNDING_SOURCE_LABEL,
+  FUNDING_SOURCE_TAGLINE,
+  MEMBER_ROLE_LABEL,
+  SELF_SERVICE_FUNDING_SOURCES,
+  SELF_SERVICE_MEMBER_ROLES,
+  narrowFundingSource,
+  narrowSelfServiceRole,
+  type SelfServiceFundingSource,
+  type SelfServiceMemberRole,
+} from "@/lib/labels/org-labels";
 
 interface Props {
   onNext: (data: Partial<OnboardingFormData>) => void;
   onBack: () => void;
   initialData: Partial<OnboardingFormData>;
 }
-
-const BILLING_MODES = [
-  {
-    value: "TAG_ONLY",
-    label: "Tag-only",
-    description:
-      "Learners pay at checkout with their own card. Payments are tagged to your organization for reporting and analytics. No org-level billing.",
-  },
-  {
-    value: "SEAT_PACK",
-    label: "Seat pack",
-    description:
-      "Your organization pre-purchases a credit pool. When learners book, credits are deducted automatically. Top up anytime from the dashboard.",
-  },
-  {
-    value: "INVOICED_MONTHLY",
-    label: "Invoiced monthly",
-    description:
-      "Learners book freely throughout the month. At month-end, your org receives one consolidated invoice. Pay within your configured NET terms.",
-  },
-  {
-    value: "PREPAID_UNLIMITED",
-    label: "Prepaid unlimited",
-    description:
-      "Enterprise flat-fee license. Pay once for unlimited sessions during the contract period. No per-session billing.",
-  },
-];
 
 const INDUSTRIES = [
   "Education", "Technology", "Healthcare", "Finance",
@@ -61,11 +46,6 @@ const SIZE_BUCKETS = [
   { value: "ENTERPRISE_1000_PLUS", label: "1000+ employees" },
 ];
 
-const INVITE_ROLES = [
-  { value: "ORG_LEARNER", label: "Learner" },
-  { value: "ORG_MANAGER", label: "Manager" },
-  { value: "ORG_ADMIN", label: "Admin" },
-];
 
 export default function OrgAdminOrgSetupStep({
   onNext,
@@ -76,8 +56,21 @@ export default function OrgAdminOrgSetupStep({
   const [orgBillingEmail, setOrgBillingEmail] = useState(
     initialData.orgBillingEmail ?? "",
   );
-  const [orgBillingMode, setOrgBillingMode] = useState<string>(
-    initialData.orgBillingMode ?? "TAG_ONLY",
+  const [orgFundingSource, setOrgFundingSource] = useState<SelfServiceFundingSource>(
+    // Parse via the Zod enum so a stale query-string or legacy-shaped
+    // payload can't leak a PROJECT value (admin-only) into the state.
+    narrowFundingSource(initialData.orgFundingSource),
+  );
+  // Capability booleans replace the old single-kind dropdown. canSponsor is
+  // defaulted true because the common onboarding shape is "I'm setting up
+  // my company to pay for employee training". canHost gates provider-side
+  // features (payout account, consultant roster) and pushes the org into
+  // PENDING_VERIFICATION server-side.
+  const [orgCanSponsor, setOrgCanSponsor] = useState<boolean>(
+    initialData.orgCanSponsor ?? true,
+  );
+  const [orgCanHost, setOrgCanHost] = useState<boolean>(
+    initialData.orgCanHost ?? false,
   );
   const [orgDescription, setOrgDescription] = useState(
     initialData.orgDescription ?? "",
@@ -90,16 +83,13 @@ export default function OrgAdminOrgSetupStep({
   );
   const [orgWebsite, setOrgWebsite] = useState(initialData.orgWebsite ?? "");
   const [orgPaymentTermsDays, setOrgPaymentTermsDays] = useState(
-    String(initialData.orgPaymentTermsDays ?? 30),
-  );
-  const [orgSeatsTotal, setOrgSeatsTotal] = useState(
-    initialData.orgSeatsTotal ? String(initialData.orgSeatsTotal) : "",
+    String(initialData.orgPaymentTermsDays ?? 60),
   );
   const [inviteEmails, setInviteEmails] = useState<string[]>(
     initialData.orgInviteEmails ?? [],
   );
-  const [inviteRole, setInviteRole] = useState(
-    initialData.orgInviteRole ?? "ORG_LEARNER",
+  const [inviteRole, setInviteRole] = useState<SelfServiceMemberRole>(
+    narrowSelfServiceRole(initialData.orgInviteRole),
   );
   const [rawEmails, setRawEmails] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -135,17 +125,24 @@ export default function OrgAdminOrgSetupStep({
       setError("Please enter a valid billing email.");
       return;
     }
+    if (!orgCanSponsor && !orgCanHost) {
+      setError(
+        "Pick at least one capability. An organization that neither sponsors nor hosts has nothing to do.",
+      );
+      return;
+    }
     setError(null);
     onNext({
       orgName: orgName.trim(),
       orgBillingEmail: orgBillingEmail.trim(),
-      orgBillingMode: orgBillingMode as "TAG_ONLY" | "SEAT_PACK" | "INVOICED_MONTHLY",
+      orgFundingSource,
+      orgCanSponsor,
+      orgCanHost,
       orgDescription: orgDescription.trim() || undefined,
       orgIndustry: orgIndustry || undefined,
       orgSizeBucket: orgSizeBucket || undefined,
       orgWebsite: orgWebsite.trim() || undefined,
-      orgPaymentTermsDays: parseInt(orgPaymentTermsDays, 10) || 30,
-      orgSeatsTotal: orgSeatsTotal ? parseInt(orgSeatsTotal, 10) : null,
+      orgPaymentTermsDays: parseInt(orgPaymentTermsDays, 10) || 60,
       orgInviteEmails: inviteEmails,
       orgInviteRole: inviteRole,
     });
@@ -225,71 +222,100 @@ export default function OrgAdminOrgSetupStep({
         </div>
       </div>
 
-      {/* Billing */}
+      {/* Capabilities */}
       <div className="space-y-4">
-        <h3 className="text-sm font-semibold text-zinc-900">Billing</h3>
-        <div className="space-y-2">
-          <Label>Billing mode</Label>
+        <h3 className="text-sm font-semibold text-zinc-900">What does this organization do?</h3>
+        <p className="text-xs text-zinc-500">
+          Pick one or both. You can add the other later — admin verification may be required to start hosting.
+        </p>
+        <div className="space-y-3">
+          <label className="flex items-start gap-3 p-3 rounded-lg border border-zinc-200 cursor-pointer hover:border-zinc-300">
+            <Checkbox
+              checked={orgCanSponsor}
+              onCheckedChange={(v) => setOrgCanSponsor(v === true)}
+              className="mt-0.5"
+            />
+            <div>
+              <p className="text-sm font-medium text-zinc-900">Sponsor members</p>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                The organization pays for its employees/students to book sessions.
+                Creates a billing account under your chosen funding source.
+              </p>
+            </div>
+          </label>
+          <label className="flex items-start gap-3 p-3 rounded-lg border border-zinc-200 cursor-pointer hover:border-zinc-300">
+            <Checkbox
+              checked={orgCanHost}
+              onCheckedChange={(v) => setOrgCanHost(v === true)}
+              className="mt-0.5"
+            />
+            <div>
+              <p className="text-sm font-medium text-zinc-900">Host consultants</p>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                The organization hosts one or more consultants who deliver sessions.
+                Enables the payout account and rate-card configuration.
+                Requires admin verification before the first booking.
+              </p>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      {/* Funding — only meaningful when the org sponsors */}
+      {orgCanSponsor && (
+        <div className="space-y-4">
+          <h3 className="text-sm font-semibold text-zinc-900">How do you want to fund bookings?</h3>
           <div className="space-y-2">
-            {BILLING_MODES.map((m) => (
+            {SELF_SERVICE_FUNDING_SOURCES.map((fs) => (
               <button
-                key={m.value}
+                key={fs}
                 type="button"
-                onClick={() => setOrgBillingMode(m.value)}
+                onClick={() => setOrgFundingSource(fs)}
                 className={`w-full flex items-start gap-3 p-3 rounded-lg border text-left transition-colors ${
-                  orgBillingMode === m.value
+                  orgFundingSource === fs
                     ? "border-zinc-900 bg-zinc-50 ring-1 ring-zinc-900"
                     : "border-zinc-200 hover:border-zinc-300"
                 }`}
               >
                 <div
                   className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
-                    orgBillingMode === m.value
-                      ? "border-zinc-900"
-                      : "border-zinc-300"
+                    orgFundingSource === fs ? "border-zinc-900" : "border-zinc-300"
                   }`}
                 >
-                  {orgBillingMode === m.value && (
+                  {orgFundingSource === fs && (
                     <div className="w-2 h-2 rounded-full bg-zinc-900" />
                   )}
                 </div>
                 <div>
                   <p className="text-sm font-medium text-zinc-900">
-                    {m.label}
+                    {FUNDING_SOURCE_LABEL[fs]}
                   </p>
                   <p className="text-xs text-zinc-500 mt-0.5">
-                    {m.description}
+                    {FUNDING_SOURCE_TAGLINE[fs]}
                   </p>
                 </div>
               </button>
             ))}
           </div>
+          {orgFundingSource === "INVOICE" && (
+            <div className="space-y-2">
+              <Label htmlFor="orgPaymentTerms">Payment terms (days)</Label>
+              <Input
+                id="orgPaymentTerms"
+                type="number"
+                min={1}
+                max={120}
+                value={orgPaymentTermsDays}
+                onChange={(e) => setOrgPaymentTermsDays(e.target.value)}
+              />
+              <p className="text-xs text-zinc-500">
+                India default is NET-60. Monthly invoices issue automatically
+                and are due within this window.
+              </p>
+            </div>
+          )}
         </div>
-        {orgBillingMode === "INVOICED_MONTHLY" && (
-          <div className="space-y-2">
-            <Label htmlFor="orgPaymentTerms">Payment terms (days)</Label>
-            <Input
-              id="orgPaymentTerms"
-              type="number"
-              min={1}
-              max={120}
-              value={orgPaymentTermsDays}
-              onChange={(e) => setOrgPaymentTermsDays(e.target.value)}
-            />
-          </div>
-        )}
-        <div className="space-y-2">
-          <Label htmlFor="orgSeats">Seat budget (optional)</Label>
-          <Input
-            id="orgSeats"
-            type="number"
-            min={1}
-            value={orgSeatsTotal}
-            onChange={(e) => setOrgSeatsTotal(e.target.value)}
-            placeholder="Leave blank for unlimited"
-          />
-        </div>
-      </div>
+      )}
 
       {/* Invite team */}
       <div className="space-y-4">
@@ -334,11 +360,19 @@ export default function OrgAdminOrgSetupStep({
 
         <div className="space-y-2">
           <Label>Default role for invitees</Label>
-          <Select value={inviteRole} onValueChange={setInviteRole}>
+          <Select
+            value={inviteRole}
+            // shadcn hands us a raw `string`; narrowSelfServiceRole parses
+            // it against the Zod enum. The fallback never fires in
+            // practice because we only render allowed options.
+            onValueChange={(v) => setInviteRole(narrowSelfServiceRole(v))}
+          >
             <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
             <SelectContent>
-              {INVITE_ROLES.map((r) => (
-                <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
+              {SELF_SERVICE_MEMBER_ROLES.map((r) => (
+                <SelectItem key={r} value={r}>
+                  {MEMBER_ROLE_LABEL[r]}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>

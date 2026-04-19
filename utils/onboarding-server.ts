@@ -588,13 +588,37 @@ export async function processOnboardingData(
       validatedBody.orgName;
     if (isOrgAdmin) {
       const orgData = validatedBody as Record<string, unknown>;
-      const validModes = ["TAG_ONLY", "SEAT_PACK", "INVOICED_MONTHLY", "PREPAID_UNLIMITED"];
-      if (orgData.orgBillingMode && !validModes.includes(orgData.orgBillingMode as string)) {
-        return { success: false, error: `Invalid billing mode: ${orgData.orgBillingMode}` };
+
+      // Validate the funding source. PROJECT is reserved for v2 and is
+      // not exposed to self-service onboarding — only an admin can set
+      // that up because project billing requires a milestone workflow
+      // that does not exist yet.
+      const validFundingSources = ["PERSONAL", "WALLET", "INVOICE", "LICENSE"];
+      if (
+        orgData.orgFundingSource &&
+        !validFundingSources.includes(orgData.orgFundingSource as string)
+      ) {
+        return {
+          success: false,
+          error: `Invalid funding source: ${orgData.orgFundingSource}`,
+        };
       }
-      const providerGatedRoles = ["ORG_CONSULTANT", "ORG_SUPPORT"];
-      if (orgData.orgInviteRole && providerGatedRoles.includes(orgData.orgInviteRole as string)) {
-        return { success: false, error: `${orgData.orgInviteRole} role is gated behind PROVIDER orgs.` };
+
+      // Restrict the invite-role surface on onboarding. CONSULTANT is a
+      // role that requires org.canHost=true and typically goes through
+      // the provider-side apply flow, not a bulk invite-on-signup input.
+      // SUPPORT is an operator role assigned later by admins; allowing
+      // it here would let a founder invite contractors into a privileged
+      // ticket-reading role with no audit path.
+      const onboardingAllowedRoles = ["OWNER", "MAINTAINER", "MANAGER", "LEARNER"];
+      if (
+        orgData.orgInviteRole &&
+        !onboardingAllowedRoles.includes(orgData.orgInviteRole as string)
+      ) {
+        return {
+          success: false,
+          error: `${orgData.orgInviteRole} role cannot be assigned via onboarding. Invite members first, then promote via Settings.`,
+        };
       }
     }
 
@@ -737,33 +761,28 @@ async function createOrgInTransaction(
   data: {
     orgName: string;
     orgBillingEmail: string;
-    orgBillingMode?: string;
+    orgFundingSource?: "PERSONAL" | "WALLET" | "INVOICE" | "LICENSE";
+    orgCanSponsor?: boolean;
+    orgCanHost?: boolean;
     orgDescription?: string;
     orgIndustry?: string;
     orgSizeBucket?: string;
     orgWebsite?: string;
     orgPaymentTermsDays?: number;
-    orgSeatsTotal?: number | null;
   },
 ): Promise<{ orgId: string; orgProfileId: string }> {
-  // Arch 4-Modified (Issue #681): mode → FundingSource mapping.
-  //   TAG_ONLY          → PERSONAL
-  //   SEAT_PACK         → WALLET
-  //   INVOICED_MONTHLY  → INVOICE
-  //   PREPAID_UNLIMITED → LICENSE
-  const legacyMode = (data.orgBillingMode ?? "TAG_ONLY") as
-    | "TAG_ONLY"
-    | "SEAT_PACK"
-    | "INVOICED_MONTHLY"
-    | "PREPAID_UNLIMITED";
-  const fundingSource =
-    legacyMode === "SEAT_PACK"
-      ? "WALLET"
-      : legacyMode === "INVOICED_MONTHLY"
-        ? "INVOICE"
-        : legacyMode === "PREPAID_UNLIMITED"
-          ? "LICENSE"
-          : "PERSONAL";
+  // Form posts the funding source directly — no legacy-mode mapping.
+  // Default = PERSONAL (learner pays own card, no org billing) so an
+  // org admin who hasn't picked a funding mode gets the safest option.
+  const fundingSource = data.orgFundingSource ?? "PERSONAL";
+
+  // Capabilities default to the buyer-only shape (canSponsor=true).
+  // ORG_ADMIN onboarding currently collects these two booleans;
+  // switching on `canHost` requires admin verification, so we force
+  // canHost=false from self-service and defer activation to the admin
+  // verify API (see /api/admin/organizations/[orgId]).
+  const canSponsor = data.orgCanSponsor ?? true;
+  const canHost = data.orgCanHost ?? false;
 
   const slug = `${slugify(data.orgName)}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -772,9 +791,9 @@ async function createOrgInTransaction(
       name: data.orgName,
       slug,
       rootId: "placeholder", // backfilled below
-      status: "ACTIVE",
-      canSponsor: true,
-      canHost: false,
+      status: canHost ? "PENDING_VERIFICATION" : "ACTIVE",
+      canSponsor,
+      canHost,
       billingEmail: data.orgBillingEmail,
       description: data.orgDescription ?? null,
       industry: data.orgIndustry ?? null,
@@ -793,20 +812,26 @@ async function createOrgInTransaction(
     data: { rootId: organization.id },
   });
 
-  // BillingAccount (sponsorship funding source)
-  const billingAccount = await tx.billingAccount.create({
-    data: {
-      ownerOrgId: organization.id,
-      billingEmail: data.orgBillingEmail,
-      currency: "INR",
-      fundingSource,
-      walletBalance: fundingSource === "WALLET" ? 0 : null,
-    },
-  });
-  await tx.organization.update({
-    where: { id: organization.id },
-    data: { billingAccountId: billingAccount.id },
-  });
+  // BillingAccount is created only when the org actually sponsors bookings.
+  // For a pure HOST org (canSponsor=false, canHost=true) there is nothing
+  // to bill against — the org earns, it doesn't pay. Keeping this table
+  // absent in that case avoids a dangling zero-balance row that would
+  // otherwise confuse the dashboard into showing a "wallet" card.
+  if (canSponsor) {
+    const billingAccount = await tx.billingAccount.create({
+      data: {
+        ownerOrgId: organization.id,
+        billingEmail: data.orgBillingEmail,
+        currency: "INR",
+        fundingSource,
+        walletBalance: fundingSource === "WALLET" ? 0 : null,
+      },
+    });
+    await tx.organization.update({
+      where: { id: organization.id },
+      data: { billingAccountId: billingAccount.id },
+    });
+  }
 
   const member = await tx.member.create({
     data: {

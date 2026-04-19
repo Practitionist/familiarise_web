@@ -5,6 +5,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -26,24 +27,6 @@ const INDUSTRIES = [
   "Manufacturing",
   "Consulting",
   "Other",
-];
-
-const ORG_KINDS = [
-  {
-    value: "BUYER",
-    label: "Buyer",
-    description: "Sponsor sessions for your employees or students",
-  },
-  {
-    value: "PROVIDER",
-    label: "Provider (Agency)",
-    description: "Host consultants and earn from their bookings",
-  },
-  {
-    value: "HYBRID",
-    label: "Hybrid",
-    description: "Both sponsor learners and host consultants",
-  },
 ];
 
 const SIZE_BUCKETS = [
@@ -69,42 +52,66 @@ export function OrgInfoStep({ onNext, initialData, isSubmitting }: StepProps) {
       industry: initialData.industry ?? "",
       sizeBucket: initialData.sizeBucket ?? "",
       website: initialData.website ?? "",
+      canSponsor: initialData.canSponsor ?? true,
+      canHost: initialData.canHost ?? false,
     },
   });
 
-  const selectedKind = watch("kind" as keyof OrgInfoFormData) as string || initialData.kind || "BUYER";
+  const canSponsor = watch("canSponsor");
+  const canHost = watch("canHost");
 
-  const onSubmit = (data: OrgInfoFormData) => onNext({ ...data, kind: selectedKind } as Partial<import("../types").OrgWizardData>);
+  const onSubmit = (data: OrgInfoFormData) => {
+    // Belt-and-braces: the zod schema doesn't enforce "at least one
+    // capability" because both fields are individually valid booleans.
+    // Catch the misconfiguration here before advancing — otherwise the
+    // wizard would skip both billing and revenue-rates steps and land
+    // on a useless inert org.
+    if (!data.canSponsor && !data.canHost) {
+      alert(
+        "Pick at least one capability. An organization that neither sponsors members nor hosts consultants has nothing to do.",
+      );
+      return;
+    }
+    onNext(data);
+  };
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
-      {/* Organization type selector */}
+      {/* Capability selection replaces the legacy kind radio. Two
+          independent booleans keep HYBRID as a natural consequence of
+          checking both rather than a distinct top-level type. */}
       <div className="space-y-2">
-        <Label>Organization type</Label>
+        <Label>What does this organization do?</Label>
         <div className="grid grid-cols-1 gap-2">
-          {ORG_KINDS.map((kind) => (
-            <label
-              key={kind.value}
-              className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${
-                selectedKind === kind.value
-                  ? "border-zinc-900 bg-zinc-50"
-                  : "border-zinc-200 hover:border-zinc-300"
-              }`}
-            >
-              <input
-                type="radio"
-                name="kind"
-                value={kind.value}
-                checked={selectedKind === kind.value}
-                onChange={() => setValue("kind" as keyof OrgInfoFormData, kind.value as never)}
-                className="mt-1"
-              />
-              <div>
-                <p className="text-sm font-medium">{kind.label}</p>
-                <p className="text-xs text-zinc-500">{kind.description}</p>
-              </div>
-            </label>
-          ))}
+          <label className="flex items-start gap-3 rounded-lg border border-zinc-200 p-3 cursor-pointer hover:border-zinc-300">
+            <Checkbox
+              checked={canSponsor}
+              onCheckedChange={(v) => setValue("canSponsor", v === true)}
+              className="mt-0.5"
+            />
+            <div>
+              <p className="text-sm font-medium">Sponsor members</p>
+              <p className="text-xs text-zinc-500">
+                The organization pays for its members&apos; sessions. Creates a
+                billing account.
+              </p>
+            </div>
+          </label>
+          <label className="flex items-start gap-3 rounded-lg border border-zinc-200 p-3 cursor-pointer hover:border-zinc-300">
+            <Checkbox
+              checked={canHost}
+              onCheckedChange={(v) => setValue("canHost", v === true)}
+              className="mt-0.5"
+            />
+            <div>
+              <p className="text-sm font-medium">Host consultants</p>
+              <p className="text-xs text-zinc-500">
+                The organization hosts consultants who deliver sessions. Enables
+                the payout account and rate cards. Admin verification required
+                before the first booking.
+              </p>
+            </div>
+          </label>
         </div>
       </div>
 
