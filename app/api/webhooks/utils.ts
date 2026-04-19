@@ -166,7 +166,7 @@ export async function handleOrgPaymentSuccess(
     }
     const invoiceRow = await prisma.organizationInvoice.findUnique({
       where: { id: invoiceId },
-      select: { id: true, totalPaise: true, status: true },
+      select: { id: true, totalPaise: true, status: true, displayCurrency: true, organizationId: true },
     });
     if (!invoiceRow) {
       console.error(`[Webhook] invoice_payment ${invoiceId} not found`);
@@ -222,11 +222,28 @@ export async function handleOrgPaymentSuccess(
 
     console.log(`[Webhook] Invoice paid: ${invoiceId}`);
 
-    if (organizationId) {
+    const resolvedOrgId = invoiceRow.organizationId ?? organizationId;
+
+    // Write SettlementLedgerEntry(INVOICE_PAID) — required for three-ledger discipline.
+    prisma.settlementLedgerEntry
+      .create({
+        data: {
+          organizationId: resolvedOrgId,
+          invoiceId,
+          kind: "INVOICE_PAID",
+          amountPaise: invoiceRow.totalPaise,
+          currency: invoiceRow.displayCurrency,
+        },
+      })
+      .catch((err) =>
+        console.error("[Webhook] Failed to write INVOICE_PAID settlement ledger entry:", err),
+      );
+
+    if (resolvedOrgId) {
       prisma.orgAuditLog
         .create({
           data: {
-            organizationId,
+            organizationId: resolvedOrgId,
             actorMembershipId: null,
             category: "INVOICE",
             action: "INVOICE_PAID",
