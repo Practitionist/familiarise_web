@@ -4,6 +4,11 @@ import { useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import type { FundingSource, MemberRole } from "@prisma/client";
+import {
+  flattenOrgDetails,
+  type OrgDetailsResponse,
+  type RawOrgDetailsResponse,
+} from "@/types/org-details";
 
 /**
  * Numeric rank per MemberRole — higher = more privileged. Used for the
@@ -25,32 +30,44 @@ const RANKS: Record<MemberRole, number> = {
 };
 
 /**
- * Shape returned by `GET /api/organizations/[orgId]`. Kept in one place
- * so the role hook + the capability hook don't drift: if the API shape
- * changes, every caller of these hooks compiles-errors until the type is
- * updated.
+ * Full-shape fallback returned when the API is unreachable or refuses
+ * the request. Every field the layout reads (`name`, `logo`, `status`,
+ * etc.) is present so the shared `["organization", orgId]` cache never
+ * gets a sparse payload — a race where `useOrgRole` wins a background
+ * refetch must not poison the layout's subsequent reads.
+ *
+ * All capability booleans are `false` so role-gated UI (invite button,
+ * billing tab) stays hidden in the degraded state. `role = LEARNER` is
+ * the least-privileged option, matching `isAtLeast` semantics.
  */
-interface OrgDetailsResponse {
-  organization: {
-    canSponsor: boolean;
-    canHost: boolean;
-    fundingSource: FundingSource | null;
+function failClosedOrgDetails(orgId: string): OrgDetailsResponse {
+  return {
+    organization: {
+      id: orgId,
+      name: "",
+      slug: "",
+      logo: null,
+      status: "PENDING_VERIFICATION",
+      canSponsor: false,
+      canHost: false,
+      fundingSource: null,
+    },
+    membership: { role: "LEARNER", status: "ACTIVE" },
   };
-  membership: { role: MemberRole } | null;
 }
 
 async function fetchOrgDetails(orgId: string): Promise<OrgDetailsResponse> {
   const res = await fetch(`/api/organizations/${orgId}`);
   // Fail closed: any error degrades to a zero-capability LEARNER view so
   // the UI hides admin-only controls rather than rendering them and
-  // letting the API return 403/404 on click.
-  if (!res.ok) {
-    return {
-      organization: { canSponsor: false, canHost: false, fundingSource: null },
-      membership: { role: "LEARNER" },
-    };
-  }
-  return (await res.json()) as OrgDetailsResponse;
+  // letting the API return 403/404 on click. We still return the full
+  // `OrgDetailsResponse` shape so the shared react-query cache (keyed
+  // on `["organization", orgId]`, also consumed by the org layout)
+  // doesn't get a sparse payload.
+  if (!res.ok) return failClosedOrgDetails(orgId);
+
+  const raw = (await res.json()) as RawOrgDetailsResponse;
+  return flattenOrgDetails(raw);
 }
 
 const ORG_DETAILS_QUERY_KEY = (orgId: string) =>
@@ -70,7 +87,7 @@ export function useOrgRole(orgId: string) {
     staleTime: 60_000,
   });
 
-  const role: MemberRole = data?.membership?.role ?? "LEARNER";
+  const role: MemberRole = data?.membership.role ?? "LEARNER";
   const canSponsor = data?.organization.canSponsor ?? false;
   const canHost = data?.organization.canHost ?? false;
   const fundingSource = data?.organization.fundingSource ?? null;

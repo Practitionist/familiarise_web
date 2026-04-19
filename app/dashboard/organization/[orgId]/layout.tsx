@@ -49,33 +49,12 @@ import { signOut, useSession } from "@/lib/auth-client";
 import { MEMBER_ROLE_LABEL } from "@/lib/labels/org-labels";
 import { resolvePersonalDashboardHref } from "@/lib/labels/personal-dashboard";
 import { disconnectStreamClients } from "@/providers/StreamProvider";
-import type {
-  FundingSource,
-  MemberRole,
-  MemberStatus,
-  OrgStatus,
-} from "@prisma/client";
-
-/**
- * Shape returned by `GET /api/organizations/[orgId]`. Arch 4-Modified
- * folds Organization and the old OrganizationProfile into a single
- * record, so there is no nested `profile` key anymore. Capability
- * booleans + fundingSource drive every sidebar and page-gating
- * decision.
- */
-interface OrgDetailsResponse {
-  organization: {
-    id: string;
-    name: string;
-    slug: string;
-    logo: string | null;
-    status: OrgStatus;
-    canSponsor: boolean;
-    canHost: boolean;
-    fundingSource: FundingSource | null;
-  };
-  membership: { role: MemberRole; status: MemberStatus };
-}
+import type { MemberRole, OrgStatus } from "@prisma/client";
+import {
+  flattenOrgDetails,
+  type OrgDetailsResponse,
+  type RawOrgDetailsResponse,
+} from "@/types/org-details";
 
 async function fetchOrg(orgId: string): Promise<OrgDetailsResponse> {
   const res = await fetch(`/api/organizations/${orgId}`);
@@ -83,19 +62,8 @@ async function fetchOrg(orgId: string): Promise<OrgDetailsResponse> {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || "Failed to load organization");
   }
-  const raw = await res.json() as OrgDetailsResponse & {
-    organization: { billingAccount?: { fundingSource: FundingSource } | null };
-  };
-  // `fundingSource` is nested in the API response under `billingAccount`;
-  // flatten it to the top-level organization object so sidebar gating and
-  // useOrgRole's fundingSource check both see the right value.
-  return {
-    ...raw,
-    organization: {
-      ...raw.organization,
-      fundingSource: raw.organization.billingAccount?.fundingSource ?? null,
-    },
-  };
+  const raw = (await res.json()) as RawOrgDetailsResponse;
+  return flattenOrgDetails(raw);
 }
 
 /**
