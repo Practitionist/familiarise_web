@@ -1,307 +1,78 @@
-# E2E Enterprise Walkthrough — Arch 4-Modified End-to-End Acceptance
+# E2E Enterprise Walkthrough — API Contract Suite (Arch 4-Modified)
+
+> **READ FIRST: [`e2e-enterprise-shared-setup.md`](./e2e-enterprise-shared-setup.md).**
+> That file owns the prerequisites (DB seed, dev-server health, role
+> promotion, cookie capture, Razorpay test keys), the capability /
+> role / funding glossary, the schema reference, the audit-action
+> cheat sheet, and the cross-cutting CRITICAL RULES. Do not start
+> Phase A until P.1-P.7 in that file are green.
 
 ## Role & Mission
 
-You are a **senior QA engineer** performing a hands-on acceptance walkthrough
-of the Arch 4-Modified enterprise layer on branch `feature/enterprise-arch4`
-of `/Users/kaustavghosh/Desktop/familiarise_web`.
+You are a **senior QA engineer** performing a hands-on **API contract
+acceptance walkthrough** of the Arch 4-Modified enterprise layer on
+branch `feature/enterprise-arch4` of
+`/Users/kaustavghosh/Desktop/familiarise_web`.
 
-This file is your single source of truth — you will have **no conversation
-history**. Everything you need (capability model, funding sources, program
-subtypes, rate-card semantics, ledger invariants, exact HTTP surface area,
-expected status codes, and the SQL to verify each step against Supabase) is
-baked in below.
+This suite is the **server-side source of truth**: every route is
+exercised with `curl`, every state transition is verified with SQL
+against the three ledgers, and every 4xx branch is exercised
+explicitly. UI-only concerns (Razorpay popup, polling toasts,
+hydration warnings, RBAC chrome visibility) live in the sibling
+prompt `e2e-enterprise-agent-002-arch4-modified-ui.md`.
 
-Your job is to walk **Phases A through J** end-to-end, producing a per-phase
-pass/fail matrix backed by Supabase SQL, `curl` logs, and Chrome DevTools
-snapshots.
+Your job is to walk **Phases A through K** end-to-end, producing a
+per-phase pass/fail matrix backed by Supabase SQL and `curl` logs.
 
-You have access to two critical MCP tools:
+You have access to one critical MCP tool here:
 
-1. **Supabase MCP** — query / verify DB state via `execute_sql`.
-2. **Chrome DevTools MCP** — drive the UI at `http://localhost:3000`.
+- **Supabase MCP** — query / verify DB state via `execute_sql`.
+  Project ID: `pzmbxqdgibfkhjwzeprf`.
 
-**Supabase Project ID:** `pzmbxqdgibfkhjwzeprf`
-
----
-
-## CRITICAL RULES
-
-1. **Fix bugs immediately.** If a flow is broken — bad status code, stale
-   enum leak, unhandled 500, a UI crash, a ledger that doesn't net to zero
-   — stop, diagnose, patch the source in-place, re-verify, and continue.
-   Do NOT accumulate a bug list.
-
-2. **Verify DB state after every meaningful action.** The UI can lie; the
-   three ledgers (`UsageLedgerEntry`, `FundingLedgerEntry`,
-   `SettlementLedgerEntry`) are the source of truth. Query them via
-   Supabase MCP at every checkpoint.
-
-3. **Test both happy paths AND guard paths.** Every route has 4xx branches
-   (disabling both capabilities, WALLET→X with balance > 0, duplicate
-   domain claims, last-OWNER demotion). Exercise each explicitly.
-
-4. **Take snapshots liberally.** `take_snapshot` before every click,
-   `take_screenshot` on anything visually wrong. Use `list_network_requests`
-   to capture exact API shape when a response surprises you.
-
-5. **All money in paise** (1 INR = 100 paise). Applies to
-   `BillingAccount.walletBalance`, `WalletEntry.deltaPaise`,
-   `OrganizationInvoice.totalPaise`, `OrganizationPayout.amountPaise`,
-   `ProgramAssignment.*`, everything.
-
-6. **Double-quote Postgres identifiers** that Prisma emitted as mixed-case
-   (e.g. `"Membership"`, `"BillingAccount"`, `"Contract"`). BetterAuth-mapped
-   tables are lower-case (`organizations`, `members`, `invitations`). The
-   Schema Reference table below lists every model.
-
-7. **App runs at** `http://localhost:3000`. Dev server must already be up
-   (`npm run dev`). You will NOT be starting or building it.
+> Chrome DevTools MCP is available but used sparingly in this suite —
+> only to grab a fresh `better-auth.session` cookie when `$COOKIE`
+> expires. UI-driving belongs in the sibling prompt.
 
 ---
 
-## BACKGROUND YOU MUST INTERNALIZE BEFORE PHASE A
+## Suite-specific notes
 
-### Capability model (replaces OrganizationKind)
-
-`Organization` carries two booleans — `canSponsor` and `canHost` — that
-together express the four conceivable shapes:
-
-| canSponsor | canHost | Shape name | Example             |
-|------------|---------|-----------|---------------------|
-| `true`     | `false` | Sponsor   | Wipro (pays for its engineers' consults) |
-| `false`    | `true`  | Host      | IIT Madras (hosts professors who earn through the org) |
-| `true`     | `true`  | Hybrid    | LearnPro (both buys sessions for staff AND hosts its own instructors) |
-| `false`    | `false` | **Invalid** — at least one must be true |
-
-An org can express further capabilities via the `capabilitiesExtra Json?`
-escape hatch (e.g. `{ "RESELL": true }`) without a migration, but the two
-typed booleans cover the 90% path.
-
-### FundingSource (replaces OrganizationBillingMode)
-
-`BillingAccount.fundingSource` is one of:
-
-- `PERSONAL` — learner pays their own card; `Payment.organizationId` is
-  tagged for attribution but the org pays nothing.
-- `LICENSE` — flat enterprise license (superset of the old
-  `PREPAID_UNLIMITED`).
-- `WALLET` — GLG-style credit pool. `walletBalance` is int paise;
-  topped up via `/wallet/top-ups`; debited at booking with a
-  `WalletEntry` row.
-- `INVOICE` — NET-X postpaid. Bookings accrue until an
-  `OrganizationInvoice` gets cut; `creditLimit` caps outstanding.
-- `PROJECT` — v2-reserved placeholder; not wired in v1 but must round-trip
-  without 500.
-
-One BillingAccount per org when `canSponsor=true`. `canSponsor=false` orgs
-have NO BillingAccount at all.
-
-### Program subtypes
-
-`Program.type` drives a discriminated subtype:
-
-- `LICENSED_SEAT` — has a 1:1 `LicensedSeatConfig` row. `ratePerSeatPaise`
-  + `cycle` + optional `coveredSessionsPerCycle` (null = unlimited, which
-  replaces the old `PREPAID_UNLIMITED`). `overageBehavior` ∈
-  `{ BLOCK, CHARGE_MEMBER, CHARGE_ORG }`.
-- `CREDIT_POOL` — has a 1:1 `CreditPoolConfig` row. `creditValuePaise`
-  + optional `premiumMultiplier` (GLG-style tier) +
-  `minimumCreditsPerPeriod`.
-- `PROJECT` / `RETAINER` — enum values reserved for v2. Not accepted at
-  the create endpoint today; a v2 body must 400.
-
-Per-member entitlement: `ProgramAssignment` (with
-`(programId, membershipId, periodStart)` unique). Per-booking usage:
-`BookingUtilization`.
-
-### Member roles (disjoint from UserRole)
-
-`MemberRole = { OWNER, MAINTAINER, MANAGER, EXPERT, LEARNER, SUPPORT }`.
-
-- `OWNER` — full org control, budget-moving actions (contracts, rate
-  cards, funding source flips, payouts).
-- `MAINTAINER` — org admin below owner. Was the old `ADMIN`; renamed to
-  avoid colliding with `UserRole.ADMIN` (platform admin).
-- `MANAGER` — read-heavy admin (invoices, earnings, audit log).
-- `EXPERT` — delivers services on behalf of the org. Was `CONSULTANT`;
-  renamed because the org-side term must be disjoint from
-  `UserRole.CONSULTANT`. Do NOT say "consultant" for a member — say
-  "expert".
-- `LEARNER` — consumes services through the org.
-- `SUPPORT` — internal ops / CX role.
-
-### Three ledgers
-
-All immutable; reconciliation invariants are in
-`docs/enterprise/18-three-ledger-discipline.md`. The three surfaces:
-
-- `UsageLedgerEntry` — sessions consumed (positive deltas; negative on
-  reversal).
-- `FundingLedgerEntry` — wallet deltas (`TOPUP`, `BOOKING_DEBIT`,
-  `REFUND_CREDIT`, `ADJUSTMENT`, `GRANT`). `balanceAfterPaise` is
-  persisted for reconciliation.
-- `SettlementLedgerEntry` — invoices, payouts, refunds (`INVOICE_ISSUED`,
-  `INVOICE_PAID`, `PAYMENT_RECEIVED`, `REFUND_ISSUED`, `PAYOUT_SENT`,
-  `CHARGEBACK`, `CREDIT_NOTE`).
-
-### RateCard and bumping
-
-`RateCard` has `effectiveFrom` / `effectiveTo`. **Rate cards are never
-mutated after creation**; a change rotates via
-`lib/api/organizations/rate-card.ts#bumpRateCard`, which:
-
-1. `UPDATE` the currently-live card's `effectiveTo = now()`.
-2. `INSERT` a new row with `effectiveFrom = now()`, `effectiveTo = null`.
-
-Invariant: `platformBps + orgBps + consultantBps === 10000` (basis
-points; integer math — no float drift).
-
-Settlement reads the **snapshot** on `OrganizationEarnings.{platformBps,
-orgBps, consultantBps}Applied` — never the live card. Bumping doesn't
-rewrite history.
-
-### Refund semantics
-
-`BookingUtilization.reversedAt` + `reversalReason`. The row is **never
-deleted**; reversal is expressed by setting those two fields and
-appending a counter `UsageLedgerEntry` (negative `sessionsConsumed`).
-
-### Audit log
-
-`OrgAuditLog.action` is a **free-form String** (so new actions like
-`REFUND_DENIED`, `CONSENT_WITHDRAWN`, `OVERAGE_CHARGED` land without a
-migration) paired with a small stable `category: OrgAuditCategory` enum
-(`MEMBER | CONTRACT | PROGRAM | WALLET | INVOICE | PAYOUT | SETTINGS |
-CONSENT | SYSTEM`). Well-known action literals come from the autocomplete
-constant `AUDIT_ACTIONS` in `lib/enterprise/audit-actions.ts`. There's a
-legacy `OrgAuditAction` enum in the schema kept for type-checking only
-— the DB column uses the string.
-
-### Stackable funding
-
-`PaymentLeg` rows attach to a `Payment` when `> 1` funding source
-contributed to it. Sources: `CARD | WALLET | REFERRAL_CREDIT |
-INVOICE_ACCRUAL | LICENSE`. When a single source paid, no `PaymentLeg`
-rows are written — the parent `Payment` is sufficient.
-
-### India compliance
-
-Fields are final on `Invoice` / `PurchaseOrder` / `OrganizationPayout`
-/ `Organization`. The actual logic (TDS, MSME, GST, IRP, DPDP, Form-15)
-is stubbed in `lib/compliance/**` — stubs return sensible defaults
-(zero tax, null IRN, default 60-day payment deadline). Do not treat
-those defaults as bugs; the schema is ready, the wiring is in-flight.
+- **Verbatim curl logs.** Every sub-step's `curl -i` (headers + body
+  + status) goes into the per-phase report. Use `curl -i -s` to
+  capture without the progress bar.
+- **SQL after every mutation.** No exceptions — even idempotent
+  retries get their `SELECT` checkpoint.
+- **No UI assertions in this suite.** If a sub-step depends on a UI
+  side-effect, mark it `DEFERRED → see UI suite §X.Y` rather than
+  open Chrome DevTools here.
 
 ---
 
-## SCHEMA REFERENCE — Table Names
-
-| Prisma Model | PostgreSQL Table | Key notes |
-|---|---|---|
-| `Organization` | `organizations` | BetterAuth `@@map` |
-| `Member` | `members` | BetterAuth `@@map`; invitation-token shim only |
-| `Invitation` | `invitations` | BetterAuth `@@map` |
-| `Membership` | `"Membership"` | Typed source of truth for roles |
-| `BillingAccount` | `"BillingAccount"` | fundingSource + walletBalance + creditLimit |
-| `Contract` | `"Contract"` | status: DRAFT/ACTIVE/EXPIRED/TERMINATED |
-| `BillingSubscription` | `"BillingSubscription"` | PER_SEAT or FLAT_FEE |
-| `WalletEntry` | `"WalletEntry"` | Immutable; `providerOrderId @unique` |
-| `Program` | `"Program"` | LICENSED_SEAT or CREDIT_POOL |
-| `LicensedSeatConfig` | `"LicensedSeatConfig"` | 1:1 with Program |
-| `CreditPoolConfig` | `"CreditPoolConfig"` | 1:1 with Program |
-| `ProgramAssignment` | `"ProgramAssignment"` | Per-member entitlement |
-| `BookingUtilization` | `"BookingUtilization"` | Per-booking usage + reversedAt |
-| `RateCard` | `"RateCard"` | Sum of 3 bps fields = 10000 |
-| `OrganizationPayoutAccount` | `"OrganizationPayoutAccount"` | |
-| `OrganizationEarnings` | `"OrganizationEarnings"` | `platformBpsApplied` etc. snapshot |
-| `OrganizationPayout` | `"OrganizationPayout"` | Includes TDS/MSME/FEMA fields |
-| `OrganizationInvoice` | `"OrganizationInvoice"` | GST + IRN fields |
-| `PurchaseOrder` | `"PurchaseOrder"` | `@@unique([organizationId, poNumber])` |
-| `OrganizationPlan` | `"OrganizationPlan"` | |
-| `OrganizationSSOSettings` | `"OrganizationSSOSettings"` | |
-| `SsoProvider` | `"SsoProvider"` | BetterAuth-managed |
-| `OrgDomainClaim` | `org_domain_claims` | `@@map` |
-| `OrgAuditLog` | `"OrgAuditLog"` | `action: String` (free-form) |
-| `UsageLedgerEntry` | `"UsageLedgerEntry"` | |
-| `FundingLedgerEntry` | `"FundingLedgerEntry"` | |
-| `SettlementLedgerEntry` | `"SettlementLedgerEntry"` | |
-| `ConsentArtifact` | `"ConsentArtifact"` | DPDP grants |
-| `HrisConfig` | `"HrisConfig"` | |
-| `HrisSyncJob` | `"HrisSyncJob"` | |
-| `HrisEmployeeMap` | `"HrisEmployeeMap"` | |
-| `PaymentLeg` | `"PaymentLeg"` | |
-
-Remember: unquoted identifiers are lower-cased by Postgres. Double-quote
-every mixed-case model table.
+<!-- CRITICAL RULES live in e2e-enterprise-shared-setup.md.
+     Re-read them before Phase A; do not duplicate them here. -->
 
 ---
 
-## PREREQUISITES
-
-### P.1 — DB reset + seed
-
-```bash
-cd /Users/kaustavghosh/Desktop/familiarise_web
-npx prisma db push --force-reset
-npm run db:seed
-```
-
-This seeds the four representative org shapes:
-
-- **Wipro** — Sponsor-only, `fundingSource=INVOICE`, `LICENSED_SEAT` program.
-- **LearnPro Academy** — Hybrid (canSponsor + canHost),
-  `fundingSource=LICENSE`.
-- **IIT Madras** — Host-only, `fundingSource=PERSONAL` (students pay their
-  own card for external-consultant access).
-- **Rahul's Coaching** — solo consultant, micro-Host org auto-created on
-  onboarding.
-
-Owner emails the seed stamps (use these for Chrome DevTools login):
-
-| Org          | Owner email                 |
-|--------------|-----------------------------|
-| Wipro        | `founder@wipro.test`        |
-| IIT Madras   | `founder@iitmadras.test`    |
-| LearnPro     | `founder@learnpro.test`     |
-| Rahul solo   | `rahul@familiarise.test`    |
-
-Password for all seeded accounts: `TestPassword123!`.
-
-### P.2 — Dev server
-
-```bash
-curl -sf http://localhost:3000/api/health
-# Expect { "ok": true } or 200.
-```
-
-If unreachable, ask the user to start `npm run dev` — do NOT start it
-yourself.
-
-### P.3 — Static checks before mutating
-
-```bash
-npx tsc --noEmit
-npm run lint
-```
-
-These are guard rails — if either fails you've got pre-existing breakage
-in the branch. Fix before touching test flows.
-
-### P.4 — Get a session cookie for curl
-
-Log in via Chrome DevTools MCP first, then copy the `better-auth.session`
-cookie from `list_network_requests` and export it:
-
-```bash
-export COOKIE='better-auth.session=<paste-here>; better-auth.session_token=<paste-here>'
-```
-
-Replay throughout the walkthrough. Each `curl` below assumes `$COOKIE`.
-
----
+<!-- The original walkthrough inlined the capability model, funding
+     sources, program subtypes, member roles, ledger glossary, schema
+     reference, and prereqs P.1-P.5 here. They now live in
+     e2e-enterprise-shared-setup.md so the API and UI suites share one
+     source of truth. The deletion stops just before "## PHASE A". -->
 
 ## PHASE A — Organization Creation + Capability Flips
+
+> **Pre-flight**: every POST in A.1-A.3 fails **403** with
+> `"Only organization administrators can create organizations…"` if the
+> session user's `users.role` is not `ORG_ADMIN` or `ADMIN`. See
+> prereq P.4. Run that first or every cell below will be red.
+
+### A.0 — Creator-role gate (sanity)
+
+Sign up a fresh `CONSULTEE` (default role for new accounts) and POST any
+A.1-shaped body without flipping the role. **Expect 403** with the
+literal `"Only organization administrators can create organizations.
+Sign up with the Organization Owner role to continue."` Then promote
+that user via P.4 and continue.
 
 ### A.1 — Create Sponsor-only org
 
@@ -920,6 +691,11 @@ curl -s -X PATCH "http://localhost:3000/api/organizations/$HYBRID_ID/billing-acc
 
 ### D.5 — Wallet top-up init
 
+> **Auth gates** (see [`app/api/organizations/[orgId]/billing-account/wallet/top-ups/route.ts`](app/api/organizations/[orgId]/billing-account/wallet/top-ups/route.ts)
+> lines 99-108): the route is **OWNER-only**, `canSponsor=true`, and
+> `requireActive: true`. Top-ups move real money — the gate is
+> deliberately the strictest in the wallet surface.
+
 ```bash
 curl -s -X POST \
   "http://localhost:3000/api/organizations/$HYBRID_ID/billing-account/wallet/top-ups" \
@@ -928,8 +704,26 @@ curl -s -X POST \
   -d '{ "amountPaise": 500000 }'
 ```
 
-**Expect 201** `{ providerOrderId, amountPaise: 500000, status: "pending",
-reused: false }`. A pending `WalletEntry` row is created:
+**Expect 201** with the pair-of-ids body:
+
+```json
+{
+  "topUpId": "we_<32-hex>",
+  "razorpayOrderId": "order_<…>",
+  "keyId": "<NEXT_PUBLIC_RAZORPAY_KEY_ID>",
+  "amountPaise": 500000,
+  "currency": "INR",
+  "status": "pending",
+  "reused": false
+}
+```
+
+`topUpId` is our wallet-entry idempotency key (stored as
+`WalletEntry.providerOrderId @unique` and used as the URL parameter for
+the polling endpoint in D.5b). `razorpayOrderId` is the gateway order
+the dashboard hands to `new Razorpay({ order_id })`.
+
+A pending `WalletEntry` row is created:
 
 ```sql
 SELECT id, "deltaPaise", reason, "balanceAfter", "providerOrderId",
@@ -940,10 +734,94 @@ ORDER BY "createdAt" DESC
 LIMIT 3;
 ```
 
-The pending row carries the `providerOrderId` from the response,
-`reason='TOPUP'`.
+The pending row carries `providerOrderId = topUpId` (the `we_<…>`
+value, NOT the Razorpay order id), `deltaPaise = 0`,
+`reason = 'TOPUP'`, `providerPaymentId IS NULL`. The webhook flips
+`deltaPaise` to the credited amount and writes `providerPaymentId`.
+
+### D.5a — Auth-gate sub-steps
+
+- As a MAINTAINER session: **Expect 403** (`requireOrgAccess` minimum
+  role check).
+- Against an org with `status = 'PENDING_VERIFICATION'`: **Expect 403**
+  (`requireActive: true`). Verify with the SQL: `SELECT status FROM
+  organizations WHERE id = '<…>'` should be `PENDING_VERIFICATION`.
+- Against a Host-only org (`canSponsor = false`): **Expect 403** —
+  `canSponsor: true` requirement on `requireOrgAccess` rejects before
+  the BillingAccount lookup.
+
+### D.5b — Razorpay-keys-missing guard
+
+If `RAZORPAY_KEY_ID` / `RAZORPAY_SECRET` are unset (preview / CI /
+pre-config dev):
+
+**Expect 503** with body
+`{ "error": "Payment gateway not configured. Set RAZORPAY_KEY_ID and
+RAZORPAY_SECRET to enable top-ups.", "errorType":
+"RAZORPAY_NOT_INITIALIZED" }`.
+
+Critically: NO `WalletEntry` row gets persisted on this branch — the
+route mints the Razorpay order **before** the DB transaction so a
+gateway failure can't leave behind a pending placeholder. Verify with
+`SELECT COUNT(*) FROM "WalletEntry" WHERE "billingAccountId" = …` —
+unchanged.
+
+### D.5c — Bounded post-checkout polling
+
+Once D.5 has landed a pending row, exercise the polling endpoint the
+dashboard uses to bridge the webhook race
+([`app/api/organizations/[orgId]/billing-account/wallet/top-ups/[topUpId]/route.ts`](app/api/organizations/[orgId]/billing-account/wallet/top-ups/[topUpId]/route.ts)):
+
+```bash
+curl -s "http://localhost:3000/api/organizations/$HYBRID_ID/billing-account/wallet/top-ups/$TOPUP_ID" \
+  -H "Cookie: $COOKIE"
+```
+
+**Pre-webhook (Expect 200):**
+
+```json
+{
+  "topUp": {
+    "topUpId": "we_<…>",
+    "providerPaymentId": null,
+    "status": "pending",
+    "amountPaise": 0,
+    "balanceAfter": 0,
+    "createdAt": "..."
+  }
+}
+```
+
+Now simulate the webhook (POST a signed payload to
+`/api/webhooks/razorpay` with `notes.type=credit_purchase` +
+`notes.walletEntryOrderId=$TOPUP_ID`, or call the dev confirm helper).
+Replay the GET:
+
+**Post-webhook (Expect 200):**
+
+```json
+{
+  "topUp": {
+    "topUpId": "we_<…>",
+    "providerPaymentId": "pay_<…>",
+    "status": "confirmed",
+    "amountPaise": 500000,
+    "balanceAfter": 500000,
+    "createdAt": "..."
+  }
+}
+```
+
+The `status` flip from `pending → confirmed` is the contract the client
+poll loop in
+[`app/dashboard/organization/[orgId]/credits/page.tsx`](app/dashboard/organization/[orgId]/credits/page.tsx)
+relies on (1 s × 20 attempts = 20 s budget). Cross-tenant lookup
+(another org's `topUpId`) → **404** `"Top-up not found"` — the
+`billingAccount: { ownerOrgId: orgId }` filter prevents leakage.
 
 ### D.6 — Idempotent retry via client key
+
+First POST mints the entry:
 
 ```bash
 curl -s -X POST \
@@ -953,9 +831,28 @@ curl -s -X POST \
   -d '{ "amountPaise": 500000, "clientIdempotencyKey": "ckey-phaseD-001" }'
 ```
 
-First call: 201 with `reused: false`. Repeat the same body: **200 with
-`reused: true`** — the `providerOrderId @unique` stops a second row from
-landing.
+**Expect 201** with `topUpId = "ckey-phaseD-001"` and `reused: false`
+— the supplied key is used verbatim as the wallet-entry order id.
+
+Replay the same body. **Expect 200** with the explicit "use a fresh
+key" advice baked in:
+
+```json
+{
+  "topUpId": "ckey-phaseD-001",
+  "amountPaise": 500000,
+  "status": "pending",
+  "reused": true,
+  "error": "A top-up with this idempotency key already exists. Retry without the key to launch a new gateway order."
+}
+```
+
+The `WalletEntry.providerOrderId @unique` constraint guarantees the
+de-dupe even without the key — passing the same physical request twice
+in a millisecond can't double-mint. The `error` field on the 200 is the
+load-bearing UX hint: it tells the client a fresh idempotency key is
+needed to launch a NEW Razorpay order (we cannot resume the original
+order from this endpoint).
 
 ### D.7 — Top-up with amount below ₹100
 
@@ -966,7 +863,8 @@ curl -s -X POST \
   -d '{ "amountPaise": 5000 }'
 ```
 
-**Expect 400** — Zod min is `10_000` paise (₹100).
+**Expect 400** — Zod `min(10_000)` paise (₹100). Below the floor,
+gateway fees would dwarf the credit.
 
 ### D.8 — Top-up on non-WALLET account
 
@@ -977,9 +875,11 @@ WALLET after.
 
 ### D.9 — Ledger invariant (post-confirmed top-up)
 
-Simulate webhook confirmation (or use the dev helper `confirmTopUp`) so
-one WalletEntry lands with `reason='TOPUP'`, `deltaPaise=500000`,
-`balanceAfter=500000`. Then verify the **three-ledger discipline**:
+Simulate webhook confirmation (signed payload to `/api/webhooks/razorpay`
+with `notes.type=credit_purchase`, or the dev `confirmTopUp` helper) so
+one WalletEntry settles with `reason='TOPUP'`, `deltaPaise=500000`,
+`balanceAfter=500000`, `providerPaymentId` populated. Then verify the
+**three-ledger discipline** AND the **two-action audit split**:
 
 ```sql
 -- 1. WalletEntry balance must equal BillingAccount.walletBalance.
@@ -995,10 +895,25 @@ WHERE ba."ownerOrgId" = '<HYBRID_ID>';
 --    via the walletEntryId @unique FK.
 SELECT COUNT(*) FROM "FundingLedgerEntry" WHERE "billingAccountId" =
   (SELECT id FROM "BillingAccount" WHERE "ownerOrgId" = '<HYBRID_ID>');
+
+-- 3. Two-stage audit split: WALLET_TOPUP from the route, then
+--    WALLET_TOPUP_CONFIRMED from the webhook handler. Both must land.
+SELECT action, COUNT(*) FROM "OrgAuditLog"
+WHERE "organizationId" = '<HYBRID_ID>'
+  AND category = 'WALLET'
+GROUP BY action;
 ```
 
-Invariant: wallet balance equals wallet-ledger sum for settled rows. The
-pending-but-unconfirmed rows are excluded from the balance.
+Invariants:
+
+- Wallet balance equals wallet-ledger sum for settled rows (pending-
+  but-unconfirmed rows are excluded from the balance).
+- The audit split must show **both** `WALLET_TOPUP` (route-emitted at
+  initiation, see [`app/api/organizations/[orgId]/billing-account/wallet/top-ups/route.ts`](app/api/organizations/[orgId]/billing-account/wallet/top-ups/route.ts)
+  line 235) and `WALLET_TOPUP_CONFIRMED` (webhook-emitted at settlement,
+  see [`app/api/webhooks/utils.ts`](app/api/webhooks/utils.ts)). Missing
+  the second row means the webhook never fired or signature verification
+  rejected it — re-check `RAZORPAY_WEBHOOK_SECRET`.
 
 ---
 
@@ -1083,14 +998,121 @@ UPDATE organizations SET "gstStateCode" = 'MH' WHERE id = '<SPONSOR_ID>';
 Re-issue. The new invoice must have `igstPaise > 0` and
 `cgstPaise = sgstPaise = 0`.
 
-### E.5 — State machine: DRAFT → ISSUED → PAID
+### E.5 — State machine: DRAFT → ISSUED (PATCH path)
 
-- DRAFT → ISSUED via PATCH (covered in the `[invoiceId]` route; include
-  that PATCH test; expect 200 + `issuedAt` populated + a
-  `SettlementLedgerEntry(kind=INVOICE_ISSUED)` row).
-- PAID is **webhook-only**. A manual PATCH setting `status='PAID'` must
-  refuse (either 400 or 409 depending on the guard). Confirm via code
-  reading if the UI path is blocked.
+The PATCH route in
+[`app/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/route.ts`](app/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/route.ts)
+is deliberately narrow:
+
+```
+DRAFT    → ISSUED, CANCELLED
+ISSUED   → VOID
+OVERDUE  → VOID
+PAID     → (terminal)
+VOID     → (terminal)
+CANCELLED→ (terminal)
+```
+
+- PATCH `{ "status": "ISSUED" }` from DRAFT: **200**, `issuedAt`
+  populated, `SettlementLedgerEntry(kind='INVOICE_ISSUED')` lands, and
+  an `OrgAuditLog(action='INVOICE_ISSUED')` row appears.
+- PATCH `{ "status": "PAID" }` from any state: **400** —
+  `PatchStatusSchema = z.enum(["ISSUED", "CANCELLED", "VOID"])` rejects
+  the value at Zod parsing. PAID is **only** reachable via the webhook
+  handler in `/pay` (E.5c).
+- PATCH `{ "status": "VOID" }` from ISSUED: **200**, audit
+  `INVOICE_VOIDED`, `voidedAt` populated.
+- PATCH `{ "status": "ISSUED" }` from PAID/VOID/CANCELLED: **409**
+  `"Cannot transition invoice from <state> to ISSUED"` — the explicit
+  per-state allow-list rejects.
+
+### E.5b — Pay an issued invoice (mints Razorpay order)
+
+```bash
+curl -s -X POST \
+  "http://localhost:3000/api/organizations/$SPONSOR_ID/billing-account/invoices/$INVOICE_ID/pay" \
+  -H "Cookie: $COOKIE"
+```
+
+**Expect 200** (no `{ status: 201 }` wrapper; route uses default
+`NextResponse.json`):
+
+```json
+{
+  "razorpayOrderId": "order_<…>",
+  "keyId": "<NEXT_PUBLIC_RAZORPAY_KEY_ID>",
+  "amountPaise": 1500000,
+  "currency": "INR",
+  "invoice": {
+    "id": "<INVOICE_ID>",
+    "invoiceNumber": "INV-…",
+    "status": "ISSUED"
+  }
+}
+```
+
+Verify the audit row:
+
+```sql
+SELECT action, details FROM "OrgAuditLog"
+WHERE "organizationId" = '<SPONSOR_ID>'
+  AND category = 'INVOICE'
+  AND action = 'INVOICE_PAYMENT_INITIATED'
+ORDER BY "createdAt" DESC LIMIT 1;
+```
+
+Critical: this route does NOT mutate the invoice. `status` stays
+`ISSUED`, `paidAt` stays NULL, no `SettlementLedgerEntry(INVOICE_PAID)`
+yet. The webhook is the only path that flips PAID — see E.5c.
+
+Guard sub-steps (cite [`app/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pay/route.ts`](app/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pay/route.ts)):
+
+- Already-PAID invoice → **409** `"Invoice already paid"` with
+  `paidAt` echoed.
+- DRAFT / VOID / CANCELLED invoice → **409**
+  `"Cannot pay an invoice in <STATE> state"`.
+- Razorpay keys missing → **503**
+  `"Payment gateway not configured. Set RAZORPAY_KEY_ID and
+  RAZORPAY_SECRET to enable invoice payments."` with `errorType:
+  "RAZORPAY_NOT_INITIALIZED"`. No audit row written, no order minted.
+- Non-OWNER session → **403** (`requireOrgAccess(..., {
+  minimumRole: "OWNER", canSponsor: true, requireActive: true })`).
+
+### E.5c — Webhook simulation flips ISSUED → PAID
+
+Either invoke the dev `confirmInvoicePayment` helper or POST a
+signature-valid `payment.captured` payload to `/api/webhooks/razorpay`
+with `notes.type=invoice_payment` + `notes.invoiceId=$INVOICE_ID` (see
+[`app/api/webhooks/utils.ts`](app/api/webhooks/utils.ts) for the
+expected shape).
+
+Verify:
+
+```sql
+-- Status flipped + paidAt populated
+SELECT status, "paidAt" FROM "OrganizationInvoice"
+WHERE id = '<INVOICE_ID>';
+
+-- SettlementLedgerEntry written
+SELECT kind, "amountPaise", "providerPaymentId" FROM "SettlementLedgerEntry"
+WHERE "invoiceId" = '<INVOICE_ID>'
+ORDER BY "createdAt" ASC;
+
+-- Audit
+SELECT action FROM "OrgAuditLog"
+WHERE "organizationId" = '<SPONSOR_ID>'
+  AND details->>'invoiceId' = '<INVOICE_ID>'
+ORDER BY "createdAt" ASC;
+```
+
+Expect: `status='PAID'`, `paidAt` NOT NULL, one
+`SettlementLedgerEntry(kind='INVOICE_PAID')` row matching `totalPaise`,
+and the audit-action sequence `INVOICE_PAYMENT_INITIATED → INVOICE_PAID`.
+
+Idempotency check: replay the webhook with the same
+`razorpay_payment_id`. The handler must short-circuit (see
+`OrganizationInvoice.providerOrderId @unique` + the `paidAt IS NULL`
+guard) — no second `INVOICE_PAID` ledger row, no duplicated audit.
 
 ### E.6 — 3-way match: invoice within PO remaining
 
@@ -1264,16 +1286,94 @@ curl -s -X PATCH \
   -d '{ "status": "CANCELLED", "notes": "Rollback test" }'
 ```
 
-**Expect 200**. Earnings flip back to `READY`, `orgPayoutId` cleared.
-A compensating SettlementLedgerEntry (opposite sign) lands so the ledger
-nets to zero for the cancelled payout.
+**Expect 200**. Verify in three places (cite [`app/api/organizations/[orgId]/payouts/[payoutId]/route.ts`](app/api/organizations/[orgId]/payouts/[payoutId]/route.ts)
+lines 122-172):
 
-### F.8 — PATCH payout: illegal transition
+```sql
+-- 1. Earnings released back to READY, orgPayoutId cleared.
+SELECT status, "orgPayoutId" FROM "OrganizationEarnings"
+WHERE "orgPayoutId" IS NULL
+  AND "organizationId" = '<HOST_ID>';
+-- (Was attached to <PAYOUT_ID> a moment ago; now NULL/READY.)
 
-Try `COMPLETED → CANCELLED`:
+-- 2. Compensating settlement row written as PAYOUT_REVERSED
+--    (NOT a negative-sign PAYOUT_SENT — the route uses a distinct kind
+--    so analytics queries don't double-count cancelled payouts).
+SELECT kind, "amountPaise", notes FROM "SettlementLedgerEntry"
+WHERE "payoutId" = '<PAYOUT_ID>'
+ORDER BY "createdAt" ASC;
+-- Expect two rows:
+--   1. kind='PAYOUT_SENT', amountPaise = -netPayoutPaise (from F.5)
+--   2. kind='PAYOUT_REVERSED', amountPaise = +netPayoutPaise (this step)
 
-**Expect 409** `"Cannot transition payout from COMPLETED to CANCELLED
-manually"`.
+-- 3. Audit action is PAYOUT_CANCELLED.
+SELECT action FROM "OrgAuditLog"
+WHERE "organizationId" = '<HOST_ID>'
+  AND details->>'payoutId' = '<PAYOUT_ID>'
+ORDER BY "createdAt" DESC LIMIT 1;
+```
+
+The two settlement rows must net to zero for this payout: `SUM(amountPaise) = 0`.
+
+### F.7b — PATCH payout: PENDING → APPROVED (manager sign-off)
+
+```bash
+curl -s -X PATCH \
+  "http://localhost:3000/api/organizations/$HOST_ID/payouts/$ANOTHER_PAYOUT_ID" \
+  -H "Content-Type: application/json" \
+  -H "Cookie: $COOKIE" \
+  -d '{ "status": "APPROVED" }'
+```
+
+**Expect 200**. The route reuses `PAYOUT_INITIATED` for non-cancel
+transitions (see route lines 153-172 — the audit action is
+`PAYOUT_CANCELLED` only when `status === 'CANCELLED'`, otherwise
+`PAYOUT_INITIATED`). Verify:
+
+```sql
+SELECT status FROM "OrganizationPayout" WHERE id = '<ANOTHER_PAYOUT_ID>';
+-- APPROVED
+
+SELECT action, details->>'from' AS from, details->>'to' AS to
+FROM "OrgAuditLog"
+WHERE "organizationId" = '<HOST_ID>'
+  AND details->>'payoutId' = '<ANOTHER_PAYOUT_ID>'
+ORDER BY "createdAt" DESC LIMIT 1;
+-- action='PAYOUT_INITIATED', from='PENDING', to='APPROVED'
+```
+
+### F.8 — PATCH payout: illegal transition matrix
+
+The route accepts only:
+
+| From       | Allowed transitions   |
+|------------|-----------------------|
+| PENDING    | APPROVED, CANCELLED   |
+| APPROVED   | CANCELLED             |
+| PROCESSING | (none — cron-managed) |
+| COMPLETED  | (terminal)            |
+| FAILED     | CANCELLED             |
+| CANCELLED  | (terminal)            |
+
+Validation order matters:
+
+- PATCH body `{ "status": "PROCESSING" }` → **400** at Zod —
+  `PatchStatusSchema = z.enum(["APPROVED", "CANCELLED"])` rejects.
+- PATCH `{ "status": "CANCELLED" }` against a `COMPLETED` payout →
+  **409** `"Cannot transition payout from COMPLETED to CANCELLED
+  manually"`.
+- PATCH `{ "status": "APPROVED" }` against a `PROCESSING` payout →
+  **409** `"Cannot transition payout from PROCESSING to APPROVED
+  manually"`.
+
+Force a row into `COMPLETED` for the negative test:
+
+```sql
+UPDATE "OrganizationPayout" SET status = 'COMPLETED'
+WHERE id = '<SOME_PAYOUT_ID>';
+```
+
+Then run the PATCH. Reset state if subsequent phases need a clean board.
 
 ### F.9 — Sponsor-only org attempts payout
 
@@ -1715,12 +1815,30 @@ curl -s "http://localhost:3000/api/organizations/$SPONSOR_ID/activity?limit=20" 
 
 **Expect 200** `{ data: [...], pagination: { hasMore, nextCursor, limit } }`.
 
-The feed must contain every audit-log row written across phases A-I:
-MEMBER_ADDED, INVITE_SENT, INVITE_RESENT, INVITE_ACCEPTED, ROLE_CHANGE,
-CONTRACT_CREATED, CONTRACT_SIGNED, PROGRAM_CREATED, PROGRAM_ASSIGNED,
-WALLET_TOPUP, PURCHASE_ORDER_CREATED, INVOICE_GENERATED,
-SETTINGS_CHANGED, SSO_ENABLED, DOMAIN_CLAIMED, CONSENT_GRANTED,
-PAYOUT_INITIATED, VERIFIED, RATE_CARD_BUMPED, etc.
+The feed must contain every audit-log row written across phases A-I.
+Cross-check against the canonical literals in
+[`lib/enterprise/audit-actions.ts`](lib/enterprise/audit-actions.ts).
+Expected from a clean run of phases A-K:
+
+- **MEMBER**: `MEMBER_ADDED`, `INVITE_SENT`, `INVITE_RESENT`,
+  `INVITE_ACCEPTED`, `ROLE_CHANGE`.
+- **CONTRACT**: `CONTRACT_CREATED`, `CONTRACT_SIGNED`.
+- **PROGRAM**: `PROGRAM_CREATED`, `PROGRAM_ASSIGNED`,
+  `RATE_CARD_BUMPED`.
+- **WALLET**: `WALLET_TOPUP` (route, D.5) AND `WALLET_TOPUP_CONFIRMED`
+  (webhook, D.9). Both literals must appear — missing the second means
+  the webhook never settled the entry.
+- **INVOICE**: `PURCHASE_ORDER_CREATED`, `INVOICE_GENERATED`,
+  `INVOICE_ISSUED`, `INVOICE_PAYMENT_INITIATED` (E.5b),
+  `INVOICE_PAID` (E.5c, webhook-emitted), and `INVOICE_VOIDED` if you
+  exercised the void path in E.5.
+- **PAYOUT**: `PAYOUT_INITIATED` (F.5 + F.7b reuse), `PAYOUT_CANCELLED`
+  (F.7).
+- **SETTINGS**: `SETTINGS_CHANGED` (Phase K branding upload + any
+  general settings PATCH), `SSO_ENABLED`, `DOMAIN_CLAIMED`.
+- **CONSENT**: `CONSENT_GRANTED`.
+- **SYSTEM**: `VERIFIED` (A.7, admin-initiated, `actorMembershipId`
+  NULL).
 
 ### J.4 — Filter by category
 
@@ -1738,7 +1856,10 @@ curl -s "http://localhost:3000/api/organizations/$SPONSOR_ID/activity?action=ROL
 ```
 
 **Expect 200**; only ROLE_CHANGE rows. `action` is a free-form string
-— pass any literal from `lib/enterprise/audit-actions.ts`.
+— pass any literal from [`lib/enterprise/audit-actions.ts`](lib/enterprise/audit-actions.ts).
+Do NOT pass strings that aren't in that constant; the route accepts
+them (the column is free-form) but the activity feed will be empty
+because nothing wrote that literal.
 
 ### J.6 — Cursor pagination
 
@@ -1763,20 +1884,165 @@ Alice (LEARNER in `$SPONSOR_ID`) must NOT be able to GET activity for
 
 ---
 
+## PHASE K — Branding (Logo + Banner Upload)
+
+The branding surface is two assets behind one route:
+[`app/api/organizations/[orgId]/branding/[asset]/route.ts`](app/api/organizations/[orgId]/branding/[asset]/route.ts)
+where `[asset] ∈ { "logo", "banner" }`. Storage helpers and constants
+live in [`lib/supabase.ts`](lib/supabase.ts):
+`ORG_LOGO_MAX_SIZE = 2 MB`, `ORG_BANNER_MAX_SIZE = 5 MB`,
+`ALLOWED_ORG_BRANDING_IMAGE_TYPES = ["image/jpeg", "image/jpg",
+"image/png", "image/webp", "image/svg+xml"]`. OWNER-only on both verbs.
+
+Run this phase against any seeded org — every shape qualifies because
+branding is a pure settings surface (no `canSponsor` / `canHost`
+dependency).
+
+### K.1 — Upload a logo
+
+```bash
+curl -s -X POST \
+  "http://localhost:3000/api/organizations/$SPONSOR_ID/branding/logo" \
+  -H "Cookie: $COOKIE" \
+  -F "file=@./test-fixtures/logo-512.png;type=image/png"
+```
+
+**Expect 200** with `{ organization: { id, logo, bannerImage } }` —
+`logo` populated to the public Supabase URL. Verify:
+
+```sql
+SELECT id, logo, "bannerImage" FROM organizations WHERE id = '<SPONSOR_ID>';
+
+SELECT action, category, details
+FROM "OrgAuditLog"
+WHERE "organizationId" = '<SPONSOR_ID>'
+  AND category = 'SETTINGS'
+ORDER BY "createdAt" DESC LIMIT 1;
+-- action='SETTINGS_CHANGED'; details->>'asset'='logo';
+-- details->>'storagePath' present; details->>'fileUrl' matches the column.
+```
+
+### K.2 — Upload a banner
+
+```bash
+curl -s -X POST \
+  "http://localhost:3000/api/organizations/$SPONSOR_ID/branding/banner" \
+  -H "Cookie: $COOKIE" \
+  -F "file=@./test-fixtures/banner-1920.jpg;type=image/jpeg"
+```
+
+**Expect 200**. `Organization.bannerImage` populated; new
+`SETTINGS_CHANGED` audit row with `details.asset = 'banner'`.
+
+### K.3 — Invalid asset path
+
+```bash
+curl -s -X POST \
+  "http://localhost:3000/api/organizations/$SPONSOR_ID/branding/avatar" \
+  -H "Cookie: $COOKIE" \
+  -F "file=@./test-fixtures/logo-512.png;type=image/png"
+```
+
+**Expect 400** `"Invalid asset — must be 'logo' or 'banner'"`. The
+asset enum is enforced at the very top of both POST and DELETE handlers
+so this rejects before any auth check (cheap pre-flight).
+
+### K.4 — Disallowed content type
+
+```bash
+curl -s -X POST \
+  "http://localhost:3000/api/organizations/$SPONSOR_ID/branding/logo" \
+  -H "Cookie: $COOKIE" \
+  -F "file=@./test-fixtures/notes.pdf;type=application/pdf"
+```
+
+**Expect 400** `"Invalid file type. Please upload a JPEG, PNG, WebP,
+or SVG image."` `Organization.logo` unchanged (verify with the same
+SELECT as K.1 — value identical to the K.1 result).
+
+### K.5 — Oversized file
+
+Logo limit is **2 MB**; banner is **5 MB**.
+
+```bash
+curl -s -X POST \
+  "http://localhost:3000/api/organizations/$SPONSOR_ID/branding/logo" \
+  -H "Cookie: $COOKIE" \
+  -F "file=@./test-fixtures/huge-3mb.png;type=image/png"
+```
+
+**Expect 400** `"File size exceeds 2MB limit"` (the route uses 400, not
+413, because the size guard is a Zod-style validation, not an HTTP
+content-length rejection — see route lines 93-100).
+
+Banner equivalent with a >5 MB file → `"File size exceeds 5MB limit"`.
+
+### K.6 — Non-OWNER session
+
+As a MAINTAINER / MANAGER session:
+
+**Expect 403** — `requireOrgOwner` rejects everything below OWNER even
+though branding is a "soft" surface. Branding is the org's public face;
+the gate is intentional.
+
+### K.7 — DELETE clears the column
+
+```bash
+curl -s -X DELETE \
+  "http://localhost:3000/api/organizations/$SPONSOR_ID/branding/logo" \
+  -H "Cookie: $COOKIE"
+```
+
+**Expect 200** with `{ organization: { id, logo: null, bannerImage: <previous-or-null> } }`.
+Verify:
+
+```sql
+SELECT logo, "bannerImage" FROM organizations WHERE id = '<SPONSOR_ID>';
+-- logo IS NULL; bannerImage unchanged.
+
+SELECT action, details FROM "OrgAuditLog"
+WHERE "organizationId" = '<SPONSOR_ID>'
+  AND category = 'SETTINGS'
+  AND details->>'removed' = 'true'
+ORDER BY "createdAt" DESC LIMIT 1;
+-- action='SETTINGS_CHANGED'; details->>'asset'='logo'; details->>'removed'='true'.
+```
+
+### K.8 — DELETE on already-empty asset
+
+Re-issue the K.7 DELETE.
+
+**Expect 200** with `{ organization, message: "No logo to delete" }`
+— short-circuit branch (route lines 174-179). No new audit row.
+
+### K.9 — DELETE invalid asset
+
+```bash
+curl -s -X DELETE \
+  "http://localhost:3000/api/organizations/$SPONSOR_ID/branding/wallpaper" \
+  -H "Cookie: $COOKIE"
+```
+
+**Expect 400** `"Invalid asset — must be 'logo' or 'banner'"`.
+
+---
+
 ## WRAP-UP — Acceptance Matrix
 
 At the end of the run, produce a matrix:
 
 ```
-             A    B    C    D    E    F    G    H    I    J
-Sponsor      ✓    ✓    ✓    -    ✓    -    -    ✓    ✓    ✓
-Host         ✓    ✓    -    -    -    ✓    ✓    ✓    -    ✓
-Hybrid       ✓    ✓    ✓    ✓    -    -    -    -    -    ✓
-Rahul solo   ✓    -    -    -    -    ✓    ✓    -    -    ✓
+             A    B    C    D    E    F    G    H    I    J    K
+Sponsor      ✓    ✓    ✓    -    ✓    -    -    ✓    ✓    ✓    ✓
+Host         ✓    ✓    -    -    -    ✓    ✓    ✓    -    ✓    ✓
+Hybrid       ✓    ✓    ✓    ✓    -    -    -    -    -    ✓    ✓
+Rahul solo   ✓    -    -    -    -    ✓    ✓    -    -    ✓    ✓
 ```
 
 (`-` = N/A for that capability combo; every `✓` must be backed by either
-a Supabase SQL query result or a curl log attached to the phase section.)
+a Supabase SQL query result or a curl log attached to the phase section.
+Phase K is `✓` for every seeded org because branding has no capability
+gate — every org has a logo/banner surface.)
 
 Flag any cells that deviate from the expected 200 / 4xx codes.
 Flag any SQL queries whose rows don't match the invariants stated in
@@ -1860,29 +2126,11 @@ A markdown report with:
 
 ---
 
-## REFERENCES (READ ONCE IF STUCK)
+## REFERENCES
 
-- Capability model: `prisma/schema.prisma` `model Organization` (line ~417).
-- Member roles: `prisma/schema.prisma` `enum MemberRole` (~643).
-- Funding sources: `prisma/schema.prisma` `enum FundingSource` (~737).
-- Program subtypes: `prisma/schema.prisma` `model Program` (~859),
-  `LicensedSeatConfig` / `CreditPoolConfig` (~889 / ~900).
-- Rate-card bumping: `lib/api/organizations/rate-card.ts`.
-- Audit-action constants: `lib/enterprise/audit-actions.ts`.
-- Three-ledger invariants: `docs/enterprise/18-three-ledger-discipline.md`.
-- Auth helpers: `lib/auth-helpers.ts` — `requireApiAuth`,
-  `requireOrgAccess(orgId, minRole)`, `requireOrgOwner(orgId)`,
-  `requireAdminAuth`, `orgRoleSatisfies`.
-- Create-org route: `app/api/organizations/route.ts`.
-- Accept-invitation race: `app/api/organizations/invitations/accept/route.ts`
-  (the `updateMany WHERE status=pending` atomic-claim is the core).
-- SSO URL derivation: `lib/sso/derive-urls.ts` (`deriveAcsUrl`,
-  `deriveMetadataUrl`).
-- India compliance stubs: `lib/compliance/{tds,msme,gst,irp,dpdp,form15}.ts`.
-
-When a step yields unexpected behaviour, read the exact route file
-from `app/api/organizations/**` before escalating — most answers live
-in the handler's inline comments, not in higher-level docs.
+The full code-pointer index lives in
+[`e2e-enterprise-shared-setup.md` § REFERENCES](./e2e-enterprise-shared-setup.md#references-read-once-if-stuck).
+Read it once when stuck on a sub-step, then come back here.
 
 ---
 
