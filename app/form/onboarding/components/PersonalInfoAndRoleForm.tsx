@@ -338,9 +338,10 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
             )}
             {selectedRole === "ORG_ADMIN" && (
               <>
-                As an <strong>Organization Owner</strong>, you'll be able to
-                create and manage an organization, invite team members, sponsor
-                consultations, and access analytics for your school or company.
+                As an <strong>Organization Administrator</strong>, you'll be
+                able to create and manage an organization, invite team members,
+                sponsor consultations, and access analytics for your school or
+                company.
               </>
             )}
             {/* STAFF and ADMIN roles are invite-only via admin dashboard */}

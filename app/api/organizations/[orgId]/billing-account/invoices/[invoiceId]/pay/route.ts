@@ -72,7 +72,7 @@ export async function POST(
       organizationId: orgId,
       actorMembershipId: access.member.id,
       category: "INVOICE",
-      action: AUDIT_ACTIONS.INVOICE.INVOICE_ISSUED,
+      action: AUDIT_ACTIONS.INVOICE.INVOICE_PAYMENT_INITIATED,
       description: `Payment initiated for invoice ${invoice.invoiceNumber}`,
       details: {
         invoiceId,

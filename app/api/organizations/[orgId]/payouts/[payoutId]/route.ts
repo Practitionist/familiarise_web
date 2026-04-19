@@ -127,9 +127,11 @@ export async function PATCH(
       });
 
       // CANCELLED releases the earnings back to READY so a subsequent
-      // payout run can pick them up. The SettlementLedgerEntry zeroing
-      // entry balances the earlier PAYOUT_SENT debit so the ledger nets
-      // to zero for the cancelled window.
+      // payout run can pick them up. We write a PAYOUT_REVERSED entry
+      // (positive, matching the original -netPayout debit) so the ledger
+      // nets to zero for the cancelled window — reusing PAYOUT_SENT for
+      // both sides makes analytics queries lie ("payouts sent" would
+      // double-count every cancel).
       if (body.status === "CANCELLED") {
         await tx.organizationEarnings.updateMany({
           where: { orgPayoutId: payoutId },
@@ -139,7 +141,7 @@ export async function PATCH(
           data: {
             organizationId: orgId,
             payoutId: payoutId,
-            kind: "PAYOUT_SENT",
+            kind: "PAYOUT_REVERSED",
             amountPaise: current.netPayoutPaise,
             currency: current.currency,
             notes:
@@ -156,7 +158,7 @@ export async function PATCH(
             category: "PAYOUT",
             action:
               body.status === "CANCELLED"
-                ? AUDIT_ACTIONS.PAYOUT.PAYOUT_FAILED
+                ? AUDIT_ACTIONS.PAYOUT.PAYOUT_CANCELLED
                 : AUDIT_ACTIONS.PAYOUT.PAYOUT_INITIATED,
             description: `Payout ${payoutId}: ${current.status} → ${body.status}`,
             details: {

@@ -11,9 +11,9 @@ import type { MemberRole } from "@prisma/client";
  * so that adding a new role to the Prisma enum surfaces a TS error here
  * rather than silently defaulting to rank 0.
  *
- * MEMBER is the default for any user whose role row hasn't been fetched
- * yet; it's the least-privileged role and matches the /members endpoint
- * default for self-service invitations.
+ * LEARNER is the default for any user whose role row hasn't been fetched
+ * yet; it's the least-privileged role and matches the self-service
+ * invitation default used elsewhere in the wizard + members API.
  */
 const RANKS: Record<MemberRole, number> = {
   OWNER: 100,

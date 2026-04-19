@@ -20,12 +20,14 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
+// PROJECT is reserved in the Prisma enum for v2 project-billing; the
+// API layer rejects it so callers can't quietly land a BillingAccount
+// shape checkout can't honour. See note in app/api/organizations/route.ts.
 const FundingSourceSchema = z.enum([
   "PERSONAL",
   "LICENSE",
   "WALLET",
   "INVOICE",
-  "PROJECT",
 ]);
 
 const CurrencySchema = z.enum(["INR", "USD", "EUR", "GBP"]);

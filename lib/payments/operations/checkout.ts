@@ -1733,6 +1733,16 @@ export async function handleCheckout(
       }
     }
 
+    // PROJECT is a schema-reserved v2 value. Accepting it at checkout
+    // would fall through to the TAG_ONLY branch and silently let the
+    // learner pay their own card — effectively a config downgrade. Fail
+    // fast so operations can spot the misconfiguration.
+    if (org.billingAccount?.fundingSource === "PROJECT") {
+      throw new Error(
+        "PROJECT funding source is not yet supported — reserved for the v2 project-billing workflow.",
+      );
+    }
+
     organizationProfileId = org.id; // legacy variable name preserved for compat
     billingAccountId = org.billingAccount?.id ?? null;
     // Map fundingSource → legacy billingMode label for downstream switch blocks.
@@ -1744,7 +1754,7 @@ export async function handleCheckout(
           : org.billingAccount?.fundingSource === "LICENSE"
             ? "PREPAID_UNLIMITED"
             : "TAG_ONLY";
-    orgContractEndDate = null; // Contract-level end date read in Phase 2b.
+    orgContractEndDate = null; // Contract-level end date read with the checkout/program wiring rewrite.
 
     // Block personal referral credits on org-funded bookings.
     if (validatedData.useReferralCredits) {

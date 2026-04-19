@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SelfServiceMemberRoleSchema } from "@/lib/labels/org-labels";
 
 export const orgInfoSchema = z.object({
   name: z.string().trim().min(2, "Name must be at least 2 characters").max(100),
@@ -37,11 +38,12 @@ export const brandingSchema = z.object({
     .optional(),
 });
 
+// Reuse the shared self-service role set so the wizard, the invite API,
+// and the label lookups all agree on vocabulary. LEARNER is the default
+// for new invites since it's the least-privileged role.
 export const inviteSchema = z.object({
   inviteEmails: z.array(z.string().email()).default([]),
-  inviteRole: z
-    .enum(["OWNER", "ADMIN", "MANAGER", "MEMBER"])
-    .default("MEMBER"),
+  inviteRole: SelfServiceMemberRoleSchema.default("LEARNER"),
 });
 
 // Basis points (integers summing to 10000) replace float percentages.

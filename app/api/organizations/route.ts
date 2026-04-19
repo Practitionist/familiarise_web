@@ -25,12 +25,16 @@ import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
+// PROJECT is reserved in the Prisma enum for the v2 milestone workflow
+// (scoped project-billing engine), but not accepted at the API boundary
+// yet — callers that pick it would otherwise silently fall into the
+// TAG_ONLY path in checkout. Re-add here once checkout has a dedicated
+// PROJECT branch.
 const FundingSourceSchema = z.enum([
   "PERSONAL",
   "LICENSE",
   "WALLET",
   "INVOICE",
-  "PROJECT",
 ]);
 const CurrencySchema = z.enum(["INR", "USD", "EUR", "GBP"]);
 const DataRegionSchema = z.enum(["IN", "US", "EU"]);

@@ -111,7 +111,7 @@ export function ReviewStep({ onBack, onGoToStep, initialData }: StepProps) {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   email,
-                  role: initialData.inviteRole ?? "MEMBER",
+                  role: initialData.inviteRole ?? "LEARNER",
                 }),
               },
             );
