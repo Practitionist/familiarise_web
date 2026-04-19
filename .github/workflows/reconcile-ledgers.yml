@@ -1,0 +1,44 @@
+name: Reconcile Ledgers
+
+on:
+  schedule:
+    # Run nightly at 03:00 UTC. Must NOT overlap the subscription-cron
+    # at 00:00 UTC or the cleanup-abandoned-org-top-ups job at 02:00 UTC
+    # (CPU + Prisma connection contention).
+    - cron: "0 3 * * *"
+  workflow_dispatch: # Allow manual triggering from the Actions UI.
+
+jobs:
+  reconcile-ledgers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Run ledger reconciliation
+        id: reconcile
+        run: npx tsx jobs/reconcile/reconcile-ledgers.ts
+
+      - name: Notify on discrepancies
+        if: failure()
+        run: |
+          echo "::error::Ledger reconciliation found discrepancies or errored. Report id: ${{ steps.reconcile.outputs.report_id }}"
+          # TODO: wire to #ops-alerts Slack channel + page on-call.

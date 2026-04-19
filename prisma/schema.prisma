@@ -1496,6 +1496,48 @@ enum SettlementKind {
   CREDIT_NOTE
 }
 
+// Snapshot output of the ledger reconciliation auditor
+// (`scripts/reconcile/reconcile-ledgers.ts`). Each run records per-scope
+// findings so operators can diff between runs and page on regressions.
+//
+// The auditor is READ-ONLY: it never mutates the three ledgers
+// (FundingLedgerEntry, WalletEntry-as-usage, SettlementLedgerEntry) or
+// the derived balances (BillingAccount.walletBalance, OrganizationInvoice
+// status). All remediation is manual — this table is the report, not the
+// fix. See `docs/enterprise/18-three-ledger-discipline.md`.
+model LedgerReconciliationReport {
+  id             String                @id @default(uuid())
+  runAt          DateTime              @default(now())
+  // "full" (all orgs / all billing accounts) or "org:<orgId>" for
+  // scoped reruns triggered by an operator.
+  scope          String
+  // Aggregate totals surfaced at the top of the report, serialised as
+  // JSON so we can add new metrics without a schema migration. Shape:
+  //   {
+  //     orgsChecked: number,
+  //     accountsChecked: number,
+  //     discrepanciesCount: number,
+  //     totals: { funding: number, settlement: number, walletSum: number },
+  //   }
+  summary        Json
+  // List of discrepancy objects. Each entry is a { orgId?, accountId?,
+  // kind: "WALLET_BALANCE_DRIFT"|"SETTLEMENT_MISSING_INVOICE"|...,
+  // expectedPaise, actualPaise, deltaPaise, details }. Empty array when
+  // clean.
+  findings       Json
+  ok             Boolean
+  // ms for the full reconcile run — useful for tracking whether the
+  // auditor itself is getting slow enough to need partitioning.
+  durationMs     Int
+  // Optional: the membership id of the admin who triggered the run via
+  // /api/admin/reconcile-ledgers, or null for the scheduled cron.
+  triggeredById  String?
+
+  @@index([runAt])
+  @@index([ok, runAt])
+  @@map("ledger_reconciliation_reports")
+}
+
 //////////////////////////////////////////////////// DPDP + HRIS (stubs) ////////////////////////////////////////////////////
 
 model ConsentArtifact {
