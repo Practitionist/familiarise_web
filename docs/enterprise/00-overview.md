@@ -70,7 +70,7 @@ Organization                       BillingAccount (at most one per org)
 | 08 | `08-sso-and-authentication.md` | `OrganizationSSOSettings`, `SsoProvider`, `OrgDomainClaim`. |
 | 09 | `09-wallet-and-ledger.md` | `WalletEntry`, `FundingLedgerEntry`, atomic debit. |
 | 10 | `10-invoicing.md` | `OrganizationInvoice`, GST breakdown, IRN, PO 3-way match. |
-| 11 | `11-public-pages-and-discovery.md` | Catalog, search, and the `/organizations/public` route. |
+| 11 | `11-public-pages-and-discovery.md` | Org catalog, ILIKE search, and how org identity surfaces on the marketplace explore page. |
 | 12 | `12-dashboard-pages.md` | Every page under `app/dashboard/organization/[orgId]/**`. |
 | 13 | `13-feature-flags-and-rollout.md` | `ENABLE_PROVIDER_ORGS` + capability-gated UI. |
 | 14 | `14-scenarios-and-examples.md` | Four worked end-to-end scenarios. |

@@ -103,9 +103,42 @@ const invoicePayResponseSchema = z.object({
 });
 type InvoicePayResponse = z.infer<typeof invoicePayResponseSchema>;
 
+// The per-invoice GET endpoint returns the full invoice + relations,
+// but for the post-checkout poll we only care about `status`. Zod
+// strips unknown fields by default so this narrow schema accepts the
+// full payload and just lifts the one field we need.
+const invoiceStatusPollSchema = z.object({
+  invoice: z.object({
+    status: z.enum([
+      "DRAFT",
+      "ISSUED",
+      "PAID",
+      "OVERDUE",
+      "VOID",
+      "CANCELLED",
+    ]),
+  }),
+});
+
 const apiErrorSchema = z.object({
   error: z.string().optional(),
 });
+
+// Same poll budget as the wallet flow (see credits/page.tsx) — 20s
+// total, then we fall back to "awaiting confirmation" so the UI never
+// stalls if Razorpay's webhook is slow.
+const INVOICE_POLL_INTERVAL_MS = 1000;
+const INVOICE_POLL_MAX_ATTEMPTS = 20;
+
+// Discriminated union for the post-checkout flow:
+//   - "confirmed": webhook landed within the poll budget; row is PAID.
+//   - "pending":   capture succeeded but the webhook is slow.
+//   - "not_paid":  popup dismissed or `payment.failed` fired (already
+//      toasted); the success handler stays silent.
+type InvoicePayMutationResult =
+  | { result: InvoicePayResponse; outcome: "confirmed" }
+  | { result: InvoicePayResponse; outcome: "pending" }
+  | { result: InvoicePayResponse; outcome: "not_paid" };
 
 function errorMessageFromBody(
   raw: z.input<typeof apiErrorSchema>,
@@ -155,6 +188,36 @@ async function payInvoice(
   return invoicePayResponseSchema.parse(raw);
 }
 
+async function fetchInvoiceStatus(
+  orgId: string,
+  invoiceId: string,
+): Promise<"DRAFT" | "ISSUED" | "PAID" | "OVERDUE" | "VOID" | "CANCELLED" | null> {
+  const res = await fetch(
+    `/api/organizations/${orgId}/billing-account/invoices/${invoiceId}`,
+  );
+  if (!res.ok) return null;
+  return invoiceStatusPollSchema.parse(await res.json()).invoice.status;
+}
+
+/**
+ * Poll the invoice endpoint until the webhook flips `status` to
+ * `PAID` or the budget elapses. Returns `true` on confirmation,
+ * `false` on timeout. The webhook handler (`handleOrgPaymentSuccess`)
+ * is the source of truth — this exists purely so the UI doesn't lie
+ * about state for ~5–20s after a successful capture.
+ */
+async function pollInvoiceUntilPaid(
+  orgId: string,
+  invoiceId: string,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < INVOICE_POLL_MAX_ATTEMPTS; attempt++) {
+    const status = await fetchInvoiceStatus(orgId, invoiceId);
+    if (status === "PAID") return true;
+    await new Promise((r) => setTimeout(r, INVOICE_POLL_INTERVAL_MS));
+  }
+  return false;
+}
+
 export function BillingPageClient({ orgId }: { orgId: string }) {
   const { isAtLeast } = useOrgRole(orgId);
   const { allowed } = useRequireOrgAccess(orgId, {
@@ -185,7 +248,9 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
   const { toast } = useToast();
 
   const payMutation = useMutation({
-    mutationFn: async (invoiceId: string) => {
+    mutationFn: async (
+      invoiceId: string,
+    ): Promise<InvoicePayMutationResult> => {
       const result = await payInvoice(orgId, invoiceId);
 
       const loaded = await loadScript(
@@ -197,7 +262,11 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
         );
       }
 
-      await new Promise<void>((resolve) => {
+      // The popup resolves with `paid: true` only if Razorpay's
+      // `handler` fired (capture succeeded). Otherwise we treat the
+      // attempt as not-yet-paid and skip polling — the row stays
+      // ISSUED, no false "awaiting confirmation" toast.
+      const paid = await new Promise<boolean>((resolve) => {
         const rzp = new window.Razorpay({
           key: result.keyId,
           amount: result.amountPaise,
@@ -206,10 +275,7 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
           description: `Invoice ${result.invoice.invoiceNumber}`,
           order_id: result.razorpayOrderId,
           handler: () => {
-            // Webhook is the source of truth for invoice settlement
-            // (see app/api/webhooks/utils.ts). We just refresh here
-            // so the row flips to PAID once the webhook lands.
-            resolve();
+            resolve(true);
           },
           theme: { color: "#2563EB" },
         });
@@ -220,19 +286,46 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
               "Your card was declined or the payment timed out. Please try again.",
             variant: "destructive",
           });
-          resolve();
+          resolve(false);
         });
         rzp.open();
       });
-      return result;
+
+      if (!paid) {
+        // Either payment.failed fired (already toasted) or the user
+        // dismissed the popup. Skip polling and let the caller show
+        // nothing extra.
+        return { result, outcome: "not_paid" };
+      }
+
+      // Bridge the webhook-settlement race so the row flips to PAID
+      // without the user manually refreshing. `outcome === "pending"`
+      // means the budget elapsed; the capture is still safe (webhook
+      // is idempotent on `OrganizationInvoice.providerOrderId`).
+      const confirmed = await pollInvoiceUntilPaid(orgId, invoiceId);
+      return { result, outcome: confirmed ? "confirmed" : "pending" };
     },
-    onSuccess: () => {
+    onSuccess: ({ result, outcome }) => {
       queryClient.invalidateQueries({
         queryKey: ["org-billing-invoices", orgId],
       });
       queryClient.invalidateQueries({
         queryKey: ["org-billing", orgId],
       });
+      if (outcome === "confirmed") {
+        toast({
+          title: "Invoice paid",
+          description: `Invoice ${result.invoice.invoiceNumber} is now marked as PAID.`,
+        });
+      } else if (outcome === "pending") {
+        toast({
+          title: "Payment received",
+          description:
+            "Awaiting confirmation from Razorpay. The invoice will flip to PAID once the webhook lands.",
+        });
+      }
+      // outcome === "not_paid" — payment.failed already toasted, or
+      // the user dismissed the popup; stay silent.
     },
     onError: (err) => {
       toast({

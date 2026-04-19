@@ -87,7 +87,7 @@ existing route.
 
 | Old | Now | Notes |
 |-----|-----|-------|
-| `GET /api/organizations/[orgId]/plans` | `GET /api/organizations/[orgId]/catalog` | Collection moved; per-plan CRUD (`.../plans/[planId]`) retained as a placeholder. |
+| `GET /api/organizations/[orgId]/plans` | `GET /api/organizations/[orgId]/catalog` | Collection moved. The pre-Arch-4 per-plan CRUD (`.../plans/[planId]`) was deleted in `2b9da181` (no 501 stub left behind); it returns when the plan refactor PR ships. |
 | `POST /api/organizations/[orgId]/plans` | `POST /api/organizations/[orgId]/catalog` | — |
 | `DELETE /api/organizations/[orgId]/plans` | `DELETE /api/organizations/[orgId]/catalog` | Bulk deactivate. |
 | `GET /api/organizations/[orgId]/plans/search` | `GET /api/organizations/[orgId]/catalog/search` | — |

@@ -94,10 +94,41 @@ const topUpInitiateResponseSchema = z.object({
 });
 type TopUpInitiateResponse = z.infer<typeof topUpInitiateResponseSchema>;
 
+const topUpStatusResponseSchema = z.object({
+  topUp: z.object({
+    topUpId: z.string(),
+    providerPaymentId: z.string().nullable(),
+    status: z.enum(["pending", "confirmed"]),
+    amountPaise: z.number(),
+    balanceAfter: z.number(),
+    createdAt: z.string(),
+  }),
+});
+type TopUpStatus = z.infer<typeof topUpStatusResponseSchema>["topUp"];
+
 const apiErrorSchema = z.object({
   error: z.string().optional(),
   errorType: z.string().optional(),
 });
+
+// Poll budget for the post-checkout webhook race. Razorpay typically
+// fires the webhook within 1–3s of capture, but the SLA is "best
+// effort"; we cap at 20 attempts × 1s = 20s and then fall back to
+// "awaiting confirmation" so the UI never stalls indefinitely.
+const TOPUP_POLL_INTERVAL_MS = 1000;
+const TOPUP_POLL_MAX_ATTEMPTS = 20;
+
+// Discriminated union for the post-checkout flow:
+//   - "confirmed": webhook landed within the poll budget; show the
+//      credited amount.
+//   - "pending":   capture succeeded but the webhook is slow; show
+//      "awaiting confirmation" — balance will catch up on its own.
+//   - "not_paid":  user dismissed the popup or `payment.failed` fired
+//      (already toasted); the success handler stays silent.
+type TopUpMutationResult =
+  | { result: TopUpInitiateResponse; outcome: "confirmed"; confirmed: TopUpStatus }
+  | { result: TopUpInitiateResponse; outcome: "pending"; confirmed: null }
+  | { result: TopUpInitiateResponse; outcome: "not_paid"; confirmed: null };
 
 async function fetchWallet(orgId: string): Promise<WalletFetchResult> {
   const res = await fetch(
@@ -133,6 +164,39 @@ async function initiateTopUp(
   return topUpInitiateResponseSchema.parse(raw);
 }
 
+async function fetchTopUpStatus(
+  orgId: string,
+  topUpId: string,
+): Promise<TopUpStatus | null> {
+  const res = await fetch(
+    `/api/organizations/${orgId}/billing-account/wallet/top-ups/${topUpId}`,
+  );
+  if (!res.ok) return null;
+  return topUpStatusResponseSchema.parse(await res.json()).topUp;
+}
+
+/**
+ * Poll the top-up endpoint until the webhook flips status to
+ * `confirmed` or we exhaust the budget. Returns the confirmed entry,
+ * or `null` if the budget elapsed without confirmation (in which case
+ * the caller should surface "awaiting confirmation").
+ *
+ * The webhook is the source of truth — this is purely a UX bridge so
+ * the dashboard reflects the settled balance without forcing the user
+ * to refresh manually after a successful Razorpay capture.
+ */
+async function pollTopUpUntilConfirmed(
+  orgId: string,
+  topUpId: string,
+): Promise<TopUpStatus | null> {
+  for (let attempt = 0; attempt < TOPUP_POLL_MAX_ATTEMPTS; attempt++) {
+    const status = await fetchTopUpStatus(orgId, topUpId);
+    if (status?.status === "confirmed") return status;
+    await new Promise((r) => setTimeout(r, TOPUP_POLL_INTERVAL_MS));
+  }
+  return null;
+}
+
 function isWalletResponse(r: WalletFetchResult): r is WalletResponse {
   return "billingAccount" in r;
 }
@@ -160,7 +224,7 @@ export default function OrgCreditsPage({
   const { toast } = useToast();
 
   const topUpMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (): Promise<TopUpMutationResult> => {
       const amountPaise = Math.round(parseFloat(amountMajor || "0") * 100);
       const result = await initiateTopUp(orgId, amountPaise);
 
@@ -172,7 +236,11 @@ export default function OrgCreditsPage({
           "Razorpay checkout failed to load. Please disable ad-blockers and retry.",
         );
       }
-      await new Promise<void>((resolve) => {
+      // The popup resolves with `paid: true` if Razorpay called our
+      // `handler` (capture succeeded), `paid: false` if `payment.failed`
+      // fired or the user dismissed the popup. We only poll for webhook
+      // confirmation in the success branch.
+      const paid = await new Promise<boolean>((resolve) => {
         const rzp = new window.Razorpay({
           key: result.keyId,
           amount: result.amountPaise,
@@ -181,34 +249,56 @@ export default function OrgCreditsPage({
           description: "Wallet top-up",
           order_id: result.razorpayOrderId,
           handler: () => {
-            // Webhook is the source of truth for crediting the wallet
-            // (idempotent on `WalletEntry.providerOrderId`). The popup
-            // handler just signals "checkout finished" so we can
-            // refresh the ledger; the actual balance update arrives
-            // when Razorpay POSTs to /api/webhooks/razorpay.
-            resolve();
+            resolve(true);
           },
           theme: { color: "#2563EB" },
         });
         rzp.on("payment.failed", () => {
-          // Surface the error and resolve so React Query records
-          // the success of the *order* call but the user sees the
-          // payment failure via toast.
           toast({
             title: "Payment failed",
             description:
               "Your card was declined or the payment timed out. Please try again.",
             variant: "destructive",
           });
-          resolve();
+          resolve(false);
         });
         rzp.open();
       });
-      return result;
+
+      if (!paid) {
+        // payment.failed already toasted (or popup dismissed) — skip
+        // polling and stay silent in the success handler.
+        return { result, outcome: "not_paid", confirmed: null };
+      }
+
+      // Bounded polling bridges the webhook-settlement race so the
+      // dashboard reflects the credited balance without a manual
+      // refresh. The capture is still safe even on timeout (webhook
+      // is idempotent on `WalletEntry.providerOrderId`); we just fall
+      // back to an "awaiting confirmation" toast.
+      const confirmed = await pollTopUpUntilConfirmed(orgId, result.topUpId);
+      if (confirmed) {
+        return { result, outcome: "confirmed", confirmed };
+      }
+      return { result, outcome: "pending", confirmed: null };
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       setShowBuy(false);
       queryClient.invalidateQueries({ queryKey: ["org-wallet", orgId] });
+      if (data.outcome === "confirmed") {
+        toast({
+          title: "Top-up confirmed",
+          description: `₹${(data.confirmed.amountPaise / 100).toLocaleString("en-IN")} credited to your wallet.`,
+        });
+      } else if (data.outcome === "pending") {
+        toast({
+          title: "Payment received",
+          description:
+            "Awaiting confirmation from Razorpay. Your balance will update automatically once the webhook lands.",
+        });
+      }
+      // outcome === "not_paid" — already handled by the payment.failed
+      // toast or the user dismissed the popup; stay silent.
     },
   });
 

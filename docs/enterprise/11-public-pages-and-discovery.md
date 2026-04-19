@@ -1,17 +1,19 @@
 # Public pages and discovery
 
-The enterprise layer adds two public-facing surfaces on top of the
-marketplace explore experience:
+The enterprise layer's only public-facing surface in the current
+product is the org-curated catalog feeding the marketplace explore
+experience:
 
 1. **Org catalog** — a member-facing list of `OrganizationPlan` rows,
    the org-curated subset of the marketplace catalog.
-2. **Public org page (stub)** — `/api/organizations/public/[slug]`
-   returns a light slice of an org record for render at
-   `/organizations/public/<slug>`.
 
-The public org page route is currently a 501 placeholder
-(`app/api/organizations/public/[slug]/route.ts` — see the in-file
-`@arch4-stub` comment). Rebuild lands with the explore redesign.
+> The standalone "public org page" surface (`/org/[slug]` page +
+> `/api/organizations/public/[slug]` route) was removed in
+> `2b9da181` along with the rest of the pre-Arch-4 stubs. The org
+> identity that learners see now flows entirely through the explore
+> badge described in **Explore-side visibility** below — there is no
+> separate org landing page until the explore redesign brings one
+> back as part of a real surface, not a stub.
 
 ## `OrganizationPlan`
 
@@ -51,10 +53,11 @@ Organization restricts members to the org's list.
 
 ## Old per-plan routes
 
-`/api/organizations/[orgId]/plans/**` are placeholders
-(`GET/PATCH/DELETE` at `plans/[planId]/route.ts`). Per-plan CRUD is
-deferred to the plan refactor PR; the collection catalog route set
-above covers the v1 needs.
+The pre-Arch-4 `/api/organizations/[orgId]/plans/**` placeholders
+were deleted in `2b9da181` rather than left behind as 501 stubs. The
+collection catalog route set above (`/catalog`, `/catalog/search`)
+covers all current needs; per-plan CRUD will return as a real
+implementation when the plan refactor PR lands, not before.
 
 ## Catalog search performance
 

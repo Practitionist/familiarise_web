@@ -131,7 +131,6 @@ values (the stub id is `__admin_stub_<userId>`).
 | `/api/organizations/[orgId]/catalog` | `POST`, `DELETE` | OWNER |
 | `/api/organizations/[orgId]/catalog/search` | `GET` | MANAGER |
 | `/api/organizations/[orgId]/settings` | `GET` | MANAGER (read-only wrapper) |
-| `/api/organizations/[orgId]/images` | `POST` | (org-scoped; see file) |
 | `/api/admin/organizations/[orgId]/verify` | `POST` | platform ADMIN |
 
 ## Role narrowing at the API boundary

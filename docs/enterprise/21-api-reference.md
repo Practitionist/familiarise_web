@@ -12,7 +12,6 @@ in parentheses. Constants live in `lib/enterprise/audit-actions.ts`.
 |------|------|----------|---------|----------------|
 | `/api/organizations` | `GET` | authenticated | List the caller's orgs (switcher feed) | — |
 | `/api/organizations` | `POST` | authenticated | Create org + BillingAccount + OWNER Membership | `MEMBER_ADDED` (MEMBER) |
-| `/api/organizations/public/[slug]` | `GET` | public | **501 stub** — public org page (re-implementation pending) | — |
 | `/api/organizations/invitations/accept` | `POST` | authenticated | Accept an invite via token | `INVITE_ACCEPTED` (MEMBER) |
 
 ## Org record
@@ -23,7 +22,6 @@ in parentheses. Constants live in `lib/enterprise/audit-actions.ts`.
 | `/api/organizations/[orgId]` | `PATCH` | OWNER | Branding + policy + capability flips | `SETTINGS_CHANGED` (SETTINGS) |
 | `/api/organizations/[orgId]` | `DELETE` | OWNER | Hard-delete (refused if any refs exist) | — |
 | `/api/organizations/[orgId]/settings` | `GET` | MANAGER | Thin settings projection | — |
-| `/api/organizations/[orgId]/images` | `POST` | (org-scoped) | Upload logo / banner | — |
 | `/api/admin/organizations/[orgId]/verify` | `POST` | platform ADMIN | Transition status (VERIFY / SUSPEND / REACTIVATE / DEACTIVATE) | `VERIFIED` / `SUSPENDED` / `REACTIVATED` / `DEACTIVATED` (SYSTEM) |
 
 ## Members and invitations
@@ -73,8 +71,8 @@ in parentheses. Constants live in `lib/enterprise/audit-actions.ts`.
 | `/api/organizations/[orgId]/billing-account` | `PATCH` | OWNER | Change billingEmail / fundingSource (guarded) | `SETTINGS_CHANGED` (SETTINGS) |
 | `/api/organizations/[orgId]/billing-account/wallet` | `GET` | MANAGER | WalletEntry history | — |
 | `/api/organizations/[orgId]/billing-account/wallet/top-ups` | `GET` | MANAGER | List top-ups (pending + confirmed) | — |
-| `/api/organizations/[orgId]/billing-account/wallet/top-ups` | `POST` | OWNER | Initiate top-up (Razorpay order) | `WALLET_TOPUP` (WALLET) |
-| `/api/organizations/[orgId]/billing-account/wallet/top-ups/[topUpId]` | `GET` | MANAGER | Top-up detail | — |
+| `/api/organizations/[orgId]/billing-account/wallet/top-ups` | `POST` | OWNER | Mint Razorpay order for a wallet top-up; the webhook (`notes.type=wallet_topup`) credits `WalletEntry.deltaPaise` idempotently | `WALLET_TOPUP` (WALLET) — `WALLET_TOPUP_CONFIRMED` is emitted by the webhook |
+| `/api/organizations/[orgId]/billing-account/wallet/top-ups/[topUpId]` | `GET` | MANAGER | Top-up detail; `topUpId` is the wallet-entry idempotency key (`we_<uuid>`), not the Razorpay order id | — |
 
 ## Invoices and purchase orders
 
@@ -83,8 +81,8 @@ in parentheses. Constants live in `lib/enterprise/audit-actions.ts`.
 | `/api/organizations/[orgId]/billing-account/invoices` | `GET` | MANAGER | List with `?status=` filter | — |
 | `/api/organizations/[orgId]/billing-account/invoices` | `POST` | OWNER | Manual invoice | `INVOICE_GENERATED` (INVOICE) |
 | `/api/organizations/[orgId]/billing-account/invoices/[invoiceId]` | `GET` | MANAGER | Invoice detail | — |
-| `/api/organizations/[orgId]/billing-account/invoices/[invoiceId]` | `PATCH` | OWNER | Status transitions | `INVOICE_ISSUED` / `INVOICE_CANCELLED` (INVOICE) |
-| `/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pay` | `POST` | OWNER | Mark paid + SettlementLedgerEntry | `INVOICE_PAID` (INVOICE) |
+| `/api/organizations/[orgId]/billing-account/invoices/[invoiceId]` | `PATCH` | OWNER | Status transitions (DRAFT→ISSUED, DRAFT→CANCELLED, ISSUED/OVERDUE→VOID) | `INVOICE_ISSUED` / `INVOICE_CANCELLED` / `INVOICE_VOIDED` (INVOICE) |
+| `/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pay` | `POST` | OWNER | Mint Razorpay order for the invoice; the webhook (`notes.type=invoice_payment`) flips ISSUED→PAID and writes the SettlementLedgerEntry | `INVOICE_PAYMENT_INITIATED` (INVOICE) — `INVOICE_PAID` is emitted by the webhook |
 | `/api/organizations/[orgId]/billing-account/purchase-orders` | `GET` | MANAGER | List POs | — |
 | `/api/organizations/[orgId]/billing-account/purchase-orders` | `POST` | OWNER | Create PO | `PURCHASE_ORDER_CREATED` (INVOICE) |
 | `/api/organizations/[orgId]/billing-account/purchase-orders/[poId]` | `GET` | MANAGER | PO detail + linked invoices | — |
@@ -142,7 +140,6 @@ in parentheses. Constants live in `lib/enterprise/audit-actions.ts`.
 | `/api/organizations/[orgId]/catalog` | `POST` | OWNER | Create a plan | — |
 | `/api/organizations/[orgId]/catalog` | `DELETE` | OWNER | Bulk deactivate (`{ planIds[] }`) | — |
 | `/api/organizations/[orgId]/catalog/search` | `GET` | active member | ILIKE search | — |
-| `/api/organizations/[orgId]/plans` | `GET` / `POST` / `PATCH` / `DELETE` | — | Placeholder for per-plan CRUD (current file set defers to catalog routes) | — |
 | `/api/organizations/[orgId]/analytics` | `GET` | MANAGER | Rollups (bookings, revenue, earnings, wallet burn) | — |
 | `/api/organizations/[orgId]/activity` | `GET` | MANAGER | OrgAuditLog feed (filterable by category/date) | — |
 
