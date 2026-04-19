@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -257,19 +256,9 @@ export function ReviewStep({ onBack, onGoToStep, initialData }: StepProps) {
 
       <Section title="Branding" stepKey="branding">
         <div className="flex items-center gap-3">
-          {initialData.logo ? (
-            <Image
-              src={initialData.logo}
-              alt="Logo"
-              width={40}
-              height={40}
-              className="w-10 h-10 rounded-lg object-cover"
-            />
-          ) : (
-            <div className="w-10 h-10 rounded-lg bg-zinc-100 flex items-center justify-center">
-              <Building2 className="w-5 h-5 text-zinc-400" />
-            </div>
-          )}
+          <div className="w-10 h-10 rounded-lg bg-zinc-100 flex items-center justify-center">
+            <Building2 className="w-5 h-5 text-zinc-400" />
+          </div>
           {initialData.primaryColor && (
             <div className="flex items-center gap-1">
               <div
@@ -292,8 +281,7 @@ export function ReviewStep({ onBack, onGoToStep, initialData }: StepProps) {
               </span>
             </div>
           )}
-          {!initialData.logo &&
-            !initialData.primaryColor &&
+          {!initialData.primaryColor &&
             !initialData.secondaryColor && <span>Skipped</span>}
         </div>
       </Section>

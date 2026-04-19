@@ -31,9 +31,7 @@ export interface OrgWizardData {
   orgBps: number;
   consultantBps: number;
 
-  // Step 2: Branding
-  logo: string | null;
-  bannerImage: string | null;
+  // Step 2: Branding — colors only until the image-upload route lands.
   primaryColor: string | null;
   secondaryColor: string | null;
 
