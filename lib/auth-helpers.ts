@@ -266,19 +266,8 @@ export async function authorizeEventAccess(
 // ============================================================================
 // ORGANIZATION ACCESS HELPERS — Arch 4-Modified (Issue #681)
 // ============================================================================
-//
-// Old OrgMemberRole (ORG_OWNER, ORG_ADMIN, ...) is now MemberRole
-// (OWNER, ADMIN, MANAGER, MEMBER, CONSULTANT, SUPPORT). ORG_LEARNER was
-// collapsed into the generic MEMBER role.
-//
-// Legacy role aliases: callers that still pass "ORG_OWNER"/"ORG_ADMIN"/etc
-// are coerced to the new enum via {@link normalizeLegacyRole}. This keeps
-// Phase-2 incremental rewrite possible without touching every call site.
-// ============================================================================
 
-/**
- * Numeric rank for MemberRole — higher = more privileged.
- */
+/** Numeric rank for MemberRole — higher = more privileged. */
 const ORG_ROLE_RANK: Record<MemberRole, number> = {
   OWNER: 100,
   MAINTAINER: 80,
@@ -288,37 +277,7 @@ const ORG_ROLE_RANK: Record<MemberRole, number> = {
   LEARNER: 20,
 };
 
-/**
- * Accepts the canonical MemberRole values, the older Checkpoint-6 draft
- * values (`ADMIN` / `MEMBER` / `CONSULTANT`), or the pre-Arch-4 legacy
- * `ORG_*` aliases, and returns the canonical MemberRole. Used at the
- * invitation-accept + onboarding boundary while we roll out the rename
- * — any persisted payload from before the rename keeps working.
- */
-export function normalizeLegacyRole(
-  role: MemberRole | string | null | undefined,
-): MemberRole | null {
-  if (!role) return null;
-  if (role in ORG_ROLE_RANK) return role as MemberRole;
-  const legacy: Record<string, MemberRole> = {
-    // pre-Arch-4 shape
-    ORG_OWNER: "OWNER",
-    ORG_ADMIN: "MAINTAINER",
-    ORG_MANAGER: "MANAGER",
-    ORG_CONSULTANT: "EXPERT",
-    ORG_LEARNER: "LEARNER",
-    ORG_SUPPORT: "SUPPORT",
-    // Checkpoint-6 draft shape (bare names before the EXPERT/LEARNER rename)
-    ADMIN: "MAINTAINER",
-    CONSULTANT: "EXPERT",
-    MEMBER: "LEARNER",
-  };
-  return legacy[role] ?? null;
-}
-
-/**
- * Whether `actual` role meets the `minimum` role requirement.
- */
+/** Whether `actual` role meets the `minimum` role requirement. */
 export function orgRoleSatisfies(
   actual: MemberRole,
   minimum: MemberRole,
@@ -341,7 +300,7 @@ export type OrgAccessGrant = {
  */
 export async function requireOrgAccess(
   organizationId: string,
-  minimumRole?: MemberRole | string,
+  minimumRole?: MemberRole,
 ): Promise<({ error?: never } & OrgAccessGrant) | { error: NextResponse }> {
   const auth = await requireApiAuth();
   if (auth.error) return { error: auth.error };
@@ -368,7 +327,7 @@ export async function requireOrgAccess(
   }
 
   const userId = auth.session.user.id;
-  const minRole = minimumRole ? normalizeLegacyRole(minimumRole) : null;
+  const minRole = minimumRole ?? null;
 
   // Platform admins bypass org membership checks.
   if (auth.session.user.role === "ADMIN") {

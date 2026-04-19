@@ -139,7 +139,7 @@ export default function OrgConsultantsPage({
           </Card>
         ) : (
           <>
-            {/* Pending applications (ORG_ADMIN+) */}
+            {/* Pending applications (MAINTAINER+) */}
             {isAtLeast("MAINTAINER") && pendingApps.length > 0 && (
               <Card className="mb-6 border-amber-200">
                 <CardHeader>

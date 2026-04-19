@@ -98,7 +98,7 @@ Every doc below defers to the following files when the prose drifts:
   every `OrgAuditLog.action` string we emit.
 - `lib/auth.ts` (the `customSession` hook) — the live session payload.
 - `lib/auth-helpers.ts` — `requireOrgAccess`, `requireOrgOwner`,
-  `ORG_ROLE_RANK`, and `normalizeLegacyRole`.
+  `orgRoleSatisfies`, and `ORG_ROLE_RANK`.
 - `lib/api/organizations/{wallet,program-helpers,rate-card,hierarchy}.ts`
   — the transactional primitives referenced across the ledger, program,
   rate-card, and hierarchy docs.

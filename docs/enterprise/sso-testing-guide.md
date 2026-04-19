@@ -20,10 +20,9 @@ Real IdPs (Okta, Auth0, Azure AD, Google Workspace) require signup + admin confi
 ## Prerequisites (all approaches)
 
 - Dev server reachable at `NEXT_PUBLIC_APP_URL` (e.g. `http://localhost:3000`).
-- A seeded org with `OWNER` access (the canonical `MemberRole` since
-  Arch 4-Modified; `ORG_OWNER` is still accepted by
-  `normalizeLegacyRole` but new code must use `OWNER`). For local dev
-  run `npm run db:seed:small`.
+- A seeded org with `OWNER` access (the canonical `MemberRole` —
+  Arch 4-Modified does not accept any legacy `ORG_*` aliases). For
+  local dev run `npm run db:seed:small`.
 - Visit `/dashboard/organization/<orgId>/settings/sso` and add the allowedEmailDomains + a provider in the UI. The Add Provider dialog shows the ACS/Redirect URI + SP Metadata URL the IdP needs — copy those into the IdP side of whichever tool you pick below.
 
 ---

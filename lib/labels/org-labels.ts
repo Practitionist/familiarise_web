@@ -106,6 +106,18 @@ export const MEMBER_ROLE_LABEL: Record<MemberRole, string> = {
   SUPPORT: "Support",
 };
 
+// Zod enum mirroring the prisma MemberRole enum; exported for callers that
+// need to narrow a string coming from the API / DB at a boundary where
+// typescript can't prove the type.
+export const MemberRoleSchema = z.enum([
+  "OWNER",
+  "MAINTAINER",
+  "MANAGER",
+  "EXPERT",
+  "LEARNER",
+  "SUPPORT",
+]);
+
 export const MEMBER_ROLE_DESCRIPTION: Record<MemberRole, string> = {
   OWNER: "Full control: billing, members, settings, deletion.",
   MAINTAINER:

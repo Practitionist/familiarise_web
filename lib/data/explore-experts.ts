@@ -1,5 +1,6 @@
 import { cache } from "react";
 import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 
 /**
  * Server-side data access for the explore experts page.
@@ -9,7 +10,15 @@ import prisma from "@/lib/prisma";
  *  - Cached (e.g. getExpertsMetadata)  — React.cache() wrapper. Used by Server Components.
  */
 
-/** Shared include shape for consultant list queries. */
+/**
+ * Shared include shape for consultant list queries.
+ *
+ * Typed via `satisfies Prisma.ConsultantProfileInclude` so Prisma's
+ * generated types validate the shape at compile time — the returned
+ * rows are then automatically narrow-typed with all the nested relations
+ * (user, domain, subDomains, tags, reviews, subscriptionPlans) without
+ * requiring `as const` or runtime narrowing at the caller.
+ */
 export const consultantListInclude = {
   user: {
     select: {
@@ -40,30 +49,33 @@ export const consultantListInclude = {
     },
     take: 5,
   },
-} as const;
+} satisfies Prisma.ConsultantProfileInclude;
 
-// Separate include for org membership (not under `as const` to avoid readonly array issues with Prisma)
+// Separate include for org membership.
+//
+// Arch 4-Modified shape: a consultant belongs to an org via `Membership`
+// (relation name "ConsultantMembership"). "Consultant" in the org context
+// is `MemberRole.EXPERT`, and a hosting org is `Organization.canHost=true`.
+//
+// Typed via `satisfies` so Prisma's generated include types validate the
+// filter at compile time (no `as const` string-literal narrowing needed).
 export const orgMembershipInclude = {
-  organizationMemberProfiles: {
+  memberships: {
     where: {
-      role: "ORG_CONSULTANT" as const,
-      status: "ACTIVE" as const,
-      organizationProfile: {
-        kind: { in: ["PROVIDER", "HYBRID"] as ["PROVIDER", "HYBRID"] },
-        status: "ACTIVE" as const,
+      role: "EXPERT",
+      status: "ACTIVE",
+      organization: {
+        canHost: true,
+        status: "ACTIVE",
       },
     },
-    orderBy: { createdAt: "asc" as const },
+    orderBy: { createdAt: "asc" },
     select: {
-      organizationProfile: {
-        select: {
-          organization: { select: { name: true, slug: true, logo: true } },
-        },
-      },
+      organization: { select: { name: true, slug: true, logo: true } },
     },
     take: 1,
   },
-};
+} satisfies Prisma.ConsultantProfileInclude;
 
 // ---------------------------------------------------------------------------
 // Experts metadata (filters, domain grid, language list)

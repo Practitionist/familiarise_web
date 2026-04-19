@@ -93,7 +93,6 @@ Individual features in design or proposal phase.
 - [features/collaborators/implementation.md](./features/collaborators/implementation.md) - Webinar/class collaborators
 - [features/collaborators/podcast-schema-integration.md](./features/collaborators/podcast-schema-integration.md) - Podcast schema
 - [features/consultant-badges/README.md](./features/consultant-badges/README.md) - Achievement badges
-- [features/consultant-companies/README.md](./features/consultant-companies/README.md) - B2B consultant companies
 - [features/gift-consultations/README.md](./features/gift-consultations/README.md) - Gift consultation purchases
 - [features/live-qa-sessions/README.md](./features/live-qa-sessions/README.md) - Live Q&A sessions
 - [features/notification-channels/README.md](./features/notification-channels/README.md) - SMS/WhatsApp notifications (email/in-app already working)

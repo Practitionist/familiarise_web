@@ -15,6 +15,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { useSession } from "@/lib/auth-client";
+import { MEMBER_ROLE_LABEL, MemberRoleSchema } from "@/lib/labels/org-labels";
 
 interface AcceptResponse {
   organization: { id: string; name: string };
@@ -27,17 +28,12 @@ type PreviewState =
   | { phase: "valid"; orgName: string; orgLogo: string | null; role: string }
   | { phase: "invalid"; message: string };
 
-const ROLE_LABELS: Record<string, string> = {
-  ORG_LEARNER: "Learner",
-  ORG_ADMIN: "Admin",
-  ORG_MANAGER: "Manager",
-  ORG_OWNER: "Owner",
-  ORG_CONSULTANT: "Consultant",
-  ORG_SUPPORT: "Support",
-};
-
+// The preview API returns `role` as a free-form string (Invitation.role on
+// the BetterAuth table). Narrow it to a MemberRole before label lookup;
+// fall back to the raw value when the string doesn't match the enum.
 function roleLabel(role: string): string {
-  return ROLE_LABELS[role] ?? role.replace(/^ORG_/, "").toLowerCase();
+  const parsed = MemberRoleSchema.safeParse(role);
+  return parsed.success ? MEMBER_ROLE_LABEL[parsed.data] : role;
 }
 
 /**

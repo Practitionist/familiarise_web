@@ -15,7 +15,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { requireApiAuth, normalizeLegacyRole } from "@/lib/auth-helpers";
+import { requireApiAuth } from "@/lib/auth-helpers";
+import { MemberRoleSchema } from "@/lib/labels/org-labels";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
 const AcceptBodySchema = z.object({
@@ -67,13 +68,16 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const normalizedRole = normalizeLegacyRole(invitation.role);
-  if (!normalizedRole) {
+  // Narrow the stored string to a MemberRole. BetterAuth's Invitation
+  // table stores role as a free-form string, so validate before using.
+  const roleResult = MemberRoleSchema.safeParse(invitation.role);
+  if (!roleResult.success) {
     return NextResponse.json(
       { error: `Unknown invitation role: ${invitation.role}` },
       { status: 400 },
     );
   }
+  const normalizedRole = roleResult.data;
 
   const userId = auth.session.user.id;
 

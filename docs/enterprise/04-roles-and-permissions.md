@@ -134,24 +134,25 @@ values (the stub id is `__admin_stub_<userId>`).
 | `/api/organizations/[orgId]/images` | `POST` | (org-scoped; see file) |
 | `/api/admin/organizations/[orgId]/verify` | `POST` | platform ADMIN |
 
-## Legacy role aliases
+## Role narrowing at the API boundary
 
-The old pre-Arch-4 role names (and the intermediate Checkpoint-6 draft
-names) are still accepted by `normalizeLegacyRole()` in
-`lib/auth-helpers.ts`:
+`MemberRole` is the single vocabulary — no aliases, no back-compat
+mapping. Strings crossing the API boundary (BetterAuth `Invitation.role`,
+query params) are narrowed via `MemberRoleSchema` from
+`lib/labels/org-labels.ts`:
 
-| Legacy value | Canonical |
-|--------------|-----------|
-| `ORG_OWNER` | `OWNER` |
-| `ORG_ADMIN`, `ADMIN` | `MAINTAINER` |
-| `ORG_MANAGER` | `MANAGER` |
-| `ORG_CONSULTANT`, `CONSULTANT` | `EXPERT` |
-| `ORG_LEARNER`, `MEMBER` | `LEARNER` |
-| `ORG_SUPPORT` | `SUPPORT` |
+```ts
+import { MemberRoleSchema } from "@/lib/labels/org-labels";
 
-The mapping is read at the invite-accept and onboarding boundaries so
-persisted payloads from before the rename keep working. New code must
-never emit a legacy value.
+const parsed = MemberRoleSchema.safeParse(invitation.role);
+if (!parsed.success) {
+  return NextResponse.json({ error: "Unknown role" }, { status: 400 });
+}
+// parsed.data is typed as MemberRole here.
+```
+
+No legacy `ORG_*` aliases are accepted. The DB is pre-MVP and will be
+reset; seeded roles use canonical values.
 
 ## Membership status
 

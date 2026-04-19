@@ -692,7 +692,7 @@ export async function processOnboardingData(
     if (isOrgAdmin && orgId) {
       const orgData = validatedBody as Record<string, unknown>;
       const emails = (orgData.orgInviteEmails as string[] | undefined) ?? [];
-      const invRole = (orgData.orgInviteRole as string) ?? "ORG_LEARNER";
+      const invRole = (orgData.orgInviteRole as string) ?? "LEARNER";
       sendOrgInvitationsAsync(orgId, userId, emails, invRole);
     }
 

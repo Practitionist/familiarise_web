@@ -53,7 +53,7 @@ existing route.
 
 | Old | Now | Notes |
 |-----|-----|-------|
-| `GET/POST /api/organizations/[orgId]/members` | same | Role values renamed (`OWNER / MAINTAINER / MANAGER / EXPERT / LEARNER / SUPPORT`). Legacy `ORG_*` values still accepted by `normalizeLegacyRole`. |
+| `GET/POST /api/organizations/[orgId]/members` | same | Role vocabulary is `OWNER / MAINTAINER / MANAGER / EXPERT / LEARNER / SUPPORT`. Strings crossing the API boundary are narrowed with `MemberRoleSchema` (lib/labels/org-labels.ts); no legacy aliases accepted. |
 | `GET/PATCH/DELETE /api/organizations/[orgId]/members/[memberId]` | same | — |
 | `GET /api/organizations/[orgId]/consultants` | `GET /api/organizations/[orgId]/members?role=EXPERT` | Role filter on the unified `/members` endpoint. |
 | `GET /api/organizations/[orgId]/learners` | `GET /api/organizations/[orgId]/members?role=LEARNER` | — |
@@ -124,6 +124,6 @@ existing route.
 
 - `21-api-reference.md` — the live route table with min-roles and
   audit actions.
-- `04-roles-and-permissions.md` — role-name rename table and the
-  `normalizeLegacyRole` helper.
+- `04-roles-and-permissions.md` — role catalog + the `MemberRoleSchema`
+  narrowing pattern at the API boundary.
 - `09-wallet-and-ledger.md` — credit-pool → wallet migration.

@@ -89,11 +89,11 @@ type PrismaTransaction = Prisma.TransactionClient;
 /**
  * Determine if a consultant's payment should use a 3-way org split.
  *
- * Returns an OrgEarningsSplit if the consultant is an active ORG_CONSULTANT
- * in a PROVIDER/HYBRID org. Returns null for independent consultants or
- * when the PROVIDER feature flag is off.
+ * Returns an OrgEarningsSplit if the consultant is an active EXPERT
+ * membership at a canHost org. Returns null for independent consultants
+ * or when the PROVIDER feature flag is off.
  *
- * For multi-org consultants, uses the first active PROVIDER/HYBRID membership.
+ * For multi-org consultants, uses the first active canHost membership.
  * (Future: allow consultant to select which org gets credit per-booking.)
  */
 async function resolveOrgSplit(

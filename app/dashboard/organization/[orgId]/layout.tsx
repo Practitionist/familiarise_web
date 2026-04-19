@@ -45,6 +45,7 @@ import {
 import { OrgContextBar } from "@/components/dashboard/OrgContextBar";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { signOut, useSession } from "@/lib/auth-client";
+import { MEMBER_ROLE_LABEL } from "@/lib/labels/org-labels";
 import { disconnectStreamClients } from "@/providers/StreamProvider";
 import type {
   FundingSource,
@@ -304,20 +305,10 @@ export default function OrgLayout({
     },
   ];
 
-  // Subtitle under the org name: the user's role in THIS org.
-  // Kind + billing mode live in the top-bar badges (non-redundant split —
-  // sidebar subtitle is user-specific, top-bar badges are org-specific).
-  const ROLE_LABELS: Record<string, string> = {
-    ORG_OWNER: "Owner",
-    ORG_ADMIN: "Admin",
-    ORG_MANAGER: "Manager",
-    ORG_CONSULTANT: "Consultant",
-    ORG_SUPPORT: "Support",
-    ORG_LEARNER: "Learner",
-  };
-  const topSubtitle = org
-    ? (ROLE_LABELS[org.membership.role] ?? org.membership.role)
-    : null;
+  // Subtitle under the org name: the user's role in THIS org. Capability
+  // badges (Sponsor/Host/Hybrid) + funding source live in the top-bar —
+  // sidebar subtitle is user-specific, top-bar badges are org-specific.
+  const topSubtitle = org ? MEMBER_ROLE_LABEL[org.membership.role] : null;
 
   // Map URL segments to human-readable page names so the breadcrumbs match
   // the heading the user actually sees on the page.
