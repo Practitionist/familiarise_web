@@ -281,16 +281,19 @@ export async function authorizeEventAccess(
  */
 const ORG_ROLE_RANK: Record<MemberRole, number> = {
   OWNER: 100,
-  ADMIN: 80,
+  MAINTAINER: 80,
   MANAGER: 60,
-  CONSULTANT: 40,
+  EXPERT: 40,
   SUPPORT: 30,
-  MEMBER: 20,
+  LEARNER: 20,
 };
 
 /**
- * Accepts the new MemberRole values or the legacy ORG_* aliases and
- * returns the canonical MemberRole.
+ * Accepts the canonical MemberRole values, the older Checkpoint-6 draft
+ * values (`ADMIN` / `MEMBER` / `CONSULTANT`), or the pre-Arch-4 legacy
+ * `ORG_*` aliases, and returns the canonical MemberRole. Used at the
+ * invitation-accept + onboarding boundary while we roll out the rename
+ * — any persisted payload from before the rename keeps working.
  */
 export function normalizeLegacyRole(
   role: MemberRole | string | null | undefined,
@@ -298,12 +301,17 @@ export function normalizeLegacyRole(
   if (!role) return null;
   if (role in ORG_ROLE_RANK) return role as MemberRole;
   const legacy: Record<string, MemberRole> = {
+    // pre-Arch-4 shape
     ORG_OWNER: "OWNER",
-    ORG_ADMIN: "ADMIN",
+    ORG_ADMIN: "MAINTAINER",
     ORG_MANAGER: "MANAGER",
-    ORG_CONSULTANT: "CONSULTANT",
-    ORG_LEARNER: "MEMBER",
+    ORG_CONSULTANT: "EXPERT",
+    ORG_LEARNER: "LEARNER",
     ORG_SUPPORT: "SUPPORT",
+    // Checkpoint-6 draft shape (bare names before the EXPERT/LEARNER rename)
+    ADMIN: "MAINTAINER",
+    CONSULTANT: "EXPERT",
+    MEMBER: "LEARNER",
   };
   return legacy[role] ?? null;
 }

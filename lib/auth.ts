@@ -334,7 +334,7 @@ export const auth = betterAuth({
       });
       for (const bm of bareMembers) {
         if (!bm.organization) continue;
-        const defaultRole = bm.organization.ssoSettings?.defaultRoleForAutoJoin ?? "MEMBER";
+        const defaultRole = bm.organization.ssoSettings?.defaultRoleForAutoJoin ?? "LEARNER";
         const consulteeProfileId =
           ((user as Record<string, unknown>).consulteeProfileId as string | undefined) ?? null;
         try {
@@ -344,7 +344,7 @@ export const auth = betterAuth({
               organizationId: bm.organizationId,
               role: defaultRole,
               status: "ACTIVE",
-              consulteeProfileId: defaultRole === "MEMBER" ? consulteeProfileId : null,
+              consulteeProfileId: defaultRole === "LEARNER" ? consulteeProfileId : null,
               betterAuthMemberId: bm.id,
             },
           });
@@ -382,6 +382,14 @@ export const auth = betterAuth({
         },
       });
 
+      // Shape returned on every session. The session is hot — every
+      // authenticated request reads it — so we keep the payload flat
+      // and small, and resolve labels at render time via
+      // lib/labels/org-labels.ts instead of precomputing them here.
+      // Legacy fields (kind / billingMode / creditBalance /
+      // organizationProfileId / contractEndDate) were removed in
+      // Checkpoint 8; the dashboard now consumes the capability
+      // booleans + fundingSource directly.
       const organizationMemberships = memberships
         .filter((m) => m.organization.status === "ACTIVE")
         .map((m) => ({
@@ -395,17 +403,6 @@ export const auth = betterAuth({
           canHost: m.organization.canHost,
           fundingSource: m.organization.billingAccount?.fundingSource ?? null,
           walletBalance: m.organization.billingAccount?.walletBalance ?? null,
-          // Legacy shape kept for downstream compatibility during Phase 2
-          // rewrite — they'll be removed once UI reads the new fields.
-          kind: (m.organization.canSponsor && m.organization.canHost
-            ? "HYBRID"
-            : m.organization.canHost
-              ? "PROVIDER"
-              : "BUYER") as "BUYER" | "PROVIDER" | "HYBRID",
-          billingMode: m.organization.billingAccount?.fundingSource ?? null,
-          contractEndDate: null,
-          creditBalance: m.organization.billingAccount?.walletBalance ?? null,
-          organizationProfileId: m.organizationId,
         }));
 
       // SSO enforcement: mark sessions that bypassed SSO for enforced domains.
