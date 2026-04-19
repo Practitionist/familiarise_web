@@ -89,7 +89,7 @@ A HYBRID org runs two independent flows:
 The two flows never intersect inside a single `Payment` record. A HYBRID
 org that sponsors its own expert's session routes the money through the
 sponsor flow AND books an earnings row on the host flow — the two
-settlements are computed from the same `Payment.amountPaid` but each
+settlements are computed from the same `Payment.amount` but each
 uses its own `RateCard`.
 
 ## What replaced what

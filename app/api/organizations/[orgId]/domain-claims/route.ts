@@ -15,6 +15,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -111,6 +112,24 @@ export async function POST(
       const status =
         typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
+    }
+    // P2002 race: two concurrent OWNERs claim the same domain at the
+    // same instant. The pre-check inside the tx misses one of them
+    // because the read-then-write isn't atomic under Read Committed
+    // isolation. The unique index on `OrgDomainClaim.domain` is the
+    // backstop — surface it as a clean 409 instead of a 500 so the UI
+    // can show "Domain already claimed" instead of a generic error.
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002"
+    ) {
+      return NextResponse.json(
+        {
+          error: `Domain '${body.domain}' is already claimed`,
+          code: "DOMAIN_ALREADY_CLAIMED",
+        },
+        { status: 409 },
+      );
     }
     throw err;
   }

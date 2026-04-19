@@ -15,6 +15,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import crypto from "node:crypto";
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -104,53 +105,86 @@ export async function POST(
   }
   const { email, role, expiresInDays } = parsed.data;
 
-  // De-dupe active invitations by (orgId, email). An inviter retrying
-  // from the UI shouldn't spawn two tokens that both resolve to the
-  // same membership — the second POST updates the expiry instead.
-  const existing = await prisma.invitation.findFirst({
-    where: {
-      organizationId: orgId,
-      email,
-      status: "pending",
-    },
-  });
-
   const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000);
 
-  const invitation = await prisma.$transaction(async (tx) => {
-    const token = existing?.id ?? crypto.randomUUID();
-    const record = existing
-      ? await tx.invitation.update({
-          where: { id: existing.id },
-          data: { role, expiresAt },
-        })
-      : await tx.invitation.create({
-          data: {
-            id: token,
+  // De-dupe active invitations by (orgId, email). An inviter retrying
+  // from the UI shouldn't spawn two tokens that both resolve to the
+  // same membership — the second POST extends the expiry instead.
+  //
+  // The findFirst → create/update sequence is wrapped in a Serializable
+  // tx because two concurrent POSTs against the same (orgId, email) would
+  // otherwise both observe `existing = null` under the default Read
+  // Committed isolation and both INSERT, leaving two pending rows.
+  // Once we move to Prisma 7.4 we can lean on a partial unique index
+  // (see Invitation model in schema.prisma) and demote this back to the
+  // default isolation level.
+  let wasExisting = false;
+  let invitation;
+  try {
+    invitation = await prisma.$transaction(
+      async (tx) => {
+        const existing = await tx.invitation.findFirst({
+          where: {
             organizationId: orgId,
             email,
-            role,
             status: "pending",
-            expiresAt,
-            inviterId: access.session.user.id,
+          },
+        });
+        wasExisting = !!existing;
+        const token = existing?.id ?? crypto.randomUUID();
+        const record = existing
+          ? await tx.invitation.update({
+              where: { id: existing.id },
+              data: { role, expiresAt },
+            })
+          : await tx.invitation.create({
+              data: {
+                id: token,
+                organizationId: orgId,
+                email,
+                role,
+                status: "pending",
+                expiresAt,
+                inviterId: access.session.user.id,
+              },
+            });
+
+        await tx.orgAuditLog.create({
+          data: {
+            organizationId: orgId,
+            actorMembershipId: access.member.id,
+            category: "MEMBER",
+            action: existing
+              ? "INVITE_RESENT"
+              : AUDIT_ACTIONS.MEMBER.INVITE_SENT,
+            description: `${existing ? "Re-sent" : "Sent"} invite to ${email} as ${role}`,
+            details: { email, role, expiresAt: expiresAt.toISOString() },
           },
         });
 
-    await tx.orgAuditLog.create({
-      data: {
-        organizationId: orgId,
-        actorMembershipId: access.member.id,
-        category: "MEMBER",
-        action: existing
-          ? "INVITE_RESENT"
-          : AUDIT_ACTIONS.MEMBER.INVITE_SENT,
-        description: `${existing ? "Re-sent" : "Sent"} invite to ${email} as ${role}`,
-        details: { email, role, expiresAt: expiresAt.toISOString() },
+        return record;
       },
-    });
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  } catch (err) {
+    // P2002 from a future partial unique index would land here; today
+    // (Prisma 7.3) we hit it only if the Serializable retry budget
+    // exhausts. Convert to 409 so the client can simply re-render the
+    // existing invitation.
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002"
+    ) {
+      return NextResponse.json(
+        {
+          error: "Pending invitation already exists for this email",
+          code: "INVITATION_EXISTS",
+        },
+        { status: 409 },
+      );
+    }
+    throw err;
+  }
 
-    return record;
-  });
-
-  return NextResponse.json({ invitation }, { status: existing ? 200 : 201 });
+  return NextResponse.json({ invitation }, { status: wasExisting ? 200 : 201 });
 }

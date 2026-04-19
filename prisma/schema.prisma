@@ -570,6 +570,20 @@ model Invitation {
 
   @@index([organizationId])
   @@index([email])
+  // Drives the "list pending invites" tab in /dashboard/.../members
+  // and the dedup pre-check at POST /organizations/[orgId]/invitations.
+  @@index([organizationId, status])
+  // Speeds up the dedup pre-check (orgId + email + status="pending")
+  // before we INSERT a new invitation. The application-level dedup is
+  // wrapped in a Serializable tx (see invitations/route.ts) so the
+  // read-then-create is atomic against concurrent inviters.
+  //
+  // TODO(prisma-7.4): once we upgrade Prisma we can replace this index
+  // with a true partial unique index:
+  //   @@unique([organizationId, email], where: raw("status = 'pending'"))
+  // which would push the dedup invariant down to the database layer
+  // instead of relying on tx isolation. Tracked in Phase 2 follow-ups.
+  @@index([organizationId, email, status])
   @@map("invitations")
 }
 
@@ -1451,6 +1465,13 @@ model SettlementLedgerEntry {
 
   @@index([organizationId, createdAt])
   @@index([kind, createdAt])
+  // Reverse-lookup indexes used by the ledger reconciliation cron
+  // (Phase 4) and by the admin "explain this payment / invoice / payout"
+  // tools. Each FK column is sparse (nullable) so we keep them as
+  // single-column indexes rather than composing them.
+  @@index([paymentId])
+  @@index([invoiceId])
+  @@index([payoutId])
 }
 
 enum FundingReason {
@@ -1531,6 +1552,16 @@ model HrisSyncJob {
   status           HrisSyncStatus
   recordsProcessed Int            @default(0)
   errorLog         String?        @db.Text
+
+  // "Latest sync per config" is the most common read (admin UI shows
+  // last-sync timestamp + status; cron picks up configs whose latest
+  // sync is older than the schedule cadence). Composite ordered by
+  // startedAt DESC effectively serves both `findFirst({ orderBy:
+  // startedAt desc })` and the per-config history view.
+  @@index([hrisConfigId, startedAt])
+  // Powers the failed-sync alerting cron (Phase 5) — `findMany({
+  // where: { status: "FAILED", startedAt: { gte: cutoff } } })`.
+  @@index([status, startedAt])
 }
 
 model HrisEmployeeMap {

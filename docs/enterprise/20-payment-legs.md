@@ -4,7 +4,7 @@ A single booking can be funded by more than one source at the same
 time: a wallet covers most of the price, a referral credit chips in,
 and the learner's card picks up whatever remains. `PaymentLeg` models
 this — one `Payment` with N `PaymentLeg` rows whose amounts sum to
-`Payment.amountPaid`.
+`Payment.amount`.
 
 ## Schema
 
@@ -33,7 +33,7 @@ enum PaymentLegSource {
 ## Invariants
 
 1. **Sum identity.** `sum(PaymentLeg.amountPaise) for a Payment ===
-   Payment.amountPaid`. Enforced at the checkout write site; a
+   Payment.amount`. Enforced at the checkout write site; a
    follow-up cron verifies against historical data.
 2. **Leg count.** Every successful `Payment` has at least one leg. A
    `Payment` with `status = SUCCEEDED` and zero legs is a data bug.
@@ -71,11 +71,11 @@ price:                500,000
     - card covers:    150,000  → PaymentLeg(source=CARD,            amountPaise=150000)
 
 sum of amountPaise (excluding LICENSE which is 0): 200,000
-Payment.amountPaid: 200,000
+Payment.amount: 200,000
 ```
 
 The LICENSE leg is written with `amountPaise = 0` so the sum still
-balances. The invariant `sum === Payment.amountPaid` holds because
+balances. The invariant `sum === Payment.amount` holds because
 LICENSE is the zero-amount marker, not part of the actual money flow.
 
 ## Refunds
