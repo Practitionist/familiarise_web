@@ -1,9 +1,20 @@
 # Programs, assignments, and booking utilization
 
 `Program` is the commercial primitive inside the enterprise layer.
-Every sponsored booking is attributed to a `ProgramAssignment` (the
-per-member entitlement row), and every successful booking leaves a
-`BookingUtilization` row + a `UsageLedgerEntry` twin.
+Every sponsored booking **will be** attributed to a `ProgramAssignment`
+(the per-member entitlement row), and every successful booking **will
+leave** a `BookingUtilization` row + a `UsageLedgerEntry` twin.
+
+> **Wiring status (as of this PR).** The schema, the server-side
+> helpers (`recordBookingUtilization`, `claimProgramAssignment`,
+> `reverseBookingUtilization`), and the management APIs under
+> `/api/organizations/[orgId]/programs/**` are live. `lib/payments/
+> operations/checkout.ts` still maps `BillingAccount.fundingSource` back
+> into the legacy `SEAT_PACK / INVOICED_MONTHLY / PREPAID_UNLIMITED /
+> TAG_ONLY` branches today — the live checkout path does **not** yet
+> resolve a `ProgramAssignment` or write `BookingUtilization` /
+> `PaymentLeg` rows. That wiring ships in the next stacked PR; the
+> primitives documented below are ready to consume.
 
 ## Schema
 

@@ -6,6 +6,11 @@ import Link from "next/link";
 import Image from "next/image";
 import { Shield, Upload, X } from "lucide-react";
 
+// /api/organizations/[orgId]/images is a 501 stub until the Arch 4-Modified
+// port lands (Issue #681). Hide the whole Logo upload card to avoid a
+// dead button. Flip to `true` when the route is real.
+const IMAGE_UPLOAD_ENABLED = false;
+
 import { useOrgRole, useRequireOrgRole } from "../useOrgRole";
 import {
   DashboardHeader,
@@ -203,7 +208,7 @@ export default function OrgSettingsPage({
       />
       <DashboardContent>
         {/* Logo upload */}
-        {isAtLeast("MAINTAINER") && (
+        {IMAGE_UPLOAD_ENABLED && isAtLeast("MAINTAINER") && (
           <Card className="mb-6">
             <CardHeader>
               <CardTitle>Organization logo</CardTitle>

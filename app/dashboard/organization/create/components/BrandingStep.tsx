@@ -7,6 +7,13 @@ import { Label } from "@/components/ui/label";
 import { Building2, Upload, X } from "lucide-react";
 import type { StepProps } from "../types";
 
+// /api/organizations/[orgId]/images is a 501 stub until the Arch 4-Modified
+// port lands (Issue #681). Keep the file-pickers visible so operators can
+// see where branding uploads will live, but short-circuit the POST so it
+// doesn't fire against the dead endpoint. Flip to `true` when the route
+// is real.
+const IMAGE_UPLOAD_ENABLED = false;
+
 export function BrandingStep({
   onNext,
   onBack,
@@ -56,8 +63,11 @@ export function BrandingStep({
     let logoUrl = initialData.logo ?? null;
     let bannerUrl = initialData.bannerImage ?? null;
 
-    // Upload files if selected
-    if (orgId && (logoFile || bannerFile)) {
+    // Upload files if selected and the upload route is live. While the
+    // route is a 501 stub we keep the preview flow working client-side
+    // (blob: URLs) but don't round-trip to the server — otherwise every
+    // wizard run would surface a bogus "Logo upload failed" toast.
+    if (IMAGE_UPLOAD_ENABLED && orgId && (logoFile || bannerFile)) {
       const uploads = [];
       if (logoFile) {
         const fd = new FormData();
