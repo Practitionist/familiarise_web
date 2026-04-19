@@ -22,22 +22,48 @@ export function BrandingStep({
   const [secondaryColor, setSecondaryColor] = useState(
     initialData.secondaryColor ?? "#16213e",
   );
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   const handleSubmit = async () => {
     const orgId = initialData.orgId;
 
     // PATCH colors if an orgId exists. Logo + banner uploads land with
     // the live image-upload route (follow-up PR); the wizard stays
-    // colors-only today.
+    // colors-only today. If the PATCH fails we surface it and stay on
+    // this step — silently advancing would leave the wizard thinking
+    // branding is saved when the server rejected it.
     if (orgId) {
-      await fetch(`/api/organizations/${orgId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          primaryColor,
-          secondaryColor,
-        }),
-      });
+      setSaveError(null);
+      setIsSaving(true);
+      try {
+        const res = await fetch(`/api/organizations/${orgId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            primaryColor,
+            secondaryColor,
+          }),
+        });
+        if (!res.ok) {
+          const message = await res
+            .json()
+            .then((b: { error?: string }) => b.error)
+            .catch(() => null);
+          setSaveError(
+            message ??
+              "Couldn't save branding. Please try again — your colors weren't applied.",
+          );
+          return;
+        }
+      } catch {
+        setSaveError(
+          "Couldn't reach the server. Check your connection and try again.",
+        );
+        return;
+      } finally {
+        setIsSaving(false);
+      }
     }
 
     onNext({
@@ -112,6 +138,15 @@ export function BrandingStep({
         </div>
       </div>
 
+      {saveError && (
+        <div
+          role="alert"
+          className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+        >
+          {saveError}
+        </div>
+      )}
+
       <div className="flex justify-between pt-4">
         <Button type="button" variant="outline" onClick={onBack}>
           Back
@@ -127,9 +162,9 @@ export function BrandingStep({
           <Button
             type="button"
             onClick={handleSubmit}
-            disabled={isSubmitting}
+            disabled={isSubmitting || isSaving}
           >
-            {isSubmitting ? "Saving…" : "Next"}
+            {isSubmitting || isSaving ? "Saving…" : "Next"}
           </Button>
         </div>
       </div>

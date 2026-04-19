@@ -5,6 +5,18 @@ import { getSession } from "@/lib/auth-server";
 import prisma from "@/lib/prisma";
 import { UserRole } from "@prisma/client";
 
+// Roles a user is allowed to self-select via this action. Privileged
+// roles (ADMIN, STAFF) MUST never be reachable from a client-driven
+// action — they are assigned by platform operators out-of-band. Today
+// only the ORG_ADMIN handoff routes through this action; CONSULTANT /
+// CONSULTEE selection happens earlier in the form via the regular
+// `processOnboardingData` path which does not let the caller pick the
+// role string. Keep this list narrow on purpose — if a new self-
+// service role needs to flow through here, add it explicitly.
+const SELF_SELECTABLE_ONBOARDING_ROLES: ReadonlySet<UserRole> = new Set([
+  UserRole.ORG_ADMIN,
+]);
+
 // #region Main Server Action
 export async function updateOnboardingInformationAction(
   userId: string,
@@ -49,6 +61,14 @@ export async function setOnboardingRoleAction(
     return { success: false, error: "Unauthorized" };
   }
   if (session.user.id !== userId) {
+    return { success: false, error: "Forbidden" };
+  }
+
+  // Reject any role outside the self-selection allowlist. The Prisma
+  // enum type alone is not a security boundary — a malicious caller
+  // can pass `"ADMIN"` / `"STAFF"` and TypeScript would happily allow
+  // it from a `.tsx` file, so the runtime check is mandatory.
+  if (!SELF_SELECTABLE_ONBOARDING_ROLES.has(role)) {
     return { success: false, error: "Forbidden" };
   }
 

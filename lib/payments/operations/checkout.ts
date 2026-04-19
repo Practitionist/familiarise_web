@@ -2081,6 +2081,28 @@ export async function handleCheckout(
             });
           }
 
+          // Enterprise: every successful Payment must have at least one
+          // PaymentLeg (`docs/enterprise/20-payment-legs.md`). For non-
+          // org-sponsored learner-pays-via-gateway flows that's the CARD
+          // leg, written here so the invariant holds whether or not the
+          // payment ever transitions to SUCCEEDED. We record the gateway
+          // payment-intent id in `sourceRef` so refund / reconciliation
+          // jobs can join back to the gateway txn without scanning the
+          // Payment table. `amount` is the post-credit gateway charge,
+          // mirroring the field-level comment on `Payment.amount`. The
+          // REFERRAL_CREDIT leg (if any) is written by
+          // `applyCreditsToPayment` further down in this same TX.
+          if (!isOrgSponsoredPayment && amount > 0) {
+            await tx.paymentLeg.create({
+              data: {
+                paymentId: payment.id,
+                source: "CARD",
+                amountPaise: amount,
+                sourceRef: paymentResponse!.id,
+              },
+            });
+          }
+
           // Increment discount code usage count atomically (only after payment is created)
           // This ensures count only increases when payment is successfully created.
           // Re-validate maxUses inside the Serializable TX: two concurrent checkouts could

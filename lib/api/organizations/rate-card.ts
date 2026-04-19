@@ -172,6 +172,14 @@ export async function bumpRateCard(
     planType?: CoveredPlanType | null;
     planId?: string | null;
     next: { platformBps: number; orgBps: number; consultantBps: number };
+    /**
+     * Optional gross-amount bounds applied to the new card. Passed to
+     * the initial `create` so callers don't need a follow-up update
+     * just to set them. Both fields are nullable on the schema so
+     * `undefined` means "leave unset (null)".
+     */
+    minGrossPaise?: number | null;
+    maxGrossPaise?: number | null;
     effectiveAt?: Date;
     reason?: string;
   },
@@ -204,6 +212,8 @@ export async function bumpRateCard(
       platformBps: params.next.platformBps,
       orgBps: params.next.orgBps,
       consultantBps: params.next.consultantBps,
+      minGrossPaise: params.minGrossPaise ?? null,
+      maxGrossPaise: params.maxGrossPaise ?? null,
       effectiveFrom: at,
       effectiveTo: null,
     },

@@ -158,29 +158,11 @@ export async function POST(
           orgBps: body.orgBps,
           consultantBps: body.consultantBps,
         },
+        minGrossPaise: body.minGrossPaise,
+        maxGrossPaise: body.maxGrossPaise,
         effectiveAt: body.effectiveAt,
         reason: body.reason,
       });
-
-      // bumpRateCard creates via Prisma.create — we also want the
-      // optional bounds, which the helper doesn't know about. Patch them
-      // in the same transaction.
-      if (
-        body.minGrossPaise !== undefined ||
-        body.maxGrossPaise !== undefined
-      ) {
-        await tx.rateCard.update({
-          where: { id: created.id },
-          data: {
-            ...(body.minGrossPaise !== undefined && {
-              minGrossPaise: body.minGrossPaise,
-            }),
-            ...(body.maxGrossPaise !== undefined && {
-              maxGrossPaise: body.maxGrossPaise,
-            }),
-          },
-        });
-      }
 
       await tx.orgAuditLog.create({
         data: {

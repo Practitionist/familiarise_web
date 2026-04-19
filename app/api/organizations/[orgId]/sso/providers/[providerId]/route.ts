@@ -49,6 +49,13 @@ export async function GET(
       ? "oidc"
       : null;
 
+  // A provider row with neither config is a half-written record (e.g.
+  // an admin started a SAML setup, dropped the cert, never finished).
+  // Fabricating an `acsUrl` from a null type would write a misleading
+  // value into the admin UI; return null instead so the page can
+  // render the "configuration incomplete" state correctly.
+  const acsUrl = type ? deriveAcsUrl(provider.providerId, type) : null;
+
   return NextResponse.json({
     provider: {
       id: provider.id,
@@ -56,7 +63,7 @@ export async function GET(
       issuer: provider.issuer,
       domain: provider.domain,
       providerType: type,
-      acsUrl: deriveAcsUrl(provider.providerId, type),
+      acsUrl,
       metadataUrl: deriveMetadataUrl(provider.providerId),
       oidcConfig: isOwner
         ? provider.oidcConfig

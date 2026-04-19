@@ -12,6 +12,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -175,9 +176,14 @@ export async function POST(
   });
 
   // Invoice numbers are per-year-per-org sequences. Kept simple here
-  // (timestamp-based) — a production run would use a lookup-table
-  // counter so numbers stay continuous even after deletions.
-  const invoiceNumber = `INV-${orgId.slice(0, 6)}-${Date.now()}`;
+  // (timestamp + random suffix) — a production run would use a lookup-
+  // table counter so numbers stay continuous even after deletions. The
+  // 6-hex random tail prevents collisions when two POSTs land in the
+  // same millisecond for the same org (the unique constraint would
+  // otherwise reject one of them with P2002).
+  const invoiceNumber = `INV-${orgId.slice(0, 6)}-${Date.now()}-${randomBytes(3)
+    .toString("hex")
+    .toUpperCase()}`;
 
   const invoice = await prisma.$transaction(async (tx) => {
     const created = await tx.organizationInvoice.create({

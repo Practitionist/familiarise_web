@@ -1,8 +1,8 @@
 /**
  * GET /api/organizations/[orgId]/catalog/search
  *
- * Text-search over the org's curated catalog. Matches `title`,
- * `description`, and plan config values. Returns a thin projection
+ * Text-search over the org's curated catalog. Matches `title` and
+ * `description` via case-insensitive ILIKE. Returns a thin projection
  * optimized for the member-facing picker (no internal ids or
  * consultant-assignment lists).
  *
