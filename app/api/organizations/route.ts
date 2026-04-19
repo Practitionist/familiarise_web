@@ -21,6 +21,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { randomUUID } from "crypto";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -46,6 +47,25 @@ const SizeBucketSchema = z.enum([
 ]);
 
 const SLUG_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+/**
+ * Carries an HTTP status (and optional machine-readable code) on a thrown
+ * Error so the route's bottom-of-handler catch can serialise it without
+ * untagged-Error guesswork. Replaces the previous `Object.assign(new
+ * Error(...), { httpStatus: 409 })` pattern, which forced every reader
+ * of the catch to cast through `unknown` to pull the status back out.
+ */
+class HttpError extends Error {
+  readonly httpStatus: number;
+  readonly code?: string;
+
+  constructor(message: string, httpStatus: number, code?: string) {
+    super(message);
+    this.name = "HttpError";
+    this.httpStatus = httpStatus;
+    this.code = code;
+  }
+}
 
 const CreateBodySchema = z
   .object({
@@ -166,9 +186,10 @@ export async function POST(req: NextRequest) {
         select: { id: true },
       });
       if (dupSlug) {
-        throw Object.assign(
-          new Error(`Slug '${desiredSlug}' is already taken`),
-          { httpStatus: 409 },
+        throw new HttpError(
+          `Slug '${desiredSlug}' is already taken`,
+          409,
+          "SLUG_TAKEN",
         );
       }
 
@@ -282,11 +303,112 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(result, { status: 201 });
   } catch (err) {
-    if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      return NextResponse.json({ error: err.message }, { status });
+    // Centralised error mapper. Every branch returns a structured envelope
+    // so the wizard never falls through to its generic "Failed to create
+    // organization" toast — which loses every byte of useful diagnostic
+    // information and was the actual cause of the bug we're fixing here.
+    //
+    // Always log the unwrapped error so dev console / Sentry capture the
+    // real stack trace; the response body intentionally redacts internals
+    // in production.
+    const userId = auth.session.user.id;
+    console.error("POST /api/organizations failed", {
+      userId,
+      slug: desiredSlug,
+      err,
+    });
+
+    // 1) Errors we tagged ourselves (slug-409 etc.).
+    if (err instanceof HttpError) {
+      return NextResponse.json(
+        {
+          error: err.message,
+          ...(err.code ? { code: err.code } : {}),
+        },
+        { status: err.httpStatus },
+      );
     }
-    throw err;
+
+    // 2) Prisma known request errors — map the common ones onto useful
+    //    HTTP statuses so the client can branch (especially P2034, where
+    //    a retry is the right answer).
+    if (err instanceof Prisma.PrismaClientKnownRequestError) {
+      switch (err.code) {
+        case "P2002":
+          return NextResponse.json(
+            {
+              error: "Conflict — a unique constraint was violated",
+              code: "P2002",
+              detail: { target: err.meta?.target ?? null },
+            },
+            { status: 409 },
+          );
+        case "P2003":
+          return NextResponse.json(
+            {
+              error: "Database foreign-key violation",
+              code: "P2003",
+              detail: { field: err.meta?.field_name ?? null },
+            },
+            { status: 500 },
+          );
+        case "P2025":
+          return NextResponse.json(
+            {
+              error: err.message,
+              code: "P2025",
+            },
+            { status: 404 },
+          );
+        case "P2034":
+          return NextResponse.json(
+            {
+              error: "Transaction conflict — please retry",
+              code: "P2034",
+            },
+            { status: 503 },
+          );
+        default:
+          return NextResponse.json(
+            {
+              error: "Database error",
+              code: err.code,
+              ...(process.env.NODE_ENV !== "production"
+                ? { message: err.message }
+                : {}),
+            },
+            { status: 500 },
+          );
+      }
+    }
+
+    // 3) Prisma client-side validation (wrong types, unknown columns).
+    //    These mean *we* sent a malformed query — return 400 so the
+    //    client sees a different bucket than a runtime DB error.
+    if (err instanceof Prisma.PrismaClientValidationError) {
+      return NextResponse.json(
+        {
+          error: "Invalid query for Prisma client",
+          code: "PRISMA_VALIDATION",
+          ...(process.env.NODE_ENV !== "production"
+            ? { message: err.message }
+            : {}),
+        },
+        { status: 400 },
+      );
+    }
+
+    // 4) Genuine unknown — still return JSON so the client doesn't see an
+    //    empty body. In production the message is suppressed.
+    return NextResponse.json(
+      {
+        error: "Internal server error",
+        code: "INTERNAL",
+        ...(process.env.NODE_ENV !== "production"
+          ? { message: err instanceof Error ? err.message : String(err) }
+          : {}),
+      },
+      { status: 500 },
+    );
   }
 }

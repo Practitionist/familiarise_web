@@ -11,6 +11,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Building2, Pencil, Check, X, Loader2 } from "lucide-react";
+import { z } from "zod";
 import { getSteps } from "./types";
 import type { StepProps } from "./types";
 import {
@@ -33,13 +34,70 @@ import {
 import {
   parseJsonResponse,
   validateOutboundPayload,
+  ApiResponseError,
 } from "@/lib/fetch-helpers";
+import { humanizeOrgError } from "@/lib/labels/org-errors";
 
 interface InviteResult {
   email: string;
   ok: boolean;
   error?: string;
 }
+
+/**
+ * Shape of the `detail` field that our routes attach when a Zod schema
+ * rejects an inbound body — `parsed.error.flatten()` from the server.
+ * Modeled as a Zod schema (rather than an interface + `as` cast) so we
+ * get a single safeParse instead of a chain of `typeof === "object"`
+ * narrowings, and so a future server change to the detail shape fails
+ * a typed parse instead of silently `as`-casting through `unknown`.
+ */
+const ZodFlattenedErrorSchema = z.object({
+  fieldErrors: z.record(z.array(z.string())).optional(),
+  formErrors: z.array(z.string()).optional(),
+});
+
+/**
+ * Pull the first field-level message out of a Zod `.flatten()` envelope
+ * so the Review step can show a useful inline message ("billingEmail:
+ * Invalid email") instead of swallowing it behind a generic "Invalid
+ * body". Returns `null` when `detail` doesn't match the Zod-flattened
+ * shape so callers can fall through to a higher-level fallback.
+ */
+function extractFirstFieldError(detail: unknown): string | null {
+  const parsed = ZodFlattenedErrorSchema.safeParse(detail);
+  if (!parsed.success) return null;
+  const { fieldErrors, formErrors } = parsed.data;
+  if (fieldErrors) {
+    for (const [field, msgs] of Object.entries(fieldErrors)) {
+      const first = msgs[0];
+      if (first) return `${field}: ${first}`;
+    }
+  }
+  return formErrors?.[0] ?? null;
+}
+
+/**
+ * Lift a launch-flow Error into user-facing copy. ApiResponseError
+ * carries the structured detail so we can route through Zod-flattened
+ * field errors first, then the humanised server message, then a final
+ * fallback. Plain Errors (validation, network) surface verbatim.
+ */
+function describeLaunchError(err: unknown): string {
+  if (err instanceof ApiResponseError) {
+    const fieldMsg = extractFirstFieldError(err.detail);
+    if (fieldMsg) return fieldMsg;
+    return humanizeOrgError(err.message);
+  }
+  if (err instanceof Error) return err.message;
+  return "Something went wrong";
+}
+
+// PATCH /api/organizations/[orgId] returns the updated org (or
+// `{ ok: true }`); the wizard doesn't read the body, only `res.ok`.
+// Passthrough schema lets parseJsonResponse own the success/error split
+// instead of the previous bespoke fetch + json + cast triplet.
+const PatchOrganizationResponseSchema = z.object({}).passthrough();
 
 export function ReviewStep({
   onBack,
@@ -55,10 +113,6 @@ export function ReviewStep({
   );
   const [error, setError] = useState<string | null>(null);
 
-  // `initialData.orgId` only exists if the user previously hit Launch and
-  // failed before afterLaunch completed — we reuse it for retry idempotency
-  // (POST would 409 on slug otherwise).
-  const existingOrgId = initialData.orgId;
   const emails = initialData.inviteEmails ?? [];
   const canSponsor = initialData.canSponsor ?? true;
   const canHost = initialData.canHost ?? false;
@@ -81,42 +135,40 @@ export function ReviewStep({
       // Step 1 — create the organization. Deferred from step 0 of the
       // wizard so a user who drops out mid-flow doesn't leave an orphan
       // Organization row; the commitment happens here at launch.
-      let orgId = existingOrgId ?? null;
-      if (!orgId) {
-        // Validate the outbound body before opening the network connection —
-        // catches malformed wizard state (missing email, name too long, etc)
-        // before the server returns a generic 400.
-        const createPayload = validateOutboundPayload(
-          CreateOrganizationPayloadSchema,
-          {
-            name: initialData.name,
-            billingEmail: initialData.billingEmail,
-            canSponsor,
-            canHost,
-            description: initialData.description || undefined,
-            industry: initialData.industry || undefined,
-            sizeBucket: initialData.sizeBucket || undefined,
-            website: initialData.website || undefined,
-            ...(canSponsor
-              ? {
-                  fundingSource: initialData.fundingSource ?? "PERSONAL",
-                  paymentTermsDays: initialData.paymentTermsDays ?? 60,
-                }
-              : {}),
-          },
-        );
-        const createRes = await fetch("/api/organizations", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(createPayload),
-        });
-        const created = await parseJsonResponse(
-          createRes,
-          CreateOrganizationResponseSchema,
-          "Failed to create organization",
-        );
-        orgId = created.organization.id;
-      }
+      //
+      // Validate the outbound body before opening the network connection —
+      // catches malformed wizard state (missing email, name too long, etc)
+      // before the server returns a generic 400.
+      const createPayload = validateOutboundPayload(
+        CreateOrganizationPayloadSchema,
+        {
+          name: initialData.name,
+          billingEmail: initialData.billingEmail,
+          canSponsor,
+          canHost,
+          description: initialData.description || undefined,
+          industry: initialData.industry || undefined,
+          sizeBucket: initialData.sizeBucket || undefined,
+          website: initialData.website || undefined,
+          ...(canSponsor
+            ? {
+                fundingSource: initialData.fundingSource ?? "PERSONAL",
+                paymentTermsDays: initialData.paymentTermsDays ?? 60,
+              }
+            : {}),
+        },
+      );
+      const createRes = await fetch("/api/organizations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(createPayload),
+      });
+      const created = await parseJsonResponse(
+        createRes,
+        CreateOrganizationResponseSchema,
+        "Failed to create organization",
+      );
+      const orgId = created.organization.id;
 
       // Step 2 — PATCH settings that the create endpoint doesn't accept
       // (branding colors + bps rate card). Split cleanly by capability:
@@ -153,16 +205,15 @@ export function ReviewStep({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(patchPayload),
         });
-        // Server returns the updated org (or `{ ok: true }` for some
-        // shapes); we don't rely on the body here, only on `res.ok`.
-        if (!patchRes.ok) {
-          const body = await patchRes.json().catch(() => ({}));
-          throw new Error(
-            (body && typeof body === "object" && "error" in body
-              ? String((body as { error?: unknown }).error ?? "")
-              : "") || "Failed to save organization settings.",
-          );
-        }
+        // parseJsonResponse handles the success/error split and throws a
+        // typed ApiResponseError with `detail` populated, which the
+        // outer catch routes through `describeLaunchError` for
+        // humanised + field-level messaging.
+        await parseJsonResponse(
+          patchRes,
+          PatchOrganizationResponseSchema,
+          "Failed to save organization settings",
+        );
       }
 
       // Step 3 — send invitations in parallel. Individual failures surface
@@ -197,7 +248,8 @@ export function ReviewStep({
         const mapped: InviteResult[] = results.map((r, i) => ({
           email: emails[i],
           ok: r.status === "fulfilled",
-          error: r.status === "rejected" ? r.reason?.message : undefined,
+          error:
+            r.status === "rejected" ? describeLaunchError(r.reason) : undefined,
         }));
         setInviteResults(mapped);
 
@@ -206,11 +258,22 @@ export function ReviewStep({
       }
 
       // Onboarding caller uses this to flip `user.onboardingCompleted`
-      // atomically with the launch. Throwing here aborts the redirect so
-      // the user can retry — org + invitations are already persisted and
-      // the retry is idempotent.
+      // atomically with the launch. We deliberately don't block the
+      // redirect on failure: the org + invitations are already
+      // persisted, and the user is much better served by landing on
+      // their new dashboard than by being trapped on the Review screen
+      // with a confusing error. The onboarding flag will be flipped on
+      // the next dashboard load (or via a follow-up server action) and
+      // the failure is captured in the console for ops.
       if (afterLaunch) {
-        await afterLaunch(orgId);
+        try {
+          await afterLaunch(orgId);
+        } catch (afterErr) {
+          console.error(
+            "afterLaunch hook failed — proceeding to dashboard anyway",
+            afterErr,
+          );
+        }
       }
 
       const target = finalRedirectPath
@@ -218,9 +281,7 @@ export function ReviewStep({
         : `/dashboard/organization/${orgId}/home`;
       router.push(target);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Something went wrong",
-      );
+      setError(describeLaunchError(err));
       setIsSubmitting(false);
     }
   };

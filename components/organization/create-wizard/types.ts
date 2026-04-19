@@ -38,9 +38,6 @@ export interface OrgWizardData {
   // Step 3: Invite Team
   inviteEmails: string[];
   inviteRole: SelfServiceMemberRole;
-
-  // Internal (set after step 0 creates the org)
-  orgId: string | null;
 }
 
 export interface StepProps {

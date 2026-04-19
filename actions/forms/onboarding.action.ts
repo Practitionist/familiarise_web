@@ -1,5 +1,6 @@
 "use server";
 
+import { z } from "zod";
 import { processOnboardingData } from "@/utils/onboarding-server";
 import { getSession } from "@/lib/auth-server";
 import prisma from "@/lib/prisma";
@@ -16,6 +17,36 @@ import { UserRole } from "@prisma/client";
 const SELF_SELECTABLE_ONBOARDING_ROLES: ReadonlySet<UserRole> = new Set([
   UserRole.ORG_ADMIN,
 ]);
+
+// `setOnboardingRoleAction`'s `personalInfo` was previously typed but
+// not Zod-validated, so the client could write arbitrary strings into
+// `User.name`/`phone`/`timezone` (the only three columns the action
+// touches). This schema mirrors the Prisma column constraints:
+//  - `name` matches FrontendOnboardingBaseSchema (min 1 — the column is
+//    `String`, not nullable);
+//  - `phone` is `@unique` in Prisma, so we reject the empty string
+//    (would collide with anyone who left phone blank);
+//  - `timezone` accepts any IANA-shaped string, capped to 64 chars
+//    (longest current IANA zone is 32, leaving headroom for `Etc/...`
+//    aliases without buying the full IANA database client-side).
+//
+// `.strict()` so an upstream typo (e.g. `phoneNumber`) fails loud
+// rather than silently dropping into `undefined` and bypassing the
+// update.
+const RoleHandoffPersonalInfoSchema = z
+  .object({
+    name: z.string().trim().min(1, "Name is required").max(200).optional(),
+    phone: z
+      .string()
+      .trim()
+      .min(1, "Phone cannot be empty")
+      .max(50)
+      .optional(),
+    timezone: z.string().trim().min(1).max(64).optional(),
+  })
+  .strict();
+
+const RoleHandoffRoleSchema = z.nativeEnum(UserRole);
 
 // #region Main Server Action
 export async function updateOnboardingInformationAction(
@@ -64,21 +95,41 @@ export async function setOnboardingRoleAction(
     return { success: false, error: "Forbidden" };
   }
 
+  // Validate inputs at the action boundary. TypeScript params don't
+  // survive the server-action serialiser (the runtime call is a JSON
+  // POST with `unknown` payload), so the static `UserRole` /
+  // `personalInfo` types are not load-bearing — Zod is.
+  const parsedRole = RoleHandoffRoleSchema.safeParse(role);
+  if (!parsedRole.success) {
+    return { success: false, error: "Invalid role" };
+  }
+  const parsedInfo = RoleHandoffPersonalInfoSchema.safeParse(personalInfo);
+  if (!parsedInfo.success) {
+    const first = parsedInfo.error.issues[0];
+    return {
+      success: false,
+      error: first
+        ? `${first.path.join(".") || "personalInfo"}: ${first.message}`
+        : "Invalid personal info",
+    };
+  }
+
   // Reject any role outside the self-selection allowlist. The Prisma
   // enum type alone is not a security boundary — a malicious caller
-  // can pass `"ADMIN"` / `"STAFF"` and TypeScript would happily allow
-  // it from a `.tsx` file, so the runtime check is mandatory.
-  if (!SELF_SELECTABLE_ONBOARDING_ROLES.has(role)) {
+  // can pass `"ADMIN"` / `"STAFF"` and Zod would happily allow it
+  // (the enum exists in Prisma), so the runtime allowlist check is
+  // mandatory after the shape check.
+  if (!SELF_SELECTABLE_ONBOARDING_ROLES.has(parsedRole.data)) {
     return { success: false, error: "Forbidden" };
   }
 
   await prisma.user.update({
     where: { id: userId },
     data: {
-      role,
-      name: personalInfo.name ?? undefined,
-      phone: personalInfo.phone ?? undefined,
-      timezone: personalInfo.timezone ?? undefined,
+      role: parsedRole.data,
+      name: parsedInfo.data.name,
+      phone: parsedInfo.data.phone,
+      timezone: parsedInfo.data.timezone,
     },
   });
 

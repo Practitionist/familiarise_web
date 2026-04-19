@@ -1,9 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { Controller, useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  revenueRatesSchema,
+  type RevenueRatesFormData,
+} from "./schemas";
 import type { StepProps } from "./types";
 
 // Defaults: 1000 / 1000 / 8000 basis points (10 / 10 / 80 %).
@@ -30,36 +35,40 @@ function pctToBps(pct: string): number {
   return Math.round(n * 100);
 }
 
-export function RevenueRatesStep({ onNext, onBack, initialData }: StepProps) {
-  const [platformBps, setPlatformBps] = useState(
-    initialData.platformBps ?? DEFAULT_PLATFORM_BPS,
-  );
-  const [orgBps, setOrgBps] = useState(
-    initialData.orgBps ?? DEFAULT_ORG_BPS,
-  );
-  const [consultantBps, setConsultantBps] = useState(
-    initialData.consultantBps ?? DEFAULT_CONSULTANT_BPS,
-  );
+function clampBps(bps: number): number {
+  return Math.min(TOTAL_BPS, Math.max(0, bps));
+}
 
+export function RevenueRatesStep({ onNext, onBack, initialData }: StepProps) {
+  // Form state is bps integers (matches `revenueRatesSchema`); each
+  // Controller owns the percent ↔ bps translation so the schema stays
+  // the canonical contract. `mode: "onChange"` so the sum-refine error
+  // (and the disabled state below) update live as the user types.
+  const {
+    control,
+    handleSubmit,
+    watch,
+  } = useForm<RevenueRatesFormData>({
+    resolver: zodResolver(revenueRatesSchema),
+    mode: "onChange",
+    defaultValues: {
+      platformBps: initialData.platformBps ?? DEFAULT_PLATFORM_BPS,
+      orgBps: initialData.orgBps ?? DEFAULT_ORG_BPS,
+      consultantBps: initialData.consultantBps ?? DEFAULT_CONSULTANT_BPS,
+    },
+  });
+
+  const platformBps = watch("platformBps");
+  const orgBps = watch("orgBps");
+  const consultantBps = watch("consultantBps");
   const sum = platformBps + orgBps + consultantBps;
   const isValid = sum === TOTAL_BPS;
   const diffBps = TOTAL_BPS - sum;
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isValid) return;
-    onNext({ platformBps, orgBps, consultantBps });
-  };
-
-  const makeHandler =
-    (setter: React.Dispatch<React.SetStateAction<number>>) =>
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const bps = pctToBps(e.target.value);
-      setter(Math.min(TOTAL_BPS, Math.max(0, bps)));
-    };
+  const onSubmit = (data: RevenueRatesFormData) => onNext(data);
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-5">
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
       <p className="text-sm text-zinc-500">
         Each booking payment is split three ways. Percentages must sum to{" "}
         <strong>100%</strong> (10,000 basis points). You can adjust these
@@ -71,28 +80,40 @@ export function RevenueRatesStep({ onNext, onBack, initialData }: StepProps) {
       <div className="space-y-4">
         <div className="space-y-2">
           <Label htmlFor="platform-rate">Platform commission (%)</Label>
-          <Input
-            id="platform-rate"
-            type="number"
-            step="0.01"
-            min={0}
-            max={100}
-            value={bpsToPct(platformBps)}
-            onChange={makeHandler(setPlatformBps)}
+          <Controller
+            control={control}
+            name="platformBps"
+            render={({ field }) => (
+              <Input
+                id="platform-rate"
+                type="number"
+                step="0.01"
+                min={0}
+                max={100}
+                value={bpsToPct(field.value)}
+                onChange={(e) => field.onChange(clampBps(pctToBps(e.target.value)))}
+              />
+            )}
           />
           <p className="text-xs text-zinc-500">Familiarise&apos;s fee per session.</p>
         </div>
 
         <div className="space-y-2">
           <Label htmlFor="org-rate">Organization share (%)</Label>
-          <Input
-            id="org-rate"
-            type="number"
-            step="0.01"
-            min={0}
-            max={100}
-            value={bpsToPct(orgBps)}
-            onChange={makeHandler(setOrgBps)}
+          <Controller
+            control={control}
+            name="orgBps"
+            render={({ field }) => (
+              <Input
+                id="org-rate"
+                type="number"
+                step="0.01"
+                min={0}
+                max={100}
+                value={bpsToPct(field.value)}
+                onChange={(e) => field.onChange(clampBps(pctToBps(e.target.value)))}
+              />
+            )}
           />
           <p className="text-xs text-zinc-500">
             Your org&apos;s cut from each consultant&apos;s booking.
@@ -101,14 +122,20 @@ export function RevenueRatesStep({ onNext, onBack, initialData }: StepProps) {
 
         <div className="space-y-2">
           <Label htmlFor="consultant-rate">Consultant payout (%)</Label>
-          <Input
-            id="consultant-rate"
-            type="number"
-            step="0.01"
-            min={0}
-            max={100}
-            value={bpsToPct(consultantBps)}
-            onChange={makeHandler(setConsultantBps)}
+          <Controller
+            control={control}
+            name="consultantBps"
+            render={({ field }) => (
+              <Input
+                id="consultant-rate"
+                type="number"
+                step="0.01"
+                min={0}
+                max={100}
+                value={bpsToPct(field.value)}
+                onChange={(e) => field.onChange(clampBps(pctToBps(e.target.value)))}
+              />
+            )}
           />
           <p className="text-xs text-zinc-500">
             What each consultant keeps. Can be overridden per consultant via
@@ -117,7 +144,9 @@ export function RevenueRatesStep({ onNext, onBack, initialData }: StepProps) {
         </div>
       </div>
 
-      {/* Live sum indicator */}
+      {/* Live sum indicator — the schema's `.refine(sum === 10000)` is
+          the authoritative gate, but showing the running total inline
+          lets the user fix the split before they hit Next. */}
       <div
         className={`flex items-center justify-between rounded-lg px-4 py-3 text-sm font-medium ${
           isValid

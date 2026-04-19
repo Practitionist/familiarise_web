@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Controller, useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Building2 } from "lucide-react";
@@ -9,6 +10,10 @@ import {
   FUNDING_SOURCE_LABEL,
   narrowFundingSource,
 } from "@/lib/labels/org-labels";
+import { brandingSchema, type BrandingFormData } from "./schemas";
+
+const DEFAULT_PRIMARY = "#1a1a2e";
+const DEFAULT_SECONDARY = "#16213e";
 
 export function BrandingStep({
   onNext,
@@ -16,18 +21,35 @@ export function BrandingStep({
   initialData,
   isSubmitting,
 }: StepProps) {
-  const [primaryColor, setPrimaryColor] = useState(
-    initialData.primaryColor ?? "#1a1a2e",
-  );
-  const [secondaryColor, setSecondaryColor] = useState(
-    initialData.secondaryColor ?? "#16213e",
-  );
+  // The native `<input type="color">` widget already constrains output
+  // to a valid hex, so the Zod regex is belt-and-braces — but routing
+  // through `zodResolver` keeps this step consistent with the others
+  // and means a hand-edited `value=` (e.g. via React DevTools) still
+  // hits the same validation as the server's PATCH body.
+  const {
+    control,
+    handleSubmit,
+    watch,
+    formState: { errors },
+  } = useForm<BrandingFormData>({
+    resolver: zodResolver(brandingSchema),
+    defaultValues: {
+      primaryColor: initialData.primaryColor ?? DEFAULT_PRIMARY,
+      secondaryColor: initialData.secondaryColor ?? DEFAULT_SECONDARY,
+    },
+  });
+
+  const primaryColor = watch("primaryColor") ?? DEFAULT_PRIMARY;
+  const secondaryColor = watch("secondaryColor") ?? DEFAULT_SECONDARY;
 
   // Org creation is deferred to the Review step, so this step just
   // stashes the chosen palette on wizardData. ReviewStep does the
   // POST+PATCH with these values in one atomic flow.
-  const handleSubmit = () => {
-    onNext({ primaryColor, secondaryColor });
+  const onSubmit = (data: BrandingFormData) => {
+    onNext({
+      primaryColor: data.primaryColor ?? null,
+      secondaryColor: data.secondaryColor ?? null,
+    });
   };
 
   // Narrow the funding-source enum via Zod so the preview uses the
@@ -37,38 +59,60 @@ export function BrandingStep({
     : FUNDING_SOURCE_LABEL.PERSONAL;
 
   return (
-    <div className="space-y-6">
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
       {/* Colors */}
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label htmlFor="primaryColor">Primary color</Label>
-          <div className="flex items-center gap-2">
-            <input
-              id="primaryColor"
-              type="color"
-              value={primaryColor}
-              onChange={(e) => setPrimaryColor(e.target.value)}
-              className="w-10 h-10 rounded border border-zinc-200 cursor-pointer"
-            />
-            <span className="text-sm text-zinc-500 font-mono">
-              {primaryColor}
-            </span>
-          </div>
+          <Controller
+            control={control}
+            name="primaryColor"
+            render={({ field }) => (
+              <div className="flex items-center gap-2">
+                <input
+                  id="primaryColor"
+                  type="color"
+                  value={field.value ?? DEFAULT_PRIMARY}
+                  onChange={(e) => field.onChange(e.target.value)}
+                  className="w-10 h-10 rounded border border-zinc-200 cursor-pointer"
+                />
+                <span className="text-sm text-zinc-500 font-mono">
+                  {field.value ?? DEFAULT_PRIMARY}
+                </span>
+              </div>
+            )}
+          />
+          {errors.primaryColor && (
+            <p className="text-sm text-red-500">
+              {errors.primaryColor.message}
+            </p>
+          )}
         </div>
         <div className="space-y-2">
           <Label htmlFor="secondaryColor">Secondary color</Label>
-          <div className="flex items-center gap-2">
-            <input
-              id="secondaryColor"
-              type="color"
-              value={secondaryColor}
-              onChange={(e) => setSecondaryColor(e.target.value)}
-              className="w-10 h-10 rounded border border-zinc-200 cursor-pointer"
-            />
-            <span className="text-sm text-zinc-500 font-mono">
-              {secondaryColor}
-            </span>
-          </div>
+          <Controller
+            control={control}
+            name="secondaryColor"
+            render={({ field }) => (
+              <div className="flex items-center gap-2">
+                <input
+                  id="secondaryColor"
+                  type="color"
+                  value={field.value ?? DEFAULT_SECONDARY}
+                  onChange={(e) => field.onChange(e.target.value)}
+                  className="w-10 h-10 rounded border border-zinc-200 cursor-pointer"
+                />
+                <span className="text-sm text-zinc-500 font-mono">
+                  {field.value ?? DEFAULT_SECONDARY}
+                </span>
+              </div>
+            )}
+          />
+          {errors.secondaryColor && (
+            <p className="text-sm text-red-500">
+              {errors.secondaryColor.message}
+            </p>
+          )}
         </div>
       </div>
 
@@ -108,15 +152,11 @@ export function BrandingStep({
           >
             Skip for now
           </Button>
-          <Button
-            type="button"
-            onClick={handleSubmit}
-            disabled={isSubmitting}
-          >
+          <Button type="submit" disabled={isSubmitting}>
             Next
           </Button>
         </div>
       </div>
-    </div>
+    </form>
   );
 }

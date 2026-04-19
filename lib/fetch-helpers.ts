@@ -50,6 +50,32 @@ export function errorMessageFromBody(
 }
 
 /**
+ * Error thrown by {@link parseJsonResponse} when a request returns a
+ * non-2xx response. Carries the HTTP status, optional machine-readable
+ * `code`, and the raw `detail` envelope so callers can branch on
+ * `instanceof ApiResponseError` instead of stringly-typed parsing.
+ *
+ * Modeled as a real class (not an interface + ad-hoc cast) so call
+ * sites get full type narrowing inside `catch` blocks via `instanceof`.
+ */
+export class ApiResponseError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  readonly detail?: unknown;
+
+  constructor(
+    message: string,
+    init: { status: number; code?: string; detail?: unknown },
+  ) {
+    super(message);
+    this.name = "ApiResponseError";
+    this.status = init.status;
+    this.code = init.code;
+    this.detail = init.detail;
+  }
+}
+
+/**
  * Parse a successful JSON response through a Zod schema. Throws a typed
  * error when the network call failed (`!res.ok`) using `errorMessageFromBody`,
  * and a separate Zod-formatted error when the body parsed but didn't
@@ -72,7 +98,19 @@ export async function parseJsonResponse<S extends z.ZodTypeAny>(
 ): Promise<z.infer<S>> {
   const raw = await res.json().catch(() => null);
   if (!res.ok) {
-    throw new Error(errorMessageFromBody(raw, fallbackError));
+    const parsedErr = apiErrorSchema.safeParse(raw);
+    const envelope = parsedErr.success ? parsedErr.data : {};
+    // When the server didn't include an `error` field (typically a 5xx
+    // with empty/HTML body), append the HTTP status so the toast at
+    // least pinpoints "the server crashed" vs "validation failed". This
+    // is what made the old fallback "Failed to create organization"
+    // actively misleading — every cause produced the same string.
+    const message = envelope.error ?? `${fallbackError} (HTTP ${res.status})`;
+    throw new ApiResponseError(message, {
+      status: res.status,
+      code: envelope.code,
+      detail: envelope.detail,
+    });
   }
   const parsed = schema.safeParse(raw);
   if (!parsed.success) {
