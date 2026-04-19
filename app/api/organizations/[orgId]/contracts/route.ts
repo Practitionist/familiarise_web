@@ -22,21 +22,31 @@ const ContractStatusSchema = z.enum([
   "TERMINATED",
 ]);
 
-const CreateBodySchema = z.object({
-  billingAccountId: z.string().min(1),
-  // PurchaseOrder is optional — India enterprise orgs have
-  // requiresPO=true, but we surface the UX constraint at the org
-  // level. Server-side we only enforce the FK shape.
-  purchaseOrderId: z.string().min(1).nullable().optional(),
-  // `effectiveFrom` defaults to now so a contract created via API
-  // takes effect immediately unless the caller specifies otherwise.
-  effectiveFrom: z.coerce.date().default(() => new Date()),
-  effectiveTo: z.coerce.date().nullable().optional(),
-  paymentTermsDays: z.coerce.number().int().min(1).max(120).default(60),
-  autoRenew: z.coerce.boolean().default(false),
-  terms: z.unknown().optional(),
-  status: ContractStatusSchema.default("DRAFT"),
-});
+const CreateBodySchema = z
+  .object({
+    billingAccountId: z.string().min(1),
+    // PurchaseOrder is optional — India enterprise orgs have
+    // requiresPO=true, but we surface the UX constraint at the org
+    // level. Server-side we only enforce the FK shape.
+    purchaseOrderId: z.string().min(1).nullable().optional(),
+    // `effectiveFrom` defaults to now so a contract created via API
+    // takes effect immediately unless the caller specifies otherwise.
+    effectiveFrom: z.coerce.date().default(() => new Date()),
+    effectiveTo: z.coerce.date().nullable().optional(),
+    paymentTermsDays: z.coerce.number().int().min(1).max(120).default(60),
+    autoRenew: z.coerce.boolean().default(false),
+    terms: z.unknown().optional(),
+    status: ContractStatusSchema.default("DRAFT"),
+  })
+  .refine(
+    (v) => v.effectiveTo === null || v.effectiveTo === undefined
+      ? true
+      : v.effectiveTo.getTime() > v.effectiveFrom.getTime(),
+    {
+      message: "effectiveTo must be strictly after effectiveFrom",
+      path: ["effectiveTo"],
+    },
+  );
 
 export async function GET(
   req: NextRequest,

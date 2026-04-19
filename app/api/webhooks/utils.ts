@@ -22,31 +22,33 @@ export {
  * Handle org-specific payment success (credit_purchase or invoice_payment).
  * These bypass the standard handlePaymentSuccess flow because they don't
  * involve appointments or booking confirmations.
+ *
+ * Razorpay order notes use `organizationId` as the canonical key — the
+ * legacy `orgProfileId` alias pointed at the now-deleted OrganizationProfile
+ * table and would silently corrupt audit writes if it ever held a stale
+ * value. Producers (initiateTopUp, invoice-pay route) set
+ * `notes.organizationId` directly.
  */
 export async function handleOrgPaymentSuccess(
   notes: Record<string, string>,
   razorpayPaymentId?: string,
 ): Promise<void> {
-  // Arch 4-Modified: credit_purchase now routes to WalletEntry via
-  // `confirmTopUp` from lib/api/organizations/wallet.ts. invoice_payment
-  // transitions OrganizationInvoice.status ISSUED → PAID.
-  //
-  // This handler is a thin wrapper; the webhook route (app/api/webhooks/razorpay)
-  // invokes it. Real wiring for invoice-payment + org-attribution to
-  // ConsentArtifact/AuditLog lands in Phase 2b.
+  // credit_purchase routes to WalletEntry via `confirmTopUp` from
+  // lib/api/organizations/wallet.ts. invoice_payment transitions
+  // OrganizationInvoice.status ISSUED → PAID. Delegation to confirmTopUp
+  // happens at the webhook-route layer to keep this helper DB-free for
+  // the credit-purchase branch.
   if (notes.type === "credit_purchase") {
-    const { walletEntryOrderId, orgProfileId } = notes as Record<string, string>;
+    const { walletEntryOrderId, organizationId } = notes;
     if (!walletEntryOrderId) {
       console.error("[Webhook] credit_purchase missing walletEntryOrderId");
       return;
     }
-    // Delegation to confirmTopUp done at the webhook-route layer to keep
-    // this helper DB-free. Just log here.
     console.log(
-      `[Webhook][arch4] credit_purchase received for order=${walletEntryOrderId} org=${orgProfileId ?? "?"} payment=${razorpayPaymentId ?? "?"}`,
+      `[Webhook][arch4] credit_purchase received for order=${walletEntryOrderId} org=${organizationId ?? "?"} payment=${razorpayPaymentId ?? "?"}`,
     );
   } else if (notes.type === "invoice_payment") {
-    const { invoiceId, orgProfileId } = notes;
+    const { invoiceId, organizationId } = notes;
     if (!invoiceId) {
       console.error("[Webhook] invoice_payment missing invoiceId");
       return;
@@ -70,11 +72,11 @@ export async function handleOrgPaymentSuccess(
 
     console.log(`[Webhook] Invoice paid: ${invoiceId}`);
 
-    if (orgProfileId) {
+    if (organizationId) {
       prisma.orgAuditLog
         .create({
           data: {
-            organizationId: orgProfileId,
+            organizationId,
             actorMembershipId: null,
             category: "INVOICE",
             action: "INVOICE_PAID",

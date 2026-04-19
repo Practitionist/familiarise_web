@@ -96,13 +96,36 @@ export async function PATCH(
           { httpStatus: 400 },
         );
       }
-      return tx.programAssignment.update({
+      const next = await tx.programAssignment.update({
         where: { id: assignmentId },
         data: {
           periodStart: nextStart,
           periodEnd: nextEnd,
         },
       });
+      await tx.orgAuditLog.create({
+        data: {
+          organizationId: orgId,
+          actorMembershipId: access.member.id,
+          targetMembershipId: current.membershipId,
+          category: "PROGRAM",
+          action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ASSIGNMENT_UPDATED,
+          description: `Program assignment period updated for program ${programId}`,
+          details: {
+            programId,
+            assignmentId,
+            from: {
+              periodStart: current.periodStart.toISOString(),
+              periodEnd: current.periodEnd.toISOString(),
+            },
+            to: {
+              periodStart: nextStart.toISOString(),
+              periodEnd: nextEnd.toISOString(),
+            },
+          },
+        },
+      });
+      return next;
     });
     return NextResponse.json({ assignment: updated });
   } catch (err) {

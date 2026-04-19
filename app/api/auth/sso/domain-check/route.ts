@@ -45,6 +45,7 @@ export async function GET(req: NextRequest) {
   const claim = await prisma.orgDomainClaim.findUnique({
     where: { domain },
     select: {
+      organizationId: true,
       organization: {
         select: {
           name: true,
@@ -74,11 +75,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ enforceSSO: false });
   }
 
-  // First provider on this domain wins. Multi-provider orgs send users
-  // to their own BetterAuth configured route — one provider per domain
-  // is the common case.
+  // Provider lookup is scoped to BOTH (domain, organizationId). The
+  // domain-claim is the authoritative "who owns this email domain"
+  // record — a stray SsoProvider row for the same domain under a
+  // different org (misconfigured tenant, stale data) must not route
+  // users to the wrong IdP.
   const provider = await prisma.ssoProvider.findFirst({
-    where: { domain },
+    where: { domain, organizationId: claim.organizationId },
     select: { providerId: true },
   });
   if (!provider) {

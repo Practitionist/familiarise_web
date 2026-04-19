@@ -64,7 +64,7 @@ export async function POST(
   // that the client can feed into the Razorpay SDK. A production build
   // would call `razorpay.orders.create` and persist the real ID on
   // the invoice. The webhook at /api/webhooks/razorpay reads the
-  // `notes.invoiceId` + `notes.orgProfileId` metadata to settle.
+  // `notes.invoiceId` + `notes.organizationId` metadata to settle.
   const providerOrderId = `order_invpay_${invoiceId.slice(0, 8)}_${Date.now()}`;
 
   await prisma.orgAuditLog.create({
@@ -97,7 +97,7 @@ export async function POST(
     razorpayNotes: {
       type: "invoice_payment",
       invoiceId,
-      orgProfileId: orgId,
+      organizationId: orgId,
     },
   });
 }

@@ -7,6 +7,11 @@ import Link from "next/link";
 import { useRequireOrgRole } from "../../useOrgRole";
 import { useToast } from "@/hooks/use-toast";
 import { deriveAcsUrl, deriveMetadataUrl } from "@/lib/sso/derive-urls";
+import type { MemberRole } from "@prisma/client";
+import {
+  MEMBER_ROLE_LABEL,
+  MemberRoleSchema,
+} from "@/lib/labels/org-labels";
 
 import {
   DashboardHeader,
@@ -98,7 +103,7 @@ interface SsoResponse {
   settings: {
     allowedEmailDomains: string[];
     enforceSSO: boolean;
-    defaultRoleForAutoJoin: string;
+    defaultRoleForAutoJoin: MemberRole;
   };
   providers: Provider[];
 }
@@ -112,7 +117,7 @@ async function fetchSso(orgId: string): Promise<SsoResponse> {
 interface PatchPayload {
   allowedEmailDomains?: string[];
   enforceSSO?: boolean;
-  defaultRoleForAutoJoin?: string;
+  defaultRoleForAutoJoin?: MemberRole;
 }
 
 async function patchSso(orgId: string, payload: PatchPayload) {
@@ -163,11 +168,15 @@ async function deleteProvider(orgId: string, providerId: string) {
   }
 }
 
-const ROLE_OPTIONS = [
-  { value: "MEMBER", label: "Learner" },
-  { value: "MANAGER", label: "Manager" },
-  { value: "ADMIN", label: "Admin" },
-];
+// Auto-join via SSO grants one of the non-privileged MemberRoles. OWNER +
+// SUPPORT + EXPERT are deliberately excluded: OWNER is destructive to
+// grant automatically, SUPPORT is an operator role assigned manually,
+// and EXPERT requires the consultant application workflow.
+const AUTO_JOIN_ROLES = ["LEARNER", "MANAGER", "MAINTAINER"] as const;
+const ROLE_OPTIONS = AUTO_JOIN_ROLES.map((value) => ({
+  value,
+  label: MEMBER_ROLE_LABEL[value],
+}));
 
 export default function OrgSsoPage({
   params,
@@ -184,7 +193,7 @@ export default function OrgSsoPage({
 
   const [domains, setDomains] = useState("");
   const [enforce, setEnforce] = useState(false);
-  const [defaultRole, setDefaultRole] = useState("MEMBER");
+  const [defaultRole, setDefaultRole] = useState<MemberRole>("LEARNER");
 
   useEffect(() => {
     if (!data) return;
@@ -192,6 +201,13 @@ export default function OrgSsoPage({
     setEnforce(data.settings.enforceSSO);
     setDefaultRole(data.settings.defaultRoleForAutoJoin);
   }, [data]);
+
+  // shadcn's Select hands onValueChange a bare string. Narrow via Zod
+  // so downstream state + the PATCH body are always a valid MemberRole.
+  const handleRoleChange = (v: string) => {
+    const parsed = MemberRoleSchema.safeParse(v);
+    if (parsed.success) setDefaultRole(parsed.data);
+  };
 
   const settingsMutation = useMutation({
     mutationFn: () =>
@@ -339,7 +355,7 @@ export default function OrgSsoPage({
                 <Label htmlFor="default-role">
                   Default role for auto-joined users
                 </Label>
-                <Select value={defaultRole} onValueChange={setDefaultRole}>
+                <Select value={defaultRole} onValueChange={handleRoleChange}>
                   <SelectTrigger id="default-role">
                     <SelectValue />
                   </SelectTrigger>

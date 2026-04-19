@@ -9,7 +9,7 @@ from org experts.
 
 ## Prerequisites
 
-An experts can only join an org whose `canHost = true`. The API
+An expert can only join an org whose `canHost = true`. The API
 refuses EXPERT membership on sponsor-only orgs at
 `POST /api/organizations/[orgId]/members` — the body's `role = EXPERT`
 is rejected when the organization's capability booleans don't support

@@ -141,7 +141,7 @@ export async function PATCH(
                 ? AUDIT_ACTIONS.INVOICE.INVOICE_ISSUED
                 : body.status === "CANCELLED"
                   ? AUDIT_ACTIONS.INVOICE.INVOICE_CANCELLED
-                  : AUDIT_ACTIONS.INVOICE.INVOICE_CANCELLED, // VOID reuses CANCELLED audit
+                  : AUDIT_ACTIONS.INVOICE.INVOICE_VOIDED,
             description: `Invoice ${current.invoiceNumber}: ${current.status} → ${body.status}`,
             details: {
               invoiceId,

@@ -61,6 +61,14 @@ export default function OrgAdminReviewStep({
     </Card>
   );
 
+  // Capability kind drives both the badge class and the label; derive it
+  // once so the two render paths can't drift out of sync as the mapping
+  // evolves.
+  const capabilityKind = deriveCapabilityKind(
+    formData.orgCanSponsor ?? true,
+    formData.orgCanHost ?? false,
+  );
+
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
@@ -83,23 +91,9 @@ export default function OrgAdminReviewStep({
           <strong>Capability:</strong>{" "}
           <Badge
             variant="secondary"
-            className={
-              CAPABILITY_BADGE_CLASS[
-                deriveCapabilityKind(
-                  formData.orgCanSponsor ?? true,
-                  formData.orgCanHost ?? false,
-                )
-              ]
-            }
+            className={CAPABILITY_BADGE_CLASS[capabilityKind]}
           >
-            {
-              CAPABILITY_LABEL[
-                deriveCapabilityKind(
-                  formData.orgCanSponsor ?? true,
-                  formData.orgCanHost ?? false,
-                )
-              ]
-            }
+            {CAPABILITY_LABEL[capabilityKind]}
           </Badge>
         </div>
         {formData.orgCanSponsor && (() => {

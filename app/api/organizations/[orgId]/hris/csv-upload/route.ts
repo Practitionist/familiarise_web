@@ -2,19 +2,17 @@
  * POST /api/organizations/[orgId]/hris/csv-upload
  *
  * CSV-shaped employee import path. For orgs without a live HRIS integration
- * this is the pragmatic fallback: an admin uploads a CSV with columns
- * (externalEmployeeId, externalEmail, externalDepartment, externalLocation,
- * externalManagerId) and we upsert HrisEmployeeMap rows.
+ * this is the pragmatic fallback: an admin POSTs a JSON body
+ * `{ rows: [{ externalEmployeeId, externalEmail?, externalDepartment?,
+ * externalLocation?, externalManagerId? }] }` and we upsert HrisEmployeeMap
+ * rows. A CSV-parsing helper can live client-side (or in a follow-up PR
+ * here) — the server accepts JSON only.
  *
  * Each row is an upsert by (hrisConfigId, externalEmployeeId) so repeated
  * uploads converge on the latest state. Rows are intentionally NOT linked
  * to Memberships here — a separate reconciliation step matches external
  * employees to platform users by email (that lives in a follow-up PR; the
  * CSV import just stages the raw rows).
- *
- * v1 accepts either a CSV text body or a JSON array of rows. A real CSV
- * parser (e.g. csv-parse) would live in a helper; the in-line shape check
- * is sufficient for the stub.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -53,22 +51,20 @@ export async function POST(
   }
   const body = parsed.data;
 
-  // CSV-upload implies a CSV-provider config. Auto-create one if the org
-  // doesn't have HRIS configured yet — saves a round trip for the common
-  // case of "admin just wants to import a roster".
-  let config = await prisma.hrisConfig.findUnique({
+  // CSV-upload implies a CSV-provider config. `upsert` keyed on the
+  // unique `organizationId` races cleanly — two concurrent uploads
+  // converge on a single config row instead of one hitting `findUnique`
+  // and both hitting `create` + a P2002 violation on the second.
+  const config = await prisma.hrisConfig.upsert({
     where: { organizationId: orgId },
+    update: {},
+    create: {
+      organizationId: orgId,
+      provider: "CSV",
+      tenantKey: `csv:${orgId}`,
+      active: true,
+    },
   });
-  if (!config) {
-    config = await prisma.hrisConfig.create({
-      data: {
-        organizationId: orgId,
-        provider: "CSV",
-        tenantKey: `csv:${orgId}`,
-        active: true,
-      },
-    });
-  }
 
   const now = new Date();
   const hrisConfigId = config.id;
