@@ -15,7 +15,9 @@ import {
   Clock,
   Wallet,
   UserCog,
+  type LucideIcon,
 } from "lucide-react";
+import type { MemberRole } from "@prisma/client";
 
 import {
   DashboardHeader,
@@ -209,45 +211,54 @@ export function HomePageClient({ orgId }: { orgId: string }) {
     },
     {
       label: "Configure billing settings",
-      done: billing.data != null,
+      done: billing.data !== null && billing.data !== undefined,
       href: `/dashboard/organization/${orgId}/settings`,
     },
   ];
   const checklistDone = checklist.filter((c) => c.done).length;
   const allDone = checklistDone === checklist.length;
-  const showChecklist = !isLoading && isAtLeast("ORG_ADMIN") && !allDone;
+  const showChecklist = !isLoading && isAtLeast("MAINTAINER") && !allDone;
 
-  // Quick action cards (role-gated)
-  const quickActions = [
+  // Quick action cards (role-gated). Typing `minRole` with `satisfies`
+  // keeps each card literal-typed to MemberRole without having to write
+  // an explicit annotation on the array — we get compile-time safety
+  // that every `minRole` value is a real role.
+  const quickActions = ([
     {
       title: "Invite member",
       description: "Add team members by email",
       icon: Mail,
       href: `/dashboard/organization/${orgId}/invitations`,
-      minRole: "ORG_ADMIN",
+      minRole: "MAINTAINER",
     },
     {
       title: "Create plan",
       description: "Set up a new service plan",
       icon: Briefcase,
       href: `/dashboard/organization/${orgId}/plans`,
-      minRole: "ORG_ADMIN",
+      minRole: "MAINTAINER",
     },
     {
       title: "View billing",
       description: "Invoices and payment summary",
       icon: CreditCard,
       href: `/dashboard/organization/${orgId}/billing`,
-      minRole: "ORG_MANAGER",
+      minRole: "MANAGER",
     },
     {
       title: "Org settings",
       description: "Profile, branding, and configuration",
       icon: Settings,
       href: `/dashboard/organization/${orgId}/settings`,
-      minRole: "ORG_ADMIN",
+      minRole: "MAINTAINER",
     },
-  ].filter((a) => isAtLeast(a.minRole));
+  ] as const satisfies readonly {
+    title: string;
+    description: string;
+    icon: LucideIcon;
+    href: string;
+    minRole: MemberRole;
+  }[]).filter((a) => isAtLeast(a.minRole));
 
   return (
     <>
@@ -352,7 +363,8 @@ export function HomePageClient({ orgId }: { orgId: string }) {
               icon={CreditCard}
               variant="success"
               trend={
-                analytics.data?.bookings.deltaPct != null
+                analytics.data?.bookings.deltaPct !== null &&
+                analytics.data?.bookings.deltaPct !== undefined
                   ? {
                       value: Math.round(analytics.data.bookings.deltaPct),
                       isPositive: analytics.data.bookings.deltaPct >= 0,
@@ -362,7 +374,7 @@ export function HomePageClient({ orgId }: { orgId: string }) {
             />
 
             {/* Billing cards — only for manager+ role, appear once billing data loads */}
-            {billing.data && isAtLeast("ORG_MANAGER") && (
+            {billing.data && isAtLeast("MANAGER") && (
               <>
                 {billing.data.outstanding.invoiceCount > 0 && (
                   <StatCard

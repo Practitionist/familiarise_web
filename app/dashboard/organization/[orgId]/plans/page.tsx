@@ -165,7 +165,7 @@ export default function OrgPlansPage({
         title="Curated Plans"
         subtitle="Plans recommended for your learners"
         actions={
-          isAtLeast("ORG_ADMIN") && (
+          isAtLeast("MAINTAINER") && (
             <Button size="sm" onClick={() => setShowBrowse(true)}>
               <Plus className="h-4 w-4 mr-1" /> Browse & add plans
             </Button>
@@ -196,7 +196,7 @@ export default function OrgPlansPage({
                     <TableHead>Type</TableHead>
                     <TableHead>Consultant</TableHead>
                     <TableHead>Price</TableHead>
-                    {isAtLeast("ORG_ADMIN") && (
+                    {isAtLeast("MAINTAINER") && (
                       <TableHead className="w-12"></TableHead>
                     )}
                   </TableRow>
@@ -226,7 +226,7 @@ export default function OrgPlansPage({
                       <TableCell>
                         {formatCurrencyAmount(item.price, item.priceCurrency)}
                       </TableCell>
-                      {isAtLeast("ORG_ADMIN") && (
+                      {isAtLeast("MAINTAINER") && (
                         <TableCell>
                           <Button
                             variant="ghost"
@@ -252,7 +252,7 @@ export default function OrgPlansPage({
               <div className="text-center py-8">
                 <p className="text-sm text-zinc-500">
                   No plans curated yet.
-                  {isAtLeast("ORG_ADMIN") &&
+                  {isAtLeast("MAINTAINER") &&
                     " Click 'Browse & add plans' to get started."}
                 </p>
               </div>

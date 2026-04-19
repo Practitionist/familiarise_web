@@ -46,16 +46,32 @@ import { OrgContextBar } from "@/components/dashboard/OrgContextBar";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { signOut, useSession } from "@/lib/auth-client";
 import { disconnectStreamClients } from "@/providers/StreamProvider";
+import type {
+  FundingSource,
+  MemberRole,
+  MemberStatus,
+  OrgStatus,
+} from "@prisma/client";
 
+/**
+ * Shape returned by `GET /api/organizations/[orgId]`. Arch 4-Modified
+ * folds Organization and the old OrganizationProfile into a single
+ * record, so there is no nested `profile` key anymore. Capability
+ * booleans + fundingSource drive every sidebar and page-gating
+ * decision.
+ */
 interface OrgDetailsResponse {
-  organization: { id: string; name: string; slug: string; logo: string | null };
-  profile: {
+  organization: {
     id: string;
-    kind: "BUYER" | "PROVIDER" | "HYBRID";
-    status: string;
-    billingMode: "TAG_ONLY" | "SEAT_PACK" | "INVOICED_MONTHLY" | "PREPAID_UNLIMITED" | null;
+    name: string;
+    slug: string;
+    logo: string | null;
+    status: OrgStatus;
+    canSponsor: boolean;
+    canHost: boolean;
+    fundingSource: FundingSource | null;
   };
-  membership: { role: string; status: string };
+  membership: { role: MemberRole; status: MemberStatus };
 }
 
 async function fetchOrg(orgId: string): Promise<OrgDetailsResponse> {
@@ -111,53 +127,62 @@ export default function OrgLayout({
     staleTime: 60_000,
   });
 
-  // Compute the sidebar items based on org kind, billing mode, AND role.
-  // Lower roles see fewer nav items — the API layer enforces this too,
-  // but hiding the pages prevents confusion.
+  // Compute sidebar items from capabilities + fundingSource + role. The
+  // API layer enforces the same gates, but hiding items that the user
+  // can't act on keeps the sidebar tidy. One source of truth for role
+  // ranks lives in useOrgRole.ts — we duplicate it here narrowly because
+  // this layout runs before the query cache is warm.
   const sidebarItems: CollapsibleSidebarItem[] = useMemo(() => {
     if (!org) return [];
-    const isProviderOrHybrid =
-      org.profile.kind === "PROVIDER" || org.profile.kind === "HYBRID";
-    const isBuyerOrHybrid =
-      org.profile.kind === "BUYER" || org.profile.kind === "HYBRID";
+    const { canSponsor, canHost, fundingSource } = org.organization;
 
-    // Role rank check — mirrors ORG_ROLE_RANK from lib/auth-helpers.ts
-    const role = org.membership.role;
-    const RANKS: Record<string, number> = {
-      ORG_OWNER: 100, ORG_ADMIN: 80, ORG_MANAGER: 60,
-      ORG_CONSULTANT: 40, ORG_SUPPORT: 30, ORG_LEARNER: 20,
+    const RANKS: Record<MemberRole, number> = {
+      OWNER: 100,
+      MAINTAINER: 80,
+      MANAGER: 60,
+      EXPERT: 40,
+      SUPPORT: 30,
+      LEARNER: 20,
     };
-    const isAtLeast = (min: string) =>
-      (RANKS[role] ?? 0) >= (RANKS[min] ?? 0);
+    const role = org.membership.role;
+    const isAtLeast = (min: MemberRole) => RANKS[role] >= RANKS[min];
 
     const items: { name: string; icon: LucideIcon; path: string; show?: boolean }[] = [
       { name: "Overview", icon: Home, path: "home" },
       { name: "Members", icon: Users, path: "members" },
-      { name: "Invitations", icon: Mail, path: "invitations", show: isAtLeast("ORG_ADMIN") },
-      { name: "Learners", icon: GraduationCap, path: "learners", show: isBuyerOrHybrid },
-      { name: "Consultants", icon: UserCog, path: "consultants", show: isProviderOrHybrid },
-      { name: "Plans", icon: Briefcase, path: "plans" },
+      { name: "Invitations", icon: Mail, path: "invitations", show: isAtLeast("MAINTAINER") },
+      // Members filtered by role — MEMBER role carries the "learner"
+      // semantics in Arch 4-Modified. A sponsor-only org gets the
+      // "Members" view; hosts see "Consultants" alongside.
+      { name: "Learners", icon: GraduationCap, path: "members?role=LEARNER", show: canSponsor },
+      { name: "Experts", icon: UserCog, path: "members?role=EXPERT", show: canHost },
+      { name: "Programs", icon: Briefcase, path: "programs", show: canSponsor && isAtLeast("MAINTAINER") },
+      { name: "Catalog", icon: Briefcase, path: "catalog" },
+      // Credits surface only when this org's BillingAccount uses WALLET
+      // funding (the credit-pool mode). Other funding sources don't have
+      // a wallet balance to display.
       {
         name: "Credits",
         icon: Coins,
         path: "credits",
-        show: org.profile.billingMode === "SEAT_PACK" && isAtLeast("ORG_MANAGER"),
+        show: fundingSource === "WALLET" && isAtLeast("MANAGER"),
       },
+      // Billing surfaces whenever the org can sponsor. MANAGER-level
+      // visibility keeps support staff out of invoice history.
       {
         name: "Billing",
         icon: CreditCard,
         path: "billing",
-        // BUYER/HYBRID only — PROVIDER orgs don't have a billing mode
-        show: isBuyerOrHybrid && isAtLeast("ORG_MANAGER"),
+        show: canSponsor && isAtLeast("MANAGER"),
       },
       {
         name: "Payouts",
         icon: Wallet,
         path: "payouts",
-        show: isProviderOrHybrid,
+        show: canHost && isAtLeast("MANAGER"),
       },
-      { name: "Analytics", icon: BarChart3, path: "analytics", show: isAtLeast("ORG_MANAGER") },
-      { name: "Settings", icon: Settings, path: "settings", show: isAtLeast("ORG_ADMIN") },
+      { name: "Analytics", icon: BarChart3, path: "analytics", show: isAtLeast("MANAGER") },
+      { name: "Settings", icon: Settings, path: "settings", show: isAtLeast("MAINTAINER") },
     ];
 
     return items
@@ -355,8 +380,9 @@ export default function OrgLayout({
           <OrgContextBar
             orgName={org.organization.name}
             orgLogo={org.organization.logo}
-            kind={org.profile.kind}
-            billingMode={org.profile.billingMode}
+            canSponsor={org.organization.canSponsor}
+            canHost={org.organization.canHost}
+            fundingSource={org.organization.fundingSource}
             breadcrumbs={breadcrumbs}
             personalHref={personalHref}
           />

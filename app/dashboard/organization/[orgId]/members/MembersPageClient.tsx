@@ -58,10 +58,10 @@ interface MemberRow {
 }
 
 const SELECTABLE_ROLES = [
-  { value: "ORG_OWNER", label: "Owner" },
-  { value: "ORG_ADMIN", label: "Admin" },
-  { value: "ORG_MANAGER", label: "Manager" },
-  { value: "ORG_LEARNER", label: "Learner" },
+  { value: "OWNER", label: "Owner" },
+  { value: "MAINTAINER", label: "Admin" },
+  { value: "MANAGER", label: "Manager" },
+  { value: "LEARNER", label: "Learner" },
 ];
 
 async function fetchMembers(orgId: string): Promise<{ members: MemberRow[] }> {
@@ -124,7 +124,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
 
   const [showInvite, setShowInvite] = useState(false);
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState("ORG_LEARNER");
+  const [role, setRole] = useState("LEARNER");
   const [error, setError] = useState<string | null>(null);
 
   const addMutation = useMutation({
@@ -133,7 +133,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
       queryClient.invalidateQueries({ queryKey: ["org-members", orgId] });
       setShowInvite(false);
       setEmail("");
-      setRole("ORG_LEARNER");
+      setRole("LEARNER");
       setError(null);
     },
     onError: (err: Error) => setError(err.message),
@@ -178,7 +178,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
         title="Members"
         subtitle="Everyone with a seat in this organization"
         actions={
-          isAtLeast("ORG_ADMIN") && (
+          isAtLeast("MAINTAINER") && (
             <Button size="sm" onClick={() => setShowInvite(true)}>
               <UserPlus className="h-4 w-4 mr-1" /> Add member
             </Button>
@@ -204,7 +204,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
                     <TableHead>Member</TableHead>
                     <TableHead>Role</TableHead>
                     <TableHead>Status</TableHead>
-                    {isAtLeast("ORG_ADMIN") && (
+                    {isAtLeast("MAINTAINER") && (
                       <TableHead className="w-24">Actions</TableHead>
                     )}
                   </TableRow>
@@ -234,7 +234,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
                           {m.status}
                         </Badge>
                       </TableCell>
-                      {isAtLeast("ORG_ADMIN") && (
+                      {isAtLeast("MAINTAINER") && (
                         <TableCell>
                           <div className="flex items-center gap-1">
                             <Button
@@ -339,12 +339,12 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
             <DialogTitle>Edit member</DialogTitle>
             <DialogDescription>
               {editMember?.user.name ?? editMember?.user.email}
-              {editMember?.role === "ORG_LEARNER" && editRole !== "ORG_LEARNER" && (
+              {editMember?.role === "LEARNER" && editRole !== "LEARNER" && (
                 <span className="block mt-1 text-amber-600 text-xs">
                   Changing from Learner will release their seat.
                 </span>
               )}
-              {editMember?.role !== "ORG_LEARNER" && editRole === "ORG_LEARNER" && (
+              {editMember?.role !== "LEARNER" && editRole === "LEARNER" && (
                 <span className="block mt-1 text-amber-600 text-xs">
                   Changing to Learner will consume a seat.
                 </span>

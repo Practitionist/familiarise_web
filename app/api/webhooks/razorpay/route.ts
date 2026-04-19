@@ -14,11 +14,46 @@ import {
   isDbHealthy,
 } from "../utils";
 import {
-  razorpayBaseEventSchema,
+  razorpayWebhookEnvelopeSchema,
   razorpayPaymentCapturedEventSchema,
   razorpayPaymentFailedEventSchema,
   razorpayOrderPaidEventSchema,
+  type RazorpayWebhookEnvelope,
 } from "../../../../schemas/webhooks/razorpay";
+import { z } from "zod";
+
+// Strict inner-entity schemas used to narrow optional envelope fields at
+// the point of consumption (one per event family we actually process).
+const refundEntitySchema = z.object({
+  id: z.string(),
+  payment_id: z.string(),
+  amount: z.number(),
+  currency: z.string().optional(),
+  status: z.string(),
+});
+
+const disputeEntitySchema = z.object({
+  id: z.string(),
+  payment_id: z.string(),
+  amount: z.number(),
+  currency: z.string().optional(),
+  reason_code: z.string().optional(),
+  reason_description: z.string().optional(),
+  status: z.string(),
+  respond_by: z.number().nullable().optional(),
+  deduct_at_onset: z.boolean().optional(),
+});
+
+const disputeUpdateEntitySchema = z.object({
+  id: z.string(),
+  status: z.string(),
+});
+
+const payoutEntitySchema = z.object({
+  id: z.string(),
+  status: z.string(),
+  failure_reason: z.string().nullable().optional(),
+});
 import { razorpayClient } from "@/lib/payments/core/razorpay";
 
 export async function POST(req: NextRequest) {
@@ -110,14 +145,13 @@ export async function POST(req: NextRequest) {
   // then return 200 immediately and process the event asynchronously via
   // Next.js `after()` to stay within Razorpay's 5-second webhook timeout.
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let event: any;
+  let event: RazorpayWebhookEnvelope;
   let eventType: string;
-  let eventId: string;
 
   try {
-    event = JSON.parse(body);
-    ({ event: eventType } = razorpayBaseEventSchema.parse(event));
+    const rawJson: unknown = JSON.parse(body);
+    event = razorpayWebhookEnvelopeSchema.parse(rawJson);
+    eventType = event.event;
   } catch (parseError) {
     console.error("Razorpay webhook parse error:", parseError);
     return NextResponse.json(
@@ -136,7 +170,7 @@ export async function POST(req: NextRequest) {
     event.payload?.payout?.entity?.id ||
     event.account_id ||
     `noid_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  eventId = `${eventType}:${entityId}`;
+  const eventId = `${eventType}:${entityId}`;
 
   // Idempotency check (synchronous — must complete before returning 200)
   const { isNew } = await logWebhookEvent(
@@ -164,9 +198,8 @@ export async function POST(req: NextRequest) {
  * Process a webhook event asynchronously (called via next/server `after()`).
  * Errors here are logged and recorded on the webhook event record for retry.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function processWebhookEvent(
-  event: any,
+  event: RazorpayWebhookEnvelope,
   eventType: string,
   eventId: string,
 ): Promise<void> {
@@ -180,8 +213,7 @@ async function processWebhookEvent(
     switch (eventType) {
       case "payment.captured": {
         const capturedEvent = razorpayPaymentCapturedEventSchema.parse(event);
-        const capturedNotes =
-          (capturedEvent.payload.payment.entity.notes as Record<string, string>) || {};
+        const capturedNotes = capturedEvent.payload.payment.entity.notes ?? {};
         if (
           capturedNotes.type === "credit_purchase" ||
           capturedNotes.type === "invoice_payment"
@@ -201,8 +233,7 @@ async function processWebhookEvent(
 
       case "order.paid": {
         const paidEvent = razorpayOrderPaidEventSchema.parse(event);
-        const paidNotes =
-          (paidEvent.payload.order.entity.notes as Record<string, string>) || {};
+        const paidNotes = paidEvent.payload.order.entity.notes ?? {};
         if (
           paidNotes.type === "credit_purchase" ||
           paidNotes.type === "invoice_payment"
@@ -230,7 +261,9 @@ async function processWebhookEvent(
       // paymentIntent. Resolve payment_id → order_id via Razorpay API first.
       case "refund.created":
       case "refund.processed": {
-        const refundEvent = event.payload.refund.entity;
+        const refundEvent = refundEntitySchema.parse(
+          event.payload?.refund?.entity,
+        );
         let paymentIntentId = refundEvent.payment_id;
 
         if (razorpayClient) {
@@ -261,7 +294,9 @@ async function processWebhookEvent(
       }
 
       case "refund.failed": {
-        const failedRefundEvent = event.payload.refund.entity;
+        const failedRefundEvent = refundEntitySchema.parse(
+          event.payload?.refund?.entity,
+        );
         let failedPaymentIntentId = failedRefundEvent.payment_id;
 
         if (razorpayClient) {
@@ -301,16 +336,19 @@ async function processWebhookEvent(
 
       // Dispute events
       case "payment.dispute.created": {
-        const disputeCreatedEvent = event.payload.dispute.entity;
+        const disputeCreatedEvent = disputeEntitySchema.parse(
+          event.payload?.dispute?.entity,
+        );
         await handleDisputeCreated(
           disputeCreatedEvent.id,
           disputeCreatedEvent.payment_id,
           disputeCreatedEvent.amount,
           disputeCreatedEvent.currency || "INR",
           disputeCreatedEvent.reason_description ||
-            disputeCreatedEvent.reason_code,
+            disputeCreatedEvent.reason_code ||
+            "unknown",
           disputeCreatedEvent.status,
-          disputeCreatedEvent.respond_by || null,
+          disputeCreatedEvent.respond_by ?? null,
           disputeCreatedEvent.deduct_at_onset === false,
           "RAZORPAY",
         );
@@ -318,19 +356,25 @@ async function processWebhookEvent(
       }
 
       case "payment.dispute.won": {
-        const disputeWonEvent = event.payload.dispute.entity;
+        const disputeWonEvent = disputeUpdateEntitySchema.parse(
+          event.payload?.dispute?.entity,
+        );
         await handleDisputeUpdated(disputeWonEvent.id, "won", null);
         break;
       }
 
       case "payment.dispute.lost": {
-        const disputeLostEvent = event.payload.dispute.entity;
+        const disputeLostEvent = disputeUpdateEntitySchema.parse(
+          event.payload?.dispute?.entity,
+        );
         await handleDisputeUpdated(disputeLostEvent.id, "lost", null);
         break;
       }
 
       case "payment.dispute.closed": {
-        const disputeClosedEvent = event.payload.dispute.entity;
+        const disputeClosedEvent = disputeUpdateEntitySchema.parse(
+          event.payload?.dispute?.entity,
+        );
         await handleDisputeUpdated(
           disputeClosedEvent.id,
           disputeClosedEvent.status,
@@ -346,11 +390,13 @@ async function processWebhookEvent(
       case "payout.queued":
       case "payout.pending":
       case "payout.cancelled": {
-        const payoutEvent = event.payload.payout.entity;
+        const payoutEvent = payoutEntitySchema.parse(
+          event.payload?.payout?.entity,
+        );
         await handleRazorpayPayoutWebhook(eventType, {
           id: payoutEvent.id,
           status: payoutEvent.status,
-          failure_reason: payoutEvent.failure_reason,
+          failure_reason: payoutEvent.failure_reason ?? undefined,
         });
         break;
       }

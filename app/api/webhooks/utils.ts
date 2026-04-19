@@ -17,7 +17,6 @@ export {
   handlePaymentSuccess,
   handlePaymentFailure,
 } from "@/lib/payments/webhooks/handlers";
-import { purchaseCredits } from "@/lib/payments/operations/org-credits";
 
 /**
  * Handle org-specific payment success (credit_purchase or invoice_payment).
@@ -77,6 +76,7 @@ export async function handleOrgPaymentSuccess(
           data: {
             organizationId: orgProfileId,
             actorMembershipId: null,
+            category: "INVOICE",
             action: "INVOICE_PAID",
             description: `Invoice ${invoiceId} paid via webhook`,
             details: { invoiceId, providerPaymentId: razorpayPaymentId ?? null },

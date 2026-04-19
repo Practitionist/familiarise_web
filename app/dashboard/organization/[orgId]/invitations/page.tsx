@@ -54,10 +54,10 @@ interface Invitation {
 }
 
 const ROLE_OPTIONS = [
-  { value: "ORG_LEARNER", label: "Learner" },
-  { value: "ORG_MANAGER", label: "Manager" },
-  { value: "ORG_ADMIN", label: "Admin" },
-  { value: "ORG_OWNER", label: "Owner" },
+  { value: "LEARNER", label: "Learner" },
+  { value: "MANAGER", label: "Manager" },
+  { value: "MAINTAINER", label: "Admin" },
+  { value: "OWNER", label: "Owner" },
 ];
 
 async function fetchInvitations(
@@ -99,7 +99,7 @@ export default function OrgInvitationsPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = use(params);
-  const { allowed } = useRequireOrgRole(orgId, "ORG_ADMIN");
+  const { allowed } = useRequireOrgRole(orgId, "MAINTAINER");
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
@@ -109,7 +109,7 @@ export default function OrgInvitationsPage({
 
   const [showCreate, setShowCreate] = useState(false);
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState("ORG_LEARNER");
+  const [role, setRole] = useState("LEARNER");
   const [error, setError] = useState<string | null>(null);
 
   const createMutation = useMutation({

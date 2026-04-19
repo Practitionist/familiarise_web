@@ -82,7 +82,7 @@ export default function OrgConsultantsPage({
   const pending = useQuery({
     queryKey: ["org-consultants", orgId, "PENDING"],
     queryFn: () => fetchConsultants(orgId, "PENDING"),
-    enabled: isAtLeast("ORG_ADMIN"),
+    enabled: isAtLeast("MAINTAINER"),
   });
 
   const approvalAction = useMutation({
@@ -140,7 +140,7 @@ export default function OrgConsultantsPage({
         ) : (
           <>
             {/* Pending applications (ORG_ADMIN+) */}
-            {isAtLeast("ORG_ADMIN") && pendingApps.length > 0 && (
+            {isAtLeast("MAINTAINER") && pendingApps.length > 0 && (
               <Card className="mb-6 border-amber-200">
                 <CardHeader>
                   <CardTitle className="text-base">
@@ -281,7 +281,8 @@ export default function OrgConsultantsPage({
                             >
                               {c.earningsRecipient === "ORGANIZATION"
                                 ? "Internal"
-                                : c.customConsultantPayoutRate != null
+                                : c.customConsultantPayoutRate !== null &&
+                                    c.customConsultantPayoutRate !== undefined
                                   ? `${(c.customConsultantPayoutRate * 100).toFixed(0)}%`
                                   : "Default"}
                             </Badge>

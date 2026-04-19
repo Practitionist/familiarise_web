@@ -45,7 +45,7 @@ export default function OrgAnalyticsPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = use(params);
-  const { allowed } = useRequireOrgRole(orgId, "ORG_MANAGER");
+  const { allowed } = useRequireOrgRole(orgId, "MANAGER");
   const { data, isLoading } = useQuery({
     queryKey: ["org-analytics", orgId],
     queryFn: () => fetchAnalytics(orgId),
@@ -98,7 +98,8 @@ export default function OrgAnalyticsPage({
             value={data?.bookings.monthToDate ?? 0}
             icon={Calendar}
             trend={
-              data?.bookings.deltaPct != null
+              data?.bookings.deltaPct !== null &&
+              data?.bookings.deltaPct !== undefined
                 ? {
                     value: Math.round(data.bookings.deltaPct),
                     isPositive: data.bookings.deltaPct >= 0,

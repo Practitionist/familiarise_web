@@ -165,7 +165,7 @@ export default function OrgPayoutsPage({
             </DashboardGrid>
 
             {/* Create payout button */}
-            {isAtLeast("ORG_OWNER") && (
+            {isAtLeast("OWNER") && (
               <div className="mt-4 flex items-center gap-3">
                 <Button
                   onClick={() => createBatch.mutate()}

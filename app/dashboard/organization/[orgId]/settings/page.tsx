@@ -77,7 +77,7 @@ export default function OrgSettingsPage({
 }) {
   const { orgId } = use(params);
   const { isAtLeast } = useOrgRole(orgId);
-  const { allowed } = useRequireOrgRole(orgId, "ORG_ADMIN");
+  const { allowed } = useRequireOrgRole(orgId, "MAINTAINER");
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
@@ -90,7 +90,7 @@ export default function OrgSettingsPage({
   const [description, setDescription] = useState("");
   const [industry, setIndustry] = useState("");
   const [website, setWebsite] = useState("");
-  const [paymentTermsDays, setPaymentTermsDays] = useState("30");
+  const [paymentTermsDays, setPaymentTermsDays] = useState("60");
   const [seatsTotal, setSeatsTotal] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -110,7 +110,9 @@ export default function OrgSettingsPage({
     setWebsite(data.profile.website ?? "");
     setPaymentTermsDays(String(data.profile.paymentTermsDays));
     setSeatsTotal(
-      data.profile.seatsTotal != null ? String(data.profile.seatsTotal) : "",
+      data.profile.seatsTotal !== null && data.profile.seatsTotal !== undefined
+        ? String(data.profile.seatsTotal)
+        : "",
     );
     // Seed logo preview from existing org logo
     if (data.organization?.logo) setLogoPreview(data.organization.logo);
@@ -190,7 +192,7 @@ export default function OrgSettingsPage({
         title="Settings"
         subtitle="Organization profile, billing email, and limits"
         actions={
-          isAtLeast("ORG_OWNER") && (
+          isAtLeast("OWNER") && (
             <Link href={`/dashboard/organization/${orgId}/settings/sso`}>
               <Button size="sm" variant="outline">
                 <Shield className="h-4 w-4 mr-1" /> SSO settings
@@ -201,7 +203,7 @@ export default function OrgSettingsPage({
       />
       <DashboardContent>
         {/* Logo upload */}
-        {isAtLeast("ORG_ADMIN") && (
+        {isAtLeast("MAINTAINER") && (
           <Card className="mb-6">
             <CardHeader>
               <CardTitle>Organization logo</CardTitle>
@@ -289,7 +291,7 @@ export default function OrgSettingsPage({
                     id="name"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    disabled={!isAtLeast("ORG_ADMIN")}
+                    disabled={!isAtLeast("MAINTAINER")}
                   />
                 </div>
                 <div className="space-y-2">
@@ -299,7 +301,7 @@ export default function OrgSettingsPage({
                     type="email"
                     value={billingEmail}
                     onChange={(e) => setBillingEmail(e.target.value)}
-                    disabled={!isAtLeast("ORG_ADMIN")}
+                    disabled={!isAtLeast("MAINTAINER")}
                   />
                 </div>
               </div>
@@ -311,7 +313,7 @@ export default function OrgSettingsPage({
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="Short description of the organization"
-                  disabled={!isAtLeast("ORG_ADMIN")}
+                  disabled={!isAtLeast("MAINTAINER")}
                 />
               </div>
 
@@ -323,7 +325,7 @@ export default function OrgSettingsPage({
                     value={industry}
                     onChange={(e) => setIndustry(e.target.value)}
                     placeholder="e.g. Education, Software"
-                    disabled={!isAtLeast("ORG_ADMIN")}
+                    disabled={!isAtLeast("MAINTAINER")}
                   />
                 </div>
                 <div className="space-y-2">
@@ -334,7 +336,7 @@ export default function OrgSettingsPage({
                     value={website}
                     onChange={(e) => setWebsite(e.target.value)}
                     placeholder="https://example.com"
-                    disabled={!isAtLeast("ORG_ADMIN")}
+                    disabled={!isAtLeast("MAINTAINER")}
                   />
                 </div>
               </div>
@@ -349,7 +351,7 @@ export default function OrgSettingsPage({
                     max="120"
                     value={paymentTermsDays}
                     onChange={(e) => setPaymentTermsDays(e.target.value)}
-                    disabled={!isAtLeast("ORG_ADMIN")}
+                    disabled={!isAtLeast("MAINTAINER")}
                   />
                 </div>
                 <div className="space-y-2">
@@ -361,7 +363,7 @@ export default function OrgSettingsPage({
                     value={seatsTotal}
                     onChange={(e) => setSeatsTotal(e.target.value)}
                     placeholder="Leave blank for unlimited"
-                    disabled={!isAtLeast("ORG_ADMIN")}
+                    disabled={!isAtLeast("MAINTAINER")}
                   />
                 </div>
               </div>
@@ -371,7 +373,7 @@ export default function OrgSettingsPage({
                 <p className="text-sm text-emerald-600">Settings saved.</p>
               )}
 
-              {isAtLeast("ORG_ADMIN") && (
+              {isAtLeast("MAINTAINER") && (
                 <div>
                   <Button type="submit" disabled={mutation.isPending}>
                     {mutation.isPending ? "Saving…" : "Save changes"}

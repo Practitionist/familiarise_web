@@ -359,13 +359,13 @@ export function DashboardSidebar({
               </li>
             ))}
           </ul>
-          <a
+          <Link
             href="/dashboard/organization/create"
             className="flex items-center gap-2 rounded-lg px-2 py-2 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
           >
             <PlusCircle className="w-4 h-4" />
             Create organization
-          </a>
+          </Link>
         </div>
       )}
     </div>

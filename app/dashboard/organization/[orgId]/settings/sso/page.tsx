@@ -164,9 +164,9 @@ async function deleteProvider(orgId: string, providerId: string) {
 }
 
 const ROLE_OPTIONS = [
-  { value: "ORG_LEARNER", label: "Learner" },
-  { value: "ORG_MANAGER", label: "Manager" },
-  { value: "ORG_ADMIN", label: "Admin" },
+  { value: "MEMBER", label: "Learner" },
+  { value: "MANAGER", label: "Manager" },
+  { value: "ADMIN", label: "Admin" },
 ];
 
 export default function OrgSsoPage({
@@ -175,7 +175,7 @@ export default function OrgSsoPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = use(params);
-  const { allowed } = useRequireOrgRole(orgId, "ORG_OWNER");
+  const { allowed } = useRequireOrgRole(orgId, "OWNER");
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ["org-sso", orgId],
@@ -184,7 +184,7 @@ export default function OrgSsoPage({
 
   const [domains, setDomains] = useState("");
   const [enforce, setEnforce] = useState(false);
-  const [defaultRole, setDefaultRole] = useState("ORG_LEARNER");
+  const [defaultRole, setDefaultRole] = useState("MEMBER");
 
   useEffect(() => {
     if (!data) return;

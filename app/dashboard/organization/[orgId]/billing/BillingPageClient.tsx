@@ -95,7 +95,7 @@ async function payInvoice(orgId: string, invoiceId: string) {
 
 export function BillingPageClient({ orgId }: { orgId: string }) {
   const { isAtLeast } = useOrgRole(orgId);
-  const { allowed } = useRequireOrgRole(orgId, "ORG_MANAGER");
+  const { allowed } = useRequireOrgRole(orgId, "MANAGER");
   const queryClient = useQueryClient();
 
   const summary = useQuery({
@@ -203,12 +203,12 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
         subtitle="Invoices, charges, and outstanding balance"
         actions={
           <div className="flex gap-2">
-            {isAtLeast("ORG_OWNER") && (
+            {isAtLeast("OWNER") && (
               <Button size="sm" variant="outline" onClick={() => setShowComposer(true)}>
                 <Plus className="h-4 w-4 mr-1" /> Create invoice
               </Button>
             )}
-            {isAtLeast("ORG_OWNER") &&
+            {isAtLeast("OWNER") &&
               summary.data?.billingMode === "INVOICED_MONTHLY" && (
               <Button
                 size="sm"
@@ -263,7 +263,7 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
             )}
             <StatCard
               title="Payment terms"
-              value={`NET-${summary.data?.paymentTermsDays ?? 30}`}
+              value={`NET-${summary.data?.paymentTermsDays ?? 60}`}
             />
             {summary.data?.billingMode && (
               <StatCard
