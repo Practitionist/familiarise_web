@@ -82,6 +82,9 @@ Organization                       BillingAccount (at most one per org)
 | 20 | `20-payment-legs.md` | `PaymentLeg` model and stackable funding. |
 | 21 | `21-api-reference.md` | Exhaustive route table with roles and audit actions. |
 | 22 | `22-route-migration-table.md` | Old-route → new-route map. |
+| 23 | `23-runbooks.md` | Incident-response procedures + scheduled operational tasks. |
+| 24 | `24-monitoring.md` | Log event taxonomy, alert thresholds, dashboards. |
+| 25 | `25-idempotency-keys.md` | Every side-effect endpoint's idempotency key + anti-patterns. |
 | — | `org-billing-playbook-sales.md` | Non-technical pitch framed around capability pairs + funding. |
 | — | `org-billing-playbook-technical.md` | Technical playbook for every capability × funding combo. |
 | — | `sso-testing-guide.md` | Mock IdP recipes for local + CI SSO tests. |

@@ -89,6 +89,45 @@ single Prisma transaction that:
 If `canSponsor || canHost` is false the request is rejected at the Zod
 boundary.
 
+### Wizard flow: commit-on-review
+
+The UI wizard at `components/organization/create-wizard/` **defers the
+POST to the final Review step's "Launch" action**. Earlier steps
+accumulate state in local React state only — dropping out before
+Review leaves zero rows in the database. This avoids orphan
+`Organization` records from users who bail mid-setup.
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant W as Wizard (client state)
+    participant API as POST /api/organizations
+    participant R as ReviewStep
+
+    U->>W: Fill Org Info (name, capability, email)
+    Note over W: state only — no API call
+    U->>W: Fill Billing / Revenue Rates
+    Note over W: state only — no API call
+    U->>W: Fill Branding / Invites
+    Note over W: state only — no API call
+    U->>R: Review + edit pass
+    U->>R: Launch Organization
+    R->>API: POST / (create + BillingAccount + OWNER)
+    API-->>R: { organization: {...} }
+    opt Branding / rate-card fields
+        R->>API: PATCH /[orgId] (colors, bps)
+    end
+    opt Invitees staged
+        R->>API: POST /[orgId]/invitations (parallel)
+    end
+    R->>U: Redirect /dashboard/organization/[orgId]/home
+```
+
+If `Launch` fails after the POST succeeded but before the PATCH or
+invites land, the wizard keeps `initialData.orgId` in state so the
+retry hits the same org row — the POST path is short-circuited and the
+retry is fully idempotent.
+
 ## `Contract` lifecycle
 
 ```prisma

@@ -98,9 +98,47 @@ Enforced by a nightly cron stub (see `19-harness-verdict.md`):
   `SettlementLedgerEntry(kind=INVOICE_PAID)` amount matches
   `OrganizationInvoice.totalPaise`.
 
-A `jobs/billing/reconcile-ledgers.ts` cron (not shipped in v1) will
-assert these identities nightly and surface drift to an admin
-dashboard.
+The `jobs/reconcile/reconcile-ledgers.ts` cron (scheduled nightly via
+`.github/workflows/reconcile-ledgers.yml`) asserts these identities
+and persists findings to the `LedgerReconciliationReport` model. An
+admin API at `POST /api/admin/reconcile-ledgers` runs the same
+auditor on-demand, scoped to a single org if a body is supplied. See
+`25-idempotency-keys.md` for the idempotency posture.
+
+### Money-flow overview
+
+```mermaid
+flowchart LR
+    subgraph External
+        RP[Razorpay / Stripe]
+        PB[Payout provider]
+    end
+    subgraph Platform
+        BA[BillingAccount<br/>wallet balance]
+        WE[WalletEntry]
+        FL[FundingLedgerEntry]
+        SL[SettlementLedgerEntry]
+        OI[OrganizationInvoice]
+        OP[OrganizationPayout]
+    end
+    subgraph User-visible
+        UL[UsageLedgerEntry]
+    end
+
+    RP -->|payment.captured<br/>webhook| BA
+    BA -->|topup/refund delta| WE
+    WE -->|1:1| FL
+    RP -->|invoice paid| OI
+    OI -->|INVOICE_ISSUED / PAID| SL
+    BA -->|booking debit| WE
+    WE -->|BOOKING_DEBIT| UL
+    OP -->|PAYOUT_SENT| SL
+    SL -->|money leaves| PB
+```
+
+Every arrow **must** have a webhook or cron source of truth — no
+manual row inserts in production. See `23-runbooks.md` if an arrow
+drifts and the reconciler flags it.
 
 ## `FundingReason` vs `WalletReason`
 
