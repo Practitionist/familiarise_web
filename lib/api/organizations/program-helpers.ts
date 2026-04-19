@@ -172,13 +172,21 @@ export async function recordBookingUtilization(
  */
 export async function reverseBookingUtilization(
   tx: Prisma.TransactionClient,
-  params: { paymentId: string },
+  params: { paymentId: string; reason?: string },
 ): Promise<{ reversed: boolean }> {
+  // Restore sessions via a reversal LEDGER ENTRY, not by deleting the
+  // original BookingUtilization row. Deleting would destroy the history
+  // needed by analytics ("who used seats in Q1?"), audits ("was this
+  // member assigned on 2026-04-10?"), and partial-refund support (we may
+  // need to reverse more than once). Instead we stamp `reversedAt` on the
+  // row and append an opposing UsageLedgerEntry; the row stays queryable
+  // forever, and the ledger sum still nets to the correct usage.
   const util = await tx.bookingUtilization.findUnique({
     where: { paymentId: params.paymentId },
     include: { programAssignment: true },
   });
   if (!util) return { reversed: false };
+  if (util.reversedAt) return { reversed: false }; // idempotent
 
   await tx.programAssignment.update({
     where: { id: util.programAssignmentId },
@@ -196,10 +204,16 @@ export async function reverseBookingUtilization(
       sessionsConsumed: -util.sessionsConsumed,
       priceAtBookingPaise: -util.priceAtBookingPaise,
       wasOverage: util.wasOverage,
-      notes: "Reversal on refund",
+      notes: params.reason ?? "Reversal on refund",
     },
   });
 
-  await tx.bookingUtilization.delete({ where: { paymentId: params.paymentId } });
+  await tx.bookingUtilization.update({
+    where: { paymentId: params.paymentId },
+    data: {
+      reversedAt: new Date(),
+      reversalReason: params.reason ?? "Refund",
+    },
+  });
   return { reversed: true };
 }

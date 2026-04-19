@@ -43,6 +43,10 @@ export interface EarningsSummary {
 /** Resolved 3-way split for a canHost=true org consultant */
 export interface OrgEarningsSplit {
   organizationId: string;
+  rateCardIdApplied: string | null;
+  platformBps: number;
+  orgBps: number;
+  consultantBps: number;
   platformFee: number; // in paise
   orgShare: number; // in paise (org retains this)
   consultantShare: number; // in paise (goes to consultant, or 0 if internal)
@@ -96,25 +100,29 @@ async function resolveOrgSplit(
   tx: PrismaTransaction,
   consultantProfileId: string,
   grossAmount: number,
+  /** Point in time at which the rate card is resolved. Default = now(),
+   *  but callers processing a historical payment MUST pass
+   *  `payment.createdAt` — otherwise a retroactive rate bump on the org
+   *  would silently rewrite what the consultant was owed for bookings
+   *  made before the bump. */
+  at: Date = new Date(),
 ): Promise<OrgEarningsSplit | null> {
   if (!ENABLE_PROVIDER_ORGS) return null;
 
-  // Arch 4-Modified: Membership where role=CONSULTANT and the parent org
-  // canHost=true. RateCard resolves via:
-  //   membership.rateCardOverride → ownerOrgId match → ownerContractId match
-  //   → default 10/10/80 basis points.
-  // Deterministic ordering: oldest membership wins (same policy as before).
+  // Arch 4-Modified + harness: Membership where role=CONSULTANT and parent
+  // org canHost=true. Oldest membership wins (multi-org consultants route
+  // deterministically to the same org). Rate card resolved via the
+  // time-scoped resolver at the booking instant.
   const membership = await tx.membership.findFirst({
     where: {
       consultantProfileId,
-      role: "CONSULTANT",
+      role: "EXPERT",
       status: "ACTIVE",
       organization: { canHost: true, status: "ACTIVE" },
     },
     orderBy: { createdAt: "asc" },
     include: {
       organization: { select: { id: true } },
-      rateCardOverride: true,
     },
   });
 
@@ -123,67 +131,55 @@ async function resolveOrgSplit(
   const orgId = membership.organization.id;
   const payoutRecipient = membership.payoutRecipient;
 
-  // Resolve rate card: explicit override → org default card → 10/10/80 default.
-  const DEFAULT_PLATFORM_BPS = 1000; // 10%
-  const DEFAULT_ORG_BPS = 1000; // 10%
-  const DEFAULT_CONSULTANT_BPS = 8000; // 80%
-
-  let platformBps = DEFAULT_PLATFORM_BPS;
-  let orgBps = DEFAULT_ORG_BPS;
-  let consultantBps = DEFAULT_CONSULTANT_BPS;
-
-  if (membership.rateCardOverride) {
-    platformBps = membership.rateCardOverride.platformBps;
-    orgBps = membership.rateCardOverride.orgBps;
-    consultantBps = membership.rateCardOverride.consultantBps;
-  } else {
-    const orgCard = await tx.rateCard.findFirst({
-      where: { ownerOrgId: orgId, planType: null, planId: null },
-      orderBy: { createdAt: "asc" },
-    });
-    if (orgCard) {
-      platformBps = orgCard.platformBps;
-      orgBps = orgCard.orgBps;
-      consultantBps = orgCard.consultantBps;
-    }
-  }
+  const { resolveEffectiveRateCard } = await import("@/lib/api/organizations/rate-card");
+  const resolved = await resolveEffectiveRateCard(tx, {
+    orgId,
+    membershipOverrideId: membership.rateCardOverrideId,
+    at,
+  });
 
   // Integer paise × basis-point math, no float drift.
-  const platformFee = Math.floor((grossAmount * platformBps) / 10_000);
-  const consultantShare = Math.floor((grossAmount * consultantBps) / 10_000);
+  const platformFee = Math.floor((grossAmount * resolved.platformBps) / 10_000);
+  const consultantShare = Math.floor((grossAmount * resolved.consultantBps) / 10_000);
   const orgShare = grossAmount - platformFee - consultantShare;
+
+  const base = {
+    organizationId: orgId,
+    rateCardIdApplied: resolved.rateCardId,
+    platformBps: resolved.platformBps,
+    orgBps: resolved.orgBps,
+    consultantBps: resolved.consultantBps,
+    payoutRecipient,
+  };
 
   if (payoutRecipient === "ORGANIZATION") {
     // Internal/salaried consultant: org absorbs the consultant slice.
     return {
-      organizationId: orgId,
+      ...base,
       platformFee,
       orgShare: grossAmount - platformFee,
       consultantShare: 0,
-      payoutRecipient,
     };
   }
 
   if (orgShare < 0) {
     console.error(
       `[Earnings] Negative orgShare (${orgShare}) for org ${orgId}: ` +
-        `platformBps=${platformBps}, consultantBps=${consultantBps}. Clamping.`,
+        `platformBps=${resolved.platformBps}, consultantBps=${resolved.consultantBps}. Clamping.`,
     );
     return {
-      organizationId: orgId,
+      ...base,
       platformFee,
       orgShare: 0,
       consultantShare: grossAmount - platformFee,
-      payoutRecipient,
     };
   }
 
   return {
-    organizationId: orgId,
+    ...base,
     platformFee,
     orgShare,
     consultantShare,
-    payoutRecipient,
   };
 }
 
@@ -246,11 +242,17 @@ export async function createEarningsFromPayment({
         return existingEarnings.id;
       }
 
-      // Check if this consultant belongs to a PROVIDER/HYBRID org (3-way split)
+      // Check if this consultant belongs to a PROVIDER/HYBRID org (3-way
+      // split). Settlement uses the rate card that was EFFECTIVE AT
+      // PAYMENT-CREATION TIME — hold periods can be days long, so by the
+      // time earnings are settled the live rate may have been bumped.
+      // Passing `payment.createdAt` keeps the split stable across that
+      // window.
       const orgSplit = await resolveOrgSplit(
         tx,
         consultantProfileId,
         grossAmount,
+        payment.createdAt,
       );
 
       // Determine platform fee and consultant pool based on whether org split applies
@@ -359,6 +361,12 @@ export async function createEarningsFromPayment({
             status: EarningStatus.PENDING,
             holdUntil,
             currency: "INR",
+            // Rate-card snapshot: persist the exact split applied so
+            // payout reconciliation reads this row, never the live card.
+            rateCardIdApplied: orgSplit.rateCardIdApplied,
+            platformBpsApplied: orgSplit.platformBps,
+            orgBpsApplied: orgSplit.orgBps,
+            consultantBpsApplied: orgSplit.consultantBps,
           },
         });
 
