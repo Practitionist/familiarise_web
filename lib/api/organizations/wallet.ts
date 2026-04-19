@@ -217,29 +217,45 @@ export async function confirmTopUp(
   },
 ): Promise<{ confirmed: boolean; balanceAfter?: number }> {
   return prisma.$transaction(async (tx) => {
-    const pending = await tx.walletEntry.findUnique({
-      where: { providerOrderId: params.providerOrderId },
-      select: { id: true, billingAccountId: true, deltaPaise: true },
-    });
-    if (!pending) {
-      throw new Error(
-        `No pending WalletEntry for providerOrderId=${params.providerOrderId}`,
-      );
+    // Atomic claim: DELETE the pending placeholder only if it is still
+    // pending (deltaPaise=0). RETURNING hands back the billingAccountId
+    // for the subsequent credit write without a separate SELECT. If two
+    // webhook deliveries race, exactly one DELETE wins; the loser sees
+    // zero rows and falls through to the idempotent "already confirmed"
+    // branch below. We also free the unique `providerOrderId` slot so
+    // walletCredit can claim it for the confirmed row.
+    const claimed = await tx.$queryRaw<Array<{ billingAccountId: string }>>`
+      DELETE FROM "WalletEntry"
+      WHERE "providerOrderId" = ${params.providerOrderId}
+        AND "deltaPaise" = 0
+      RETURNING "billingAccountId"
+    `;
+
+    if (claimed.length === 0) {
+      // Either the placeholder was already claimed by a prior retry (the
+      // confirmed row now holds providerOrderId) or no placeholder ever
+      // existed. Return the confirmed entry's balanceAfter so the caller
+      // can surface the latest state; throw only if neither row exists.
+      const confirmed = await tx.walletEntry.findUnique({
+        where: { providerOrderId: params.providerOrderId },
+        select: { balanceAfter: true },
+      });
+      if (!confirmed) {
+        throw new Error(
+          `No WalletEntry for providerOrderId=${params.providerOrderId}`,
+        );
+      }
+      return { confirmed: false, balanceAfter: confirmed.balanceAfter };
     }
-    if (pending.deltaPaise !== 0) {
-      // Already confirmed; this is a webhook retry.
-      return { confirmed: false };
-    }
+
     const result = await walletCredit(tx, {
-      billingAccountId: pending.billingAccountId,
+      billingAccountId: claimed[0].billingAccountId,
       amountPaise: params.amountPaise,
       reason: "TOPUP",
+      providerOrderId: params.providerOrderId,
       providerPaymentId: params.providerPaymentId,
       notes: `Top-up confirmed via webhook; order=${params.providerOrderId}`,
     });
-    // Delete the placeholder row; the walletCredit call created the
-    // real confirmed row.
-    await tx.walletEntry.delete({ where: { id: pending.id } });
     return { confirmed: true, balanceAfter: result.balanceAfter };
   });
 }

@@ -14,6 +14,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -76,22 +77,14 @@ export async function POST(
   }
   const body = parsed.data;
 
+  // Rely on the `(organizationId, poNumber)` unique index to guarantee no
+  // duplicates under concurrency. A read-before-write pre-check opens a
+  // race window (two simultaneous POSTs can both pass the findFirst and
+  // both reach `create`); the DB catches the second one as P2002 but the
+  // handler needs to translate that to a 409 rather than letting it
+  // surface as a 500.
   try {
     const po = await prisma.$transaction(async (tx) => {
-      // (organizationId, poNumber) is unique per schema; catch the
-      // duplicate early so we return a readable 409 instead of
-      // bubbling up a P2002 as a 500.
-      const existing = await tx.purchaseOrder.findFirst({
-        where: { organizationId: orgId, poNumber: body.poNumber },
-        select: { id: true },
-      });
-      if (existing) {
-        throw Object.assign(
-          new Error(`PO number ${body.poNumber} already exists for this org`),
-          { httpStatus: 409 },
-        );
-      }
-
       const created = await tx.purchaseOrder.create({
         data: {
           organizationId: orgId,
@@ -132,10 +125,14 @@ export async function POST(
 
     return NextResponse.json({ purchaseOrder: po }, { status: 201 });
   } catch (err) {
-    if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      return NextResponse.json({ error: err.message }, { status });
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002"
+    ) {
+      return NextResponse.json(
+        { error: `PO number ${body.poNumber} already exists for this org` },
+        { status: 409 },
+      );
     }
     throw err;
   }

@@ -5,7 +5,7 @@
  * Original impl queried OrganizationProfile; new impl should query
  * Organization with `canHost: true, status: "ACTIVE"`.
  *
- * See docs/enterprise/phase-2-api-rewrite-checklist.md.
+ * See docs/enterprise/22-route-migration-table.md.
  */
 
 export default function ExploreCompaniesPage() {

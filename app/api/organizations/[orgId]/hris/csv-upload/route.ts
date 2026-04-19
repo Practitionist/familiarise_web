@@ -74,77 +74,97 @@ export async function POST(
   const hrisConfigId = config.id;
   const configForRows = config;
 
-  const { processed, job } = await prisma.$transaction(async (tx) => {
-    const startJob = await tx.hrisSyncJob.create({
+  // Chunk upserts across multiple transactions. A single 5,000-row tx
+  // holds row locks for the full duration and easily exceeds the
+  // statement-timeout envelope on small Postgres instances; splitting
+  // into 500-row tx windows keeps each commit short and lets the sync
+  // job reflect partial progress if a later chunk fails.
+  const CHUNK_SIZE = 500;
+
+  const startJob = await prisma.hrisSyncJob.create({
+    data: { hrisConfigId, startedAt: now, status: "RUNNING" },
+  });
+
+  let processed = 0;
+  try {
+    for (let i = 0; i < body.rows.length; i += CHUNK_SIZE) {
+      const chunk = body.rows.slice(i, i + CHUNK_SIZE);
+      await prisma.$transaction(async (tx) => {
+        for (const row of chunk) {
+          await tx.hrisEmployeeMap.upsert({
+            where: {
+              hrisConfigId_externalEmployeeId: {
+                hrisConfigId,
+                externalEmployeeId: row.externalEmployeeId,
+              },
+            },
+            create: {
+              hrisConfigId,
+              organizationId: orgId,
+              externalEmployeeId: row.externalEmployeeId,
+              externalEmail: row.externalEmail ?? null,
+              externalDepartment: row.externalDepartment ?? null,
+              externalLocation: row.externalLocation ?? null,
+              externalManagerId: row.externalManagerId ?? null,
+              syncedAt: now,
+            },
+            update: {
+              externalEmail: row.externalEmail ?? null,
+              externalDepartment: row.externalDepartment ?? null,
+              externalLocation: row.externalLocation ?? null,
+              externalManagerId: row.externalManagerId ?? null,
+              syncedAt: now,
+            },
+          });
+        }
+      });
+      processed += chunk.length;
+    }
+  } catch (err) {
+    await prisma.hrisSyncJob.update({
+      where: { id: startJob.id },
       data: {
-        hrisConfigId,
-        startedAt: now,
-        status: "RUNNING",
+        completedAt: new Date(),
+        status: "FAILED",
+        recordsProcessed: processed,
+        errorLog: err instanceof Error ? err.message : String(err),
       },
     });
+    return NextResponse.json(
+      { error: "CSV import failed mid-batch", processed },
+      { status: 500 },
+    );
+  }
 
-    let count = 0;
-    for (const row of body.rows) {
-      await tx.hrisEmployeeMap.upsert({
-        where: {
-          hrisConfigId_externalEmployeeId: {
-            hrisConfigId,
-            externalEmployeeId: row.externalEmployeeId,
-          },
-        },
-        create: {
-          hrisConfigId,
-          organizationId: orgId,
-          externalEmployeeId: row.externalEmployeeId,
-          externalEmail: row.externalEmail ?? null,
-          externalDepartment: row.externalDepartment ?? null,
-          externalLocation: row.externalLocation ?? null,
-          externalManagerId: row.externalManagerId ?? null,
-          syncedAt: now,
-        },
-        update: {
-          externalEmail: row.externalEmail ?? null,
-          externalDepartment: row.externalDepartment ?? null,
-          externalLocation: row.externalLocation ?? null,
-          externalManagerId: row.externalManagerId ?? null,
-          syncedAt: now,
-        },
-      });
-      count++;
-    }
-
-    const completedJob = await tx.hrisSyncJob.update({
+  const [completedJob] = await prisma.$transaction([
+    prisma.hrisSyncJob.update({
       where: { id: startJob.id },
       data: {
         completedAt: new Date(),
         status: "COMPLETED",
-        recordsProcessed: count,
+        recordsProcessed: processed,
       },
-    });
-
-    await tx.hrisConfig.update({
+    }),
+    prisma.hrisConfig.update({
       where: { id: hrisConfigId },
       data: { lastSyncedAt: now },
-    });
-
-    await tx.orgAuditLog.create({
+    }),
+    prisma.orgAuditLog.create({
       data: {
         organizationId: orgId,
         actorMembershipId: access.member.id,
         category: "SYSTEM",
         action: AUDIT_ACTIONS.SYSTEM.HRIS_SYNC_COMPLETED,
-        description: `CSV HRIS import: ${count} rows`,
+        description: `CSV HRIS import: ${processed} rows`,
         details: {
           provider: configForRows.provider,
           tenantKey: configForRows.tenantKey,
-          recordsProcessed: count,
-          jobId: completedJob.id,
+          recordsProcessed: processed,
+          jobId: startJob.id,
         },
       },
-    });
+    }),
+  ]);
 
-    return { processed: count, job: completedJob };
-  });
-
-  return NextResponse.json({ processed, job });
+  return NextResponse.json({ processed, job: completedJob });
 }

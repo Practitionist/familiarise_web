@@ -108,38 +108,69 @@ export async function recordBookingUtilization(
     priceAtBookingPaise: number;
   },
 ): Promise<{ wasOverage: boolean }> {
+  // Read the program config once — the cap + behavior values aren't racy
+  // (schema-side config is stable across the transaction). The racy part
+  // is the sessionsUsed increment, which we perform via a conditional
+  // UPDATE so two concurrent bookings can't both pass the cap check.
   const assignment = await tx.programAssignment.findUniqueOrThrow({
     where: { id: params.programAssignmentId },
-    include: {
+    select: {
+      programId: true,
+      membershipId: true,
       program: {
-        include: {
-          licensedSeatConfig: true,
+        select: {
+          licensedSeatConfig: {
+            select: { coveredSessionsPerCycle: true, overageBehavior: true },
+          },
         },
       },
     },
   });
 
-  let wasOverage = false;
   const cap = assignment.program.licensedSeatConfig?.coveredSessionsPerCycle ?? null;
   const behavior = assignment.program.licensedSeatConfig?.overageBehavior ?? "BLOCK";
 
-  if (cap !== null && assignment.sessionsUsed + params.sessionsConsumed > cap) {
-    if (behavior === "BLOCK") {
+  // Atomic conditional increment — mirrors the walletDebit pattern.
+  //   - No cap: unconditional increment.
+  //   - Cap with BLOCK: increment only if (sessionsUsed + n) <= cap;
+  //     returns 0 rows when the cap would be exceeded → throw.
+  //   - Cap with CHARGE_MEMBER / CHARGE_ORG: increment unconditionally,
+  //     flag overage when the post-increment count exceeds the cap.
+  let wasOverage = false;
+
+  if (cap === null) {
+    await tx.$executeRaw`
+      UPDATE "ProgramAssignment"
+      SET "sessionsUsed" = "sessionsUsed" + ${params.sessionsConsumed}
+      WHERE "id" = ${params.programAssignmentId}
+    `;
+  } else if (behavior === "BLOCK") {
+    const updated = await tx.$executeRaw`
+      UPDATE "ProgramAssignment"
+      SET "sessionsUsed" = "sessionsUsed" + ${params.sessionsConsumed}
+      WHERE "id" = ${params.programAssignmentId}
+        AND "sessionsUsed" + ${params.sessionsConsumed} <= ${cap}
+    `;
+    if (updated === 0) {
       throw new ProgramAssignmentLimitError(
         assignment.programId,
         assignment.membershipId,
       );
     }
-    wasOverage = true;
+  } else {
+    // CHARGE_MEMBER / CHARGE_ORG: increment unconditionally, then flag
+    // overage if we crossed the cap. The RETURNING clause avoids a
+    // follow-up SELECT for the updated sessionsUsed value.
+    const rows = await tx.$queryRaw<Array<{ sessionsUsed: number }>>`
+      UPDATE "ProgramAssignment"
+      SET "sessionsUsed" = "sessionsUsed" + ${params.sessionsConsumed},
+          "overageCount" = "overageCount"
+            + CASE WHEN "sessionsUsed" + ${params.sessionsConsumed} > ${cap} THEN 1 ELSE 0 END
+      WHERE "id" = ${params.programAssignmentId}
+      RETURNING "sessionsUsed"
+    `;
+    wasOverage = (rows[0]?.sessionsUsed ?? 0) > cap;
   }
-
-  await tx.programAssignment.update({
-    where: { id: params.programAssignmentId },
-    data: {
-      sessionsUsed: { increment: params.sessionsConsumed },
-      overageCount: wasOverage ? { increment: 1 } : undefined,
-    },
-  });
 
   await tx.bookingUtilization.create({
     data: {

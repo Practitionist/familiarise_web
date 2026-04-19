@@ -67,24 +67,16 @@ export async function GET(
   }
   const q = parsedQuery.data;
 
-  // Scope to this org: fetch member userIds once, then filter consents.
-  // Without this filter an admin could see consent rows for users in
-  // other orgs, which defeats the point of org-scoped dashboards.
-  const memberUserIds = await prisma.membership.findMany({
-    where: { organizationId: orgId },
-    select: { userId: true },
-  });
-  const orgUserIds = memberUserIds.map((m) => m.userId);
-  if (orgUserIds.length === 0) {
-    return NextResponse.json({ data: [] });
-  }
-
+  // Scope to this org via the user → memberships relation so Postgres
+  // does the filter with a JOIN rather than pulling every member userId
+  // into application memory and blasting them back as an `IN (...)` list.
+  // When `q.userId` is set we still constrain via the same relational
+  // filter so non-members return an empty list instead of leaking cross-
+  // org records.
   const consents = await prisma.consentArtifact.findMany({
     where: {
-      userId: q.userId ? q.userId : { in: orgUserIds },
-      ...(q.userId && !orgUserIds.includes(q.userId)
-        ? { id: "__no_match__" } // short-circuit: requested user not in org
-        : {}),
+      ...(q.userId && { userId: q.userId }),
+      user: { memberships: { some: { organizationId: orgId } } },
       ...(q.active === "true" && { withdrawnAt: null }),
       ...(q.active === "false" && { withdrawnAt: { not: null } }),
     },

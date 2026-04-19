@@ -13,7 +13,7 @@
  * wrappers don't throw — the client hooks will re-fetch on mount.
  *
  * Live rewrite checklist lives at:
- *   docs/enterprise/phase-2-api-rewrite-checklist.md
+ *   docs/enterprise/22-route-migration-table.md
  */
 
 export interface OrgAnalytics {

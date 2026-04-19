@@ -6,7 +6,7 @@
  * uses Organization / Membership / BillingAccount / WalletEntry / Program.
  *
  * This route is currently a 501 placeholder. See:
- *   docs/enterprise/phase-2-api-rewrite-checklist.md
+ *   docs/enterprise/22-route-migration-table.md
  * for the per-route migration plan.
  *
  * File: app/api/cleanup/mark-overdue-invoices/route.ts

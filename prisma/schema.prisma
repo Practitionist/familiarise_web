@@ -67,6 +67,7 @@ model User {
   members         Member[] // BetterAuth membership rows
   memberships     Membership[] // Typed enterprise memberships (Arch 4-Modified)
   invitationsSent Invitation[] @relation("InvitationsSent")
+  consentArtifacts ConsentArtifact[]
 
   // Staff Dashboard Relations
   reportsSubmitted  ModerationReport[] @relation("ReportsSubmitted")
@@ -1456,6 +1457,10 @@ enum SettlementKind {
   PAYMENT_RECEIVED
   REFUND_ISSUED
   PAYOUT_SENT
+  // Counter-entry written when a PAYOUT_SENT is reversed (admin cancel,
+  // gateway failure reclaim). Carries the signed-positive amount that
+  // nets the original -netPayout entry to zero for the cancelled window.
+  PAYOUT_REVERSED
   CHARGEBACK
   CREDIT_NOTE
 }
@@ -1465,6 +1470,7 @@ enum SettlementKind {
 model ConsentArtifact {
   id                 String    @id @default(uuid())
   userId             String
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   dataFiduciary      String
   purposeCodes       String[]
   grantedAt          DateTime

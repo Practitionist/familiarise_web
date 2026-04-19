@@ -206,7 +206,7 @@ export async function POST(
         dueDate: body.dueDate,
         billingCycleStart: body.billingCycleStart ?? null,
         billingCycleEnd: body.billingCycleEnd ?? null,
-        items: JSON.parse(JSON.stringify(body.items)),
+        items: body.items,
       },
     });
 

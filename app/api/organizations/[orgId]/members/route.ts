@@ -161,20 +161,6 @@ export async function POST(
   }
   const { userId, role, departmentLabel } = parsed.data;
 
-  // Idempotency: reject if this user already has a Membership in the
-  // org. A duplicate POST should not silently overwrite the role —
-  // callers that want to change a role use PATCH /[memberId].
-  const existing = await prisma.membership.findUnique({
-    where: { userId_organizationId: { userId, organizationId: orgId } },
-    select: { id: true },
-  });
-  if (existing) {
-    return NextResponse.json(
-      { error: "User is already a member of this organization" },
-      { status: 409 },
-    );
-  }
-
   // Consultee/consultant profile links are optional — we populate them
   // if the user has the matching profile, so downstream code that joins
   // via `membership.consulteeProfile` doesn't have to null-check first.
@@ -186,7 +172,56 @@ export async function POST(
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
+  // Idempotency: a duplicate POST for a currently-active (or pending/
+  // suspended) member is a conflict. A REMOVED row is *not* a conflict —
+  // that path flips the existing row back to ACTIVE instead of 409'ing
+  // (so re-adding someone who was off-boarded doesn't require cleaning up
+  // the tombstone first).
+  const existing = await prisma.membership.findUnique({
+    where: { userId_organizationId: { userId, organizationId: orgId } },
+    select: { id: true, status: true },
+  });
+
+  if (existing && existing.status !== "REMOVED") {
+    return NextResponse.json(
+      { error: "User is already a member of this organization" },
+      { status: 409 },
+    );
+  }
+
+  const consulteeProfileId =
+    role === "LEARNER" ? user.consulteeProfileId ?? null : null;
+  const consultantProfileId =
+    role === "EXPERT" ? user.consultantProfileId ?? null : null;
+
   const membership = await prisma.$transaction(async (tx) => {
+    if (existing) {
+      // REMOVED → ACTIVE reactivation. Keep the same membership row so
+      // downstream FKs (ProgramAssignment, audit trail, etc.) stay intact.
+      const reactivated = await tx.membership.update({
+        where: { id: existing.id },
+        data: {
+          role,
+          status: "ACTIVE",
+          departmentLabel: departmentLabel ?? null,
+          consulteeProfileId,
+          consultantProfileId,
+        },
+      });
+      await tx.orgAuditLog.create({
+        data: {
+          organizationId: orgId,
+          actorMembershipId: access.member.id,
+          targetMembershipId: reactivated.id,
+          category: "MEMBER",
+          action: AUDIT_ACTIONS.MEMBER.MEMBER_REACTIVATED,
+          description: `Reactivated ${userId} as ${role}`,
+          details: { role, departmentLabel: departmentLabel ?? null },
+        },
+      });
+      return reactivated;
+    }
+
     const created = await tx.membership.create({
       data: {
         userId,
@@ -194,10 +229,8 @@ export async function POST(
         role,
         status: "ACTIVE",
         departmentLabel: departmentLabel ?? null,
-        consulteeProfileId:
-          role === "LEARNER" ? user.consulteeProfileId ?? null : null,
-        consultantProfileId:
-          role === "EXPERT" ? user.consultantProfileId ?? null : null,
+        consulteeProfileId,
+        consultantProfileId,
       },
     });
     await tx.orgAuditLog.create({
@@ -214,5 +247,8 @@ export async function POST(
     return created;
   });
 
-  return NextResponse.json({ membership }, { status: 201 });
+  return NextResponse.json(
+    { membership },
+    { status: existing ? 200 : 201 },
+  );
 }

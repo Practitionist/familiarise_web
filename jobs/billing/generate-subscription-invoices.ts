@@ -53,10 +53,12 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
     const dueDate = new Date(now);
     dueDate.setDate(dueDate.getDate() + sub.contract.paymentTermsDays);
 
+    // Include the subscription id suffix so an org with two subs due the
+    // same day doesn't collide on the unique invoiceNumber constraint.
     const invoiceNumber = `AUTO-${sub.contract.organization.id.slice(0, 6)}-${now
       .toISOString()
       .slice(0, 10)
-      .replace(/-/g, "")}`;
+      .replace(/-/g, "")}-${sub.id.slice(0, 8)}`;
 
     const invoice = await prisma.organizationInvoice.create({
       data: {
