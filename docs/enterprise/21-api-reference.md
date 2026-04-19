@@ -21,6 +21,8 @@ in parentheses. Constants live in `lib/enterprise/audit-actions.ts`.
 | `/api/organizations/[orgId]` | `GET` | LEARNER | Full org record + counts | — |
 | `/api/organizations/[orgId]` | `PATCH` | OWNER | Branding + policy + capability flips | `SETTINGS_CHANGED` (SETTINGS) |
 | `/api/organizations/[orgId]` | `DELETE` | OWNER | Hard-delete (refused if any refs exist) | — |
+| `/api/organizations/[orgId]/branding/[asset]` | `POST` | OWNER | Upload logo or banner image (multipart `file`; `asset` = `logo` \| `banner`) | `SETTINGS_CHANGED` (SETTINGS) |
+| `/api/organizations/[orgId]/branding/[asset]` | `DELETE` | OWNER | Remove logo or banner image (`asset` = `logo` \| `banner`) | `SETTINGS_CHANGED` (SETTINGS) |
 | `/api/organizations/[orgId]/settings` | `GET` | MANAGER | Thin settings projection | — |
 | `/api/admin/organizations/[orgId]/verify` | `POST` | platform ADMIN | Transition status (VERIFY / SUSPEND / REACTIVATE / DEACTIVATE) | `VERIFIED` / `SUSPENDED` / `REACTIVATED` / `DEACTIVATED` (SYSTEM) |
 
