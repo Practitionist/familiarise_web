@@ -9,7 +9,6 @@ import {
   DocumentsPage,
   IActivity,
   IApproval,
-  IDocument,
 } from "../types";
 
 /**

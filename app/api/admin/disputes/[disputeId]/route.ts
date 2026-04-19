@@ -14,7 +14,6 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     // Check authentication (admin or staff)
     const auth = await requirePrivilegedAuth();
     if (auth.error) return auth.error;
-    const session = auth.session;
 
     const resolvedParams = await params;
 
