@@ -51,6 +51,10 @@ export async function GET(
   },
 ) {
   const { orgId, memberId } = await params;
+  // MANAGER+ can read other members' details. LEARNER+SUPPORT can only
+  // fetch THEIR OWN membership — otherwise any member of the org could
+  // enumerate peers' emails/names/profile ids. Member-list (index) view
+  // remains separately gated; this is the detail endpoint.
   const access = await requireOrgAccess(orgId);
   if (access.error) return access.error;
 
@@ -67,6 +71,16 @@ export async function GET(
   if (!membership) {
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
   }
+
+  const isSelf = membership.id === access.member.id;
+  const isManagerPlus = orgRoleSatisfies(access.member.role, "MANAGER");
+  if (!isSelf && !isManagerPlus) {
+    return NextResponse.json(
+      { error: "Insufficient role to view other members" },
+      { status: 403 },
+    );
+  }
+
   return NextResponse.json({ membership });
 }
 
@@ -222,9 +236,9 @@ export async function DELETE(
       }
 
       if (current.role === "OWNER") {
-        // Same last-OWNER guard as PATCH. DELETE is a hard remove — the
-        // membership row goes away, so we cannot rely on status !==
-        // ACTIVE for the count check.
+        // Last-OWNER guard — unchanged semantically. Now applied to
+        // soft-delete (status → REMOVED) so a sole OWNER can't orphan
+        // the org by removing themselves.
         const activeOwnerCount = await tx.membership.count({
           where: {
             organizationId: orgId,
@@ -236,14 +250,28 @@ export async function DELETE(
         if (activeOwnerCount === 0) {
           throw Object.assign(
             new Error(
-              "Cannot delete the only active OWNER. Promote another member first.",
+              "Cannot remove the only active OWNER. Promote another member first.",
             ),
             { httpStatus: 409 },
           );
         }
       }
 
-      await tx.membership.delete({ where: { id: memberId } });
+      if (current.status === "REMOVED") {
+        // Idempotent: a repeat DELETE is a no-op that still returns 204.
+        return;
+      }
+
+      // Soft-delete (status=REMOVED) instead of hard-delete: audit rows
+      // reference Membership via `actorMembershipId`/`targetMembershipId`,
+      // payouts, earnings, and wallet entries do too. A hard delete
+      // would cascade across half the compliance tables. REMOVED is a
+      // tombstone — it hides the row from all listing endpoints, blocks
+      // login attempts, but keeps the history queryable.
+      await tx.membership.update({
+        where: { id: memberId },
+        data: { status: "REMOVED" },
+      });
       await tx.orgAuditLog.create({
         data: {
           organizationId: orgId,
@@ -251,8 +279,8 @@ export async function DELETE(
           targetMembershipId: memberId,
           category: "MEMBER",
           action: AUDIT_ACTIONS.MEMBER.MEMBER_REMOVED,
-          description: `Removed member ${memberId}`,
-          details: { role: current.role, status: current.status },
+          description: `Removed member ${memberId} (soft delete)`,
+          details: { role: current.role, previousStatus: current.status },
         },
       });
     });

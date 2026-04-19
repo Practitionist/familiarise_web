@@ -62,11 +62,11 @@ model User {
   supportTickets   SupportTicket[]
   supportResponses SupportResponse[]
 
-  accounts        Account[] // BetterAuth Accounts
-  sessions        Session[] // BetterAuth Sessions
-  members         Member[] // BetterAuth membership rows
-  memberships     Membership[] // Typed enterprise memberships (Arch 4-Modified)
-  invitationsSent Invitation[] @relation("InvitationsSent")
+  accounts         Account[] // BetterAuth Accounts
+  sessions         Session[] // BetterAuth Sessions
+  members          Member[] // BetterAuth membership rows
+  memberships      Membership[] // Typed enterprise memberships (Arch 4-Modified)
+  invitationsSent  Invitation[]      @relation("InvitationsSent")
   consentArtifacts ConsentArtifact[]
 
   // Staff Dashboard Relations
@@ -759,8 +759,8 @@ model Contract {
   paymentTermsDays Int            @default(60)
   autoRenew        Boolean        @default(false)
 
-  rateCardId String?
-  rateCard   RateCard? @relation("ContractRateCard", fields: [rateCardId], references: [id])
+  rateCardId     String?
+  rateCard       RateCard?  @relation("ContractRateCard", fields: [rateCardId], references: [id])
   // Back-relation for RateCard.ownerContractId — rate cards owned by this
   // contract (negotiated, contract-specific splits).
   ownedRateCards RateCard[] @relation("RateCardOwnerContract")
@@ -1217,7 +1217,13 @@ model OrganizationInvoice {
   paidAt            DateTime?
   pdfUrl            String?
 
-  providerPaymentId String?
+  providerPaymentId      String?
+  // Razorpay `order_<…>` minted by /invoices/[id]/pay. Persisted so the
+  // Pay endpoint is idempotent across retries — if the invoice still has
+  // an unpaid order id we reuse it instead of minting a fresh one (which
+  // would leak created-but-unpaid orders in the gateway). Cleared on
+  // PAID/VOID transitions.
+  providerPaymentOrderId String?
 
   paymentId String?  @unique
   payment   Payment? @relation("OrgInvoicePayment", fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: SetNull)
@@ -1262,6 +1268,10 @@ enum OrgInvoiceStatus {
   OVERDUE
   VOID
   CANCELLED
+  /// Invoice was PAID and later fully refunded at the gateway. We do
+  /// not reuse VOID for refunds because VOID is a pre-payment state
+  /// (cancelled before settlement) — REFUNDED is a post-payment state.
+  REFUNDED
 }
 
 enum IrpStatus {

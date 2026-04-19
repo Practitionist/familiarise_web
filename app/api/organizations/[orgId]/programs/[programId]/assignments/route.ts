@@ -33,11 +33,17 @@ export async function GET(
   },
 ) {
   const { orgId, programId } = await params;
-  const access = await requireOrgAccess(orgId, {
-    minimumRole: "MANAGER",
-    canSponsor: true,
-  });
+  // Read widened to any ACTIVE member. LEARNERs need to see who else
+  // is assigned for seat-pool visibility ("how many seats left?").
+  // Write endpoints (POST/DELETE) stay MANAGER+canSponsor.
+  const access = await requireOrgAccess(orgId);
   if (access.error) return access.error;
+  if (!access.org.canSponsor) {
+    return NextResponse.json(
+      { error: "Organization does not sponsor programs" },
+      { status: 404 },
+    );
+  }
 
   // Belt-and-braces: don't leak assignments from a program in a
   // sibling org even if the caller knows the programId.

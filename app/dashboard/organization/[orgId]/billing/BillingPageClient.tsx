@@ -516,17 +516,22 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
                           : "—"}
                       </TableCell>
                       <TableCell>
+                        {/* Pay is gated to OWNER on the API; mirror that
+                            here so non-owners don't see a button that
+                            will 403 on click. MAINTAINERs can view the
+                            invoice but only the billing owner pays. */}
                         {(inv.status === "ISSUED" ||
-                          inv.status === "OVERDUE") && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => payMutation.mutate(inv.id)}
-                            disabled={payMutation.isPending}
-                          >
-                            Pay
-                          </Button>
-                        )}
+                          inv.status === "OVERDUE") &&
+                          isAtLeast("OWNER") && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => payMutation.mutate(inv.id)}
+                              disabled={payMutation.isPending}
+                            >
+                              Pay
+                            </Button>
+                          )}
                       </TableCell>
                     </TableRow>
                   ))}

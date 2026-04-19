@@ -138,8 +138,16 @@ export async function POST(
         targetMembershipId: member.id,
         category: "CONSENT",
         action: AUDIT_ACTIONS.CONSENT.CONSENT_GRANTED,
-        description: `Consent granted for user ${body.userId}`,
+        // PII hygiene (DPDP §8, §11): do NOT spell out the data
+        // principal's userId in the description — audit-log descriptions
+        // are surfaced in the admin UI and exported via CSV/SIEM, which
+        // widens the blast radius for a PII leak. The targetMembershipId
+        // column already connects this log back to the exact member, and
+        // `details` is a structured JSON blob that auditors can pivot on
+        // without splashing the id in free text.
+        description: `Consent granted for member ${member.id}`,
         details: {
+          membershipId: member.id,
           purposeCodes: body.purposeCodes,
           language: body.language,
           version: body.version,

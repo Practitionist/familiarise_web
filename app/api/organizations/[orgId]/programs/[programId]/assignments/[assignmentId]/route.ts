@@ -32,11 +32,17 @@ export async function GET(
   },
 ) {
   const { orgId, programId, assignmentId } = await params;
-  const access = await requireOrgAccess(orgId, {
-    minimumRole: "MANAGER",
-    canSponsor: true,
-  });
+  // Read widened to any ACTIVE member so a LEARNER can see their own
+  // assignment details (utilization, limits) without MANAGER access.
+  // PATCH/DELETE remain MANAGER+canSponsor.
+  const access = await requireOrgAccess(orgId);
   if (access.error) return access.error;
+  if (!access.org.canSponsor) {
+    return NextResponse.json(
+      { error: "Organization does not sponsor programs" },
+      { status: 404 },
+    );
+  }
 
   const assignment = await prisma.programAssignment.findFirst({
     where: {

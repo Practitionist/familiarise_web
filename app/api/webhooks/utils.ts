@@ -11,7 +11,7 @@ import {
 } from "@/lib/novu";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { getAppUrl } from "@/lib/url";
-import { confirmTopUp } from "@/lib/api/organizations/wallet";
+import { confirmTopUp, walletCredit } from "@/lib/api/organizations/wallet";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
 // Re-export payment handlers from lib (architectural fix)
@@ -34,6 +34,14 @@ export {
 export async function handleOrgPaymentSuccess(
   notes: Record<string, string>,
   razorpayPaymentId?: string,
+  /**
+   * Authoritative amount captured at the gateway (paise). Must be passed
+   * by the caller so we can reject `notes.amountPaise` tampering for
+   * top-ups and reject under-paid invoices. When undefined (e.g. legacy
+   * `order.paid` path that has no payment id) we fall back to trusting
+   * notes but refuse to mark an invoice PAID.
+   */
+  gatewayAmountPaise?: number,
 ): Promise<void> {
   // credit_purchase routes to WalletEntry via `confirmTopUp` from
   // lib/api/organizations/wallet.ts (idempotent on providerOrderId).
@@ -59,6 +67,44 @@ export async function handleOrgPaymentSuccess(
       console.error(
         `[Webhook] credit_purchase ${walletEntryOrderId} has invalid amountPaise notes value: ${amountPaise}`,
       );
+      return;
+    }
+    // Defence-in-depth: `notes.amountPaise` is mutable metadata we
+    // attach to the Razorpay order. Verify it matches what was actually
+    // captured before crediting the wallet. A mismatch means either a
+    // gateway anomaly or a tampered order — we log + return 200 so
+    // Razorpay stops retrying, but we do NOT credit the wallet.
+    if (
+      gatewayAmountPaise !== undefined &&
+      paise !== gatewayAmountPaise
+    ) {
+      console.error(
+        `[Webhook] credit_purchase ${walletEntryOrderId} notes.amountPaise=${paise} ≠ gatewayAmount=${gatewayAmountPaise}. Skipping wallet credit.`,
+      );
+      if (organizationId) {
+        prisma.orgAuditLog
+          .create({
+            data: {
+              organizationId,
+              actorMembershipId: null,
+              category: "WALLET",
+              action: AUDIT_ACTIONS.WALLET.WALLET_TOPUP,
+              description: `Top-up amount mismatch for order ${walletEntryOrderId}: notes=${paise}p gateway=${gatewayAmountPaise}p`,
+              details: {
+                walletEntryOrderId,
+                providerPaymentId: razorpayPaymentId,
+                notesAmountPaise: paise,
+                gatewayAmountPaise,
+              },
+            },
+          })
+          .catch((err) =>
+            console.error(
+              "[Webhook] Failed to write WALLET topup mismatch audit log:",
+              err,
+            ),
+          );
+      }
       return;
     }
     try {
@@ -107,11 +153,62 @@ export async function handleOrgPaymentSuccess(
       return;
     }
 
+    // Verify the captured amount matches what was billed before we
+    // flip the invoice to PAID. Without this, a tampered or partial
+    // capture could mark an invoice paid for less than what was owed.
+    // If we don't have a gateway amount (order-level event), we wait
+    // for the payment.captured event — no ISSUED→PAID without proof.
+    if (gatewayAmountPaise === undefined) {
+      console.log(
+        `[Webhook] invoice_payment ${invoiceId} deferred: no gateway amount (awaiting payment.captured)`,
+      );
+      return;
+    }
+    const invoiceRow = await prisma.organizationInvoice.findUnique({
+      where: { id: invoiceId },
+      select: { id: true, totalPaise: true, status: true },
+    });
+    if (!invoiceRow) {
+      console.error(`[Webhook] invoice_payment ${invoiceId} not found`);
+      return;
+    }
+    if (invoiceRow.totalPaise !== gatewayAmountPaise) {
+      console.error(
+        `[Webhook] invoice_payment ${invoiceId} totalPaise=${invoiceRow.totalPaise} ≠ gatewayAmount=${gatewayAmountPaise}. Not marking PAID.`,
+      );
+      if (organizationId) {
+        prisma.orgAuditLog
+          .create({
+            data: {
+              organizationId,
+              actorMembershipId: null,
+              category: "INVOICE",
+              action: AUDIT_ACTIONS.INVOICE.INVOICE_PAYMENT_INITIATED,
+              description: `Invoice ${invoiceId} captured amount mismatch: billed=${invoiceRow.totalPaise}p, captured=${gatewayAmountPaise}p`,
+              details: {
+                invoiceId,
+                providerPaymentId: razorpayPaymentId ?? null,
+                totalPaise: invoiceRow.totalPaise,
+                gatewayAmountPaise,
+              },
+            },
+          })
+          .catch((err) =>
+            console.error(
+              "[Webhook] Failed to write invoice amount-mismatch audit log:",
+              err,
+            ),
+          );
+      }
+      return;
+    }
+
     const claimed = await prisma.organizationInvoice.updateMany({
       where: { id: invoiceId, status: { in: ["ISSUED", "OVERDUE"] } },
       data: {
         status: "PAID",
         paidAt: new Date(),
+        providerPaymentOrderId: null,
         ...(razorpayPaymentId ? { providerPaymentId: razorpayPaymentId } : {}),
       },
     });
@@ -218,7 +315,23 @@ export async function verifyWebhookSignature(
 // ============================================================================
 
 /**
- * Handle refund created/processed event
+ * Handle refund created/processed event.
+ *
+ * Dispatches to one of three branches based on what the refund is paying
+ * back:
+ *   1. B2C appointment payment (`Payment` row keyed on `paymentIntent`):
+ *      reverse consultant earnings + referral credits (legacy path).
+ *   2. Enterprise wallet top-up (`WalletEntry.providerPaymentId`):
+ *      credit a compensating REFUND WalletEntry so the wallet balance
+ *      decreases and FundingLedger stays balanced.
+ *   3. Enterprise invoice payment (`OrganizationInvoice.providerPaymentId`):
+ *      mark the invoice REFUNDED and reverse any bookings charged to it
+ *      (program utilisation → wallet credit, if applicable).
+ *
+ * If the webhook resolves to none of the above, we log and return.
+ * `providerPaymentId` (Razorpay `pay_<…>`) is optional and only used by
+ * the org-level branches; for Stripe we keep the legacy `paymentIntentId`
+ * contract.
  */
 export async function handleRefundCreated(
   refundId: string,
@@ -227,15 +340,187 @@ export async function handleRefundCreated(
   currency: string,
   status: string,
   gateway: "STRIPE" | "RAZORPAY",
+  providerPaymentId?: string,
 ) {
   return await prisma.$transaction(async (tx) => {
-    // Find the payment
+    // Find the payment (B2C appointment path)
     const payment = await tx.payment.findUnique({
       where: { paymentIntent: paymentIntentId },
     });
 
     if (!payment) {
-      console.warn(`Payment not found for refund: ${refundId}`);
+      // Fall through to enterprise branches. We need the original
+      // provider payment id (`pay_<…>`) to look up org-level rows.
+      if (!providerPaymentId) {
+        console.warn(
+          `Payment not found for refund ${refundId} and no providerPaymentId supplied; cannot dispatch org-level refund`,
+        );
+        return;
+      }
+
+      // --- Enterprise wallet top-up refund ---
+      const topUpEntry = await tx.walletEntry.findFirst({
+        where: {
+          providerPaymentId,
+          reason: "TOPUP",
+          deltaPaise: { gt: 0 }, // only confirmed top-ups have positive delta
+        },
+        select: {
+          id: true,
+          billingAccountId: true,
+          deltaPaise: true,
+          providerOrderId: true,
+        },
+      });
+      if (topUpEntry) {
+        const mapped = mapRefundStatus(status);
+        // Idempotency: if we already booked a REFUND WalletEntry that
+        // references this providerPaymentId, skip.
+        const already = await tx.walletEntry.findFirst({
+          where: {
+            billingAccountId: topUpEntry.billingAccountId,
+            reason: "REFUND",
+            providerPaymentId,
+          },
+          select: { id: true },
+        });
+        if (already) {
+          console.log(
+            `💸 Top-up refund already booked for payment ${providerPaymentId}, skipping`,
+          );
+          return;
+        }
+        if (mapped === "SUCCEEDED") {
+          // Clamp: cannot refund more than was credited to this wallet.
+          const refundAmt = Math.min(amount, topUpEntry.deltaPaise);
+          const acct = await tx.billingAccount.findUniqueOrThrow({
+            where: { id: topUpEntry.billingAccountId },
+            select: { walletBalance: true },
+          });
+          const newBalance = (acct.walletBalance ?? 0) - refundAmt;
+          await tx.$executeRaw`
+            UPDATE "BillingAccount"
+            SET "walletBalance" = COALESCE("walletBalance", 0) - ${refundAmt}
+            WHERE "id" = ${topUpEntry.billingAccountId}
+          `;
+          await tx.walletEntry.create({
+            data: {
+              billingAccountId: topUpEntry.billingAccountId,
+              deltaPaise: -refundAmt,
+              reason: "REFUND",
+              balanceAfter: newBalance,
+              providerPaymentId,
+              notes: `Refund for top-up ${topUpEntry.providerOrderId ?? ""} (gateway refund ${refundId})`,
+            },
+          });
+          await tx.fundingLedgerEntry.create({
+            data: {
+              billingAccountId: topUpEntry.billingAccountId,
+              deltaPaise: -refundAmt,
+              reason: "REFUND_CREDIT",
+              balanceAfterPaise: newBalance,
+              notes: `Top-up refund ${refundId} via ${gateway}`,
+            },
+          });
+          // Intentionally NOT inserting a `Refund` row for org-level
+          // refunds: Refund.paymentId is NOT NULL and is scoped to the
+          // B2C `Payment` table. The compensating WalletEntry (reason
+          // REFUND, providerPaymentId=<rzp payment id>) is the
+          // authoritative record; reconcile jobs index on it.
+          console.log(
+            `💸 Top-up refund ${refundId} booked: -${refundAmt} paise on billingAccount ${topUpEntry.billingAccountId}`,
+          );
+        }
+        return;
+      }
+
+      // --- Enterprise invoice refund ---
+      const invoice = await tx.organizationInvoice.findFirst({
+        where: { providerPaymentId },
+        select: {
+          id: true,
+          organizationId: true,
+          invoiceNumber: true,
+          totalPaise: true,
+          status: true,
+        },
+      });
+      if (invoice) {
+        const mapped = mapRefundStatus(status);
+        if (mapped === "SUCCEEDED") {
+          if (invoice.status === "REFUNDED") {
+            console.log(
+              `💸 Invoice ${invoice.id} already REFUNDED, skipping`,
+            );
+            return;
+          }
+          await tx.organizationInvoice.update({
+            where: { id: invoice.id },
+            data: { status: "REFUNDED" },
+          });
+          // NOTE: Booking-level utilization reversal is keyed on
+          // individual Payment ids (BookingUtilization.paymentId @unique),
+          // not on the invoice. Invoices that roll up many bookings do
+          // not have a single paymentId to feed `reverseBookingUtilization`
+          // — a follow-up phase (after the invoice-line-item schema lands)
+          // will iterate over linked line-items and reverse each one
+          // individually. For now, the compensating WalletEntry credit
+          // below plus the INVOICE_REFUNDED audit log is the guaranteed
+          // bookkeeping; the operator runbook calls out bookings that
+          // may need manual reversal.
+          await tx.orgAuditLog.create({
+            data: {
+              organizationId: invoice.organizationId,
+              actorMembershipId: null,
+              category: "INVOICE",
+              action: AUDIT_ACTIONS.INVOICE.INVOICE_REFUNDED,
+              description: `Invoice ${invoice.invoiceNumber} refunded (${refundId}, ${amount} ${currency})`,
+              details: {
+                invoiceId: invoice.id,
+                refundId,
+                amount,
+                currency,
+                providerPaymentId,
+              },
+            },
+          }).catch((err) =>
+            console.error(
+              `⚠️ Failed to write INVOICE_REFUNDED audit log:`,
+              err,
+            ),
+          );
+          // Opportunistic: if wallet-based funding was used, credit the
+          // refund amount back. Swallow if no wallet flow applies.
+          try {
+            const ba = await tx.billingAccount.findFirst({
+              where: { ownerOrgId: invoice.organizationId },
+              select: { id: true, fundingSource: true },
+            });
+            if (ba && ba.fundingSource === "WALLET") {
+              await walletCredit(tx, {
+                billingAccountId: ba.id,
+                amountPaise: amount,
+                reason: "REFUND",
+                providerPaymentId,
+                notes: `Invoice ${invoice.invoiceNumber} refund (${refundId})`,
+              });
+            }
+          } catch (err) {
+            console.warn(
+              `⚠️ Wallet credit for invoice refund ${refundId} skipped:`,
+              err,
+            );
+          }
+          console.log(
+            `💸 Invoice refund ${refundId} booked for invoice ${invoice.id}`,
+          );
+        }
+        return;
+      }
+
+      console.warn(
+        `Payment not found for refund: ${refundId} (paymentIntent=${paymentIntentId}, providerPaymentId=${providerPaymentId})`,
+      );
       return;
     }
 
@@ -257,7 +542,10 @@ export async function handleRefundCreated(
 
       try {
         // Check if any refund for this payment has forceRefund in metadata
-        const refunds = await prisma.refund.findMany({
+        // (read is done on `tx` so we see Refund rows inserted earlier in
+        // this same transaction — otherwise the hasForceRefund check
+        // would race with new refunds created moments before.)
+        const refunds = await tx.refund.findMany({
           where: { paymentId },
           select: { metadata: true },
         });
@@ -270,10 +558,13 @@ export async function handleRefundCreated(
 
         // FIX #618: Pass refund amount context so partial refunds only
         // reverse a proportional share of earnings, not the full amount.
+        // `tx` plumbed through so earnings reversal, TDS reversal, and
+        // the Refund insert above all commit atomically.
         await refundEarnings(paymentId, {
           forceRefund: hasForceRefund,
           refundAmount: refundAmt,
           paymentAmount: originalPaymentAmt,
+          tx,
         });
         console.log(`💰 Earnings refunded for payment ${paymentId}`);
       } catch (earningsError) {

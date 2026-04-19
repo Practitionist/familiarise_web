@@ -168,9 +168,43 @@ export async function POST(
   const walletEntryOrderId =
     clientIdempotencyKey ?? `we_${randomUUID().replace(/-/g, "")}`;
 
-  // Mint the Razorpay order BEFORE the WalletEntry insert: if Razorpay
-  // refuses (gateway down, bad credentials, missing keys) we shouldn't
-  // leave behind a pending placeholder that can never be settled.
+  // Order of operations (fixes "orphaned gateway order" leak):
+  //   (1) Persist the pending WalletEntry placeholder FIRST — if
+  //       something later fails, we know this DB row exists and the
+  //       abandoned-top-ups cleanup cron can reap it.
+  //   (2) Mint the Razorpay order SECOND. If this fails, delete the
+  //       placeholder (no gateway side-effect to compensate).
+  //   (3) Append the `razorpay_order=<id>` to notes so operators can
+  //       trace the placeholder back to the gateway order.
+  //
+  // The previous order (create Razorpay order → persist WalletEntry)
+  // leaked orders into Razorpay whenever the DB write failed, and the
+  // gateway order would linger until its 24h TTL with no DB trace.
+  try {
+    await prisma.$transaction(async (tx) => {
+      await initiateTopUp(tx, {
+        billingAccountId: ba.id,
+        amountPaise,
+        providerOrderId: walletEntryOrderId,
+        notes: `Top-up initiated by membership ${access.member.id}; razorpay_order=pending`,
+      });
+    });
+  } catch (err) {
+    console.error(
+      "[wallet/top-ups] placeholder WalletEntry persistence failed:",
+      err,
+    );
+    return NextResponse.json(
+      {
+        error:
+          err instanceof Error
+            ? err.message
+            : "Failed to record pending top-up",
+      },
+      { status: 500 },
+    );
+  }
+
   let razorpayOrderId: string;
   try {
     const order = await createRazorpayOrder({
@@ -195,6 +229,17 @@ export async function POST(
     });
     razorpayOrderId = order.id;
   } catch (err) {
+    // Razorpay refused — reap the placeholder so abandoned-cleanup
+    // doesn't have to. If this delete fails too, the cron will eventually
+    // pick it up; the user sees a clean error either way.
+    await prisma.walletEntry
+      .delete({ where: { providerOrderId: walletEntryOrderId } })
+      .catch((cleanupErr) =>
+        console.error(
+          "[wallet/top-ups] failed to reap orphan WalletEntry:",
+          cleanupErr,
+        ),
+      );
     if (err instanceof PaymentError && err.code === "RAZORPAY_NOT_INITIALIZED") {
       return NextResponse.json(
         {
@@ -221,11 +266,11 @@ export async function POST(
 
   try {
     await prisma.$transaction(async (tx) => {
-      await initiateTopUp(tx, {
-        billingAccountId: ba.id,
-        amountPaise,
-        providerOrderId: walletEntryOrderId,
-        notes: `Top-up initiated by membership ${access.member.id}; razorpay_order=${razorpayOrderId}`,
+      await tx.walletEntry.update({
+        where: { providerOrderId: walletEntryOrderId },
+        data: {
+          notes: `Top-up initiated by membership ${access.member.id}; razorpay_order=${razorpayOrderId}`,
+        },
       });
       await tx.orgAuditLog.create({
         data: {
@@ -243,18 +288,12 @@ export async function POST(
       });
     });
   } catch (err) {
-    // Razorpay order already minted; surface the failure but don't
-    // attempt order cancellation here (an unfunded order in Razorpay
-    // is harmless and gets garbage-collected after 24h).
-    console.error("[wallet/top-ups] WalletEntry persistence failed:", err);
-    return NextResponse.json(
-      {
-        error:
-          err instanceof Error
-            ? err.message
-            : "Failed to record pending top-up",
-      },
-      { status: 500 },
+    // Notes/audit-log write failed, but the WalletEntry already exists
+    // and the Razorpay order is live — the top-up will still settle on
+    // webhook capture. Return 201 and log for operators.
+    console.error(
+      "[wallet/top-ups] notes/audit-log write failed (top-up still valid):",
+      err,
     );
   }
 

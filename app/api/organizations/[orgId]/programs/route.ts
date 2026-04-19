@@ -65,11 +65,20 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, {
-    minimumRole: "MANAGER",
-    canSponsor: true,
-  });
+  // Read is widened to any ACTIVE org member: LEARNERs legitimately need
+  // to see "which programs am I under" (drives the home dashboard,
+  // booking UI, and utilization widgets). Mutations (POST below) stay
+  // MANAGER+canSponsor — see docs/enterprise/02-roles-and-access.md.
+  const access = await requireOrgAccess(orgId);
   if (access.error) return access.error;
+  if (!access.org.canSponsor) {
+    // Hosting-only orgs genuinely do not have programs; surface 404 so
+    // the nav treats this as "feature off" rather than "forbidden".
+    return NextResponse.json(
+      { error: "Organization does not sponsor — no programs to list" },
+      { status: 404 },
+    );
+  }
 
   const url = new URL(req.url);
   const contractId = url.searchParams.get("contractId") ?? undefined;

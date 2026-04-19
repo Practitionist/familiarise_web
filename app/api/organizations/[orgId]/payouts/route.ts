@@ -156,12 +156,51 @@ export async function POST(
         );
       }
 
-      const readyEarnings = await tx.organizationEarnings.findMany({
+      // Race-safe claim pattern:
+      //   (1) Create the payout row first (with zero totals as placeholders).
+      //   (2) Atomically claim READY earnings by assigning them orgPayoutId
+      //       in a single UPDATE — Postgres' row-level locks serialise any
+      //       concurrent POST, so two requests can never claim the same
+      //       earning.
+      //   (3) Re-read the claimed rows (authoritatively scoped by orgPayoutId),
+      //       compute totals, and patch the payout row with the real numbers.
+      //   (4) Flip the claimed rows READY → PAID in the same tx.
+      // If no rows are claimed, throw to abort the tx so the placeholder
+      // payout row is rolled back too.
+      const created = await tx.organizationPayout.create({
+        data: {
+          organizationId: orgId,
+          amountPaise: 0,
+          currency: "INR",
+          status: "PENDING",
+          paymentGateway: body.paymentGateway,
+          periodStart: body.periodStart,
+          periodEnd: body.periodEnd,
+          grossRevenuePaise: 0,
+          platformFeePaise: 0,
+          refundsPaise: 0,
+          netPayoutPaise: 0,
+        },
+      });
+
+      const claim = await tx.organizationEarnings.updateMany({
         where: {
           organizationId: orgId,
           status: "READY",
+          orgPayoutId: null,
           createdAt: { gte: body.periodStart, lt: body.periodEnd },
         },
+        data: { orgPayoutId: created.id },
+      });
+      if (claim.count === 0) {
+        throw Object.assign(
+          new Error("No READY earnings in the requested window"),
+          { httpStatus: 409 },
+        );
+      }
+
+      const readyEarnings = await tx.organizationEarnings.findMany({
+        where: { orgPayoutId: created.id },
         select: {
           id: true,
           grossAmountPaise: true,
@@ -171,13 +210,6 @@ export async function POST(
           currency: true,
         },
       });
-
-      if (readyEarnings.length === 0) {
-        throw Object.assign(
-          new Error("No READY earnings in the requested window"),
-          { httpStatus: 409 },
-        );
-      }
 
       const first = readyEarnings[0];
       if (!first) {
@@ -220,15 +252,11 @@ export async function POST(
         );
       }
 
-      const created = await tx.organizationPayout.create({
+      await tx.organizationPayout.update({
+        where: { id: created.id },
         data: {
-          organizationId: orgId,
           amountPaise: netPayout,
           currency: first.currency,
-          status: "PENDING",
-          paymentGateway: body.paymentGateway,
-          periodStart: body.periodStart,
-          periodEnd: body.periodEnd,
           grossRevenuePaise: totals.gross,
           platformFeePaise: totals.platformFee,
           refundsPaise: totals.refunds,
@@ -236,12 +264,11 @@ export async function POST(
         },
       });
 
-      // Reserve the earnings: attach them AND flip READY → PAID in the
-      // same tx. The cron that flips payout to COMPLETED does not touch
-      // earnings.status — it's already correct at this point.
+      // Flip the claimed earnings READY → PAID. The cron that flips the
+      // payout to COMPLETED does not touch earnings.status.
       await tx.organizationEarnings.updateMany({
-        where: { id: { in: readyEarnings.map((e) => e.id) } },
-        data: { orgPayoutId: created.id, status: "PAID" },
+        where: { orgPayoutId: created.id, status: "READY" },
+        data: { status: "PAID" },
       });
 
       await tx.settlementLedgerEntry.create({

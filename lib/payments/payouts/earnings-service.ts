@@ -539,7 +539,14 @@ export async function getConsultantEarnings(
 }
 
 /**
- * Refund earnings (called when a payment is refunded)
+ * Refund earnings (called when a payment is refunded).
+ *
+ * Accepts an optional `tx` so callers inside `$transaction` blocks (most
+ * notably the Razorpay refund webhook) can commit earnings reversals,
+ * org-earnings reversals, and TDS-reversal records atomically with the
+ * surrounding refund-row + wallet-credit + utilization-reversal writes.
+ * When `tx` is omitted we fall back to the global `prisma` client for
+ * legacy callers that drive refunds outside a transaction.
  */
 export async function refundEarnings(
   paymentId: string,
@@ -549,9 +556,12 @@ export async function refundEarnings(
     refundAmount?: number;
     /** For partial refunds: the original payment amount in smallest currency unit */
     paymentAmount?: number;
+    /** Optional Prisma transaction client; see function docblock. */
+    tx?: Prisma.TransactionClient;
   },
 ): Promise<boolean> {
-  const allEarnings = await prisma.consultantEarnings.findMany({
+  const db = options?.tx ?? prisma;
+  const allEarnings = await db.consultantEarnings.findMany({
     where: { paymentId },
   });
 
@@ -588,7 +598,7 @@ export async function refundEarnings(
   }
 
   // Also refund any org earnings for this payment (PROVIDER 3-way split)
-  const orgEarnings = await prisma.organizationEarnings.findMany({
+  const orgEarnings = await db.organizationEarnings.findMany({
     where: { paymentId },
   });
 
@@ -605,7 +615,7 @@ export async function refundEarnings(
     const isOrgFullyRefunded =
       alreadyRefunded + orgRefundAmount >= orgEarning.orgSharePaise;
 
-    await prisma.organizationEarnings.update({
+    await db.organizationEarnings.update({
       where: { id: orgEarning.id },
       data: {
         refundedAmountPaise: { increment: orgRefundAmount },
@@ -656,7 +666,7 @@ export async function refundEarnings(
 
       // Force refund of PAID earnings: create TDS reversal record
       if (earnings.payoutId) {
-        const tdsRecord = await prisma.tDSRecord.findFirst({
+        const tdsRecord = await db.tDSRecord.findFirst({
           where: {
             payoutId: earnings.payoutId,
             consultantProfileId: earnings.consultantProfileId,
@@ -666,7 +676,7 @@ export async function refundEarnings(
 
         if (tdsRecord && tdsRecord.tdsDeducted > 0) {
           const tdsToReverse = Math.round(tdsRecord.tdsDeducted * refundRatio);
-          await prisma.tDSRecord.create({
+          await db.tDSRecord.create({
             data: {
               consultantProfileId: earnings.consultantProfileId,
               financialYear: tdsRecord.financialYear,
@@ -687,7 +697,7 @@ export async function refundEarnings(
       }
 
       // Update earnings: always track refundedShareAmount, set REFUNDED when fully exhausted
-      await prisma.consultantEarnings.update({
+      await db.consultantEarnings.update({
         where: { id: earnings.id },
         data: {
           refundedShareAmount: { increment: shareToReverse },
@@ -696,7 +706,7 @@ export async function refundEarnings(
       });
 
       // For PAID earnings, decrement totalRevenue (not pendingRevenue — already paid)
-      await prisma.consultantProfile.update({
+      await db.consultantProfile.update({
         where: { id: earnings.consultantProfileId },
         data: { totalRevenue: { decrement: shareToReverse } },
       });
@@ -706,7 +716,7 @@ export async function refundEarnings(
 
     // Update earnings for non-paid earnings (PENDING/HELD/READY):
     // always track refundedShareAmount, set REFUNDED when fully exhausted
-    await prisma.consultantEarnings.update({
+    await db.consultantEarnings.update({
       where: { id: earnings.id },
       data: {
         refundedShareAmount: { increment: shareToReverse },
@@ -715,7 +725,7 @@ export async function refundEarnings(
     });
 
     // Decrease consultant's pending revenue by the capped share
-    await prisma.consultantProfile.update({
+    await db.consultantProfile.update({
       where: { id: earnings.consultantProfileId },
       data: {
         pendingRevenue: { decrement: shareToReverse },

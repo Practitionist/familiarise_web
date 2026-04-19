@@ -48,11 +48,17 @@ export async function GET(
   },
 ) {
   const { orgId, programId } = await params;
-  const access = await requireOrgAccess(orgId, {
-    minimumRole: "MANAGER",
-    canSponsor: true,
-  });
+  // Read widened to any ACTIVE member: a LEARNER assigned to a program
+  // needs to see the program's rules (covered plan types, pool balance)
+  // to understand what they can book. Mutations stay MANAGER+ below.
+  const access = await requireOrgAccess(orgId);
   if (access.error) return access.error;
+  if (!access.org.canSponsor) {
+    return NextResponse.json(
+      { error: "Organization does not sponsor programs" },
+      { status: 404 },
+    );
+  }
 
   const program = await prisma.program.findFirst({
     where: { id: programId, contract: { organizationId: orgId } },

@@ -221,6 +221,7 @@ async function processWebhookEvent(
           await handleOrgPaymentSuccess(
             capturedNotes,
             capturedEvent.payload.payment.entity.id,
+            capturedEvent.payload.payment.entity.amount,
           );
         } else {
           await handlePaymentSuccess(
@@ -289,6 +290,7 @@ async function processWebhookEvent(
           refundEvent.currency || "INR",
           refundEvent.status,
           "RAZORPAY",
+          refundEvent.payment_id,
         );
         break;
       }
@@ -322,6 +324,7 @@ async function processWebhookEvent(
           failedRefundEvent.currency || "INR",
           "failed",
           "RAZORPAY",
+          failedRefundEvent.payment_id,
         );
         break;
       }

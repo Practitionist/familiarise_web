@@ -82,7 +82,7 @@ export async function POST(req: NextRequest) {
   const userId = auth.session.user.id;
 
   try {
-    const membership = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       // Atomic claim — only the first concurrent accept wins. Follow-up
       // retries get count=0 and fall into the 409 branch below.
       const claim = await tx.invitation.updateMany({
@@ -93,6 +93,17 @@ export async function POST(req: NextRequest) {
         throw Object.assign(
           new Error("Invitation is no longer pending"),
           { httpStatus: 409 },
+        );
+      }
+
+      const org = await tx.organization.findUnique({
+        where: { id: invitation.organizationId },
+        select: { id: true, name: true },
+      });
+      if (!org) {
+        throw Object.assign(
+          new Error("Organization no longer exists"),
+          { httpStatus: 404 },
         );
       }
 
@@ -107,7 +118,9 @@ export async function POST(req: NextRequest) {
           },
         },
       });
-      if (existing) return existing;
+      if (existing) {
+        return { membership: existing, organization: org, alreadyMember: true };
+      }
 
       // Profile FK hydration — if the user has a consultee or consultant
       // profile we link it so downstream joins don't have to null-check.
@@ -164,10 +177,22 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      return created;
+      return { membership: created, organization: org, alreadyMember: false };
     });
 
-    return NextResponse.json({ membership }, { status: 201 });
+    // Client contract (app/organizations/invite/[token]/page.tsx): expects
+    //   { organization: { id, name }, role?: string, alreadyMember?: boolean }
+    // so it can redirect to /dashboard/organization/:id/home after accept.
+    // Returning a bare `{ membership }` silently broke the redirect.
+    return NextResponse.json(
+      {
+        organization: result.organization,
+        role: result.membership.role,
+        alreadyMember: result.alreadyMember,
+        membership: result.membership,
+      },
+      { status: result.alreadyMember ? 200 : 201 },
+    );
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
       const status =

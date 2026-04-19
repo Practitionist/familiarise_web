@@ -1,13 +1,14 @@
-name: Cleanup Orphaned Org Credit Purchases
+name: Cleanup Abandoned Org Top-Ups
 
 on:
   schedule:
-    # Run daily at 02:00 UTC
+    # Run daily at 02:00 UTC. Must NOT overlap the subscription-cron
+    # at 00:00 UTC (CPU + Prisma connection contention).
     - cron: "0 2 * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:
-  cleanup-orphaned-org-credit-purchases:
+  cleanup-abandoned-org-top-ups:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -32,11 +33,11 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
-      - name: Run orphaned purchase cleanup
-        run: npx tsx jobs/enterprise/cleanup-orphaned-org-credit-purchases.ts
+      - name: Run abandoned org top-up cleanup
+        run: npx tsx jobs/cleanup/cleanup-abandoned-org-top-ups.ts
 
       - name: Notify on failure
         if: failure()
         run: |
-          echo "Orphaned org credit purchase cleanup failed"
-          # Add notification logic here (Slack, email, etc.)
+          echo "Abandoned org top-up cleanup failed"
+          # TODO: wire to #ops-alerts Slack channel.

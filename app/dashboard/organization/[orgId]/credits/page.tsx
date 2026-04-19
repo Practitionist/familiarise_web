@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Coins, Plus } from "lucide-react";
 import { z } from "zod";
 
-import { useRequireOrgAccess } from "../useOrgRole";
+import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import { useToast } from "@/hooks/use-toast";
 import { loadScript } from "@/app/checkout/plans/utils";
 import {
@@ -212,6 +212,9 @@ export default function OrgCreditsPage({
     canSponsor: true,
     fundingSource: "WALLET",
   });
+  // MANAGER can view wallet; top-up API is OWNER-only (touches money).
+  // Render the page either way but hide the Top-up CTA for non-owners.
+  const { isAtLeast } = useOrgRole(orgId);
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ["org-wallet", orgId],
@@ -313,7 +316,7 @@ export default function OrgCreditsPage({
         title="Wallet"
         subtitle="Pre-funded credit pool used by WALLET-funded organizations."
         actions={
-          walletResponse && (
+          walletResponse && isAtLeast("OWNER") && (
             <Button size="sm" onClick={() => setShowBuy(true)}>
               <Plus className="h-4 w-4 mr-1" /> Top up
             </Button>

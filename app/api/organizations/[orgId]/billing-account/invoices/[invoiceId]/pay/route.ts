@@ -51,6 +51,7 @@ export async function POST(
       totalPaise: true,
       displayCurrency: true,
       paidAt: true,
+      providerPaymentOrderId: true,
     },
   });
   if (!invoice) {
@@ -73,64 +74,92 @@ export async function POST(
   }
 
   let razorpayOrderId: string;
-  try {
-    const order = await createRazorpayOrder({
-      amount: invoice.totalPaise,
-      currency: invoice.displayCurrency,
-      paymentGateway: "RAZORPAY",
-      // PaymentIntentParams.metadata insists on appointmentId/Type for
-      // booking flows; invoice payments don't have an appointment so
-      // we pass empty strings. The webhook routes purely off
-      // `notes.type === "invoice_payment"` + `notes.invoiceId`.
-      metadata: {
-        appointmentId: "",
-        appointmentType: "",
-        type: "invoice_payment",
-        invoiceId,
-        organizationId: orgId,
-        invoiceNumber: invoice.invoiceNumber,
-      },
-    });
-    razorpayOrderId = order.id;
-  } catch (err) {
-    if (err instanceof PaymentError && err.code === "RAZORPAY_NOT_INITIALIZED") {
+  // Idempotent Pay: if we already minted a Razorpay order for this
+  // invoice (persisted on OrganizationInvoice.providerPaymentOrderId),
+  // reuse it instead of creating another. Without this, every retry of
+  // the client popup leaks a fresh order into the gateway.
+  if (invoice.providerPaymentOrderId) {
+    razorpayOrderId = invoice.providerPaymentOrderId;
+    console.log(
+      `[invoice/pay] reusing existing Razorpay order ${razorpayOrderId} for invoice ${invoiceId}`,
+    );
+  } else {
+    try {
+      const order = await createRazorpayOrder({
+        amount: invoice.totalPaise,
+        currency: invoice.displayCurrency,
+        paymentGateway: "RAZORPAY",
+        // PaymentIntentParams.metadata insists on appointmentId/Type for
+        // booking flows; invoice payments don't have an appointment so
+        // we pass empty strings. The webhook routes purely off
+        // `notes.type === "invoice_payment"` + `notes.invoiceId`.
+        metadata: {
+          appointmentId: "",
+          appointmentType: "",
+          type: "invoice_payment",
+          invoiceId,
+          organizationId: orgId,
+          invoiceNumber: invoice.invoiceNumber,
+        },
+      });
+      razorpayOrderId = order.id;
+    } catch (err) {
+      if (err instanceof PaymentError && err.code === "RAZORPAY_NOT_INITIALIZED") {
+        return NextResponse.json(
+          {
+            error:
+              "Payment gateway not configured. Set RAZORPAY_KEY_ID and RAZORPAY_SECRET to enable invoice payments.",
+            errorType: err.code,
+          },
+          { status: 503 },
+        );
+      }
+      console.error("[invoice/pay] createRazorpayOrder failed:", err);
       return NextResponse.json(
         {
           error:
-            "Payment gateway not configured. Set RAZORPAY_KEY_ID and RAZORPAY_SECRET to enable invoice payments.",
-          errorType: err.code,
+            err instanceof Error
+              ? err.message
+              : "Failed to initiate Razorpay order",
+          errorType:
+            err instanceof PaymentError ? err.code : "RAZORPAY_ORDER_FAILED",
         },
-        { status: 503 },
+        { status: 502 },
       );
     }
-    console.error("[invoice/pay] createRazorpayOrder failed:", err);
-    return NextResponse.json(
-      {
-        error:
-          err instanceof Error
-            ? err.message
-            : "Failed to initiate Razorpay order",
-        errorType:
-          err instanceof PaymentError ? err.code : "RAZORPAY_ORDER_FAILED",
-      },
-      { status: 502 },
-    );
-  }
 
-  await prisma.orgAuditLog.create({
-    data: {
-      organizationId: orgId,
-      actorMembershipId: access.member.id,
-      category: "INVOICE",
-      action: AUDIT_ACTIONS.INVOICE.INVOICE_PAYMENT_INITIATED,
-      description: `Payment initiated for invoice ${invoice.invoiceNumber}`,
-      details: {
-        invoiceId,
-        razorpayOrderId,
-        totalPaise: invoice.totalPaise,
-      },
-    },
-  });
+    // Persist the order id + audit log atomically so the next retry
+    // sees the order id (and audit writes tie to the gateway side-effect).
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.organizationInvoice.update({
+          where: { id: invoiceId },
+          data: { providerPaymentOrderId: razorpayOrderId },
+        });
+        await tx.orgAuditLog.create({
+          data: {
+            organizationId: orgId,
+            actorMembershipId: access.member.id,
+            category: "INVOICE",
+            action: AUDIT_ACTIONS.INVOICE.INVOICE_PAYMENT_INITIATED,
+            description: `Payment initiated for invoice ${invoice.invoiceNumber}`,
+            details: {
+              invoiceId,
+              razorpayOrderId,
+              totalPaise: invoice.totalPaise,
+            },
+          },
+        });
+      });
+    } catch (err) {
+      // Gateway order already live — log but return it so the client
+      // can proceed. The webhook still honours the order on capture.
+      console.error(
+        "[invoice/pay] failed to persist providerPaymentOrderId/audit log:",
+        err,
+      );
+    }
+  }
 
   return NextResponse.json({
     // `razorpayOrderId` (`order_<…>`) drives Razorpay checkout

@@ -214,23 +214,49 @@ export const auth = betterAuth({
             email: user?.email ?? null,
             userId: session.userId,
             lookupEnforcedOrg: async (domain) => {
-              const enforced = await prisma.organizationSSOSettings.findFirst({
-                where: {
-                  enforceSSO: true,
-                  allowedEmailDomains: { has: domain },
-                },
+              // Use OrgDomainClaim as the authoritative "who owns this
+              // email domain" record (matches /api/auth/sso/domain-check
+              // exactly). `OrganizationSSOSettings.allowedEmailDomains`
+              // is an additional curated allowlist, honoured *after* the
+              // claim — a caught-in-transition domain owned by the org
+              // but not currently in allowedEmailDomains should fall
+              // through to credentials, not be force-rejected.
+              const claim = await prisma.orgDomainClaim.findUnique({
+                where: { domain },
                 select: {
-                  organization: { select: { id: true } },
+                  organizationId: true,
+                  organization: {
+                    select: {
+                      status: true,
+                      ssoSettings: {
+                        select: {
+                          enforceSSO: true,
+                          allowedEmailDomains: true,
+                        },
+                      },
+                    },
+                  },
                 },
               });
-              const organizationId = enforced?.organization?.id;
-              if (!organizationId) return null;
+              if (
+                !claim ||
+                !claim.organization ||
+                claim.organization.status !== "ACTIVE" ||
+                !claim.organization.ssoSettings?.enforceSSO
+              ) {
+                return null;
+              }
+              const allowed =
+                claim.organization.ssoSettings.allowedEmailDomains;
+              if (allowed.length > 0 && !allowed.includes(domain)) {
+                return null;
+              }
               const rows = await prisma.ssoProvider.findMany({
-                where: { organizationId },
+                where: { organizationId: claim.organizationId },
                 select: { providerId: true },
               });
               return {
-                organizationId,
+                organizationId: claim.organizationId,
                 registeredProviderIds: rows.map((r) => r.providerId),
               };
             },
@@ -417,27 +443,54 @@ export const auth = betterAuth({
         const email = user.email;
         const domain = email?.split("@")[1]?.toLowerCase();
         if (domain) {
-          const enforced = await prisma.organizationSSOSettings.findFirst({
-            where: { enforceSSO: true, allowedEmailDomains: { has: domain } },
-            select: { organization: { select: { id: true } } },
+          // Mirror `session.create.before` / `domain-check` lookup: use
+          // OrgDomainClaim as the source of truth, honour allowlist if
+          // present, skip inactive orgs. Keeping a SINGLE enforcement
+          // path fixes issue where credential-signin and read-time
+          // reconciliation could disagree on who counts as "enforced".
+          const claim = await prisma.orgDomainClaim.findUnique({
+            where: { domain },
+            select: {
+              organizationId: true,
+              organization: {
+                select: {
+                  status: true,
+                  ssoSettings: {
+                    select: {
+                      enforceSSO: true,
+                      allowedEmailDomains: true,
+                    },
+                  },
+                },
+              },
+            },
           });
-          if (enforced?.organization?.id) {
+          const allowed =
+            claim?.organization?.ssoSettings?.allowedEmailDomains ?? [];
+          const isEnforced =
+            !!claim &&
+            claim.organization?.status === "ACTIVE" &&
+            !!claim.organization?.ssoSettings?.enforceSSO &&
+            (allowed.length === 0 || allowed.includes(domain));
+          if (isEnforced) {
             const registeredProviders = await prisma.ssoProvider.findMany({
-              where: { organizationId: enforced.organization.id },
+              where: { organizationId: claim.organizationId },
               select: { providerId: true },
             });
             const validProviderIds = registeredProviders.map((p) => p.providerId);
-            const linkedViaSSO =
-              validProviderIds.length > 0
-                ? await prisma.account.findFirst({
-                    where: {
-                      userId: user.id,
-                      providerId: { in: validProviderIds },
-                    },
-                    select: { id: true },
-                  })
-                : null;
-            if (!linkedViaSSO) ssoEnforcementFailed = true;
+            // Fail-open if no providers configured yet — matches
+            // `shouldRejectSession`'s behaviour. Without this, a
+            // half-configured org would flag every session as failed.
+            if (validProviderIds.length > 0) {
+              const linkedViaSSO = await prisma.account.findFirst({
+                where: {
+                  userId: user.id,
+                  providerId: { in: validProviderIds },
+                },
+                select: { id: true },
+              });
+              if (!linkedViaSSO) ssoEnforcementFailed = true;
+            }
           }
         }
       } catch {
