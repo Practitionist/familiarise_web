@@ -75,11 +75,12 @@ Settlement reads `payoutRecipient` at booking time:
   `OrganizationPayout` cycle pays the expert separately through its
   own payroll.
 
-`payoutRecipient` is set when the MAINTAINER approves the application
-(MAINTAINER-editable), and may be flipped later via PATCH on the
-member row. Flipping it mid-cycle does not retroactively rewrite
-already-booked earnings (those carry the bps snapshot and their own
-recipient decision).
+`payoutRecipient` is set at invite time (the invite payload carries
+it, and the accept handler stamps it onto the new Membership), and
+may be flipped later via PATCH on the member row (MAINTAINER-editable).
+Flipping it mid-cycle does not retroactively rewrite already-booked
+earnings (those carry the bps snapshot and their own recipient
+decision).
 
 ## Rate-card overrides
 
@@ -113,11 +114,30 @@ flips to false; when the last one is removed, it flips back to true.
 The explore surface reads this flag to decide whether to render the
 "hosted by <org>" badge on an expert card.
 
+## Promoting a learner to expert (or vice versa)
+
+Not supported on the same Membership row — the transition is blocked
+at the API (`409 ROLE_TRANSITION_BLOCKED`, see
+`lib/enterprise/role-transitions.ts`). The correct recipe is:
+
+1. `DELETE /api/organizations/[orgId]/members/[memberId]` on the
+   existing row (sets `status = REMOVED`, retains the row for audit).
+2. `POST /api/organizations/[orgId]/invitations` with the new role
+   and `payoutRecipient` (if EXPERT).
+3. The user accepts the invite. A fresh Membership lands with the
+   right profile FKs — `ConsulteeProfile` for LEARNER or a
+   placeholder `ConsultantProfile` for EXPERT. Audit rows show the
+   removal and the new member cleanly, rather than a single
+   `ROLE_CHANGE` hiding the profile-swap.
+
+See `04-roles-and-permissions.md` for the policy and its UX copy.
+
 ## Related docs
 
 - `03-earnings-and-revenue.md` — rate-card resolution and the
   `payoutRecipient` fork.
-- `04-roles-and-permissions.md` — where EXPERT sits on the rank ladder.
+- `04-roles-and-permissions.md` — where EXPERT sits on the rank ladder
+  and the LEARNER ↔ EXPERT disjoint rule.
 - `07-payout-pipeline.md` — how EXPERT earnings reconcile.
 - `11-public-pages-and-discovery.md` — how the explore surface surfaces
   org-hosted experts.

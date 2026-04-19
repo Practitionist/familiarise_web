@@ -30,6 +30,21 @@ Every booking that an org sponsors is attributed to a Program, and every
 Program subtype (`LICENSED_SEAT`, `CREDIT_POOL`) is a row in its own
 config table. See `16-programs.md`.
 
+### `OrgAdminProfile`
+
+Orthogonal to Membership: `OrgAdminProfile` is a per-user profile row
+(mirrors `StaffProfile` / `AdminProfile`) that exists for any user who
+operates at least one org. `POST /api/organizations` provisions one
+inside the creation transaction; `prisma/scripts/backfill-org-admin-profiles.ts`
+covers existing OWNERs. The profile id surfaces on the BetterAuth
+session and backs the operator home at
+`/dashboard/org-admin/:orgAdminId/home`, which redirects single-org
+operators straight into that org, shows a chooser for multi-org
+operators, and a "create an organization" CTA for operators whose
+orgs have all been deactivated. See
+`docs/onboarding/onboarding-system-reference.md` §0 for the full
+profile-model roster.
+
 ```
 Organization                       BillingAccount (at most one per org)
 ┌──────────────────────────────┐   ┌──────────────────────────────────┐
@@ -99,12 +114,26 @@ Every doc below defers to the following files when the prose drifts:
   labels + Zod narrowers consumed by dashboard and wizard code.
 - `lib/enterprise/audit-actions.ts` — the typed constant object that backs
   every `OrgAuditLog.action` string we emit.
-- `lib/auth.ts` (the `customSession` hook) — the live session payload.
+- `lib/enterprise/role-transitions.ts` — `isBlockedRoleTransition`, the
+  single source of truth for the disjoint LEARNER ↔ EXPERT rule.
+- `lib/labels/personal-dashboard.ts` — `resolvePersonalDashboardHref`
+  (priority: `orgAdminProfile → consultantProfile → consulteeProfile`).
+- `lib/labels/org-errors.ts` — humanized copy for `ORG_NOT_VERIFIED`
+  and `ROLE_TRANSITION_BLOCKED` (surfaced via `humanizeOrgError`).
+- `lib/profiles/ensure-consultee-profile.ts` — lazy
+  `ensureConsulteeProfile(db, userId)` called from checkout, slot
+  request-for-approval, and LEARNER invite accept.
+- `lib/auth.ts` (the `customSession` hook) — the live session payload;
+  also the `databaseHooks.user.create.after` hook, which no longer
+  force-creates a `ConsulteeProfile` on signup.
 - `lib/auth-helpers.ts` — `requireOrgAccess`, `requireOrgOwner`,
   `orgRoleSatisfies`, and `ORG_ROLE_RANK`.
 - `lib/api/organizations/{wallet,program-helpers,rate-card,hierarchy}.ts`
   — the transactional primitives referenced across the ledger, program,
   rate-card, and hierarchy docs.
+- `types/org-details.ts` — shared `OrgDetailsResponse` shape +
+  `flattenOrgDetails` helper; consumed by the org layout and
+  `useOrgRole`.
 
 ## Session shape
 
@@ -129,3 +158,10 @@ There is no `kind`, `billingMode`, `creditBalance`, `contractEndDate`, or
 `organizationProfileId` on the session anymore. UI code derives the badge
 via `deriveCapabilityKind(canSponsor, canHost)` and reads fundingSource
 directly — labels come from `lib/labels/org-labels.ts`.
+
+At the user level (outside the `organizationMemberships[]` list) the
+session also carries the four profile-id FKs — `consultantProfileId`,
+`consulteeProfileId`, `staffProfileId`, `adminProfileId`,
+`orgAdminProfileId` — surfaced from `lib/auth.ts` so client code can
+resolve the "Personal Dashboard" href via
+`resolvePersonalDashboardHref` without re-querying the DB.

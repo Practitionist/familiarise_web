@@ -154,6 +154,38 @@ not interfere with the marketplace flow. Every `lib/` primitive in
 the enterprise layer checks "is there an org?" before writing. The
 settlement path short-circuits at `resolveOrgShare() === null`.
 
+## 5. LearnPro promotes a learner to expert (remove-and-reinvite)
+
+**Shape:** LEARNER ↔ EXPERT is a disjoint transition; HR cannot
+flip the role in place.
+
+A LearnPro learner (say, a senior who has been consuming sessions
+for 6 months) agrees to come on-board as an EXPERT. The naive
+`PATCH /members/[memberId]` with `{ role: "EXPERT" }` would return
+`409 ROLE_TRANSITION_BLOCKED` because the two roles wire to
+different profile models (`ConsulteeProfile` vs `ConsultantProfile`)
+and different earnings flows. The correct recipe:
+
+1. MAINTAINER `DELETE /api/organizations/[orgId]/members/[memberId]`
+   on the existing LEARNER row (`status = REMOVED`, retained for
+   audit; `MEMBER_REMOVED`).
+2. MAINTAINER `POST /api/organizations/[orgId]/invitations` with
+   `{ role: "EXPERT", payoutRecipient: "ORGANIZATION" }` (salaried)
+   or `"SELF"` (marketplace share).
+3. User accepts. The accept handler upserts a placeholder
+   `ConsultantProfile` (`Domain "General"`,
+   `scheduleType = WEEKLY`, `verificationStatus =
+   PENDING_VERIFICATION`) if none exists, and creates a fresh
+   `Membership(role=EXPERT, status=ACTIVE, consultantProfileId=...)`.
+4. The new expert then completes their real domain + schedule and
+   submits for platform verification.
+
+Audit trail reads `MEMBER_REMOVED` → `INVITE_SENT` →
+`INVITE_ACCEPTED` — three clean rows, all referencing the same
+userId, instead of one ambiguous `ROLE_CHANGE`. The same recipe
+runs in reverse when an EXPERT becomes a LEARNER (e.g. retiring from
+delivery but still consuming sessions).
+
 ## Rate-card math worked example
 
 Default card: `platform=1000, org=1000, expert=8000` bps.

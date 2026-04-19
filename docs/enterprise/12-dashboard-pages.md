@@ -39,6 +39,11 @@ A few additional surfaces are not in the org-scoped tree:
 
 - `/organizations/invite/[token]` — invite-accept landing
   (`app/organizations/invite/[token]/page.tsx`).
+- `/dashboard/org-admin/[orgAdminId]/home` — the per-operator entry
+  point. Keyed on `OrgAdminProfile.id`. Auto-redirects operators who
+  own exactly one ACTIVE OWNER membership straight to that org's
+  `/home`, renders a chooser for operators who own multiple orgs, and
+  shows a "create an organization" CTA when the operator has none.
 - `/dashboard/admin/**` — the platform admin surface that can verify,
   suspend, or deactivate any org. Lives outside this doc set.
 
@@ -68,6 +73,27 @@ The sidebar under `app/dashboard/organization/[orgId]/page.tsx` reads
 capability booleans from the session and hides navigation items that
 would 404 or 501. It does NOT re-derive from `deriveCapabilityKind()`
 — the booleans are consumed directly.
+
+## Personal dashboard routing
+
+The "Personal Dashboard" chip at the bottom of the org sidebar
+resolves its href through a single helper,
+`resolvePersonalDashboardHref` in `lib/labels/personal-dashboard.ts`.
+Priority: `orgAdminProfile → consultantProfile → consulteeProfile` —
+operator identity wins over consumer identity, and
+`ConsultantProfile` wins over `ConsulteeProfile` for users who have
+both. If the user has none of the three, the chip is hidden. The same
+resolver backs the invitations dialog, `OrgContextBar`, and the org
+layout shell; do not inline a ternary.
+
+## Invitations dialog polish
+
+`/dashboard/organization/[orgId]/invitations` disables the "Send
+invite" button with a tooltip when the org's status is
+`PENDING_VERIFICATION`. Any `ORG_NOT_VERIFIED` error returned from
+the POST is run through `humanizeOrgError` (`lib/labels/org-errors.ts`)
+before it reaches the toast, so users see the friendly sentence
+instead of the raw error code.
 
 ## Wizard
 

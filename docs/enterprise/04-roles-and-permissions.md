@@ -176,9 +176,31 @@ SelfServiceMemberRoleSchema = z.enum(["OWNER", "MAINTAINER", "MANAGER", "LEARNER
 ```
 
 `EXPERT` and `SUPPORT` are deliberately excluded — the first needs
-`canHost=true` plus the application workflow (see
+`canHost=true` plus the invite-driven EXPERT entry (see
 `06-expert-lifecycle.md`), the second is an operator role that only an
 existing OWNER can assign from Settings.
+
+## LEARNER ↔ EXPERT is disjoint
+
+LEARNER and EXPERT are treated as disjoint roles on a single
+`Membership`. The server refuses `PATCH /members/[memberId]` and the
+reactivation branch of `POST /members` when the requested transition
+is `LEARNER → EXPERT` or `EXPERT → LEARNER`. The policy lives in
+`lib/enterprise/role-transitions.ts::isBlockedRoleTransition`; callers
+that violate it receive a `409 ROLE_TRANSITION_BLOCKED`, which the
+dashboard translates through `humanizeOrgError` (see
+`lib/labels/org-errors.ts`) into: _"Members cannot switch between
+Learner and Expert roles. Remove the member and re-invite them with
+the new role instead."_
+
+The two roles wire the user up to different profile models
+(`ConsulteeProfile` vs `ConsultantProfile`) and different earnings
+flows, so flipping them in place would leave stale FKs. Removing +
+re-inviting forces a fresh Membership row with the right profile
+links and a clean audit trail. The pre-Arch-4 "apply to deliver"
+workflow — which used to live on `Membership.applicationNote /
+appliedAt / approvedAt / approvedBy` — was removed alongside this
+rule; those columns are gone (see `06-expert-lifecycle.md`).
 
 ## Related docs
 

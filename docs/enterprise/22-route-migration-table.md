@@ -57,8 +57,8 @@ existing route.
 | `GET/PATCH/DELETE /api/organizations/[orgId]/members/[memberId]` | same | — |
 | `GET /api/organizations/[orgId]/consultants` | `GET /api/organizations/[orgId]/members?role=EXPERT` | Role filter on the unified `/members` endpoint. |
 | `GET /api/organizations/[orgId]/learners` | `GET /api/organizations/[orgId]/members?role=LEARNER` | — |
-| `POST /api/organizations/[orgId]/consultants/[consultantId]/approve` | `PATCH /api/organizations/[orgId]/members/[memberId]` | Body: `{ status: "ACTIVE", approvedAt: ... }`. |
-| `POST /api/organizations/[orgId]/consultants/[consultantId]/reject` | `PATCH /api/organizations/[orgId]/members/[memberId]` | Body: `{ status: "REMOVED" }`. |
+| `POST /api/organizations/[orgId]/consultants/[consultantId]/approve` | **removed** | The Arch-4 refactor dropped the in-org "apply to deliver" workflow. EXPERT entry is now invite-driven (see `06-expert-lifecycle.md`); there is no approval step on the Membership row. `Membership.applicationNote / appliedAt / approvedAt / approvedBy` are gone, and `EXPERT_APPLIED / EXPERT_APPROVED / EXPERT_REJECTED` audit actions were deleted. |
+| `POST /api/organizations/[orgId]/consultants/[consultantId]/reject` | `DELETE /api/organizations/[orgId]/members/[memberId]` | Use member removal (`status = REMOVED`) instead of reject; there is no pending-expert queue anymore. |
 
 ## Earnings / payouts / rate cards
 

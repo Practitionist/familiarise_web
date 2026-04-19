@@ -11,8 +11,8 @@ in parentheses. Constants live in `lib/enterprise/audit-actions.ts`.
 | Path | Verb | Min role | Purpose | Audit actions |
 |------|------|----------|---------|----------------|
 | `/api/organizations` | `GET` | authenticated | List the caller's orgs (switcher feed) | — |
-| `/api/organizations` | `POST` | authenticated | Create org + BillingAccount + OWNER Membership | `MEMBER_ADDED` (MEMBER) |
-| `/api/organizations/invitations/accept` | `POST` | authenticated | Accept an invite via token | `INVITE_ACCEPTED` (MEMBER) |
+| `/api/organizations` | `POST` | authenticated | Create org + BillingAccount + OWNER Membership. Also upserts an `OrgAdminProfile` for the creator (so they become "an operator of at least one org") and returns `orgAdminProfileId` on the response. | `MEMBER_ADDED` (MEMBER) |
+| `/api/organizations/invitations/accept` | `POST` | authenticated | Accept an invite via token. Side-effects: LEARNER invites lazily upsert a `ConsulteeProfile` (via `ensureConsulteeProfile`); EXPERT invites upsert a placeholder `ConsultantProfile` (`Domain "General"`, `scheduleType = WEEKLY`, `verificationStatus = PENDING_VERIFICATION`) if the user doesn't already have one. | `INVITE_ACCEPTED` (MEMBER) |
 
 ## Org record
 
@@ -31,9 +31,9 @@ in parentheses. Constants live in `lib/enterprise/audit-actions.ts`.
 | Path | Verb | Min role | Purpose | Audit actions |
 |------|------|----------|---------|----------------|
 | `/api/organizations/[orgId]/members` | `GET` | active member | Paginated list; `?role=` / `?status=` / `?q=` | — |
-| `/api/organizations/[orgId]/members` | `POST` | MAINTAINER | Direct add (idempotent on userId) | `MEMBER_ADDED` (MEMBER) |
+| `/api/organizations/[orgId]/members` | `POST` | MAINTAINER | Direct add (idempotent on userId). If the userId matches a `REMOVED` membership the row is reactivated, with the same `LEARNER ↔ EXPERT` transition guard applied (`409 ROLE_TRANSITION_BLOCKED` on violation). | `MEMBER_ADDED` / `MEMBER_REACTIVATED` (MEMBER) |
 | `/api/organizations/[orgId]/members/[memberId]` | `GET` | MAINTAINER | Full member record | — |
-| `/api/organizations/[orgId]/members/[memberId]` | `PATCH` | MAINTAINER | Role / status / departmentLabel / payoutRecipient | `ROLE_CHANGE` / `STATUS_CHANGE` (MEMBER) |
+| `/api/organizations/[orgId]/members/[memberId]` | `PATCH` | MAINTAINER | Role / status / departmentLabel / payoutRecipient. Returns `409 ROLE_TRANSITION_BLOCKED` if the caller tries to flip LEARNER ↔ EXPERT (`lib/enterprise/role-transitions.ts`). | `ROLE_CHANGE` / `STATUS_CHANGE` (MEMBER) |
 | `/api/organizations/[orgId]/members/[memberId]` | `DELETE` | MAINTAINER | Set `status = REMOVED` | `MEMBER_REMOVED` (MEMBER) |
 | `/api/organizations/[orgId]/invitations` | `GET` | MAINTAINER | Pending + accepted + revoked invites | — |
 | `/api/organizations/[orgId]/invitations` | `POST` | MAINTAINER | Send invite | `INVITE_SENT` (MEMBER) |
@@ -81,7 +81,7 @@ in parentheses. Constants live in `lib/enterprise/audit-actions.ts`.
 | Path | Verb | Min role | Purpose | Audit actions |
 |------|------|----------|---------|----------------|
 | `/api/organizations/[orgId]/billing-account/invoices` | `GET` | MANAGER | List with `?status=` filter | — |
-| `/api/organizations/[orgId]/billing-account/invoices` | `POST` | OWNER | Manual invoice | `INVOICE_GENERATED` (INVOICE) |
+| `/api/organizations/[orgId]/billing-account/invoices` | `POST` | OWNER | Manual invoice. Dashboard composer defaults `dueDate` to NET-60 and posts `issueImmediately: true` so the row lands as `ISSUED` in a single call. | `INVOICE_GENERATED` (INVOICE) |
 | `/api/organizations/[orgId]/billing-account/invoices/[invoiceId]` | `GET` | MANAGER | Invoice detail | — |
 | `/api/organizations/[orgId]/billing-account/invoices/[invoiceId]` | `PATCH` | OWNER | Status transitions (DRAFT→ISSUED, DRAFT→CANCELLED, ISSUED/OVERDUE→VOID) | `INVOICE_ISSUED` / `INVOICE_CANCELLED` / `INVOICE_VOIDED` (INVOICE) |
 | `/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pay` | `POST` | OWNER | Mint Razorpay order for the invoice; the webhook (`notes.type=invoice_payment`) flips ISSUED→PAID and writes the SettlementLedgerEntry | `INVOICE_PAYMENT_INITIATED` (INVOICE) — `INVOICE_PAID` is emitted by the webhook |
@@ -115,7 +115,7 @@ in parentheses. Constants live in `lib/enterprise/audit-actions.ts`.
 | `/api/organizations/[orgId]/sso` | `PATCH` | OWNER | allowedEmailDomains / enforceSSO / defaultRoleForAutoJoin | `SSO_ENABLED` / `SSO_DISABLED` (SETTINGS) |
 | `/api/organizations/[orgId]/sso/providers` | `GET` | MANAGER | List providers | — |
 | `/api/organizations/[orgId]/sso/providers` | `POST` | OWNER | Add SAML/OIDC provider | `SSO_ENABLED` (SETTINGS) |
-| `/api/organizations/[orgId]/sso/providers/[providerId]` | `GET` | MANAGER | Provider detail | — |
+| `/api/organizations/[orgId]/sso/providers/[providerId]` | `GET` | MANAGER | Provider detail. Response includes a derived `providerType` of `SAML` or `OIDC`, inferred from whether `samlConfig` or `oidcConfig` is populated on the row. | — |
 | `/api/organizations/[orgId]/sso/providers/[providerId]` | `DELETE` | OWNER | Remove provider | `SSO_DISABLED` (SETTINGS) |
 | `/api/organizations/[orgId]/domain-claims` | `GET` | MANAGER | List claims | — |
 | `/api/organizations/[orgId]/domain-claims` | `POST` | OWNER | Claim domain | `DOMAIN_CLAIMED` (SETTINGS) |
@@ -132,7 +132,7 @@ in parentheses. Constants live in `lib/enterprise/audit-actions.ts`.
 | `/api/organizations/[orgId]/hris/sync` | `POST` | OWNER | Kick a sync job | `HRIS_SYNC_STARTED` (SYSTEM) |
 | `/api/organizations/[orgId]/hris/csv-upload` | `POST` | OWNER | CSV fallback sync | `HRIS_SYNC_STARTED` / `HRIS_SYNC_COMPLETED` (SYSTEM) |
 | `/api/organizations/[orgId]/consent` | `GET` | MANAGER | ConsentArtifact roster | — |
-| `/api/organizations/[orgId]/consent` | `POST` | MANAGER | Record a grant / withdrawal | `CONSENT_GRANTED` / `CONSENT_WITHDRAWN` (CONSENT) |
+| `/api/organizations/[orgId]/consent` | `POST` | MANAGER | Record a grant / withdrawal. `userId` is validated as a non-empty string (1–128 chars) because `User.id` is a `cuid()`, not a UUID. | `CONSENT_GRANTED` / `CONSENT_WITHDRAWN` (CONSENT) |
 
 ## Catalog, analytics, activity
 
@@ -144,6 +144,21 @@ in parentheses. Constants live in `lib/enterprise/audit-actions.ts`.
 | `/api/organizations/[orgId]/catalog/search` | `GET` | active member | ILIKE search | — |
 | `/api/organizations/[orgId]/analytics` | `GET` | MANAGER | Rollups (bookings, revenue, earnings, wallet burn) | — |
 | `/api/organizations/[orgId]/activity` | `GET` | MANAGER | OrgAuditLog feed (filterable by category/date) | — |
+
+## Retired audit actions
+
+The Arch-4 refactor removed the in-org "apply to deliver" workflow. The
+following action strings are no longer emitted and have been deleted
+from `lib/enterprise/audit-actions.ts`:
+
+- `EXPERT_APPLIED`
+- `EXPERT_APPROVED`
+- `EXPERT_REJECTED`
+
+EXPERT entry is now invite-driven (or direct admin add); see
+`06-expert-lifecycle.md`. The corresponding `Membership` columns
+(`applicationNote`, `appliedAt`, `approvedAt`, `approvedBy`) were
+dropped in the same cycle — any doc referencing those is stale.
 
 ## Invariants across the table
 
