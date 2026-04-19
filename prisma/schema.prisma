@@ -573,16 +573,23 @@ model Invitation {
   // Drives the "list pending invites" tab in /dashboard/.../members
   // and the dedup pre-check at POST /organizations/[orgId]/invitations.
   @@index([organizationId, status])
-  // Speeds up the dedup pre-check (orgId + email + status="pending")
-  // before we INSERT a new invitation. The application-level dedup is
-  // wrapped in a Serializable tx (see invitations/route.ts) so the
-  // read-then-create is atomic against concurrent inviters.
+  // Supports the dedup pre-check (orgId + email + status="pending")
+  // before INSERT. The real invariant — "at most one pending invite per
+  // (org, email)" — is currently enforced at the application layer by a
+  // Serializable transaction in invitations/route.ts, plus P2002 handling.
   //
-  // TODO(prisma-7.4): once we upgrade Prisma we can replace this index
-  // with a true partial unique index:
-  //   @@unique([organizationId, email], where: raw("status = 'pending'"))
-  // which would push the dedup invariant down to the database layer
-  // instead of relying on tx isolation. Tracked in Phase 2 follow-ups.
+  // TODO(infra/partial-unique): replace this index with a true PARTIAL
+  // UNIQUE constraint once the Prisma `partialIndexes` preview feature
+  // graduates to stable. Target syntax:
+  //
+  //   @@unique([organizationId, email],
+  //            name: "invitations_org_email_pending_key",
+  //            where: { status: "pending" })
+  //
+  // As of Prisma 7.7.0 (2026-04) the feature is still preview with known
+  // migration-drift bugs (prisma/prisma#29263, #29415), so we deliberately
+  // stick to Serializable tx + regular index until GA. Tracked in:
+  //   https://github.com/Practitionist/familiarise_web/issues/685
   @@index([organizationId, email, status])
   @@map("invitations")
 }
