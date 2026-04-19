@@ -77,7 +77,7 @@ export interface IrpResponse {
  *
  * TODO: replace with live connector per the header docblock.
  */
-export async function generateIrn(params: {
+export async function generateIrn(_params: {
   invoiceId: string;
   payload: Record<string, unknown>;
 }): Promise<IrpResponse> {
