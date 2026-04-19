@@ -796,7 +796,7 @@ export default function SupportTicketsPage() {
                             ticketDetail.linkedPayment.currency,
                           )}
                         </p>
-                        <p>
+                        <div>
                           <strong>Status:</strong>{" "}
                           <Badge
                             variant="outline"
@@ -809,7 +809,7 @@ export default function SupportTicketsPage() {
                           >
                             {ticketDetail.linkedPayment.paymentStatus}
                           </Badge>
-                        </p>
+                        </div>
                         <p>
                           <strong>Gateway:</strong>{" "}
                           {ticketDetail.linkedPayment.paymentGateway}
@@ -835,7 +835,7 @@ export default function SupportTicketsPage() {
                             ticketDetail.linkedRefund.currency,
                           )}
                         </p>
-                        <p>
+                        <div>
                           <strong>Status:</strong>{" "}
                           <Badge
                             variant="outline"
@@ -847,7 +847,7 @@ export default function SupportTicketsPage() {
                           >
                             {ticketDetail.linkedRefund.status}
                           </Badge>
-                        </p>
+                        </div>
                         {ticketDetail.linkedRefund.reason && (
                           <p>
                             <strong>Reason:</strong>{" "}

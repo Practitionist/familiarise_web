@@ -79,7 +79,7 @@ export default function OrgAdminReviewStep({
       <Section title="Organization" step={1}>
         <p><strong>Name:</strong> {formData.orgName ?? "—"}</p>
         <p><strong>Billing email:</strong> {formData.orgBillingEmail ?? "—"}</p>
-        <p>
+        <div>
           <strong>Capability:</strong>{" "}
           <Badge
             variant="secondary"
@@ -101,14 +101,14 @@ export default function OrgAdminReviewStep({
               ]
             }
           </Badge>
-        </p>
+        </div>
         {formData.orgCanSponsor && (() => {
           // Re-narrow through the Zod schema so the same fallback logic
           // the edit step uses also runs here — keeps the review screen
           // consistent with what the server will actually receive.
           const fs = narrowFundingSource(formData.orgFundingSource);
           return (
-            <p>
+            <div>
               <strong>Funding:</strong>{" "}
               <Badge
                 variant="secondary"
@@ -116,7 +116,7 @@ export default function OrgAdminReviewStep({
               >
                 {FUNDING_SOURCE_LABEL[fs]}
               </Badge>
-            </p>
+            </div>
           );
         })()}
         {formData.orgDescription && (
