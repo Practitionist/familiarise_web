@@ -19,18 +19,10 @@ import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
-
-const DOMAIN_REGEX =
-  /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/i;
+import { DomainSchema } from "@/lib/enterprise/validators";
 
 const CreateBodySchema = z.object({
-  domain: z
-    .string()
-    .trim()
-    .toLowerCase()
-    .min(3)
-    .max(253)
-    .regex(DOMAIN_REGEX, "Invalid domain format"),
+  domain: DomainSchema,
 });
 
 export async function GET(

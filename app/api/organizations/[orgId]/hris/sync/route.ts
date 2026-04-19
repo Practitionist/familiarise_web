@@ -80,34 +80,76 @@ export async function POST(
   }
 
   const now = new Date();
-  const [job] = await prisma.$transaction([
-    prisma.hrisSyncJob.create({
-      data: {
-        hrisConfigId: config.id,
-        startedAt: now,
-        // Marking completed immediately reflects the v1 stub — the
-        // real async-pull lands in a follow-up PR that flips
-        // PENDING → RUNNING → COMPLETED from the job runner.
-        completedAt: now,
-        status: "COMPLETED",
-        recordsProcessed: 0,
-      },
-    }),
-    prisma.hrisConfig.update({
-      where: { id: config.id },
-      data: { lastSyncedAt: now },
-    }),
-    prisma.orgAuditLog.create({
-      data: {
-        organizationId: orgId,
-        actorMembershipId: access.member.id,
-        category: "SYSTEM",
-        action: AUDIT_ACTIONS.SYSTEM.HRIS_SYNC_STARTED,
-        description: `HRIS sync started (${config.provider})`,
-        details: { provider: config.provider, tenantKey: config.tenantKey },
-      },
-    }),
-  ]);
+  try {
+    const [job] = await prisma.$transaction([
+      prisma.hrisSyncJob.create({
+        data: {
+          hrisConfigId: config.id,
+          startedAt: now,
+          // Marking completed immediately reflects the v1 stub — the
+          // real async-pull lands in a follow-up PR that flips
+          // PENDING → RUNNING → COMPLETED from the job runner.
+          completedAt: now,
+          status: "COMPLETED",
+          recordsProcessed: 0,
+        },
+      }),
+      prisma.hrisConfig.update({
+        where: { id: config.id },
+        data: { lastSyncedAt: now },
+      }),
+      prisma.orgAuditLog.create({
+        data: {
+          organizationId: orgId,
+          actorMembershipId: access.member.id,
+          category: "SYSTEM",
+          action: AUDIT_ACTIONS.SYSTEM.HRIS_SYNC_STARTED,
+          description: `HRIS sync started (${config.provider})`,
+          details: { provider: config.provider, tenantKey: config.tenantKey },
+        },
+      }),
+      // v1 stub transitions RUNNING → COMPLETED in-line, so emit the
+      // terminal audit row alongside STARTED. When the real job runner
+      // lands, this COMPLETED row will instead be emitted from the
+      // worker on successful pull.
+      prisma.orgAuditLog.create({
+        data: {
+          organizationId: orgId,
+          actorMembershipId: access.member.id,
+          category: "SYSTEM",
+          action: AUDIT_ACTIONS.SYSTEM.HRIS_SYNC_COMPLETED,
+          description: `HRIS sync completed (${config.provider}) — 0 records`,
+          details: {
+            provider: config.provider,
+            tenantKey: config.tenantKey,
+            recordsProcessed: 0,
+          },
+        },
+      }),
+    ]);
 
-  return NextResponse.json({ job }, { status: 201 });
+    return NextResponse.json({ job }, { status: 201 });
+  } catch (err) {
+    // The v1 stub shouldn't reach here, but the audit entry makes the
+    // failure path observable once the real runner lands. Kept as a
+    // best-effort write — we still want to surface the 500 to the
+    // caller even if the audit insert itself fails.
+    await prisma.orgAuditLog
+      .create({
+        data: {
+          organizationId: orgId,
+          actorMembershipId: access.member.id,
+          category: "SYSTEM",
+          action: AUDIT_ACTIONS.SYSTEM.HRIS_SYNC_FAILED,
+          description: `HRIS sync failed (${config.provider})`,
+          details: {
+            provider: config.provider,
+            tenantKey: config.tenantKey,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        },
+      })
+      .catch(() => null);
+    throw err;
+  }
 }

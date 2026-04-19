@@ -115,9 +115,12 @@ export async function POST(
   // tx because two concurrent POSTs against the same (orgId, email) would
   // otherwise both observe `existing = null` under the default Read
   // Committed isolation and both INSERT, leaving two pending rows.
-  // Once we move to Prisma 7.4 we can lean on a partial unique index
-  // (see Invitation model in schema.prisma) and demote this back to the
-  // default isolation level.
+  //
+  // TODO(infra/partial-unique): once Prisma graduates the `partialIndexes`
+  // preview feature to stable we can lean on a true partial unique
+  // constraint in schema.prisma (see Invitation model) and demote this
+  // back to the default isolation level. Tracked in:
+  //   https://github.com/Practitionist/familiarise_web/issues/685
   let wasExisting = false;
   let invitation;
   try {
@@ -168,9 +171,8 @@ export async function POST(
     );
   } catch (err) {
     // P2002 from a future partial unique index would land here; today
-    // (Prisma 7.3) we hit it only if the Serializable retry budget
-    // exhausts. Convert to 409 so the client can simply re-render the
-    // existing invitation.
+    // we hit it only if the Serializable retry budget exhausts. Convert
+    // to 409 so the client can simply re-render the existing invitation.
     if (
       err instanceof Prisma.PrismaClientKnownRequestError &&
       err.code === "P2002"

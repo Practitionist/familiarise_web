@@ -1364,10 +1364,11 @@ enum OrgAuditCategory {
   CONTRACT // contract lifecycle
   PROGRAM // program crud + assignment
   WALLET // top-ups, debits, refunds
-  INVOICE // generation, payment, dispute
+  INVOICE // generation, payment, dispute + PO creation/close
   PAYOUT // earnings & settlement
   SETTINGS // SSO, branding, policies
   CONSENT // DPDP events
+  CATALOG // org-curated plan catalog add/remove/deactivate
   SYSTEM // anything platform-triggered
 }
 

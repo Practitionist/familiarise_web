@@ -79,6 +79,15 @@ export const AUDIT_ACTIONS = {
     CONSENT_WITHDRAWN: "CONSENT_WITHDRAWN",
     DATA_BREACH_REPORTED: "DATA_BREACH_REPORTED",
   },
+  CATALOG: {
+    // Emitted from POST /api/organizations/[orgId]/catalog when an OWNER
+    // adds an OrganizationPlan to the sponsored catalog.
+    CATALOG_PLAN_CREATED: "CATALOG_PLAN_CREATED",
+    // Emitted from DELETE /api/organizations/[orgId]/catalog bulk
+    // deactivate (isActive=false). Kept as a single audit row per call,
+    // with the affected planIds surfaced via `details`.
+    CATALOG_PLAN_DEACTIVATED: "CATALOG_PLAN_DEACTIVATED",
+  },
   SYSTEM: {
     VERIFIED: "VERIFIED",
     SUSPENDED: "SUSPENDED",
@@ -86,6 +95,16 @@ export const AUDIT_ACTIONS = {
     DEACTIVATED: "DEACTIVATED",
     HRIS_SYNC_STARTED: "HRIS_SYNC_STARTED",
     HRIS_SYNC_COMPLETED: "HRIS_SYNC_COMPLETED",
+    // Logged from the HRIS sync pipeline when a provider call throws or
+    // returns a non-success response. Keeps the failure visible on the
+    // org audit log so MANAGERs can see "we tried, here's why it didn't
+    // land" without having to SSH into worker logs.
+    HRIS_SYNC_FAILED: "HRIS_SYNC_FAILED",
+    // Emitted by DELETE /api/organizations/[orgId] when an OWNER tears
+    // an org down. Kept inside SYSTEM so the audit row outlives the
+    // org itself (soft-deleted targetMembershipId) and is still
+    // auditable post-deletion.
+    ORG_DELETED: "ORG_DELETED",
   },
 } as const satisfies Record<OrgAuditCategory, Record<string, string>>;
 

@@ -16,6 +16,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
 const PlanTypeSchema = z.enum([
   "CONSULTATION",
@@ -98,20 +99,40 @@ export async function POST(
   }
   const body = parsed.data;
 
-  const plan = await prisma.organizationPlan.create({
-    data: {
-      organizationId: orgId,
-      planType: body.planType,
-      title: body.title,
-      description: body.description ?? null,
-      price: body.price,
-      priceCurrency: body.priceCurrency,
-      isActive: body.isActive,
-      // Cast lives here because Prisma's JSON type is unknown-ish;
-      // we've already validated shape via z.record above.
-      config: body.config as object,
-      assignedConsultantIds: body.assignedConsultantIds,
-    },
+  const plan = await prisma.$transaction(async (tx) => {
+    const created = await tx.organizationPlan.create({
+      data: {
+        organizationId: orgId,
+        planType: body.planType,
+        title: body.title,
+        description: body.description ?? null,
+        price: body.price,
+        priceCurrency: body.priceCurrency,
+        isActive: body.isActive,
+        // Cast lives here because Prisma's JSON type is unknown-ish;
+        // we've already validated shape via z.record above.
+        config: body.config as object,
+        assignedConsultantIds: body.assignedConsultantIds,
+      },
+    });
+
+    await tx.orgAuditLog.create({
+      data: {
+        organizationId: orgId,
+        actorMembershipId: access.member.id,
+        category: "CATALOG",
+        action: AUDIT_ACTIONS.CATALOG.CATALOG_PLAN_CREATED,
+        description: `Plan added to catalog: ${created.title}`,
+        details: {
+          planId: created.id,
+          planType: created.planType,
+          pricePaise: created.price,
+          currency: created.priceCurrency,
+        },
+      },
+    });
+
+    return created;
   });
 
   return NextResponse.json({ plan }, { status: 201 });
@@ -134,12 +155,32 @@ export async function DELETE(
     );
   }
 
-  const { count } = await prisma.organizationPlan.updateMany({
-    where: {
-      organizationId: orgId,
-      id: { in: parsed.data.planIds },
-    },
-    data: { isActive: false },
+  const { count } = await prisma.$transaction(async (tx) => {
+    const updated = await tx.organizationPlan.updateMany({
+      where: {
+        organizationId: orgId,
+        id: { in: parsed.data.planIds },
+      },
+      data: { isActive: false },
+    });
+
+    if (updated.count > 0) {
+      await tx.orgAuditLog.create({
+        data: {
+          organizationId: orgId,
+          actorMembershipId: access.member.id,
+          category: "CATALOG",
+          action: AUDIT_ACTIONS.CATALOG.CATALOG_PLAN_DEACTIVATED,
+          description: `Deactivated ${updated.count} catalog plan(s)`,
+          details: {
+            planIds: parsed.data.planIds,
+            deactivated: updated.count,
+          },
+        },
+      });
+    }
+
+    return updated;
   });
 
   return NextResponse.json({ deactivated: count });

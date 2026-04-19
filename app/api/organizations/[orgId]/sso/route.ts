@@ -17,22 +17,12 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { DomainSchema } from "@/lib/enterprise/validators";
 import { SelfServiceMemberRoleSchema } from "@/lib/labels/org-labels";
-
-const DOMAIN_REGEX = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/i;
 
 const PatchBodySchema = z
   .object({
-    allowedEmailDomains: z
-      .array(
-        z
-          .string()
-          .trim()
-          .toLowerCase()
-          .regex(DOMAIN_REGEX, "Invalid domain format"),
-      )
-      .max(50)
-      .optional(),
+    allowedEmailDomains: z.array(DomainSchema).max(50).optional(),
     enforceSSO: z.boolean().optional(),
     // OWNER/MAINTAINER/MANAGER/LEARNER — never SUPPORT/EXPERT via auto-join.
     defaultRoleForAutoJoin: SelfServiceMemberRoleSchema.optional(),
