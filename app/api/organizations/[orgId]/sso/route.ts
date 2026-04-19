@@ -50,6 +50,8 @@ export async function GET(
         providerId: true,
         issuer: true,
         domain: true,
+        samlConfig: true,
+        oidcConfig: true,
       },
     }),
     prisma.orgDomainClaim.findMany({
@@ -65,7 +67,10 @@ export async function GET(
       enforceSSO: false,
       defaultRoleForAutoJoin: "LEARNER",
     },
-    providers,
+    providers: providers.map(({ samlConfig, oidcConfig, ...rest }) => ({
+      ...rest,
+      providerType: samlConfig ? "saml" : oidcConfig ? "oidc" : null,
+    })),
     domainClaims: claims,
   });
 }

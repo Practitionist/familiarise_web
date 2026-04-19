@@ -34,7 +34,7 @@ const LanguageSchema = z
   .regex(/^[a-z]{2,3}(-[A-Z]{2})?$/, "ISO 639-1/2 language code required");
 
 const CreateBodySchema = z.object({
-  userId: z.string().uuid(),
+  userId: z.string().min(1).max(128),
   purposeCodes: z.array(z.string().min(1).max(64)).min(1).max(20),
   language: LanguageSchema,
   consentManager: z.string().min(1).max(120).nullable().optional(),
@@ -42,7 +42,7 @@ const CreateBodySchema = z.object({
 });
 
 const QuerySchema = z.object({
-  userId: z.string().uuid().optional(),
+  userId: z.string().min(1).max(128).optional(),
   active: z.enum(["true", "false"]).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });
@@ -180,7 +180,7 @@ export async function POST(
  *    authenticated user to match `userId` rather than MANAGER access.
  */
 const DeleteQuerySchema = z.object({
-  userId: z.string().uuid(),
+  userId: z.string().min(1).max(128),
   purposeCode: z.string().min(1).max(64).optional(),
 });
 

@@ -367,14 +367,14 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
       setComposerError("Add at least one line item.");
       return;
     }
-    const res = await fetch(`/api/organizations/${orgId}/billing/invoices`, {
+    const res = await fetch(`/api/organizations/${orgId}/billing-account/invoices`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         items,
-        taxRate: taxRate ? parseFloat(taxRate) : undefined,
-        gstin: gstin || undefined,
-        dueDate: dueDate || undefined,
+        // Default due date: 60 days from today (NET-60) if not supplied.
+        dueDate: dueDate || new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString(),
+        issueImmediately: true,
       }),
     });
     const body = await res.json();
