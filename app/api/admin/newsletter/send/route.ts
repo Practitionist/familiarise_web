@@ -37,7 +37,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // Auth check
     const auth = await requireAdminAuth();
     if (auth.error) return auth.error;
-    const session = auth.session;
 
     // Validate input
     const body = await req.json();

@@ -7,7 +7,6 @@ export async function GET() {
   try {
     const auth = await requirePrivilegedAuth();
     if (auth.error) return auth.error;
-    const session = auth.session;
 
     // Get current date info for time-based queries
     const now = new Date();
