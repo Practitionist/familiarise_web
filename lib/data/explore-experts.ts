@@ -227,11 +227,38 @@ export const getCuratedExperts = cache(
         break;
     }
 
-    return prisma.consultantProfile.findMany({
+    const rows = await prisma.consultantProfile.findMany({
       where: { verificationStatus: "VERIFIED" },
       orderBy,
       take: limit,
       include: { ...consultantListInclude, ...orgMembershipInclude },
+    });
+
+    // Explicitly map to IConsultantCardData so that Prisma Decimal fields
+    // (e.g. tdsRate) are never included in the payload passed to Client
+    // Components. Spreading the full row crosses the Server→Client boundary
+    // with non-serializable Decimal objects, which Next.js rejects.
+    return rows.map(({ memberships, ...c }) => {
+      const firstOrg = memberships[0]?.organization ?? null;
+      return {
+        id: c.id,
+        rating: c.rating,
+        headline: c.headline,
+        experience: c.experience,
+        description: c.description,
+        createdAt: c.createdAt,
+        isVerified: c.isVerified,
+        languages: c.languages,
+        user: c.user,
+        domain: c.domain,
+        subDomains: c.subDomains,
+        tags: c.tags,
+        reviews: c.reviews,
+        subscriptionPlans: c.subscriptionPlans,
+        organizationBadge: firstOrg
+          ? { name: firstOrg.name, slug: firstOrg.slug, logo: firstOrg.logo }
+          : null,
+      };
     });
   },
 );

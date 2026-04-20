@@ -196,19 +196,19 @@ export const ConsultantCard = memo(function ConsultantCard({
                   </span>
                 )}
                 {consultant.organizationBadge && (
-                  // /org/[slug] is a placeholder shell until the public
-                  // org profile is rebuilt on the Arch 4 schema (Issue
-                  // #681). Render the badge without a link so it doesn't
-                  // send marketplace traffic to a "pending rewrite" page.
-                  <span title={consultant.organizationBadge.name}>
+                  <Link
+                    href={`/explore/enterprise/organisations/${consultant.organizationBadge.slug}`}
+                    title={consultant.organizationBadge.name}
+                    onClick={(e) => e.stopPropagation()}
+                  >
                     <Badge
                       variant="outline"
-                      className="border-indigo-200 text-indigo-700 text-[10px] px-1.5 py-0"
+                      className="border-indigo-200 text-indigo-700 text-[10px] px-1.5 py-0 hover:bg-indigo-50 transition-colors"
                     >
                       <Building2 className="w-3 h-3 mr-0.5" />
                       {consultant.organizationBadge.name}
                     </Badge>
-                  </span>
+                  </Link>
                 )}
               </div>
               <div className="flex items-center gap-2 mt-2">

@@ -115,6 +115,15 @@ export async function GET(request: NextRequest) {
       conditions.push({ languages: { has: language } });
     }
 
+    // Affiliation type filter: independent (isIndependent=true) or agency
+    // (isIndependent=false). When null/absent, show all verified consultants.
+    const affiliationType = searchParams.get("affiliationType");
+    if (affiliationType === "independent") {
+      conditions.push({ isIndependent: true });
+    } else if (affiliationType === "agency") {
+      conditions.push({ isIndependent: false });
+    }
+
     // Search filter
     if (search) {
       conditions.push({
