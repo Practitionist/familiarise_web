@@ -479,8 +479,7 @@ model Organization {
   sizeBucket     OrgSizeBucket?
   billingEmail   String?
 
-  // Policies (merged from old OrganizationProfile)
-  autoApproveConsultants    Boolean @default(false)
+  // Policies
   enforceOrganizationPlans  Boolean @default(false)
   defaultCancellationPolicy String? @db.Text
   defaultRefundPolicy       String? @db.Text
@@ -1376,32 +1375,6 @@ enum OrgAuditCategory {
   SYSTEM // anything platform-triggered
 }
 
-/// @deprecated — kept as a TypeScript-facing constant object in
-/// lib/enterprise/audit-actions.ts for autocomplete. The DB column is
-/// `action: String` now; use any string literal from AUDIT_ACTIONS.
-enum OrgAuditAction {
-  MEMBER_ADDED
-  MEMBER_REMOVED
-  ROLE_CHANGE
-  STATUS_CHANGE
-  CONSULTANT_APPLIED
-  CONSULTANT_APPROVED
-  CONSULTANT_REJECTED
-  CONTRACT_CREATED
-  CONTRACT_TERMINATED
-  PROGRAM_CREATED
-  PROGRAM_ASSIGNED
-  PROGRAM_UNASSIGNED
-  WALLET_TOPUP
-  WALLET_REFUND
-  PURCHASE_ORDER_CREATED
-  INVOICE_GENERATED
-  INVOICE_PAID
-  PAYOUT_INITIATED
-  PAYOUT_PROCESSED
-  SETTINGS_CHANGED
-}
-
 // Org-curated plan catalog. Unchanged semantics; FK renamed to organizationId.
 model OrganizationPlan {
   id             String       @id @default(uuid())
@@ -1728,7 +1701,7 @@ model ConsultantProfile {
   pendingRevenue Int @default(0)
 
   // Enterprise: optional org memberships. A consultant can belong to zero or
-  // more PROVIDER/HYBRID orgs via typed Membership rows.
+  // more HOST/HYBRID orgs via typed Membership rows.
   memberships   Membership[] @relation("ConsultantMembership")
   isIndependent Boolean      @default(true)
 

@@ -170,7 +170,8 @@ async function deleteProvider(orgId: string, providerId: string) {
 // Auto-join via SSO grants one of the non-privileged MemberRoles. OWNER +
 // SUPPORT + EXPERT are deliberately excluded: OWNER is destructive to
 // grant automatically, SUPPORT is an operator role assigned manually,
-// and EXPERT requires the consultant application workflow.
+// and EXPERT is invite-driven at the org level (not auto-joinable via
+// SSO — the invite-accept path provisions the ConsultantProfile FK).
 const AUTO_JOIN_ROLES = ["LEARNER", "MANAGER", "MAINTAINER"] as const;
 const ROLE_OPTIONS = AUTO_JOIN_ROLES.map((value) => ({
   value,

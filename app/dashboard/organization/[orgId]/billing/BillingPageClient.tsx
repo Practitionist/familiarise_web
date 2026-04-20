@@ -46,6 +46,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { FUNDING_SOURCE_LABEL } from "@/lib/labels/org-labels";
 
 // ---------------------------------------------------------------------------
 // Zod schemas — narrow API responses at the network boundary so the rest
@@ -53,8 +54,8 @@ import { formatCurrencyAmount } from "@/utils/formatting";
 // ---------------------------------------------------------------------------
 
 const billingSummarySchema = z.object({
-  billingMode: z
-    .enum(["TAG_ONLY", "SEAT_PACK", "INVOICED_MONTHLY", "PREPAID_UNLIMITED"])
+  fundingSource: z
+    .enum(["PERSONAL", "WALLET", "INVOICE", "LICENSE", "PROJECT"])
     .nullable(),
   monthToDate: z.object({
     gross: z.number(),
@@ -400,7 +401,7 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
               </Button>
             )}
             {isAtLeast("OWNER") &&
-              summary.data?.billingMode === "INVOICED_MONTHLY" && (
+              summary.data?.fundingSource === "INVOICE" && (
               <Button
                 size="sm"
                 onClick={() => generateMutation.mutate()}
@@ -456,18 +457,10 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
               title="Payment terms"
               value={`NET-${summary.data?.paymentTermsDays ?? 60}`}
             />
-            {summary.data?.billingMode && (
+            {summary.data?.fundingSource && (
               <StatCard
-                title="Billing mode"
-                value={
-                  summary.data.billingMode === "PREPAID_UNLIMITED"
-                    ? "Prepaid Unlimited"
-                    : summary.data.billingMode === "SEAT_PACK"
-                    ? "Seat Pack"
-                    : summary.data.billingMode === "INVOICED_MONTHLY"
-                    ? "Invoiced Monthly"
-                    : "Tag Only"
-                }
+                title="Funding source"
+                value={FUNDING_SOURCE_LABEL[summary.data.fundingSource]}
               />
             )}
           </DashboardGrid>

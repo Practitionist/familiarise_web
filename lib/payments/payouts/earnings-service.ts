@@ -2,16 +2,17 @@
  * Earnings Service
  * Manages consultant and organization earnings from payments.
  *
- * For PROVIDER/HYBRID orgs, implements a 3-way revenue split:
+ * For HOST / HYBRID orgs, implements a 3-way revenue split:
  *   Payment (100%) = Platform fee (configurable, default 10%)
  *                   + Org retain (configurable, default 5%)
  *                   + Consultant payout (configurable, default 85%)
  *
- * The split is controlled by OrganizationProfile rates and can be overridden
- * per-consultant via OrganizationMemberProfile.customConsultantPayoutRate.
+ * The split is controlled by the org's active `RateCard` row and can be
+ * overridden per-membership via `Membership.rateCardOverrideId`.
  *
- * When earningsRecipient = ORGANIZATION, the consultant's share is redirected
- * to the org (internal/salaried consultant case).
+ * When `Membership.payoutRecipient = ORGANIZATION`, the consultant's share
+ * is redirected to the org (internal / salaried consultant case) and the
+ * consultant's personal payout for that booking is zero.
  */
 
 import prisma from "@/lib/prisma";
@@ -24,7 +25,7 @@ import {
 import { PAYOUT_CONSTANTS, AppointmentType } from "./constants";
 import { calculateRevenueSplit } from "@/lib/collaborators/service";
 import { getIndianFYQuarter } from "@/lib/payments/tax/tds-service";
-import { ENABLE_PROVIDER_ORGS } from "@/lib/feature-flags";
+import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
 import type { RevenueSplit } from "@/types/collaborators";
 
 // ============================================
@@ -91,7 +92,7 @@ type PrismaTransaction = Prisma.TransactionClient;
  *
  * Returns an OrgEarningsSplit if the consultant is an active EXPERT
  * membership at a canHost org. Returns null for independent consultants
- * or when the PROVIDER feature flag is off.
+ * or when the HOST-orgs feature flag is off.
  *
  * For multi-org consultants, uses the first active canHost membership.
  * (Future: allow consultant to select which org gets credit per-booking.)
@@ -107,12 +108,12 @@ async function resolveOrgSplit(
    *  made before the bump. */
   at: Date = new Date(),
 ): Promise<OrgEarningsSplit | null> {
-  if (!ENABLE_PROVIDER_ORGS) return null;
+  if (!ENABLE_HOST_ORGS) return null;
 
-  // Arch 4-Modified + harness: Membership where role=CONSULTANT and parent
-  // org canHost=true. Oldest membership wins (multi-org consultants route
-  // deterministically to the same org). Rate card resolved via the
-  // time-scoped resolver at the booking instant.
+  // Arch-4: Membership where role=EXPERT and parent org canHost=true.
+  // Oldest membership wins (multi-org consultants route deterministically
+  // to the same org). Rate card resolved via the time-scoped resolver at
+  // the booking instant.
   const membership = await tx.membership.findFirst({
     where: {
       consultantProfileId,
@@ -242,7 +243,7 @@ export async function createEarningsFromPayment({
         return existingEarnings.id;
       }
 
-      // Check if this consultant belongs to a PROVIDER/HYBRID org (3-way
+      // Check if this consultant belongs to a HOST/HYBRID org (3-way
       // split). Settlement uses the rate card that was EFFECTIVE AT
       // PAYMENT-CREATION TIME — hold periods can be days long, so by the
       // time earnings are settled the live rate may have been bumped.
@@ -315,7 +316,7 @@ export async function createEarningsFromPayment({
           }
 
           console.log(
-            `Earnings created for ${split.role} (${split.consultantProfileId}): ${split.share / 100} from payment ${payment.id}${orgSplit ? " [PROVIDER 3-way split]" : ""}`,
+            `Earnings created for ${split.role} (${split.consultantProfileId}): ${split.share / 100} from payment ${payment.id}${orgSplit ? " [HOST 3-way split]" : ""}`,
           );
         }
       } else {
@@ -345,7 +346,7 @@ export async function createEarningsFromPayment({
         ownerId = earnings.id;
       }
 
-      // Create OrganizationEarnings row for the PROVIDER/HYBRID org (3-way split).
+      // Create OrganizationEarnings row for the HOST/HYBRID org (3-way split).
       // Skip when orgShare is 0 (Platform-only mode: platformCommissionRate = 1.0)
       // — creating 0-value rows adds noise without value.
       if (orgSplit && orgSplit.orgShare > 0) {
@@ -597,7 +598,7 @@ export async function refundEarnings(
     );
   }
 
-  // Also refund any org earnings for this payment (PROVIDER 3-way split)
+  // Also refund any org earnings for this payment (HOST 3-way split)
   const orgEarnings = await db.organizationEarnings.findMany({
     where: { paymentId },
   });

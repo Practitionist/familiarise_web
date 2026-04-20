@@ -9,6 +9,12 @@
  * Adding a new event: just add a string literal here. Anything unknown
  * at write time still persists — this collection is a convention, not a
  * constraint.
+ *
+ * NB: `CONSULTANT_APPLIED / CONSULTANT_APPROVED / CONSULTANT_REJECTED`
+ * and their EXPERT_* aliases were purged in the Arch-4 terminology
+ * migration. Do not re-add; EXPERT membership is invite-driven (see
+ * docs/enterprise/06-expert-lifecycle.md) and the dead `OrgAuditAction`
+ * enum was dropped from the Prisma schema at the same time.
  */
 
 import type { OrgAuditCategory } from "@prisma/client";

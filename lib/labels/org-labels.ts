@@ -2,10 +2,10 @@
  * Shared user-facing labels for Organization + Membership + BillingAccount.
  *
  * Every dashboard badge, form option, review summary, and checkout subtitle
- * that needs a human-readable version of a new-taxonomy enum pulls from
- * here. Centralising avoids the "BUYER" badge inconsistency that happened
- * when labels were defined inline in OrgContextBar vs OrganizationSwitcher
- * vs org-list.
+ * that needs a human-readable version of an Arch-4 capability/funding enum
+ * pulls from here. Centralising avoids the taxonomy drift we saw before
+ * Arch-4, when labels were defined inline in OrgContextBar vs
+ * OrganizationSwitcher vs org-list and disagreed with each other.
  *
  * Palette conventions:
  *   - Sponsor (buyer-side): blue

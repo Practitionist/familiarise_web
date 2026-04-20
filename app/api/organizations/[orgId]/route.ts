@@ -55,7 +55,6 @@ const PatchBodySchema = z
     gstStateCode: z.string().length(2).nullable().optional(),
     defaultCancellationPolicy: z.string().max(5000).nullable().optional(),
     defaultRefundPolicy: z.string().max(5000).nullable().optional(),
-    autoApproveConsultants: z.boolean().optional(),
     enforceOrganizationPlans: z.boolean().optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
@@ -197,9 +196,6 @@ export async function PATCH(
           }),
           ...(body.defaultRefundPolicy !== undefined && {
             defaultRefundPolicy: body.defaultRefundPolicy,
-          }),
-          ...(body.autoApproveConsultants !== undefined && {
-            autoApproveConsultants: body.autoApproveConsultants,
           }),
           ...(body.enforceOrganizationPlans !== undefined && {
             enforceOrganizationPlans: body.enforceOrganizationPlans,

@@ -4,13 +4,13 @@
  * Seeds FOUR representative org shapes covering every capability pair + the
  * two v1 Program types:
  *
- *   1. Wipro           canSponsor=true,  canHost=false  (pure BUYER)
+ *   1. Wipro           canSponsor=true,  canHost=false  (pure SPONSOR)
  *                      → BillingAccount(INVOICE) + Program(LICENSED_SEAT)
  *                        + PurchaseOrder + OrganizationInvoice (DRAFT)
  *
- *   2. LearnPro Agency canSponsor=false, canHost=true   (pure PROVIDER)
+ *   2. LearnPro Agency canSponsor=false, canHost=true   (pure HOST)
  *                      → OrganizationPayoutAccount + RateCard(10/10/80)
- *                        + 5 CONSULTANT memberships
+ *                        + 5 EXPERT memberships
  *
  *   3. IIT Madras      canSponsor=true,  canHost=true   (HYBRID)
  *                      → BillingAccount(WALLET) with WalletEntry ledger
@@ -157,7 +157,8 @@ export async function createOrganizations(
   await seedWipro(consultees.slice(0, 3), consultees[7]);
 
   // ------------------------------------------------------------------ LEARNPRO
-  await seedLearnPro(consultants.slice(0, 5));
+  // consultants[11] is the dedicated LearnPro owner; fallback to consultants[5]
+  await seedLearnPro(consultants[11] ?? consultants[5], consultants.slice(0, 5));
 
   // --------------------------------------------------------------------- IIT
   await seedIit({
@@ -179,7 +180,7 @@ export async function createOrganizations(
 }
 
 // ---------------------------------------------------------------------------
-// Shape 1: Wipro — pure BUYER with INVOICE funding + LICENSED_SEAT program
+// Shape 1: Wipro — pure SPONSOR with INVOICE funding + LICENSED_SEAT program
 // ---------------------------------------------------------------------------
 
 async function seedWipro(learners: UserWithProfiles[], owner: UserWithProfiles) {
@@ -390,15 +391,15 @@ async function seedWipro(learners: UserWithProfiles[], owner: UserWithProfiles) 
   });
 
   console.log(
-    `[15a]   ✓ Wipro (BUYER, INVOICE, LICENSED_SEAT): ${learners.length} learners`,
+    `[15a]   ✓ Wipro (SPONSOR, INVOICE, LICENSED_SEAT): ${learners.length} learners`,
   );
 }
 
 // ---------------------------------------------------------------------------
-// Shape 2: LearnPro Agency — pure PROVIDER with RateCard + payout account
+// Shape 2: LearnPro Agency — pure HOST with RateCard + payout account
 // ---------------------------------------------------------------------------
 
-async function seedLearnPro(agencyConsultants: UserWithProfiles[]) {
+async function seedLearnPro(owner: UserWithProfiles, agencyConsultants: UserWithProfiles[]) {
   const org = await createRootOrg({
     name: "LearnPro Academy",
     slug: "learnpro-academy",
@@ -430,6 +431,19 @@ async function seedLearnPro(agencyConsultants: UserWithProfiles[]) {
       razorpayFundAccountId: "fa_" + faker.string.alphanumeric(14),
       status: "VERIFIED",
       verifiedAt: faker.date.recent({ days: 60 }),
+    },
+  });
+
+  // OWNER membership — required so the org has an admin who can log in
+  await prisma.membership.create({
+    data: {
+      userId: owner.id,
+      organizationId: org.id,
+      role: MemberRole.OWNER,
+      status: MemberStatus.ACTIVE,
+      departmentLabel: "Management",
+      consultantProfileId: owner.consultantProfile?.id ?? null,
+      payoutRecipient: PayoutRecipient.SELF,
     },
   });
 
@@ -477,7 +491,7 @@ async function seedLearnPro(agencyConsultants: UserWithProfiles[]) {
   });
 
   console.log(
-    `[15a]   ✓ LearnPro (PROVIDER): ${agencyConsultants.length} consultants, RateCard 10/10/80`,
+    `[15a]   ✓ LearnPro (HOST): ${agencyConsultants.length} consultants, RateCard 10/10/80`,
   );
 }
 
