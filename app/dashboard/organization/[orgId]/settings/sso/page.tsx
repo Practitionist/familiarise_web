@@ -52,6 +52,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -469,6 +470,9 @@ export default function OrgSsoPage({
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Add SSO provider</DialogTitle>
+            <DialogDescription>
+              Configure a SAML or OIDC identity provider for this organization.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
