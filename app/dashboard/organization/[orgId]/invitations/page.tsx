@@ -8,6 +8,10 @@ import { useRequireOrgRole } from "../useOrgRole";
 import { MEMBER_ROLE_LABEL } from "@/lib/labels/org-labels";
 import { humanizeOrgError } from "@/lib/labels/org-errors";
 import {
+  fetchOrgDetails,
+  orgDetailsQueryKey,
+} from "@/lib/api/organizations/org-details";
+import {
   CreateInvitationPayloadSchema,
   CreateInvitationResponseSchema,
   InvitationsListResponseSchema,
@@ -150,17 +154,20 @@ export default function OrgInvitationsPage({
     enabled: allowed,
   });
 
-  // Mirror of the query the org layout owns; `enabled: false` keeps us
-  // from racing a second fetch against it. Layout blocks rendering
-  // children until this cache is warm, so `data` is effectively always
-  // present by the time this page mounts.
-  const { data: orgSnapshot } = useQuery<{
-    organization: { status: OrgStatus };
-  }>({
-    queryKey: ["organization", orgId],
-    enabled: false,
+  // Read the org the layout already fetched. We pass the same queryKey
+  // + queryFn so react-query dedupes: if the layout's fetch has
+  // finished (which it always has — the layout blocks child rendering
+  // until the cache is warm), we read from the cache; otherwise we
+  // kick the same fetch and the layout's call is joined to ours. React
+  // Query v5 requires a queryFn even when `enabled` is false, so the
+  // previous `enabled: false`-plus-no-queryFn trick crashed on mount.
+  const { data: orgSnapshot } = useQuery({
+    queryKey: orgDetailsQueryKey(orgId),
+    queryFn: () => fetchOrgDetails(orgId),
+    enabled: allowed,
+    staleTime: 60_000,
   });
-  const orgStatus = orgSnapshot?.organization.status;
+  const orgStatus: OrgStatus | undefined = orgSnapshot?.organization.status;
   const isPendingVerification = orgStatus === "PENDING_VERIFICATION";
 
   const [showCreate, setShowCreate] = useState(false);

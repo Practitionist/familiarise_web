@@ -51,20 +51,9 @@ import { resolvePersonalDashboardHref } from "@/lib/labels/personal-dashboard";
 import { disconnectStreamClients } from "@/providers/StreamProvider";
 import type { MemberRole, OrgStatus } from "@prisma/client";
 import {
-  flattenOrgDetails,
-  type OrgDetailsResponse,
-  type RawOrgDetailsResponse,
-} from "@/types/org-details";
-
-async function fetchOrg(orgId: string): Promise<OrgDetailsResponse> {
-  const res = await fetch(`/api/organizations/${orgId}`);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || "Failed to load organization");
-  }
-  const raw = (await res.json()) as RawOrgDetailsResponse;
-  return flattenOrgDetails(raw);
-}
+  fetchOrgDetails,
+  orgDetailsQueryKey,
+} from "@/lib/api/organizations/org-details";
 
 /**
  * Banner rendered across the org dashboard when `Organization.status !== ACTIVE`.
@@ -146,8 +135,8 @@ export default function OrgLayout({
     error,
     isLoading,
   } = useQuery({
-    queryKey: ["organization", orgId],
-    queryFn: () => fetchOrg(orgId),
+    queryKey: orgDetailsQueryKey(orgId),
+    queryFn: () => fetchOrgDetails(orgId),
     enabled: !!orgId && !!session?.user?.id,
     staleTime: 60_000,
   });
