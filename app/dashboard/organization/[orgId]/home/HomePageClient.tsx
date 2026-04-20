@@ -296,11 +296,18 @@ export function HomePageClient({ orgId }: { orgId: string }) {
             visible. Capability-dependent cards (wallet, invoices, earnings)
             are rendered inline once their section of the analytics payload
             is non-null. */}
-        {isLoading || !data ? (
+        {analytics.isLoading ? (
           <DashboardGrid columns={4}>
             {[1, 2, 3, 4].map((i) => (
               <StatCardSkeleton key={i} />
             ))}
+          </DashboardGrid>
+        ) : !data ? (
+          <DashboardGrid columns={4}>
+            <StatCard title="Members" value="—" subtitle="Could not load" icon={Users} variant="info" />
+            <StatCard title="Active programs" value="—" subtitle="Could not load" icon={Briefcase} />
+            <StatCard title="Experts" value="—" icon={UserCog} />
+            <StatCard title="Learners" value="—" icon={UserCheck} />
           </DashboardGrid>
         ) : (
           <DashboardGrid columns={4}>

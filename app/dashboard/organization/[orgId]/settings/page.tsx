@@ -3,7 +3,8 @@
 import { use, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { Shield } from "lucide-react";
+import { Globe, Shield } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import type { FundingSource, OrgStatus } from "@prisma/client";
 
 import { useOrgRole, useRequireOrgRole } from "../useOrgRole";
@@ -19,6 +20,7 @@ import {
   Card,
   CardContent,
   CardDescription,
+  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -53,6 +55,7 @@ interface SettingsResponse {
     industry: string | null;
     website: string | null;
     paymentTermsDays: number;
+    isPublic: boolean;
     billingAccount?: { fundingSource: FundingSource } | null;
   };
 }
@@ -70,6 +73,7 @@ interface PatchPayload {
   industry?: string | null;
   website?: string | null;
   paymentTermsDays?: number;
+  isPublic?: boolean;
 }
 
 async function patchSettings(orgId: string, payload: PatchPayload) {
@@ -105,6 +109,7 @@ export default function OrgSettingsPage({
   const [industry, setIndustry] = useState("");
   const [website, setWebsite] = useState("");
   const [paymentTermsDays, setPaymentTermsDays] = useState("60");
+  const [isPublic, setIsPublic] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
@@ -116,6 +121,7 @@ export default function OrgSettingsPage({
     setIndustry(data.profile.industry ?? "");
     setWebsite(data.profile.website ?? "");
     setPaymentTermsDays(String(data.profile.paymentTermsDays));
+    setIsPublic(data.profile.isPublic ?? false);
   }, [data]);
 
   const mutation = useMutation({
@@ -127,6 +133,7 @@ export default function OrgSettingsPage({
         industry: industry.trim() || null,
         website: website.trim() || null,
         paymentTermsDays: parseInt(paymentTermsDays, 10),
+        isPublic,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["org-settings", orgId] });
@@ -310,6 +317,61 @@ export default function OrgSettingsPage({
             </form>
           </CardContent>
         </Card>
+
+        {/* Marketplace Visibility — only HOST/HYBRID orgs can opt in */}
+        {data.profile.canHost && (
+          <Card className="mt-6">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Globe className="w-4 h-4" /> Marketplace Visibility
+              </CardTitle>
+              <CardDescription>
+                Allow learners and companies to discover this organisation on{" "}
+                <Link
+                  href="/explore/enterprise/organisations"
+                  className="underline hover:text-zinc-700"
+                >
+                  Explore Organisations
+                </Link>
+                . Your experts and programs will be visible to anonymous
+                visitors.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium">Public listing</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">
+                    {data.profile.status !== "ACTIVE"
+                      ? "Organisation must be ACTIVE before enabling public listing."
+                      : isPublic
+                        ? "Your organisation appears on the Explore page."
+                        : "Your organisation is hidden from the Explore page."}
+                  </p>
+                </div>
+                <Switch
+                  checked={isPublic}
+                  onCheckedChange={setIsPublic}
+                  disabled={
+                    data.profile.status !== "ACTIVE" ||
+                    !isAtLeast("OWNER") ||
+                    mutation.isPending
+                  }
+                />
+              </div>
+            </CardContent>
+            {isAtLeast("OWNER") && (
+              <CardFooter>
+                <Button
+                  onClick={() => mutation.mutate()}
+                  disabled={mutation.isPending}
+                >
+                  {mutation.isPending ? "Saving…" : "Save visibility"}
+                </Button>
+              </CardFooter>
+            )}
+          </Card>
+        )}
       </DashboardContent>
     </>
   );

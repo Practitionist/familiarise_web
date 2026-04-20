@@ -56,6 +56,7 @@ const PatchBodySchema = z
     defaultCancellationPolicy: z.string().max(5000).nullable().optional(),
     defaultRefundPolicy: z.string().max(5000).nullable().optional(),
     enforceOrganizationPlans: z.boolean().optional(),
+    isPublic: z.boolean().optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
     message: "PATCH body must contain at least one field",
@@ -200,6 +201,7 @@ export async function PATCH(
           ...(body.enforceOrganizationPlans !== undefined && {
             enforceOrganizationPlans: body.enforceOrganizationPlans,
           }),
+          ...(body.isPublic !== undefined && { isPublic: body.isPublic }),
         },
       });
 
