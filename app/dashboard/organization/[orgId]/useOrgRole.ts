@@ -5,10 +5,9 @@ import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import type { FundingSource, MemberRole } from "@prisma/client";
 import {
-  flattenOrgDetails,
-  type OrgDetailsResponse,
-  type RawOrgDetailsResponse,
-} from "@/types/org-details";
+  fetchOrgDetails,
+  orgDetailsQueryKey,
+} from "@/lib/api/organizations/org-details";
 
 /**
  * Numeric rank per MemberRole — higher = more privileged. Used for the
@@ -30,59 +29,30 @@ const RANKS: Record<MemberRole, number> = {
 };
 
 /**
- * Full-shape fallback returned when the API is unreachable or refuses
- * the request. Every field the layout reads (`name`, `logo`, `status`,
- * etc.) is present so the shared `["organization", orgId]` cache never
- * gets a sparse payload — a race where `useOrgRole` wins a background
- * refetch must not poison the layout's subsequent reads.
- *
- * All capability booleans are `false` so role-gated UI (invite button,
- * billing tab) stays hidden in the degraded state. `role = LEARNER` is
- * the least-privileged option, matching `isAtLeast` semantics.
- */
-function failClosedOrgDetails(orgId: string): OrgDetailsResponse {
-  return {
-    organization: {
-      id: orgId,
-      name: "",
-      slug: "",
-      logo: null,
-      status: "PENDING_VERIFICATION",
-      canSponsor: false,
-      canHost: false,
-      fundingSource: null,
-    },
-    membership: { role: "LEARNER", status: "ACTIVE" },
-  };
-}
-
-async function fetchOrgDetails(orgId: string): Promise<OrgDetailsResponse> {
-  const res = await fetch(`/api/organizations/${orgId}`);
-  // Fail closed: any error degrades to a zero-capability LEARNER view so
-  // the UI hides admin-only controls rather than rendering them and
-  // letting the API return 403/404 on click. We still return the full
-  // `OrgDetailsResponse` shape so the shared react-query cache (keyed
-  // on `["organization", orgId]`, also consumed by the org layout)
-  // doesn't get a sparse payload.
-  if (!res.ok) return failClosedOrgDetails(orgId);
-
-  const raw = (await res.json()) as RawOrgDetailsResponse;
-  return flattenOrgDetails(raw);
-}
-
-const ORG_DETAILS_QUERY_KEY = (orgId: string) =>
-  ["organization", orgId] as const;
-
-/**
  * Hook that returns the current user's role in the org and an `isAtLeast`
  * helper for role-based UI guards. Cached via react-query for 60 seconds
  * so sidebar / header re-renders don't thrash the API. The capability
  * booleans are exposed as side-information for pages that want to branch
  * on them without a second fetch.
+ *
+ * Fails closed at the hook level — when `data` is undefined (loading or
+ * error), every capability reads as `false` and `role` resolves to
+ * LEARNER. This is intentional: role-gated UI stays hidden while we
+ * don't know the answer, and a surfaced API error degrades to the
+ * least-privileged state instead of leaking admin buttons. The earlier
+ * implementation wrote a "fail-closed stub" payload into the shared
+ * react-query cache on error, which could poison the org layout's
+ * subsequent reads — we now keep the fallback at the consumer layer so
+ * the cache only ever holds real API payloads.
+ *
+ * The queryFn + queryKey are imported from
+ * `lib/api/organizations/org-details.ts` so this hook shares a single
+ * in-flight request with the org layout. React-Query dedupes on the
+ * shared key.
  */
 export function useOrgRole(orgId: string) {
   const { data, isLoading } = useQuery({
-    queryKey: ORG_DETAILS_QUERY_KEY(orgId),
+    queryKey: orgDetailsQueryKey(orgId),
     queryFn: () => fetchOrgDetails(orgId),
     staleTime: 60_000,
   });

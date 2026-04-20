@@ -7,6 +7,7 @@ import { Shield } from "lucide-react";
 import type { FundingSource, OrgStatus } from "@prisma/client";
 
 import { useOrgRole, useRequireOrgRole } from "../useOrgRole";
+import { orgDetailsQueryKey } from "@/lib/api/organizations/org-details";
 import {
   DashboardHeader,
   DashboardContent,
@@ -129,7 +130,7 @@ export default function OrgSettingsPage({
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["org-settings", orgId] });
-      queryClient.invalidateQueries({ queryKey: ["organization", orgId] });
+      queryClient.invalidateQueries({ queryKey: orgDetailsQueryKey(orgId) });
       setSuccess(true);
       setError(null);
       setTimeout(() => setSuccess(false), 2500);
