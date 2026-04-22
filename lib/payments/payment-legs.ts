@@ -124,3 +124,62 @@ export function makeLeg(input: PaymentLegInput): {
       };
   }
 }
+
+/**
+ * Per-payment invariant: `sum(legs.amountPaise) === Payment.amount`.
+ *
+ * `LICENSE` legs intentionally carry `amountPaise = 0` (the cost is
+ * absorbed at contract time) — they're still part of the sum and the
+ * math holds. For org-sponsored flows a single non-zero leg (WALLET or
+ * INVOICE_ACCRUAL) equals `Payment.amount`. For B2C card flows with
+ * referral credits applied the CARD leg carries the post-credit gateway
+ * charge and the REFERRAL_CREDIT leg carries the credit value; together
+ * they sum to `Payment.amount` (which is post-credit per the field-
+ * level comment on `Payment.amount`).
+ *
+ * Returns `null` when the invariant holds, or a `PaymentLegSumMismatch`
+ * payload describing the drift otherwise. Callers pick policy: hard
+ * throw for tests + reconciliation jobs, structured log for hot paths
+ * where breaking checkout is worse than surfacing a warning.
+ *
+ * The `amountPaise` values on individual legs can be negative (refund
+ * adjustments write negative legs to keep the ledger immutable), so the
+ * check is signed — do not `Math.abs` the sum.
+ */
+export type PaymentLegSumMismatch = {
+  paymentAmountPaise: number;
+  legSumPaise: number;
+  deltaPaise: number;
+  legs: Array<{ source: PaymentLegSource; amountPaise: number }>;
+};
+
+export function checkPaymentLegsSumToAmount(args: {
+  paymentAmountPaise: number;
+  legs: Array<{ source: PaymentLegSource; amountPaise: number }>;
+}): PaymentLegSumMismatch | null {
+  const legSum = args.legs.reduce((acc, leg) => acc + leg.amountPaise, 0);
+  if (legSum === args.paymentAmountPaise) return null;
+  return {
+    paymentAmountPaise: args.paymentAmountPaise,
+    legSumPaise: legSum,
+    deltaPaise: legSum - args.paymentAmountPaise,
+    legs: args.legs,
+  };
+}
+
+/**
+ * Hard-throwing sibling of `checkPaymentLegsSumToAmount`. Use in tests
+ * and in reconciliation / settlement jobs where the invariant MUST hold
+ * before the job continues. Do not use in the hot checkout path — a
+ * production false-positive there would break booking for real users.
+ */
+export function assertPaymentLegsSumToAmount(args: {
+  paymentAmountPaise: number;
+  legs: Array<{ source: PaymentLegSource; amountPaise: number }>;
+}): void {
+  const mismatch = checkPaymentLegsSumToAmount(args);
+  if (!mismatch) return;
+  throw new Error(
+    `PaymentLeg sum invariant violated: expected ${mismatch.paymentAmountPaise} paise but legs sum to ${mismatch.legSumPaise} (delta ${mismatch.deltaPaise}). Legs: ${JSON.stringify(mismatch.legs)}`,
+  );
+}

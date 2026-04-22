@@ -56,6 +56,7 @@ import {
   validatePlanCurrency,
   validateDiscountCurrency,
 } from "@/lib/payments/validation/currency-guards";
+import { checkPaymentLegsSumToAmount } from "@/lib/payments/payment-legs";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -2176,6 +2177,37 @@ export async function handleCheckout(
               );
             }
             actualCreditsApplied = creditsApplied; // In paise
+          }
+
+          // Invariant sweep: every Payment should have legs that sum to
+          // `Payment.amount` (`docs/enterprise/20-payment-legs.md`). We
+          // log-only here rather than throw because the hot checkout
+          // path is the worst place to discover a leg-accounting drift
+          // — a surprise 500 blocks real bookings. A mismatch signals
+          // either (a) an org branch above wrote the wrong amount, or
+          // (b) a future PaymentLegSource was added without updating
+          // its write site. Reconciliation jobs + tests call the
+          // hard-throwing `assertPaymentLegsSumToAmount` instead.
+          if (!isMockPayment) {
+            const writtenLegs = await tx.paymentLeg.findMany({
+              where: { paymentId: payment.id },
+              select: { source: true, amountPaise: true },
+            });
+            const legMismatch = checkPaymentLegsSumToAmount({
+              paymentAmountPaise: payment.amount,
+              legs: writtenLegs,
+            });
+            if (legMismatch) {
+              console.warn(
+                JSON.stringify({
+                  event: "payment_leg_sum_mismatch",
+                  paymentId: payment.id,
+                  organizationId: validatedData.organizationId ?? null,
+                  appointmentType: validatedData.appointmentType,
+                  ...legMismatch,
+                }),
+              );
+            }
           }
 
           return {

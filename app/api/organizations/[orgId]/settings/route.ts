@@ -14,8 +14,8 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
 ) {
+  const { orgId } = await params;
   try {
-    const { orgId } = await params;
     const access = await requireOrgAccess(orgId, { minimumRole: "LEARNER" });
     if (access.error) return access.error;
 
@@ -42,7 +42,15 @@ export async function GET(
       },
     });
   } catch (error) {
-    console.error("[API /organizations/[orgId]/settings GET] error:", error);
+    console.error(
+      JSON.stringify({
+        event: "org_settings_fetch_failed",
+        route: "GET /api/organizations/[orgId]/settings",
+        orgId,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      }),
+    );
     return NextResponse.json(
       { error: "Failed to fetch settings" },
       { status: 500 },

@@ -30,6 +30,11 @@ export const AUDIT_ACTIONS = {
     INVITE_RESENT: "INVITE_RESENT",
     INVITE_ACCEPTED: "INVITE_ACCEPTED",
     INVITE_REVOKED: "INVITE_REVOKED",
+    // Emitted by the stale-invitation cleanup cron when a PENDING invite
+    // ages past the 14-day window and is auto-expired. Keeps an audit row
+    // so MAINTAINERs can see "this invite lapsed" without needing to tail
+    // worker logs.
+    INVITE_EXPIRED: "INVITE_EXPIRED",
   },
   CONTRACT: {
     CONTRACT_CREATED: "CONTRACT_CREATED",
@@ -61,6 +66,11 @@ export const AUDIT_ACTIONS = {
     INVOICE_VOIDED: "INVOICE_VOIDED",
     INVOICE_REFUNDED: "INVOICE_REFUNDED",
     REFUND_DENIED: "REFUND_DENIED",
+    // Emitted by the consolidated-invoice rollup cron when a parent org
+    // rolls up its child orgs' unpaid invoices into a single parent
+    // invoice. `details.childInvoiceIds` carries the rolled-up rows for
+    // audit-trail chain-of-custody.
+    INVOICE_ROLLED_UP: "INVOICE_ROLLED_UP",
   },
   PAYOUT: {
     PAYOUT_INITIATED: "PAYOUT_INITIATED",
@@ -76,6 +86,11 @@ export const AUDIT_ACTIONS = {
     SSO_DISABLED: "SSO_DISABLED",
     DOMAIN_CLAIMED: "DOMAIN_CLAIMED",
     DOMAIN_RELEASED: "DOMAIN_RELEASED",
+    // Emitted by the SSO cert expiry cron at 30-day WARN and 7-day
+    // CRITICAL thresholds. `details.daysRemaining` + `details.providerId`
+    // carry the context so an OWNER scanning the audit log can tell which
+    // provider's cert is about to lapse.
+    SSO_CERT_EXPIRING: "SSO_CERT_EXPIRING",
   },
   CONSENT: {
     CONSENT_GRANTED: "CONSENT_GRANTED",
