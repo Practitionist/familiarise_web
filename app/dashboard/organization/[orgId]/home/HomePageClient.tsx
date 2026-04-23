@@ -148,15 +148,57 @@ function countByRole(
 
 export function HomePageClient({ orgId }: { orgId: string }) {
   const { isAtLeast } = useOrgRole(orgId);
+  // The operator surface (stat grid, checklist, activity feed) requires
+  // MANAGER — that matches the analytics + activity API gates. Consumer
+  // roles see the ConsumerView below instead of broken "Could not load"
+  // cards. Sub-MANAGERs shouldn't normally reach /home anyway because
+  // /[orgId]/page.tsx redirects them to their personal dashboard — this
+  // is a deep-link safety net.
+  const isOperator = isAtLeast("MANAGER");
 
   const analytics = useQuery({
     queryKey: ["org-analytics", orgId],
     queryFn: () => fetchAnalytics(orgId),
+    enabled: isOperator,
   });
   const activity = useQuery({
     queryKey: ["org-activity", orgId],
     queryFn: () => fetchActivity(orgId),
+    enabled: isOperator,
   });
+
+  if (!isOperator) {
+    return (
+      <>
+        <DashboardHeader
+          title="Overview"
+          subtitle="Your membership on this organization"
+        />
+        <DashboardContent>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">
+                You&apos;re a member here
+              </CardTitle>
+              <CardDescription>
+                This organization covers your bookings through its programs.
+                Day-to-day activity — booking history, upcoming sessions, and
+                account settings — lives on your personal dashboard.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Link
+                href="/dashboard"
+                className="inline-flex items-center gap-2 rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-800"
+              >
+                Go to my personal dashboard
+              </Link>
+            </CardContent>
+          </Card>
+        </DashboardContent>
+      </>
+    );
+  }
 
   const isLoading = analytics.isLoading;
   const data = analytics.data;
