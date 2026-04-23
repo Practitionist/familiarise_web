@@ -47,16 +47,18 @@ Rates per 1,000 participant-minutes (PM). 60fps = 2× the 30fps rate.
 | 2K (1440p)     | $6.00/1K PM | $12.00/1K PM| Premium         |
 | 4K (2160p)     | $9.60/1K PM | $19.20/1K PM| Ultra           |
 
-**Live Streaming mode** rates are 60–67% of the Video Calls rates above (40% for Audio Only).
+**Live Streaming mode** rates are 67% of the Video Calls rates above for SD through 4K, and 40% for Audio Only.
 
 ### Recording Add-on (Video Calls only, unavailable at 2K/4K)
 
 | Quality    | Rate per 1K call-minutes |
 | ---------- | ------------------------ |
 | Audio Only | $1.50                    |
-| SD         | $3.00                    |
+| SD         | $3.00 ¹                  |
 | HD         | $6.00                    |
 | Full HD    | $12.00                   |
+
+¹ SD recording rate follows the confirmed doubling pattern (Audio Only $1.50 → SD $3.00 → HD $6.00 → FHD $12.00) but was not directly verified in the calculator — all other rows were.
 
 ### Other Add-ons
 

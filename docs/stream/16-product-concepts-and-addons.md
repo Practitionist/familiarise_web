@@ -22,7 +22,7 @@ This is why it scales to thousands of viewers cheaply: Stream only encodes the s
 
 ### Activity Feeds
 
-Completely different product — not video at all. Think Twitter/Instagram-style social feeds: follow graphs, timelines, notification feeds, "X liked your post" events. It's a database-backed pub/sub system for social interactions. Priced on API calls and activities stored, not minutes.
+Completely different product — not video at all. Think Twitter/Instagram-style social feeds: follow graphs, timelines, notification feeds, "X liked your post" events. It's a database-backed pub/sub system for social interactions. Billed as flat monthly plan tiers (Start/Elevate) with an included API call quota — not per-minute like Video.
 
 Use cases: "show me all posts from people I follow", "send a notification when someone comments." Familiarise could use it for a discovery feed of consultants, but doesn't currently.
 
