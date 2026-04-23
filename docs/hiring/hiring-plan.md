@@ -49,7 +49,7 @@ Everything else (DevOps, dedicated QA, CFO, HR, Chief of Staff, Growth Engineer,
 | Gateway fees, misc | Nil at zero volume |
 | **Pre-launch burn** | **~₹22-27K/month** |
 
-Reference: `docs/finances/06-saas-expenditures.md`.
+Reference: `docs/stream/00-pricing-overview.md` (Stream costs) and `docs/finances/09-pricing-strategy.md` (full cost model).
 
 ### 2.3 The David vs Goliath reality
 
@@ -182,7 +182,7 @@ Hire only when **both** of these are true:
 
 ### Phase 3 — Scale (₹10L+ MRR, month 12+)
 
-Out of scope for this document. Revisit when you actually hit this stage — the economics change dramatically at ~₹8.5L revenue due to the Stream.io cost cliff (Maker account → paid tier, ~₹36K/month jump — ref: `docs/finances/06-saas-expenditures.md`).
+Out of scope for this document. Revisit when you actually hit this stage — the economics change dramatically at ~₹8.5L revenue due to the Stream.io cost cliff (Maker account → paid tier, ~₹36K/month jump — ref: `docs/stream/00-pricing-overview.md`).
 
 ---
 
@@ -473,7 +473,8 @@ This document is **living**. Treat it as the source of truth for hiring decision
 
 ## 13. Appendix — sources + related docs
 
-- `docs/finances/06-saas-expenditures.md` — monthly cost baseline + Stream.io cliff.
+- `docs/stream/00-pricing-overview.md` — Stream cost baseline + cliff detail.
+- `docs/finances/09-pricing-strategy.md` — full cost model and competitive pricing.
 - `docs/finances/03-pricing-calculator.md` — commission tiers + creator savings vs Topmate.
 - `docs/competition/04-pricing-strategy.md` — competitive positioning.
 - `docs/competition/01-threat-matrix.md` — competitor ranking + threat levels.

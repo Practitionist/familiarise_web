@@ -296,8 +296,7 @@ All prices verified April 2026 from `upstash.com/pricing/workflow`.
 
 ## Related Documents
 
-- `docs/upstash/redis/04-pricing-and-cost-model.md` — Detailed Redis command budget and growth model
 - `docs/upstash/redis/locking/00_README.md` — Distributed locking implementation
-- `docs/finances/06-saas-expenditures.md` — Full SaaS stack cost breakdown
-- `STREAM_PRICING.md` — Stream.io dedicated pricing reference
+- `docs/stream/00-pricing-overview.md` — Stream.io pricing overview and cost cliff
+- `docs/stream/14-pricing-and-cost-model.md` — Stream.io full rate tables (verified Apr 2026)
 - Screenshots: `docs/upstash-redis-pricing-apr2026.png`, `docs/upstash-qstash-pricing-apr2026.png`

@@ -440,5 +440,5 @@ Contact: `getstream.io/contact/`
 - `UPSTASH_PRICING.md` — Upstash Redis, QStash, Vector, Workflow pricing
 - `docs/stream/` — Stream integration technical docs
 - `docs/finances/11-cfo-master-plan.md` — Full financial plan with SaaS costs
-- `docs/finances/06-saas-expenditures.md` — Full SaaS stack cost breakdown
+- `docs/stream/00-pricing-overview.md` — Stream pricing quick reference and cost cliff summary
 - Screenshots: `docs/stream-video-pricing-apr2026.png`, `docs/stream-chat-pricing-apr2026.png`, `docs/stream-feeds-pricing-apr2026.png`

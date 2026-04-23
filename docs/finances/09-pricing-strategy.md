@@ -43,7 +43,7 @@ The goal isn't to diversify for diversification's sake — it's that enterprise 
 
 ## 3. Current SaaS cost baseline
 
-From `docs/finances/06-saas-expenditures.md`, the fixed-cost per month across the three stages:
+Fixed-cost per month across the three stages (Stream costs from `docs/stream/00-pricing-overview.md`):
 
 | Stage | Trigger | Monthly SaaS (with GST) | Notes |
 |---|---|---|---|
@@ -451,7 +451,7 @@ Lower prices if:
 
 - `docs/finances/01-business-model.md` — commission curve + revenue model.
 - `docs/finances/03-pricing-calculator.md` — minimum price floors + creator-savings math.
-- `docs/finances/06-saas-expenditures.md` — SaaS cost breakdown + Stream.io cliff.
+- `docs/stream/00-pricing-overview.md` — Stream cost baseline + cliff detail.
 - `docs/competition/04-pricing-strategy.md` — competitor pricing benchmarks.
 - `docs/competition/01-threat-matrix.md` — competitor threat levels.
 - `HIRING_PLAN.md` — headcount growth (fixed-cost side of the model).
