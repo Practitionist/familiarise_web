@@ -24,6 +24,8 @@ export const ORG_ERROR_COPY: Record<string, string> = {
     "Your organization is awaiting platform review. This action will be available once a Familiarise admin verifies your account — this usually takes 1–2 business days.",
   ROLE_TRANSITION_BLOCKED:
     "Members cannot switch between Learner and Expert roles. Remove the member and re-invite them with the new role instead.",
+  USER_NOT_FOUND:
+    "No user account found with that email. They need to sign up at Familiarise first, or use the Invitations page to send them an invite.",
 };
 
 /**

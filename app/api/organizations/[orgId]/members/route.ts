@@ -149,22 +149,38 @@ export async function GET(
 }
 
 /**
- * Direct-add a member by userId. The common add-by-email path goes
- * through /invitations; this endpoint is for admin tooling + SSO
- * auto-provisioning, where we already have a verified userId.
+ * Direct-add a member by email (dashboard path) or userId
+ * (SSO auto-provisioning / admin tooling). Exactly one of the two
+ * identifiers must be present; the server resolves email → userId
+ * and returns 404 USER_NOT_FOUND when the account doesn't exist.
  */
-const CreateBodySchema = z.object({
-  userId: z.string().min(1),
-  role: MemberRoleSchema,
-  departmentLabel: z.string().max(100).optional().nullable(),
-});
+const CreateBodySchema = z
+  .object({
+    userId: z.string().min(1).optional(),
+    email: z.string().email().optional(),
+    role: MemberRoleSchema,
+    departmentLabel: z.string().max(100).optional().nullable(),
+  })
+  .refine((v) => !!(v.userId || v.email), {
+    message: "userId or email is required",
+  })
+  .refine((v) => !(v.userId && v.email), {
+    message: "Provide userId OR email, not both",
+  });
 
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "MAINTAINER");
+  // Mirrors the /invitations guard: pre-verification we block direct-add
+  // too, otherwise the banner promise ("inviting members unlocks once
+  // verified") is misleading. SSO auto-provisioning goes through the
+  // session.create hook, not this route, so it is unaffected.
+  const access = await requireOrgAccess(orgId, {
+    minimumRole: "MAINTAINER",
+    requireActive: true,
+  });
   if (access.error) return access.error;
 
   const bodyRaw = await req.json().catch(() => null);
@@ -175,18 +191,25 @@ export async function POST(
       { status: 400 },
     );
   }
-  const { userId, role, departmentLabel } = parsed.data;
+  const { userId: providedUserId, email, role, departmentLabel } = parsed.data;
 
   // Consultee/consultant profile links are optional — we populate them
   // if the user has the matching profile, so downstream code that joins
   // via `membership.consulteeProfile` doesn't have to null-check first.
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { id: true, consulteeProfileId: true, consultantProfileId: true },
-  });
+  // The dashboard sends email; SSO / admin tooling sends userId.
+  const user = providedUserId
+    ? await prisma.user.findUnique({
+        where: { id: providedUserId },
+        select: { id: true, consulteeProfileId: true, consultantProfileId: true },
+      })
+    : await prisma.user.findUnique({
+        where: { email: email!.toLowerCase() },
+        select: { id: true, consulteeProfileId: true, consultantProfileId: true },
+      });
   if (!user) {
-    return NextResponse.json({ error: "User not found" }, { status: 404 });
+    return NextResponse.json({ error: "USER_NOT_FOUND" }, { status: 404 });
   }
+  const userId = user.id;
 
   // Idempotency: a duplicate POST for a currently-active (or pending/
   // suspended) member is a conflict. A REMOVED row is *not* a conflict —

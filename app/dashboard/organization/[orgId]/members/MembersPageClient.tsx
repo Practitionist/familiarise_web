@@ -21,6 +21,7 @@ import {
   validateOutboundPayload,
   errorMessageFromBody,
 } from "@/lib/fetch-helpers";
+import { humanizeOrgError } from "@/lib/labels/org-errors";
 import {
   DashboardHeader,
   DashboardContent,
@@ -94,7 +95,10 @@ async function addMember(
     body: JSON.stringify(validated),
   });
   const body = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(errorMessageFromBody(body, "Failed to add member"));
+  if (!res.ok) {
+    const raw = errorMessageFromBody(body, "Failed to add member");
+    throw new Error(humanizeOrgError(raw));
+  }
   return body;
 }
 

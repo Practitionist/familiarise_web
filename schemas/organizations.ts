@@ -112,11 +112,12 @@ export const MembersListResponseSchema = z.object({
     .optional(),
 });
 
-// POST /api/organizations/[orgId]/members — admin-tooling path.
-// The dashboard's "Add member" dialog routes through this endpoint with
-// the user's email; the server expects `userId`, so the typical UX is
-// to fail fast and redirect to the Invitations page. We still validate
-// the email here so a missing/empty value doesn't even reach the server.
+// POST /api/organizations/[orgId]/members
+// Direct-add a member by email (dashboard path) OR userId (SSO /
+// admin tooling). The server accepts either identifier, resolves
+// email → userId internally, and returns 404 USER_NOT_FOUND when the
+// account doesn't exist. The dashboard always sends email; userId is
+// reserved for programmatic callers (SSO provisioning, admin scripts).
 export const AddMemberPayloadSchema = z.object({
   email: z.string().email(),
   role: SelfServiceMemberRoleSchema,
