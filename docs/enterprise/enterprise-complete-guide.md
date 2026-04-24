@@ -171,13 +171,13 @@ The entire Enterprise subsystem is designed around three orthogonal axes. Intern
 
 ```mermaid
 flowchart LR
-    A["Who has access?<br/>(Capability)"] --> A1[canSponsor: true/false]
+    A["Who has access? (Capability)"] --> A1[canSponsor: true/false]
     A --> A2[canHost: true/false]
-    B["Who pays,<br/>how, when?<br/>(Funding)"] --> B1[PERSONAL]
+    B["Who pays, how, when? (Funding)"] --> B1[PERSONAL]
     B --> B2[WALLET]
     B --> B3[INVOICE]
     B --> B4[LICENSE]
-    C["What's covered<br/>per person?<br/>(Entitlement)"] --> C1[CREDIT_POOL program]
+    C["What's covered per person? (Entitlement)"] --> C1[CREDIT_POOL program]
     C --> C2[LICENSED_SEAT program]
     C --> C3[no program: tag-only]
     C --> C4["future: PROJECT / RETAINER"]
@@ -210,10 +210,10 @@ Here are some real permutations:
 
 ```mermaid
 flowchart TD
-    Start[Are you signing up as an organization?] --> Q1{Do you want to<br/>pay for sessions<br/>your members book?}
+    Start[Are you signing up as an organization?] --> Q1{Do you want to pay for sessions your members book?}
     Q1 -->|Yes| S1[canSponsor = true]
     Q1 -->|No| S2[canSponsor = false]
-    S1 --> Q2{Do you have<br/>experts you want<br/>to sell sessions from?}
+    S1 --> Q2{Do you have experts you want to sell sessions from?}
     S2 --> Q2
     Q2 -->|Yes| H1[canHost = true]
     Q2 -->|No| H2[canHost = false]
@@ -551,11 +551,11 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    Start[Org is deciding billing mode] --> Q1{Is this a pilot<br/>or permanent?}
+    Start[Org is deciding billing mode] --> Q1{Is this a pilot or permanent?}
     Q1 -->|Pilot| PERSONAL
-    Q1 -->|Permanent| Q2{How predictable<br/>is monthly usage?}
-    Q2 -->|Variable| Q3{Budget-control<br/>priority?}
-    Q2 -->|Predictable<br/>+ high volume| LICENSE
+    Q1 -->|Permanent| Q2{How predictable is monthly usage?}
+    Q2 -->|Variable| Q3{Budget-control priority?}
+    Q2 -->|Predictable + high volume| LICENSE
     Q3 -->|High — hard cap| WALLET
     Q3 -->|Low — flexibility| INVOICE
 ```
@@ -639,12 +639,12 @@ A Program is a commercial package describing **what the org has bought for its m
 
 ```mermaid
 flowchart LR
-    A[MAINTAINER] -->|POST /programs<br/>creates Program| P[Program row]
-    A -->|POST /programs/X/assignments<br/>for member M, period P| PA[ProgramAssignment row]
+    A[MAINTAINER] -->|POST /programs creates Program| P[Program row]
+    A -->|POST /programs/X/assignments for member M, period P| PA[ProgramAssignment row]
     B[Member M] -->|checkout session| C[Checkout API]
-    C --> D{Resolve<br/>ProgramAssignment}
-    D -->|found + active +<br/>matches service type| E[Write BookingUtilization +<br/>PaymentLeg using program]
-    D -->|not found| F[Fall back to PERSONAL<br/>or reject]
+    C --> D{Resolve ProgramAssignment}
+    D -->|found + active + matches service type| E[Write BookingUtilization + PaymentLeg using program]
+    D -->|not found| F[Fall back to PERSONAL or reject]
 ```
 
 ---
@@ -886,11 +886,11 @@ A founder signing up for the first time to create an organization.
 flowchart TD
     A[Visits familiarise.io] --> B[Clicks Sign Up]
     B --> C[Picks role: Organization Owner]
-    C --> D[Step 1: Personal Info<br/>name, email, password]
-    D --> E[Step 2: Organization Setup<br/>org name, slug, capability, funding]
+    C --> D[Step 1: Personal Info name, email, password]
+    D --> E[Step 2: Organization Setup org name, slug, capability, funding]
     E --> F[Step 3: Review + Launch]
     F --> G[Submit]
-    G --> H[Atomic TX:<br/>1. Create User<br/>2. Create Organization<br/>3. Create BillingAccount if canSponsor<br/>4. Create OWNER Membership<br/>5. Create OrgAdminProfile]
+    G --> H[Atomic TX: 1. Create User 2. Create Organization 3. Create BillingAccount if canSponsor 4. Create OWNER Membership 5. Create OrgAdminProfile]
     H --> I[Redirected to /dashboard/organization/orgId/home]
     I --> J[PENDING_VERIFICATION banner shows]
     J --> K[Platform admin reviews + verifies]
@@ -905,14 +905,14 @@ A user who already has a consultee profile receives an invite link.
 
 ```mermaid
 flowchart TD
-    A[Existing user receives email:<br/>"You've been invited to Wipro"] --> B[Clicks Accept link]
-    B --> C[Not logged in?<br/>Prompt to sign in]
+    A[Existing user receives email: "You've been invited to Wipro"] --> B[Clicks Accept link]
+    B --> C[Not logged in? Prompt to sign in]
     C --> D[Landing: /organizations/invite/<token>]
     D --> E{Token valid?}
     E -->|No / expired| F[Error + contact OWNER]
-    E -->|Yes| G[Show invite details:<br/>org name, role=LEARNER]
+    E -->|Yes| G[Show invite details: org name, role=LEARNER]
     G --> H[User clicks Accept]
-    H --> I[Atomic TX:<br/>1. Upsert Membership<br/>2. Lazy-upsert ConsulteeProfile<br/>3. Increment Invitation.status=accepted<br/>4. Write OrgAuditLog]
+    H --> I[Atomic TX: 1. Upsert Membership 2. Lazy-upsert ConsulteeProfile 3. Increment Invitation.status=accepted 4. Write OrgAuditLog]
     I --> J[Redirect to /dashboard/organization/orgId/home]
     J --> K[Org sidebar visible; role=LEARNER limits what they see]
 ```
@@ -921,12 +921,12 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[New user receives email:<br/>"You've been invited to LearnPro as Expert"] --> B[Clicks Accept link]
-    B --> C[Redirected to Sign Up + localStorage<br/>stores invite token]
-    C --> D[Complete 4-step consultee onboarding<br/>OR skip to minimal consultant setup]
-    D --> E[Post-onboarding:<br/>localStorage invite token triggers accept]
-    E --> F[Atomic TX:<br/>1. Create User<br/>2. Upsert ConsultantProfile with<br/>   Domain=General, verificationStatus=PENDING<br/>3. Create Membership role=EXPERT<br/>4. Audit entry]
-    F --> G[Redirect to consultant onboarding<br/>continue: verify identity, set rates]
+    A[New user receives email: "You've been invited to LearnPro as Expert"] --> B[Clicks Accept link]
+    B --> C[Redirected to Sign Up + localStorage stores invite token]
+    C --> D[Complete 4-step consultee onboarding OR skip to minimal consultant setup]
+    D --> E[Post-onboarding: localStorage invite token triggers accept]
+    E --> F[Atomic TX: 1. Create User 2. Upsert ConsultantProfile with    Domain=General, verificationStatus=PENDING 3. Create Membership role=EXPERT 4. Audit entry]
+    F --> G[Redirect to consultant onboarding continue: verify identity, set rates]
 ```
 
 ### 11.4 Journey D — MAINTAINER invites a team
@@ -978,7 +978,7 @@ Users can be members of many orgs simultaneously. The UX accommodates via the **
 flowchart TD
     A[Member decides to leave] --> B{What role?}
     B -->|LEARNER / MANAGER / SUPPORT| C[POST /api/organizations/X/members/me/leave]
-    B -->|EXPERT| D[POST /api/organizations/X/members/me/leave<br/>requires offboarding flow]
+    B -->|EXPERT| D[POST /api/organizations/X/members/me/leave requires offboarding flow]
     B -->|OWNER| E[Block if last OWNER]
     B -->|MAINTAINER| F[Allowed]
     C --> G[Membership.status=REMOVED]
@@ -987,7 +987,7 @@ flowchart TD
     F --> G
     G --> I[Audit entry MEMBER_REMOVED]
     I --> J[User's org access revoked]
-    J --> K[Active bookings continue to play out<br/>(historical attribution stays)]
+    J --> K[Active bookings continue to play out (historical attribution stays)]
 ```
 
 ### 11.7 Journey G — SSO auto-join via domain claim
@@ -1278,19 +1278,19 @@ Settlement is **T+7 default** (can be contract-configured):
 
 ```mermaid
 flowchart TD
-    Start[OWNER or admin triggers<br/>POST /org/orgId/payouts]
-    Start --> Scan[Scan READY earnings<br/>in period window]
+    Start[OWNER or admin triggers POST /org/orgId/payouts]
+    Start --> Scan[Scan READY earnings in period window]
     Scan --> Create[Create OrganizationPayout row]
-    Create --> Claim[Atomically claim earnings:<br/>UPDATE earnings SET orgPayoutId=X WHERE status=READY]
-    Claim --> Aggregate[Aggregate totals:<br/>gross, fees, refunds, net]
+    Create --> Claim[Atomically claim earnings: UPDATE earnings SET orgPayoutId=X WHERE status=READY]
+    Claim --> Aggregate[Aggregate totals: gross, fees, refunds, net]
     Aggregate --> Patch[Patch payout row with totals]
     Patch --> Flip[Flip earnings READY to PAID]
     Flip --> Audit[Audit: PAYOUT_INITIATED]
-    Audit --> Dispatch[Dispatch via RazorpayX/Cashfree<br/>(async via job)]
-    Dispatch --> Webhook[Gateway webhook:<br/>payout.processed or .failed]
+    Audit --> Dispatch[Dispatch via RazorpayX/Cashfree (async via job)]
+    Dispatch --> Webhook[Gateway webhook: payout.processed or .failed]
     Webhook --> Final{Success?}
-    Final -->|Yes| Complete[Update to COMPLETED<br/>+ audit PAYOUT_PROCESSED]
-    Final -->|No| Failed[Update to FAILED<br/>+ audit PAYOUT_FAILED<br/>+ alert admin]
+    Final -->|Yes| Complete[Update to COMPLETED + audit PAYOUT_PROCESSED]
+    Final -->|No| Failed[Update to FAILED + audit PAYOUT_FAILED + alert admin]
 ```
 
 ### 16.3 Payout state machine
@@ -1392,8 +1392,8 @@ flowchart TD
     U[User signs up] --> Modal[Consent modal displayed]
     Modal --> Accept[User clicks Accept]
     Accept --> API[POST /api/organizations/consent]
-    API --> Hash[buildConsentArtifact:<br/>SHA-256 hash of policy text]
-    Hash --> DB[Create ConsentArtifact row<br/>userId, policyVersion, hash, grantedAt]
+    API --> Hash[buildConsentArtifact: SHA-256 hash of policy text]
+    Hash --> DB[Create ConsentArtifact row userId, policyVersion, hash, grantedAt]
     DB --> Audit[OrgAuditLog: CONSENT_GRANTED]
     Audit --> Continue[Onboarding continues]
 ```
