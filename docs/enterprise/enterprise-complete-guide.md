@@ -905,7 +905,7 @@ A user who already has a consultee profile receives an invite link.
 
 ```mermaid
 flowchart TD
-    A[Existing user receives email: "You've been invited to Wipro"] --> B[Clicks Accept link]
+    A[Existing user receives email: You've been invited to Wipro] --> B[Clicks Accept link]
     B --> C[Not logged in? Prompt to sign in]
     C --> D[Landing: /organizations/invite/<token>]
     D --> E{Token valid?}
@@ -921,7 +921,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[New user receives email: "You've been invited to LearnPro as Expert"] --> B[Clicks Accept link]
+    A[New user receives email: You've been invited to LearnPro as Expert] --> B[Clicks Accept link]
     B --> C[Redirected to Sign Up + localStorage stores invite token]
     C --> D[Complete 4-step consultee onboarding OR skip to minimal consultant setup]
     D --> E[Post-onboarding: localStorage invite token triggers accept]
