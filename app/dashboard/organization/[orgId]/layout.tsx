@@ -166,11 +166,14 @@ export default function OrgLayout({
       { name: "Members", icon: Users, path: "members", show: isAtLeast("MANAGER") },
       { name: "Invitations", icon: Mail, path: "invitations", show: isAtLeast("MAINTAINER") },
       // Members filtered by role — a sponsor-only org gets the
-      // "Learners" view; hosts see "Experts" alongside. The canonical
-      // role names come straight from `MemberRole` so nothing here
+      // "Learners" view; hosts see "Experts" alongside. Both are
+      // operator views (manage who consumes / who hosts), so they
+      // gate on MANAGER the same way Members does — consumers see
+      // only the Overview ConsumerViewCard. The canonical role
+      // names come straight from `MemberRole` so nothing here
       // carries the legacy "consultant" vocabulary.
-      { name: "Learners", icon: GraduationCap, path: "learners", show: canSponsor },
-      { name: "Experts", icon: UserCog, path: "experts", show: canHost },
+      { name: "Learners", icon: GraduationCap, path: "learners", show: canSponsor && isAtLeast("MANAGER") },
+      { name: "Experts", icon: UserCog, path: "experts", show: canHost && isAtLeast("MANAGER") },
       { name: "Programs", icon: Briefcase, path: "programs", show: canSponsor && isAtLeast("MAINTAINER") },
       // Catalog nav has no page today (deleted alongside the legacy
       // OrganizationPlan-based curated catalog). Hidden until the
