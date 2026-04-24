@@ -10,11 +10,17 @@ thin `requireOrgAccess` check plus role-driven conditional rendering.
 ```
 /dashboard/organization                        → switcher + "create org" CTA
 /dashboard/organization/create                 → org-creation wizard
-/dashboard/organization/[orgId]                → redirects to /home
+/dashboard/organization/[orgId]                → operator-aware redirect:
+                                                  MANAGER+ → /home;
+                                                  sub-MANAGER (LEARNER / EXPERT /
+                                                  SUPPORT) → personal dashboard
+                                                  via resolvePersonalDashboardHref
 /dashboard/organization/[orgId]/home           → overview: capability badges,
-                                                  counts, quick actions
+                                                  counts, quick actions (operator
+                                                  view); sub-MANAGERs who deep-link
+                                                  here see a ConsumerViewCard
 /dashboard/organization/[orgId]/members        → unified Membership list
-/dashboard/organization/[orgId]/consultants    → filtered list (role=EXPERT)
+/dashboard/organization/[orgId]/experts        → filtered list (role=EXPERT)
 /dashboard/organization/[orgId]/learners       → filtered list (role=LEARNER)
 /dashboard/organization/[orgId]/invitations    → pending/accepted/revoked
 /dashboard/organization/[orgId]/contracts      → contracts + linked programs
@@ -23,7 +29,6 @@ thin `requireOrgAccess` check plus role-driven conditional rendering.
 /dashboard/organization/[orgId]/billing        → BillingAccount + top-ups + invoices
 /dashboard/organization/[orgId]/credits        → legacy alias for /billing
                                                   (wallet view; kept for redirects)
-/dashboard/organization/[orgId]/plans          → org catalog (OrganizationPlan)
 /dashboard/organization/[orgId]/payouts        → OrganizationPayout list + TDS
                                                   summary (host-side only)
 /dashboard/organization/[orgId]/analytics      → rollups (bookings, revenue,
@@ -49,30 +54,91 @@ A few additional surfaces are not in the org-scoped tree:
 
 ## Visibility by capability
 
-| Page           | SPONSOR | HOST | HYBRID | Notes |
-|----------------|---------|------|--------|-------|
-| `/home`        | ✅      | ✅   | ✅     | — |
-| `/members`     | ✅      | ✅   | ✅     | — |
-| `/consultants` | —       | ✅   | ✅     | Hidden when `canHost = false`. |
-| `/learners`    | ✅      | —    | ✅     | Hidden when `canSponsor = false`. |
-| `/invitations` | ✅      | ✅   | ✅     | — |
-| `/contracts`   | ✅      | —    | ✅     | Contracts are a sponsor concept. |
-| `/programs`    | ✅      | —    | ✅     | Program subtypes only apply to sponsored bookings. |
-| `/purchase-orders` | ✅  | —    | ✅     | — |
-| `/billing`     | ✅      | —    | ✅     | BillingAccount summary + wallet + invoices. |
-| `/plans`       | ✅      | —    | ✅     | Org catalog. |
-| `/payouts`     | —       | ✅   | ✅     | Host-side only; hidden when `canHost = false`. |
-| `/analytics`   | ✅      | ✅   | ✅     | Rollups respect capability — host-side numbers hidden when `canHost = false` and vice versa. |
-| `/consent`     | ✅      | ✅   | ✅     | DPDP artifact roster; not capability-gated. |
-| `/settings`    | ✅      | ✅   | ✅     | — |
-| `/settings/sso`| ✅      | ✅   | ✅     | — |
+Visibility here is the **capability** gate only. Every tab is **also** role-gated — see the "Min role" column. "Min role" reflects what the page itself enforces via `useRequireOrgAccess` / `useRequireOrgRole` (or, for pages that have no page-level gate, the API gate that fails first). The canonical API gate matrix lives in `04-roles-and-permissions.md:63-134`.
+
+| Page           | SPONSOR | HOST | HYBRID | Min role  | In sidebar? | Notes |
+|----------------|---------|------|--------|-----------|-------------|-------|
+| `/home`        | ✅      | ✅   | ✅     | any       | yes | Renders operator stat grid for MANAGER+; ConsumerViewCard for sub-MANAGER deep-links. |
+| `/members`     | ✅      | ✅   | ✅     | MANAGER   | yes | — |
+| `/experts`     | —       | ✅   | ✅     | MANAGER   | yes (if `canHost`) | Hidden when `canHost = false`. |
+| `/learners`    | ✅      | —    | ✅     | MANAGER   | yes (if `canSponsor`) | Hidden when `canSponsor = false`. |
+| `/invitations` | ✅      | ✅   | ✅     | MAINTAINER| yes | Send-invite button disabled pre-verification; uses `humanizeOrgError` for `ORG_NOT_VERIFIED`. |
+| `/programs`    | ✅      | —    | ✅     | MAINTAINER| yes (if `canSponsor`) | Program subtypes only apply to sponsored bookings. |
+| `/billing`     | ✅      | —    | ✅     | MANAGER   | yes (if `canSponsor`) | BillingAccount summary + wallet + invoices. See TODO below — code currently splits this into two pages (`/billing` + `/credits`), which diverges from the unified design described here. |
+| `/payouts`     | —       | ✅   | ✅     | MANAGER   | yes (if `canHost`) | Host-side only. |
+| `/analytics`   | ✅      | ✅   | ✅     | MANAGER   | yes | Rollups respect capability — host-side numbers hidden when `canHost = false` and vice versa. |
+| `/settings`    | ✅      | ✅   | ✅     | MAINTAINER| yes | Branding + policy. |
+| `/settings/sso`| ✅      | ✅   | ✅     | **OWNER** | no — reached from inside /settings | SSO policy + providers + domain claims. |
+| `/contracts`   | ✅      | —    | ✅     | MAINTAINER (API) | **no — deep-link only** | Page has no `useRequireOrgAccess` gate today; relies on API rejection + sidebar omission. |
+| `/purchase-orders` | ✅  | —    | ✅     | MANAGER (API) | **no — deep-link only** | Same as `/contracts` — page renders but API calls fail for sub-MANAGER. |
+| `/consent`     | ✅      | ✅   | ✅     | MANAGER (API) | **no — deep-link only** | DPDP artifact roster; not capability-gated. |
+
+> The `/plans` page (previous "org catalog" over `OrganizationPlan`)
+> was removed in the legacy-stub cleanup; its capability-driven
+> replacement (`/catalog`) is reserved in the sidebar with
+> `show: false` and will re-enable when the page ships.
+
+### TODO — `/billing` vs `/credits` unification (code drift)
+
+This doc describes `/billing` as the single BillingAccount surface
+(top-ups + invoices together), with `/credits` kept only as a
+redirect alias for backward compatibility.
+
+The code currently diverges from that design:
+
+- `app/dashboard/organization/[orgId]/billing/BillingPageClient.tsx`
+  (671 lines) ships the invoice / payment-terms / pending-charges
+  view only.
+- `app/dashboard/organization/[orgId]/credits/page.tsx` (475 lines)
+  ships the wallet balance / top-up / WalletEntry history view as
+  a distinct, non-redirecting page.
+- The sidebar renders both as separate tabs under different gates
+  (`layout.tsx:186-199`).
+
+Impact: a WALLET-funded org's OWNER visits Credits to top up the
+wallet but Billing to see receipts / invoices — two tabs for one
+conceptual concern. Observed during manual testing: the Billing
+page shows "NET-60 payment terms" and a "Create invoice" button
+even for WALLET-funded orgs where neither applies.
+
+Resolution options for the senior-dev owner:
+
+1. **Preferred — unify (docs are right).** Fold the wallet UI from
+   `/credits/page.tsx` into `BillingPageClient.tsx` as a
+   `fundingSource`-branching section. Turn `/credits` into a
+   server-side redirect to `/billing` (per the docs' "legacy alias
+   kept for redirects"). Drop the separate Credits sidebar tab.
+
+2. **Alternate — embrace the split.** If the separation is
+   deliberate, update this doc to describe two first-class pages
+   and clean up the BillingPage surface so non-WALLET-specific
+   cards (NET terms, Create invoice) don't render on a WALLET
+   org's `/billing`.
+
+Do NOT legitimize the current drift by leaving both pages as-is —
+the duplicate-purpose sidebar surface is a real UX bug.
+
+> **Sidebar vs page-level note.** `/contracts`, `/purchase-orders`,
+> and `/consent` exist as routes but are not listed in the sidebar
+> memo (`layout.tsx:164-208`). They also lack page-level
+> `useRequireOrgAccess` guards, so a sub-MANAGER who deep-links to
+> them will see the page chrome load, then watch every API call
+> fail. Worth adding either a `useRequireOrgAccess` guard + sidebar
+> entry, or an explicit redirect — tracked as follow-up.
 
 ## Navigation source of truth
 
-The sidebar under `app/dashboard/organization/[orgId]/page.tsx` reads
-capability booleans from the session and hides navigation items that
-would 404 or 501. It does NOT re-derive from `deriveCapabilityKind()`
-— the booleans are consumed directly.
+The sidebar is built in
+`app/dashboard/organization/[orgId]/layout.tsx` (`sidebarItems`
+memo) from three inputs: the org's `canSponsor` / `canHost` /
+`fundingSource` booleans, and the current user's `MemberRole`
+ranked via the local `isAtLeast()` helper (duplicated narrowly from
+`lib/auth-helpers.ts` because the layout runs before the org query
+cache is warm). The sidebar is cosmetic — it does not re-derive
+from `deriveCapabilityKind()` and it does not enforce authorization.
+Every page and API route still calls `requireOrgAccess` / `useRequireOrgAccess`
+independently. Items that would 404/403/501 are simply hidden to
+keep the nav tidy.
 
 ## Personal dashboard routing
 
