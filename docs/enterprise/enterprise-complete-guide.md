@@ -987,7 +987,7 @@ flowchart TD
     F --> G
     G --> I[Audit entry MEMBER_REMOVED]
     I --> J[User's org access revoked]
-    J --> K[Active bookings continue to play out (historical attribution stays)]
+    J --> K["Active bookings continue to play out (historical attribution stays)"]
 ```
 
 ### 11.7 Journey G — SSO auto-join via domain claim
@@ -1286,7 +1286,7 @@ flowchart TD
     Aggregate --> Patch[Patch payout row with totals]
     Patch --> Flip[Flip earnings READY to PAID]
     Flip --> Audit[Audit: PAYOUT_INITIATED]
-    Audit --> Dispatch[Dispatch via RazorpayX/Cashfree (async via job)]
+    Audit --> Dispatch["Dispatch via RazorpayX/Cashfree (async via job)"]
     Dispatch --> Webhook[Gateway webhook: payout.processed or .failed]
     Webhook --> Final{Success?}
     Final -->|Yes| Complete[Update to COMPLETED + audit PAYOUT_PROCESSED]
