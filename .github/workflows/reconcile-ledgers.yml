@@ -2,10 +2,15 @@ name: Reconcile Ledgers
 
 on:
   schedule:
-    # Run nightly at 03:00 UTC. Must NOT overlap the subscription-cron
-    # at 00:00 UTC or the cleanup-abandoned-org-top-ups job at 02:00 UTC
-    # (CPU + Prisma connection contention).
-    - cron: "0 3 * * *"
+    # Run nightly at 03:45 UTC. The 03:00 UTC slot already hosts
+    # sso-cert-expiry-alert and mark-expired-recordings; pushing 45 min
+    # later puts us cleanly after their (~1-2 min) workloads and 15 min
+    # before the monthly invoice-rollup window at 04:00 UTC on day 1.
+    # The job is read-only so the cost of overlapping with writers is
+    # bounded, but staying off the cluster keeps the Supabase connection
+    # pooler from spiking. The broader hourly :00 + :15 pile-ups are
+    # tracked under a follow-up cron-schedule-audit issue.
+    - cron: "45 3 * * *"
   workflow_dispatch: # Allow manual triggering from the Actions UI.
 
 jobs:

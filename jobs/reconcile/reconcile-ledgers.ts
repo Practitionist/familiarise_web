@@ -35,6 +35,7 @@ async function main(): Promise<void> {
     console.log(`   Duration:    ${report.durationMs}ms`);
     console.log(`   Orgs:        ${report.summary.orgsChecked}`);
     console.log(`   Accounts:    ${report.summary.accountsChecked}`);
+    console.log(`   Assignments: ${report.summary.assignmentsChecked}`);
     console.log(
       `   Findings:    ${report.summary.discrepanciesCount}`,
     );

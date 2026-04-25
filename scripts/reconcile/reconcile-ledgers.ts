@@ -8,6 +8,7 @@
  *                             (its sum is the wallet invariant)
  *   3. SettlementLedgerEntry ← invoice issued / paid / payout events
  *   4. OrganizationInvoice  ← ISSUED / PAID / REFUNDED status machine
+ *   5. ProgramAssignment    ← per-(member, cycle) sessionsUsed counter
  *
  * Invariants we check:
  *
@@ -31,6 +32,12 @@
  *      a matching INVOICE_PAID SettlementLedgerEntry exists
  *      (detects invoice-paid webhook that flipped status but failed to
  *      log the settlement row)
+ *
+ *   E. For every ACTIVE ProgramAssignment (periodEnd >= now):
+ *      sum(usageLedgerEntry.sessionsConsumed) === programAssignment.sessionsUsed
+ *      (the denormalized counter must match the immutable consumption
+ *      ledger; drift means a partial-rollback bug or a manual SQL edit
+ *      slipped past the atomic recordBookingUtilization() write)
  *
  * This is READ-ONLY. It never writes to any of the audited tables. It
  * only writes its findings to `LedgerReconciliationReport`.
@@ -60,10 +67,16 @@ export type Finding = {
     | "WALLET_BALANCE_DRIFT"
     | "FUNDING_LEDGER_MISSING"
     | "SETTLEMENT_MISSING_INVOICE_ISSUED"
-    | "SETTLEMENT_MISSING_INVOICE_PAID";
+    | "SETTLEMENT_MISSING_INVOICE_PAID"
+    | "PROGRAM_ASSIGNMENT_SESSIONS_DRIFT";
   organizationId?: string;
   billingAccountId?: string;
   invoiceId?: string;
+  programAssignmentId?: string;
+  // For sessions-drift findings the values are session counts, not
+  // paise. The shared field name keeps the report row compact at the
+  // cost of a small abuse of the term — it's documented on the
+  // PROGRAM_ASSIGNMENT_SESSIONS_DRIFT branch only.
   expectedPaise: number;
   actualPaise: number;
   deltaPaise: number;
@@ -79,6 +92,7 @@ export type ReconcileReport = {
   summary: {
     orgsChecked: number;
     accountsChecked: number;
+    assignmentsChecked: number;
     discrepanciesCount: number;
   };
   findings: Finding[];
@@ -216,12 +230,64 @@ export async function runReconcileLedgers(
     }
   }
 
+  // --- (E): per ProgramAssignment session-counter drift ---
+  // sessionsUsed is denormalized for query performance — checkout reads
+  // it on every booking to evaluate the per-cycle cap. It's incremented
+  // atomically inside recordBookingUtilization() in the same transaction
+  // that writes the UsageLedgerEntry, so under correct operation the two
+  // never drift. Drift here implies a partial-rollback bug, a manual
+  // SQL fix, or a missing-ledger-write code path. Scoped to ACTIVE
+  // assignments (periodEnd >= now()) — we don't re-check historical
+  // cycles every run. Reversed UsageLedgerEntry rows post a negative
+  // sessionsConsumed, so the SUM here naturally accounts for refunds
+  // without a separate filter.
+  const now = new Date();
+  const liveAssignments = await prisma.programAssignment.findMany({
+    where: {
+      periodEnd: { gte: now },
+      ...(opts.organizationId
+        ? { program: { contract: { organizationId: opts.organizationId } } }
+        : {}),
+    },
+    select: {
+      id: true,
+      sessionsUsed: true,
+      program: { select: { contract: { select: { organizationId: true } } } },
+    },
+  });
+
+  for (const a of liveAssignments) {
+    const ledgerSum = await prisma.usageLedgerEntry.aggregate({
+      where: { programAssignmentId: a.id },
+      _sum: { sessionsConsumed: true },
+    });
+    const ledgerTotal = ledgerSum._sum?.sessionsConsumed ?? 0;
+    if (ledgerTotal !== a.sessionsUsed) {
+      findings.push({
+        kind: "PROGRAM_ASSIGNMENT_SESSIONS_DRIFT",
+        programAssignmentId: a.id,
+        organizationId: a.program.contract.organizationId,
+        // The shared expected/actual fields hold session counts here,
+        // not paise. The auditor UI keys on `kind` to render units
+        // correctly.
+        expectedPaise: ledgerTotal,
+        actualPaise: a.sessionsUsed,
+        deltaPaise: a.sessionsUsed - ledgerTotal,
+        details: {
+          unit: "sessions",
+          note: "ProgramAssignment.sessionsUsed disagrees with sum(UsageLedgerEntry.sessionsConsumed). Investigate via the assignment's UsageLedgerEntry trail and the recordBookingUtilization() write path.",
+        },
+      });
+    }
+  }
+
   const durationMs = Date.now() - startedAt;
   const ok = findings.length === 0;
 
   const summary = {
     orgsChecked: organizations.length,
     accountsChecked: accounts.length,
+    assignmentsChecked: liveAssignments.length,
     discrepanciesCount: findings.length,
   };
 
