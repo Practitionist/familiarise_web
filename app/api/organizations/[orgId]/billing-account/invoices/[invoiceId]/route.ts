@@ -116,6 +116,15 @@ export async function PATCH(
         }
       }
 
+      // Invalidate the cached PDF when the invoice transitions out of a
+      // sendable state (CANCELLED / VOID) — the next GET …/pdf must
+      // regenerate so the watermark + status reflect the change. The
+      // refunded path lives on Payment, not OrganizationInvoice, so we
+      // don't branch on REFUNDED here.
+      const invalidatePdfCache =
+        body.status !== undefined &&
+        (body.status === "CANCELLED" || body.status === "VOID");
+
       const next = await tx.organizationInvoice.update({
         where: { id: invoiceId },
         data: {
@@ -127,6 +136,10 @@ export async function PATCH(
           }),
           ...(body.dueDate !== undefined && { dueDate: body.dueDate }),
           ...(body.pdfUrl !== undefined && { pdfUrl: body.pdfUrl }),
+          ...(invalidatePdfCache && {
+            pdfStoragePath: null,
+            pdfGeneratedAt: null,
+          }),
         },
       });
 
