@@ -1,6 +1,6 @@
 # Tax Compliance — Marketplace Obligations (March 2026)
 
-> Comprehensive tax, compliance, and financial infrastructure requirements for Familiarise as an Indian services marketplace. Supplements [07-tax-compliance-india.md](./07-tax-compliance-india.md).
+> Comprehensive tax, compliance, and financial infrastructure requirements for Familiarise as an Indian services marketplace. Supplements [06-tax-compliance-india.md](./06-tax-compliance-india.md).
 
 **Last Updated**: 2026-03-19
 
@@ -356,7 +356,7 @@ These items are for your CA or legal advisor, not engineering.
 
 ## Related Documentation
 
-- [07-tax-compliance-india.md](./07-tax-compliance-india.md) — Original tax compliance doc
+- [06-tax-compliance-india.md](./06-tax-compliance-india.md) — Original tax compliance doc
 - [Gateway Evaluation](../payments/gateways/gateway-evaluation-mar-2026.md) — Full gateway comparison
 - [Multi-Currency Architecture](../payments/multi-currency/) — IBT, gateway auto-routing
 - [11-cfo-master-plan.md](./11-cfo-master-plan.md) — Financial strategy and entity structure

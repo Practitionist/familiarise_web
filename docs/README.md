@@ -223,10 +223,10 @@ CFO-level business documentation. See [finances/README.md](./finances/README.md)
 - [03-pricing-calculator.md](./finances/03-pricing-calculator.md) - Pricing calculator
 - [04-profitability-analysis.md](./finances/04-profitability-analysis.md) - Profitability
 - [05-saas-metrics-monthly.md](./finances/05-saas-metrics-monthly.md) - SaaS metrics
-- [06-saas-expenditures.md](./finances/06-saas-expenditures.md) - Expenditures
-- [07-tax-compliance-india.md](./finances/07-tax-compliance-india.md) - Tax compliance
-- [08-tax-compliance-marketplace-obligations.md](./finances/08-tax-compliance-marketplace-obligations.md) - Marketplace obligations
-- [09-tax-essentials-simplified.md](./finances/09-tax-essentials-simplified.md) - Simplified tax guide
+- [06-tax-compliance-india.md](./finances/06-tax-compliance-india.md) - Tax compliance
+- [07-tax-compliance-marketplace-obligations.md](./finances/07-tax-compliance-marketplace-obligations.md) - Marketplace obligations
+- [08-tax-essentials-simplified.md](./finances/08-tax-essentials-simplified.md) - Simplified tax guide
+- [09-pricing-strategy.md](./finances/09-pricing-strategy.md) - Competitive pricing strategy
 
 ---
 
