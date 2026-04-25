@@ -1,6 +1,6 @@
 # Tax Essentials — Simplified Guide
 
-> Beginner-friendly explanation of GST, TDS, and compliance for technical founders with zero finance background. For comprehensive technical references, see [07-tax-compliance-india.md](./07-tax-compliance-india.md) and [08-tax-compliance-marketplace-obligations.md](./08-tax-compliance-marketplace-obligations.md).
+> Beginner-friendly explanation of GST, TDS, and compliance for technical founders with zero finance background. For comprehensive technical references, see [06-tax-compliance-india.md](./06-tax-compliance-india.md) and [07-tax-compliance-marketplace-obligations.md](./07-tax-compliance-marketplace-obligations.md).
 
 **Last Updated**: March 2026
 
@@ -191,6 +191,6 @@ Your CA handles all of this. Your code provides the data via `GET /api/admin/tds
 
 ## Related Documentation
 
-- [07-tax-compliance-india.md](./07-tax-compliance-india.md) — Comprehensive tax compliance guide
-- [08-tax-compliance-marketplace-obligations.md](./08-tax-compliance-marketplace-obligations.md) — Marketplace-specific obligations
+- [06-tax-compliance-india.md](./06-tax-compliance-india.md) — Comprehensive tax compliance guide
+- [07-tax-compliance-marketplace-obligations.md](./07-tax-compliance-marketplace-obligations.md) — Marketplace-specific obligations
 - [Multi-Currency Architecture](../payments/multi-currency/) — IBT, gateway auto-routing, TDS implementation

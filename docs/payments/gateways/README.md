@@ -159,4 +159,4 @@ Both gateways share a common abstraction layer:
 - [Status Enums Reference](../03-status-enums-reference.md) — PaymentStatus, RefundStatus, DisputeStatus
 - [Payouts](../payouts/README.md) — Payout algorithm, earnings lifecycle, batch processing
 - [Webhooks](../webhooks/README.md) — Webhook monitoring and schemas
-- [Tax Compliance — Marketplace Obligations](../../finances/08-tax-compliance-marketplace-obligations.md) — GST, TCS, TDS, Section 44AD, cross-border compliance
+- [Tax Compliance — Marketplace Obligations](../../finances/07-tax-compliance-marketplace-obligations.md) — GST, TCS, TDS, Section 44AD, cross-border compliance
