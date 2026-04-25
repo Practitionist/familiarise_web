@@ -30,7 +30,6 @@ model Program {
 
   licensedSeatConfig LicensedSeatConfig?
   creditPoolConfig   CreditPoolConfig?
-  customConfig       Json?
 
   assignments ProgramAssignment[]
   ...
@@ -38,9 +37,10 @@ model Program {
 ```
 
 The subtype is declared by `type`, and the corresponding config row is
-one of two sibling tables. A `customConfig: Json` escape hatch exists
-for bespoke enterprise splits that don't fit either typed subtype;
-checkout defers to a custom resolver when that column is non-null.
+one of two sibling tables. The pre-Arch-4 `customConfig: Json` escape
+hatch was removed — bespoke splits live on a per-Program rate-card
+override (see `docs/enterprise/03-earnings-and-revenue.md`) rather
+than as JSON blobs that the typed config tables can't enforce.
 
 ## `LicensedSeatConfig`
 
@@ -72,15 +72,23 @@ model LicensedSeatConfig {
 ```prisma
 model CreditPoolConfig {
   programId               String @id
-  creditValuePaise        Int
-  premiumMultiplier       Decimal?
+  cycle                   BillingCycle
+  creditsPerCycle         Int                // hard cap (1 credit = ₹1)
   minimumCreditsPerPeriod Int?
 }
 ```
 
-GLG-style per-minute credit pool: `creditValuePaise` is the paise
-value of one credit; `premiumMultiplier` multiplies the credit cost
-for premium tiers (e.g. 1.5x for high-demand experts).
+Pool with a per-cycle credit cap. `creditsPerCycle` is the hard cap
+when `overageBehavior=BLOCK` (and the soft cap when overage routes
+elsewhere). `minimumCreditsPerPeriod` is an optional commitment
+minimum that rolls into the next invoice if unconsumed.
+
+**1 credit = ₹1 = 100 paise. Fixed.** The pre-Arch-4
+`creditValuePaise` and `premiumMultiplier` columns were dropped
+because they were never branched in checkout and only added a
+translation layer that finance and audit dashboards had to undo at
+read time. Per-tier rate adjustments now live on a Program rate-card
+override (see `03-earnings-and-revenue.md`).
 
 The actual debits land on `BillingAccount.walletBalance` via
 `walletDebit()` — the CreditPool Program is the *policy*, not the

@@ -55,7 +55,7 @@ enum-reserved for v2:
 ```prisma
 enum ProgramType {
   LICENSED_SEAT   // seat cap per cycle (was SEAT_PACK + PREPAID_UNLIMITED)
-  CREDIT_POOL     // GLG-style per-minute credit pool
+  CREDIT_POOL     // credit cap per cycle (1 credit = ₹1)
   PROJECT         // v2 reserved
   RETAINER        // v2 reserved
 }
@@ -76,16 +76,18 @@ model LicensedSeatConfig {
 
 model CreditPoolConfig {
   programId               String @id
-  creditValuePaise        Int
-  premiumMultiplier       Decimal?
-  minimumCreditsPerPeriod Int?
+  cycle                   BillingCycle       // when does the pool reset?
+  creditsPerCycle         Int                // hard cap (1 credit = ₹1)
+  minimumCreditsPerPeriod Int?               // optional commitment minimum
 }
 ```
 
-A `Program` may alternatively carry a `customConfig: Json` blob — the
-escape hatch for bespoke splits or tier structures. Checkout defers to
-a custom resolver when `customConfig` is non-null and skips the typed
-config tables.
+`CREDIT_POOL` was simplified post-Arch-4: 1 credit is fixed at ₹1
+(100 paise). The dormant `premiumMultiplier` field was dropped and
+`creditValuePaise` was retired in favor of the fixed mapping —
+finance, audit, and reconciliation all read in rupees end-to-end with
+no translation layer. Per-tier rate adjustments live on a Program
+rate-card override rather than as JSON escape hatches.
 
 ## `OverageBehavior`
 

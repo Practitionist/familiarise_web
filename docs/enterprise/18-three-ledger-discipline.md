@@ -155,6 +155,33 @@ the funding enum is ledger-facing. Every `WalletEntry` has exactly
 one `FundingLedgerEntry`, joined via
 `FundingLedgerEntry.walletEntryId @unique`.
 
+### Why two tables, not one
+
+It's tempting to look at the near-1:1 pairing and the parallel enums
+and say "merge them, add a `dashboardVisible` flag." Don't. The
+separation is load-bearing for two reasons:
+
+1. **Audiences differ.** `WalletEntry` is queried by the org's billing
+   tab and feeds the user-facing transaction list — it carries gateway
+   idempotency keys (`providerOrderId`, `providerPaymentId`) that
+   product UI needs. `FundingLedgerEntry` carries `balanceAfterPaise`
+   for point-in-time audit and is queried by finance/accounting
+   exports. Different read patterns, different retention policies,
+   different access scopes.
+2. **`GRANT` is the carve-out.** Platform-side awards (promotional
+   credits, support comps, post-incident migration backfill) get a
+   `FundingLedgerEntry` with `reason = GRANT` and **no**
+   `walletEntryId`. There's no corresponding `WalletEntry` because
+   the wallet history page intentionally doesn't show platform grants
+   (they look like fraud signals to a CFO scanning the org's wallet
+   tab). A merged table with a flag would still need this carve-out;
+   the cost of the extra table is mostly in the schema, not in the
+   write path.
+
+If platform grants ever become user-visible (e.g. as part of a
+loyalty program), the merge becomes viable — see the "redundancies"
+follow-up issue.
+
 ## `SettlementKind`
 
 ```

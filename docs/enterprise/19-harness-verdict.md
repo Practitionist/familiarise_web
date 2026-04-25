@@ -2,7 +2,7 @@
 
 The evaluation harness exercises four representative org scenarios
 plus a set of cross-cutting checks, for a total of 19 line items.
-Current verdict: **14 ✅ / 5 ⚠️ / 0 ❌**.
+Current verdict: **15 ✅ / 4 ⚠️ / 0 ❌**.
 
 Every ⚠️ is a schema-final item whose cron / integration lands in a
 follow-up PR. No ❌ outstanding.
@@ -56,17 +56,17 @@ Legend:
 | 16 | BookingUtilization reversal stamps `reversedAt` + appends opposing UsageLedgerEntry | ✅ | `reverseBookingUtilization()`. |
 | 17 | India TDS/MSME fields populated on `OrganizationPayout` | ⚠️ | Schema final; derivation cron (reading `ConsultantTaxInfo` / `MsmeStatus`) stubbed. |
 | 18 | E-invoice (IRN) upload + signed QR | ⚠️ | Schema final; live IRP integration stubbed. |
-| 19 | Nightly reconciliation cron for the three ledger identities | ⚠️ | `jobs/billing/reconcile-ledgers.ts` not shipped in v1. |
+| 19 | Nightly reconciliation cron for the three ledger identities + ProgramAssignment session-counter drift | ✅ | `scripts/reconcile/reconcile-ledgers.ts::runReconcileLedgers` covers wallet balance / funding mirror / settlement coverage / program-assignment session-counter (check E). Wired via `.github/workflows/reconcile-ledgers.yml` (nightly 03:45 UTC) calling `jobs/reconcile/reconcile-ledgers.ts`, and via admin route `POST /api/admin/reconcile-ledgers` for on-demand runs. |
 
 ## Summary
 
-- **14 ✅** — core capability, funding, program, rate-card, wallet,
-  audit, and live checkout-leg wiring (rows 3 + 9) run end-to-end
-  against the schema.
-- **5 ⚠️** — all India-compliance / cron-driven items whose
-  schema is final but whose populator is deferred. Every field the
-  eventual cron will write is already modelled; the ⚠️ is about
-  *producing* the value, not about *storing* it.
+- **15 ✅** — core capability, funding, program, rate-card, wallet,
+  audit, live checkout-leg wiring (rows 3 + 9), and ledger
+  reconciliation (row 19) run end-to-end against the schema.
+- **4 ⚠️** — India-compliance / cron-driven items whose schema is
+  final but whose populator is deferred. Every field the eventual cron
+  will write is already modelled; the ⚠️ is about *producing* the
+  value, not about *storing* it.
 - **0 ❌** — every scenario in the harness produces either a correct
   result or a ⚠️ with a known stub.
 
@@ -77,8 +77,6 @@ The outstanding ⚠️ items are:
 2. Live IRP integration for `OrganizationInvoice.irn` population.
 3. Contract-expiry cron (`ContractStatus ACTIVE → EXPIRED`).
 4. TDS / MSME derivation cron for `OrganizationPayout`.
-5. `jobs/billing/reconcile-ledgers.ts` (nightly three-ledger integrity
-   check).
 
 Each ⚠️ has a corresponding issue tracked for the follow-up PR. The
 remaining integrations are compliance-layer code that reads schema-

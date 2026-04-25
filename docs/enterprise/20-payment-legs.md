@@ -40,7 +40,13 @@ enum PaymentLegSource {
 3. **Source uniqueness per payment.** Two legs of the same source on
    the same payment is illegal (you can't split a card charge in two
    at the checkout layer; refunds are modelled as a separate `Refund`
-   row, not an inverse leg).
+   row, not an inverse leg). Enforced at the schema layer by
+   `@@unique([paymentId, source])` on `PaymentLeg` — a future code path
+   that tries to write a duplicate-source leg fails on insert with a
+   Prisma `P2002` rather than corrupting the leg sum invariant. If
+   split-billing across sub-orgs ever becomes a real requirement, drop
+   this constraint and add a `legGroupId` FK that disambiguates the
+   parties (see the "redundancies" follow-up issue).
 4. **sourceRef is always populated** for WALLET (→ `WalletEntry.id`)
    and REFERRAL_CREDIT (→ `ReferralCredit.id`). It's the join key for
    reversal. CARD and LICENSE legs may omit it (CARD keeps the gateway
