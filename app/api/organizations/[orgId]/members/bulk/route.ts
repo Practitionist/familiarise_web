@@ -16,17 +16,23 @@
 
 import { NextResponse } from "next/server";
 
-const NOT_SUPPORTED = NextResponse.json(
-  {
-    error: "BULK_REMOVAL_NOT_SUPPORTED",
-    message:
-      "Bulk member operations are not supported. Use PATCH /api/organizations/<orgId>/members/<memberId> per member; the single-member route enforces the anti-lockout guard.",
-  },
-  { status: 405, headers: { Allow: "" } },
-);
+// Build a fresh Response per call. A Web Response body is one-shot —
+// returning a single shared `NextResponse.json(...)` instance from
+// multiple handlers (or for multiple concurrent requests on the same
+// method) means the second consumer hits "Body has already been read".
+// The factory keeps each request isolated.
+const notSupported = () =>
+  NextResponse.json(
+    {
+      error: "BULK_REMOVAL_NOT_SUPPORTED",
+      message:
+        "Bulk member operations are not supported. Use PATCH /api/organizations/<orgId>/members/<memberId> per member; the single-member route enforces the anti-lockout guard.",
+    },
+    { status: 405, headers: { Allow: "" } },
+  );
 
-export const GET = () => NOT_SUPPORTED;
-export const POST = () => NOT_SUPPORTED;
-export const PUT = () => NOT_SUPPORTED;
-export const PATCH = () => NOT_SUPPORTED;
-export const DELETE = () => NOT_SUPPORTED;
+export const GET = () => notSupported();
+export const POST = () => notSupported();
+export const PUT = () => notSupported();
+export const PATCH = () => notSupported();
+export const DELETE = () => notSupported();
