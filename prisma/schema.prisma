@@ -3145,6 +3145,13 @@ enum EarningStatus {
   READY // Ready for payout
   PAID // Successfully paid
   REFUNDED // Refunded to consultee
+  /// Earnings accrued from a PENDING_VERIFICATION INVOICE-funded org
+  /// before the org has been verified or paid its first invoice. The
+  /// `release-pending-trust-earnings` cron flips these to PENDING (and
+  /// thence READY) once the org transitions to ACTIVE OR pays an
+  /// invoice. Without this state, an unverified org could accumulate
+  /// real consultant earnings and ghost — see #687 invoice-fraud.
+  PENDING_TRUST
 }
 
 enum PayoutStatus {

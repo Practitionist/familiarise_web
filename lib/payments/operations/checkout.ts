@@ -57,6 +57,7 @@ import {
   validateDiscountCurrency,
 } from "@/lib/payments/validation/currency-guards";
 import { checkPaymentLegsSumToAmount } from "@/lib/payments/payment-legs";
+import { getInvoiceCreditLimitPaise } from "@/lib/enterprise/governance";
 import { notifyOrgProgramExhausted } from "@/lib/novu/org-workflows";
 
 // Re-export for backward compatibility
@@ -1705,8 +1706,19 @@ export async function handleCheckout(
         },
       },
     });
-    if (!org || org.status !== "ACTIVE") {
-      throw new Error("Organization not found or deactivated.");
+    if (!org) {
+      throw new Error("Organization not found.");
+    }
+    // PR-1d: PENDING_VERIFICATION orgs may transact for INVOICE bookings
+    // under the credit-limit gate (#687 invoice-fraud guard). Anything
+    // else still requires fully ACTIVE status.
+    if (
+      org.status !== "ACTIVE" &&
+      org.status !== "PENDING_VERIFICATION"
+    ) {
+      throw new Error(
+        `Organization is ${org.status.toLowerCase()}; cannot process bookings.`,
+      );
     }
     if (!org.canSponsor) {
       throw new Error(
@@ -1741,40 +1753,54 @@ export async function handleCheckout(
       validatedData = { ...validatedData, useReferralCredits: false };
     }
 
-    // INVOICE fundingSource: enforce creditLimit if configured. Look at
-    // outstanding PaymentLeg(source=INVOICE_ACCRUAL) + open invoices.
-    if (
-      fundingSource === "INVOICE" &&
-      org.billingAccount?.creditLimit !== null &&
-      org.billingAccount?.creditLimit !== undefined
-    ) {
-      const [accrualAgg, outstandingAgg] = await Promise.all([
-        prisma.paymentLeg.aggregate({
-          where: {
-            source: "INVOICE_ACCRUAL",
-            payment: {
-              organizationId: org.id,
-              paymentStatus: "SUCCEEDED",
-              billableToOrgInvoiceId: null,
+    // INVOICE fundingSource: enforce creditLimit. PR-1d (#687):
+    // unverified orgs (PENDING_VERIFICATION) get an automatic
+    // governance credit-limit even when the BillingAccount.creditLimit
+    // column is null — the default ₹50k starter blocks the
+    // book-everything-then-ghost abuse pattern. The cap auto-lifts
+    // once the org is verified OR pays its first invoice.
+    if (fundingSource === "INVOICE") {
+      const explicitLimit = org.billingAccount?.creditLimit ?? null;
+      const isVerified = org.status === "ACTIVE";
+      const governanceLimit = isVerified
+        ? null
+        : getInvoiceCreditLimitPaise();
+      const effectiveLimit =
+        explicitLimit === null
+          ? governanceLimit
+          : governanceLimit === null
+            ? explicitLimit
+            : Math.min(explicitLimit, governanceLimit);
+
+      if (effectiveLimit !== null) {
+        const [accrualAgg, outstandingAgg] = await Promise.all([
+          prisma.paymentLeg.aggregate({
+            where: {
+              source: "INVOICE_ACCRUAL",
+              payment: {
+                organizationId: org.id,
+                paymentStatus: "SUCCEEDED",
+                billableToOrgInvoiceId: null,
+              },
             },
-          },
-          _sum: { amountPaise: true },
-        }),
-        prisma.organizationInvoice.aggregate({
-          where: {
-            organizationId: org.id,
-            status: { in: ["ISSUED", "OVERDUE"] },
-          },
-          _sum: { totalPaise: true },
-        }),
-      ]);
-      const exposure =
-        (accrualAgg._sum.amountPaise ?? 0) +
-        (outstandingAgg._sum.totalPaise ?? 0);
-      if (exposure >= org.billingAccount.creditLimit) {
-        throw new Error(
-          "Organization has reached its invoice credit limit. Outstanding invoices must be paid before new bookings.",
-        );
+            _sum: { amountPaise: true },
+          }),
+          prisma.organizationInvoice.aggregate({
+            where: {
+              organizationId: org.id,
+              status: { in: ["ISSUED", "OVERDUE"] },
+            },
+            _sum: { totalPaise: true },
+          }),
+        ]);
+        const exposure =
+          (accrualAgg._sum.amountPaise ?? 0) +
+          (outstandingAgg._sum.totalPaise ?? 0);
+        if (exposure >= effectiveLimit) {
+          throw new Error(
+            `Organization has reached its invoice credit limit (${effectiveLimit} paise). Outstanding invoices must be paid before new bookings.`,
+          );
+        }
       }
     }
 

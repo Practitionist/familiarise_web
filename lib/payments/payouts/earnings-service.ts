@@ -362,7 +362,29 @@ export async function createEarningsFromPayment({
       // Create OrganizationEarnings row for the HOST/HYBRID org (3-way split).
       // Skip when orgShare is 0 (Platform-only mode: platformCommissionRate = 1.0)
       // — creating 0-value rows adds noise without value.
+      //
+      // PR-1d / #687: if the sponsoring org is still PENDING_VERIFICATION
+      // and has never paid an invoice, accruals start in PENDING_TRUST
+      // instead of PENDING. The `release-pending-trust-earnings` cron
+      // promotes them once the org is verified or first invoice clears.
       if (orgSplit && orgSplit.orgShare > 0) {
+        const sponsorOrg = await tx.organization.findUnique({
+          where: { id: orgSplit.organizationId },
+          select: { status: true },
+        });
+        let initialStatus: EarningStatus = EarningStatus.PENDING;
+        if (sponsorOrg?.status === "PENDING_VERIFICATION") {
+          const paidInvoiceCount = await tx.organizationInvoice.count({
+            where: {
+              organizationId: orgSplit.organizationId,
+              status: "PAID",
+            },
+          });
+          if (paidInvoiceCount === 0) {
+            initialStatus = EarningStatus.PENDING_TRUST;
+          }
+        }
+
         await tx.organizationEarnings.create({
           data: {
             organizationId: orgSplit.organizationId,
@@ -372,7 +394,7 @@ export async function createEarningsFromPayment({
             orgSharePaise: orgSplit.orgShare,
             consultantSharePaise: orgSplit.consultantShare,
             refundedAmountPaise: 0,
-            status: EarningStatus.PENDING,
+            status: initialStatus,
             holdUntil,
             currency: "INR",
             // Rate-card snapshot: persist the exact split applied so

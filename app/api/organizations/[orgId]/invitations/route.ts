@@ -19,6 +19,11 @@ import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import {
+  DomainVerificationRequiredError,
+  hasVerifiedDomain,
+  UNVERIFIED_ORG_SEAT_CAP,
+} from "@/lib/enterprise/governance";
 import { notifyOrgInviteSent } from "@/lib/novu/org-workflows";
 
 // Subset of MemberRole an inviter can assign without elevated flows.
@@ -135,6 +140,28 @@ export async function POST(
           },
         });
         wasExisting = !!existing;
+
+        // PR-1d / #675: an unverified org may onboard a small founding
+        // team but is hard-capped until at least one OrgDomainClaim is
+        // verified. Skip the gate for re-invites (the seat is already
+        // counted in the active+pending sum from the original send).
+        if (!existing) {
+          const verified = await hasVerifiedDomain(tx, orgId);
+          if (!verified) {
+            const [activeMembers, pendingInvites] = await Promise.all([
+              tx.membership.count({
+                where: { organizationId: orgId, status: "ACTIVE" },
+              }),
+              tx.invitation.count({
+                where: { organizationId: orgId, status: "pending" },
+              }),
+            ]);
+            if (activeMembers + pendingInvites >= UNVERIFIED_ORG_SEAT_CAP) {
+              throw new DomainVerificationRequiredError("BULK_SEATS");
+            }
+          }
+        }
+
         const token = existing?.id ?? crypto.randomUUID();
         const record = existing
           ? await tx.invitation.update({
@@ -171,6 +198,15 @@ export async function POST(
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
   } catch (err) {
+    if (err instanceof DomainVerificationRequiredError) {
+      return NextResponse.json(
+        {
+          error: `Verify a domain to invite more than ${UNVERIFIED_ORG_SEAT_CAP} members`,
+          code: err.code,
+        },
+        { status: err.httpStatus },
+      );
+    }
     // P2002 from a future partial unique index would land here; today
     // we hit it only if the Serializable retry budget exhausts. Convert
     // to 409 so the client can simply re-render the existing invitation.

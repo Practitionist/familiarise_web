@@ -19,6 +19,10 @@ import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { DomainSchema } from "@/lib/enterprise/validators";
 import { SelfServiceMemberRoleSchema } from "@/lib/labels/org-labels";
+import {
+  DomainVerificationRequiredError,
+  hasVerifiedDomain,
+} from "@/lib/enterprise/governance";
 
 const PatchBodySchema = z
   .object({
@@ -119,6 +123,19 @@ export async function PATCH(
         }
       }
 
+      // PR-1d / #675: SSO settings (the high-impact ones — enforcement
+      // + auto-join) require a verified domain. Without this gate any
+      // org could enforce SSO against an unverified domain and lock
+      // out members of a third-party org that happens to share the
+      // email suffix.
+      const sensitiveChange =
+        body.enforceSSO === true ||
+        (body.allowedEmailDomains !== undefined &&
+          body.allowedEmailDomains.length > 0);
+      if (sensitiveChange && !(await hasVerifiedDomain(tx, orgId))) {
+        throw new DomainVerificationRequiredError("SSO");
+      }
+
       const next = await tx.organizationSSOSettings.upsert({
         where: { organizationId: orgId },
         create: {
@@ -178,6 +195,12 @@ export async function PATCH(
 
     return NextResponse.json({ settings: updated });
   } catch (err) {
+    if (err instanceof DomainVerificationRequiredError) {
+      return NextResponse.json(
+        { error: err.message, code: err.code },
+        { status: err.httpStatus },
+      );
+    }
     if (err instanceof Error && "httpStatus" in err) {
       const status =
         typeof err.httpStatus === "number" ? err.httpStatus : 500;

@@ -25,6 +25,8 @@ import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { isValidGstin } from "@/lib/compliance/gst";
+import { isValidPan } from "@/lib/compliance/tds";
 
 // PROJECT is reserved in the Prisma enum for the v2 milestone workflow
 // (scoped project-billing engine), but not accepted at the API boundary
@@ -89,8 +91,26 @@ const CreateBodySchema = z
     website: z.string().url().nullable().optional(),
     sizeBucket: SizeBucketSchema.nullable().optional(),
     dataResidencyRegion: DataRegionSchema.default("IN"),
-    gstin: z.string().length(15).nullable().optional(),
-    pan: z.string().length(10).nullable().optional(),
+    // GSTIN / PAN: format-only validation here; live API verification
+    // (NIC GST taxpayer search, sanctions screening) lands in PR-2.
+    // Format validators reject the obvious "made up" values that the
+    // book-everything-then-ghost fraud pattern (#687) relies on.
+    gstin: z
+      .string()
+      .nullable()
+      .optional()
+      .refine(
+        (v) => v === null || v === undefined || isValidGstin(v),
+        { message: "INVALID_GSTIN_FORMAT" },
+      ),
+    pan: z
+      .string()
+      .nullable()
+      .optional()
+      .refine(
+        (v) => v === null || v === undefined || isValidPan(v),
+        { message: "INVALID_PAN_FORMAT" },
+      ),
     requiresPO: z.boolean().default(false),
   })
   .refine((v) => v.canSponsor || v.canHost, {
