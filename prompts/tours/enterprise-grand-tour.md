@@ -171,7 +171,9 @@ a host arm (RateCard + EXPERT memberships + payouts). T.10.5 / T.10.6
 | Anti-lockout guards (3 vectors) | T.23 |
 | OrgContextFilter (Personal / Org / All) | T.24 |
 | Novu org-lifecycle workflows (9 events) | T.25 |
-| Reconcile cron (5 checks incl. session drift) | T.26 - T.27 |
+| Reconcile cron (8 checks incl. session, seat, payout, leg drift) | T.26 - T.27 |
+| Invoice-fraud guard (PENDING_TRUST + credit-limit) | T.8.6 |
+| Domain governance gates (SSO save, bulk seats) | T.18, T.19 |
 
 ---
 
@@ -311,7 +313,9 @@ FROM "organizations"
 WHERE slug = 'tour-2026-04-25-acme';
 ```
 
-Expect exactly one row, `canSponsor=t`, `canHost=f`, `status='ACTIVE'`.
+Expect exactly one row, `canSponsor=t`, `canHost=f`,
+`status='PENDING_VERIFICATION'` (the schema default — see Watch for
+below).
 
 Also confirm the OWNER membership was created automatically:
 
@@ -331,6 +335,37 @@ session user.
 combination at the schema layer (try toggling both off in `auto` mode
 and observe the 400). The dashboard hero should now show a "Sponsor"
 badge — that label resolves through `lib/labels/org-labels.ts`.
+
+New orgs default to `status='PENDING_VERIFICATION'` (schema default,
+enforced by the route). They stay there until an admin flips them to
+ACTIVE — which is what unlocks billing, SSO enforcement, and the
+trust gate for INVOICE earnings (see T.18, T.19, T.8.6). The fact
+that a fresh tour org is pending-not-active is the FEATURE, not a
+bug — write checks accordingly.
+
+**GSTIN / PAN format gate (PR-1d / #687).** Try POSTing an org with a
+malformed GSTIN — expect a 400 `INVALID_GSTIN_FORMAT`:
+
+```bash
+curl -i -X POST 'http://localhost:3000/api/organizations' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "Tour Bogus GSTIN",
+    "slug": "tour-2026-04-25-bogus-gstin",
+    "canSponsor": true,
+    "fundingSource": "INVOICE",
+    "billingEmail": "ops@tour.example.com",
+    "gstin": "BOGUS123"
+  }'
+```
+
+Same for a malformed PAN (`pan: "NOTAPAN"`) — expect
+`INVALID_PAN_FORMAT`. The validators (`isValidGstin` /
+`isValidPan` in `lib/compliance/{gst,tds}.ts`) check format only;
+live API verification (NIC GST taxpayer search + sanctions
+screening) is part of PR-2 compliance go-live. Without this gate
+the book-everything-then-ghost fraud pattern (#687) could register
+an org with a made-up GSTIN.
 
 ---
 
@@ -444,14 +479,13 @@ The matrix is in the Coverage Matrix above. The seed cohort already
 demonstrates 3 of the 4 v1 cells; the tour creates fresh orgs so we
 can inspect each in isolation.
 
-> **Known limitation — issue #710.** `BookingUtilization.engagementsConsumed`
-> is hardcoded to `1` at `lib/payments/operations/checkout.ts:2064`,
-> regardless of plan type or duration. This means a 12-month SUBSCRIPTION
-> consumes 1 cap unit at signup (not 12), an 8-week CLASS consumes 1
-> (not 8), and a 4-hour CONSULTATION consumes 1 (not 8 — eight 30-min
-> slots). LICENSED_SEAT cap enforcement is therefore *under-counting*
-> for multi-session plans. LICENSE orgs are unaffected (cap=null). The
-> agreed fix is in #710. T.7.5 (next) demonstrates the bug live.
+> **Closed — issue #710 (PR-1a).** `engagementsConsumed` is now
+> derived from the actual count of allocated slots
+> (`classInstance.appointments.length`) rather than hardcoded to 1.
+> An 8-week CLASS consumes 8 cap units, a 12-call SUBSCRIPTION lazy-
+> debits 1 per consultant allocation, and CONSULTATION/WEBINAR debit 1
+> at checkout. LICENSE orgs (cap=null) remain unaffected. T.7.5 (next)
+> verifies the fix end-to-end and includes a BLOCK-overage drill.
 
 ---
 
@@ -637,30 +671,29 @@ line ~660 for the formatting helper.
 
 ---
 
-### T.7.5 — Demonstrate the multi-session cap-counting bug (issue #710)
+### T.7.5 — Verify the multi-session cap-counting fix (issue #710 — closed)
 
 **What we're about to do.** On `tour-2026-04-25-wallet-seat` (T.6,
 the Stripe IN shape with `coveredEngagementsPerCycle=4` per quarter),
 have a tour LEARNER book an 8-week CLASS instead of a single
 consultation. Observe that `ProgramAssignment.engagementsUsed`
-increments by **1** — not by **8** — even though the class will
-deliver 8 weekly occurrences.
+increments by **8** — one per delivered occurrence — proving that
+the engagement-based cap counter works for multi-session plans.
 
-This is the bug from #710 made tangible: the schema column says
-`coveredEngagementsPerCycle` (sessions = occurrences), but checkout
-deducts `engagementsConsumed = 1` per booking. A learner can book a
-multi-session product and consume one cap unit instead of the
-expected per-occurrence count.
+This stop used to demonstrate bug #710 (then-current `sessionsConsumed=1`
+hardcode). PR-1a closed that issue: checkout now reads
+`engagementsConsumed` from the actual count of allocated slots
+(`classInstance.appointments.length`), so a multi-session product
+correctly consumes its full cap weight.
 
-**Real customer pattern.** Imagine Stripe IN's CFO asks "we covered
-4 sessions per engineer per quarter, why did 80 engineers consume
-240 sessions worth of mentor time and our cap report only shows
-80?" The answer is row #710's bug — the cap counts bookings, not
-delivered occurrences.
+**Real customer pattern.** Stripe IN's CFO asks "we covered 4
+sessions per engineer per quarter, why did 80 engineers consume 240
+sessions worth of mentor time but our cap report only shows 80?"
+Pre-fix the answer was the bug; post-fix the cap report shows the
+true 240 and BLOCK overage behaviour kicks in correctly.
 
-**Coverage.** Cross-cutting: documents the known limitation; doesn't
-fix it. Coverage matrix is *honest* about what the system does today,
-not what we wish it did.
+**Coverage.** Closes #710. Verifies the fix end-to-end: cap counter,
+ledger entries, reconcile invariant E, and BLOCK overage rejection.
 
 **Drive.**
 
@@ -693,33 +726,39 @@ After the booking:
 -- Same query as above
 ```
 
-`engagementsUsed` should now be `N + 1` (the bug). The expected
-behavior — once #710 lands — is `N + 8` (one per allocated slot).
+`engagementsUsed` should now be `N + 8` — one per allocated CLASS
+slot. If it shows `N + 1` the fix has regressed; file a P0.
 
-Also confirm the slot count:
+Cross-check against the actual slot count and the immutable ledger:
 
 ```sql
+-- Slot count for the booked class
 SELECT COUNT(*) FROM "SlotOfAppointment" sa
 JOIN "Appointment" a ON a.id = sa."appointmentId"
 WHERE a."classId" IN (
-  -- the class we just booked
   SELECT id FROM "Class" WHERE "classPlanId" = '<our-plan-id>' ORDER BY "createdAt" DESC LIMIT 1
 );
+
+-- UsageLedgerEntry must mirror the increment
+SELECT SUM("engagementsConsumed")
+FROM "UsageLedgerEntry"
+WHERE "programAssignmentId" = '<the assignment id>';
 ```
 
-Expect 8 (or close to it — depends on how the class was set up). The
-gap between this and `engagementsUsed`'s delta is the bug magnitude.
+The slot count, the counter delta (`N+8 - N`), and the ledger sum
+must all match.
 
-**Watch for.** The audit log will show one
-`PROGRAM_ASSIGNMENT_INCREMENTED` entry, not 8. The reconcile cron
-(T.26) won't flag this as drift because both `engagementsUsed` and
-`UsageLedgerEntry.engagementsConsumed` are written from the same
-hardcoded `1` — they're internally consistent but externally wrong.
-The drift check (E) compares counter to ledger, not to slot count.
+**BLOCK overage drill.** With cap=4 and the booking burning 8, the
+booking should be REJECTED at checkout for a BLOCK-mode program (the
+default in T.6). Re-run with `overageBehavior=CHARGE_ORG` to see the
+booking succeed but `wasOverage=true` flagged on `BookingUtilization`.
 
-After the fix (#710), the reconcile cron should grow a check (F)
-that compares cap consumption to actual slot delivery; that's
-explicitly part of the issue's acceptance criteria.
+**Watch for.** Reconcile invariant E (T.26) — sum of
+`UsageLedgerEntry.engagementsConsumed` must equal
+`ProgramAssignment.engagementsUsed`. After this stop both values land
+at `N+8` and the invariant holds. SUBSCRIPTION plans use the lazy
+debit path (one engagement per consultant allocation) — covered by
+T.6's earlier debit pattern, no change needed here.
 
 ---
 
@@ -767,10 +806,97 @@ WHERE o.slug = 'tour-2026-04-25-invoice-seat';
 Expect `fundingSource='INVOICE'`, `walletBalance=NULL`,
 `creditLimit=500000` (paise).
 
-**Watch for.** Issue #687 (invoice-fraud threat model) recommends
-defaulting `creditLimit` to ₹50,000 for new INVOICE orgs to bound
-shell-org risk. As of this tour the default is `null` (unlimited);
-the recommended default is tracked but not yet enforced.
+**Watch for.** Issue #687 (invoice-fraud threat model) is now
+enforced — see T.8.6 below for the live drill. Even when
+`BillingAccount.creditLimit` is null, an unverified org gets the
+governance default (`MAX_INVOICE_BOOKING_PAISE`, default ₹50k) at
+the checkout layer.
+
+---
+
+### T.8.6 — Invoice-fraud guard: book-then-ghost (issue #687)
+
+**What we're about to do.** Stand up a fresh INVOICE-funded org that
+we deliberately leave in `status=PENDING_VERIFICATION`. Drive the
+guard from PR-1d through three steps:
+
+1. Book up to (just under) the governance credit limit — bookings
+   succeed, OrganizationEarnings rows land in
+   `status=PENDING_TRUST` (NOT the usual PENDING).
+2. Try to book past the limit — expect `402 CREDIT_LIMIT_EXCEEDED`
+   from `lib/payments/operations/checkout.ts`.
+3. Flip the org to `status=ACTIVE` (admin verify), kick the
+   release cron — observe PENDING_TRUST earnings promote to
+   PENDING.
+
+**Why it matters.** Issue #687's threat: a malicious INVOICE org
+books unlimited consultations, ghosts before the monthly invoice
+cuts, and the platform has already accrued real consultant
+payables. PR-1d closes both halves: the credit-limit gate at
+checkout caps cumulative exposure, and the PENDING_TRUST status
+holds earnings hostage until the org pays an invoice or an admin
+verifies it.
+
+**Coverage.** Closes #687 (P0 mitigations). Live GSTIN/sanctions
+screening is deferred to PR-2.
+
+**Drive.**
+
+> Pick one:
+> - `auto` — Create the org via the wizard with funding=INVOICE.
+>   Skip the verification step. Have a tour LEARNER book a few
+>   consultations. SQL-query `OrganizationEarnings` to see the
+>   PENDING_TRUST status. Try to book one more past the limit —
+>   expect 402. Flip status via SQL, run the release cron via
+>   `npx tsx jobs/cleanup/release-pending-trust-earnings.ts`,
+>   re-query.
+> - `manual` — Same path; type `done` after each substep.
+
+**Verify.**
+
+```sql
+-- Earnings should be PENDING_TRUST while the org is unverified
+SELECT id, "orgSharePaise", status
+FROM "OrganizationEarnings"
+WHERE "organizationId" = (
+  SELECT id FROM "organizations"
+  WHERE slug = 'tour-2026-04-25-invoice-fraud'
+);
+```
+
+Expect every row `status='PENDING_TRUST'`. After flipping the org
+to ACTIVE and running the release cron:
+
+```sql
+-- ...same query
+```
+
+Expect every row `status='PENDING'` (the next standard
+release-from-hold cron will bump them to READY).
+
+**402 drill.** Once cumulative exposure (open invoice totals +
+INVOICE_ACCRUAL legs) reaches the effective credit limit
+(`min(BillingAccount.creditLimit, MAX_INVOICE_BOOKING_PAISE)`),
+the next checkout returns:
+
+```
+402 Payment Required
+{ "error": "Organization has reached its invoice credit limit (5000000 paise). Outstanding invoices must be paid before new bookings." }
+```
+
+The cap auto-lifts on org verification — re-attempt the same
+booking after the admin-verify step and expect 200/201.
+
+**Override knob.** `MAX_INVOICE_BOOKING_PAISE` env var overrides
+the ₹50,000 starter cap (e.g. set to `100000000` for ₹10L while
+ramping a known-good design partner). Default lives in
+`lib/enterprise/governance.ts:getInvoiceCreditLimitPaise()`.
+
+**Watch for.** The release cron promotes earnings on EITHER signal
+— admin verifies (status → ACTIVE) OR the org pays its first
+invoice (any `OrganizationInvoice.status='PAID'`). The latter is
+the natural "trust acquired by paying" signal; the former is the
+admin override.
 
 ---
 
@@ -1423,6 +1549,26 @@ Expect `enforceSSO=true` (after verifiedAt is set).
 return `enforceSSO=false`. This is the security gate — unverified
 claims must NOT steer signin.
 
+**Bulk-seat gate (PR-1d / #675).** While `verifiedAt` is still null,
+attempt to invite a 6th member via
+`POST /api/organizations/<acmeId>/invitations`. The request must be
+rejected with `403 DOMAIN_VERIFICATION_REQUIRED`:
+
+```bash
+# Adjust the cookie / auth as needed for your tour user.
+curl -i -X POST 'http://localhost:3000/api/organizations/<acmeId>/invitations' \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"sixth@tour.example.com","role":"LEARNER"}'
+```
+
+Pre-cap (≤5 active+pending members) the same call returns 201. Once
+five seats have been used (active or pending) the gate kicks in.
+After the fake-DNS UPDATE flips `verifiedAt`, re-issue the same
+invite — now it returns 201. The cap is `UNVERIFIED_ORG_SEAT_CAP=5`
+(see `lib/enterprise/governance.ts`); override with the
+`UNVERIFIED_ORG_SEAT_CAP` constant only if a future tour run needs a
+different ceiling.
+
 ---
 
 ### T.19 — SSO provider config + cert expiry warning
@@ -1465,6 +1611,23 @@ Expect a row, `details.severity='WARN'`, `details.daysRemaining≈20`.
 **Watch for.** The cron has a 20-hour dedup window
 (`scripts/cleanup/sso-cert-expiry-alert.ts`) — re-running it within
 20 hours should NOT produce a duplicate audit row.
+
+**SSO settings save gate (PR-1d / #675).** Before T.18 fakes the
+domain DNS proof, attempt to PATCH the org's SSO settings with
+`enforceSSO=true` or a non-empty `allowedEmailDomains`:
+
+```bash
+curl -i -X PATCH 'http://localhost:3000/api/organizations/<acmeId>/sso' \
+  -H 'Content-Type: application/json' \
+  -d '{"enforceSSO": true}'
+```
+
+Expect `403 DOMAIN_VERIFICATION_REQUIRED`. Without this gate, an
+attacker org could enforce SSO against an unverified email-domain
+suffix and lock out members of an unrelated tenant. After T.18
+flips `verifiedAt`, the same PATCH succeeds. The PATCH branch that
+ONLY changes `defaultRoleForAutoJoin` (a non-sensitive setting)
+still works without a verified domain.
 
 ---
 
@@ -1517,6 +1680,31 @@ URL; the second GET (within 24h TTL) returns the SAME signed URL
 without regenerating the PDF. Confirm via `list_network_requests`
 that the second request did NOT call out to Supabase storage's
 upload endpoint.
+
+**INVOICE_PAID transactional discipline (PR-1b / #700 LED-1).**
+Trigger a Razorpay invoice-payment webhook for the ISSUED invoice and
+confirm BOTH writes commit together: invoice → PAID AND a matching
+`SettlementLedgerEntry(kind='INVOICE_PAID')` row.
+
+```sql
+-- After the webhook lands:
+SELECT inv.status, inv."paidAt", sle.id AS settlement_id, sle."amountPaise"
+FROM "OrganizationInvoice" inv
+LEFT JOIN "SettlementLedgerEntry" sle
+  ON sle."invoiceId" = inv.id AND sle.kind = 'INVOICE_PAID'
+WHERE inv.id = '<invoiceId>';
+```
+
+Expect `status='PAID'`, `paidAt` populated, AND `settlement_id`
+non-null with `amountPaise = inv.totalPaise`. Pre-PR-1b a transient
+DB error on the settlement insert would have left the invoice PAID
+with `settlement_id=NULL` (silent ledger drift); post-PR-1b they
+share a transaction and either both commit or both roll back.
+
+The reconcile cron's invariant D (T.26) catches any historical drift
+that might still be on the books — kick it off after this stop and
+expect `discrepanciesCount=0` (or, if a prior tour run produced
+drift, watch invariant D flag the orphan invoice).
 
 ---
 
@@ -1588,57 +1776,118 @@ hard error. The webhook handler is at
 
 ---
 
-### T.22 — Payout request + 3-way revenue split
+### T.22 — Payout eligibility + idempotent batch + state machine
 
 **What we're about to do.** On `tour-2026-04-25-acme` (Hybrid),
-configure an OrganizationPayoutAccount via the Payouts page. Then
-create a synthetic OrganizationEarnings row via Supabase MCP
-(simulating that an EXPERT delivered a session and earned money).
-Request a payout. Walk through the 3-way split:
-platformBps + orgBps + consultantBps.
+configure an OrganizationPayoutAccount via the Payouts page (must
+flip to status=VERIFIED — admin-side action via Supabase MCP for the
+tour). Insert a handful of synthetic `OrganizationEarnings` rows in
+status READY via SQL. Walk the new three-step service path:
+eligibility probe → batch create → process state machine. Verify the
+3-way split snapshot is preserved on each row.
 
-**Why it matters.** The 3-way split is the heart of a marketplace
-where the platform takes a cut, the org takes a cut, and the
-expert takes a cut. Snapshotting bps at booking time
-(`BookingUtilization.platformBpsAtBooking` etc.) means a later
-rate-card rotation doesn't retroactively rewrite history.
+**Why it matters.** PR-1c (#713-2 / #700 LED-4) replaced the
+80-line `@arch4-stub` `OrgPayoutService` with a real implementation:
 
-**Coverage.** Cross-cutting integration — Payout request + 3-way
-split.
+- `getOrgPayoutEligibility(orgId)` — read-only probe; safe to call
+  from a dashboard.
+- `createOrgPayoutBatch(orgId, periodStart, periodEnd, opts)` —
+  Redis-locked + Serializable tx. Optional `idempotencyKey` so the
+  weekly cron's deterministic key is a true no-op on retry.
+- `processOrgPayout(payoutId)` — state machine
+  `PENDING → PROCESSING`. Live RazorpayX submission is gated on
+  `ENABLE_LIVE_PAYOUTS` and lands in PR-3.
+
+The 3-way split itself is unchanged — bps snapshotting in
+`OrganizationEarnings.platformBpsApplied / orgBpsApplied /
+consultantBpsApplied` still keeps a rate-card rotation from
+retroactively rewriting history.
+
+**Coverage.** Closes #700 (LED-4), Part of #713 (item 2). Verifies
+the new service end-to-end including idempotency + concurrency.
 
 **Drive.**
 
 > Pick one:
-> - `auto` — Configure payout account (fake bank details, OK for
->   tour), then SQL-insert a synthetic earnings row, then click
->   "Request payout".
-> - `manual` — Same.
+> - `auto` — Configure payout account → flip to VERIFIED via SQL.
+>   SQL-insert ~5 READY OrganizationEarnings rows. Hit
+>   `GET /api/organizations/<orgId>/payouts` (eligibility-style read)
+>   then `POST /api/organizations/<orgId>/payouts` to create the
+>   batch. Watch the response carry a single `OrganizationPayout` id.
+>   Then run the cron entry-point
+>   `npx tsx scripts/payouts/create-payout-batch.ts` a SECOND time
+>   for the same window — expect zero new rows (the
+>   `idempotencyKey` matches the existing row).
+> - `manual` — Same path; type `done` after each substep.
 
 **Verify.**
 
 ```sql
+-- Eligibility precondition: payout account must be VERIFIED.
+SELECT status FROM "OrganizationPayoutAccount"
+WHERE "organizationId" = (SELECT id FROM "organizations" WHERE slug = 'tour-2026-04-25-acme');
+-- Expect 'VERIFIED'
+
+-- After batch creation: one OrganizationPayout, all READY earnings
+-- claimed and flipped to PAID.
 SELECT
-  oe."grossAmountPaise",
-  oe."platformBpsApplied",
-  oe."orgBpsApplied",
-  oe."consultantBpsApplied",
-  oe."netToOrgPaise",
-  oe."netToConsultantPaise",
-  op.status AS payout_status
-FROM "OrganizationEarnings" oe
-LEFT JOIN "OrganizationPayout" op ON op.id = oe."payoutId"
-WHERE oe."organizationId" = (SELECT id FROM "organizations" WHERE slug = 'tour-2026-04-25-acme')
-ORDER BY oe."createdAt" DESC LIMIT 1;
+  op.id, op.status, op."netPayoutPaise", op."idempotencyKey",
+  COUNT(oe.id) AS earnings_attached,
+  oe."platformBpsApplied", oe."orgBpsApplied", oe."consultantBpsApplied"
+FROM "OrganizationPayout" op
+LEFT JOIN "OrganizationEarnings" oe ON oe."orgPayoutId" = op.id
+WHERE op."organizationId" = (SELECT id FROM "organizations" WHERE slug = 'tour-2026-04-25-acme')
+GROUP BY op.id, oe."platformBpsApplied", oe."orgBpsApplied", oe."consultantBpsApplied"
+ORDER BY op."createdAt" DESC LIMIT 1;
 ```
 
-Expect bps values that sum to 10000 (100%) and net amounts that
-match the gross × bps math.
+Expect: status=`PENDING` after batch creation, `idempotencyKey`
+populated when the cron path was used (null when route-driven),
+attached earnings count > 0, all earnings now in `status='PAID'`.
+Bps values must sum to 10000 (100%).
 
-**Watch for.** If the payout status is stuck in `PENDING` for more
-than a few seconds, check the payout cron at
-`scripts/cleanup/process-payouts.ts` — it might not be wired in
-dev. T.22 is observational; payouts are only fully exercised in
-the API test suite.
+Then run the process pass (cron entry-point) and re-query:
+
+```bash
+npx tsx scripts/payouts/process-payouts.ts
+```
+
+```sql
+SELECT status FROM "OrganizationPayout"
+WHERE "organizationId" = (SELECT id FROM "organizations" WHERE slug = 'tour-2026-04-25-acme')
+ORDER BY "createdAt" DESC LIMIT 1;
+```
+
+Expect `status='PROCESSING'`. Without `ENABLE_LIVE_PAYOUTS=true` no
+gateway call fires — that's PR-3's job.
+
+**Concurrency drill.** Open two terminals and fire
+`POST /api/organizations/<orgId>/payouts` simultaneously (or call
+`createOrgPayoutBatch` twice from a small script). Expect ONE 201
+and one `409 PAYOUT_LOCK_CONFLICT` (`PayoutLockError` from the Redis
+60s-TTL lock). The losing call's transaction never starts; no
+duplicate payout.
+
+**Idempotency drill.** Re-run the cron in the same window:
+
+```bash
+npx tsx scripts/payouts/create-payout-batch.ts
+```
+
+Expect log line `payouts_already_existed=1` (or similar) and zero
+new `OrganizationPayout` rows for the org — the unique index on
+`OrganizationPayout.idempotencyKey` short-circuited the second run.
+
+**Watch for.** Reconcile invariant G (T.26) — sum of
+`OrganizationEarnings.orgSharePaise - refundedAmountPaise` for
+batched earnings must equal `OrganizationPayout.netPayoutPaise`.
+This stop should leave the invariant clean. If not, the batch
+totals were computed against a stale earnings snapshot.
+
+**Live submission (deferred).** Setting `ENABLE_LIVE_PAYOUTS=true`
+today throws `PayoutValidationError` at processOrgPayout — by
+design. The cron submission to RazorpayX `payouts.create` + the
+webhook reconciler that flips PROCESSING → COMPLETED land in PR-3.
 
 ---
 
@@ -1804,17 +2053,25 @@ that's a known gap tracked in the broader follow-up issue.
 
 ---
 
-### T.26 — Reconcile cron — walk all 5 checks
+### T.26 — Reconcile cron — walk all 8 checks
 
 **What we're about to do.** Trigger the reconcile cron via
-`POST /api/admin/reconcile-ledgers`. Walk through the 5 checks the
+`POST /api/admin/reconcile-ledgers`. Walk through the 8 checks the
 auditor runs:
 - (A) Wallet balance drift
 - (B) Funding-ledger mirror
 - (C) Settlement coverage (INVOICE_ISSUED)
 - (D) Settlement coverage (INVOICE_PAID)
-- (E) **NEW:** ProgramAssignment session-counter drift (from commit
-  `7231f75f`)
+- (E) ProgramAssignment session-counter drift (commit `7231f75f`)
+- (F) **PR-1a (#699 ENT-1):** BillingSubscription.activeSeatCount
+  drift — count of in-period LICENSED_SEAT ProgramAssignments must
+  match the denormalized counter.
+- (G) **PR-1c (#713-2):** OrganizationPayout total mismatch — sum
+  of attached `OrganizationEarnings.orgSharePaise -
+  refundedAmountPaise` must equal `OrganizationPayout.netPayoutPaise`.
+- (H) **PR-1b (#700 LED-3):** Payment leg-sum mismatch — for every
+  Payment with org legs, sum(PaymentLeg.amountPaise) must equal
+  Payment.amount.
 
 For each check, the agent reads the corresponding section of
 `scripts/reconcile/reconcile-ledgers.ts` and explains what
@@ -1822,11 +2079,15 @@ invariant is being asserted.
 
 **Why it matters.** The reconcile cron is the safety net that
 catches drift between the three ledgers (Usage / Funding /
-Settlement) and between cached counters (ProgramAssignment.engagementsUsed)
-and the immutable ledger they're derived from. The cron now runs at
-03:45 UTC nightly.
+Settlement), between cached counters
+(`ProgramAssignment.engagementsUsed`,
+`BillingSubscription.activeSeatCount`) and the immutable ledger,
+and between payouts and their attached earnings. The cron runs at
+03:45 UTC nightly. PR-1a/b/c added invariants F + H + G; the report
+schema gained `subscriptionsChecked / paymentsChecked /
+payoutsChecked` counters in `summary`.
 
-**Coverage.** Cross-cutting integration — Reconcile cron (5
+**Coverage.** Cross-cutting integration — Reconcile cron (8
 checks).
 
 **Drive.**
@@ -1845,13 +2106,19 @@ FROM "LedgerReconciliationReport"
 ORDER BY "runAt" DESC LIMIT 1;
 ```
 
-Expect `ok=true` (no drift) for our tour data. Inspect `summary`
-to confirm `assignmentsChecked > 0` (proves check E ran).
+Expect `ok=true` (no drift) for our tour data. Inspect `summary` to
+confirm all six counters > 0 (or at least the ones the tour data
+should populate): `accountsChecked`, `assignmentsChecked`,
+`subscriptionsChecked`, `paymentsChecked`, `payoutsChecked`,
+`orgsChecked`. Zero on any of these means the invariant didn't
+walk that table — useful early signal during a tour rerun.
 
 **Watch for.** If `ok=false`, the `findings` JSON will list each
-discrepancy with `kind`, expected/actual, and details. Walk each
-finding and decide whether to `fix it` or `note it` per Standing
-Rule #3.
+discrepancy with `kind`, expected/actual, and details. The new
+finding kinds are `ACTIVE_SEAT_COUNT_DRIFT` (F),
+`PAYMENT_LEG_SUM_MISMATCH` (H), and `ORG_PAYOUT_TOTAL_MISMATCH`
+(G). Walk each finding and decide whether to `fix it` or `note it`
+per Standing Rule #3.
 
 ---
 
@@ -1906,6 +2173,32 @@ hold session counts here, not paise — see the comment in
 `scripts/reconcile/reconcile-ledgers.ts` where the Finding type was
 extended. The auditor UI should render the units correctly based
 on `kind`.
+
+**Bonus drift drills (PR-1a/b/c invariants).**
+
+Three quick deliberate-drift drills that mirror invariant E's
+pattern. Run each, observe the finding, restore, re-run clean.
+
+- **F — `ACTIVE_SEAT_COUNT_DRIFT`.** UPDATE
+  `BillingSubscription.activeSeatCount` to a number that doesn't
+  match the in-period assignment count for `tour-2026-04-25-wallet-seat`.
+  Re-run the cron — finding appears with `details.unit='seats'`,
+  `expectedPaise` = real assignment count, `actualPaise` = the
+  bogus value. Restore via the backfill query in
+  `prisma/migrations/<...>_backfill_active_seat_count/migration.sql`.
+
+- **G — `ORG_PAYOUT_TOTAL_MISMATCH`.** On the payout from T.22,
+  UPDATE `OrganizationPayout.netPayoutPaise` to a value that
+  diverges from `sum(orgShare - refundedAmount)` of attached
+  earnings. Re-run — finding appears with `payoutId` populated.
+
+- **H — `PAYMENT_LEG_SUM_MISMATCH`.** Pick any org-funded Payment
+  from earlier stops; UPDATE one `PaymentLeg.amountPaise` to throw
+  off the sum. Re-run — finding appears with `paymentId` populated
+  and `details.legs` listing the offending breakdown.
+
+After each drill, restore the original value via Supabase MCP and
+re-run the cron — invariant should re-clean.
 
 ---
 
