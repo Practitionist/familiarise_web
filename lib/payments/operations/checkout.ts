@@ -1627,6 +1627,10 @@ export async function handleClassCheckout(
     plan,
     amount: plan.price,
     slotsLinked: linkedSlotCount,
+    // For enterprise cap counting (issue #710): one engagement per
+    // class day. The learner is enrolling in every existing class
+    // appointment at this moment, so the count is fully known here.
+    engagementsConsumed: classInstance.appointments.length,
   };
 }
 
@@ -1932,6 +1936,16 @@ export async function handleCheckout(
       const result = await prisma.$transaction(
         async (tx) => {
           let createdAppointment;
+          // Engagement count for enterprise cap (issue #710). One
+          // engagement = one Appointment row = one calendar occurrence.
+          //   - CONSULTATION/WEBINAR: 1 (single Appointment created here)
+          //   - CLASS: N (count of appointments the learner enrolled in,
+          //     all known at checkout because consultant pre-allocated)
+          //   - SUBSCRIPTION: null → SKIP recordBookingUtilization at
+          //     checkout. Slots are allocated lazily by the consultant;
+          //     debits land in SlotAllocationService.createAppointments,
+          //     1 per allocation batch.
+          let engagementsForCap: number | null = null;
 
           // FIX #520: Zero-amount payments (credits cover full cost) skip the
           // gateway, so slots should be confirmed immediately just like mock payments.
@@ -1950,6 +1964,7 @@ export async function handleCheckout(
                 skipPayment,
               );
               createdAppointment = consultationResult.appointment;
+              engagementsForCap = 1;
               break;
             }
 
@@ -1963,6 +1978,8 @@ export async function handleCheckout(
               // Use placeholder appointment for payment linkage
               // This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)
               createdAppointment = subscriptionResult.appointment;
+              // engagementsForCap stays null — debit happens at
+              // SlotAllocationService.createAppointments time.
               break;
             }
 
@@ -1974,6 +1991,7 @@ export async function handleCheckout(
                 skipPayment,
               );
               createdAppointment = webinarResult.appointment;
+              engagementsForCap = 1;
               break;
             }
 
@@ -1987,6 +2005,7 @@ export async function handleCheckout(
               // Class creates slots across multiple appointments
               // Use first appointment for payment linkage
               createdAppointment = classResult.appointment || null;
+              engagementsForCap = classResult.engagementsConsumed;
               break;
             }
 
@@ -2056,12 +2075,16 @@ export async function handleCheckout(
           // from. This is the runtime source of truth for sponsorship
           // attribution — analytics / invoicing / cap enforcement all read
           // these rows rather than back-deriving from `paymentMethod`.
-          if (programAssignmentId && isOrgSponsoredPayment) {
+          if (
+            programAssignmentId &&
+            isOrgSponsoredPayment &&
+            engagementsForCap !== null
+          ) {
             try {
               await recordBookingUtilization(tx, {
                 programAssignmentId,
                 paymentId: payment.id,
-                sessionsConsumed: 1,
+                engagementsConsumed: engagementsForCap,
                 priceAtBookingPaise: amount,
               });
             } catch (err) {
