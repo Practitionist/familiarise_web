@@ -579,7 +579,7 @@ A Program is a commercial package describing **what the org has bought for its m
 | `seatCount` | Total seats paid for |
 | `seatsUsed` | Current assigned seat count (atomically tracked) |
 | `cycleMonths` | 1 (monthly) or 12 (annual) |
-| `coveredSessionsPerCycle` | Soft cap per member per cycle; null = unlimited |
+| `coveredEngagementsPerCycle` | Soft cap per member per cycle; null = unlimited |
 | `overageBehavior` | BLOCK (reject) or ALLOW_WITH_OVERAGE (charge extra) |
 | `overageRatePaise` | Price per overage session when ALLOW_WITH_OVERAGE |
 | `pricePerSeatPaise` | Price per seat per cycle |

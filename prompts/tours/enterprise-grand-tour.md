@@ -136,11 +136,16 @@ a clean 400) but not exercised end-to-end.
 
 | ↓ Funding / → Program | LICENSED_SEAT | CREDIT_POOL | PROJECT | RETAINER |
 |---|---|---|---|---|
-| **PERSONAL** | n/a (T.5) | n/a | n/a | n/a |
-| **WALLET** | T.6 | T.7 | v2 (T.10) | v2 (T.10) |
-| **INVOICE** | T.8 | (atypical, skipped) | v2 (T.10) | v2 (T.10) |
-| **LICENSE** | T.9 (`coveredSessionsPerCycle=null`) | (atypical, skipped) | v2 | v2 |
+| **PERSONAL** | n/a (T.5 — no Program; just attribution tag) | n/a | n/a | n/a |
+| **WALLET** | T.6 (Stripe IN: per-seat quota) | T.7 (IIT students: shared pool) | v2 (T.10) | v2 (T.10) |
+| **INVOICE** | T.8 (Microsoft India: postpaid per-seat) | T.8.5 (Razorpay L&D: postpaid pool) | v2 (T.10) | v2 (T.10) |
+| **LICENSE** | T.9 (Goldman analysts: `coveredEngagementsPerCycle=null`) | ❌ **bogus** — flat fee already pays for unmetered usage; API rejects with `BOGUS_LICENSE_CREDIT_POOL` | v2 | v2 |
 | **PROJECT** | v2 (T.10) | v2 | v2 | v2 |
+
+**Hybrid combos** (canSponsor=true AND canHost=true) are layered on top
+of the above — the org has a sponsor arm (any of the above rows) PLUS
+a host arm (RateCard + EXPERT memberships + payouts). T.10.5 / T.10.6
+/ T.10.7 walk three real Hybrid shapes.
 
 ### Role lenses (`MemberRole`)
 
@@ -439,6 +444,15 @@ The matrix is in the Coverage Matrix above. The seed cohort already
 demonstrates 3 of the 4 v1 cells; the tour creates fresh orgs so we
 can inspect each in isolation.
 
+> **Known limitation — issue #710.** `BookingUtilization.engagementsConsumed`
+> is hardcoded to `1` at `lib/payments/operations/checkout.ts:2064`,
+> regardless of plan type or duration. This means a 12-month SUBSCRIPTION
+> consumes 1 cap unit at signup (not 12), an 8-week CLASS consumes 1
+> (not 8), and a 4-hour CONSULTATION consumes 1 (not 8 — eight 30-min
+> slots). LICENSED_SEAT cap enforcement is therefore *under-counting*
+> for multi-session plans. LICENSE orgs are unaffected (cap=null). The
+> agreed fix is in #710. T.7.5 (next) demonstrates the bug live.
+
 ---
 
 ### T.5 — PERSONAL funding (no program)
@@ -447,6 +461,11 @@ can inspect each in isolation.
 SPONSOR with `fundingSource=PERSONAL`. Observe that no contract is
 required and no program is created. Members will eventually pay for
 their own sessions; the org is attribution-only.
+
+**Real customer pattern.** Wipro reimbursement plan — 250k employees,
+no central budget. HR adds `wipro.com` as a verified domain so
+bookings get the corporate rate; employees pay on their card and
+submit expense reports. Wallet stays at ₹0 forever.
 
 **Why it matters.** PERSONAL is the "lightweight org" model — handy
 for free trials, design partners, and any cohort where the sponsor
@@ -495,13 +514,20 @@ a friendly empty state. The "Wallet" section should be hidden.
 
 **What we're about to do.** Create `tour-2026-04-25-wallet-seat` as a
 SPONSOR with `fundingSource=WALLET`. Then create a `Contract`, attach
-a `LICENSED_SEAT` Program with `coveredSessionsPerCycle=10` per month
+a `LICENSED_SEAT` Program with `coveredEngagementsPerCycle=4` per quarter
 and `overageBehavior=BLOCK`. We'll skip the actual top-up here (T.21
 walks the Razorpay flow); we just want the schema rows in place.
 
+**Real customer pattern.** Stripe IN engineering — 80 engineers,
+prepaid quarter. CFO transfers ₹15L into the wallet; each engineer
+gets 4 mentor sessions per quarter; overage = BLOCK so a budget
+overrun never sneaks through. Per-seat quota means engineer A
+booking 5 doesn't steal from engineer B's bucket.
+
 **Why it matters.** This is the most common enterprise shape — the
 employer pre-loads cash, the employees get N sessions per cycle, and
-overage either blocks or charges the org.
+overage either blocks or charges the org. The per-seat allocation is
+what differentiates this from CREDIT_POOL (next stop).
 
 **Coverage.** `FundingSource.WALLET` × `ProgramType.LICENSED_SEAT`.
 
@@ -520,7 +546,7 @@ SELECT
   o.slug,
   c.id AS contract_id,
   p.type,
-  lsc."coveredSessionsPerCycle",
+  lsc."coveredEngagementsPerCycle",
   lsc."overageBehavior",
   lsc."ratePerSeatPaise"
 FROM "organizations" o
@@ -531,7 +557,7 @@ WHERE o.slug = 'tour-2026-04-25-wallet-seat';
 ```
 
 Expect one row with `type='LICENSED_SEAT'`,
-`coveredSessionsPerCycle=10`, `overageBehavior='BLOCK'`.
+`coveredEngagementsPerCycle=10`, `overageBehavior='BLOCK'`.
 
 **Watch for.** The dashboard's Programs page should render the new
 program with a status pill (`ACTIVE`) and a per-cycle cap pill (`10
@@ -545,15 +571,24 @@ blank — `null` means unlimited (which we'll do in T.9).
 
 **What we're about to do.** Create `tour-2026-04-25-wallet-pool` as
 SPONSOR + WALLET. Add a Contract + a `CREDIT_POOL` Program with
-`creditsPerCycle=1000`, `cycle=MONTHLY`. Confirm the schema
+`creditsPerCycle=10000`, `cycle=MONTHLY`. Confirm the schema
 simplification: there's no `creditValuePaise` field anymore (1
 credit = ₹1 fixed) and no `premiumMultiplier`.
 
-**Why it matters.** CREDIT_POOL was simplified post-Arch-4 (see commit
-`9d33c652`). The dormant denomination layer was dropped because it
-added a translation step at debit time without enabling any feature
-the rate-card couldn't already express. Finance dashboards now read
-in ₹ end-to-end.
+**Real customer pattern.** IIT Madras student coaching — 800
+students, Dean tops up ₹10L/month, sessions debit from a 10,000-credit
+pool. Variable usage by month (exam season spikes, summer dips). NO
+per-student quota — anyone in the org can draw from the shared
+budget; first-come-first-served until the pool exhausts.
+
+**Why it matters.** CREDIT_POOL is the *shared-budget* shape — the
+opposite of LICENSED_SEAT's per-seat quota. Same funding source
+(WALLET) but completely different allocation semantics. CREDIT_POOL
+was simplified post-Arch-4 (see commit `9d33c652`); the dormant
+`creditValuePaise` denomination layer was dropped because it added
+a translation step at debit time without enabling any feature the
+rate-card couldn't already express. Finance dashboards now read in
+₹ end-to-end.
 
 **Coverage.** `FundingSource.WALLET` × `ProgramType.CREDIT_POOL`.
 
@@ -602,6 +637,92 @@ line ~660 for the formatting helper.
 
 ---
 
+### T.7.5 — Demonstrate the multi-session cap-counting bug (issue #710)
+
+**What we're about to do.** On `tour-2026-04-25-wallet-seat` (T.6,
+the Stripe IN shape with `coveredEngagementsPerCycle=4` per quarter),
+have a tour LEARNER book an 8-week CLASS instead of a single
+consultation. Observe that `ProgramAssignment.engagementsUsed`
+increments by **1** — not by **8** — even though the class will
+deliver 8 weekly occurrences.
+
+This is the bug from #710 made tangible: the schema column says
+`coveredEngagementsPerCycle` (sessions = occurrences), but checkout
+deducts `engagementsConsumed = 1` per booking. A learner can book a
+multi-session product and consume one cap unit instead of the
+expected per-occurrence count.
+
+**Real customer pattern.** Imagine Stripe IN's CFO asks "we covered
+4 sessions per engineer per quarter, why did 80 engineers consume
+240 sessions worth of mentor time and our cap report only shows
+80?" The answer is row #710's bug — the cap counts bookings, not
+delivered occurrences.
+
+**Coverage.** Cross-cutting: documents the known limitation; doesn't
+fix it. Coverage matrix is *honest* about what the system does today,
+not what we wish it did.
+
+**Drive.**
+
+> Pick one:
+> - `auto` — Use the existing CLASS plan from a seeded consultant (or
+>   create a tiny tour CLASS via Supabase MCP with `totalSessions=8`).
+>   Have the tour learner book it via the marketplace flow. Watch the
+>   network tab for the checkout call.
+> - `manual` — Same path; type `done` after the booking confirms.
+
+**Verify.** Before the booking:
+
+```sql
+SELECT pa.id, pa."engagementsUsed", lsc."coveredEngagementsPerCycle"
+FROM "ProgramAssignment" pa
+JOIN "Program" p ON p.id = pa."programId"
+JOIN "LicensedSeatConfig" lsc ON lsc."programId" = p.id
+WHERE p."contractId" IN (
+  SELECT c.id FROM "Contract" c
+  JOIN "organizations" o ON o.id = c."organizationId"
+  WHERE o.slug = 'tour-2026-04-25-wallet-seat'
+);
+```
+
+Note `engagementsUsed` (call it N).
+
+After the booking:
+
+```sql
+-- Same query as above
+```
+
+`engagementsUsed` should now be `N + 1` (the bug). The expected
+behavior — once #710 lands — is `N + 8` (one per allocated slot).
+
+Also confirm the slot count:
+
+```sql
+SELECT COUNT(*) FROM "SlotOfAppointment" sa
+JOIN "Appointment" a ON a.id = sa."appointmentId"
+WHERE a."classId" IN (
+  -- the class we just booked
+  SELECT id FROM "Class" WHERE "classPlanId" = '<our-plan-id>' ORDER BY "createdAt" DESC LIMIT 1
+);
+```
+
+Expect 8 (or close to it — depends on how the class was set up). The
+gap between this and `engagementsUsed`'s delta is the bug magnitude.
+
+**Watch for.** The audit log will show one
+`PROGRAM_ASSIGNMENT_INCREMENTED` entry, not 8. The reconcile cron
+(T.26) won't flag this as drift because both `engagementsUsed` and
+`UsageLedgerEntry.engagementsConsumed` are written from the same
+hardcoded `1` — they're internally consistent but externally wrong.
+The drift check (E) compares counter to ledger, not to slot count.
+
+After the fix (#710), the reconcile cron should grow a check (F)
+that compares cap consumption to actual slot delivery; that's
+explicitly part of the issue's acceptance criteria.
+
+---
+
 ### T.8 — INVOICE funding + LICENSED_SEAT program
 
 **What we're about to do.** Create `tour-2026-04-25-invoice-seat`
@@ -610,6 +731,11 @@ LICENSED_SEAT Program. We'll skip the actual booking-and-accrual
 flow here (it requires a learner + a consultant + an availability
 slot). Instead we'll just observe the schema rows and confirm the
 dashboard shows "INVOICE — billed monthly" in the funding label.
+
+**Real customer pattern.** Microsoft India HRBP coaching — 200
+senior PMs, NET-30 invoice, 8 sessions/seat/quarter (₹6,000/session
+≈ ₹96L/quarter base). Overage = CHARGE_ORG so any usage above 8
+rolls into the next invoice. PO required for AP 3-way match.
 
 **Why it matters.** INVOICE is the postpaid mode — sessions accrue,
 a roll-up `OrganizationInvoice` gets cut at month-end. The
@@ -648,20 +774,88 @@ the recommended default is tracked but not yet enforced.
 
 ---
 
-### T.9 — LICENSE funding + LICENSED_SEAT (`coveredSessionsPerCycle=null`)
+### T.8.5 — INVOICE funding + CREDIT_POOL program
+
+**What we're about to do.** Create `tour-2026-04-25-invoice-pool`
+with `fundingSource=INVOICE`, `creditLimit=2500000` (₹25,000), and a
+CREDIT_POOL Program with `creditsPerCycle=2000000` (₹20,00,000),
+`cycle=QUARTERLY`. Walk the dashboard and confirm the funding label
+reads "INVOICE — billed monthly" while the program shows "20,00,000
+credits / quarterly".
+
+**Real customer pattern.** Razorpay engineering L&D — flexible
+budget by team. ₹20L/quarter shared credit pool, NET-30, no per-seat
+allocation. Anyone in the org can draw; the invoice cuts at
+quarter-end with itemized PaymentLegs showing each booking that
+hit the pool.
+
+**Why it matters.** This is the **postpaid pool** shape — different
+from T.7 (prepaid pool) because no money is held; the org accrues
+against `creditLimit` until the monthly invoice cron rolls everything
+up. Different from T.8 (postpaid per-seat) because there's no
+per-member quota; teams self-organize within the budget. Together,
+T.6/T.7/T.8/T.8.5 enumerate the four valid Funding × Program cells
+for paying orgs.
+
+**Coverage.** `FundingSource.INVOICE` × `ProgramType.CREDIT_POOL`.
+
+**Drive.**
+
+> Pick one:
+> - `auto` — Wizard with funding = "INVOICE", credit limit = 25000,
+>   then contract + program with type = CREDIT_POOL, creditsPerCycle
+>   = 2000000, cycle = QUARTERLY.
+> - `manual` — Same.
+
+**Verify.**
+
+```sql
+SELECT
+  o.slug,
+  ba."fundingSource",
+  ba."creditLimit",
+  cpc.cycle,
+  cpc."creditsPerCycle"
+FROM "organizations" o
+JOIN "BillingAccount" ba ON ba."ownerOrgId" = o.id
+JOIN "Contract" c ON c."organizationId" = o.id
+JOIN "Program" p ON p."contractId" = c.id
+JOIN "CreditPoolConfig" cpc ON cpc."programId" = p.id
+WHERE o.slug = 'tour-2026-04-25-invoice-pool';
+```
+
+Expect `fundingSource='INVOICE'`, `creditLimit=2500000`,
+`cycle='QUARTERLY'`, `creditsPerCycle=2000000`.
+
+**Watch for.** Booking against this program will write
+`PaymentLeg.source='INVOICE_ACCRUAL'`, NOT `WALLET` (because there's
+no wallet to debit) and NOT `LICENSE` (because money will eventually
+move at invoice time). The month-end cron sums all such legs into
+one OrganizationInvoice.
+
+---
+
+### T.9 — LICENSE funding + LICENSED_SEAT (`coveredEngagementsPerCycle=null`)
 
 **What we're about to do.** Create `tour-2026-04-25-license` with
 `fundingSource=LICENSE`. Add a Contract + a LICENSED_SEAT Program
-with `coveredSessionsPerCycle=NULL` (the unmetered mode). Observe
+with `coveredEngagementsPerCycle=NULL` (the unmetered mode). Observe
 that the DB stores the `null` cap correctly and that bookings (in
 T.20+) will produce a `PaymentLeg` with `source=LICENSE,
 amountPaise=0` — a marker, not a real money entry.
 
+**Real customer pattern.** Goldman Sachs analyst program — annual
+flat fee (~₹75L/year), unlimited usage by 1,200 analysts. No metering
+per booking. Goldman has paid offline; we just need to record that
+the booking happened and was authorized by the license.
+
 **Why it matters.** LICENSE is the "flat enterprise contract" mode.
 The org pays a lump sum offline; the platform's job is to track
-usage but not bill per booking. The `coveredSessionsPerCycle=null`
+usage but not bill per booking. The `coveredEngagementsPerCycle=null`
 convention replaces the pre-Arch-4 `OrgBillingMode.PREPAID_UNLIMITED`
-enum value with a much simpler shape.
+enum value with a much simpler shape. Important: LICENSE only pairs
+with LICENSED_SEAT — pairing it with CREDIT_POOL is bogus and now
+blocked at the API layer (see T.10 sub-stop).
 
 **Coverage.** `FundingSource.LICENSE` × `ProgramType.LICENSED_SEAT`
 (unmetered).
@@ -678,7 +872,7 @@ enum value with a much simpler shape.
 ```sql
 SELECT
   ba."fundingSource",
-  lsc."coveredSessionsPerCycle"
+  lsc."coveredEngagementsPerCycle"
 FROM "organizations" o
 JOIN "BillingAccount" ba ON ba."ownerOrgId" = o.id
 JOIN "Contract" c ON c."organizationId" = o.id
@@ -687,7 +881,7 @@ JOIN "LicensedSeatConfig" lsc ON lsc."programId" = p.id
 WHERE o.slug = 'tour-2026-04-25-license';
 ```
 
-Expect `fundingSource='LICENSE'`, `coveredSessionsPerCycle=NULL`.
+Expect `fundingSource='LICENSE'`, `coveredEngagementsPerCycle=NULL`.
 
 **Watch for.** The Programs page should display "Unlimited sessions"
 where the cap pill normally shows a number. The PaymentLeg with
@@ -697,54 +891,214 @@ where the cap pill normally shows a number. The PaymentLeg with
 
 ---
 
-### T.10 — Observe PROJECT and RETAINER as v2-reserved
+### T.10 — Observe the bogus + v2-reserved rejections
 
-**What we're about to do.** Try to create a Program with
-`type='PROJECT'` via `mcp__chrome-devtools__fill_form` (or
-`curl -X POST` if you prefer manual). Confirm the API returns 400
-with a specific message that PROJECT is v2-reserved. Same for
-RETAINER. We don't actually want to wire these up — we want to
-confirm the rejection works.
+**What we're about to do.** Three rejections back-to-back:
 
-**Why it matters.** Schema-reserved enum values must round-trip
-without 500 errors. If a future client sends a PROJECT body, we want
-a helpful 400, not a Prisma validation crash. This is the kind of
-soft-failure surface that's easy to miss until a customer trips it.
+(a) **LICENSE + CREDIT_POOL is bogus.** Try POSTing a CREDIT_POOL
+program against `tour-2026-04-25-license` (T.9's Goldman-style org).
+Confirm the API returns 400 with `code: "BOGUS_LICENSE_CREDIT_POOL"`.
 
-**Coverage.** `ProgramType.PROJECT` (v2 observed),
-`ProgramType.RETAINER` (v2 observed).
+(b) **PROJECT is v2-reserved.** Try POSTing `type='PROJECT'`. Confirm
+400.
+
+(c) **RETAINER is v2-reserved.** Same.
+
+**Why it matters.** Schema-reserved + bogus enum combos must
+round-trip without 500 errors and without sneaking through. The
+LICENSE + CREDIT_POOL guard landed alongside this PR (see
+`app/api/organizations/[orgId]/programs/route.ts` and
+`__tests__/enterprise/license-credit-pool-bogus.test.ts`). v2
+rejections come from the discriminated-union schema.
+
+**Coverage.** Bogus combo `LICENSE × CREDIT_POOL`,
+`ProgramType.PROJECT` (v2 observed), `ProgramType.RETAINER` (v2
+observed).
 
 **Drive.**
 
 > Pick one:
-> - `auto` — Use `mcp__chrome-devtools__navigate_page` to the
->   programs page of one of our tour orgs, open the dropdown, observe
->   PROJECT + RETAINER options are greyed out (label says "v2
->   reserved"). Then fire a raw POST via `curl` (or via the network
->   panel's "replay" if available) with `type='PROJECT'`.
-> - `manual` — Curl from your shell:
+> - `auto` — Three curl POSTs against
+>   `/api/organizations/<licenseOrgId>/programs` (sub-stop a) and
+>   `/api/organizations/<wallet-seatOrgId>/programs` (b + c with
+>   PROJECT and RETAINER bodies). Inspect each response.
+> - `manual` — Same via your shell:
 >   ```bash
+>   # (a) LICENSE × CREDIT_POOL — bogus
+>   curl -i -X POST http://localhost:3000/api/organizations/<licenseOrgId>/programs \
+>     -H 'Content-Type: application/json' \
+>     -b "<your session cookie>" \
+>     -d '{"type":"CREDIT_POOL","contractId":"<licenseContractId>","name":"bogus","creditPoolConfig":{"cycle":"MONTHLY","creditsPerCycle":1000}}'
+>   # Expect 400, code = BOGUS_LICENSE_CREDIT_POOL
+>
+>   # (b) PROJECT — v2
 >   curl -i -X POST http://localhost:3000/api/organizations/<orgId>/programs \
 >     -H 'Content-Type: application/json' \
 >     -b "<your session cookie>" \
 >     -d '{"type":"PROJECT","contractId":"<contractId>","name":"x"}'
+>   # Expect 400 (Zod discriminated union rejects)
 >   ```
->   Expect 400.
 
 **Verify.**
 
 ```sql
+-- No bogus or v2 programs landed in the DB
 SELECT COUNT(*) FROM "Program"
 WHERE type IN ('PROJECT', 'RETAINER');
+
+SELECT COUNT(*) FROM "Program" p
+JOIN "Contract" c ON c.id = p."contractId"
+JOIN "BillingAccount" ba ON ba."ownerOrgId" = c."organizationId"
+WHERE p.type = 'CREDIT_POOL' AND ba."fundingSource" = 'LICENSE';
 ```
 
-Expect `0` (no v2 programs in the tour DB; the seed may have some
-demo rows but the tour orgs should be clean).
+Both counts should be `0`.
 
-**Watch for.** The 400 response body should include
-`code: "PROJECT_NOT_SUPPORTED"` or similar (check
-`app/api/organizations/[orgId]/programs/route.ts`'s discriminated
-union).
+**Watch for.** The bogus-combo response body's `error` text should
+mention both LICENSE and LICENSED_SEAT — it's the helpful kind of
+400 that points the API caller at the right shape ("use
+LICENSED_SEAT with `coveredEngagementsPerCycle=null` instead").
+
+---
+
+# Chapter 2.5 — Hybrid combos (canSponsor + canHost in parallel)
+
+The funding × program matrix above only covers the Sponsor arm. A
+Hybrid org runs a Sponsor arm AND a Host arm simultaneously — same
+DB rows, same code paths, just two `Membership.role` values mixed
+together (LEARNERs on the consume side, EXPERTs on the host side).
+
+This chapter walks three real Hybrid customer shapes from the
+playbook to make sure the Sponsor + Host arms actually compose without
+stepping on each other.
+
+---
+
+### T.10.5 — Hybrid + WALLET + CREDIT_POOL
+
+**What we're about to do.** Take `tour-2026-04-25-wallet-pool` (T.7,
+the IIT-students shape) and flip `canHost = true`. Add 2 EXPERT
+memberships pointing at fake `ConsultantProfile` rows we create via
+Supabase MCP. Configure an `OrganizationPayoutAccount` and a
+`RateCard` (`platformBps=1000, orgBps=1000, consultantBps=8000` —
+the standard 10/10/80 split). The org now sponsors student coaching
+AND hosts professors who sell sessions externally.
+
+**Real customer pattern.** IIT Madras (full) — same as T.7 PLUS the
+Dean opens up 6 professors as paid mentors to alumni. Internal
+bookings hit the wallet (₹10L pool); external bookings flow earnings
+through `OrganizationEarnings` at the rate-card split. Half of the
+professors are `payoutRecipient=ORGANIZATION` (university takes the
+80%); half are `payoutRecipient=SELF` (professor pockets it).
+
+**Coverage.** Hybrid + WALLET + CREDIT_POOL.
+
+**Drive.**
+
+> Pick one:
+> - `auto` — Settings → Capability → toggle "Can host". Then Hosting
+>   → "Add expert" twice. Then Hosting → "Payout account" →
+>   "Configure". Then Hosting → "Rate card" → set 10/10/80.
+> - `manual` — Same path; type `done` after each substep.
+
+**Verify.**
+
+```sql
+SELECT
+  o.slug,
+  o."canSponsor",
+  o."canHost",
+  (SELECT COUNT(*) FROM "Membership" m
+    WHERE m."organizationId" = o.id AND m.role = 'EXPERT') AS expert_count,
+  rc."platformBps",
+  rc."orgBps",
+  rc."consultantBps"
+FROM "organizations" o
+LEFT JOIN "RateCard" rc ON rc."ownerContractId" IN (
+  SELECT id FROM "Contract" WHERE "organizationId" = o.id
+)
+WHERE o.slug = 'tour-2026-04-25-wallet-pool';
+```
+
+Expect `canSponsor=t, canHost=t, expert_count=2, platformBps=1000,
+orgBps=1000, consultantBps=8000`.
+
+**Watch for.** The Sponsor side (wallet pool) and the Host side
+(rate card + experts) live on separate DB rows that DON'T cross-link
+beyond the `Organization` parent. You can demote `canSponsor=false`
+later and the Host arm keeps working — the rewrite's whole point.
+
+---
+
+### T.10.6 — Hybrid + LICENSE + LICENSED_SEAT
+
+**What we're about to do.** Take `tour-2026-04-25-license` (T.9,
+the Goldman-style flat-fee org) and flip `canHost = true`. Add 3
+EXPERT memberships. Same rate-card setup as T.10.5.
+
+**Real customer pattern.** Boston Consulting Group EMEA — flat
+license (~₹1.2 Cr/year) for internal coaching of 600 consultants
+(consume side, cap=null) PLUS 25 senior partners listed as experts
+to external paying clients (host side, ~₹8L/month earnings, 80%
+to BCG via `OrganizationEarnings`).
+
+**Coverage.** Hybrid + LICENSE + LICENSED_SEAT (cap=null).
+
+**Drive.**
+
+> Pick one:
+> - `auto` — Same as T.10.5 but on the license org.
+> - `manual` — Same.
+
+**Verify.**
+
+```sql
+SELECT o.slug, o."canHost", ba."fundingSource", lsc."coveredEngagementsPerCycle"
+FROM "organizations" o
+JOIN "BillingAccount" ba ON ba."ownerOrgId" = o.id
+JOIN "Contract" c ON c."organizationId" = o.id
+JOIN "Program" p ON p."contractId" = c.id
+JOIN "LicensedSeatConfig" lsc ON lsc."programId" = p.id
+WHERE o.slug = 'tour-2026-04-25-license';
+```
+
+Expect `canHost=t, fundingSource='LICENSE',
+coveredEngagementsPerCycle=NULL`.
+
+**Watch for.** The two arms have totally different money mechanics
+— internal bookings produce `PaymentLeg.LICENSE` (amountPaise=0,
+absorbed); external bookings produce `PaymentLeg.CARD` and an
+`OrganizationEarnings` row at the rate-card split. The same
+`Organization.id` shows up on both, but they don't share a
+`BillingAccount` row (the host side doesn't need one).
+
+---
+
+### T.10.7 — Hybrid + INVOICE + LICENSED_SEAT
+
+**What we're about to do.** Take `tour-2026-04-25-invoice-seat`
+(T.8, the Microsoft-India-style postpaid per-seat) and flip
+`canHost = true`. Add 4 EXPERT memberships. Same rate-card setup.
+
+**Real customer pattern.** Accenture Capability Network — large
+enterprise with both arms big. 400 employees consume coaching at
+NET-60, 60 partners host sessions externally. Sponsored side runs
+~₹1.32 Cr/quarter; host side runs ~₹40L/month gross of which
+Accenture retains 80%.
+
+**Coverage.** Hybrid + INVOICE + LICENSED_SEAT.
+
+**Drive.** Same as T.10.5 / T.10.6 with the canHost toggle on the
+invoice-seat org.
+
+**Verify.** Analogous query — confirm `canHost=t,
+fundingSource='INVOICE'`, expert_count=4, rate-card 10/10/80.
+
+**Watch for.** Hybrid + PERSONAL (the GitHub India shape — small
+office where employees pay personal cards but the org also lists 8
+staff engineers as paid mentors) is also a real combo, but it's
+just T.5 + T.4 layered together; covered implicitly by walking
+those two stops.
 
 ---
 
@@ -1468,7 +1822,7 @@ invariant is being asserted.
 
 **Why it matters.** The reconcile cron is the safety net that
 catches drift between the three ledgers (Usage / Funding /
-Settlement) and between cached counters (ProgramAssignment.sessionsUsed)
+Settlement) and between cached counters (ProgramAssignment.engagementsUsed)
 and the immutable ledger they're derived from. The cron now runs at
 03:45 UTC nightly.
 
@@ -1504,16 +1858,16 @@ Rule #3.
 ### T.27 — Force a ProgramAssignment drift, observe the finding
 
 **What we're about to do.** On `tour-2026-04-25-wallet-seat` (T.6),
-manually UPDATE `ProgramAssignment.sessionsUsed = 99` via Supabase
+manually UPDATE `ProgramAssignment.engagementsUsed = 99` via Supabase
 MCP — creating a deliberate drift between the counter and the (zero)
 UsageLedgerEntry sum. Re-run the reconcile cron. Watch the new
-`PROGRAM_ASSIGNMENT_SESSIONS_DRIFT` finding appear. Then UPDATE
+`PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT` finding appear. Then UPDATE
 back to `0` and re-run to confirm clean.
 
 **Why it matters.** Closing the loop on the safety net we just
 toured. The drift check from commit `7231f75f` is the answer to
 "what if a partial-rollback bug or a manual SQL edit pushed
-sessionsUsed out of sync with the ledger?". This stop proves the
+engagementsUsed out of sync with the ledger?". This stop proves the
 check actually catches it.
 
 **Coverage.** Cross-cutting integration — Reconcile cron drift
@@ -1534,7 +1888,7 @@ FROM "LedgerReconciliationReport"
 ORDER BY "runAt" DESC LIMIT 1;
 ```
 
-Expect a finding with `kind='PROGRAM_ASSIGNMENT_SESSIONS_DRIFT'`,
+Expect a finding with `kind='PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT'`,
 `expectedPaise=0` (ledger total), `actualPaise=99` (counter),
 `deltaPaise=99`.
 

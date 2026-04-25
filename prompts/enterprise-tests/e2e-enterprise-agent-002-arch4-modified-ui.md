@@ -353,7 +353,7 @@ Capture the Wipro `orgId` from the URL.
    - `type`: `LICENSED_SEAT`
    - `ratePerSeatPaise`: `499000` (₹4,990 per seat)
    - `cycle`: `MONTHLY`
-   - `coveredSessionsPerCycle`: `4`
+   - `coveredEngagementsPerCycle`: `4`
    - `overageBehavior`: `BLOCK`
 3. `click` "Create".
 4. `wait_for` the toast "Program created" + the new row in the table.
@@ -373,7 +373,7 @@ Capture the Wipro `orgId` from the URL.
 
    ```sql
    SELECT pa."programId", pa."membershipId", pa."periodStart",
-          p.type, lsc."ratePerSeatPaise", lsc."coveredSessionsPerCycle"
+          p.type, lsc."ratePerSeatPaise", lsc."coveredEngagementsPerCycle"
      FROM "ProgramAssignment" pa
      JOIN "Program" p ON p.id = pa."programId"
      JOIN "LicensedSeatConfig" lsc ON lsc."programId" = p.id
@@ -382,7 +382,7 @@ Capture the Wipro `orgId` from the URL.
    ```
 
    One row, `type='LICENSED_SEAT'`, `ratePerSeatPaise=499000`,
-   `coveredSessionsPerCycle=4`. Audit:
+   `coveredEngagementsPerCycle=4`. Audit:
 
    ```sql
    SELECT action FROM "OrgAuditLog"

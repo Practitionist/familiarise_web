@@ -96,7 +96,7 @@ refund:
   cycle.
 - LICENSE legs → no money to refund; the corresponding
   `BookingUtilization` is stamped with `reversedAt` and the
-  assignment's `sessionsUsed` is decremented.
+  assignment's `engagementsUsed` is decremented.
 
 ## Why PaymentLeg and not N columns on Payment
 

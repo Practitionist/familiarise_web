@@ -201,20 +201,20 @@ POST /api/organizations/[orgId]/programs
   "licensedSeatConfig": {
     "ratePerSeatPaise": 0,
     "cycle": "ANNUAL",
-    "coveredSessionsPerCycle": null,
+    "coveredEngagementsPerCycle": null,
     "overageBehavior": "BLOCK"
   }
 }
 ```
 
-`coveredSessionsPerCycle = null` means unlimited. `ratePerSeatPaise =
+`coveredEngagementsPerCycle = null` means unlimited. `ratePerSeatPaise =
 0` because the license fee was collected offline.
 
 ### Checkout flow
 
 - `PaymentLeg(source=LICENSE, amountPaise=0)` — the program absorbs
   the booking, no money moves.
-- `BookingUtilization` is written for analytics; `sessionsUsed`
+- `BookingUtilization` is written for analytics; `engagementsUsed`
   increments but there is no cap to check.
 - No invoice.
 

@@ -5,16 +5,35 @@ Every sponsored booking **will be** attributed to a `ProgramAssignment`
 (the per-member entitlement row), and every successful booking **will
 leave** a `BookingUtilization` row + a `UsageLedgerEntry` twin.
 
-> **Wiring status (as of this PR).** The schema, the server-side
-> helpers (`recordBookingUtilization`, `claimProgramAssignment`,
-> `reverseBookingUtilization`), and the management APIs under
-> `/api/organizations/[orgId]/programs/**` are live. `lib/payments/
-> operations/checkout.ts` still maps `BillingAccount.fundingSource` back
-> into the legacy `SEAT_PACK / INVOICED_MONTHLY / PREPAID_UNLIMITED /
-> TAG_ONLY` branches today — the live checkout path does **not** yet
-> resolve a `ProgramAssignment` or write `BookingUtilization` /
-> `PaymentLeg` rows. That wiring ships in the next stacked PR; the
-> primitives documented below are ready to consume.
+> **Wiring status.** Schema, helpers (`recordBookingUtilization`,
+> `claimProgramAssignment`, `reverseBookingUtilization`), management
+> APIs, and the live checkout path are all wired up. Cap counting is
+> done in **engagement units** — see "Counting model" below.
+
+## Counting model — engagements, not bookings, not slots
+
+The cap on a `LicensedSeatConfig` is denominated in **engagements**.
+One engagement = one `Appointment` row = one calendar occurrence,
+regardless of duration. This avoids two failure modes:
+
+- **Counting bookings under-charges multi-session plans.** A 12-call
+  SUBSCRIPTION purchased once at signup would burn 1 cap unit and the
+  remaining 11 would escape — the bug fixed by issue #710.
+- **Counting slots is commercially incoherent.** Orgs can't sell "8
+  slots per cycle"; they sell occurrences. Per-occurrence price is
+  governed separately by `priceCapPerEngagementPaise`.
+
+| Plan type             | Cap units consumed                    | Debited at        |
+|-----------------------|---------------------------------------|-------------------|
+| 30-min CONSULTATION   | 1                                     | checkout          |
+| 4-hour CONSULTATION   | 1 (price cap polices the duration)    | checkout          |
+| WEBINAR (any length)  | 1                                     | checkout          |
+| 8-week CLASS          | 8 (one per class day enrolment)       | checkout          |
+| 12-call SUBSCRIPTION  | 1 per consultant allocation (lazy)    | slot allocation   |
+
+The term **engagement** was picked to avoid collision with BetterAuth
+`Session` and Stream's `MeetingSession` (which is a video-call record,
+not a billing unit).
 
 ## Schema
 
@@ -46,22 +65,22 @@ than as JSON blobs that the typed config tables can't enforce.
 
 ```prisma
 model LicensedSeatConfig {
-  programId               String @id
-  ratePerSeatPaise        Int
-  cycle                   BillingCycle  // MONTHLY | QUARTERLY | ANNUAL
-  coveredSessionsPerCycle Int?          // null = unlimited (LICENSE)
-  overageBehavior         OverageBehavior @default(BLOCK)
-  activeSeatCount         Int @default(0)
-  priceCapPerSessionPaise Int?
+  programId                  String @id
+  ratePerSeatPaise           Int
+  cycle                      BillingCycle  // MONTHLY | QUARTERLY | ANNUAL
+  coveredEngagementsPerCycle Int?          // null = unlimited (LICENSE)
+  overageBehavior            OverageBehavior @default(BLOCK)
+  activeSeatCount            Int @default(0)
+  priceCapPerEngagementPaise Int?
 }
 ```
 
-- `coveredSessionsPerCycle = null` is the v1 "unlimited" marker — it
-  is the new home for the pre-Arch-4 `PREPAID_UNLIMITED` billing mode.
-  A LICENSE-funded org typically has exactly one LICENSED_SEAT Program
-  with this column null.
-- `priceCapPerSessionPaise` limits the grossAmount the program will
-  absorb for a single booking. If a plan price exceeds the cap, the
+- `coveredEngagementsPerCycle = null` is the v1 "unlimited" marker —
+  it is the new home for the pre-Arch-4 `PREPAID_UNLIMITED` billing
+  mode. A LICENSE-funded org typically has exactly one LICENSED_SEAT
+  Program with this column null.
+- `priceCapPerEngagementPaise` limits the grossAmount the program will
+  absorb for a single engagement. If a plan price exceeds the cap, the
   excess is treated as overage and routed according to
   `overageBehavior`.
 - `activeSeatCount` is the aggregate across non-completed assignments.
@@ -105,8 +124,8 @@ model ProgramAssignment {
   periodStart DateTime
   periodEnd   DateTime
 
-  sessionsUsed Int @default(0)
-  overageCount Int @default(0)
+  engagementsUsed Int @default(0)
+  overageCount    Int @default(0)
 
   utilizations BookingUtilization[]
 
@@ -119,9 +138,10 @@ One row per (Program, Membership, cycle). `claimProgramAssignment()`
 in `lib/api/organizations/program-helpers.ts` upserts on the composite
 unique, which makes the claim idempotent under concurrent bookings.
 
-`sessionsUsed` is incremented atomically by Prisma's `{ increment }`
-operator; a nightly cron will reconcile it against
-`sum(UsageLedgerEntry.sessionsConsumed)` where the ledger is the
+`engagementsUsed` is incremented atomically by an inline conditional
+SQL UPDATE inside `recordBookingUtilization()` (so the cap check and
+the increment can't race); a nightly cron reconciles it against
+`sum(UsageLedgerEntry.engagementsConsumed)` where the ledger is the
 source of truth.
 
 ## `BookingUtilization`
@@ -131,7 +151,7 @@ model BookingUtilization {
   id                  String @id @default(uuid())
   programAssignmentId String
   paymentId           String @unique
-  sessionsConsumed    Int @default(1)
+  engagementsConsumed Int @default(1)
   priceAtBookingPaise Int
   wasOverage          Boolean @default(false)
 
@@ -151,11 +171,18 @@ The rate-card snapshot columns mirror the ones on
 `OrganizationEarnings` (see `03-earnings-and-revenue.md`). Settlement
 reconciliation compares these two snapshots to detect drift.
 
+`paymentId` is `@unique` — one row per Payment. For SUBSCRIPTION's
+lazy allocation pattern, `recordBookingUtilization()` upserts and
+*increments* `engagementsConsumed` on subsequent allocations rather
+than inserting a new row. The append-only `UsageLedgerEntry` still
+gets one row per call, so `sum(ledger.engagementsConsumed)` per
+payment equals the upserted `BookingUtilization.engagementsConsumed`.
+
 ### Reversal (refund path)
 
 `reverseBookingUtilization()` stamps `reversedAt = now()` and appends
-an opposing `UsageLedgerEntry` with negative `sessionsConsumed`. The
-row is never deleted because:
+an opposing `UsageLedgerEntry` with negative `engagementsConsumed`.
+The row is never deleted because:
 
 - Partial refunds may run more than once per booking — the original
   row is still needed.
@@ -163,8 +190,11 @@ row is never deleted because:
   still find the row.
 - Audit trail needs the original cap decision.
 
-The `sessionsUsed` counter on the parent assignment is decremented at
-the same time.
+The `engagementsUsed` counter on the parent assignment is decremented
+at the same time, by the row's full `engagementsConsumed`. Partial
+reversal of a SUBSCRIPTION (refunding one allocated call out of N)
+isn't supported by this helper — it requires a per-call helper that
+doesn't exist yet.
 
 ## `OverageBehavior`
 

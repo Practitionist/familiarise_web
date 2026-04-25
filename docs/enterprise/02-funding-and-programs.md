@@ -28,7 +28,7 @@ Labels and taglines come from `FUNDING_SOURCE_LABEL` and
 | `TAG_ONLY`              | `PERSONAL`          | Members pay at checkout; the org is attribution-only. |
 | `SEAT_PACK`             | `WALLET`            | Credits live as paise on `BillingAccount.walletBalance`. |
 | `INVOICED_MONTHLY`      | `INVOICE`           | Roll-up invoice at month-end; `PaymentLeg.source=INVOICE_ACCRUAL`. |
-| `PREPAID_UNLIMITED`     | `LICENSE`           | Flat fee contract; `coveredSessionsPerCycle=null` on the LICENSED_SEAT Program. |
+| `PREPAID_UNLIMITED`     | `LICENSE`           | Flat fee contract; `coveredEngagementsPerCycle=null` on the LICENSED_SEAT Program. |
 | _(not previously modelled)_ | `PROJECT`       | Per-engagement fixed-fee or hourly billing. v2-reserved; not exposed in the self-service wizard (see `SelfServiceFundingSourceSchema` in `lib/labels/org-labels.ts`). |
 
 ## Funding-source matrix
@@ -43,7 +43,7 @@ Labels and taglines come from `FUNDING_SOURCE_LABEL` and
 
 Pre-launch verified: the "unmetered" experience of a LICENSE org is not
 a separate funding model — it's a `LICENSED_SEAT` Program with
-`coveredSessionsPerCycle = null`. The old PREPAID_UNLIMITED enum value
+`coveredEngagementsPerCycle = null`. The old PREPAID_UNLIMITED enum value
 pretended the two were distinct; they are not.
 
 ## Programs layer
@@ -68,10 +68,10 @@ model LicensedSeatConfig {
   programId               String @id
   ratePerSeatPaise        Int
   cycle                   BillingCycle       // MONTHLY | QUARTERLY | ANNUAL
-  coveredSessionsPerCycle Int?               // null = unlimited (LICENSE)
+  coveredEngagementsPerCycle Int?               // null = unlimited (LICENSE)
   overageBehavior         OverageBehavior    // BLOCK | CHARGE_MEMBER | CHARGE_ORG
   activeSeatCount         Int @default(0)
-  priceCapPerSessionPaise Int?
+  priceCapPerEngagementPaise Int?
 }
 
 model CreditPoolConfig {

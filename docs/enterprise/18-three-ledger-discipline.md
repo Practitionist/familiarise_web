@@ -30,7 +30,7 @@ model UsageLedgerEntry {
   programAssignmentId String?
   membershipId        String
   paymentId           String?
-  sessionsConsumed    Int        // signed (negative on reversal)
+  engagementsConsumed    Int        // signed (negative on reversal)
   minutesConsumed     Int?
   priceAtBookingPaise Int
   wasOverage          Boolean @default(false)
@@ -81,7 +81,7 @@ model SettlementLedgerEntry {
 3. **Ledger rows carry `balanceAfter` where applicable** (Funding) so
    point-in-time reconciliation doesn't require a running sum.
 4. **Reversals are new rows, not updates.** A refund writes an
-   opposing `UsageLedgerEntry` with negative `sessionsConsumed` and a
+   opposing `UsageLedgerEntry` with negative `engagementsConsumed` and a
    `SettlementLedgerEntry(kind=REFUND_ISSUED)`. The original rows
    are untouched — `BookingUtilization.reversedAt` is the marker.
 
@@ -92,8 +92,8 @@ Enforced by a nightly cron stub (see `19-harness-verdict.md`):
 - **Wallet identity:** `sum(FundingLedgerEntry.deltaPaise)` for a
   billing account equals `BillingAccount.walletBalance`.
 - **Usage identity:** For a ProgramAssignment,
-  `sum(UsageLedgerEntry.sessionsConsumed)` equals
-  `ProgramAssignment.sessionsUsed`.
+  `sum(UsageLedgerEntry.engagementsConsumed)` equals
+  `ProgramAssignment.engagementsUsed`.
 - **Settlement identity:** For an OrganizationInvoice, the
   `SettlementLedgerEntry(kind=INVOICE_PAID)` amount matches
   `OrganizationInvoice.totalPaise`.

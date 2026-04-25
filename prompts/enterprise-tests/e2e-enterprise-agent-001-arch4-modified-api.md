@@ -520,7 +520,7 @@ curl -s -X POST "http://localhost:3000/api/organizations/$SPONSOR_ID/programs" \
     \"licensedSeatConfig\": {
       \"ratePerSeatPaise\": 1500000,
       \"cycle\": \"MONTHLY\",
-      \"coveredSessionsPerCycle\": 4,
+      \"coveredEngagementsPerCycle\": 4,
       \"overageBehavior\": \"CHARGE_MEMBER\"
     }
   }"
@@ -530,7 +530,7 @@ curl -s -X POST "http://localhost:3000/api/organizations/$SPONSOR_ID/programs" \
 
 ```sql
 SELECT p.id, p.type, p.name, lsc."ratePerSeatPaise", lsc."cycle",
-       lsc."coveredSessionsPerCycle", lsc."overageBehavior"
+       lsc."coveredEngagementsPerCycle", lsc."overageBehavior"
 FROM "Program" p
 JOIN "LicensedSeatConfig" lsc ON lsc."programId" = p.id
 WHERE p."contractId" = '<CONTRACT_ID>';
@@ -595,13 +595,13 @@ curl -s -X POST \
 
 ```sql
 SELECT id, "programId", "membershipId", "periodStart", "periodEnd",
-       "sessionsUsed", "overageCount"
+       "engagementsUsed", "overageCount"
 FROM "ProgramAssignment"
 WHERE "programId" = '<PROGRAM_ID>'
   AND "membershipId" = '<ALICE_MEMBERSHIP_ID>';
 ```
 
-Exactly one row; `sessionsUsed=0`, `overageCount=0`.
+Exactly one row; `engagementsUsed=0`, `overageCount=0`.
 
 ### C.10 — Atomicity of claimProgramAssignment
 

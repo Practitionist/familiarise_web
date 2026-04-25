@@ -36,10 +36,10 @@ flowchart TD
 
     subgraph PROGRAMS["Programs & Entitlements"]
         Program["Program\ntype LICENSED_SEAT / CREDIT_POOL\ncoveredPlanTypes · status"]
-        LicSeat["LicensedSeatConfig\nratePerSeatPaise · cycle\ncoveredSessionsPerCycle\noverageBehavior"]
+        LicSeat["LicensedSeatConfig\nratePerSeatPaise · cycle\ncoveredEngagementsPerCycle\noverageBehavior"]
         CreditPool["CreditPoolConfig\ncreditValuePaise\npremiumMultiplier"]
-        Assignment["ProgramAssignment\nperiodStart · periodEnd\nsessionsUsed · overageCount"]
-        BookUtil["BookingUtilization\npriceAtBookingPaise · sessionsConsumed\nplatformBps/orgBps/consultantBps snapshot\nreversedAt"]
+        Assignment["ProgramAssignment\nperiodStart · periodEnd\nengagementsUsed · overageCount"]
+        BookUtil["BookingUtilization\npriceAtBookingPaise · engagementsConsumed\nplatformBps/orgBps/consultantBps snapshot\nreversedAt"]
     end
 
     subgraph SUPPLY["Supply / Host Side"]
@@ -49,7 +49,7 @@ flowchart TD
     end
 
     subgraph LEDGERS["Three Ledgers (immutable)"]
-        UsageLedger["UsageLedgerEntry\nsessionsConsumed · minutesConsumed\npriceAtBookingPaise · wasOverage"]
+        UsageLedger["UsageLedgerEntry\nengagementsConsumed · minutesConsumed\npriceAtBookingPaise · wasOverage"]
         FundingLedger["FundingLedgerEntry\ndeltaPaise · reason · balanceAfterPaise"]
         SettleLedger["SettlementLedgerEntry\nkind · amountPaise · currency\npaymentId / invoiceId / payoutId"]
         ReconReport["LedgerReconciliationReport\nsummary JSON · findings JSON\nok · durationMs"]

@@ -62,7 +62,7 @@ in parentheses. Constants live in `lib/enterprise/audit-actions.ts`.
 | `/api/organizations/[orgId]/programs/[programId]/assignments` | `GET` | active member | List assignments | — |
 | `/api/organizations/[orgId]/programs/[programId]/assignments` | `POST` | MAINTAINER | Upsert assignment for a membership | `PROGRAM_ASSIGNED` (PROGRAM) |
 | `/api/organizations/[orgId]/programs/[programId]/assignments/[assignmentId]` | `GET` | active member | Assignment detail + utilizations | — |
-| `/api/organizations/[orgId]/programs/[programId]/assignments/[assignmentId]` | `PATCH` | MAINTAINER | Period / sessionsUsed reconciliation | — |
+| `/api/organizations/[orgId]/programs/[programId]/assignments/[assignmentId]` | `PATCH` | MAINTAINER | Period / engagementsUsed reconciliation | — |
 | `/api/organizations/[orgId]/programs/[programId]/assignments/[assignmentId]` | `DELETE` | MAINTAINER | Remove assignment | `PROGRAM_UNASSIGNED` (PROGRAM) |
 
 ## Billing account

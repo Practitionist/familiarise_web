@@ -191,7 +191,7 @@ At each invoice cycle:
 
 The "unmetered" part means the per-session charge to the *org* is zero. The consultant payout is **not** zero — platform still pays the consultant from the license fee pool. Think of a LICENSE org as prepaying a big batch of sessions and then not caring about individual booking amounts.
 
-Program-level schema exists for limited-vs-unlimited: `LicensedSeat.coveredSessionsPerCycle = null` means unlimited, or a number means a cap (when the cap is hit, bookings revert to PERSONAL-style charging). Most enterprise LICENSE contracts are unlimited because the entire point is "stop counting".
+Program-level schema exists for limited-vs-unlimited: `LicensedSeat.coveredEngagementsPerCycle = null` means unlimited, or a number means a cap (when the cap is hit, bookings revert to PERSONAL-style charging). Most enterprise LICENSE contracts are unlimited because the entire point is "stop counting".
 
 ---
 

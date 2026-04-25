@@ -50,27 +50,27 @@ member in the same period converge on the same row. Postgres resolves
 the race at constraint-check time with `ON CONFLICT DO NOTHING`
 semantics courtesy of Prisma's upsert.
 
-## Booking utilization (sessionsUsed + ledger in lock-step)
+## Booking utilization (engagementsUsed + ledger in lock-step)
 
 `lib/api/organizations/program-helpers.ts#recordBookingUtilization`
 
 Single transaction:
 
 1. `findUniqueOrThrow` the assignment with
-   `LicensedSeatConfig.coveredSessionsPerCycle` joined.
-2. Check `assignment.sessionsUsed + consumed > cap`. If over cap and
+   `LicensedSeatConfig.coveredEngagementsPerCycle` joined.
+2. Check `assignment.engagementsUsed + consumed > cap`. If over cap and
    `overageBehavior = BLOCK`, throw `ProgramAssignmentLimitError`.
-3. `programAssignment.update({ sessionsUsed: { increment: consumed } })`
-   — Prisma emits the atomic increment as `sessionsUsed = sessionsUsed
+3. `programAssignment.update({ engagementsUsed: { increment: consumed } })`
+   — Prisma emits the atomic increment as `engagementsUsed = engagementsUsed
    + :n`, which Postgres serialises.
 4. `bookingUtilization.create(...)` — the row.
 5. `usageLedgerEntry.create(...)` — the ledger twin.
 
 The cap check is not technically safe under Serializable concurrency
-(two transactions could both read `sessionsUsed = cap - 1` and both
+(two transactions could both read `engagementsUsed = cap - 1` and both
 write `cap`). In practice the incremental UPDATE in step 3 makes step
 2 eventually consistent — the first transaction wins, the second
-writes `sessionsUsed = cap + 1` and marks `wasOverage = true`. For the
+writes `engagementsUsed = cap + 1` and marks `wasOverage = true`. For the
 `BLOCK` case the overage flag causes the downstream cron to reverse
 the second utilization; no money was debited because the checkout
 path refuses when `wasOverage && overageBehavior === BLOCK`. A

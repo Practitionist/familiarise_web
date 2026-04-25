@@ -110,9 +110,9 @@ earnings still settle at 80% to expert because their
 
 - `Contract(paymentTermsDays=30, effectiveFrom=Apr-2026,
   effectiveTo=Mar-2027, autoRenew=true)`.
-- `Program(type=LICENSED_SEAT, coveredSessionsPerCycle=null,
+- `Program(type=LICENSED_SEAT, coveredEngagementsPerCycle=null,
   cycle=ANNUAL, ratePerSeatPaise=200000, overageBehavior=BLOCK)`.
-- `coveredSessionsPerCycle = null` is the v1 "unlimited" marker — it
+- `coveredEngagementsPerCycle = null` is the v1 "unlimited" marker — it
   replaces the old `PREPAID_UNLIMITED` enum value.
 
 ### Booking flow
@@ -124,7 +124,7 @@ earnings still settle at 80% to expert because their
    "absorbed" by the license. No money moves, no wallet debit, no
    invoice row.
 4. `BookingUtilization` records the usage for analytics;
-   `sessionsUsed` increments on the assignment.
+   `engagementsUsed` increments on the assignment.
 
 Settlement reads: the Program absorbed the price; no
 `SettlementLedgerEntry(kind=PAYMENT_RECEIVED)` is written because

@@ -98,7 +98,7 @@ orgs have NO BillingAccount at all.
 `Program.type` drives a discriminated subtype:
 
 - `LICENSED_SEAT` — has a 1:1 `LicensedSeatConfig` row.
-  `ratePerSeatPaise` + `cycle` + optional `coveredSessionsPerCycle`
+  `ratePerSeatPaise` + `cycle` + optional `coveredEngagementsPerCycle`
   (null = unlimited, which replaces the old `PREPAID_UNLIMITED`).
   `overageBehavior` ∈ `{ BLOCK, CHARGE_MEMBER, CHARGE_ORG }`.
 - `CREDIT_POOL` — has a 1:1 `CreditPoolConfig` row. `creditValuePaise`
@@ -168,7 +168,7 @@ rewrite history.
 
 `BookingUtilization.reversedAt` + `reversalReason`. The row is **never
 deleted**; reversal is expressed by setting those two fields and
-appending a counter `UsageLedgerEntry` (negative `sessionsConsumed`).
+appending a counter `UsageLedgerEntry` (negative `engagementsConsumed`).
 
 ### Audit log
 

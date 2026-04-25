@@ -2,7 +2,7 @@
 
 The evaluation harness exercises four representative org scenarios
 plus a set of cross-cutting checks, for a total of 19 line items.
-Current verdict: **15 ✅ / 4 ⚠️ / 0 ❌**.
+Current verdict: **15 ✅ / 5 ⚠️ / 0 ❌** (with row 20 newly added by the multi-session cap-counting audit; see #710).
 
 Every ⚠️ is a schema-final item whose cron / integration lands in a
 follow-up PR. No ❌ outstanding.
@@ -36,7 +36,7 @@ Legend:
 
 | # | Item | Verdict | Notes |
 |---|------|---------|-------|
-| 9 | `LICENSE` funding + LICENSED_SEAT Program with `coveredSessionsPerCycle=null` absorbs bookings | ✅ | Checkout writes a `PaymentLeg(source=LICENSE, amountPaise=0)` for org-sponsored LICENSE bookings and increments `BookingUtilization` against the active assignment. |
+| 9 | `LICENSE` funding + LICENSED_SEAT Program with `coveredEngagementsPerCycle=null` absorbs bookings | ✅ | Checkout writes a `PaymentLeg(source=LICENSE, amountPaise=0)` for org-sponsored LICENSE bookings and increments `BookingUtilization` against the active assignment. |
 | 10 | SSO enforcement + allowedEmailDomains via `OrganizationSSOSettings` | ✅ | `customSession` hook + `shouldRejectSession`. |
 | 11 | Contract `effectiveTo` cron transitions status to `EXPIRED` | ⚠️ | Schema final; cron stubbed (no loss-of-service risk because `requireOrgAccess` still honours the org). |
 
@@ -56,17 +56,18 @@ Legend:
 | 16 | BookingUtilization reversal stamps `reversedAt` + appends opposing UsageLedgerEntry | ✅ | `reverseBookingUtilization()`. |
 | 17 | India TDS/MSME fields populated on `OrganizationPayout` | ⚠️ | Schema final; derivation cron (reading `ConsultantTaxInfo` / `MsmeStatus`) stubbed. |
 | 18 | E-invoice (IRN) upload + signed QR | ⚠️ | Schema final; live IRP integration stubbed. |
-| 19 | Nightly reconciliation cron for the three ledger identities + ProgramAssignment session-counter drift | ✅ | `scripts/reconcile/reconcile-ledgers.ts::runReconcileLedgers` covers wallet balance / funding mirror / settlement coverage / program-assignment session-counter (check E). Wired via `.github/workflows/reconcile-ledgers.yml` (nightly 03:45 UTC) calling `jobs/reconcile/reconcile-ledgers.ts`, and via admin route `POST /api/admin/reconcile-ledgers` for on-demand runs. |
+| 19 | Nightly reconciliation cron for the three ledger identities + ProgramAssignment engagement-counter drift | ✅ | `scripts/reconcile/reconcile-ledgers.ts::runReconcileLedgers` covers wallet balance / funding mirror / settlement coverage / program-assignment engagement-counter (check E). Wired via `.github/workflows/reconcile-ledgers.yml` (nightly 03:45 UTC) calling `jobs/reconcile/reconcile-ledgers.ts`, and via admin route `POST /api/admin/reconcile-ledgers` for on-demand runs. |
+| 20 | LICENSED_SEAT cap counts engagements correctly across plan types (CONSULTATION / WEBINAR / SUBSCRIPTION / CLASS) | ✅ | Issue #710 closed. Counting unit is the engagement (one `Appointment` row = one calendar occurrence). CONSULTATION/WEBINAR debit 1 at checkout; CLASS debits N at enrolment (one per pre-allocated class day); SUBSCRIPTION debits 1 per consultant allocation lazily via `SlotAllocationService.createAppointments`, upserting `BookingUtilization.engagementsConsumed`. Schema renamed: `coveredEngagementsPerCycle`, `engagementsUsed`, `engagementsConsumed`, `priceCapPerEngagementPaise`. Term picked to avoid collision with BetterAuth `Session` and Stream `MeetingSession`. Test coverage: `__tests__/enterprise/multi-engagement-cap.test.ts`. |
 
 ## Summary
 
-- **15 ✅** — core capability, funding, program, rate-card, wallet,
-  audit, live checkout-leg wiring (rows 3 + 9), and ledger
-  reconciliation (row 19) run end-to-end against the schema.
-- **4 ⚠️** — India-compliance / cron-driven items whose schema is
-  final but whose populator is deferred. Every field the eventual cron
-  will write is already modelled; the ⚠️ is about *producing* the
-  value, not about *storing* it.
+- **16 ✅** — core capability, funding, program, rate-card, wallet,
+  audit, live checkout-leg wiring (rows 3 + 9), ledger reconciliation
+  (row 19), and engagement cap counting (row 20) run end-to-end
+  against the schema.
+- **4 ⚠️** — India-compliance / cron-driven items whose schema is final
+  but whose populator is deferred. The ⚠️ is about *producing* the
+  right value, not about *storing* it.
 - **0 ❌** — every scenario in the harness produces either a correct
   result or a ⚠️ with a known stub.
 

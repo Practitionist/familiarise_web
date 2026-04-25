@@ -151,7 +151,7 @@ A nightly reconciliation cron is wired through
 `scripts/reconcile/reconcile-ledgers.ts::runReconcileLedgers`
 (triggered via admin route `POST /api/admin/reconcile-ledgers`). It
 audits wallet-balance drift, funding-ledger mirror parity, settlement
-coverage, and `ProgramAssignment.sessionsUsed` drift. See
+coverage, and `ProgramAssignment.engagementsUsed` drift. See
 `19-harness-verdict.md` row 19.
 
 ## Related docs
