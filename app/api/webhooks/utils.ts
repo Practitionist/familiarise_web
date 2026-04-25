@@ -9,6 +9,10 @@ import {
   notifyDisputeCreated,
   notifyDisputeResolved,
 } from "@/lib/novu";
+import {
+  notifyOrgInvoicePaid,
+  notifyOrgWalletTopupConfirmed,
+} from "@/lib/novu/org-workflows";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { getAppUrl } from "@/lib/url";
 import { confirmTopUp, walletCredit } from "@/lib/api/organizations/wallet";
@@ -138,6 +142,28 @@ export async function handleOrgPaymentSuccess(
               err,
             ),
           );
+
+        // Novu bell notification to OWNERs. Look up org context inline
+        // — the webhook is outside the HTTP session scope, so we can't
+        // lean on `requireOrgAccess` to hand us `access.org`.
+        const orgRow = await prisma.organization.findUnique({
+          where: { id: organizationId },
+          select: {
+            name: true,
+            billingAccount: { select: { walletBalance: true, currency: true } },
+          },
+        });
+        if (orgRow) {
+          notifyOrgWalletTopupConfirmed(organizationId, {
+            orgName: orgRow.name,
+            amountPaise: paise,
+            currency: orgRow.billingAccount?.currency ?? "INR",
+            newBalancePaise: orgRow.billingAccount?.walletBalance ?? 0,
+            dashboardUrl: `${getAppUrl()}/dashboard/organization/${organizationId}/billing`,
+          }).catch((err) =>
+            console.error("[notifyOrgWalletTopupConfirmed] failed:", err),
+          );
+        }
       }
     } catch (err) {
       console.error(
@@ -254,6 +280,30 @@ export async function handleOrgPaymentSuccess(
         .catch((err) =>
           console.error("[Webhook] Failed to write INVOICE_PAID audit log:", err),
         );
+
+      // Novu bell notification to OWNERs. Look up the invoice number +
+      // org name here rather than passing them down — the webhook entry
+      // site doesn't have them.
+      const ctx = await prisma.organizationInvoice.findUnique({
+        where: { id: invoiceId },
+        select: {
+          invoiceNumber: true,
+          paidAt: true,
+          organization: { select: { name: true } },
+        },
+      });
+      if (ctx) {
+        notifyOrgInvoicePaid(resolvedOrgId, {
+          invoiceNumber: ctx.invoiceNumber,
+          orgName: ctx.organization.name,
+          totalPaise: invoiceRow.totalPaise,
+          currency: invoiceRow.displayCurrency,
+          paidAt: (ctx.paidAt ?? new Date()).toISOString(),
+          dashboardUrl: `${getAppUrl()}/dashboard/organization/${resolvedOrgId}/billing`,
+        }).catch((err) =>
+          console.error("[notifyOrgInvoicePaid] failed:", err),
+        );
+      }
     }
   }
 }

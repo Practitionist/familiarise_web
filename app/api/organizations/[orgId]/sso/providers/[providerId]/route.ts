@@ -16,6 +16,7 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { deriveAcsUrl, deriveMetadataUrl } from "@/lib/sso/derive-urls";
+import { notifyOrgSsoProviderDeleted } from "@/lib/novu/org-workflows";
 
 export async function GET(
   _req: NextRequest,
@@ -80,7 +81,7 @@ export async function GET(
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   {
     params,
   }: {
@@ -141,6 +142,20 @@ export async function DELETE(
         },
       });
     });
+
+    // Security alert: notify the org's OWNER roster via Novu. SSO
+    // deletion is a high-impact action — if a malicious OWNER strips
+    // SSO, every other OWNER sees it on their bell immediately.
+    const origin = new URL(req.url).origin;
+    notifyOrgSsoProviderDeleted(orgId, {
+      orgName: access.org.name,
+      providerId,
+      deletedByName:
+        access.session.user.name ?? access.session.user.email,
+      dashboardUrl: `${origin}/dashboard/organization/${orgId}/settings/sso`,
+    }).catch((err) =>
+      console.error("[notifyOrgSsoProviderDeleted] failed:", err),
+    );
 
     return new NextResponse(null, { status: 204 });
   } catch (err) {

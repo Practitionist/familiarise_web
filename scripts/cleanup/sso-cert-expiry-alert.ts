@@ -37,6 +37,7 @@
 import { X509Certificate } from "node:crypto";
 import prisma from "../../lib/prisma";
 import { AUDIT_ACTIONS } from "../../lib/enterprise/audit-actions";
+import { notifyOrgSsoCertExpiring } from "../../lib/novu/org-workflows";
 
 type Severity = "WARN" | "CRITICAL" | "EXPIRED";
 
@@ -165,6 +166,22 @@ export async function runSsoCertExpiryAlert(): Promise<SsoCertExpiryAlertResult>
           },
         },
       });
+      // Best-effort Novu bell notification to OWNERs. Lookup org name
+      // inline — providers table doesn't carry it.
+      const org = await prisma.organization.findUnique({
+        where: { id: provider.organizationId },
+        select: { name: true },
+      });
+      if (org) {
+        await notifyOrgSsoCertExpiring(provider.organizationId, {
+          orgName: org.name,
+          providerId: provider.providerId,
+          daysRemaining,
+          severity,
+          notAfter: notAfter.toISOString(),
+          dashboardUrl: `/dashboard/organization/${provider.organizationId}/settings/sso`,
+        });
+      }
       alerted += 1;
       console.log(
         `   ⚠️  ${severity} — provider ${provider.providerId} expires ${notAfter.toISOString()} (${daysRemaining}d)`,

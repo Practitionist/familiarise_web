@@ -57,6 +57,7 @@ import {
   validateDiscountCurrency,
 } from "@/lib/payments/validation/currency-guards";
 import { checkPaymentLegsSumToAmount } from "@/lib/payments/payment-legs";
+import { notifyOrgProgramExhausted } from "@/lib/novu/org-workflows";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -2065,6 +2066,57 @@ export async function handleCheckout(
               });
             } catch (err) {
               if (err instanceof ProgramAssignmentLimitError) {
+                // Fire-and-forget bell notification to the assignee + org
+                // operators. Lookup uses the outer prisma client (not the
+                // about-to-roll-back `tx`) so the query runs against
+                // committed state. The TX still rolls back on throw —
+                // the notification is the correct signal whether or not
+                // the booking eventually succeeds.
+                //
+                // `Program.organizationId` lives on its parent Contract,
+                // not on Program itself, so the select chain hops
+                // Program → Contract → Organization.
+                prisma.programAssignment
+                  .findUnique({
+                    where: { id: programAssignmentId },
+                    select: {
+                      membership: {
+                        select: {
+                          userId: true,
+                          user: { select: { name: true, email: true } },
+                        },
+                      },
+                      program: {
+                        select: {
+                          name: true,
+                          contract: {
+                            select: {
+                              organizationId: true,
+                              organization: { select: { name: true } },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  })
+                  .then((ctx) => {
+                    if (!ctx) return;
+                    const orgId = ctx.program.contract.organizationId;
+                    return notifyOrgProgramExhausted(orgId, ctx.membership.userId, {
+                      orgName: ctx.program.contract.organization.name,
+                      programName: ctx.program.name,
+                      assigneeName:
+                        ctx.membership.user.name ?? ctx.membership.user.email,
+                      dashboardUrl: `/dashboard/organization/${orgId}/programs`,
+                    });
+                  })
+                  .catch((notifyErr) =>
+                    console.error(
+                      "[notifyOrgProgramExhausted] failed:",
+                      notifyErr,
+                    ),
+                  );
+
                 throw new Error(
                   "Your program has hit its session cap for this cycle. Ask your organization admin to upgrade the program or wait for the next cycle.",
                 );

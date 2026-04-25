@@ -76,6 +76,20 @@ export const NOVU_WORKFLOWS = {
   MAINTENANCE_SCHEDULED: "maintenance-scheduled",
   MAINTENANCE_STARTED: "maintenance-started",
   MAINTENANCE_ENDED: "maintenance-ended",
+
+  // Enterprise (arch-4) — org-scoped events. Workflow definitions must
+  // exist in the Novu dashboard with the matching slug; each is one
+  // in-app + optional email step. Delivery-channel routing is Novu's
+  // responsibility — the app just triggers with payload.
+  ORG_INVITE_SENT: "org-invite-sent",
+  ORG_INVITE_ACCEPTED: "org-invite-accepted",
+  ORG_INVOICE_ISSUED: "org-invoice-issued",
+  ORG_INVOICE_PAID: "org-invoice-paid",
+  ORG_WALLET_TOPUP_CONFIRMED: "org-wallet-topup-confirmed",
+  ORG_PAYOUT_COMPLETED: "org-payout-completed",
+  ORG_PROGRAM_EXHAUSTED: "org-program-exhausted",
+  ORG_SSO_PROVIDER_DELETED: "org-sso-provider-deleted",
+  ORG_SSO_CERT_EXPIRING: "org-sso-cert-expiring",
 } as const;
 
 export type NovuWorkflowId =
@@ -292,4 +306,81 @@ export type MaintenancePayload = {
   phase: string;
   reason?: string;
   estimatedEnd?: string;
+};
+
+// ============================================================================
+// Enterprise (arch-4) Payload Types
+// ============================================================================
+
+export type OrgInviteSentPayload = {
+  inviterName: string;
+  orgName: string;
+  role: string;
+  inviteUrl: string;
+  expiresAt: string;
+};
+
+export type OrgInviteAcceptedPayload = {
+  accepteeName: string;
+  accepteeEmail: string;
+  orgName: string;
+  role: string;
+  dashboardUrl: string;
+};
+
+export type OrgInvoiceIssuedPayload = {
+  invoiceNumber: string;
+  orgName: string;
+  totalPaise: number;
+  currency: string;
+  dueDate: string;
+  dashboardUrl: string;
+};
+
+export type OrgInvoicePaidPayload = {
+  invoiceNumber: string;
+  orgName: string;
+  totalPaise: number;
+  currency: string;
+  paidAt: string;
+  dashboardUrl: string;
+};
+
+export type OrgWalletTopupConfirmedPayload = {
+  orgName: string;
+  amountPaise: number;
+  currency: string;
+  newBalancePaise: number;
+  dashboardUrl: string;
+};
+
+export type OrgPayoutCompletedPayload = {
+  orgName: string;
+  payoutId: string;
+  amountPaise: number;
+  currency: string;
+  dashboardUrl: string;
+};
+
+export type OrgProgramExhaustedPayload = {
+  orgName: string;
+  programName: string;
+  assigneeName: string;
+  dashboardUrl: string;
+};
+
+export type OrgSsoProviderDeletedPayload = {
+  orgName: string;
+  providerId: string;
+  deletedByName: string;
+  dashboardUrl: string;
+};
+
+export type OrgSsoCertExpiringPayload = {
+  orgName: string;
+  providerId: string;
+  daysRemaining: number;
+  severity: "WARN" | "CRITICAL" | "EXPIRED";
+  notAfter: string;
+  dashboardUrl: string;
 };

@@ -19,6 +19,7 @@ import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { notifyOrgInviteSent } from "@/lib/novu/org-workflows";
 
 // Subset of MemberRole an inviter can assign without elevated flows.
 // Mirrors SELF_SERVICE_MEMBER_ROLES in lib/labels/org-labels.ts — two
@@ -187,6 +188,22 @@ export async function POST(
     }
     throw err;
   }
+
+  // Side-effect: trigger Novu email delivery to the invitee. Non-blocking
+  // — on failure we still return the invitation response. The existing
+  // email-send flow (lib/email.ts / Resend) continues to run; Novu is
+  // additive so in-app bell delivery works once the invitee has a user
+  // account.
+  const origin = new URL(req.url).origin;
+  notifyOrgInviteSent(email, {
+    inviterName: access.session.user.name ?? access.session.user.email,
+    orgName: access.org.name,
+    role,
+    inviteUrl: `${origin}/organizations/invite/${invitation.id}`,
+    expiresAt: expiresAt.toISOString(),
+  }).catch((err) =>
+    console.error("[notifyOrgInviteSent] failed:", err),
+  );
 
   return NextResponse.json({ invitation }, { status: wasExisting ? 200 : 201 });
 }

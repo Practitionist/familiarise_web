@@ -18,6 +18,7 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { notifyOrgInvoiceIssued } from "@/lib/novu/org-workflows";
 
 const CurrencySchema = z.enum(["INR", "USD", "EUR", "GBP"]);
 
@@ -113,6 +114,7 @@ export async function POST(
     where: { id: orgId },
     select: {
       id: true,
+      name: true,
       gstStateCode: true,
       gstin: true,
       hsnDefault: true,
@@ -246,6 +248,23 @@ export async function POST(
 
     return created;
   });
+
+  // Side-effect: if the invoice was issued on creation, fire the Novu
+  // bell workflow so OWNERs see it immediately (email delivery is via
+  // the `billingEmail` channel configured on the workflow in Novu).
+  if (body.issueImmediately) {
+    const origin = new URL(req.url).origin;
+    notifyOrgInvoiceIssued(orgId, {
+      invoiceNumber: invoice.invoiceNumber,
+      orgName: org.name,
+      totalPaise: invoice.totalPaise,
+      currency: body.displayCurrency,
+      dueDate: body.dueDate.toISOString(),
+      dashboardUrl: `${origin}/dashboard/organization/${orgId}/billing`,
+    }).catch((err) =>
+      console.error("[notifyOrgInvoiceIssued] failed:", err),
+    );
+  }
 
   return NextResponse.json({ invoice }, { status: 201 });
 }

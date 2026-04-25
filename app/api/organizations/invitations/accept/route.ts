@@ -19,6 +19,7 @@ import { requireApiAuth } from "@/lib/auth-helpers";
 import { MemberRoleSchema } from "@/lib/labels/org-labels";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
+import { notifyOrgInviteAccepted } from "@/lib/novu/org-workflows";
 
 const AcceptBodySchema = z.object({
   invitationId: z.string().min(1),
@@ -223,6 +224,22 @@ export async function POST(req: NextRequest) {
 
       return { membership: created, organization: org, alreadyMember: false };
     });
+
+    // Side-effect: notify the org's operator roster that someone new
+    // joined. Skip when the caller was already a member — the "accept"
+    // button was just idempotent, nothing newsworthy happened.
+    if (!result.alreadyMember) {
+      const origin = new URL(req.url).origin;
+      notifyOrgInviteAccepted(result.organization.id, {
+        accepteeName: auth.session.user.name ?? auth.session.user.email,
+        accepteeEmail: auth.session.user.email,
+        orgName: result.organization.name,
+        role: result.membership.role,
+        dashboardUrl: `${origin}/dashboard/organization/${result.organization.id}/members`,
+      }).catch((err) =>
+        console.error("[notifyOrgInviteAccepted] failed:", err),
+      );
+    }
 
     // Client contract (app/organizations/invite/[token]/page.tsx): expects
     //   { organization: { id, name }, role?: string, alreadyMember?: boolean }
