@@ -122,6 +122,33 @@ export async function PATCH(
         }
       }
 
+      // Anti-orphan guard: terminating an ACTIVE contract that still has
+      // ProgramAssignments inside their current cycle would leave those
+      // members entitled to a benefit with no parent contract — checkout
+      // would then 500 on the assignment lookup. Force the operator to
+      // cancel the assignments (or wait for the cycle to roll) before
+      // they can terminate. EXPIRED is fine: the cycle naturally ended.
+      if (
+        body.status === "TERMINATED" &&
+        current.status === "ACTIVE"
+      ) {
+        const now = new Date();
+        const liveAssignmentCount = await tx.programAssignment.count({
+          where: {
+            program: { contractId },
+            periodEnd: { gte: now },
+          },
+        });
+        if (liveAssignmentCount > 0) {
+          throw Object.assign(
+            new Error(
+              `Cannot terminate a contract with ${liveAssignmentCount} active assignment(s) in the current cycle. Cancel the assignments first or wait for the cycle to expire.`,
+            ),
+            { httpStatus: 409 },
+          );
+        }
+      }
+
       const next = await tx.contract.update({
         where: { id: contractId },
         data: {

@@ -14,7 +14,8 @@
  *
  * CREDIT_POOL programs:
  *   - An assignment represents access authorization; actual debits hit
- *     the wallet via `walletDebit`.
+ *     the wallet via `walletDebit` against the per-cycle credit cap
+ *     (1 credit = ₹1 = 100 paise; see schema.prisma).
  *
  * Overage behaviour is driven by `LicensedSeatConfig.overageBehavior`:
  *   - BLOCK: checkout returns 402.
@@ -94,7 +95,8 @@ export async function claimProgramAssignment(
  * `overageCount` when over cap per overageBehavior).
  *
  * For CREDIT_POOL programs, just records the utilization row; the wallet
- * debit is done separately via `walletDebit`.
+ * debit is done separately via `walletDebit` and the per-cycle credit
+ * cap is enforced there (1 credit = ₹1).
  *
  * Returns the utilization snapshot. Throws `ProgramAssignmentLimitError`
  * if cap hit and overageBehavior=BLOCK.

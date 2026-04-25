@@ -35,9 +35,12 @@ const LicensedSeatConfigSchema = z.object({
   priceCapPerSessionPaise: z.coerce.number().int().min(0).nullable().optional(),
 });
 
+// 1 credit = ₹1 = 100 paise (fixed; see schema.prisma). The pool resets
+// every `cycle`. Premium-tier multipliers were dropped from v1 — bespoke
+// per-expert rates live on a Program rate-card override.
 const CreditPoolConfigSchema = z.object({
-  creditValuePaise: z.coerce.number().int().min(1),
-  premiumMultiplier: z.coerce.number().min(0).nullable().optional(),
+  cycle: BillingCycleSchema,
+  creditsPerCycle: z.coerce.number().int().min(1),
   minimumCreditsPerPeriod: z.coerce.number().int().min(0).nullable().optional(),
 });
 
@@ -164,9 +167,8 @@ export async function POST(
         ...(body.type === "CREDIT_POOL" && {
           creditPoolConfig: {
             create: {
-              creditValuePaise: body.creditPoolConfig.creditValuePaise,
-              premiumMultiplier:
-                body.creditPoolConfig.premiumMultiplier ?? null,
+              cycle: body.creditPoolConfig.cycle,
+              creditsPerCycle: body.creditPoolConfig.creditsPerCycle,
               minimumCreditsPerPeriod:
                 body.creditPoolConfig.minimumCreditsPerPeriod ?? null,
             },

@@ -176,34 +176,64 @@ export async function DELETE(
   if (access.error) return access.error;
 
   try {
-    await prisma.$transaction(async (tx) => {
-      const current = await tx.program.findFirst({
-        where: { id: programId, contract: { organizationId: orgId } },
-        include: { _count: { select: { assignments: true } } },
-      });
-      if (!current) {
-        throw Object.assign(new Error("Program not found"), { httpStatus: 404 });
-      }
-      if (current._count.assignments > 0) {
-        throw Object.assign(
-          new Error(
-            "Cannot delete a program with active assignments. Pause it instead (PATCH status=PAUSED).",
-          ),
-          { httpStatus: 409 },
-        );
-      }
-      await tx.program.delete({ where: { id: programId } });
-      await tx.orgAuditLog.create({
-        data: {
-          organizationId: orgId,
-          actorMembershipId: access.member.id,
-          category: "PROGRAM",
-          action: AUDIT_ACTIONS.PROGRAM.PROGRAM_PAUSED,
-          description: `Program ${programId} deleted (no assignments)`,
-          details: { programId },
-        },
-      });
-    });
+    // Serializable isolation closes the race where assignment-creation
+    // and program-deletion run concurrently: both transactions read
+    // assignments=0, both proceed, and the delete cascades the
+    // newly-created assignment. Postgres detects the read/write
+    // dependency cycle under SERIALIZABLE and aborts one with P2034
+    // (which Prisma surfaces as a retryable serialization error). The
+    // explicit assignment count + utilization check inside the tx still
+    // runs first as a fast-fail.
+    await prisma.$transaction(
+      async (tx) => {
+        const current = await tx.program.findFirst({
+          where: { id: programId, contract: { organizationId: orgId } },
+          include: { _count: { select: { assignments: true } } },
+        });
+        if (!current) {
+          throw Object.assign(new Error("Program not found"), { httpStatus: 404 });
+        }
+        if (current._count.assignments > 0) {
+          throw Object.assign(
+            new Error(
+              "Cannot delete a program with active assignments. Pause it instead (PATCH status=PAUSED).",
+            ),
+            { httpStatus: 409 },
+          );
+        }
+
+        // Even when assignments=0, a current-cycle BookingUtilization
+        // can exist via a reversed-but-not-removed history row. Refuse
+        // the hard delete if any utilization in the current period is
+        // still queryable — the audit trail would otherwise lose its
+        // foreign-key target.
+        const utilizationStillPresent = await tx.bookingUtilization.findFirst({
+          where: { programAssignment: { programId } },
+          select: { id: true },
+        });
+        if (utilizationStillPresent) {
+          throw Object.assign(
+            new Error(
+              "Program has historical utilization rows. Pause via PATCH status=CANCELLED instead of deleting.",
+            ),
+            { httpStatus: 409 },
+          );
+        }
+
+        await tx.program.delete({ where: { id: programId } });
+        await tx.orgAuditLog.create({
+          data: {
+            organizationId: orgId,
+            actorMembershipId: access.member.id,
+            category: "PROGRAM",
+            action: AUDIT_ACTIONS.PROGRAM.PROGRAM_PAUSED,
+            description: `Program ${programId} deleted (no assignments)`,
+            details: { programId },
+          },
+        });
+      },
+      { isolationLevel: "Serializable" },
+    );
     return new NextResponse(null, { status: 204 });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {

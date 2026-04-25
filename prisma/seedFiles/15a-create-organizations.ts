@@ -534,7 +534,7 @@ async function seedIit(params: {
     data: { billingAccountId: billingAccount.id },
   });
 
-  // Contract with credit-pool program
+  // Contract with credit-pool program (1 credit = ₹1)
   const contract = await prisma.contract.create({
     data: {
       organizationId: org.id,
@@ -544,7 +544,7 @@ async function seedIit(params: {
       effectiveTo: faker.date.future({ years: 1 }),
       paymentTermsDays: 0, // wallet is prepaid
       terms: {
-        notes: "Student coaching credit pool, 1 credit = ₹1",
+        notes: "Student coaching credit pool — 10,000 credits/month (1 credit = ₹1)",
       },
     },
   });
@@ -558,7 +558,8 @@ async function seedIit(params: {
       coveredPlanTypes: ["CONSULTATION", "SUBSCRIPTION"],
       creditPoolConfig: {
         create: {
-          creditValuePaise: 100, // ₹1 per credit
+          cycle: "MONTHLY",
+          creditsPerCycle: 10_000, // 10k credits = ₹10k / month
           minimumCreditsPerPeriod: 10_000,
         },
       },

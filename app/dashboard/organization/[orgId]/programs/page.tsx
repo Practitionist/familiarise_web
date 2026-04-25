@@ -71,7 +71,8 @@ interface ProgramListItem {
     activeSeatCount: number;
   } | null;
   creditPoolConfig: {
-    creditValuePaise: number;
+    cycle: BillingCycle;
+    creditsPerCycle: number;
     minimumCreditsPerPeriod: number | null;
   } | null;
   _count: { assignments: number };
@@ -152,7 +153,8 @@ type CreateProgramBody =
       contractId: string;
       name: string;
       creditPoolConfig: {
-        creditValuePaise: number;
+        cycle: BillingCycle;
+        creditsPerCycle: number;
       };
     };
 
@@ -188,7 +190,7 @@ const PROGRAM_TYPE_META: Record<
   CREDIT_POOL: {
     label: "Credit pool",
     description:
-      "Wallet-backed pool. Each booking debits credits from the org wallet.",
+      "Pool with a per-cycle credit cap (1 credit = ₹1). Each booking debits credits from the org wallet up to the cap.",
     available: true,
   },
   PROJECT: {
@@ -238,7 +240,9 @@ function CreateProgramDialog({
   const [coveredSessionsPerCycle, setCoveredSessionsPerCycle] = useState("");
   const [overageBehavior, setOverageBehavior] =
     useState<OverageBehavior>("BLOCK");
-  const [creditValueRupees, setCreditValueRupees] = useState("500");
+  // 1 credit = ₹1; per-cycle cap is the user-facing input, paise conversion
+  // is implicit (credits map to rupees end-to-end).
+  const [creditsPerCycle, setCreditsPerCycle] = useState("1000");
   const [error, setError] = useState<string | null>(null);
 
   const reset = () => {
@@ -249,7 +253,7 @@ function CreateProgramDialog({
     setCycle("MONTHLY");
     setCoveredSessionsPerCycle("");
     setOverageBehavior("BLOCK");
-    setCreditValueRupees("500");
+    setCreditsPerCycle("1000");
     setError(null);
   };
 
@@ -299,16 +303,19 @@ function CreateProgramDialog({
         },
       });
     } else {
-      const creditPaise = rupeesToPaise(creditValueRupees);
-      if (creditPaise === null || creditPaise < 1) {
-        setError("Credit value must be a positive number (in rupees).");
+      const credits = Number(creditsPerCycle.trim());
+      if (!Number.isFinite(credits) || credits < 1 || !Number.isInteger(credits)) {
+        setError("Credits per cycle must be a positive integer.");
         return;
       }
       createMutation.mutate({
         type: "CREDIT_POOL",
         contractId,
         name: name.trim(),
-        creditPoolConfig: { creditValuePaise: creditPaise },
+        creditPoolConfig: {
+          cycle,
+          creditsPerCycle: credits,
+        },
       });
     }
   };
@@ -487,17 +494,21 @@ function CreateProgramDialog({
             </>
           ) : (
             <div className="space-y-2">
-              <Label htmlFor="credit-value">Credit value (₹)</Label>
+              <Label htmlFor="credits-per-cycle">
+                Credits per cycle (1 credit = ₹1)
+              </Label>
               <Input
-                id="credit-value"
+                id="credits-per-cycle"
                 type="number"
                 min={1}
                 step={1}
-                value={creditValueRupees}
-                onChange={(e) => setCreditValueRupees(e.target.value)}
+                value={creditsPerCycle}
+                onChange={(e) => setCreditsPerCycle(e.target.value)}
               />
               <p className="text-xs text-zinc-500">
-                Each booking debits the wallet at this amount × 1 credit.
+                Hard cap on bookings per {cycle.toLowerCase()} cycle. Each
+                credit equals ₹1; debits stop at the cap unless overage is
+                enabled.
               </p>
             </div>
           )}
@@ -657,11 +668,10 @@ export default function OrgProgramsPage({
                           </>
                         ) : p.type === "CREDIT_POOL" && p.creditPoolConfig ? (
                           <>
-                            {formatCurrencyAmount(
-                              p.creditPoolConfig.creditValuePaise,
-                              "INR",
+                            {p.creditPoolConfig.creditsPerCycle.toLocaleString(
+                              "en-IN",
                             )}{" "}
-                            / credit
+                            credits / {p.creditPoolConfig.cycle.toLowerCase()}
                           </>
                         ) : (
                           "—"
