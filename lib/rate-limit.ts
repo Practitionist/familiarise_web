@@ -74,6 +74,37 @@ export const eligibilityLimiter = makeLimiter(20, "1 m", "rl:eligibility");
 /** 30 per minute — GET /api/slots/availability/[consultantId] (IP-based, public booking flow) */
 export const availabilityLimiter = makeLimiter(30, "1 m", "rl:availability");
 
+// ============================================================================
+// Enterprise (arch-4) — per-org / per-IP buckets for org-specific surfaces.
+//
+// These are narrower than the global authLimiter because an org-scoped
+// attacker (e.g. credential-stuffing against a single tenant's SSO) can
+// keep the global IP counter fresh by rotating source IPs. Adding an
+// org-scoped bucket catches single-tenant floods that wouldn't trip the
+// global bucket.
+// ============================================================================
+
+/** 30 per hour — POST /api/organizations/invitations/accept (IP-based; org-level identity only available post-token-lookup, which middleware can't do) */
+export const orgInviteAcceptLimiter = makeLimiter(
+  30,
+  "1 h",
+  "rl:org-invite-accept",
+);
+
+/** 60 per hour — POST /api/auth/sso/domain-check (IP-based, prevents org-existence enumeration) */
+export const ssoDomainCheckLimiter = makeLimiter(
+  60,
+  "1 h",
+  "rl:sso-domain-check",
+);
+
+/** 20 per hour per org — POST /api/organizations/[orgId]/billing-account/wallet/top-ups (orgId-keyed; blocks a single org from minting hundreds of Razorpay orders) */
+export const orgWalletTopUpLimiter = makeLimiter(
+  20,
+  "1 h",
+  "rl:org-wallet-topup",
+);
+
 /**
  * Apply rate limit to a request.
  * Returns a 429 NextResponse if exceeded, otherwise null.
