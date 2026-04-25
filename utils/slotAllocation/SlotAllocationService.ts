@@ -39,6 +39,10 @@ import {
   AllocationNotFoundError,
   AllocationConflictError,
 } from "./errors";
+import {
+  recordBookingUtilization,
+  ProgramAssignmentLimitError,
+} from "@/lib/api/organizations/program-helpers";
 
 type AppointmentWithSlots = Appointment & {
   slotsOfAppointment: SlotOfAppointment[];
@@ -1401,7 +1405,144 @@ export class SlotAllocationService {
       }),
     );
 
+    // Issue #710: per-allocation cap debit for SUBSCRIPTION.
+    //
+    // CONSULTATION/WEBINAR debit at checkout (1 engagement, slots known
+    // synchronously). CLASS debits at enrolment (N engagements, all
+    // appointments pre-allocated by the consultant). SUBSCRIPTION is the
+    // only event type with truly lazy slot allocation — the consultant
+    // adds calls one-at-a-time via the Requests tab — so the cap debit
+    // must happen here, once per Appointment row created.
+    //
+    // The original Payment carries the org tag; we re-resolve the
+    // ProgramAssignment fresh because cycles may have rolled since
+    // signup and we want today's cap, not signup-time's cap. If the
+    // booking wasn't org-sponsored (no organizationId on the original
+    // Payment) we skip silently.
+    if (
+      eventType === "subscription" &&
+      consulteeUserId &&
+      appointments.length > 0
+    ) {
+      await this.recordSubscriptionAllocationCap(
+        tx,
+        eventId,
+        consulteeUserId,
+        appointments.length,
+      );
+    }
+
     return appointments;
+  }
+
+  /**
+   * For SUBSCRIPTION: debit `engagementsConsumed` per Appointment created
+   * in this allocation batch against the consultee's active org program
+   * assignment. No-op when the booking isn't org-sponsored.
+   *
+   * Throws `ProgramAssignmentLimitError` if the cap is BLOCK and would
+   * be exceeded — the surrounding transaction rolls back the new slots.
+   */
+  private static async recordSubscriptionAllocationCap(
+    tx: PrismaTransaction,
+    subscriptionId: string,
+    consulteeUserId: string,
+    newEngagements: number,
+  ): Promise<void> {
+    // Find the original signup Payment via the placeholder Appointment.
+    // SUBSCRIPTION checkout creates exactly one Appointment with a
+    // linked Payment; subsequent allocation appointments have no Payment
+    // of their own.
+    const subscription = await tx.subscription.findUnique({
+      where: { id: subscriptionId },
+      include: {
+        appointments: {
+          include: { payment: true },
+        },
+      },
+    });
+
+    // Schema declares Appointment.payment as Payment[] (one Appointment
+    // can carry multiple Payments historically — refunds/retries chain
+    // off the original). Flatten and pick the org-tagged one.
+    const orgPayment = subscription?.appointments
+      .flatMap((a) => a.payment)
+      .find((p) => !!p.organizationId);
+
+    if (!orgPayment || !orgPayment.organizationId) {
+      // PERSONAL-funded subscription — no org cap to debit.
+      return;
+    }
+
+    const membership = await tx.membership.findUnique({
+      where: {
+        userId_organizationId: {
+          userId: consulteeUserId,
+          organizationId: orgPayment.organizationId,
+        },
+      },
+    });
+    if (!membership || membership.status !== "ACTIVE") return;
+
+    // Re-resolve the active ProgramAssignment at allocation time.
+    // Mirrors the resolver in lib/payments/operations/checkout.ts so the
+    // same coverage filters apply (program ACTIVE, contract ACTIVE,
+    // covers SUBSCRIPTION).
+    const now = new Date();
+    const assignment = await tx.programAssignment.findFirst({
+      where: {
+        membershipId: membership.id,
+        periodStart: { lte: now },
+        periodEnd: { gte: now },
+        program: {
+          status: "ACTIVE",
+          OR: [
+            { coveredPlanTypes: { isEmpty: true } },
+            { coveredPlanTypes: { has: "SUBSCRIPTION" } },
+          ],
+          contract: {
+            organizationId: orgPayment.organizationId,
+            status: "ACTIVE",
+            effectiveFrom: { lte: now },
+            OR: [{ effectiveTo: null }, { effectiveTo: { gte: now } }],
+          },
+        },
+      },
+      orderBy: { periodEnd: "desc" },
+      select: { id: true },
+    });
+    if (!assignment) return;
+
+    // priceAtBookingPaise: full upfront sub price on the very first
+    // allocation (so the BookingUtilization row carries it for
+    // analytics); 0 on subsequent allocations (no new money). The
+    // helper's upsert preserves the first-create priceAtBookingPaise.
+    const existingUtil = await tx.bookingUtilization.findUnique({
+      where: { paymentId: orgPayment.id },
+      select: { id: true },
+    });
+    const priceAtBookingPaise = existingUtil ? 0 : orgPayment.amount;
+
+    try {
+      // recordBookingUtilization's signature wants Prisma.TransactionClient;
+      // PrismaTransaction is structurally that minus $transaction (which
+      // the helper never calls). Safe upcast.
+      await recordBookingUtilization(tx as unknown as Prisma.TransactionClient, {
+        programAssignmentId: assignment.id,
+        paymentId: orgPayment.id,
+        engagementsConsumed: newEngagements,
+        priceAtBookingPaise,
+      });
+    } catch (err) {
+      if (err instanceof ProgramAssignmentLimitError) {
+        // Cap exceeded with BLOCK behavior — surface upward so the
+        // transaction rolls back the newly-created appointments. The
+        // SlotAllocationService.allocate() error mapper translates this
+        // to the appropriate HTTP status for the route handler.
+        throw err;
+      }
+      throw err;
+    }
   }
 
   /**
