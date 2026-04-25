@@ -75,7 +75,7 @@ export async function walletDebit(
   }
   const acct = await tx.billingAccount.findUniqueOrThrow({
     where: { id: params.billingAccountId },
-    select: { walletBalance: true },
+    select: { walletBalance: true, currency: true },
   });
   const balanceAfter = acct.walletBalance ?? 0;
 
@@ -95,6 +95,7 @@ export async function walletDebit(
     data: {
       billingAccountId: params.billingAccountId,
       deltaPaise: -params.amountPaise,
+      currency: acct.currency,
       reason:
         params.reason === "BOOKING"
           ? "BOOKING_DEBIT"
@@ -141,7 +142,7 @@ export async function walletCredit(
   }
   const acct = await tx.billingAccount.findUniqueOrThrow({
     where: { id: params.billingAccountId },
-    select: { walletBalance: true },
+    select: { walletBalance: true, currency: true },
   });
   const balanceAfter = acct.walletBalance ?? 0;
 
@@ -163,6 +164,7 @@ export async function walletCredit(
     data: {
       billingAccountId: params.billingAccountId,
       deltaPaise: params.amountPaise,
+      currency: acct.currency,
       reason:
         params.reason === "TOPUP"
           ? "TOPUP"

@@ -1531,6 +1531,13 @@ model FundingLedgerEntry {
   id                String        @id @default(uuid())
   billingAccountId  String
   deltaPaise        Int // signed
+  /// Currency of `deltaPaise`. Today every BillingAccount is INR and the
+  /// invariant "sum(deltaPaise) == walletBalance" assumes a single currency
+  /// per account. Once multi-currency wallets land (see issue #711 and
+  /// docs/payments/multi-currency/), the reconciler's invariant will need
+  /// a per-currency split. The column ships now so the historical writes
+  /// have the metadata when that day comes.
+  currency          Currency      @default(INR)
   reason            FundingReason
   balanceAfterPaise Int
   paymentId         String?

@@ -229,17 +229,58 @@ export async function handleOrgPaymentSuccess(
       return;
     }
 
-    const claimed = await prisma.organizationInvoice.updateMany({
-      where: { id: invoiceId, status: { in: ["ISSUED", "OVERDUE"] } },
-      data: {
-        status: "PAID",
-        paidAt: new Date(),
-        providerPaymentOrderId: null,
-        ...(razorpayPaymentId ? { providerPaymentId: razorpayPaymentId } : {}),
-      },
-    });
+    const resolvedOrgId = invoiceRow.organizationId ?? organizationId;
 
-    if (claimed.count === 0) {
+    // LED-1: invoice claim + INVOICE_PAID settlement write must be atomic.
+    // Before this PR the settlement write was a fire-and-forget after the
+    // updateMany — so a transient DB error on the settlement insert left
+    // the invoice marked PAID with no ledger row, and the nightly
+    // reconciler would flag drift it could not auto-remediate. Both writes
+    // now share a transaction. Audit + Novu notifications stay best-effort
+    // outside the tx — they're operator surfaces, not ledger.
+    let claimedCount = 0;
+    try {
+      const txResult = await prisma.$transaction(async (tx) => {
+        const claimed = await tx.organizationInvoice.updateMany({
+          where: { id: invoiceId, status: { in: ["ISSUED", "OVERDUE"] } },
+          data: {
+            status: "PAID",
+            paidAt: new Date(),
+            providerPaymentOrderId: null,
+            ...(razorpayPaymentId
+              ? { providerPaymentId: razorpayPaymentId }
+              : {}),
+          },
+        });
+        if (claimed.count === 0) {
+          return { count: 0 as const };
+        }
+        if (resolvedOrgId) {
+          await tx.settlementLedgerEntry.create({
+            data: {
+              organizationId: resolvedOrgId,
+              invoiceId,
+              kind: "INVOICE_PAID",
+              amountPaise: invoiceRow.totalPaise,
+              currency: invoiceRow.displayCurrency,
+            },
+          });
+        }
+        return { count: claimed.count };
+      });
+      claimedCount = txResult.count;
+    } catch (err) {
+      // Webhook delivery is at-least-once; throwing causes Razorpay to
+      // retry. The tx already rolled back so a retry sees the original
+      // ISSUED/OVERDUE state and tries again cleanly.
+      console.error(
+        `[Webhook] INVOICE_PAID transaction failed for ${invoiceId}; rolling back:`,
+        err,
+      );
+      throw err;
+    }
+
+    if (claimedCount === 0) {
       console.log(
         `[Webhook] Invoice ${invoiceId} already PAID — skipping (idempotent)`,
       );
@@ -248,23 +289,6 @@ export async function handleOrgPaymentSuccess(
 
     console.log(`[Webhook] Invoice paid: ${invoiceId}`);
 
-    const resolvedOrgId = invoiceRow.organizationId ?? organizationId;
-
-    // Write SettlementLedgerEntry(INVOICE_PAID) — required for three-ledger discipline.
-    prisma.settlementLedgerEntry
-      .create({
-        data: {
-          organizationId: resolvedOrgId,
-          invoiceId,
-          kind: "INVOICE_PAID",
-          amountPaise: invoiceRow.totalPaise,
-          currency: invoiceRow.displayCurrency,
-        },
-      })
-      .catch((err) =>
-        console.error("[Webhook] Failed to write INVOICE_PAID settlement ledger entry:", err),
-      );
-
     if (resolvedOrgId) {
       prisma.orgAuditLog
         .create({
@@ -272,7 +296,7 @@ export async function handleOrgPaymentSuccess(
             organizationId: resolvedOrgId,
             actorMembershipId: null,
             category: "INVOICE",
-            action: "INVOICE_PAID",
+            action: AUDIT_ACTIONS.INVOICE.INVOICE_PAID,
             description: `Invoice ${invoiceId} paid via webhook`,
             details: { invoiceId, providerPaymentId: razorpayPaymentId ?? null },
           },
@@ -575,7 +599,7 @@ export async function handleRefundCreated(
           const refundAmt = Math.min(amount, topUpEntry.deltaPaise);
           const acct = await tx.billingAccount.findUniqueOrThrow({
             where: { id: topUpEntry.billingAccountId },
-            select: { walletBalance: true },
+            select: { walletBalance: true, currency: true },
           });
           const newBalance = (acct.walletBalance ?? 0) - refundAmt;
           await tx.$executeRaw`
@@ -619,6 +643,7 @@ export async function handleRefundCreated(
             data: {
               billingAccountId: topUpEntry.billingAccountId,
               deltaPaise: -refundAmt,
+              currency: acct.currency,
               reason: "REFUND_CREDIT",
               balanceAfterPaise: newBalance,
               notes: `Top-up refund ${refundId} via ${gateway}`,

@@ -48,6 +48,12 @@
  *      historical default. Run the backfill SQL migration first, then
  *      this invariant will hold.)
  *
+ *   H. For every Payment:
+ *      sum(PaymentLeg.amountPaise) === Payment.amount
+ *      (LICENSE legs carry amountPaise=0, so the sum still works for
+ *      org-license-covered bookings. The hot checkout path log-warns
+ *      on mismatch; this invariant is the retroactive detector.)
+ *
  * This is READ-ONLY. It never writes to any of the audited tables. It
  * only writes its findings to `LedgerReconciliationReport`.
  *
@@ -61,6 +67,7 @@
 
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
+import { checkPaymentLegsSumToAmount } from "@/lib/payments/payment-legs";
 
 export type ReconcileScope = {
   /** Human-readable scope tag, e.g. "full" or "org:<orgId>". */
@@ -78,11 +85,13 @@ export type Finding = {
     | "SETTLEMENT_MISSING_INVOICE_ISSUED"
     | "SETTLEMENT_MISSING_INVOICE_PAID"
     | "PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT"
-    | "ACTIVE_SEAT_COUNT_DRIFT";
+    | "ACTIVE_SEAT_COUNT_DRIFT"
+    | "PAYMENT_LEG_SUM_MISMATCH";
   organizationId?: string;
   billingAccountId?: string;
   billingSubscriptionId?: string;
   invoiceId?: string;
+  paymentId?: string;
   programAssignmentId?: string;
   // For engagements-drift + seat-count findings the values are integer
   // counts, not paise. The shared field name keeps the report row compact
@@ -105,6 +114,7 @@ export type ReconcileReport = {
     accountsChecked: number;
     assignmentsChecked: number;
     subscriptionsChecked: number;
+    paymentsChecked: number;
     discrepanciesCount: number;
   };
   findings: Finding[];
@@ -293,6 +303,44 @@ export async function runReconcileLedgers(
     }
   }
 
+  // --- (H): per Payment leg-sum invariant ---
+  // The hot checkout path log-warns on mismatch (we don't break booking
+  // for a leg-accounting bug); this is the retroactive detector. We only
+  // walk Payments associated with org bookings — B2C card-only payments
+  // have a single CARD leg whose sum is trivially equal and the read
+  // would balloon for no audit value. Org legs (WALLET, INVOICE_ACCRUAL,
+  // LICENSE) are the ones that benefit from a sweep.
+  const paymentsWithOrgLegs = await prisma.payment.findMany({
+    where: {
+      organizationId: opts.organizationId ?? { not: null },
+    },
+    select: { id: true, amount: true, organizationId: true },
+  });
+  for (const p of paymentsWithOrgLegs) {
+    const legs = await prisma.paymentLeg.findMany({
+      where: { paymentId: p.id },
+      select: { source: true, amountPaise: true },
+    });
+    const mismatch = checkPaymentLegsSumToAmount({
+      paymentAmountPaise: p.amount,
+      legs,
+    });
+    if (mismatch) {
+      findings.push({
+        kind: "PAYMENT_LEG_SUM_MISMATCH",
+        organizationId: p.organizationId ?? undefined,
+        paymentId: p.id,
+        expectedPaise: p.amount,
+        actualPaise: mismatch.legSumPaise,
+        deltaPaise: mismatch.deltaPaise,
+        details: {
+          legs: mismatch.legs,
+          note: "Sum of PaymentLeg.amountPaise diverges from Payment.amount. Investigate which leg writer (checkout / wallet / referral) emitted the wrong amount.",
+        },
+      });
+    }
+  }
+
   // --- (F): per BillingSubscription activeSeatCount drift ---
   // activeSeatCount is denormalized from ProgramAssignment count for
   // billing-cron read efficiency (the invoice cron must compute
@@ -350,6 +398,7 @@ export async function runReconcileLedgers(
     accountsChecked: accounts.length,
     assignmentsChecked: liveAssignments.length,
     subscriptionsChecked: subscriptions.length,
+    paymentsChecked: paymentsWithOrgLegs.length,
     discrepanciesCount: findings.length,
   };
 

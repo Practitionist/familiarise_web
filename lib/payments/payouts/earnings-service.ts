@@ -82,6 +82,19 @@ export interface CreateEarningsParams {
 }
 
 // ============================================
+// Status transition guard (#700 LED-2)
+// ============================================
+// The transition predicate lives in its own file so consumers (esp.
+// unit tests) can import it without dragging in earnings-service's
+// transitive Stream / Razorpay deps. We re-export here for ergonomics
+// at existing call sites.
+export {
+  IllegalEarningStatusTransitionError,
+  assertEarningStatusTransitionLegal,
+} from "./earning-status";
+import { assertEarningStatusTransitionLegal } from "./earning-status";
+
+// ============================================
 // Org Split Resolution
 // ============================================
 
@@ -663,6 +676,16 @@ export async function refundEarnings(
           `Cannot refund earnings ${earnings.id} - already paid out. Use forceRefund: true to proceed with TDS reversal.`,
         );
         continue;
+      }
+      if (isFullyRefunded) {
+        // Defensive double-check: forceRefund is the only path that
+        // writes PAID → REFUNDED, but if another code path ever forgets
+        // the assertion this throws before any state mutates.
+        assertEarningStatusTransitionLegal(
+          earnings.id,
+          earnings.status,
+          EarningStatus.REFUNDED,
+        );
       }
 
       // Force refund of PAID earnings: create TDS reversal record
