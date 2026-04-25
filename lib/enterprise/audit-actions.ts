@@ -85,6 +85,16 @@ export const AUDIT_ACTIONS = {
     SSO_ENABLED: "SSO_ENABLED",
     SSO_DISABLED: "SSO_DISABLED",
     DOMAIN_CLAIMED: "DOMAIN_CLAIMED",
+    // Emitted by POST /organizations/[orgId]/domain-claims/[domain]/verify
+    // after the DNS TXT record at `_familiarise-verify.<domain>` matches
+    // the claim's verificationToken. `verifiedAt` on the row flips from
+    // NULL → now(), unlocking domain-based auto-join for SSO.
+    DOMAIN_VERIFIED: "DOMAIN_VERIFIED",
+    // Emitted by GET /api/organizations/[orgId]/audit/export (the CSV
+    // exporter is itself auditable — a compliance review asking "who
+    // pulled our audit trail and when?" needs an answer). `details`
+    // carries the filter params + row-count as evidence.
+    AUDIT_LOG_EXPORTED: "AUDIT_LOG_EXPORTED",
     DOMAIN_RELEASED: "DOMAIN_RELEASED",
     // Emitted by the SSO cert expiry cron at 30-day WARN and 7-day
     // CRITICAL thresholds. `details.daysRemaining` + `details.providerId`

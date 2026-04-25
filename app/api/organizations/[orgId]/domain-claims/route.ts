@@ -8,18 +8,35 @@
  * claim the same domain, since that would make domain→org resolution
  * ambiguous at login time.
  *
- * Verification-of-ownership for claimed domains is deliberately out of
- * scope here; we expect an OWNER-only flow and trust owner intent. Future
- * work: DNS TXT verification before activating a claim.
+ * Two-step verification: POST here records the claim + generates a
+ * `verificationToken`. The OWNER places that token at
+ * `_familiarise-verify.<domain>` as a DNS TXT record, then calls POST
+ * /domain-claims/[domain]/verify to flip `verifiedAt`. Unverified
+ * claims are retained for audit but not honored as identity boundaries
+ * (SSO auto-join + invite auto-routing require `verifiedAt IS NOT NULL`).
+ * The two-step flow protects against an OWNER hijacking a competitor's
+ * domain in the global unique-index race — without TXT proof of control,
+ * an unverified claim can't do real damage.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { DomainSchema } from "@/lib/enterprise/validators";
+
+/**
+ * Generate a domain-verification token. URL-safe base64 without padding
+ * gives us ~128 bits of entropy in ~22 characters — plenty for TXT
+ * record lookup but short enough to paste into a DNS provider's UI
+ * without wrapping.
+ */
+function generateVerificationToken(): string {
+  return `familiarise-verify=${randomBytes(16).toString("base64url")}`;
+}
 
 const CreateBodySchema = z.object({
   domain: DomainSchema,
@@ -77,10 +94,12 @@ export async function POST(
         );
       }
 
+      const verificationToken = generateVerificationToken();
       const claim = await tx.orgDomainClaim.create({
         data: {
           organizationId: orgId,
           domain: body.domain,
+          verificationToken,
         },
       });
 
@@ -90,7 +109,7 @@ export async function POST(
           actorMembershipId: access.member.id,
           category: "SETTINGS",
           action: AUDIT_ACTIONS.SETTINGS.DOMAIN_CLAIMED,
-          description: `Domain '${body.domain}' claimed`,
+          description: `Domain '${body.domain}' claimed (pending DNS verification)`,
           details: { domain: body.domain, claimId: claim.id },
         },
       });
@@ -98,7 +117,20 @@ export async function POST(
       return claim;
     });
 
-    return NextResponse.json({ domainClaim: created }, { status: 201 });
+    // Expose the TXT record name + value the OWNER needs to add. The
+    // client renders a copy-paste block on the settings page.
+    return NextResponse.json(
+      {
+        domainClaim: created,
+        verification: {
+          recordName: `_familiarise-verify.${created.domain}`,
+          recordValue: created.verificationToken,
+          recordType: "TXT",
+          instructionsUrl: "/docs/enterprise/08-sso-and-authentication.md",
+        },
+      },
+      { status: 201 },
+    );
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
       const status =

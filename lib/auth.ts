@@ -227,6 +227,7 @@ export const auth = betterAuth({
                 where: { domain },
                 select: {
                   organizationId: true,
+                  verifiedAt: true,
                   organization: {
                     select: {
                       status: true,
@@ -240,8 +241,14 @@ export const auth = betterAuth({
                   },
                 },
               });
+              // Unverified domain claims (no DNS TXT proof) must NOT
+              // gate session SSO enforcement — same rationale as
+              // /api/auth/sso/domain-check. Without this, a malicious
+              // OWNER could claim a public domain and force-reject
+              // unrelated users' sessions.
               if (
                 !claim ||
+                !claim.verifiedAt ||
                 !claim.organization ||
                 claim.organization.status !== "ACTIVE" ||
                 !claim.organization.ssoSettings?.enforceSSO

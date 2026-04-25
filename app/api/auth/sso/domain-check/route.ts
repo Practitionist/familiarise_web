@@ -46,6 +46,7 @@ export async function GET(req: NextRequest) {
     where: { domain },
     select: {
       organizationId: true,
+      verifiedAt: true,
       organization: {
         select: {
           name: true,
@@ -58,8 +59,12 @@ export async function GET(req: NextRequest) {
     },
   });
 
+  // Unverified claims (no DNS TXT proof) must not steer users into SSO —
+  // a malicious OWNER could otherwise claim `gmail.com` and intercept
+  // the domain-check redirect for anyone whose email matches.
   if (
     !claim ||
+    !claim.verifiedAt ||
     !claim.organization ||
     claim.organization.status !== "ACTIVE" ||
     !claim.organization.ssoSettings?.enforceSSO
