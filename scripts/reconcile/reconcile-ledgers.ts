@@ -54,6 +54,13 @@
  *      org-license-covered bookings. The hot checkout path log-warns
  *      on mismatch; this invariant is the retroactive detector.)
  *
+ *   G. For every OrganizationPayout:
+ *      sum(OrganizationEarnings.orgSharePaise - .refundedAmountPaise)
+ *        for batched earnings === OrganizationPayout.netPayoutPaise
+ *      (drift here means the batch claim updated earnings but didn't
+ *      match the payout totals — investigate the
+ *      createOrgPayoutBatch tx history)
+ *
  * This is READ-ONLY. It never writes to any of the audited tables. It
  * only writes its findings to `LedgerReconciliationReport`.
  *
@@ -86,12 +93,14 @@ export type Finding = {
     | "SETTLEMENT_MISSING_INVOICE_PAID"
     | "PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT"
     | "ACTIVE_SEAT_COUNT_DRIFT"
-    | "PAYMENT_LEG_SUM_MISMATCH";
+    | "PAYMENT_LEG_SUM_MISMATCH"
+    | "ORG_PAYOUT_TOTAL_MISMATCH";
   organizationId?: string;
   billingAccountId?: string;
   billingSubscriptionId?: string;
   invoiceId?: string;
   paymentId?: string;
+  payoutId?: string;
   programAssignmentId?: string;
   // For engagements-drift + seat-count findings the values are integer
   // counts, not paise. The shared field name keeps the report row compact
@@ -115,6 +124,7 @@ export type ReconcileReport = {
     assignmentsChecked: number;
     subscriptionsChecked: number;
     paymentsChecked: number;
+    payoutsChecked: number;
     discrepanciesCount: number;
   };
   findings: Finding[];
@@ -341,6 +351,45 @@ export async function runReconcileLedgers(
     }
   }
 
+  // --- (G): per OrganizationPayout total vs claimed earnings ---
+  // The createOrgPayoutBatch tx claims READY earnings, computes totals,
+  // and writes them to the payout in one go. If anything ever diverges
+  // (manual SQL, partial migration, future code changes) this catches
+  // the drift before the next bank transfer is initiated.
+  const payouts = await prisma.organizationPayout.findMany({
+    where: opts.organizationId
+      ? { organizationId: opts.organizationId }
+      : undefined,
+    select: {
+      id: true,
+      organizationId: true,
+      netPayoutPaise: true,
+      earnings: {
+        select: { orgSharePaise: true, refundedAmountPaise: true },
+      },
+    },
+  });
+  for (const p of payouts) {
+    const expected = p.earnings.reduce(
+      (acc, e) => acc + e.orgSharePaise - e.refundedAmountPaise,
+      0,
+    );
+    if (expected !== p.netPayoutPaise) {
+      findings.push({
+        kind: "ORG_PAYOUT_TOTAL_MISMATCH",
+        organizationId: p.organizationId,
+        payoutId: p.id,
+        expectedPaise: expected,
+        actualPaise: p.netPayoutPaise,
+        deltaPaise: p.netPayoutPaise - expected,
+        details: {
+          earningsCount: p.earnings.length,
+          note: "OrganizationPayout.netPayoutPaise diverges from sum(orgShare - refunds) of attached earnings.",
+        },
+      });
+    }
+  }
+
   // --- (F): per BillingSubscription activeSeatCount drift ---
   // activeSeatCount is denormalized from ProgramAssignment count for
   // billing-cron read efficiency (the invoice cron must compute
@@ -399,6 +448,7 @@ export async function runReconcileLedgers(
     assignmentsChecked: liveAssignments.length,
     subscriptionsChecked: subscriptions.length,
     paymentsChecked: paymentsWithOrgLegs.length,
+    payoutsChecked: payouts.length,
     discrepanciesCount: findings.length,
   };
 

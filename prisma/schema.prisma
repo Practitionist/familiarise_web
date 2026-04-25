@@ -1204,6 +1204,13 @@ model OrganizationPayout {
   failureReason   String?
   processedAt     DateTime?
 
+  /// Cron-driven duplicate-guard key. The weekly batch cron derives a
+  /// deterministic key from (organizationId, periodStart) so a retried
+  /// invocation never creates a second OrganizationPayout for the same
+  /// window. Manual / route-driven payouts leave this null. Unique when
+  /// present so two cron runs cannot both insert the same key.
+  idempotencyKey  String?       @unique
+
   earnings OrganizationEarnings[]
 
   createdAt DateTime @default(now())

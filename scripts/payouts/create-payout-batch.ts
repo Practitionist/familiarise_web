@@ -15,8 +15,13 @@
  */
 
 import { EarningStatus, PayoutStatus, PayoutMethod } from "@prisma/client";
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 import prisma from "@/lib/prisma";
+import {
+  createOrgPayoutBatch,
+  PayoutLockError,
+  PayoutValidationError,
+} from "@/lib/payments/payouts/org-payout-service";
 
 // Configuration
 const MINIMUM_PAYOUT_AMOUNT = 50000; // ₹500 in paise
@@ -248,6 +253,106 @@ export async function createPayoutBatch(
 }
 
 /**
+ * Org-side payout batch creation (#713-2 / #700 LED-4).
+ *
+ * Walks every canHost org with READY OrganizationEarnings older than the
+ * cycle window and calls the org-payout-service to roll them into one
+ * OrganizationPayout per org. Idempotent via a SHA-256-derived key from
+ * (orgId, periodStart) — re-running the cron in the same window is a
+ * no-op. Errors against a single org do not abort the rest of the run.
+ *
+ * Period semantics: the cron is weekly-Monday; the natural window is
+ * "everything in the prior 7 days". Callers may pass an explicit
+ * (periodStart, periodEnd); default is now()-7d → now().
+ */
+export interface OrgBatchResult {
+  success: boolean;
+  orgsScanned: number;
+  payoutsCreated: number;
+  payoutsAlreadyExisted: number;
+  totalAmount: number;
+  skippedNotEligible: number;
+  errors: string[];
+}
+
+export async function createOrgPayoutBatches(opts?: {
+  periodStart?: Date;
+  periodEnd?: Date;
+}): Promise<OrgBatchResult> {
+  const periodEnd = opts?.periodEnd ?? new Date();
+  const periodStart =
+    opts?.periodStart ??
+    new Date(periodEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+  const result: OrgBatchResult = {
+    success: false,
+    orgsScanned: 0,
+    payoutsCreated: 0,
+    payoutsAlreadyExisted: 0,
+    totalAmount: 0,
+    skippedNotEligible: 0,
+    errors: [],
+  };
+
+  // Eligible = canHost orgs with at least one unbatched READY earning in
+  // the window. groupBy is cheaper than scanning every canHost org and
+  // probing each.
+  const eligible = await prisma.organizationEarnings.groupBy({
+    by: ["organizationId"],
+    where: {
+      status: EarningStatus.READY,
+      orgPayoutId: null,
+      createdAt: { gte: periodStart, lt: periodEnd },
+    },
+    _count: true,
+  });
+  result.orgsScanned = eligible.length;
+
+  for (const row of eligible) {
+    const orgId = row.organizationId;
+    // Deterministic per-(org, periodStart) key — re-running the cron in
+    // the same window is a no-op via the unique constraint.
+    const idempotencyKey = createHash("sha256")
+      .update(`${orgId}:${periodStart.toISOString()}`)
+      .digest("hex");
+
+    try {
+      const out = await createOrgPayoutBatch(orgId, periodStart, periodEnd, {
+        idempotencyKey,
+        notes: `Weekly cron batch ${periodStart.toISOString()} → ${periodEnd.toISOString()}`,
+      });
+      if (out.alreadyExisted) {
+        result.payoutsAlreadyExisted++;
+      } else {
+        result.payoutsCreated++;
+        result.totalAmount += out.amountPaise;
+      }
+    } catch (err) {
+      if (err instanceof PayoutLockError) {
+        // Another worker holds the lock; safe to skip — they'll
+        // produce the same payout we would have.
+        result.errors.push(`${orgId}: payout lock held; skipped`);
+        continue;
+      }
+      if (err instanceof PayoutValidationError) {
+        // 4xx semantics — eligibility check failed (no account, refunds
+        // exceed earnings, etc.). Not an error worth aborting the run.
+        result.skippedNotEligible++;
+        result.errors.push(`${orgId}: ${err.message}`);
+        continue;
+      }
+      // Anything else is a real error; record but continue with the
+      // remaining orgs.
+      const message = err instanceof Error ? err.message : String(err);
+      result.errors.push(`${orgId}: ${message}`);
+    }
+  }
+
+  result.success = true;
+  return result;
+}
+
+/**
  * Get statistics about pending payouts
  */
 export async function getPayoutStats(): Promise<{
@@ -312,6 +417,31 @@ export async function runBatchCreationTask(): Promise<BatchResult> {
 
     // Create batch
     const result = await createPayoutBatch();
+
+    // Org-side batches: independent pass for canHost orgs. Errors on
+    // either side don't abort the other — the consultant flow is the
+    // primary v1 path and must keep running even if the org pipeline
+    // surfaces an issue.
+    try {
+      const orgBatch = await createOrgPayoutBatches();
+      console.log(`\n🏢 Org Payout Batch:`);
+      console.log(`   Orgs scanned: ${orgBatch.orgsScanned}`);
+      console.log(`   Created: ${orgBatch.payoutsCreated}`);
+      console.log(`   Already existed (idempotent): ${orgBatch.payoutsAlreadyExisted}`);
+      console.log(`   Skipped (ineligible): ${orgBatch.skippedNotEligible}`);
+      console.log(
+        `   Total amount: ₹${(orgBatch.totalAmount / 100).toFixed(2)}`,
+      );
+      if (orgBatch.errors.length > 0) {
+        console.warn(`   ⚠️ Org batch issues (non-fatal):`);
+        orgBatch.errors.forEach((e) => console.warn(`      - ${e}`));
+      }
+    } catch (err) {
+      console.error(
+        "❌ Org payout batch creation threw — consultant batch was unaffected:",
+        err,
+      );
+    }
 
     // Get post-batch stats
     const postStats = await getPayoutStats();
