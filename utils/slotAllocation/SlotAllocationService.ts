@@ -1524,10 +1524,7 @@ export class SlotAllocationService {
     const priceAtBookingPaise = existingUtil ? 0 : orgPayment.amount;
 
     try {
-      // recordBookingUtilization's signature wants Prisma.TransactionClient;
-      // PrismaTransaction is structurally that minus $transaction (which
-      // the helper never calls). Safe upcast.
-      await recordBookingUtilization(tx as unknown as Prisma.TransactionClient, {
+      await recordBookingUtilization(tx, {
         programAssignmentId: assignment.id,
         paymentId: orgPayment.id,
         engagementsConsumed: newEngagements,

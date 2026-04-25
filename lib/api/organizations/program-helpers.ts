@@ -30,6 +30,20 @@
 
 import type { Prisma, PrismaClient, ProgramAssignment } from "@prisma/client";
 
+/**
+ * Narrowed transaction type for the cap-debit helpers. Structurally
+ * identical to `Prisma.TransactionClient` minus the lifecycle methods
+ * that aren't usable inside an active transaction anyway. TypeScript's
+ * width-subtyping accepts both `Prisma.TransactionClient` and the
+ * narrower `PrismaTransaction` defined in `utils/slotAllocation/types.ts`
+ * — so callers from either checkout.ts or SlotAllocationService pass
+ * without casts.
+ */
+export type CapTx = Omit<
+  Prisma.TransactionClient,
+  "$connect" | "$disconnect" | "$on" | "$transaction" | "$use"
+>;
+
 export class ProgramAssignmentLimitError extends Error {
   constructor(public programId: string, public membershipId: string) {
     super(
@@ -67,7 +81,7 @@ export async function resolveActiveAssignment(
  * idempotency.
  */
 export async function claimProgramAssignment(
-  tx: Prisma.TransactionClient,
+  tx: CapTx,
   params: {
     programId: string;
     membershipId: string;
@@ -119,7 +133,7 @@ export async function claimProgramAssignment(
  * if cap hit and overageBehavior=BLOCK.
  */
 export async function recordBookingUtilization(
-  tx: Prisma.TransactionClient,
+  tx: CapTx,
   params: {
     programAssignmentId: string;
     paymentId: string;
@@ -245,7 +259,7 @@ export async function recordBookingUtilization(
  * is append-only for audit).
  */
 export async function reverseBookingUtilization(
-  tx: Prisma.TransactionClient,
+  tx: CapTx,
   params: { paymentId: string; reason?: string },
 ): Promise<{ reversed: boolean }> {
   // Restore engagements via a reversal LEDGER ENTRY, not by deleting the
