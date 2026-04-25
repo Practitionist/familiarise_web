@@ -42,6 +42,7 @@ import { randomBytes } from "crypto";
 import { Prisma } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { AUDIT_ACTIONS } from "../../lib/enterprise/audit-actions";
+import { BILLABLE_ORG_STATUSES } from "../../lib/enterprise/org-status";
 
 export interface ConsolidatedInvoiceRollupResult {
   success: boolean;
@@ -96,7 +97,7 @@ export async function runConsolidatedInvoiceRollup(): Promise<ConsolidatedInvoic
     where: {
       depth: 0,
       canSponsor: true,
-      status: "ACTIVE",
+      status: { in: BILLABLE_ORG_STATUSES },
       children: { some: {} },
     },
     select: {

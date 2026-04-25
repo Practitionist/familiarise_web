@@ -39,6 +39,15 @@
  *      ledger; drift means a partial-rollback bug or a manual SQL edit
  *      slipped past the atomic recordBookingUtilization() write)
  *
+ *   F. For every BillingSubscription:
+ *      billingSubscription.activeSeatCount ===
+ *        count(active LICENSED_SEAT ProgramAssignment for that contract
+ *              where periodEnd >= now)
+ *      (the per-seat invoice line item depends on this counter; before
+ *      issue #699 ENT-1 it had no production writer, so drift is the
+ *      historical default. Run the backfill SQL migration first, then
+ *      this invariant will hold.)
+ *
  * This is READ-ONLY. It never writes to any of the audited tables. It
  * only writes its findings to `LedgerReconciliationReport`.
  *
@@ -68,15 +77,17 @@ export type Finding = {
     | "FUNDING_LEDGER_MISSING"
     | "SETTLEMENT_MISSING_INVOICE_ISSUED"
     | "SETTLEMENT_MISSING_INVOICE_PAID"
-    | "PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT";
+    | "PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT"
+    | "ACTIVE_SEAT_COUNT_DRIFT";
   organizationId?: string;
   billingAccountId?: string;
+  billingSubscriptionId?: string;
   invoiceId?: string;
   programAssignmentId?: string;
-  // For engagements-drift findings the values are engagement counts,
-  // not paise. The shared field name keeps the report row compact at
-  // the cost of a small abuse of the term — it's documented on the
-  // PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT branch only.
+  // For engagements-drift + seat-count findings the values are integer
+  // counts, not paise. The shared field name keeps the report row compact
+  // at the cost of a small abuse of the term — units are documented in
+  // each finding's `details.unit`.
   expectedPaise: number;
   actualPaise: number;
   deltaPaise: number;
@@ -93,6 +104,7 @@ export type ReconcileReport = {
     orgsChecked: number;
     accountsChecked: number;
     assignmentsChecked: number;
+    subscriptionsChecked: number;
     discrepanciesCount: number;
   };
   findings: Finding[];
@@ -281,6 +293,55 @@ export async function runReconcileLedgers(
     }
   }
 
+  // --- (F): per BillingSubscription activeSeatCount drift ---
+  // activeSeatCount is denormalized from ProgramAssignment count for
+  // billing-cron read efficiency (the invoice cron must compute
+  // line-items in O(1) lookups across thousands of subs). It is written
+  // by adjustActiveSeatCount() in lib/api/organizations/seat-count.ts on
+  // assignment create/delete. Drift means a missed write or manual SQL.
+  // We only count assignments whose program is currently ACTIVE — paused
+  // / archived programs don't contribute to billable seats.
+  const subscriptions = await prisma.billingSubscription.findMany({
+    where: opts.organizationId
+      ? { contract: { organizationId: opts.organizationId } }
+      : undefined,
+    select: {
+      id: true,
+      activeSeatCount: true,
+      contractId: true,
+      contract: {
+        select: { organizationId: true },
+      },
+    },
+  });
+
+  for (const sub of subscriptions) {
+    const expected = await prisma.programAssignment.count({
+      where: {
+        periodEnd: { gte: now },
+        program: {
+          contractId: sub.contractId,
+          type: "LICENSED_SEAT",
+          status: "ACTIVE",
+        },
+      },
+    });
+    if (expected !== sub.activeSeatCount) {
+      findings.push({
+        kind: "ACTIVE_SEAT_COUNT_DRIFT",
+        organizationId: sub.contract.organizationId,
+        billingSubscriptionId: sub.id,
+        expectedPaise: expected,
+        actualPaise: sub.activeSeatCount,
+        deltaPaise: sub.activeSeatCount - expected,
+        details: {
+          unit: "seats",
+          note: "BillingSubscription.activeSeatCount disagrees with the count of in-period LICENSED_SEAT ProgramAssignments. Re-run the backfill migration if this reflects historical drift.",
+        },
+      });
+    }
+  }
+
   const durationMs = Date.now() - startedAt;
   const ok = findings.length === 0;
 
@@ -288,6 +349,7 @@ export async function runReconcileLedgers(
     orgsChecked: organizations.length,
     accountsChecked: accounts.length,
     assignmentsChecked: liveAssignments.length,
+    subscriptionsChecked: subscriptions.length,
     discrepanciesCount: findings.length,
   };
 

@@ -159,7 +159,7 @@ export async function POST(
             actorMembershipId: access.member.id,
             category: "MEMBER",
             action: existing
-              ? "INVITE_RESENT"
+              ? AUDIT_ACTIONS.MEMBER.INVITE_RESENT
               : AUDIT_ACTIONS.MEMBER.INVITE_SENT,
             description: `${existing ? "Re-sent" : "Sent"} invite to ${email} as ${role}`,
             details: { email, role, expiresAt: expiresAt.toISOString() },

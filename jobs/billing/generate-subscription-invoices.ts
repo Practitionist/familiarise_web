@@ -29,6 +29,7 @@
 
 import prisma from "@/lib/prisma";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
+import { BILLABLE_ORG_STATUSES } from "@/lib/enterprise/org-status";
 import { Currency, OrgInvoiceStatus, Prisma } from "@prisma/client";
 
 export async function runGenerateSubscriptionInvoices(): Promise<{
@@ -38,7 +39,12 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
   const now = new Date();
 
   const dueSubs = await prisma.billingSubscription.findMany({
-    where: { nextInvoiceDate: { lte: now } },
+    where: {
+      nextInvoiceDate: { lte: now },
+      contract: {
+        organization: { status: { in: BILLABLE_ORG_STATUSES } },
+      },
+    },
     include: {
       contract: {
         include: {

@@ -12,6 +12,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { adjustActiveSeatCount } from "@/lib/api/organizations/seat-count";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
 const PatchBodySchema = z
@@ -189,6 +190,9 @@ export async function DELETE(
         );
       }
       await tx.programAssignment.delete({ where: { id: assignmentId } });
+      // For LICENSED_SEAT programs the seat is freed; for others this is
+      // a no-op and `adjustActiveSeatCount` returns applied:false.
+      await adjustActiveSeatCount(tx, { programId, delta: -1 });
       await tx.orgAuditLog.create({
         data: {
           organizationId: orgId,

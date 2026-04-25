@@ -16,6 +16,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { claimProgramAssignment } from "@/lib/api/organizations/program-helpers";
+import { adjustActiveSeatCount } from "@/lib/api/organizations/seat-count";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
 const CreateBodySchema = z.object({
@@ -138,12 +139,29 @@ export async function POST(
   }
 
   const assignment = await prisma.$transaction(async (tx) => {
+    // claimProgramAssignment is an upsert keyed on (programId, membershipId,
+    // periodStart). If the row already existed, the assignment was already
+    // counted on a prior call — we must not double-count seats. Cheaper to
+    // probe before the upsert than diff timestamps after.
+    const preexisting = await tx.programAssignment.findUnique({
+      where: {
+        programId_membershipId_periodStart: {
+          programId,
+          membershipId: body.membershipId,
+          periodStart: body.periodStart,
+        },
+      },
+      select: { id: true },
+    });
     const created = await claimProgramAssignment(tx, {
       programId,
       membershipId: body.membershipId,
       periodStart: body.periodStart,
       periodEnd: body.periodEnd,
     });
+    if (!preexisting) {
+      await adjustActiveSeatCount(tx, { programId, delta: +1 });
+    }
     await tx.orgAuditLog.create({
       data: {
         organizationId: orgId,

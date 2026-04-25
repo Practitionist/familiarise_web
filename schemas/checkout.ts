@@ -90,10 +90,13 @@ export const checkoutSchema = z
     fromWaitlist: z.string().optional(), // Waitlist ID if coming from waitlist flow
     useReferralCredits: z.boolean().optional(), // Apply available referral credits
     // Enterprise: optional org context. When set, the payment is tagged with
-    // organizationProfileId and billing is routed per the org's billingMode.
-    // TAG_ONLY → normal gateway, payment tagged for reporting.
-    // SEAT_PACK → credit deduction (Phase J).
-    // INVOICED_MONTHLY → invoice rollup (Phase K).
+    // organizationId and billing is routed per the BillingAccount's
+    // fundingSource (Arch-4 model):
+    //   PERSONAL  → normal gateway, payment tagged for reporting.
+    //   WALLET    → wallet debit (lib/api/organizations/wallet.ts).
+    //   LICENSE   → covered by an active LICENSED_SEAT ProgramAssignment.
+    //   INVOICE   → deferred billing; line item lands on next invoice.
+    //   PROJECT   → reserved for v2.
     organizationId: z.string().optional(),
   })
   .superRefine((data, ctx) => {

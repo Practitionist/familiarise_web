@@ -14,10 +14,12 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { MemberRoleSchema } from "@/lib/labels/org-labels";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { isOnboardingBlocked } from "@/lib/enterprise/org-status";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import { notifyOrgInviteAccepted } from "@/lib/novu/org-workflows";
 
@@ -57,13 +59,18 @@ export async function POST(req: NextRequest) {
   if (!invitation) {
     return NextResponse.json({ error: "Invitation not found" }, { status: 404 });
   }
-  if (invitation.email.toLowerCase() !== auth.session.user.email.toLowerCase()) {
+  // Closure-friendly non-null alias. TS doesn't carry the
+  // null-narrowed flow type into the inner `runAcceptTx` function
+  // declaration below; binding to a fresh const preserves the
+  // narrowed type for closure reads.
+  const inv = invitation;
+  if (inv.email.toLowerCase() !== auth.session.user.email.toLowerCase()) {
     return NextResponse.json(
       { error: "This invitation is not addressed to you" },
       { status: 403 },
     );
   }
-  if (invitation.expiresAt.getTime() < Date.now()) {
+  if (inv.expiresAt.getTime() < Date.now()) {
     return NextResponse.json(
       { error: "Invitation has expired" },
       { status: 410 },
@@ -72,10 +79,10 @@ export async function POST(req: NextRequest) {
 
   // Narrow the stored string to a MemberRole. BetterAuth's Invitation
   // table stores role as a free-form string, so validate before using.
-  const roleResult = MemberRoleSchema.safeParse(invitation.role);
+  const roleResult = MemberRoleSchema.safeParse(inv.role);
   if (!roleResult.success) {
     return NextResponse.json(
-      { error: `Unknown invitation role: ${invitation.role}` },
+      { error: `Unknown invitation role: ${inv.role}` },
       { status: 400 },
     );
   }
@@ -83,8 +90,76 @@ export async function POST(req: NextRequest) {
 
   const userId = auth.session.user.id;
 
-  try {
-    const result = await prisma.$transaction(async (tx) => {
+  // ENT-5: A second concurrent accept for the same (user, org) pair can
+  // race past the in-tx existence check and hit P2002 on Membership's
+  // (userId, organizationId) unique. Retry once: the second attempt will
+  // see the row created by the winner and fall into the alreadyMember
+  // idempotent branch. Bound the retry to keep this from masking real
+  // bugs.
+  const MAX_ATTEMPTS = 2;
+  let lastErr: unknown;
+  let result:
+    | Awaited<ReturnType<typeof runAcceptTx>>
+    | undefined;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      result = await runAcceptTx();
+      lastErr = undefined;
+      break;
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === "P2002" &&
+        attempt < MAX_ATTEMPTS
+      ) {
+        lastErr = err;
+        continue;
+      }
+      lastErr = err;
+      break;
+    }
+  }
+  if (!result) {
+    if (lastErr instanceof Error && "httpStatus" in lastErr) {
+      const status =
+        typeof lastErr.httpStatus === "number" ? lastErr.httpStatus : 500;
+      return NextResponse.json({ error: lastErr.message }, { status });
+    }
+    throw lastErr ?? new Error("Invitation accept failed for unknown reason");
+  }
+
+  // Side-effect: notify the org's operator roster that someone new
+  // joined. Skip when the caller was already a member — the "accept"
+  // button was just idempotent, nothing newsworthy happened.
+  if (!result.alreadyMember) {
+    const origin = new URL(req.url).origin;
+    notifyOrgInviteAccepted(result.organization.id, {
+      accepteeName: auth.session.user.name ?? auth.session.user.email,
+      accepteeEmail: auth.session.user.email,
+      orgName: result.organization.name,
+      role: result.membership.role,
+      dashboardUrl: `${origin}/dashboard/organization/${result.organization.id}/members`,
+    }).catch((err) =>
+      console.error("[notifyOrgInviteAccepted] failed:", err),
+    );
+  }
+
+  // Client contract (app/organizations/invite/[token]/page.tsx): expects
+  //   { organization: { id, name }, role?: string, alreadyMember?: boolean }
+  // so it can redirect to /dashboard/organization/:id/home after accept.
+  // Returning a bare `{ membership }` silently broke the redirect.
+  return NextResponse.json(
+    {
+      organization: result.organization,
+      role: result.membership.role,
+      alreadyMember: result.alreadyMember,
+      membership: result.membership,
+    },
+    { status: result.alreadyMember ? 200 : 201 },
+  );
+
+  async function runAcceptTx() {
+    return prisma.$transaction(async (tx) => {
       // Atomic claim — only the first concurrent accept wins. Follow-up
       // retries get count=0 and fall into the 409 branch below.
       const claim = await tx.invitation.updateMany({
@@ -98,14 +173,26 @@ export async function POST(req: NextRequest) {
         );
       }
 
+      // Re-fetch org status inside the tx so a SUSPENDED/DEACTIVATED org
+      // can't be onboarded into via a stale invite link. The pre-check
+      // outside the tx is not enough — an admin could suspend the org
+      // mid-flight between the email click and the POST.
       const org = await tx.organization.findUnique({
-        where: { id: invitation.organizationId },
-        select: { id: true, name: true },
+        where: { id: inv.organizationId },
+        select: { id: true, name: true, status: true },
       });
       if (!org) {
         throw Object.assign(
           new Error("Organization no longer exists"),
           { httpStatus: 404 },
+        );
+      }
+      if (isOnboardingBlocked(org.status)) {
+        throw Object.assign(
+          new Error(
+            `Organization is ${org.status.toLowerCase()}; cannot accept new members`,
+          ),
+          { httpStatus: 403 },
         );
       }
 
@@ -116,7 +203,7 @@ export async function POST(req: NextRequest) {
         where: {
           userId_organizationId: {
             userId,
-            organizationId: invitation.organizationId,
+            organizationId: inv.organizationId,
           },
         },
       });
@@ -189,7 +276,7 @@ export async function POST(req: NextRequest) {
       // BetterAuth's own adapter writes are done.
       const betterAuthMember = await tx.member.create({
         data: {
-          organizationId: invitation.organizationId,
+          organizationId: inv.organizationId,
           userId,
           // BetterAuth's Member.role is a free-form string; we write the
           // typed MemberRole value here so third-party tools that read
@@ -201,7 +288,7 @@ export async function POST(req: NextRequest) {
       const created = await tx.membership.create({
         data: {
           userId,
-          organizationId: invitation.organizationId,
+          organizationId: inv.organizationId,
           role: normalizedRole,
           status: "ACTIVE",
           consulteeProfileId,
@@ -212,54 +299,17 @@ export async function POST(req: NextRequest) {
 
       await tx.orgAuditLog.create({
         data: {
-          organizationId: invitation.organizationId,
+          organizationId: inv.organizationId,
           actorMembershipId: created.id,
           targetMembershipId: created.id,
           category: "MEMBER",
           action: AUDIT_ACTIONS.MEMBER.INVITE_ACCEPTED,
           description: `User ${userId} accepted invitation to join as ${normalizedRole}`,
-          details: { invitationId: invitation.id, role: normalizedRole },
+          details: { invitationId: inv.id, role: normalizedRole },
         },
       });
 
       return { membership: created, organization: org, alreadyMember: false };
     });
-
-    // Side-effect: notify the org's operator roster that someone new
-    // joined. Skip when the caller was already a member — the "accept"
-    // button was just idempotent, nothing newsworthy happened.
-    if (!result.alreadyMember) {
-      const origin = new URL(req.url).origin;
-      notifyOrgInviteAccepted(result.organization.id, {
-        accepteeName: auth.session.user.name ?? auth.session.user.email,
-        accepteeEmail: auth.session.user.email,
-        orgName: result.organization.name,
-        role: result.membership.role,
-        dashboardUrl: `${origin}/dashboard/organization/${result.organization.id}/members`,
-      }).catch((err) =>
-        console.error("[notifyOrgInviteAccepted] failed:", err),
-      );
-    }
-
-    // Client contract (app/organizations/invite/[token]/page.tsx): expects
-    //   { organization: { id, name }, role?: string, alreadyMember?: boolean }
-    // so it can redirect to /dashboard/organization/:id/home after accept.
-    // Returning a bare `{ membership }` silently broke the redirect.
-    return NextResponse.json(
-      {
-        organization: result.organization,
-        role: result.membership.role,
-        alreadyMember: result.alreadyMember,
-        membership: result.membership,
-      },
-      { status: result.alreadyMember ? 200 : 201 },
-    );
-  } catch (err) {
-    if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      return NextResponse.json({ error: err.message }, { status });
-    }
-    throw err;
   }
 }
