@@ -82,7 +82,6 @@ export async function GET() {
   try {
     const auth = await requirePrivilegedAuth();
     if (auth.error) return auth.error;
-    const session = auth.session;
 
     // Get recent execution stats for each job
     const recentExecutions = await prisma.systemJobExecution.groupBy({
