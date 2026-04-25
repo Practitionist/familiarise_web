@@ -258,10 +258,10 @@ async function seedWipro(learners: UserWithProfiles[], owner: UserWithProfiles) 
         create: {
           ratePerSeatPaise: 25_000 * 100, // ₹25K per seat/year
           cycle: BillingCycle.ANNUAL,
-          coveredSessionsPerCycle: 12,
+          coveredEngagementsPerCycle: 12, // 12 calendar occurrences per cycle
           overageBehavior: OverageBehavior.CHARGE_ORG,
           activeSeatCount: 0,
-          priceCapPerSessionPaise: 10_000 * 100, // ₹10K/session cap
+          priceCapPerEngagementPaise: 10_000 * 100, // ₹10K/engagement cap
         },
       },
     },
@@ -303,7 +303,7 @@ async function seedWipro(learners: UserWithProfiles[], owner: UserWithProfiles) 
         membershipId: membership.id,
         periodStart,
         periodEnd,
-        sessionsUsed: idx === 0 ? 3 : 1,
+        engagementsUsed: idx === 0 ? 3 : 1,
       },
     });
   }

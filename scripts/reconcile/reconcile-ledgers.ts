@@ -8,7 +8,7 @@
  *                             (its sum is the wallet invariant)
  *   3. SettlementLedgerEntry ← invoice issued / paid / payout events
  *   4. OrganizationInvoice  ← ISSUED / PAID / REFUNDED status machine
- *   5. ProgramAssignment    ← per-(member, cycle) sessionsUsed counter
+ *   5. ProgramAssignment    ← per-(member, cycle) engagementsUsed counter
  *
  * Invariants we check:
  *
@@ -34,7 +34,7 @@
  *      log the settlement row)
  *
  *   E. For every ACTIVE ProgramAssignment (periodEnd >= now):
- *      sum(usageLedgerEntry.sessionsConsumed) === programAssignment.sessionsUsed
+ *      sum(usageLedgerEntry.engagementsConsumed) === programAssignment.engagementsUsed
  *      (the denormalized counter must match the immutable consumption
  *      ledger; drift means a partial-rollback bug or a manual SQL edit
  *      slipped past the atomic recordBookingUtilization() write)
@@ -68,15 +68,15 @@ export type Finding = {
     | "FUNDING_LEDGER_MISSING"
     | "SETTLEMENT_MISSING_INVOICE_ISSUED"
     | "SETTLEMENT_MISSING_INVOICE_PAID"
-    | "PROGRAM_ASSIGNMENT_SESSIONS_DRIFT";
+    | "PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT";
   organizationId?: string;
   billingAccountId?: string;
   invoiceId?: string;
   programAssignmentId?: string;
-  // For sessions-drift findings the values are session counts, not
-  // paise. The shared field name keeps the report row compact at the
-  // cost of a small abuse of the term — it's documented on the
-  // PROGRAM_ASSIGNMENT_SESSIONS_DRIFT branch only.
+  // For engagements-drift findings the values are engagement counts,
+  // not paise. The shared field name keeps the report row compact at
+  // the cost of a small abuse of the term — it's documented on the
+  // PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT branch only.
   expectedPaise: number;
   actualPaise: number;
   deltaPaise: number;
@@ -230,17 +230,17 @@ export async function runReconcileLedgers(
     }
   }
 
-  // --- (E): per ProgramAssignment session-counter drift ---
-  // sessionsUsed is denormalized for query performance — checkout reads
-  // it on every booking to evaluate the per-cycle cap. It's incremented
-  // atomically inside recordBookingUtilization() in the same transaction
-  // that writes the UsageLedgerEntry, so under correct operation the two
-  // never drift. Drift here implies a partial-rollback bug, a manual
-  // SQL fix, or a missing-ledger-write code path. Scoped to ACTIVE
-  // assignments (periodEnd >= now()) — we don't re-check historical
-  // cycles every run. Reversed UsageLedgerEntry rows post a negative
-  // sessionsConsumed, so the SUM here naturally accounts for refunds
-  // without a separate filter.
+  // --- (E): per ProgramAssignment engagement-counter drift ---
+  // engagementsUsed is denormalized for query performance — checkout
+  // reads it on every booking to evaluate the per-cycle cap. It's
+  // incremented atomically inside recordBookingUtilization() in the
+  // same transaction that writes the UsageLedgerEntry, so under correct
+  // operation the two never drift. Drift here implies a
+  // partial-rollback bug, a manual SQL fix, or a missing-ledger-write
+  // code path. Scoped to ACTIVE assignments (periodEnd >= now()) — we
+  // don't re-check historical cycles every run. Reversed
+  // UsageLedgerEntry rows post a negative engagementsConsumed, so the
+  // SUM here naturally accounts for refunds without a separate filter.
   const now = new Date();
   const liveAssignments = await prisma.programAssignment.findMany({
     where: {
@@ -251,7 +251,7 @@ export async function runReconcileLedgers(
     },
     select: {
       id: true,
-      sessionsUsed: true,
+      engagementsUsed: true,
       program: { select: { contract: { select: { organizationId: true } } } },
     },
   });
@@ -259,23 +259,23 @@ export async function runReconcileLedgers(
   for (const a of liveAssignments) {
     const ledgerSum = await prisma.usageLedgerEntry.aggregate({
       where: { programAssignmentId: a.id },
-      _sum: { sessionsConsumed: true },
+      _sum: { engagementsConsumed: true },
     });
-    const ledgerTotal = ledgerSum._sum?.sessionsConsumed ?? 0;
-    if (ledgerTotal !== a.sessionsUsed) {
+    const ledgerTotal = ledgerSum._sum?.engagementsConsumed ?? 0;
+    if (ledgerTotal !== a.engagementsUsed) {
       findings.push({
-        kind: "PROGRAM_ASSIGNMENT_SESSIONS_DRIFT",
+        kind: "PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT",
         programAssignmentId: a.id,
         organizationId: a.program.contract.organizationId,
-        // The shared expected/actual fields hold session counts here,
-        // not paise. The auditor UI keys on `kind` to render units
-        // correctly.
+        // The shared expected/actual fields hold engagement counts
+        // here, not paise. The auditor UI keys on `kind` to render
+        // units correctly.
         expectedPaise: ledgerTotal,
-        actualPaise: a.sessionsUsed,
-        deltaPaise: a.sessionsUsed - ledgerTotal,
+        actualPaise: a.engagementsUsed,
+        deltaPaise: a.engagementsUsed - ledgerTotal,
         details: {
-          unit: "sessions",
-          note: "ProgramAssignment.sessionsUsed disagrees with sum(UsageLedgerEntry.sessionsConsumed). Investigate via the assignment's UsageLedgerEntry trail and the recordBookingUtilization() write path.",
+          unit: "engagements",
+          note: "ProgramAssignment.engagementsUsed disagrees with sum(UsageLedgerEntry.engagementsConsumed). Investigate via the assignment's UsageLedgerEntry trail and the recordBookingUtilization() write path.",
         },
       });
     }

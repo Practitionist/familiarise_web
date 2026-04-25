@@ -30,9 +30,9 @@ const OverageBehaviorSchema = z.enum(["BLOCK", "CHARGE_MEMBER", "CHARGE_ORG"]);
 const LicensedSeatConfigSchema = z.object({
   ratePerSeatPaise: z.coerce.number().int().min(0),
   cycle: BillingCycleSchema,
-  coveredSessionsPerCycle: z.coerce.number().int().min(0).nullable().optional(),
+  coveredEngagementsPerCycle: z.coerce.number().int().min(0).nullable().optional(),
   overageBehavior: OverageBehaviorSchema.default("BLOCK"),
-  priceCapPerSessionPaise: z.coerce.number().int().min(0).nullable().optional(),
+  priceCapPerEngagementPaise: z.coerce.number().int().min(0).nullable().optional(),
 });
 
 // 1 credit = ₹1 = 100 paise (fixed; see schema.prisma). The pool resets
@@ -125,10 +125,16 @@ export async function POST(
 
   // Contract ownership check — same pattern as BillingAccount in
   // /contracts: reject a stolen id from another tenant before we hit
-  // the FK layer with a 500.
+  // the FK layer with a 500. We also pull the parent's billingAccount
+  // fundingSource so we can reject the LICENSE + CREDIT_POOL combo
+  // before it ever hits the DB (see the bogus-combo guard below).
   const contract = await prisma.contract.findUnique({
     where: { id: body.contractId },
-    select: { organizationId: true, status: true },
+    select: {
+      organizationId: true,
+      status: true,
+      billingAccount: { select: { fundingSource: true } },
+    },
   });
   if (!contract || contract.organizationId !== orgId) {
     return NextResponse.json(
@@ -140,6 +146,26 @@ export async function POST(
     return NextResponse.json(
       { error: `Cannot attach a program to a ${contract.status} contract` },
       { status: 409 },
+    );
+  }
+
+  // LICENSE + CREDIT_POOL is bogus: a flat-fee license has already paid
+  // for unmetered usage, so a per-cycle credit cap on top of it doesn't
+  // express a real customer arrangement. The wizard already hides this
+  // option; this server-side guard closes the API loophole so a curious
+  // client can't construct it directly. See `prompts/a.txt` rows 68 +
+  // 73 + 120 for the original analysis.
+  if (
+    body.type === "CREDIT_POOL" &&
+    contract.billingAccount?.fundingSource === "LICENSE"
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "CREDIT_POOL programs are not allowed under a LICENSE-funded contract. License is a flat fee for unmetered usage; pair it with a LICENSED_SEAT program (coveredEngagementsPerCycle=null) instead.",
+        code: "BOGUS_LICENSE_CREDIT_POOL",
+      },
+      { status: 400 },
     );
   }
 
@@ -156,11 +182,11 @@ export async function POST(
             create: {
               ratePerSeatPaise: body.licensedSeatConfig.ratePerSeatPaise,
               cycle: body.licensedSeatConfig.cycle,
-              coveredSessionsPerCycle:
-                body.licensedSeatConfig.coveredSessionsPerCycle ?? null,
+              coveredEngagementsPerCycle:
+                body.licensedSeatConfig.coveredEngagementsPerCycle ?? null,
               overageBehavior: body.licensedSeatConfig.overageBehavior,
-              priceCapPerSessionPaise:
-                body.licensedSeatConfig.priceCapPerSessionPaise ?? null,
+              priceCapPerEngagementPaise:
+                body.licensedSeatConfig.priceCapPerEngagementPaise ?? null,
             },
           },
         }),

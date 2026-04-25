@@ -185,7 +185,7 @@ export async function notifyOrgPayoutCompleted(
 }
 
 /**
- * Fires when a `ProgramAssignment` hits its `coveredSessionsPerCycle`
+ * Fires when a `ProgramAssignment` hits its `coveredEngagementsPerCycle`
  * cap with `overageBehavior = BLOCK`. Delivers in-app to the assignee
  * (they need to know their booking was refused) + OWNER + MAINTAINER
  * (they need to decide whether to upsize the program).

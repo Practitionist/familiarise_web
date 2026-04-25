@@ -917,14 +917,24 @@ model Program {
 }
 
 model LicensedSeatConfig {
-  programId               String          @id
-  program                 Program         @relation(fields: [programId], references: [id], onDelete: Cascade)
-  ratePerSeatPaise        Int
-  cycle                   BillingCycle
-  coveredSessionsPerCycle Int? // null = unlimited (replaces PREPAID_UNLIMITED)
-  overageBehavior         OverageBehavior @default(BLOCK)
-  activeSeatCount         Int             @default(0)
-  priceCapPerSessionPaise Int?
+  programId                  String          @id
+  program                    Program         @relation(fields: [programId], references: [id], onDelete: Cascade)
+  ratePerSeatPaise           Int
+  cycle                      BillingCycle
+  /// Per-assignment cap, counted in *engagements* — one engagement is one
+  /// calendar occurrence (one Appointment row), regardless of duration.
+  /// A 4-hour CONSULTATION = 1 engagement; a 12-call SUBSCRIPTION burns
+  /// 12 over the cycle (one per consultant allocation); an 8-day CLASS
+  /// burns 8 at enrolment. Per-engagement *price* is governed by
+  /// `priceCapPerEngagementPaise` below — this field controls *quantity*.
+  /// `null` means unlimited — used for LICENSE-funded contracts where
+  /// the flat fee already pays for unmetered usage.
+  /// Term chosen to avoid collision with BetterAuth `Session` and Stream
+  /// `MeetingSession`.
+  coveredEngagementsPerCycle Int?
+  overageBehavior            OverageBehavior @default(BLOCK)
+  activeSeatCount            Int             @default(0)
+  priceCapPerEngagementPaise Int?
 }
 
 // 1 credit = ₹1 = 100 paise. Fixed; no per-pool override. Per-tier
@@ -936,6 +946,15 @@ model LicensedSeatConfig {
 // the soft cap (with overage routing) otherwise. `minimumCreditsPerPeriod`
 // is an optional commitment minimum — rolls into the next invoice if
 // the org didn't consume it.
+//
+// Bogus combo: CREDIT_POOL programs under a LICENSE-funded contract
+// don't model a real customer arrangement (a flat-fee license already
+// pays for unmetered usage; a per-cycle credit cap on top is just
+// internal accounting noise). The wizard hides this option; the API
+// rejects it with `BOGUS_LICENSE_CREDIT_POOL` (see
+// `app/api/organizations/[orgId]/programs/route.ts`). Schema permits
+// it because cross-table CHECK constraints are awkward in Postgres
+// and the API+UI layer is tight enough.
 model CreditPoolConfig {
   programId               String       @id
   program                 Program      @relation(fields: [programId], references: [id], onDelete: Cascade)
@@ -954,8 +973,12 @@ model ProgramAssignment {
   periodStart DateTime
   periodEnd   DateTime
 
-  sessionsUsed Int @default(0)
-  overageCount Int @default(0)
+  /// Engagements consumed in the current cycle (1 per Appointment).
+  /// Atomically incremented by recordBookingUtilization, decremented by
+  /// reverseBookingUtilization on refund. Reconcile cron asserts this
+  /// equals sum(UsageLedgerEntry.engagementsConsumed) for the period.
+  engagementsUsed Int @default(0)
+  overageCount    Int @default(0)
 
   utilizations BookingUtilization[]
 
@@ -972,7 +995,18 @@ model BookingUtilization {
   programAssignment   ProgramAssignment @relation(fields: [programAssignmentId], references: [id], onDelete: Cascade)
   paymentId           String            @unique
   payment             Payment           @relation("PaymentBookingUtilization", fields: [paymentId], references: [id], onDelete: Cascade)
-  sessionsConsumed    Int               @default(1)
+  /// Engagements consumed by this payment. One engagement = one
+  /// Appointment row (one calendar occurrence), regardless of duration.
+  /// Recorded:
+  ///   - CONSULTATION/WEBINAR: at checkout, always 1 (one Appointment).
+  ///   - CLASS: at checkout, equal to the count of distinct Appointments
+  ///     the learner is being enrolled in (slots are pre-allocated by
+  ///     the consultant; all appointments are known at enrolment time).
+  ///   - SUBSCRIPTION: at slot-allocation time, 1 per consultant
+  ///     allocation — see SlotAllocationService.createAppointments. The
+  ///     subscription checkout itself does NOT write a utilization row.
+  /// Reversal is the negative of this value via reverseBookingUtilization.
+  engagementsConsumed Int               @default(1)
   priceAtBookingPaise Int
   wasOverage          Boolean           @default(false)
 
@@ -1451,7 +1485,10 @@ model UsageLedgerEntry {
   programAssignmentId String?
   membershipId        String
   paymentId           String?
-  sessionsConsumed    Int
+  /// Signed engagement count (negative on reversal entries). Sum across
+  /// the period must equal ProgramAssignment.engagementsUsed — the
+  /// reconcile cron asserts this invariant nightly.
+  engagementsConsumed Int
   minutesConsumed     Int?
   priceAtBookingPaise Int
   wasOverage          Boolean @default(false)

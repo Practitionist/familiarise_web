@@ -66,7 +66,7 @@ interface ProgramListItem {
   licensedSeatConfig: {
     ratePerSeatPaise: number;
     cycle: BillingCycle;
-    coveredSessionsPerCycle: number | null;
+    coveredEngagementsPerCycle: number | null;
     overageBehavior: OverageBehavior;
     activeSeatCount: number;
   } | null;
@@ -144,7 +144,7 @@ type CreateProgramBody =
       licensedSeatConfig: {
         ratePerSeatPaise: number;
         cycle: BillingCycle;
-        coveredSessionsPerCycle: number | null;
+        coveredEngagementsPerCycle: number | null;
         overageBehavior: OverageBehavior;
       };
     }
@@ -184,7 +184,7 @@ const PROGRAM_TYPE_META: Record<
   LICENSED_SEAT: {
     label: "Licensed seat",
     description:
-      "Per-seat licence. Each seat covers N sessions per cycle (or unlimited).",
+      "Per-seat licence. Each seat covers N engagements (calendar occurrences) per cycle, or unlimited.",
     available: true,
   },
   CREDIT_POOL: {
@@ -237,7 +237,7 @@ function CreateProgramDialog({
   const [name, setName] = useState("");
   const [ratePerSeatRupees, setRatePerSeatRupees] = useState("5000");
   const [cycle, setCycle] = useState<BillingCycle>("MONTHLY");
-  const [coveredSessionsPerCycle, setCoveredSessionsPerCycle] = useState("");
+  const [coveredEngagementsPerCycle, setCoveredEngagementsPerCycle] = useState("");
   const [overageBehavior, setOverageBehavior] =
     useState<OverageBehavior>("BLOCK");
   // 1 credit = ₹1; per-cycle cap is the user-facing input, paise conversion
@@ -251,7 +251,7 @@ function CreateProgramDialog({
     setName("");
     setRatePerSeatRupees("5000");
     setCycle("MONTHLY");
-    setCoveredSessionsPerCycle("");
+    setCoveredEngagementsPerCycle("");
     setOverageBehavior("BLOCK");
     setCreditsPerCycle("1000");
     setError(null);
@@ -284,11 +284,11 @@ function CreateProgramDialog({
         return;
       }
       const cap =
-        coveredSessionsPerCycle.trim() === ""
+        coveredEngagementsPerCycle.trim() === ""
           ? null
-          : parseInt(coveredSessionsPerCycle, 10);
+          : parseInt(coveredEngagementsPerCycle, 10);
       if (cap !== null && (!Number.isFinite(cap) || cap < 1)) {
-        setError("Covered sessions per cycle must be blank or a positive integer.");
+        setError("Covered engagements per cycle must be blank or a positive integer.");
         return;
       }
       createMutation.mutate({
@@ -298,7 +298,7 @@ function CreateProgramDialog({
         licensedSeatConfig: {
           ratePerSeatPaise: ratePaise,
           cycle,
-          coveredSessionsPerCycle: cap,
+          coveredEngagementsPerCycle: cap,
           overageBehavior,
         },
       });
@@ -442,21 +442,28 @@ function CreateProgramDialog({
                 </div>
               </div>
 
-              {/* Sessions per cycle — full width so the hint + input
+              {/* Engagements per cycle — full width so the hint + input
                   breathe instead of wrapping into a 2-col cell. */}
               <div className="space-y-2">
-                <Label htmlFor="covered-sessions">Sessions per cycle</Label>
+                <Label htmlFor="covered-engagements">
+                  Engagements per cycle
+                </Label>
                 <Input
-                  id="covered-sessions"
+                  id="covered-engagements"
                   type="number"
                   min={1}
-                  value={coveredSessionsPerCycle}
-                  onChange={(e) => setCoveredSessionsPerCycle(e.target.value)}
-                  placeholder="e.g. 4 — leave blank for unlimited"
+                  value={coveredEngagementsPerCycle}
+                  onChange={(e) =>
+                    setCoveredEngagementsPerCycle(e.target.value)
+                  }
+                  placeholder="e.g. 12 — leave blank for unlimited"
                 />
                 <p className="text-xs text-zinc-500">
-                  How many sessions each seat covers before overage kicks in.
-                  Leave blank for unlimited (flat licence).
+                  An engagement is one calendar occurrence — a 1:1 call, a
+                  webinar, or one class day. A 4-hour mentoring call counts
+                  as 1; a 12-call subscription counts as 12 over the cycle;
+                  an 8-week class counts as 8. Per-engagement price cap is
+                  separate. Leave blank for unlimited (flat licence).
                 </p>
               </div>
 
@@ -662,9 +669,10 @@ export default function OrgProgramsPage({
                             )}{" "}
                             / seat /{" "}
                             {p.licensedSeatConfig.cycle.toLowerCase()} ·{" "}
-                            {p.licensedSeatConfig.coveredSessionsPerCycle ??
+                            {p.licensedSeatConfig.coveredEngagementsPerCycle ??
                               "unlimited"}{" "}
-                            sessions · {p.licensedSeatConfig.overageBehavior}
+                            engagements ·{" "}
+                            {p.licensedSeatConfig.overageBehavior}
                           </>
                         ) : p.type === "CREDIT_POOL" && p.creditPoolConfig ? (
                           <>

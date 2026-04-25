@@ -5,7 +5,7 @@
  *
  * DELETE is narrow: an assignment with recorded BookingUtilizations
  * cannot be deleted — the usage ledger would lose its anchor. Instead,
- * PATCH sessionsUsed / overageCount or let the periodEnd pass naturally.
+ * PATCH engagementsUsed / overageCount or let the periodEnd pass naturally.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
