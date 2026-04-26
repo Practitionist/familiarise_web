@@ -202,6 +202,27 @@ workflow — which used to live on `Membership.applicationNote /
 appliedAt / approvedAt / approvedBy` — was removed alongside this
 rule; those columns are gone (see `06-expert-lifecycle.md`).
 
+## Per-role landing in `/dashboard/organization/[orgId]`
+
+The bare org route is no longer a one-way bounce-to-personal for consumer
+roles. The entry-point router at
+`app/dashboard/organization/[orgId]/page.tsx` chooses the destination
+from the role:
+
+| Role | Lands on | Why |
+|------|----------|-----|
+| `OWNER` / `MAINTAINER` / `MANAGER` / `SUPPORT` | `/home` | Operator overview (analytics, members, billing). |
+| `LEARNER` | `/my-program` | Per-cycle ProgramAssignment + utilization. The only in-org consumer surface for sponsored bookings. |
+| `EXPERT` | `/my-arrangement` | Membership.payoutRecipient + RateCard split + recent earnings on org-tagged payments. |
+| no membership | personal dashboard fallback (`resolvePersonalDashboardHref` → `/dashboard`) | Stranger to this org — bounce out entirely. |
+
+Both `/my-program` and `/my-arrangement` are read-only in v1. A LEARNER
+cannot self-assign to a Program; an EXPERT cannot flip their own
+`payoutRecipient`. Mutations remain on operator pages. The "Personal
+Dashboard" footer chip on the sidebar (`resolvePersonalDashboardHref`)
+stays so consumers can hop back to their personal surface without
+hunting for the URL.
+
 ## Related docs
 
 - `05-organization-lifecycle.md` — what a membership looks like in

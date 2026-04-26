@@ -10,15 +10,28 @@ thin `requireOrgAccess` check plus role-driven conditional rendering.
 ```
 /dashboard/organization                        → switcher + "create org" CTA
 /dashboard/organization/create                 → org-creation wizard
-/dashboard/organization/[orgId]                → operator-aware redirect:
-                                                  MANAGER+ → /home;
-                                                  sub-MANAGER (LEARNER / EXPERT /
-                                                  SUPPORT) → personal dashboard
-                                                  via resolvePersonalDashboardHref
+/dashboard/organization/[orgId]                → role-aware redirect:
+                                                  MANAGER+ / OWNER / SUPPORT → /home;
+                                                  LEARNER → /my-program;
+                                                  EXPERT  → /my-arrangement;
+                                                  no membership → personal
+                                                  dashboard via
+                                                  resolvePersonalDashboardHref
 /dashboard/organization/[orgId]/home           → overview: capability badges,
                                                   counts, quick actions (operator
                                                   view); sub-MANAGERs who deep-link
-                                                  here see a ConsumerViewCard
+                                                  here see a ConsumerViewCard with
+                                                  a role-specific deep link to
+                                                  /my-program or /my-arrangement
+/dashboard/organization/[orgId]/my-program     → LEARNER's per-org allocation:
+                                                  ProgramAssignment progress,
+                                                  coverage rules, utilization
+                                                  history. canSponsor only.
+/dashboard/organization/[orgId]/my-arrangement → EXPERT's per-org payout view:
+                                                  Membership.payoutRecipient,
+                                                  RateCard split, recent earnings
+                                                  on org-tagged payments. canHost
+                                                  only.
 /dashboard/organization/[orgId]/members        → unified Membership list
 /dashboard/organization/[orgId]/experts        → filtered list (role=EXPERT)
 /dashboard/organization/[orgId]/learners       → filtered list (role=LEARNER)
@@ -58,7 +71,9 @@ Visibility here is the **capability** gate only. Every tab is **also** role-gate
 
 | Page           | SPONSOR | HOST | HYBRID | Min role  | In sidebar? | Notes |
 |----------------|---------|------|--------|-----------|-------------|-------|
-| `/home`        | ✅      | ✅   | ✅     | any       | yes | Renders operator stat grid for MANAGER+; ConsumerViewCard for sub-MANAGER deep-links. |
+| `/home`        | ✅      | ✅   | ✅     | any       | yes | Renders operator stat grid for MANAGER+; role-branched ConsumerViewCard for sub-MANAGER deep-links. |
+| `/my-program`  | ✅      | —    | ✅     | any active member (page filters server-side to caller's assignments) | yes (LEARNER + canSponsor only) | Per-cycle ProgramAssignment progress, coverage rules, utilization history. 404 on canSponsor=false. |
+| `/my-arrangement` | —    | ✅   | ✅     | any active member (page filters to caller's earnings) | yes (EXPERT + canHost only) | Membership.payoutRecipient, default RateCard split, recent earnings on org-tagged payments. 404 on canHost=false. |
 | `/members`     | ✅      | ✅   | ✅     | MANAGER   | yes | — |
 | `/experts`     | —       | ✅   | ✅     | MANAGER   | yes (if `canHost`) | Hidden when `canHost = false`. |
 | `/learners`    | ✅      | —    | ✅     | MANAGER   | yes (if `canSponsor`) | Hidden when `canSponsor = false`. |
