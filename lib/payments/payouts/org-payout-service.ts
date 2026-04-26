@@ -24,6 +24,12 @@
  *       Stripe Connect submission is gated on `ENABLE_LIVE_PAYOUTS` and
  *       lands in PR-3.
  *
+ *   - markOrgPayoutCompleted(payoutId)
+ *       Idempotent PROCESSING → COMPLETED transition + Novu fire to the
+ *       visibility roster. Called by the gateway-webhook reconciler
+ *       (PR-3); kept here so the notification dispatch is co-located with
+ *       the state change (closes #718 / BUG-017).
+ *
  * Atomicity:
  *   - createOrgPayoutBatch acquires a Redis lock keyed by orgId so two
  *     concurrent callers (cron + UI button + manual replay) cannot both
@@ -48,6 +54,8 @@ import type { PaymentGateway, PayoutStatus } from "@prisma/client";
 import { acquireLock, releaseLock } from "@/lib/redis";
 import { computeMsmePaymentDeadline } from "@/lib/compliance/msme";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { notifyOrgPayoutCompleted } from "@/lib/novu/org-workflows";
+import { getAppUrl } from "@/lib/url";
 
 export class PayoutLockError extends Error {
   readonly code = "PAYOUT_LOCK_CONFLICT" as const;
@@ -493,7 +501,9 @@ export async function processOrgPayout(
 
     // Live gateway submission gated on env flag — PR-3 wires actual
     // RazorpayX `payouts.create` call and webhook reconciler that flips
-    // PROCESSING → COMPLETED on success.
+    // PROCESSING → COMPLETED on success. The reconciler should call
+    // `markOrgPayoutCompleted(payoutId)` below (closes #718 / BUG-017
+    // by co-locating the Novu fire with the state transition).
     if (!liveEnabled) {
       return { status: "PROCESSING" as const, submittedToGateway: false };
     }
@@ -502,4 +512,96 @@ export async function processOrgPayout(
       501,
     );
   });
+}
+
+/**
+ * Idempotent PROCESSING → COMPLETED transition for an OrganizationPayout.
+ *
+ * Called by the gateway-webhook reconciler that PR-3 wires up; the
+ * notification fire is intentionally co-located with the state change so
+ * future call sites cannot forget to dispatch (#718 / BUG-017 root cause).
+ *
+ * Idempotency: the conditional updateMany only progresses rows still in
+ * PROCESSING. A duplicate webhook delivery returns `wasNoOp: true` and
+ * the notification is NOT re-sent.
+ *
+ * Notification: fired AFTER the transaction commits so a rolled-back
+ * transition cannot page the visibility roster. `notifyOrgPayoutCompleted`
+ * is non-throwing per its own contract.
+ */
+export async function markOrgPayoutCompleted(payoutId: string): Promise<{
+  wasNoOp: boolean;
+  status: PayoutStatus;
+}> {
+  const result = await prisma.$transaction(async (tx) => {
+    const claim = await tx.organizationPayout.updateMany({
+      where: { id: payoutId, status: "PROCESSING" },
+      data: { status: "COMPLETED", processedAt: new Date() },
+    });
+    if (claim.count === 0) {
+      const current = await tx.organizationPayout.findUnique({
+        where: { id: payoutId },
+        select: { status: true },
+      });
+      if (!current) {
+        throw new PayoutValidationError(
+          `Payout ${payoutId} not found`,
+          404,
+        );
+      }
+      console.log(
+        `[OrgPayoutService] markOrgPayoutCompleted no-op: payout ${payoutId} status=${current.status}`,
+      );
+      return { wasNoOp: true, status: current.status, notify: null };
+    }
+
+    const payout = await tx.organizationPayout.findUniqueOrThrow({
+      where: { id: payoutId },
+      select: {
+        id: true,
+        organizationId: true,
+        netPayoutPaise: true,
+        currency: true,
+        organization: { select: { name: true } },
+      },
+    });
+
+    await tx.orgAuditLog.create({
+      data: {
+        organizationId: payout.organizationId,
+        actorMembershipId: null,
+        category: "PAYOUT",
+        action: AUDIT_ACTIONS.PAYOUT.PAYOUT_COMPLETED,
+        description: `Payout ${payoutId} moved PROCESSING → COMPLETED`,
+        details: {
+          payoutId,
+          netPayoutPaise: payout.netPayoutPaise,
+          currency: payout.currency,
+        },
+      },
+    });
+
+    return {
+      wasNoOp: false,
+      status: "COMPLETED" as PayoutStatus,
+      notify: {
+        organizationId: payout.organizationId,
+        orgName: payout.organization.name,
+        netPayoutPaise: payout.netPayoutPaise,
+        currency: payout.currency,
+      },
+    };
+  });
+
+  if (result.notify) {
+    await notifyOrgPayoutCompleted(result.notify.organizationId, {
+      orgName: result.notify.orgName,
+      payoutId,
+      amountPaise: result.notify.netPayoutPaise,
+      currency: result.notify.currency,
+      dashboardUrl: `${getAppUrl()}/dashboard/organization/${result.notify.organizationId}/payouts`,
+    });
+  }
+
+  return { wasNoOp: result.wasNoOp, status: result.status };
 }

@@ -252,7 +252,7 @@ export async function POST(
         );
       }
 
-      await tx.organizationPayout.update({
+      const updated = await tx.organizationPayout.update({
         where: { id: created.id },
         data: {
           amountPaise: netPayout,
@@ -302,7 +302,7 @@ export async function POST(
         },
       });
 
-      return created;
+      return updated;
     });
 
     return NextResponse.json({ payout }, { status: 201 });
