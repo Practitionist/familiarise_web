@@ -53,10 +53,29 @@ export type CreateOrganizationPayload = z.infer<
   typeof CreateOrganizationPayloadSchema
 >;
 
-// PATCH /api/organizations/[orgId] — branding + rate-card subset used by
-// the wizard's review step. Other PATCH fields (gstin, pan, etc.) live
-// behind a different settings UX and aren't validated here.
+// PATCH /api/organizations/[orgId] — fields the dashboard surfaces.
+// The wizard's Review step sends branding fields; the Settings page
+// adds slug, capability flags, and the standard profile fields. Other
+// PATCH fields (gstin, pan, gstStateCode, etc.) flow through their own
+// dedicated forms and aren't validated here.
 export const PatchOrganizationPayloadSchema = z.object({
+  name: z.string().trim().min(2).max(200).optional(),
+  slug: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .min(2)
+    .max(80)
+    .regex(/^[a-z0-9-]+$/, "Slug may only contain lowercase letters, digits, and hyphens")
+    .optional(),
+  description: z.string().max(5000).nullable().optional(),
+  industry: z.string().max(120).nullable().optional(),
+  website: z.string().url().nullable().optional(),
+  billingEmail: z.string().email().optional(),
+  paymentTermsDays: z.number().int().min(0).max(180).optional(),
+  canSponsor: z.boolean().optional(),
+  canHost: z.boolean().optional(),
+  isPublic: z.boolean().optional(),
   primaryColor: z
     .string()
     .regex(/^#[0-9a-fA-F]{6}$/, "Hex colour required")
@@ -67,13 +86,24 @@ export const PatchOrganizationPayloadSchema = z.object({
     .regex(/^#[0-9a-fA-F]{6}$/, "Hex colour required")
     .nullable()
     .optional(),
-  platformBps: z.number().int().min(0).max(10000).optional(),
-  orgBps: z.number().int().min(0).max(10000).optional(),
-  consultantBps: z.number().int().min(0).max(10000).optional(),
 });
 export type PatchOrganizationPayload = z.infer<
   typeof PatchOrganizationPayloadSchema
 >;
+
+// POST /api/organizations/[orgId]/rate-cards — 3-way split for host orgs.
+// bps values must sum to 10 000 (enforced server-side; duplicated here so
+// the wizard catches it before opening the network connection).
+export const CreateRateCardPayloadSchema = z
+  .object({
+    platformBps: z.number().int().min(0).max(10000),
+    orgBps: z.number().int().min(0).max(10000),
+    consultantBps: z.number().int().min(0).max(10000),
+  })
+  .refine((v) => v.platformBps + v.orgBps + v.consultantBps === 10000, {
+    message: "Revenue split must add up to 100%",
+  });
+export type CreateRateCardPayload = z.infer<typeof CreateRateCardPayloadSchema>;
 
 // ───────────────────────────── Members ─────────────────────────────
 

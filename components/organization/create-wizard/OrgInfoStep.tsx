@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { useSession } from "@/lib/auth-client";
 import {
   Select,
   SelectContent,
@@ -66,7 +67,12 @@ export function OrgInfoStep({
 
   const canSponsor = watch("canSponsor");
   const canHost = watch("canHost");
+  const billingEmail = watch("billingEmail");
   const [capabilityError, setCapabilityError] = useState<string | null>(null);
+
+  const { data: session } = useSession();
+  const profileEmail = session?.user?.email ?? "";
+  const usingProfileEmail = !!profileEmail && billingEmail === profileEmail;
 
   const onSubmit = (data: OrgInfoFormData) => {
     // Belt-and-braces: the zod schema doesn't enforce "at least one
@@ -138,7 +144,24 @@ export function OrgInfoStep({
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="billingEmail">Billing email *</Label>
+        <div className="flex items-center justify-between">
+          <Label htmlFor="billingEmail">Billing email *</Label>
+          {profileEmail && (
+            <button
+              type="button"
+              onClick={() =>
+                setValue(
+                  "billingEmail",
+                  usingProfileEmail ? "" : profileEmail,
+                  { shouldValidate: true },
+                )
+              }
+              className="text-xs text-zinc-500 hover:text-zinc-800 underline underline-offset-2 transition-colors"
+            >
+              {usingProfileEmail ? "Clear" : "Use my account email"}
+            </button>
+          )}
+        </div>
         <Input
           id="billingEmail"
           type="email"

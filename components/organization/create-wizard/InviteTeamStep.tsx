@@ -29,10 +29,10 @@ export function InviteTeamStep({ onNext, onBack, initialData }: StepProps) {
   const [role, setRole] = useState<SelfServiceMemberRole>(
     narrowSelfServiceRole(initialData.inviteRole),
   );
-  const [parseError, setParseError] = useState<string | null>(null);
+  const [invalidEmails, setInvalidEmails] = useState<string[]>([]);
 
   const addEmails = () => {
-    setParseError(null);
+    setInvalidEmails([]);
     const candidates = rawInput
       .split(/[,\n;]+/)
       .map((s) => s.trim().toLowerCase())
@@ -51,7 +51,7 @@ export function InviteTeamStep({ onNext, onBack, initialData }: StepProps) {
     }
 
     if (invalid.length > 0) {
-      setParseError(`Invalid emails: ${invalid.join(", ")}`);
+      setInvalidEmails(invalid);
     }
     if (valid.length > 0) {
       setEmails((prev) => [...prev, ...valid]);
@@ -92,7 +92,26 @@ export function InviteTeamStep({ onNext, onBack, initialData }: StepProps) {
         <p className="text-xs text-zinc-500">
           Comma, semicolon, or newline-separated. Duplicates are ignored.
         </p>
-        {parseError && <p className="text-sm text-red-500">{parseError}</p>}
+        {invalidEmails.length > 0 && (
+          <div className="space-y-1">
+            <p className="text-sm text-red-500 font-medium">
+              {invalidEmails.length === 1
+                ? "1 address couldn't be added:"
+                : `${invalidEmails.length} addresses couldn't be added:`}
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {invalidEmails.map((e) => (
+                <Badge
+                  key={e}
+                  variant="secondary"
+                  className="bg-red-50 text-red-700 border border-red-200 font-mono text-xs"
+                >
+                  {e}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {emails.length > 0 && (

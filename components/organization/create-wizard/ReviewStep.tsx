@@ -28,6 +28,7 @@ import {
   CreateOrganizationPayloadSchema,
   CreateOrganizationResponseSchema,
   PatchOrganizationPayloadSchema,
+  CreateRateCardPayloadSchema,
   CreateInvitationPayloadSchema,
   CreateInvitationResponseSchema,
 } from "@/schemas/organizations";
@@ -170,34 +171,16 @@ export function ReviewStep({
       );
       const orgId = created.organization.id;
 
-      // Step 2 — PATCH settings that the create endpoint doesn't accept
-      // (branding colors + bps rate card). Split cleanly by capability:
-      // sponsor-only fields don't flow to host-only orgs and vice versa.
+      // Step 2a — PATCH branding colors (org endpoint accepts these).
       const hasBranding =
         initialData.primaryColor != null ||
         initialData.secondaryColor != null;
-      const hasRateCard =
-        canHost &&
-        (initialData.platformBps != null ||
-          initialData.orgBps != null ||
-          initialData.consultantBps != null);
-      if (hasBranding || hasRateCard) {
+      if (hasBranding) {
         const patchPayload = validateOutboundPayload(
           PatchOrganizationPayloadSchema,
           {
-            ...(hasBranding
-              ? {
-                  primaryColor: initialData.primaryColor ?? null,
-                  secondaryColor: initialData.secondaryColor ?? null,
-                }
-              : {}),
-            ...(hasRateCard
-              ? {
-                  platformBps: initialData.platformBps ?? 1000,
-                  orgBps: initialData.orgBps ?? 1000,
-                  consultantBps: initialData.consultantBps ?? 8000,
-                }
-              : {}),
+            primaryColor: initialData.primaryColor ?? null,
+            secondaryColor: initialData.secondaryColor ?? null,
           },
         );
         const patchRes = await fetch(`/api/organizations/${orgId}`, {
@@ -205,14 +188,41 @@ export function ReviewStep({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(patchPayload),
         });
-        // parseJsonResponse handles the success/error split and throws a
-        // typed ApiResponseError with `detail` populated, which the
-        // outer catch routes through `describeLaunchError` for
-        // humanised + field-level messaging.
         await parseJsonResponse(
           patchRes,
           PatchOrganizationResponseSchema,
-          "Failed to save organization settings",
+          "Failed to save branding",
+        );
+      }
+
+      // Step 2b — POST rate card for host orgs. Rate-card fields are owned
+      // by /api/organizations/[orgId]/rate-cards, not the org PATCH route.
+      const hasRateCard =
+        canHost &&
+        (initialData.platformBps != null ||
+          initialData.orgBps != null ||
+          initialData.consultantBps != null);
+      if (hasRateCard) {
+        const rateCardPayload = validateOutboundPayload(
+          CreateRateCardPayloadSchema,
+          {
+            platformBps: initialData.platformBps ?? 1000,
+            orgBps: initialData.orgBps ?? 1000,
+            consultantBps: initialData.consultantBps ?? 8000,
+          },
+        );
+        const rcRes = await fetch(
+          `/api/organizations/${orgId}/rate-cards`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(rateCardPayload),
+          },
+        );
+        await parseJsonResponse(
+          rcRes,
+          z.object({}).passthrough(),
+          "Failed to save revenue split",
         );
       }
 
