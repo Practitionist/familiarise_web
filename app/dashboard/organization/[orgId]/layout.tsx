@@ -14,12 +14,14 @@ import {
   CreditCard,
   Coins,
   BarChart3,
+  ClipboardList,
   Settings,
   Wallet,
   UserCog,
   Building2,
   LayoutDashboard,
   Clock,
+  FileText,
   type LucideIcon,
 } from "lucide-react";
 
@@ -163,6 +165,23 @@ export default function OrgLayout({
 
     const items: { name: string; icon: LucideIcon; path: string; show?: boolean }[] = [
       { name: "Overview", icon: Home, path: "home" },
+      // Consumer-role surfaces — the only in-org pages a LEARNER or
+      // EXPERT sees. Operators (MANAGER+) don't need these because
+      // their richer pages (Programs, Payouts, Members) supersede.
+      // Gated on the matching capability so we don't show "My Program"
+      // on a non-sponsor org.
+      {
+        name: "My Program",
+        icon: GraduationCap,
+        path: "my-program",
+        show: role === "LEARNER" && canSponsor,
+      },
+      {
+        name: "My Arrangement",
+        icon: UserCog,
+        path: "my-arrangement",
+        show: role === "EXPERT" && canHost,
+      },
       { name: "Members", icon: Users, path: "members", show: isAtLeast("MANAGER") },
       { name: "Invitations", icon: Mail, path: "invitations", show: isAtLeast("MAINTAINER") },
       // Members filtered by role — a sponsor-only org gets the
@@ -175,6 +194,7 @@ export default function OrgLayout({
       { name: "Learners", icon: GraduationCap, path: "learners", show: canSponsor && isAtLeast("MANAGER") },
       { name: "Experts", icon: UserCog, path: "experts", show: canHost && isAtLeast("MANAGER") },
       { name: "Programs", icon: Briefcase, path: "programs", show: canSponsor && isAtLeast("MAINTAINER") },
+      { name: "Contracts", icon: FileText, path: "contracts", show: canSponsor && isAtLeast("MAINTAINER") },
       // Catalog nav has no page today (deleted alongside the legacy
       // OrganizationPlan-based curated catalog). Hidden until the
       // capability-driven replacement ships. Leaving the entry here so
@@ -204,6 +224,7 @@ export default function OrgLayout({
         show: canHost && isAtLeast("MANAGER"),
       },
       { name: "Analytics", icon: BarChart3, path: "analytics", show: isAtLeast("MANAGER") },
+      { name: "Audit", icon: ClipboardList, path: "audit", show: isAtLeast("MAINTAINER") },
       { name: "Settings", icon: Settings, path: "settings", show: isAtLeast("MAINTAINER") },
     ];
 
@@ -341,10 +362,12 @@ export default function OrgLayout({
     learners:    "Learners",
     experts:     "Experts",
     programs:    "Programs",
+    contracts:   "Contracts",
     credits:     "Credits",
     billing:     "Billing",
     payouts:     "Payouts",
     analytics:   "Analytics",
+    audit:       "Audit",
     settings:    "Settings",
     sso:         "SSO",
   };

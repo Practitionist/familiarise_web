@@ -147,13 +147,13 @@ function countByRole(
 // ---------------------------------------------------------------------------
 
 export function HomePageClient({ orgId }: { orgId: string }) {
-  const { isAtLeast } = useOrgRole(orgId);
+  const { role, canSponsor, canHost, isAtLeast } = useOrgRole(orgId);
   // The operator surface (stat grid, checklist, activity feed) requires
   // MANAGER — that matches the analytics + activity API gates. Consumer
   // roles see the ConsumerView below instead of broken "Could not load"
   // cards. Sub-MANAGERs shouldn't normally reach /home anyway because
-  // /[orgId]/page.tsx redirects them to their personal dashboard — this
-  // is a deep-link safety net.
+  // /[orgId]/page.tsx redirects them to /my-program (LEARNER) or
+  // /my-arrangement (EXPERT) — this is a deep-link safety net.
   const isOperator = isAtLeast("MANAGER");
 
   const analytics = useQuery({
@@ -168,6 +168,37 @@ export function HomePageClient({ orgId }: { orgId: string }) {
   });
 
   if (!isOperator) {
+    // Per-role CTA — deep-link to the role's in-org page where one
+    // exists. The "personal dashboard" link stays as a secondary
+    // anchor so consumers can hop out without hunting for the sidebar
+    // chip.
+    const primary =
+      role === "LEARNER" && canSponsor
+        ? {
+            title: "Your sponsored bookings live here",
+            body:
+              "This organisation covers your sessions through one or more programs. Open My Program to see your current cycle allocation and recent activity.",
+            ctaLabel: "Open My Program",
+            ctaHref: `/dashboard/organization/${orgId}/my-program`,
+          }
+        : role === "EXPERT" && canHost
+          ? {
+              title: "Your hosting arrangement with this organisation",
+              body:
+                "This organisation routes session payments through a shared rate card. Open My Arrangement to see the split and your recent earnings.",
+              ctaLabel: "Open My Arrangement",
+              ctaHref: `/dashboard/organization/${orgId}/my-arrangement`,
+            }
+          : {
+              title: "You're a member here",
+              body:
+                "Day-to-day activity — booking history, upcoming sessions, and account settings — lives on your personal dashboard.",
+              ctaLabel: "Go to my personal dashboard",
+              ctaHref: "/dashboard",
+            };
+    const secondaryHref = "/dashboard";
+    const showSecondary = primary.ctaHref !== secondaryHref;
+
     return (
       <>
         <DashboardHeader
@@ -177,22 +208,24 @@ export function HomePageClient({ orgId }: { orgId: string }) {
         <DashboardContent>
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">
-                You&apos;re a member here
-              </CardTitle>
-              <CardDescription>
-                This organization covers your bookings through its programs.
-                Day-to-day activity — booking history, upcoming sessions, and
-                account settings — lives on your personal dashboard.
-              </CardDescription>
+              <CardTitle className="text-base">{primary.title}</CardTitle>
+              <CardDescription>{primary.body}</CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="flex flex-wrap items-center gap-3">
               <Link
-                href="/dashboard"
+                href={primary.ctaHref}
                 className="inline-flex items-center gap-2 rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-800"
               >
-                Go to my personal dashboard
+                {primary.ctaLabel}
               </Link>
+              {showSecondary && (
+                <Link
+                  href={secondaryHref}
+                  className="text-sm text-muted-foreground underline underline-offset-2 hover:text-zinc-900"
+                >
+                  Or go to my personal dashboard
+                </Link>
+              )}
             </CardContent>
           </Card>
         </DashboardContent>
@@ -222,13 +255,17 @@ export function HomePageClient({ orgId }: { orgId: string }) {
       done: (data?.programs.active ?? 0) > 0,
       href: `/dashboard/organization/${orgId}/programs`,
     },
-    {
-      label: "Configure billing settings",
-      done:
-        (data?.wallet !== null && data?.wallet !== undefined) ||
-        (data?.invoices !== null && data?.invoices !== undefined),
-      href: `/dashboard/organization/${orgId}/billing`,
-    },
+    ...(canSponsor
+      ? [
+          {
+            label: "Configure billing settings",
+            done:
+              (data?.wallet !== null && data?.wallet !== undefined) ||
+              (data?.invoices !== null && data?.invoices !== undefined),
+            href: `/dashboard/organization/${orgId}/billing`,
+          },
+        ]
+      : []),
   ];
   const checklistDone = checklist.filter((c) => c.done).length;
   const allDone = checklistDone === checklist.length;
@@ -277,7 +314,11 @@ export function HomePageClient({ orgId }: { orgId: string }) {
       href: string;
       minRole: MemberRole;
     }[]
-  ).filter((a) => isAtLeast(a.minRole));
+  ).filter(
+    (a) =>
+      isAtLeast(a.minRole) &&
+      (a.title !== "View billing" || canSponsor),
+  );
 
   return (
     <>
@@ -338,7 +379,7 @@ export function HomePageClient({ orgId }: { orgId: string }) {
             visible. Capability-dependent cards (wallet, invoices, earnings)
             are rendered inline once their section of the analytics payload
             is non-null. */}
-        {analytics.isLoading ? (
+        {analytics.isLoading || (isOperator && !analytics.isFetched) ? (
           <DashboardGrid columns={4}>
             {[1, 2, 3, 4].map((i) => (
               <StatCardSkeleton key={i} />

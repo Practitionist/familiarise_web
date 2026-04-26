@@ -61,7 +61,12 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { minimumRole: "MANAGER", canHost: true });
+  // Read access widened to any ACTIVE member of a canHost org. Rate
+  // cards encode the org's revenue-split policy (e.g. "consultants
+  // earn 80%"), which the consultant rightly needs to know — keeping
+  // the GET MANAGER-gated meant an EXPERT had no way to confirm their
+  // commission. Mutations (POST + bumpRateCard) stay OWNER-gated.
+  const access = await requireOrgAccess(orgId, { canHost: true });
   if (access.error) return access.error;
 
   const url = new URL(req.url);

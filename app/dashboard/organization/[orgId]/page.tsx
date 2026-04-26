@@ -2,17 +2,23 @@ import { redirect } from "next/navigation";
 
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
-import { orgRoleSatisfies } from "@/lib/auth-helpers";
 import { resolvePersonalDashboardHref } from "@/lib/labels/personal-dashboard";
 
 /**
  * Bare /[orgId] route.
  *
- * Operators (MANAGER+) land on /home — the org overview. Consumer
- * roles (LEARNER, EXPERT, SUPPORT) aren't operators; they're routed
- * to their personal dashboard via resolvePersonalDashboardHref so
- * they don't see a broken operator view. Platform ADMINs and any
- * user with no membership row fall through to the default redirect.
+ * Routing by role:
+ *   - MANAGER+      → /home (operator overview)
+ *   - LEARNER       → /my-program (per-org sponsored allocation view)
+ *   - EXPERT        → /my-arrangement (per-org payout + RateCard view)
+ *   - SUPPORT       → /home (read-only operator views; rank-30 passes
+ *                    role checks on the lighter pages)
+ *   - no membership → personal dashboard fallback (resolver may return
+ *                     null if no profile yet — final default is
+ *                     /dashboard which routes by role on the client)
+ *
+ * Platform ADMINs are role-stubbed as OWNER by `requireOrgAccess`
+ * elsewhere; they always pass through to /home.
  */
 export default async function OrgRoot({
   params,
@@ -23,8 +29,6 @@ export default async function OrgRoot({
   const session = await getSession(true);
   if (!session?.user?.id) redirect("/auth/signin");
 
-  // ADMINs bypass membership checks elsewhere (lib/auth-helpers.ts
-  // synthesizes an OWNER stub). Keep their /home path intact.
   if (session.user.role !== "ADMIN") {
     const member = await prisma.membership.findUnique({
       where: {
@@ -36,14 +40,17 @@ export default async function OrgRoot({
       select: { role: true, status: true },
     });
 
-    if (
-      member?.status === "ACTIVE" &&
-      !orgRoleSatisfies(member.role, "MANAGER")
-    ) {
-      // Resolver returns null if the user has no personal profile yet
-      // (e.g. a LEARNER whose ConsulteeProfile is still lazy per
-      // lib/profiles/ensure-consultee-profile.ts). Fall back to /dashboard
-      // which routes by role on the client.
+    if (member?.status === "ACTIVE") {
+      if (member.role === "LEARNER") {
+        redirect(`/dashboard/organization/${orgId}/my-program`);
+      }
+      if (member.role === "EXPERT") {
+        redirect(`/dashboard/organization/${orgId}/my-arrangement`);
+      }
+      // MANAGER+, SUPPORT, OWNER, MAINTAINER fall through to /home
+    } else if (!member) {
+      // No membership — bounce out entirely. resolvePersonalDashboardHref
+      // may return null if the user has no personal profile yet.
       redirect(resolvePersonalDashboardHref(session.user) ?? "/dashboard");
     }
   }
