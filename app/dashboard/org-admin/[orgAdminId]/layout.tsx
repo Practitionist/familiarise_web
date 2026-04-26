@@ -1,19 +1,25 @@
 import { notFound } from "next/navigation";
 import { requireAuth } from "@/lib/auth-guard";
+import NovuProvider from "@/providers/NovuProvider";
+import { OrgSwitcherTopBar } from "@/components/dashboard/OrgSwitcherTopBar";
 
 /**
- * Guard for the operator-side personal dashboard.
+ * Guard + slim chrome for the operator-side personal dashboard.
  *
- * The orgAdminId in the URL must match the authenticated user's
- * orgAdminProfileId. We refuse to even hint that another user's
- * profile exists — IDOR by URL-guessing returns the same 404 as
- * a truly absent id.
+ * IDOR guard: the orgAdminId in the URL must match the authenticated
+ * user's orgAdminProfileId. We refuse to even hint that another
+ * user's profile exists — URL-guessing returns the same 404 as a
+ * truly absent id.
  *
- * We deliberately do NOT render a sidebar/shell here. The operator
- * dashboard today is a thin redirect/chooser page. When we grow
- * actual operator-only surfaces (preferences, activity feed, billing
- * overview across orgs), revisit this to lift a proper
- * CollapsibleSidebar like /dashboard/staff has.
+ * Chrome: a 64px slim top-bar (back link, OrganizationSwitcher,
+ * NotificationInbox, user menu). Previously this layout was a noop,
+ * which left the operator chooser page stranded. The back link is
+ * suppressed (`hideBackLink`) because the resolver would route the
+ * user right back to this same operator dashboard, creating a loop.
+ *
+ * The full per-org CollapsibleSidebar lives one level deeper, on
+ * /dashboard/organization/[orgId]/layout.tsx — once the operator
+ * picks an org, they get the rich sidebar.
  */
 export default async function OrgAdminLayout({
   children,
@@ -32,5 +38,14 @@ export default async function OrgAdminLayout({
     notFound();
   }
 
-  return <>{children}</>;
+  return (
+    <NovuProvider>
+      <div className="flex h-screen-maintenance flex-col bg-zinc-50 dark:bg-zinc-950">
+        <OrgSwitcherTopBar hideBackLink />
+        <main className="flex-1 overflow-y-auto">
+          <div className="p-6">{children}</div>
+        </main>
+      </div>
+    </NovuProvider>
+  );
 }
