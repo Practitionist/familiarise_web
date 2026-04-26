@@ -18,6 +18,7 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import type { MemberRole, MemberStatus } from "@prisma/client";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { isBlockedRoleTransition } from "@/lib/enterprise/role-transitions";
+import { applyMembershipRoleEffects } from "@/lib/api/organizations/membership-transitions";
 
 // Canonical MemberRole Zod enum. Mirrors the Prisma enum — if a role
 // is added to the schema, TS fails here until the list is updated.
@@ -193,18 +194,31 @@ export async function POST(
   }
   const { userId: providedUserId, email, role, departmentLabel } = parsed.data;
 
-  // Consultee/consultant profile links are optional — we populate them
-  // if the user has the matching profile, so downstream code that joins
-  // via `membership.consulteeProfile` doesn't have to null-check first.
-  // The dashboard sends email; SSO / admin tooling sends userId.
+  // EXPERT requires the org to actually host consultants — otherwise
+  // there's no rate card / payout account to settle their earnings.
+  // Mirrors the gate in app/api/organizations/[orgId]/invitations/route.ts.
+  if (role === "EXPERT" && !access.org.canHost) {
+    return NextResponse.json(
+      {
+        error: "EXPERT can only be assigned on host-capable organizations",
+        code: "EXPERT_REQUIRES_CANHOST",
+      },
+      { status: 400 },
+    );
+  }
+
+  // The dashboard sends email; SSO / admin tooling sends userId. Profile
+  // FK hydration is handled inside the transaction below by
+  // applyMembershipRoleEffects (lazy-creates ConsulteeProfile /
+  // ConsultantProfile when needed for LEARNER / EXPERT).
   const user = providedUserId
     ? await prisma.user.findUnique({
         where: { id: providedUserId },
-        select: { id: true, consulteeProfileId: true, consultantProfileId: true },
+        select: { id: true },
       })
     : await prisma.user.findUnique({
         where: { email: email!.toLowerCase() },
-        select: { id: true, consulteeProfileId: true, consultantProfileId: true },
+        select: { id: true },
       });
   if (!user) {
     return NextResponse.json({ error: "USER_NOT_FOUND" }, { status: 404 });
@@ -228,14 +242,18 @@ export async function POST(
     );
   }
 
-  const consulteeProfileId =
-    role === "LEARNER" ? user.consulteeProfileId ?? null : null;
-  const consultantProfileId =
-    role === "EXPERT" ? user.consultantProfileId ?? null : null;
-
   let membership;
   try {
     membership = await prisma.$transaction(async (tx) => {
+    // Profile FK + payoutRecipient defaults from the shared helper. The
+    // helper lazy-creates a ConsulteeProfile (LEARNER) or
+    // ConsultantProfile (EXPERT) inside the same tx if the user does
+    // not already have one, so direct-add stays consistent with
+    // invitations/accept and SSO auto-join.
+    const roleEffects = await applyMembershipRoleEffects(tx, {
+      userId,
+      role,
+    });
     if (existing) {
       // Reactivation keeps the same Membership row (preserves downstream
       // FKs on ProgramAssignment / audit trail). That means the LEARNER
@@ -262,8 +280,9 @@ export async function POST(
           role,
           status: "ACTIVE",
           departmentLabel: departmentLabel ?? null,
-          consulteeProfileId,
-          consultantProfileId,
+          consulteeProfileId: roleEffects.consulteeProfileId,
+          consultantProfileId: roleEffects.consultantProfileId,
+          payoutRecipient: roleEffects.payoutRecipient,
         },
       });
       await tx.orgAuditLog.create({
@@ -287,8 +306,9 @@ export async function POST(
         role,
         status: "ACTIVE",
         departmentLabel: departmentLabel ?? null,
-        consulteeProfileId,
-        consultantProfileId,
+        consulteeProfileId: roleEffects.consulteeProfileId,
+        consultantProfileId: roleEffects.consultantProfileId,
+        payoutRecipient: roleEffects.payoutRecipient,
       },
     });
     await tx.orgAuditLog.create({

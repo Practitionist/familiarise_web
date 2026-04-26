@@ -165,3 +165,27 @@ session also carries the four profile-id FKs — `consultantProfileId`,
 `orgAdminProfileId` — surfaced from `lib/auth.ts` so client code can
 resolve the "Personal Dashboard" href via
 `resolvePersonalDashboardHref` without re-querying the DB.
+
+## Seed / production-shaped grid
+
+For local development, tour rehearsals, and any agent reasoning about
+"what the dashboard should look like for a real org", refer to the
+deterministic cohort below. Slugs and emails are stable handles —
+prefer them over raw IDs in tests, prompts, and docs (IDs change
+across `prisma migrate reset`). Source: `prisma/seedFiles/15a-create-organizations.ts`.
+
+| Slug | Capability | Funding | Program | Notes |
+|---|---|---|---|---|
+| `wipro` | Sponsor (canSponsor=true, canHost=false) | INVOICE | LICENSED_SEAT | PO + draft monthly invoice; pure buyer-side. |
+| `learnpro-academy` | Host (canSponsor=false, canHost=true) | — | — | Payout account + 10/10/80 RateCard + EXPERT memberships. |
+| `iit-madras` | Hybrid (canSponsor=true, canHost=true) | WALLET | CREDIT_POOL | Both money flows live in parallel. |
+| Rahul's solo org | Host (canSponsor=false, canHost=true) | — | — | Single-consultant convenience org; dynamic slug. |
+
+**Tour owner:** `tour-owner@familiarise.dev`, password from
+`SEED_PASSWORD` (default `SeedPass123!`). Created with
+`UserRole = ORG_ADMIN` and `OrgAdminProfile`; OWNER of `wipro` so
+the operator portfolio (`/dashboard/org-admin/<id>/home`) renders
+populated on first sign-in.
+
+`19-harness-verdict.md` cross-references this grid for the harness
+table; if a row here changes, update both files together.

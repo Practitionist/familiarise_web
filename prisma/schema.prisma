@@ -406,7 +406,7 @@ model Verification {
 //   TAG_ONLY          → no Program; Payment.organizationId tag only
 //   SEAT_PACK         → Program(CREDIT_POOL) + BillingAccount.fundingSource=WALLET
 //   INVOICED_MONTHLY  → BillingAccount.fundingSource=INVOICE + PurchaseOrder + Invoice
-//   PREPAID_UNLIMITED → Program(LICENSED_SEAT) coveredSessions=null
+//   PREPAID_UNLIMITED → Program(LICENSED_SEAT) coveredEngagementsPerCycle=null
 //
 // BetterAuth's `Member` table is kept for invitation-token compatibility; the
 // typed `Membership` model is the source of truth. Linkage via
@@ -532,6 +532,11 @@ model Organization {
 
   // Payment attribution
   payments Payment[] @relation("PaymentOrgTag")
+
+  // Rate cards owned by the org (HOST/HYBRID). The FK was previously a
+  // soft reference (string only) which let mis-bound writes silently
+  // settle to the platform default. Now enforced at the DB level.
+  rateCards RateCard[] @relation("RateCardOwnerOrg")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1072,6 +1077,7 @@ enum CoveredPlanType {
 model RateCard {
   id              String           @id @default(uuid())
   ownerOrgId      String?
+  ownerOrg        Organization?    @relation("RateCardOwnerOrg", fields: [ownerOrgId], references: [id], onDelete: Cascade)
   ownerContractId String?
   ownerContract   Contract?        @relation("RateCardOwnerContract", fields: [ownerContractId], references: [id], onDelete: Cascade)
   planType        CoveredPlanType?

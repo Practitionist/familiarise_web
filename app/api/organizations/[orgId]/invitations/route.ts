@@ -26,15 +26,18 @@ import {
 } from "@/lib/enterprise/governance";
 import { notifyOrgInviteSent } from "@/lib/novu/org-workflows";
 
-// Subset of MemberRole an inviter can assign without elevated flows.
-// Mirrors SELF_SERVICE_MEMBER_ROLES in lib/labels/org-labels.ts — two
-// places because this is the server-side enforcement and the UI
-// subset should never drift from the API subset.
+// Roles a self-service inviter can assign. EXPERT is included in the
+// canHost-aware widening below; the rest mirror SELF_SERVICE_MEMBER_ROLES
+// in lib/labels/org-labels.ts — kept in two places because this is the
+// server-side enforcement and the UI subset must never drift from the
+// API subset. SUPPORT remains owner-only and is assigned from Settings,
+// not the invitations form.
 const InvitableRoleSchema = z.enum([
   "OWNER",
   "MAINTAINER",
   "MANAGER",
   "LEARNER",
+  "EXPERT",
 ]);
 
 const InviteBodySchema = z.object({
@@ -110,6 +113,21 @@ export async function POST(
     );
   }
   const { email, role, expiresInDays } = parsed.data;
+
+  // EXPERT is only valid for orgs that host consultants. Sponsor-only
+  // orgs have no payout account / RateCard / settlement path for an
+  // EXPERT's earnings, so the role is rejected even if a stale
+  // dashboard payload smuggles it through. Returning the typed code
+  // lets humanizeOrgError surface a precise message.
+  if (role === "EXPERT" && !access.org.canHost) {
+    return NextResponse.json(
+      {
+        error: "EXPERT can only be assigned on host-capable organizations",
+        code: "EXPERT_REQUIRES_CANHOST",
+      },
+      { status: 400 },
+    );
+  }
 
   const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000);
 

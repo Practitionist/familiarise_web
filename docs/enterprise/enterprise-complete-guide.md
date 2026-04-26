@@ -596,13 +596,12 @@ A Program is a commercial package describing **what the org has bought for its m
 
 | Field | Meaning |
 |---|---|
-| `totalCredits` | Credits purchased in this pool |
-| `creditsUsed` | Credits consumed so far |
-| `pricePerCreditPaise` | Price per credit (used for top-ups) |
-| `premiumMultiplier` | Premium-session multiplier (e.g. 1.5x for senior mentor) |
-| `minCreditsPerPeriod` | Minimum commitment per cycle (prevent pool abandonment) |
+| `creditsPerCycle` | Credits granted per Program cycle (replenished each rollover) |
+| `minimumCreditsPerPeriod` | Minimum commitment per cycle; nullable (no floor when null) |
 
-**Use case:** Wipro buys 500 credits at ₹800/credit = ₹4L pool. Each 1-hour session = 1 credit. Senior-mentor sessions = 1.5 credits (premium multiplier). When credits hit low-threshold, OWNER gets a notification to buy more.
+The pool's running balance is tracked separately on `BillingAccount.walletBalance` (paise). 1 credit = ₹1 by convention; the legacy `pricePerCreditPaise` and `premiumMultiplier` fields were dropped — premium pricing is now expressed via per-plan rate cards instead of a flat multiplier.
+
+**Use case:** Wipro funds a ₹4L pool. Each 1-hour session deducts ₹1,500 worth of credits at the plan's listed rate. When the wallet balance hits the low-water threshold, OWNER gets a notification to top up.
 
 ### 8.3 PROJECT (reserved — future)
 

@@ -20,7 +20,7 @@ import { requireApiAuth } from "@/lib/auth-helpers";
 import { MemberRoleSchema } from "@/lib/labels/org-labels";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { isOnboardingBlocked } from "@/lib/enterprise/org-status";
-import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
+import { applyMembershipRoleEffects } from "@/lib/api/organizations/membership-transitions";
 import { notifyOrgInviteAccepted } from "@/lib/novu/org-workflows";
 
 const AcceptBodySchema = z.object({
@@ -211,65 +211,22 @@ export async function POST(req: NextRequest) {
         return { membership: existing, organization: org, alreadyMember: true };
       }
 
-      // Profile FK hydration. The rules are role-specific:
-      //   LEARNER — ensure ConsulteeProfile exists (lazy-create if not),
-      //             link via Membership.consulteeProfileId.
-      //   EXPERT  — ensure ConsultantProfile exists (lazy-create with
-      //             verificationStatus=PENDING if not), link via
-      //             Membership.consultantProfileId. The org-issued
-      //             ConsultantProfile mirrors the posture of the self-
-      //             service apply flow: the profile is hidden from
-      //             /explore/experts until a platform admin verifies.
-      //   Other roles — no profile linkage (MAINTAINER, MANAGER, etc.).
+      // Profile FK + payoutRecipient defaults are computed by the
+      // shared helper (see lib/api/organizations/membership-transitions.ts).
+      // LEARNER lazy-creates ConsulteeProfile; EXPERT lazy-creates
+      // ConsultantProfile with the "General" placeholder domain +
+      // WEEKLY schedule + PENDING_VERIFICATION (hidden from
+      // /explore/experts until a platform admin reviews). Operator
+      // roles (OWNER/MAINTAINER/MANAGER/SUPPORT) leave both FKs null.
       //
       // The same profile may be linked to memberships at several orgs
       // concurrently; the schema is deliberately many-to-many and
       // docs/enterprise/14-scenarios-and-examples.md lists multi-org
       // experts and learners as first-class cases.
-      let consulteeProfileId: string | null = null;
-      let consultantProfileId: string | null = null;
-
-      if (normalizedRole === "LEARNER") {
-        consulteeProfileId = await ensureConsulteeProfile(tx, userId);
-      } else if (normalizedRole === "EXPERT") {
-        const existing = await tx.user.findUnique({
-          where: { id: userId },
-          select: { consultantProfileId: true },
-        });
-        if (existing?.consultantProfileId) {
-          consultantProfileId = existing.consultantProfileId;
-        } else {
-          // Org-invited EXPERTs don't pick a domain / schedule at
-          // invitation accept time the way self-service apply-to-consult
-          // does. Seed a minimal-but-valid profile with the "General"
-          // placeholder domain + WEEKLY schedule so the Membership FK
-          // can be satisfied. The user completes real domain + schedule
-          // selection from the expert profile editor.
-          //
-          // verificationStatus defaults to PENDING_VERIFICATION, which
-          // keeps the profile hidden from /explore/experts until a
-          // platform admin reviews — matching the apply-flow posture.
-          const placeholderDomain = await tx.domain.upsert({
-            where: { name: "General" },
-            create: { name: "General" },
-            update: {},
-            select: { id: true },
-          });
-          const created = await tx.consultantProfile.create({
-            data: {
-              userId,
-              domainId: placeholderDomain.id,
-              scheduleType: "WEEKLY",
-            },
-            select: { id: true },
-          });
-          await tx.user.updateMany({
-            where: { id: userId, consultantProfileId: null },
-            data: { consultantProfileId: created.id },
-          });
-          consultantProfileId = created.id;
-        }
-      }
+      const roleEffects = await applyMembershipRoleEffects(tx, {
+        userId,
+        role: normalizedRole,
+      });
 
       // BetterAuth Member row is kept for org-scoped session flows.
       // Membership.betterAuthMemberId preserves the linkage even after
@@ -291,8 +248,9 @@ export async function POST(req: NextRequest) {
           organizationId: inv.organizationId,
           role: normalizedRole,
           status: "ACTIVE",
-          consulteeProfileId,
-          consultantProfileId,
+          consulteeProfileId: roleEffects.consulteeProfileId,
+          consultantProfileId: roleEffects.consultantProfileId,
+          payoutRecipient: roleEffects.payoutRecipient,
           betterAuthMemberId: betterAuthMember.id,
         },
       });

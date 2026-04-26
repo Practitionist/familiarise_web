@@ -175,10 +175,10 @@ export type SelfServiceFundingSource = z.infer<
 export const SELF_SERVICE_FUNDING_SOURCES =
   SelfServiceFundingSourceSchema.options;
 
-// Self-service onboarding exposes the four non-privileged MemberRoles.
-// EXPERT and SUPPORT are assigned elsewhere:
-//   EXPERT  requires canHost=true and the application workflow;
-//   SUPPORT is an operator role assigned by owners from Settings.
+// Self-service onboarding for a sponsor-only org exposes the four
+// non-privileged MemberRoles. EXPERT is assigned only on canHost=true
+// orgs (see HostInvitableMemberRoleSchema below); SUPPORT is an
+// operator role assigned by owners from Settings.
 export const SelfServiceMemberRoleSchema = z.enum([
   "OWNER",
   "MAINTAINER",
@@ -187,6 +187,39 @@ export const SelfServiceMemberRoleSchema = z.enum([
 ]);
 export type SelfServiceMemberRole = z.infer<typeof SelfServiceMemberRoleSchema>;
 export const SELF_SERVICE_MEMBER_ROLES = SelfServiceMemberRoleSchema.options;
+
+// Host-invitable subset — adds EXPERT to the self-service set. Used by
+// the Members + Invitations dashboard surfaces and the matching server
+// schemas when the org has canHost=true. EXPERT carries the implicit
+// guarantee that the org has a payout account, so the canHost gate is
+// non-negotiable: a sponsor-only org assigning EXPERT would have no
+// settlement path for the consultant's earnings.
+export const HostInvitableMemberRoleSchema = z.enum([
+  "OWNER",
+  "MAINTAINER",
+  "MANAGER",
+  "LEARNER",
+  "EXPERT",
+]);
+export type HostInvitableMemberRole = z.infer<
+  typeof HostInvitableMemberRoleSchema
+>;
+export const HOST_INVITABLE_MEMBER_ROLES =
+  HostInvitableMemberRoleSchema.options;
+
+/**
+ * Returns the role list a self-service inviter can pick on the given
+ * org. canHost orgs include EXPERT; sponsor-only orgs do not.
+ *
+ * Single source of truth for both the dropdown population (UI) and the
+ * server-side canHost gate (`InvitableRoleSchema` selection in
+ * `app/api/organizations/[orgId]/invitations/route.ts`).
+ */
+export function getInvitableRoles(canHost: boolean): MemberRole[] {
+  return canHost
+    ? [...HOST_INVITABLE_MEMBER_ROLES]
+    : [...SELF_SERVICE_MEMBER_ROLES];
+}
 
 /**
  * Narrow an untyped value to a self-service funding source, falling back

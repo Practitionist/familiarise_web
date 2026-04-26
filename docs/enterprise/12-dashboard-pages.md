@@ -8,7 +8,9 @@ thin `requireOrgAccess` check plus role-driven conditional rendering.
 ## Page tree
 
 ```
-/dashboard/organization                        → switcher + "create org" CTA
+/dashboard/organization                        → server-redirect (see § below):
+                                                  OrgAdmin → /dashboard/org-admin/
+                                                  <id>/home; everyone else → /dashboard
 /dashboard/organization/create                 → org-creation wizard
 /dashboard/organization/[orgId]                → role-aware redirect:
                                                   MANAGER+ / OWNER / SUPPORT → /home;

@@ -181,9 +181,18 @@ describe("PATCH /api/organizations/[orgId]/members/[memberId] — anti-lockout",
     )) as Response;
 
     expect(res.status).toBe(200);
+    // OWNER → MAINTAINER is an operator-role transition: the centralized
+    // applyMembershipRoleEffects helper clears any consulteeProfileId /
+    // consultantProfileId and resets payoutRecipient to SELF so a former
+    // consumer/provider role doesn't leave a stale profile FK behind.
     expect(mockedPrisma.membership.update).toHaveBeenCalledWith({
       where: { id: "m-target" },
-      data: { role: "MAINTAINER" },
+      data: {
+        role: "MAINTAINER",
+        consulteeProfileId: null,
+        consultantProfileId: null,
+        payoutRecipient: "SELF",
+      },
     });
   });
 

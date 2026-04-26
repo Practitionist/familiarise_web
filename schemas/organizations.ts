@@ -13,6 +13,7 @@
 
 import { z } from "zod";
 import {
+  HostInvitableMemberRoleSchema,
   MemberRoleSchema,
   SelfServiceFundingSourceSchema,
   SelfServiceMemberRoleSchema,
@@ -148,9 +149,12 @@ export const MembersListResponseSchema = z.object({
 // email → userId internally, and returns 404 USER_NOT_FOUND when the
 // account doesn't exist. The dashboard always sends email; userId is
 // reserved for programmatic callers (SSO provisioning, admin scripts).
+// EXPERT is in the wider HostInvitableMemberRoleSchema. It is only
+// accepted by the server when the target org has canHost=true; the UI
+// hides it for sponsor-only orgs (see MembersPageClient).
 export const AddMemberPayloadSchema = z.object({
   email: z.string().email(),
-  role: SelfServiceMemberRoleSchema,
+  role: HostInvitableMemberRoleSchema,
 });
 export type AddMemberPayload = z.infer<typeof AddMemberPayloadSchema>;
 
@@ -200,10 +204,12 @@ export const InvitationsListResponseSchema = z.object({
 });
 
 // POST /api/organizations/[orgId]/invitations — outbound.
-// Mirrors `InviteBodySchema` on the server.
+// Mirrors `InviteBodySchema` on the server. EXPERT is only accepted on
+// canHost=true orgs; the server narrows back to the self-service subset
+// for sponsor-only orgs and rejects with EXPERT_REQUIRES_CANHOST.
 export const CreateInvitationPayloadSchema = z.object({
   email: z.string().email(),
-  role: SelfServiceMemberRoleSchema,
+  role: HostInvitableMemberRoleSchema,
   expiresInDays: z.number().int().min(1).max(30).optional(),
 });
 export type CreateInvitationPayload = z.infer<

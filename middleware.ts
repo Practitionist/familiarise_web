@@ -18,6 +18,7 @@ import {
   orgWalletTopUpLimiter,
   applyRateLimit,
   getClientIp,
+  isBypassableIp,
 } from "@/lib/rate-limit";
 
 // Constants for common URLs and route patterns
@@ -178,10 +179,13 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   // Runs before any serverless function is invoked — prevents cost amplification
   // under DDoS even when every request would otherwise return 429.
 
-  // Auth brute-force protection — POST only; skip for localhost (dev testing)
+  // Auth brute-force protection — POST only; skip for localhost (dev
+  // testing). `isBypassableIp` returns false in production for every
+  // value (including the `unknown_ip` sentinel), so a misconfigured
+  // proxy / missing header in prod still incurs the rate-limit
+  // penalty instead of waving traffic through. See lib/rate-limit.ts.
   const clientIp = getClientIp(req);
-  const isLocalhost =
-    clientIp === "::1" || clientIp === "127.0.0.1" || clientIp === "unknown_ip";
+  const isLocalhost = isBypassableIp(clientIp);
   if (
     !isLocalhost &&
     req.method === "POST" &&

@@ -26,6 +26,8 @@ export const ORG_ERROR_COPY: Record<string, string> = {
     "Members cannot switch between Learner and Expert roles. Remove the member and re-invite them with the new role instead.",
   USER_NOT_FOUND:
     "No user account found with that email. They need to sign up at Familiarise first, or use the Invitations page to send them an invite.",
+  EXPERT_REQUIRES_CANHOST:
+    "Expert can only be assigned on host-capable organizations. Enable hosting under Settings → Capabilities first.",
 };
 
 /**

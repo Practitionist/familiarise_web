@@ -92,14 +92,21 @@ export default function Dashboard() {
               );
               break;
             case "ORG_ADMIN": {
-              // ORG_ADMIN users land on their org dashboard.
-              const memberships = session?.user?.organizationMemberships;
-              const firstOrg = memberships?.[0];
-              if (firstOrg) {
+              // ORG_ADMIN users land on the cross-org operator portfolio
+              // (`/dashboard/org-admin/<id>/home`) so a multi-org operator
+              // sees every owned org, not just whichever membership sorts
+              // first. The `/dashboard/organization` redirect target uses
+              // the same path; the role router mirrors it here so
+              // `/dashboard` and `/dashboard/organization` agree.
+              if (userDetails.orgAdminProfileId) {
                 router.push(
-                  `/dashboard/organization/${firstOrg.organizationId}/home`,
+                  `/dashboard/org-admin/${userDetails.orgAdminProfileId}/home`,
                 );
               } else {
+                // Fallback for the half-onboarded edge case (#724) — no
+                // OrgAdminProfile yet. Send them to the create wizard
+                // via /dashboard/organization so they can finish
+                // onboarding instead of bouncing off a 404.
                 router.push("/dashboard/organization");
               }
               break;

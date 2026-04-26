@@ -13,6 +13,7 @@ import {
 } from "@/lib/email";
 import { syncSubscriber } from "@/lib/novu/subscriber";
 import { shouldRejectSession } from "@/lib/sso/enforce-session";
+import { applyMembershipRoleEffects } from "@/lib/api/organizations/membership-transitions";
 
 export const auth = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET,
@@ -371,18 +372,28 @@ export const auth = betterAuth({
       for (const bm of bareMembers) {
         if (!bm.organization) continue;
         const defaultRole = bm.organization.ssoSettings?.defaultRoleForAutoJoin ?? "LEARNER";
-        const consulteeProfileId =
-          ((user as Record<string, unknown>).consulteeProfileId as string | undefined) ?? null;
         try {
-          await prisma.membership.create({
-            data: {
+          // Wrap the role-effect resolution + Membership create in a
+          // transaction so the lazy-created profile (LEARNER →
+          // ConsulteeProfile, EXPERT → ConsultantProfile) and the
+          // Membership row commit atomically.
+          await prisma.$transaction(async (tx) => {
+            const roleEffects = await applyMembershipRoleEffects(tx, {
               userId: user.id,
-              organizationId: bm.organizationId,
               role: defaultRole,
-              status: "ACTIVE",
-              consulteeProfileId: defaultRole === "LEARNER" ? consulteeProfileId : null,
-              betterAuthMemberId: bm.id,
-            },
+            });
+            await tx.membership.create({
+              data: {
+                userId: user.id,
+                organizationId: bm.organizationId,
+                role: defaultRole,
+                status: "ACTIVE",
+                consulteeProfileId: roleEffects.consulteeProfileId,
+                consultantProfileId: roleEffects.consultantProfileId,
+                payoutRecipient: roleEffects.payoutRecipient,
+                betterAuthMemberId: bm.id,
+              },
+            });
           });
         } catch {
           // Unique-constraint race — safe to ignore.

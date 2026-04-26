@@ -235,9 +235,11 @@ creating tour data.
 
 **Why it matters.** The seed cohort is your reference for what each
 shape *should* look like in the dashboard later. Wipro is a pure
-sponsor; LearnPro is a hybrid; IIT Madras is a hybrid (HOST + WALLET);
-Rahul's personal org is a host. When we create the tour orgs, we'll
-mirror these shapes with `tour-2026-04-25-*` slugs.
+sponsor (canSponsor=true, canHost=false); LearnPro Agency is host-only
+(canSponsor=false, canHost=true); IIT Madras is hybrid (canSponsor=true,
+canHost=true with WALLET funding); Rahul's personal org is host-only.
+When we create the tour orgs, we'll mirror these shapes with
+`tour-2026-04-25-*` slugs.
 
 **Coverage.** None — orientation only.
 

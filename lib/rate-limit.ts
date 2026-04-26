@@ -91,7 +91,7 @@ export const orgInviteAcceptLimiter = makeLimiter(
   "rl:org-invite-accept",
 );
 
-/** 60 per hour — POST /api/auth/sso/domain-check (IP-based, prevents org-existence enumeration) */
+/** 60 per hour — GET /api/auth/sso/domain-check (IP-based, prevents org-existence enumeration) */
 export const ssoDomainCheckLimiter = makeLimiter(
   60,
   "1 h",
@@ -138,12 +138,43 @@ export async function applyRateLimit(
 /**
  * Extract the client IP from request headers.
  * Use for IP-based rate limiting on public endpoints.
+ *
+ * Header preference (most-trusted first):
+ *   - `req.ip` (Next.js / Vercel-derived)
+ *   - `x-nf-client-connection-ip` (Netlify canonical client IP)
+ *   - `x-forwarded-for` (first hop)
+ *
+ * Returns the sentinel `"unknown_ip"` when nothing resolves. The
+ * production middleware MUST NOT bypass on this sentinel — see
+ * `isBypassableIp`. In dev / test, the sentinel is treated as
+ * localhost and waved through.
  */
 export function getClientIp(req: {
   ip?: string;
   headers: { get(name: string): string | null };
 }): string {
   const ip =
-    req.ip ?? req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+    req.ip ??
+    req.headers.get("x-nf-client-connection-ip")?.trim() ??
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   return ip || "unknown_ip";
+}
+
+/**
+ * Returns true when an IP value is safe to bypass rate-limiting on.
+ * Localhost handles (`::1`, `127.0.0.1`) and the `unknown_ip` sentinel
+ * are bypassable in non-production environments only — production
+ * traffic that arrives without a usable IP header should fall into the
+ * normal limiter bucket so a header-stripping attacker pays the same
+ * rate-limit price as a real client. Previously the sentinel was an
+ * unconditional bypass, which meant a misconfigured reverse-proxy in
+ * production would silently disable every limiter.
+ */
+export function isBypassableIp(ip: string): boolean {
+  if (process.env.NODE_ENV === "production") return false;
+  return (
+    ip === "::1" ||
+    ip === "127.0.0.1" ||
+    ip === "unknown_ip"
+  );
 }

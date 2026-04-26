@@ -17,6 +17,7 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess, orgRoleSatisfies } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { isBlockedRoleTransition } from "@/lib/enterprise/role-transitions";
+import { applyMembershipRoleEffects } from "@/lib/api/organizations/membership-transitions";
 
 const MemberRoleSchema = z.enum([
   "OWNER",
@@ -172,6 +173,20 @@ export async function PATCH(
         }
       }
 
+      // Role-driven profile reconciliation. When the role changes we
+      // hydrate / clear the consultee / consultant FKs through the
+      // shared helper so PATCH stays in sync with POST and invite-accept.
+      // payoutRecipient is reset to the role default (SELF) on role
+      // change; pre-existing overrides are not preserved across a role
+      // move.
+      const roleEffects =
+        patch.role !== undefined && patch.role !== current.role
+          ? await applyMembershipRoleEffects(tx, {
+              userId: current.userId,
+              role: patch.role,
+            })
+          : null;
+
       const updated = await tx.membership.update({
         where: { id: memberId },
         data: {
@@ -179,6 +194,11 @@ export async function PATCH(
           ...(patch.status !== undefined && { status: patch.status }),
           ...(patch.departmentLabel !== undefined && {
             departmentLabel: patch.departmentLabel,
+          }),
+          ...(roleEffects && {
+            consulteeProfileId: roleEffects.consulteeProfileId,
+            consultantProfileId: roleEffects.consultantProfileId,
+            payoutRecipient: roleEffects.payoutRecipient,
           }),
         },
       });

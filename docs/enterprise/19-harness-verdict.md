@@ -4,6 +4,12 @@ The evaluation harness exercises four representative org scenarios
 plus a set of cross-cutting checks, for a total of 19 line items.
 Current verdict: **15 ✅ / 5 ⚠️ / 0 ❌** (with row 20 newly added by the multi-session cap-counting audit; see #710).
 
+> **Seed cohort:** the four scenarios below map onto the deterministic
+> seed cohort. See `00-overview.md → Seed / production-shaped grid`
+> for the canonical slugs / capability shape per scenario, plus the
+> `tour-owner@familiarise.dev` operator handle used by the harness
+> sign-in path.
+
 Every ⚠️ is a schema-final item whose cron / integration lands in a
 follow-up PR. No ❌ outstanding.
 

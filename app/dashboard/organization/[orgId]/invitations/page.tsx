@@ -4,8 +4,8 @@ import { use, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Mail, Trash2, Copy } from "lucide-react";
 import type { MemberRole, OrgStatus } from "@prisma/client";
-import { useRequireOrgRole } from "../useOrgRole";
-import { MEMBER_ROLE_LABEL } from "@/lib/labels/org-labels";
+import { useOrgRole, useRequireOrgRole } from "../useOrgRole";
+import { MEMBER_ROLE_LABEL, getInvitableRoles } from "@/lib/labels/org-labels";
 import { humanizeOrgError } from "@/lib/labels/org-errors";
 import {
   fetchOrgDetails,
@@ -27,6 +27,16 @@ import type { z } from "zod";
 type SelfServiceRole = z.infer<
   typeof CreateInvitationPayloadSchema
 >["role"];
+
+// canHost-aware role list. EXPERT only renders for host-capable orgs;
+// sponsor-only orgs see the four self-service roles. Mirrors the
+// server's EXPERT_REQUIRES_CANHOST guard in the invitations route.
+function selectableRoles(canHost: boolean): Array<{ value: SelfServiceRole; label: string }> {
+  return getInvitableRoles(canHost).map((value) => ({
+    value: value as SelfServiceRole,
+    label: MEMBER_ROLE_LABEL[value],
+  }));
+}
 
 // Invitation.status is stored as a free-form string to stay aligned with
 // BetterAuth's `member_invitations` bridge table. The three states the
@@ -86,13 +96,6 @@ import {
 // `InvitationRow` lives in `@/schemas/organizations` so the same shape
 // powers the wizard, this page, and any future operator tooling.
 
-const ROLE_OPTIONS: Array<{ value: SelfServiceRole; label: string }> = [
-  { value: "LEARNER", label: "Learner" },
-  { value: "MANAGER", label: "Manager" },
-  { value: "MAINTAINER", label: "Maintainer" },
-  { value: "OWNER", label: "Owner" },
-];
-
 async function fetchInvitations(
   orgId: string,
 ): Promise<{ invitations: InvitationRow[] }> {
@@ -143,6 +146,8 @@ export default function OrgInvitationsPage({
 }) {
   const { orgId } = use(params);
   const { allowed } = useRequireOrgRole(orgId, "MAINTAINER");
+  const { canHost } = useOrgRole(orgId);
+  const roleOptions = selectableRoles(canHost);
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
@@ -354,7 +359,7 @@ export default function OrgInvitationsPage({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {ROLE_OPTIONS.map((r) => (
+                  {roleOptions.map((r) => (
                     <SelectItem key={r.value} value={r.value}>
                       {r.label}
                     </SelectItem>

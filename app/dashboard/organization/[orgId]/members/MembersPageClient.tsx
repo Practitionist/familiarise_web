@@ -9,6 +9,7 @@ import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import {
   MEMBER_ROLE_LABEL,
   MEMBER_STATUS_LABEL,
+  getInvitableRoles,
 } from "@/lib/labels/org-labels";
 import {
   AddMemberPayloadSchema,
@@ -64,12 +65,14 @@ import {
 // so the dashboard and any other consumer (e.g. operator tools) share the
 // same runtime contract.
 
-const SELECTABLE_ROLES: Array<{ value: MemberRole; label: string }> = [
-  { value: "OWNER", label: "Owner" },
-  { value: "MAINTAINER", label: "Maintainer" },
-  { value: "MANAGER", label: "Manager" },
-  { value: "LEARNER", label: "Learner" },
-];
+// canHost-aware role list. EXPERT only appears on host-capable orgs;
+// the server enforces the same gate with EXPERT_REQUIRES_CANHOST.
+function selectableRoles(canHost: boolean): Array<{ value: MemberRole; label: string }> {
+  return getInvitableRoles(canHost).map((value) => ({
+    value,
+    label: MEMBER_ROLE_LABEL[value],
+  }));
+}
 
 async function fetchMembers(orgId: string): Promise<{ members: MemberRow[] }> {
   const res = await fetch(`/api/organizations/${orgId}/members`);
@@ -138,9 +141,10 @@ async function removeMember(orgId: string, memberId: string) {
 }
 
 export function MembersPageClient({ orgId }: { orgId: string }) {
-  const { isAtLeast } = useOrgRole(orgId);
+  const { isAtLeast, canHost } = useOrgRole(orgId);
   const { allowed } = useRequireOrgAccess(orgId, { minRole: "MANAGER" });
   const queryClient = useQueryClient();
+  const roleOptions = selectableRoles(canHost);
 
   const { data, isLoading } = useQuery({
     queryKey: ["org-members", orgId],
@@ -349,7 +353,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {SELECTABLE_ROLES.map((r) => (
+                  {roleOptions.map((r) => (
                     <SelectItem key={r.value} value={r.value}>
                       {r.label}
                     </SelectItem>
@@ -407,7 +411,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {SELECTABLE_ROLES.map((r) => (
+                  {roleOptions.map((r) => (
                     <SelectItem key={r.value} value={r.value}>
                       {r.label}
                     </SelectItem>
