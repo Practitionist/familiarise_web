@@ -1,25 +1,27 @@
 import { notFound } from "next/navigation";
 import { requireAuth } from "@/lib/auth-guard";
 import NovuProvider from "@/providers/NovuProvider";
-import { OrgSwitcherTopBar } from "@/components/dashboard/OrgSwitcherTopBar";
+import { OrgAdminShell } from "./OrgAdminShell";
 
 /**
- * Guard + slim chrome for the operator-side personal dashboard.
+ * Server-side guard + chrome lift for the operator (cross-org) dashboard.
  *
  * IDOR guard: the orgAdminId in the URL must match the authenticated
- * user's orgAdminProfileId. We refuse to even hint that another
- * user's profile exists — URL-guessing returns the same 404 as a
- * truly absent id.
+ * user's orgAdminProfileId. We refuse to even hint that another user's
+ * profile exists — URL-guessing returns the same 404 as a truly absent
+ * id.
  *
- * Chrome: a 64px slim top-bar (back link, OrganizationSwitcher,
- * NotificationInbox, user menu). Previously this layout was a noop,
- * which left the operator chooser page stranded. The back link is
- * suppressed (`hideBackLink`) because the resolver would route the
- * user right back to this same operator dashboard, creating a loop.
+ * Chrome: full CollapsibleSidebar (mirrors /dashboard/admin and
+ * /dashboard/staff), with a top context bar carrying the
+ * OrganizationSwitcher dropdown and the Novu notification bell. The
+ * sidebar items live on OrgAdminShell — keeping the layout thin so
+ * the auth check stays server-side.
  *
- * The full per-org CollapsibleSidebar lives one level deeper, on
- * /dashboard/organization/[orgId]/layout.tsx — once the operator
- * picks an org, they get the rich sidebar.
+ * User identity props (name/email/image) are read from the *server*
+ * session here and passed down. The shell intentionally does NOT use
+ * useSession() for these — the client hook returns null on the first
+ * render and resolves later, which causes a hydration mismatch when
+ * the sidebar renders the displayed name.
  */
 export default async function OrgAdminLayout({
   children,
@@ -31,21 +33,22 @@ export default async function OrgAdminLayout({
   const { orgAdminId } = await params;
   const session = await requireAuth();
 
-  const sessionUser = session.user as typeof session.user & {
-    orgAdminProfileId?: string | null;
-  };
-  if (sessionUser.orgAdminProfileId !== orgAdminId) {
+  // `orgAdminProfileId` lives on the inferred Session["user"] via the
+  // customSession callback (lib/auth.ts:522). Direct access is type-safe.
+  if (session.user.orgAdminProfileId !== orgAdminId) {
     notFound();
   }
 
   return (
     <NovuProvider>
-      <div className="flex h-screen-maintenance flex-col bg-zinc-50 dark:bg-zinc-950">
-        <OrgSwitcherTopBar hideBackLink />
-        <main className="flex-1 overflow-y-auto">
-          <div className="p-6">{children}</div>
-        </main>
-      </div>
+      <OrgAdminShell
+        orgAdminId={orgAdminId}
+        userName={session.user.name ?? null}
+        userEmail={session.user.email ?? null}
+        userImage={session.user.image ?? null}
+      >
+        {children}
+      </OrgAdminShell>
     </NovuProvider>
   );
 }

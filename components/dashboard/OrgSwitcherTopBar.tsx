@@ -59,19 +59,14 @@ export function OrgSwitcherTopBar({
 }) {
   const { data: session } = useSession();
 
-  const userExt = session?.user as
-    | (NonNullable<typeof session>["user"] & {
-        orgAdminProfileId?: string | null;
-        consultantProfileId?: string | null;
-        consulteeProfileId?: string | null;
-      })
-    | undefined;
-
-  const personalHref = userExt
+  // `*ProfileId` fields live on the customSession-augmented user type
+  // (lib/auth.ts:518-522). useSession()'s data is typed as the inferred
+  // Session, so direct field access is type-safe.
+  const personalHref = session?.user
     ? resolvePersonalDashboardHref({
-        orgAdminProfileId: userExt.orgAdminProfileId,
-        consultantProfileId: userExt.consultantProfileId,
-        consulteeProfileId: userExt.consulteeProfileId,
+        orgAdminProfileId: session.user.orgAdminProfileId,
+        consultantProfileId: session.user.consultantProfileId,
+        consulteeProfileId: session.user.consulteeProfileId,
       })
     : null;
 
