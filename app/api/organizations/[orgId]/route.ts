@@ -28,6 +28,14 @@ const GstRegStatusSchema = z.enum(["REGULAR", "COMPOSITION", "UNREGISTERED"]);
 const PatchBodySchema = z
   .object({
     name: z.string().trim().min(2).max(200).optional(),
+    slug: z
+      .string()
+      .trim()
+      .toLowerCase()
+      .min(2)
+      .max(80)
+      .regex(/^[a-z0-9-]+$/, "Slug may only contain lowercase letters, digits, and hyphens")
+      .optional(),
     description: z.string().max(5000).nullable().optional(),
     industry: z.string().max(120).nullable().optional(),
     website: z.string().url().nullable().optional(),
@@ -169,10 +177,26 @@ export async function PATCH(
         );
       }
 
+      // Slug uniqueness — only check on actual change so a no-op PATCH
+      // (e.g., wizard resubmit) doesn't 409 against the org's own row.
+      if (body.slug && body.slug !== current.slug) {
+        const slugTaken = await tx.organization.findUnique({
+          where: { slug: body.slug },
+          select: { id: true },
+        });
+        if (slugTaken && slugTaken.id !== orgId) {
+          throw Object.assign(
+            new Error(`Slug "${body.slug}" is already taken`),
+            { httpStatus: 409 },
+          );
+        }
+      }
+
       const next = await tx.organization.update({
         where: { id: orgId },
         data: {
           ...(body.name !== undefined && { name: body.name }),
+          ...(body.slug !== undefined && { slug: body.slug }),
           ...(body.description !== undefined && { description: body.description }),
           ...(body.industry !== undefined && { industry: body.industry }),
           ...(body.website !== undefined && { website: body.website }),
