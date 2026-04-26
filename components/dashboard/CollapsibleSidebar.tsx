@@ -82,6 +82,15 @@ export interface CollapsibleSidebarProps {
   pathname: string;
   /** Sign-out handler invoked when the footer button is clicked. */
   onSignOut: () => void;
+  /**
+   * Extra classes appended to the outer `<aside>`. Lets a caller
+   * override or extend the default `bg-white` so different dashboard
+   * roles can carry distinct sidebar accents (e.g. operator chrome
+   * uses a silver gradient to differentiate from per-org chrome).
+   * Cascade order: defaults first, then this prop — so a `bg-*` here
+   * wins over the default `bg-white`.
+   */
+  className?: string;
 }
 
 /**
@@ -107,6 +116,7 @@ export function CollapsibleSidebar({
   topDropdownActions,
   pathname,
   onSignOut,
+  className,
 }: CollapsibleSidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
 
@@ -122,6 +132,7 @@ export function CollapsibleSidebar({
       className={cn(
         "flex h-full flex-col border-r border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 transition-all duration-300",
         collapsed ? "w-16" : "w-64",
+        className,
       )}
     >
       {/* Header: single-row layout, fixed h-14 to pixel-match the

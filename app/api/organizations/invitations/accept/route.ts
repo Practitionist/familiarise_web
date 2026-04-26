@@ -1,251 +1,315 @@
 /**
- * Accept an organization invitation.
+ * POST /api/organizations/invitations/accept
  *
- * POST { token } — looks up the Invitation row, verifies it's pending and
- * unexpired, and creates the Member + OrganizationMemberProfile rows for the
- * authenticated caller. The caller's email must match the invited email.
+ * Accepts a pending BetterAuth `Invitation` by id and creates the typed
+ * `Membership` row in the same transaction. Also creates the BetterAuth
+ * `Member` sibling so BetterAuth's org-scoped session flows keep working
+ * — the two tables are linked via `Membership.betterAuthMemberId`.
+ *
+ * Token race: two concurrent accepts from the same email could both pass
+ * the pre-check. `updateMany WHERE status = pending` gives us an atomic
+ * claim — only the first caller transitions the invitation to accepted,
+ * the second sees count=0 and reports 409.
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
-import { ENABLE_PROVIDER_ORGS } from "@/lib/feature-flags";
-import { acquireSeat } from "@/lib/api/organizations/seat-helpers";
-import { OrgAuditAction, OrgMemberRole } from "@prisma/client";
+import { MemberRoleSchema } from "@/lib/labels/org-labels";
+import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { isOnboardingBlocked } from "@/lib/enterprise/org-status";
+import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
+import { notifyOrgInviteAccepted } from "@/lib/novu/org-workflows";
 
-const acceptSchema = z.object({
-  token: z.string().min(16),
+const AcceptBodySchema = z.object({
+  invitationId: z.string().min(1),
 });
 
-const PROVIDER_GATED_ROLES: OrgMemberRole[] = ["ORG_CONSULTANT", "ORG_SUPPORT"];
-
-function coerceOrgMemberRole(raw: string): OrgMemberRole {
-  // Defensive: invitations created via BetterAuth's UI may carry "member" /
-  // "owner" / "admin" string values. Map them onto our typed enum.
-  if (raw in OrgMemberRole) return raw as OrgMemberRole;
-  switch (raw.toLowerCase()) {
-    case "owner":
-      return "ORG_OWNER";
-    case "admin":
-      return "ORG_ADMIN";
-    case "manager":
-      return "ORG_MANAGER";
-    case "member":
-    case "learner":
-    default:
-      return "ORG_LEARNER";
-  }
-}
-
 export async function POST(req: NextRequest) {
-  try {
-    const auth = await requireApiAuth();
-    if (auth.error) return auth.error;
+  const auth = await requireApiAuth();
+  if (auth.error) return auth.error;
 
-    const body = await req.json();
-    const parsed = acceptSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: "Invalid request body", details: parsed.error.flatten() },
-        { status: 400 },
-      );
+  const raw = await req.json().catch(() => null);
+  const parsed = AcceptBodySchema.safeParse(raw);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid body", detail: parsed.error.flatten() },
+      { status: 400 },
+    );
+  }
+  const { invitationId } = parsed.data;
+
+  // Verify the invitation against the authenticated user's email before
+  // doing anything mutative. Preventing accept-by-id-guessing means a
+  // stolen URL from a user's inbox still can't be redeemed by someone
+  // else's account.
+  const invitation = await prisma.invitation.findUnique({
+    where: { id: invitationId },
+    select: {
+      id: true,
+      organizationId: true,
+      email: true,
+      role: true,
+      status: true,
+      expiresAt: true,
+    },
+  });
+  if (!invitation) {
+    return NextResponse.json({ error: "Invitation not found" }, { status: 404 });
+  }
+  // Closure-friendly non-null alias. TS doesn't carry the
+  // null-narrowed flow type into the inner `runAcceptTx` function
+  // declaration below; binding to a fresh const preserves the
+  // narrowed type for closure reads.
+  const inv = invitation;
+  if (inv.email.toLowerCase() !== auth.session.user.email.toLowerCase()) {
+    return NextResponse.json(
+      { error: "This invitation is not addressed to you" },
+      { status: 403 },
+    );
+  }
+  if (inv.expiresAt.getTime() < Date.now()) {
+    return NextResponse.json(
+      { error: "Invitation has expired" },
+      { status: 410 },
+    );
+  }
+
+  // Narrow the stored string to a MemberRole. BetterAuth's Invitation
+  // table stores role as a free-form string, so validate before using.
+  const roleResult = MemberRoleSchema.safeParse(inv.role);
+  if (!roleResult.success) {
+    return NextResponse.json(
+      { error: `Unknown invitation role: ${inv.role}` },
+      { status: 400 },
+    );
+  }
+  const normalizedRole = roleResult.data;
+
+  const userId = auth.session.user.id;
+
+  // ENT-5: A second concurrent accept for the same (user, org) pair can
+  // race past the in-tx existence check and hit P2002 on Membership's
+  // (userId, organizationId) unique. Retry once: the second attempt will
+  // see the row created by the winner and fall into the alreadyMember
+  // idempotent branch. Bound the retry to keep this from masking real
+  // bugs.
+  const MAX_ATTEMPTS = 2;
+  let lastErr: unknown;
+  let result:
+    | Awaited<ReturnType<typeof runAcceptTx>>
+    | undefined;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      result = await runAcceptTx();
+      lastErr = undefined;
+      break;
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === "P2002" &&
+        attempt < MAX_ATTEMPTS
+      ) {
+        lastErr = err;
+        continue;
+      }
+      lastErr = err;
+      break;
     }
+  }
+  if (!result) {
+    if (lastErr instanceof Error && "httpStatus" in lastErr) {
+      const status =
+        typeof lastErr.httpStatus === "number" ? lastErr.httpStatus : 500;
+      return NextResponse.json({ error: lastErr.message }, { status });
+    }
+    throw lastErr ?? new Error("Invitation accept failed for unknown reason");
+  }
 
-    const invitation = await prisma.invitation.findUnique({
-      where: { id: parsed.data.token },
-      include: {
-        organization: {
-          select: { id: true, name: true, organizationProfile: true },
+  // Side-effect: notify the org's operator roster that someone new
+  // joined. Skip when the caller was already a member — the "accept"
+  // button was just idempotent, nothing newsworthy happened.
+  if (!result.alreadyMember) {
+    const origin = new URL(req.url).origin;
+    notifyOrgInviteAccepted(result.organization.id, {
+      accepteeName: auth.session.user.name ?? auth.session.user.email,
+      accepteeEmail: auth.session.user.email,
+      orgName: result.organization.name,
+      role: result.membership.role,
+      dashboardUrl: `${origin}/dashboard/organization/${result.organization.id}/members`,
+    }).catch((err) =>
+      console.error("[notifyOrgInviteAccepted] failed:", err),
+    );
+  }
+
+  // Client contract (app/organizations/invite/[token]/page.tsx): expects
+  //   { organization: { id, name }, role?: string, alreadyMember?: boolean }
+  // so it can redirect to /dashboard/organization/:id/home after accept.
+  // Returning a bare `{ membership }` silently broke the redirect.
+  return NextResponse.json(
+    {
+      organization: result.organization,
+      role: result.membership.role,
+      alreadyMember: result.alreadyMember,
+      membership: result.membership,
+    },
+    { status: result.alreadyMember ? 200 : 201 },
+  );
+
+  async function runAcceptTx() {
+    return prisma.$transaction(async (tx) => {
+      // Atomic claim — only the first concurrent accept wins. Follow-up
+      // retries get count=0 and fall into the 409 branch below.
+      const claim = await tx.invitation.updateMany({
+        where: { id: invitationId, status: "pending" },
+        data: { status: "accepted", userId },
+      });
+      if (claim.count === 0) {
+        throw Object.assign(
+          new Error("Invitation is no longer pending"),
+          { httpStatus: 409 },
+        );
+      }
+
+      // Re-fetch org status inside the tx so a SUSPENDED/DEACTIVATED org
+      // can't be onboarded into via a stale invite link. The pre-check
+      // outside the tx is not enough — an admin could suspend the org
+      // mid-flight between the email click and the POST.
+      const org = await tx.organization.findUnique({
+        where: { id: inv.organizationId },
+        select: { id: true, name: true, status: true },
+      });
+      if (!org) {
+        throw Object.assign(
+          new Error("Organization no longer exists"),
+          { httpStatus: 404 },
+        );
+      }
+      if (isOnboardingBlocked(org.status)) {
+        throw Object.assign(
+          new Error(
+            `Organization is ${org.status.toLowerCase()}; cannot accept new members`,
+          ),
+          { httpStatus: 403 },
+        );
+      }
+
+      // User may already have a Membership in this org from a direct
+      // admin add or an SSO auto-join. Idempotent upsert keeps the
+      // UI's "accept" button safe to click twice.
+      const existing = await tx.membership.findUnique({
+        where: {
+          userId_organizationId: {
+            userId,
+            organizationId: inv.organizationId,
+          },
         },
-      },
-    });
-
-    if (!invitation) {
-      return NextResponse.json(
-        { error: "This invitation link is no longer valid. Please ask your organization admin for a new invite." },
-        { status: 404 },
-      );
-    }
-
-    // Special case: invitation already accepted — check whether THIS user is already
-    // a member and give them a helpful dashboard redirect rather than a dead-end error.
-    if (invitation.status === "accepted") {
-      const existing = await prisma.member.findUnique({
-        where: { organizationId_userId: { organizationId: invitation.organizationId, userId: auth.session.user.id } },
       });
       if (existing) {
-        return NextResponse.json({
-          organization: { id: invitation.organization.id, name: invitation.organization.name },
-          alreadyMember: true,
+        return { membership: existing, organization: org, alreadyMember: true };
+      }
+
+      // Profile FK hydration. The rules are role-specific:
+      //   LEARNER — ensure ConsulteeProfile exists (lazy-create if not),
+      //             link via Membership.consulteeProfileId.
+      //   EXPERT  — ensure ConsultantProfile exists (lazy-create with
+      //             verificationStatus=PENDING if not), link via
+      //             Membership.consultantProfileId. The org-issued
+      //             ConsultantProfile mirrors the posture of the self-
+      //             service apply flow: the profile is hidden from
+      //             /explore/experts until a platform admin verifies.
+      //   Other roles — no profile linkage (MAINTAINER, MANAGER, etc.).
+      //
+      // The same profile may be linked to memberships at several orgs
+      // concurrently; the schema is deliberately many-to-many and
+      // docs/enterprise/14-scenarios-and-examples.md lists multi-org
+      // experts and learners as first-class cases.
+      let consulteeProfileId: string | null = null;
+      let consultantProfileId: string | null = null;
+
+      if (normalizedRole === "LEARNER") {
+        consulteeProfileId = await ensureConsulteeProfile(tx, userId);
+      } else if (normalizedRole === "EXPERT") {
+        const existing = await tx.user.findUnique({
+          where: { id: userId },
+          select: { consultantProfileId: true },
         });
-      }
-      // Accepted by someone else (or admin-forced) — not their invite.
-      return NextResponse.json(
-        { error: "This invitation link is no longer valid. Please ask your organization admin for a new invite." },
-        { status: 400 },
-      );
-    }
-
-    if (invitation.status !== "pending") {
-      return NextResponse.json(
-        { error: "This invitation link is no longer valid. Please ask your organization admin for a new invite." },
-        { status: 400 },
-      );
-    }
-    if (invitation.expiresAt < new Date()) {
-      return NextResponse.json(
-        { error: "This invitation has expired. Please ask your organization admin for a new invite." },
-        { status: 400 },
-      );
-    }
-    if (
-      invitation.email.toLowerCase() !==
-      auth.session.user.email.toLowerCase()
-    ) {
-      return NextResponse.json(
-        { error: "This invitation was sent to a different email address." },
-        { status: 403 },
-      );
-    }
-    if (!invitation.organization.organizationProfile) {
-      return NextResponse.json(
-        { error: "Organization profile is missing — contact support." },
-        { status: 500 },
-      );
-    }
-
-    const role = coerceOrgMemberRole(invitation.role);
-    if (!ENABLE_PROVIDER_ORGS && PROVIDER_GATED_ROLES.includes(role)) {
-      return NextResponse.json(
-        {
-          error: `${role} role is gated behind PROVIDER orgs.`,
-          flag: "ENABLE_PROVIDER_ORGS",
-        },
-        { status: 501 },
-      );
-    }
-
-    const orgProfile = invitation.organization.organizationProfile;
-    const userId = auth.session.user.id;
-
-    // Idempotent: if a Member already exists, surface that.
-    const existing = await prisma.member.findUnique({
-      where: {
-        organizationId_userId: {
-          organizationId: invitation.organizationId,
-          userId,
-        },
-      },
-    });
-    if (existing) {
-      await prisma.invitation.update({
-        where: { id: invitation.id },
-        data: { status: "accepted" },
-      });
-      return NextResponse.json({
-        organization: {
-          id: invitation.organization.id,
-          name: invitation.organization.name,
-        },
-        alreadyMember: true,
-      });
-    }
-
-    const consulteeProfileId = auth.session.user.consulteeProfileId ?? null;
-    const consultantProfileId = auth.session.user.consultantProfileId ?? null;
-
-    // Profile link guard — same check as the direct-add flow.
-    if (role === "ORG_LEARNER" && !consulteeProfileId) {
-      return NextResponse.json(
-        { error: "Complete your learner profile before accepting this invitation." },
-        { status: 422 },
-      );
-    }
-    if (role === "ORG_CONSULTANT" && !consultantProfileId) {
-      return NextResponse.json(
-        { error: "Complete your consultant profile before accepting this invitation." },
-        { status: 422 },
-      );
-    }
-
-    await prisma.$transaction(async (tx) => {
-      // Atomic status claim — prevents double-accept race.
-      // The pre-TX status check is a fast-path for the common case; this guard
-      // is the actual enforcement. Two concurrent accepts both pass the soft
-      // check above; only the first updateMany wins (count=1), the second gets
-      // count=0 and throws INVITATION_ALREADY_ACCEPTED.
-      const claimed = await tx.invitation.updateMany({
-        where: { id: invitation.id, status: "pending" },
-        data: { status: "accepted" },
-      });
-      if (claimed.count === 0) throw new Error("INVITATION_ALREADY_ACCEPTED");
-
-      // Atomic seat acquisition — conditional UPDATE prevents oversubscription.
-      if (role === "ORG_LEARNER") {
-        const acquired = await acquireSeat(tx, orgProfile.id);
-        if (!acquired) throw new Error("SEAT_LIMIT_REACHED");
+        if (existing?.consultantProfileId) {
+          consultantProfileId = existing.consultantProfileId;
+        } else {
+          // Org-invited EXPERTs don't pick a domain / schedule at
+          // invitation accept time the way self-service apply-to-consult
+          // does. Seed a minimal-but-valid profile with the "General"
+          // placeholder domain + WEEKLY schedule so the Membership FK
+          // can be satisfied. The user completes real domain + schedule
+          // selection from the expert profile editor.
+          //
+          // verificationStatus defaults to PENDING_VERIFICATION, which
+          // keeps the profile hidden from /explore/experts until a
+          // platform admin reviews — matching the apply-flow posture.
+          const placeholderDomain = await tx.domain.upsert({
+            where: { name: "General" },
+            create: { name: "General" },
+            update: {},
+            select: { id: true },
+          });
+          const created = await tx.consultantProfile.create({
+            data: {
+              userId,
+              domainId: placeholderDomain.id,
+              scheduleType: "WEEKLY",
+            },
+            select: { id: true },
+          });
+          await tx.user.updateMany({
+            where: { id: userId, consultantProfileId: null },
+            data: { consultantProfileId: created.id },
+          });
+          consultantProfileId = created.id;
+        }
       }
 
-      const member = await tx.member.create({
+      // BetterAuth Member row is kept for org-scoped session flows.
+      // Membership.betterAuthMemberId preserves the linkage even after
+      // BetterAuth's own adapter writes are done.
+      const betterAuthMember = await tx.member.create({
         data: {
-          organizationId: invitation.organizationId,
+          organizationId: inv.organizationId,
           userId,
-          role,
+          // BetterAuth's Member.role is a free-form string; we write the
+          // typed MemberRole value here so third-party tools that read
+          // the BetterAuth table see the correct role.
+          role: normalizedRole,
         },
       });
 
-      const memberProfile = await tx.organizationMemberProfile.create({
+      const created = await tx.membership.create({
         data: {
-          memberId: member.id,
-          organizationProfileId: orgProfile.id,
-          role,
+          userId,
+          organizationId: inv.organizationId,
+          role: normalizedRole,
           status: "ACTIVE",
-          consulteeProfileId:
-            role === "ORG_LEARNER" ? consulteeProfileId : null,
-          consultantProfileId:
-            role === "ORG_CONSULTANT" ? consultantProfileId : null,
-          seatAssignedAt: role === "ORG_LEARNER" ? new Date() : null,
+          consulteeProfileId,
+          consultantProfileId,
+          betterAuthMemberId: betterAuthMember.id,
         },
       });
 
-      // Audit log — actor and target are the same person (self-join via invite).
       await tx.orgAuditLog.create({
         data: {
-          organizationProfileId: orgProfile.id,
-          actorMemberId: memberProfile.id,
-          targetMemberId: memberProfile.id,
-          action: OrgAuditAction.MEMBER_ADDED,
-          description: `${auth.session.user.email} joined as ${role} via invitation`,
-          details: { role, email: auth.session.user.email, viaInvitation: true },
+          organizationId: inv.organizationId,
+          actorMembershipId: created.id,
+          targetMembershipId: created.id,
+          category: "MEMBER",
+          action: AUDIT_ACTIONS.MEMBER.INVITE_ACCEPTED,
+          description: `User ${userId} accepted invitation to join as ${normalizedRole}`,
+          details: { invitationId: inv.id, role: normalizedRole },
         },
       });
-    });
 
-    return NextResponse.json({
-      organization: {
-        id: invitation.organization.id,
-        name: invitation.organization.name,
-      },
-      role,
+      return { membership: created, organization: org, alreadyMember: false };
     });
-  } catch (error) {
-    if (error instanceof Error && error.message === "INVITATION_ALREADY_ACCEPTED") {
-      return NextResponse.json(
-        { error: "This invitation has already been accepted." },
-        { status: 409 },
-      );
-    }
-    if (error instanceof Error && error.message === "SEAT_LIMIT_REACHED") {
-      return NextResponse.json(
-        { error: "This organization has reached its seat limit. Contact the org admin." },
-        { status: 403 },
-      );
-    }
-    console.error("[API /organizations/invitations/accept POST] error:", error);
-    return NextResponse.json(
-      { error: "Failed to accept invitation" },
-      { status: 500 },
-    );
   }
 }

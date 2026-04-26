@@ -1,369 +1,315 @@
 /**
- * Single org member — PATCH (role/status) / DELETE (soft remove).
+ * GET    /api/organizations/[orgId]/members/[memberId]
+ * PATCH  /api/organizations/[orgId]/members/[memberId]
+ * DELETE /api/organizations/[orgId]/members/[memberId]
  *
- * Auth: ORG_ADMIN+ on both. The last ORG_OWNER cannot be demoted or removed.
- * Role/status changes to ORG_CONSULTANT / ORG_SUPPORT are gated behind
- * ENABLE_PROVIDER_ORGS.
+ * `memberId` is a `Membership.id` (not a User id). Operations produce an
+ * audit log row in the same transaction as the mutation.
  *
- * `memberId` in the URL refers to the OrganizationMemberProfile.id (our typed
- * sibling), NOT the BetterAuth Member.id — the sibling is what UI code touches.
+ * Last-OWNER safety: the API refuses to demote or remove the only active
+ * OWNER so an org can never end up ownerless. The check runs inside the
+ * transaction so a concurrent second request can't race past it.
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { requireOrgAccess } from "@/lib/auth-helpers";
-import { ENABLE_PROVIDER_ORGS } from "@/lib/feature-flags";
-import { acquireSeat, releaseSeat } from "@/lib/api/organizations/seat-helpers";
-import {
-  EarningsRecipient,
-  OrgAuditAction,
-  OrgMemberRole,
-  OrgMemberStatus,
-  Prisma,
-} from "@prisma/client";
+import { requireOrgAccess, orgRoleSatisfies } from "@/lib/auth-helpers";
+import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { isBlockedRoleTransition } from "@/lib/enterprise/role-transitions";
 
-const patchMemberSchema = z.object({
-  role: z.nativeEnum(OrgMemberRole).optional(),
-  status: z.nativeEnum(OrgMemberStatus).optional(),
-  // PROVIDER-only: per-consultant payout controls
-  customConsultantPayoutRate: z.number().min(0).max(1).nullable().optional(),
-  earningsRecipient: z.nativeEnum(EarningsRecipient).optional(),
-});
+const MemberRoleSchema = z.enum([
+  "OWNER",
+  "MAINTAINER",
+  "MANAGER",
+  "EXPERT",
+  "LEARNER",
+  "SUPPORT",
+]);
 
-const PROVIDER_GATED_ROLES: OrgMemberRole[] = ["ORG_CONSULTANT", "ORG_SUPPORT"];
+const MemberStatusSchema = z.enum(["PENDING", "ACTIVE", "SUSPENDED", "REMOVED"]);
+
+const PatchBodySchema = z
+  .object({
+    role: MemberRoleSchema.optional(),
+    status: MemberStatusSchema.optional(),
+    departmentLabel: z.string().max(100).nullable().optional(),
+  })
+  .refine(
+    (v) =>
+      v.role !== undefined ||
+      v.status !== undefined ||
+      v.departmentLabel !== undefined,
+    { message: "PATCH body must contain at least one of role/status/departmentLabel" },
+  );
+
+export async function GET(
+  _req: NextRequest,
+  {
+    params,
+  }: {
+    params: Promise<{ orgId: string; memberId: string }>;
+  },
+) {
+  const { orgId, memberId } = await params;
+  // MANAGER+ can read other members' details. LEARNER+SUPPORT can only
+  // fetch THEIR OWN membership — otherwise any member of the org could
+  // enumerate peers' emails/names/profile ids. Member-list (index) view
+  // remains separately gated; this is the detail endpoint.
+  const access = await requireOrgAccess(orgId);
+  if (access.error) return access.error;
+
+  const membership = await prisma.membership.findFirst({
+    where: { id: memberId, organizationId: orgId },
+    include: {
+      user: {
+        select: { id: true, name: true, email: true, image: true },
+      },
+      consulteeProfile: { select: { id: true } },
+      consultantProfile: { select: { id: true } },
+    },
+  });
+  if (!membership) {
+    return NextResponse.json({ error: "Member not found" }, { status: 404 });
+  }
+
+  const isSelf = membership.id === access.member.id;
+  const isManagerPlus = orgRoleSatisfies(access.member.role, "MANAGER");
+  if (!isSelf && !isManagerPlus) {
+    return NextResponse.json(
+      { error: "Insufficient role to view other members" },
+      { status: 403 },
+    );
+  }
+
+  return NextResponse.json({ membership });
+}
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: Promise<{ orgId: string; memberId: string }> },
+  {
+    params,
+  }: {
+    params: Promise<{ orgId: string; memberId: string }>;
+  },
 ) {
+  const { orgId, memberId } = await params;
+  const access = await requireOrgAccess(orgId, "MAINTAINER");
+  if (access.error) return access.error;
+
+  const raw = await req.json().catch(() => null);
+  const parsed = PatchBodySchema.safeParse(raw);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid body", detail: parsed.error.flatten() },
+      { status: 400 },
+    );
+  }
+  const patch = parsed.data;
+
   try {
-    const { orgId, memberId } = await params;
-    const access = await requireOrgAccess(orgId, "ORG_ADMIN");
-    if (access.error) return access.error;
-
-    const body = await req.json();
-    const parsed = patchMemberSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: "Invalid request body", details: parsed.error.flatten() },
-        { status: 400 },
-      );
-    }
-
-    const { role, status, customConsultantPayoutRate, earningsRecipient } =
-      parsed.data;
-
-    // Gate per-consultant payout controls behind ENABLE_PROVIDER_ORGS.
-    const payoutControlsTouched =
-      customConsultantPayoutRate !== undefined || earningsRecipient !== undefined;
-    if (payoutControlsTouched && !ENABLE_PROVIDER_ORGS) {
-      return NextResponse.json(
-        {
-          error: "Per-consultant payout controls require PROVIDER orgs.",
-          flag: "ENABLE_PROVIDER_ORGS",
-        },
-        { status: 501 },
-      );
-    }
-
-    if (!ENABLE_PROVIDER_ORGS && role && PROVIDER_GATED_ROLES.includes(role)) {
-      return NextResponse.json(
-        {
-          error: `${role} role is gated behind PROVIDER orgs.`,
-          flag: "ENABLE_PROVIDER_ORGS",
-        },
-        { status: 501 },
-      );
-    }
-
-    const target = await prisma.organizationMemberProfile.findFirst({
-      where: { id: memberId, organizationProfileId: access.org.id },
-    });
-    if (!target) {
-      return NextResponse.json({ error: "Member not found" }, { status: 404 });
-    }
-
-    // Domain validation for per-consultant payout controls:
-    //   - target must become (or already be) an ORG_CONSULTANT
-    //   - the org must be PROVIDER or HYBRID kind
-    //   - the effective rate combination must not exceed 1.0
-    if (payoutControlsTouched) {
-      const effectiveRole = role ?? target.role;
-      if (effectiveRole !== "ORG_CONSULTANT") {
-        return NextResponse.json(
-          {
-            error:
-              "Payout controls (customConsultantPayoutRate, earningsRecipient) can only be set on ORG_CONSULTANT members.",
-          },
-          { status: 400 },
-        );
+    const result = await prisma.$transaction(async (tx) => {
+      const current = await tx.membership.findFirst({
+        where: { id: memberId, organizationId: orgId },
+      });
+      if (!current) {
+        throw Object.assign(new Error("Member not found"), { httpStatus: 404 });
       }
-      if (access.org.kind !== "PROVIDER" && access.org.kind !== "HYBRID") {
-        return NextResponse.json(
-          {
-            error: `Payout controls are only available on PROVIDER/HYBRID orgs (this org is ${access.org.kind}).`,
-          },
-          { status: 400 },
-        );
-      }
-      // Validate effective rate combination if a custom rate is being set.
-      // customConsultantPayoutRate = null is valid (clears the override).
+
+      // Disjoint LEARNER/EXPERT boundary. These two roles imply
+      // different platform profiles (ConsulteeProfile vs ConsultantProfile)
+      // and different billing postures (consumer vs provider), so the
+      // product rule is to force a remove + re-invite instead of
+      // mutating in place. Returning the machine-readable code lets the
+      // dashboard surface the humanized copy via humanizeOrgError.
       if (
-        customConsultantPayoutRate !== undefined &&
-        customConsultantPayoutRate !== null
+        patch.role !== undefined &&
+        patch.role !== current.role &&
+        isBlockedRoleTransition(current.role, patch.role)
       ) {
-        const platform = access.org.platformCommissionRate;
-        const orgRetain = access.org.orgRetainRate;
-        const effectiveSum = platform + orgRetain + customConsultantPayoutRate;
-        // Hard-fail when override + fixed rates exceed 100% (would produce
-        // negative orgShare at earnings time). Under 100% is valid — the org
-        // just captures more than its default retain rate.
-        if (effectiveSum > 1.0001) {
-          return NextResponse.json(
-            {
-              error: `customConsultantPayoutRate (${customConsultantPayoutRate}) + platform (${platform}) + orgRetain (${orgRetain}) = ${effectiveSum.toFixed(4)} exceeds 1.0. Reduce the override or adjust the org's fixed rates.`,
-            },
-            { status: 400 },
+        throw Object.assign(
+          new Error("ROLE_TRANSITION_BLOCKED"),
+          { httpStatus: 409 },
+        );
+      }
+
+      // OWNER role gate: only OWNERs can assign or revoke the OWNER role.
+      // A MAINTAINER renaming someone to OWNER would effectively grant
+      // themselves extra privileges by proxy.
+      const touchesOwnerRole =
+        patch.role === "OWNER" || current.role === "OWNER";
+      if (touchesOwnerRole && !orgRoleSatisfies(access.member.role, "OWNER")) {
+        throw Object.assign(
+          new Error("Only an OWNER can assign or revoke the OWNER role"),
+          { httpStatus: 403 },
+        );
+      }
+
+      // Last-OWNER guard. Runs inside the TX so two concurrent demotes
+      // can't both believe there's a second owner.
+      const isDemotingOwner =
+        current.role === "OWNER" &&
+        patch.role !== undefined &&
+        patch.role !== "OWNER";
+      const isRemovingOwner =
+        current.role === "OWNER" && patch.status === "REMOVED";
+      if (isDemotingOwner || isRemovingOwner) {
+        const activeOwnerCount = await tx.membership.count({
+          where: {
+            organizationId: orgId,
+            role: "OWNER",
+            status: "ACTIVE",
+            id: { not: memberId },
+          },
+        });
+        if (activeOwnerCount === 0) {
+          throw Object.assign(
+            new Error(
+              "Cannot demote or remove the only active OWNER. Promote another member to OWNER first.",
+            ),
+            { httpStatus: 409 },
           );
         }
       }
-    }
 
-    // Compute whether this request would demote/remove an active owner.
-    // The actual last-owner guard runs INSIDE the transaction (post-update)
-    // to prevent the TOCTOU race where two concurrent requests both pass a
-    // pre-TX check when the org has exactly 2 owners.
-    const wasOwner = target.role === "ORG_OWNER" && target.status === "ACTIVE";
-    const demoting = wasOwner && role !== undefined && role !== "ORG_OWNER";
-    const deactivating = wasOwner && status !== undefined && status !== "ACTIVE";
-
-    // Compute seat transition for seatsUsed bookkeeping.
-    const oldRole = target.role;
-    const oldStatus = target.status;
-    const newRole = role ?? oldRole;
-    const newStatus = status ?? oldStatus;
-    const wasSeatOccupying =
-      oldRole === "ORG_LEARNER" && oldStatus === "ACTIVE";
-    const isSeatOccupying =
-      newRole === "ORG_LEARNER" && newStatus === "ACTIVE";
-
-    // Resolve profile FKs — look up user to link correct profiles.
-    let consulteeProfileId: string | null = target.consulteeProfileId;
-    let consultantProfileId: string | null = target.consultantProfileId;
-    if (role !== undefined && role !== oldRole) {
-      const user = await prisma.member.findUnique({
-        where: { id: target.memberId },
-        select: {
-          user: {
-            select: { consulteeProfileId: true, consultantProfileId: true },
-          },
-        },
-      });
-      consulteeProfileId =
-        newRole === "ORG_LEARNER"
-          ? user?.user.consulteeProfileId ?? null
-          : null;
-      consultantProfileId =
-        newRole === "ORG_CONSULTANT"
-          ? user?.user.consultantProfileId ?? null
-          : null;
-
-      // Reject the role change if the target user lacks the required profile.
-      if (newRole === "ORG_LEARNER" && !consulteeProfileId) {
-        return NextResponse.json(
-          { error: "This user has not completed learner onboarding and cannot be assigned ORG_LEARNER." },
-          { status: 422 },
-        );
-      }
-      if (newRole === "ORG_CONSULTANT" && !consultantProfileId) {
-        return NextResponse.json(
-          { error: "This user has not completed consultant onboarding and cannot be assigned ORG_CONSULTANT." },
-          { status: 422 },
-        );
-      }
-    }
-
-    const [updated] = await prisma.$transaction(async (tx) => {
-      // Atomic seat acquisition/release via conditional UPDATE.
-      if (!wasSeatOccupying && isSeatOccupying) {
-        const acquired = await acquireSeat(tx, access.org.id);
-        if (!acquired) throw new Error("SEAT_LIMIT_REACHED");
-      } else if (wasSeatOccupying && !isSeatOccupying) {
-        await releaseSeat(tx, access.org.id);
-      }
-
-      const profileUpdate = await tx.organizationMemberProfile.update({
+      const updated = await tx.membership.update({
         where: { id: memberId },
         data: {
-          ...(role !== undefined && { role }),
-          ...(status !== undefined && { status }),
-          ...(customConsultantPayoutRate !== undefined && {
-            customConsultantPayoutRate,
+          ...(patch.role !== undefined && { role: patch.role }),
+          ...(patch.status !== undefined && { status: patch.status }),
+          ...(patch.departmentLabel !== undefined && {
+            departmentLabel: patch.departmentLabel,
           }),
-          ...(earningsRecipient !== undefined && { earningsRecipient }),
-          consulteeProfileId,
-          consultantProfileId,
-          seatAssignedAt: isSeatOccupying && !wasSeatOccupying
-            ? new Date()
-            : !isSeatOccupying && wasSeatOccupying
-              ? null
-              : undefined,
         },
       });
-      if (role !== undefined) {
-        await tx.member.update({
-          where: { id: target.memberId },
-          data: { role },
-        });
+
+      const auditActions: string[] = [];
+      if (patch.role !== undefined && patch.role !== current.role) {
+        auditActions.push(AUDIT_ACTIONS.MEMBER.ROLE_CHANGE);
       }
-
-      // Audit log — record every role/status change for compliance.
-      const isRoleChange = role !== undefined && role !== oldRole;
-      const isStatusChange = status !== undefined && status !== oldStatus;
-      if (isRoleChange || isStatusChange) {
-        const auditDetails: Record<string, unknown> = {};
-        let description: string;
-        let action: OrgAuditAction;
-
-        if (isRoleChange) {
-          auditDetails.roleFrom = oldRole;
-          auditDetails.roleTo = role;
-          description = `Role changed from ${oldRole} to ${role}`;
-          action = OrgAuditAction.ROLE_CHANGE;
-        } else {
-          auditDetails.statusFrom = oldStatus;
-          auditDetails.statusTo = status;
-          description = `Status changed from ${oldStatus} to ${status}`;
-          action = OrgAuditAction.STATUS_CHANGE;
-        }
-
+      if (patch.status !== undefined && patch.status !== current.status) {
+        auditActions.push(AUDIT_ACTIONS.MEMBER.STATUS_CHANGE);
+      }
+      for (const action of auditActions) {
         await tx.orgAuditLog.create({
           data: {
-            organizationProfileId: access.org.id,
-            actorMemberId: access.member.id,
-            targetMemberId: memberId,
+            organizationId: orgId,
+            actorMembershipId: access.member.id,
+            targetMembershipId: memberId,
+            category: "MEMBER",
             action,
-            description,
-            details: auditDetails as Prisma.InputJsonValue,
+            description:
+              action === AUDIT_ACTIONS.MEMBER.ROLE_CHANGE
+                ? `Role: ${current.role} → ${patch.role}`
+                : `Status: ${current.status} → ${patch.status}`,
+            details: {
+              from: {
+                role: current.role,
+                status: current.status,
+              },
+              to: {
+                role: patch.role ?? current.role,
+                status: patch.status ?? current.status,
+              },
+            },
           },
         });
       }
 
-      // Post-update last-owner guard — runs inside TX so it sees our own
-      // uncommitted changes + any previously committed changes from concurrent
-      // requests. Under READ COMMITTED: if two requests both demote/remove
-      // owners concurrently, whichever commits second will count 0 active
-      // owners here and roll back, preserving at least one owner.
-      if (demoting || deactivating) {
-        const remaining = await tx.organizationMemberProfile.count({
-          where: {
-            organizationProfileId: access.org.id,
-            role: "ORG_OWNER",
-            status: "ACTIVE",
-          },
-        });
-        if (remaining === 0) throw new Error("LAST_OWNER");
-      }
-
-      // seatsUsed already updated atomically by acquireSeat/releaseSeat above.
-      return [profileUpdate];
+      return updated;
     });
 
-    return NextResponse.json({ memberProfile: updated });
-  } catch (error) {
-    if (error instanceof Error && error.message === "LAST_OWNER") {
-      return NextResponse.json(
-        { error: "Cannot demote or remove the last organization owner." },
-        { status: 400 },
-      );
+    return NextResponse.json({ membership: result });
+  } catch (err) {
+    // Structured error handling keeps the switch between 404/403/409
+    // explicit — never leak a 500 for user-facing validation issues.
+    if (err instanceof Error && "httpStatus" in err) {
+      const status =
+        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      return NextResponse.json({ error: err.message }, { status });
     }
-    if (error instanceof Error && error.message === "SEAT_LIMIT_REACHED") {
-      return NextResponse.json(
-        { error: "Organization has reached its seat limit." },
-        { status: 403 },
-      );
-    }
-    console.error(
-      "[API /organizations/[orgId]/members/[memberId] PATCH] error:",
-      error,
-    );
-    return NextResponse.json(
-      { error: "Failed to update member" },
-      { status: 500 },
-    );
+    throw err;
   }
 }
 
 export async function DELETE(
   _req: NextRequest,
-  { params }: { params: Promise<{ orgId: string; memberId: string }> },
+  {
+    params,
+  }: {
+    params: Promise<{ orgId: string; memberId: string }>;
+  },
 ) {
+  const { orgId, memberId } = await params;
+  const access = await requireOrgAccess(orgId, "MAINTAINER");
+  if (access.error) return access.error;
+
   try {
-    const { orgId, memberId } = await params;
-    const access = await requireOrgAccess(orgId, "ORG_ADMIN");
-    if (access.error) return access.error;
-
-    const target = await prisma.organizationMemberProfile.findFirst({
-      where: { id: memberId, organizationProfileId: access.org.id },
-    });
-    if (!target) {
-      return NextResponse.json({ error: "Member not found" }, { status: 404 });
-    }
-
-    const wasOwnerActive =
-      target.role === "ORG_OWNER" && target.status === "ACTIVE";
-    const wasSeatOccupying =
-      target.role === "ORG_LEARNER" && target.status === "ACTIVE";
-
     await prisma.$transaction(async (tx) => {
-      await tx.organizationMemberProfile.update({
+      const current = await tx.membership.findFirst({
+        where: { id: memberId, organizationId: orgId },
+      });
+      if (!current) {
+        throw Object.assign(new Error("Member not found"), { httpStatus: 404 });
+      }
+
+      if (current.role === "OWNER") {
+        // Last-OWNER guard — unchanged semantically. Now applied to
+        // soft-delete (status → REMOVED) so a sole OWNER can't orphan
+        // the org by removing themselves.
+        const activeOwnerCount = await tx.membership.count({
+          where: {
+            organizationId: orgId,
+            role: "OWNER",
+            status: "ACTIVE",
+            id: { not: memberId },
+          },
+        });
+        if (activeOwnerCount === 0) {
+          throw Object.assign(
+            new Error(
+              "Cannot remove the only active OWNER. Promote another member first.",
+            ),
+            { httpStatus: 409 },
+          );
+        }
+      }
+
+      if (current.status === "REMOVED") {
+        // Idempotent: a repeat DELETE is a no-op that still returns 204.
+        return;
+      }
+
+      // Soft-delete (status=REMOVED) instead of hard-delete: audit rows
+      // reference Membership via `actorMembershipId`/`targetMembershipId`,
+      // payouts, earnings, and wallet entries do too. A hard delete
+      // would cascade across half the compliance tables. REMOVED is a
+      // tombstone — it hides the row from all listing endpoints, blocks
+      // login attempts, but keeps the history queryable.
+      await tx.membership.update({
         where: { id: memberId },
         data: { status: "REMOVED" },
       });
-
-      // Post-update last-owner guard — see PATCH handler for the race rationale.
-      if (wasOwnerActive) {
-        const remaining = await tx.organizationMemberProfile.count({
-          where: {
-            organizationProfileId: access.org.id,
-            role: "ORG_OWNER",
-            status: "ACTIVE",
-          },
-        });
-        if (remaining === 0) throw new Error("LAST_OWNER");
-      }
-
-      if (wasSeatOccupying) {
-        await releaseSeat(tx, access.org.id);
-      }
       await tx.orgAuditLog.create({
         data: {
-          organizationProfileId: access.org.id,
-          actorMemberId: access.member.id,
-          targetMemberId: memberId,
-          action: OrgAuditAction.MEMBER_REMOVED,
-          description: `Member removed (was ${target.role})`,
-          details: { role: target.role, previousStatus: target.status },
+          organizationId: orgId,
+          actorMembershipId: access.member.id,
+          targetMembershipId: memberId,
+          category: "MEMBER",
+          action: AUDIT_ACTIONS.MEMBER.MEMBER_REMOVED,
+          description: `Removed member ${memberId} (soft delete)`,
+          details: { role: current.role, previousStatus: current.status },
         },
       });
     });
 
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    if (error instanceof Error && error.message === "LAST_OWNER") {
-      return NextResponse.json(
-        { error: "Cannot remove the last organization owner." },
-        { status: 400 },
-      );
+    return new NextResponse(null, { status: 204 });
+  } catch (err) {
+    if (err instanceof Error && "httpStatus" in err) {
+      const status =
+        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      return NextResponse.json({ error: err.message }, { status });
     }
-    console.error(
-      "[API /organizations/[orgId]/members/[memberId] DELETE] error:",
-      error,
-    );
-    return NextResponse.json(
-      { error: "Failed to remove member" },
-      { status: 500 },
-    );
+    throw err;
   }
 }

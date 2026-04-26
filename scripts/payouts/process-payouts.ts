@@ -16,6 +16,7 @@
 
 import { PayoutStatus, PaymentGateway } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { processOrgPayout } from "@/lib/payments/payouts/org-payout-service";
 
 /**
  * Result structure for individual payout processing
@@ -321,6 +322,50 @@ export async function processApprovedPayouts(): Promise<ProcessingResult> {
 }
 
 /**
+ * Process org-side payouts (#713-2 / #700 LED-4).
+ *
+ * Today only progresses PENDING → PROCESSING and writes the audit
+ * trail; live gateway submission lands in PR-3 behind ENABLE_LIVE_PAYOUTS.
+ * Errors against a single payout do not abort the rest of the run.
+ */
+export interface OrgProcessingResult {
+  success: boolean;
+  scanned: number;
+  advanced: number;
+  errors: string[];
+}
+
+export async function processOrgPayouts(): Promise<OrgProcessingResult> {
+  const result: OrgProcessingResult = {
+    success: false,
+    scanned: 0,
+    advanced: 0,
+    errors: [],
+  };
+
+  const pending = await prisma.organizationPayout.findMany({
+    where: { status: PayoutStatus.PENDING },
+    select: { id: true, organizationId: true, amountPaise: true },
+  });
+  result.scanned = pending.length;
+
+  for (const p of pending) {
+    try {
+      const out = await processOrgPayout(p.id);
+      if (out.status === PayoutStatus.PROCESSING) {
+        result.advanced++;
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      result.errors.push(`OrgPayout ${p.id}: ${message}`);
+    }
+  }
+
+  result.success = true;
+  return result;
+}
+
+/**
  * Get processing statistics
  */
 export async function getProcessingStats(): Promise<{
@@ -370,6 +415,23 @@ export async function runProcessingTask(): Promise<ProcessingResult> {
 
     // Process payouts
     const result = await processApprovedPayouts();
+
+    // Org-side processing pass — independent of consultant-side success.
+    try {
+      const orgResult = await processOrgPayouts();
+      console.log(`\n🏢 Org Payout Processing:`);
+      console.log(`   Scanned (PENDING): ${orgResult.scanned}`);
+      console.log(`   Advanced → PROCESSING: ${orgResult.advanced}`);
+      if (orgResult.errors.length > 0) {
+        console.warn(`   ⚠️ Org payout issues (non-fatal):`);
+        orgResult.errors.forEach((e) => console.warn(`      - ${e}`));
+      }
+    } catch (err) {
+      console.error(
+        "❌ Org payout processing threw — consultant processing was unaffected:",
+        err,
+      );
+    }
 
     // Get post-processing stats
     const postStats = await getProcessingStats();

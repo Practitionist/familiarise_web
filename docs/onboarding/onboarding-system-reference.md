@@ -2,7 +2,71 @@
 
 > **Audience:** Coding agents (Claude, Codex, Copilot), future interns, and any developer touching the onboarding flow.
 >
-> **Last updated:** 2026-03-17
+> **Last updated:** 2026-04-19
+
+---
+
+## 0. Profile model roster (Arch-4)
+
+The platform wires a user to one or more profile models. Each row has
+a matching FK on `User` (all nullable, all `@unique`). Onboarding
+touches `ConsultantProfile` / `ConsulteeProfile` / `StaffProfile` /
+`AdminProfile`; `OrgAdminProfile` is provisioned by the enterprise
+layer.
+
+| Profile | Purpose | FK on `User` | Created by |
+|---------|---------|--------------|------------|
+| `ConsultantProfile` | Platform expert — domains, availability, earnings. | `consultantProfileId` | `/form/onboarding` (CONSULTANT), or auto-provisioned (placeholder) on EXPERT invite accept. |
+| `ConsulteeProfile` | Platform learner — goals, career stage, aboutMe. | `consulteeProfileId` | `/form/onboarding` (CONSULTEE), or **lazily** via `ensureConsulteeProfile(db, userId)` from checkout, slot request-for-approval, and LEARNER invite accept. |
+| `StaffProfile` | Platform operator (support / moderation / ops). | `staffProfileId` | `/form/onboarding` (invite-only; server rejects public submission). |
+| `AdminProfile` | Platform admin. | `adminProfileId` | `/form/onboarding` (invite-only). |
+| `OrgAdminProfile` | One row per user who operates an org. Mirrors `StaffProfile` / `AdminProfile` structure. Backs `/dashboard/org-admin/:id/home`. | `orgAdminProfileId` | `POST /api/organizations` (inside the create transaction) and by the `prisma/scripts/backfill-org-admin-profiles.ts` one-shot for existing OWNERs. |
+
+### Lazy ConsulteeProfile (Arch-4)
+
+The BetterAuth signup hook in `lib/auth.ts`
+(`databaseHooks.user.create.after`) **no longer force-creates a
+`ConsulteeProfile`**. Instead, the helper
+`lib/profiles/ensure-consultee-profile.ts::ensureConsulteeProfile(db,
+userId)` upserts one on first consumer action. It is invoked from:
+
+- `lib/payments/operations/checkout.ts` (checkout path +
+  `revalidateInsideLock`)
+- `app/api/slots/request-for-approval/route.ts`
+- `app/api/organizations/invitations/accept/route.ts` (LEARNER branch)
+- The existing `/form/onboarding` path continues to work because
+  `utils/onboarding-server.ts::upsertConsulteeProfile` is
+  idempotent — it upserts regardless of whether one already exists.
+
+This means a fresh signup who never takes a consumer action will have
+`consulteeProfileId = null` until one of the above triggers fires. UI
+code should treat the FK as optional and use
+`resolvePersonalDashboardHref` (`lib/labels/personal-dashboard.ts`) to
+decide the "Personal Dashboard" target.
+
+### OrgAdminProfile on org creation
+
+`POST /api/organizations` upserts an `OrgAdminProfile` for the caller
+inside the same transaction that creates the `Organization`,
+`BillingAccount`, and OWNER `Membership`, and returns the
+`orgAdminProfileId` on the response body so the client can
+immediately navigate to `/dashboard/org-admin/:id/home`. See
+`docs/enterprise/12-dashboard-pages.md` for the operator home route.
+
+### Placeholder ConsultantProfile on EXPERT invite accept
+
+When a user accepts an EXPERT invitation without a pre-existing
+`ConsultantProfile`, `app/api/organizations/invitations/accept/route.ts`
+upserts a placeholder with:
+
+- `domain` → upserted `Domain "General"`
+- `scheduleType = WEEKLY`
+- `verificationStatus = PENDING_VERIFICATION`
+
+The user fills in their real domain, schedule, and verification
+materials afterwards through the consultant profile editor.
+Marketplace visibility in `/explore/experts` still gates on platform
+verification, not on membership existence.
 
 ---
 
@@ -646,6 +710,7 @@ consultantProfileId  String?  @unique
 consulteeProfileId   String?  @unique
 staffProfileId       String?  @unique
 adminProfileId       String?  @unique
+orgAdminProfileId    String?  @unique    // one row per user who operates an org
 ```
 
 #### ConsultantProfile

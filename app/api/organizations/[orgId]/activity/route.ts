@@ -1,129 +1,99 @@
 /**
- * Org recent activity feed — lightweight union of recent events.
+ * GET /api/organizations/[orgId]/activity
  *
- * GET — any active member. Returns the last N events across member joins,
- * payments, invoices, and invitations for the activity feed on the Overview page.
+ * Read-only view over `OrgAuditLog` for a single organization. The audit
+ * log is the central event feed for every mutation against the org — it
+ * gets written inside the same transaction as the mutation it records
+ * (see the 9a-9g routes), so this endpoint is the canonical "what
+ * happened" surface for admins.
+ *
+ * Filters:
+ *   category=MEMBER|CONTRACT|PROGRAM|WALLET|INVOICE|PAYOUT|SETTINGS|CONSENT|SYSTEM
+ *   action=<string literal from AUDIT_ACTIONS>
+ *   actorMembershipId=<uuid>
+ *   from=ISO-8601 (inclusive lower bound)
+ *   to=ISO-8601   (exclusive upper bound)
+ *   limit=1..200  (default 50)
+ *   cursor=<id>   (for reverse-chronological pagination)
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
+import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 
-interface ActivityItem {
-  type: "member_joined" | "payment" | "invoice_generated" | "invitation_sent";
-  description: string;
-  timestamp: string;
-}
+const CategorySchema = z.enum([
+  "MEMBER",
+  "CONTRACT",
+  "PROGRAM",
+  "WALLET",
+  "INVOICE",
+  "PAYOUT",
+  "SETTINGS",
+  "CONSENT",
+  "SYSTEM",
+]);
+
+const QuerySchema = z.object({
+  category: CategorySchema.optional(),
+  action: z.string().min(1).max(128).optional(),
+  actorMembershipId: z.string().uuid().optional(),
+  targetMembershipId: z.string().uuid().optional(),
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  cursor: z.string().optional(),
+});
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
 ) {
-  try {
-    const { orgId } = await params;
-    const access = await requireOrgAccess(orgId);
-    if (access.error) return access.error;
+  const { orgId } = await params;
+  const access = await requireOrgAccess(orgId, "MANAGER");
+  if (access.error) return access.error;
 
-    const url = new URL(req.url);
-    const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "5"), 20);
-
-    // Fetch recent events in parallel
-    const [members, payments, invoices, invitations] = await Promise.all([
-      prisma.organizationMemberProfile.findMany({
-        where: { organizationProfileId: access.org.id },
-        include: {
-          member: {
-            include: { user: { select: { name: true } } },
-          },
-        },
-        orderBy: { createdAt: "desc" },
-        take: 3,
-      }),
-      prisma.payment.findMany({
-        where: {
-          organizationProfileId: access.org.id,
-          paymentStatus: "SUCCEEDED",
-        },
-        select: {
-          amount: true,
-          currency: true,
-          createdAt: true,
-          appointment: { select: { appointmentType: true } },
-        },
-        orderBy: { createdAt: "desc" },
-        take: 3,
-      }),
-      prisma.organizationInvoice.findMany({
-        where: { organizationProfileId: access.org.id },
-        select: {
-          invoiceNumber: true,
-          amount: true,
-          status: true,
-          createdAt: true,
-        },
-        orderBy: { createdAt: "desc" },
-        take: 2,
-      }),
-      prisma.invitation.findMany({
-        where: { organizationId: orgId },
-        select: { email: true, role: true, createdAt: true, status: true },
-        orderBy: { createdAt: "desc" },
-        take: 2,
-      }),
-    ]);
-
-    // Merge into a unified activity feed
-    const items: ActivityItem[] = [];
-
-    for (const m of members) {
-      items.push({
-        type: "member_joined",
-        description: `${m.member.user.name ?? "A user"} joined as ${m.role.replace("ORG_", "")}`,
-        timestamp: m.createdAt.toISOString(),
-      });
-    }
-
-    for (const p of payments) {
-      const type = p.appointment?.appointmentType ?? "booking";
-      const amountMajor = (p.amount / 100).toLocaleString("en-IN", {
-        style: "currency",
-        currency: p.currency,
-      });
-      items.push({
-        type: "payment",
-        description: `${amountMajor} ${type.toLowerCase()} booked`,
-        timestamp: p.createdAt.toISOString(),
-      });
-    }
-
-    for (const inv of invoices) {
-      items.push({
-        type: "invoice_generated",
-        description: `Invoice ${inv.invoiceNumber} (${inv.status.toLowerCase()})`,
-        timestamp: inv.createdAt.toISOString(),
-      });
-    }
-
-    for (const inv of invitations) {
-      items.push({
-        type: "invitation_sent",
-        description: `Invitation sent to ${inv.email} (${inv.status})`,
-        timestamp: inv.createdAt.toISOString(),
-      });
-    }
-
-    // Sort by timestamp descending, take top N
-    items.sort(
-      (a, b) =>
-        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
-    );
-
-    return NextResponse.json({ activity: items.slice(0, limit) });
-  } catch (error) {
-    console.error("[API /organizations/[orgId]/activity GET] error:", error);
+  const url = new URL(req.url);
+  const parsedQuery = QuerySchema.safeParse(
+    Object.fromEntries(url.searchParams.entries()),
+  );
+  if (!parsedQuery.success) {
     return NextResponse.json(
-      { error: "Failed to fetch activity" },
-      { status: 500 },
+      { error: "Invalid query", detail: parsedQuery.error.flatten() },
+      { status: 400 },
     );
   }
+  const q = parsedQuery.data;
+
+  const rows = await prisma.orgAuditLog.findMany({
+    where: {
+      organizationId: orgId,
+      ...(q.category && { category: q.category }),
+      ...(q.action && { action: q.action }),
+      ...(q.actorMembershipId && { actorMembershipId: q.actorMembershipId }),
+      ...(q.targetMembershipId && {
+        targetMembershipId: q.targetMembershipId,
+      }),
+      ...(q.from || q.to
+        ? {
+            createdAt: {
+              ...(q.from && { gte: q.from }),
+              ...(q.to && { lt: q.to }),
+            },
+          }
+        : {}),
+    },
+    orderBy: { createdAt: "desc" },
+    take: q.limit + 1,
+    ...(q.cursor && { cursor: { id: q.cursor }, skip: 1 }),
+  });
+
+  const hasMore = rows.length > q.limit;
+  const data = hasMore ? rows.slice(0, q.limit) : rows;
+  const nextCursor = hasMore ? data[data.length - 1]?.id ?? null : null;
+
+  return NextResponse.json({
+    data,
+    pagination: { hasMore, nextCursor, limit: q.limit },
+  });
 }

@@ -297,11 +297,14 @@ export function printConfigSummary(): void {
   console.log(
     `  Organizations: ${orgs.buyer + orgs.seatPack + orgs.invoiced + orgs.provider + orgs.hybrid} total`,
   );
+  // Counter keys (buyer / seatPack / invoiced / provider) are kept as-is
+  // to avoid cascading the rename into the shared Volumes type; only the
+  // human-readable log labels are refreshed to the Arch-4 vocabulary.
   console.log(
-    `    - BUYER: TAG_ONLY: ${orgs.buyer}, SEAT_PACK: ${orgs.seatPack}, INVOICED: ${orgs.invoiced}`,
+    `    - SPONSOR: PERSONAL: ${orgs.buyer}, WALLET: ${orgs.seatPack}, INVOICE: ${orgs.invoiced}`,
   );
   console.log(
-    `    - PROVIDER: ${orgs.provider}, HYBRID: ${orgs.hybrid}`,
+    `    - HOST: ${orgs.provider}, HYBRID: ${orgs.hybrid}`,
   );
   console.log("=".repeat(60));
 }

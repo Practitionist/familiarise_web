@@ -1446,6 +1446,227 @@ const deleteProfileImage = async (userId: string): Promise<boolean> => {
   }
 };
 
+// Organization branding image upload types (logo + banner)
+export interface OrganizationBrandingUploadOptions {
+  organizationId: string;
+  file: File;
+}
+
+export interface OrganizationBrandingUploadResult {
+  success: boolean;
+  fileUrl?: string;
+  storagePath?: string;
+  error?: string;
+}
+
+// Allowed MIME types for organization branding images.
+// SVG is included so brand teams can upload crisp vector logos; JPEG/PNG/WebP
+// cover photographic banners.
+const ALLOWED_ORG_BRANDING_IMAGE_TYPES = [
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+  "image/svg+xml",
+];
+
+const ORG_LOGO_MAX_SIZE = 2 * 1024 * 1024; // 2MB
+const ORG_BANNER_MAX_SIZE = 5 * 1024 * 1024; // 5MB
+
+const ORG_BRANDING_BUCKET = "organization-images";
+
+// generateStorageFileName() relies on MIME_TO_EXT, which doesn't ship with
+// SVG by default. Add the local mapping so SVG uploads get a .svg extension.
+const ORG_BRANDING_MIME_TO_EXT: Record<string, string> = {
+  "image/svg+xml": "svg",
+};
+
+const buildOrgBrandingFileName = (mimeType: string): string => {
+  const localExt = ORG_BRANDING_MIME_TO_EXT[mimeType];
+  if (localExt) {
+    return `${globalThis.crypto.randomUUID()}.${localExt}`;
+  }
+  return generateStorageFileName(mimeType);
+};
+
+/**
+ * Upload organization logo image to Supabase storage.
+ * Structure: organization-images/logos/{organizationId}/{filename}
+ */
+const uploadOrganizationLogo = async (
+  options: OrganizationBrandingUploadOptions,
+): Promise<OrganizationBrandingUploadResult> => {
+  return uploadOrganizationBrandingImage(options, "logo");
+};
+
+/**
+ * Upload organization banner image to Supabase storage.
+ * Structure: organization-images/banners/{organizationId}/{filename}
+ */
+const uploadOrganizationBanner = async (
+  options: OrganizationBrandingUploadOptions,
+): Promise<OrganizationBrandingUploadResult> => {
+  return uploadOrganizationBrandingImage(options, "banner");
+};
+
+const uploadOrganizationBrandingImage = async (
+  options: OrganizationBrandingUploadOptions,
+  kind: "logo" | "banner",
+): Promise<OrganizationBrandingUploadResult> => {
+  try {
+    const { organizationId, file } = options;
+
+    if (!file) {
+      return { success: false, error: "No file provided" };
+    }
+
+    const maxSize =
+      kind === "logo" ? ORG_LOGO_MAX_SIZE : ORG_BANNER_MAX_SIZE;
+    if (file.size > maxSize) {
+      const limitMb = Math.round(maxSize / (1024 * 1024));
+      return {
+        success: false,
+        error: `File size exceeds ${limitMb}MB limit`,
+      };
+    }
+
+    if (!ALLOWED_ORG_BRANDING_IMAGE_TYPES.includes(file.type)) {
+      return {
+        success: false,
+        error:
+          "File type not supported. Please use JPEG, PNG, WebP, or SVG.",
+      };
+    }
+
+    const bucketReady = await ensureBucketExists(ORG_BRANDING_BUCKET, {
+      public: true,
+      allowedMimeTypes: ALLOWED_ORG_BRANDING_IMAGE_TYPES,
+      fileSizeLimit: ORG_BANNER_MAX_SIZE,
+    });
+    if (!bucketReady) {
+      return {
+        success: false,
+        error: `Organization images storage bucket not found. Please create an '${ORG_BRANDING_BUCKET}' bucket in your Supabase dashboard.`,
+      };
+    }
+
+    const folderPath =
+      kind === "logo"
+        ? `logos/${organizationId}`
+        : `banners/${organizationId}`;
+    const fileName = buildOrgBrandingFileName(file.type);
+    const storagePath = `${folderPath}/${fileName}`;
+
+    // Upsert-single-file pattern: clear out any prior asset so the folder
+    // never accumulates orphaned uploads (mirrors uploadProfileImage).
+    try {
+      const { data: existingFiles } = await supabase.storage
+        .from(ORG_BRANDING_BUCKET)
+        .list(folderPath);
+
+      if (existingFiles && existingFiles.length > 0) {
+        const filesToDelete = existingFiles.map(
+          (f) => `${folderPath}/${f.name}`,
+        );
+        await supabase.storage
+          .from(ORG_BRANDING_BUCKET)
+          .remove(filesToDelete);
+      }
+    } catch {
+      // Ignore errors when cleaning up old files
+    }
+
+    const { error: uploadError } = await supabase.storage
+      .from(ORG_BRANDING_BUCKET)
+      .upload(storagePath, file, {
+        cacheControl: "3600",
+        upsert: true,
+      });
+
+    if (uploadError) {
+      console.error(
+        `Supabase organization ${kind} upload error:`,
+        uploadError,
+      );
+      return { success: false, error: uploadError.message };
+    }
+
+    const { data: urlData } = supabase.storage
+      .from(ORG_BRANDING_BUCKET)
+      .getPublicUrl(storagePath);
+
+    return {
+      success: true,
+      fileUrl: urlData.publicUrl,
+      storagePath,
+    };
+  } catch (error) {
+    console.error(`Error uploading organization ${kind}:`, error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Upload failed",
+    };
+  }
+};
+
+/**
+ * Delete organization logo image from Supabase storage.
+ */
+const deleteOrganizationLogo = async (
+  organizationId: string,
+): Promise<boolean> => {
+  return deleteOrganizationBrandingImage(organizationId, "logo");
+};
+
+/**
+ * Delete organization banner image from Supabase storage.
+ */
+const deleteOrganizationBanner = async (
+  organizationId: string,
+): Promise<boolean> => {
+  return deleteOrganizationBrandingImage(organizationId, "banner");
+};
+
+const deleteOrganizationBrandingImage = async (
+  organizationId: string,
+  kind: "logo" | "banner",
+): Promise<boolean> => {
+  try {
+    const folderPath =
+      kind === "logo"
+        ? `logos/${organizationId}`
+        : `banners/${organizationId}`;
+
+    const { data: files, error: listError } = await supabase.storage
+      .from(ORG_BRANDING_BUCKET)
+      .list(folderPath);
+
+    if (listError) {
+      console.error(`Error listing organization ${kind} images:`, listError);
+      return false;
+    }
+
+    if (!files || files.length === 0) {
+      return true;
+    }
+
+    const filesToDelete = files.map((f) => `${folderPath}/${f.name}`);
+    const { error: deleteError } = await supabase.storage
+      .from(ORG_BRANDING_BUCKET)
+      .remove(filesToDelete);
+
+    if (deleteError) {
+      console.error(`Error deleting organization ${kind} images:`, deleteError);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error(`Error deleting organization ${kind}:`, error);
+    return false;
+  }
+};
+
 /**
  * Generic upload to Supabase storage
  * Returns { url, error } - url is the public URL if successful
@@ -1575,6 +1796,14 @@ export {
   deleteProfileImage,
   ALLOWED_PROFILE_IMAGE_TYPES,
   PROFILE_IMAGE_MAX_SIZE,
+  // Organization branding (logo + banner)
+  uploadOrganizationLogo,
+  uploadOrganizationBanner,
+  deleteOrganizationLogo,
+  deleteOrganizationBanner,
+  ALLOWED_ORG_BRANDING_IMAGE_TYPES,
+  ORG_LOGO_MAX_SIZE,
+  ORG_BANNER_MAX_SIZE,
   // Generic upload/delete
   uploadToSupabase,
   deleteFromSupabase,

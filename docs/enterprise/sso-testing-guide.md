@@ -10,7 +10,7 @@ Real IdPs (Okta, Auth0, Azure AD, Google Workspace) require signup + admin confi
 
 | # | Tool | Protocol | Setup | What it proves |
 | -- | ---- | -------- | ----- | -------------- |
-| 1 | `mocksaml.com` | SAML | Zero | BetterAuth parses IdP assertions; `customSession` auto-provisions `OrganizationMemberProfile` |
+| 1 | `mocksaml.com` | SAML | Zero | BetterAuth parses IdP assertions; `customSession` auto-provisions a typed `Membership` row |
 | 2 | `saml-idp` (npm) | SAML | 1 command | SP-initiated flow, cert rotation, attribute mapping |
 | 3 | Keycloak (Docker) | SAML + OIDC | Docker Compose | OIDC PKCE verifier round-trip; most Okta-like |
 | 4 | Auth0 / Okta dev tenant | OIDC / SAML | Free signup | Real-world IdP behavior before shipping to a customer |
@@ -20,7 +20,9 @@ Real IdPs (Okta, Auth0, Azure AD, Google Workspace) require signup + admin confi
 ## Prerequisites (all approaches)
 
 - Dev server reachable at `NEXT_PUBLIC_APP_URL` (e.g. `http://localhost:3000`).
-- A seeded org with `ORG_OWNER` access. For local dev run `npm run db:seed:small`.
+- A seeded org with `OWNER` access (the canonical `MemberRole` —
+  Arch 4-Modified does not accept any legacy `ORG_*` aliases). For
+  local dev run `npm run db:seed:small`.
 - Visit `/dashboard/organization/<orgId>/settings/sso` and add the allowedEmailDomains + a provider in the UI. The Add Provider dialog shows the ACS/Redirect URI + SP Metadata URL the IdP needs — copy those into the IdP side of whichever tool you pick below.
 
 ---
@@ -49,12 +51,12 @@ In the Add Provider dialog, type:
 - **SSO entry point URL**: `https://mocksaml.com/api/saml/sso`
 - **X.509 certificate**: paste from `https://mocksaml.com/api/saml/cert` (include BEGIN/END lines)
 
-Save. Then go to `/auth/signin`, enter `alice@example.com`, blur the field — the "Sign in with <Org> SSO" button should appear. Click it. mocksaml will show its fake login form with a pre-filled email; click "Sign In". You should land on `/dashboard` with a created user + `OrganizationMemberProfile`.
+Save. Then go to `/auth/signin`, enter `alice@example.com`, blur the field — the "Sign in with <Org> SSO" button should appear. Click it. mocksaml will show its fake login form with a pre-filled email; click "Sign In". You should land on `/dashboard` with a created user + typed `Membership` row (auto-provisioned by the `customSession` hook in `lib/auth.ts`).
 
 ### What to verify
 
 - [ ] Session cookie set; `useSession()` returns the new user.
-- [ ] `OrganizationMemberProfile` row created with role = `defaultRoleForAutoJoin` for the org.
+- [ ] `Membership` row created with `role = defaultRoleForAutoJoin` (default `LEARNER`) for the org, bridged to the BetterAuth `Member` via `Membership.betterAuthMemberId`.
 - [ ] `ssoEnforcementFailed` is false on the session (the user authenticated through a registered `ssoProvider.providerId`).
 
 ### Limits
@@ -195,7 +197,7 @@ Only do this before cutting a customer a signup link — don't burn cycles here 
 | IdP shows "InvalidRequest: redirect_uri mismatch" | IdP's allowlisted redirect URI differs from our derived one. Copy from the dialog verbatim — paths are case-sensitive. |
 | "InResponseTo mismatch" at SAML callback | Session lost between the AuthnRequest and the response (e.g. `sameSite=strict` cookie dropped). Check Network tab for the `better-auth.state` cookie. |
 | OIDC callback fails with "code_verifier missing" | `ssoClient()` plugin not registered in `lib/auth-client.ts`, or the signin page is calling raw `fetch` instead of `signIn.sso()`. |
-| `OrganizationMemberProfile` not created after first SSO login | `customSession` sync only runs on session load — visit `/dashboard` once after the SSO redirect lands. Check the `member` row exists; if it does but the typed sibling doesn't, the sync is failing. Check server logs. |
+| Typed `Membership` row not created after first SSO login | `customSession` sync only runs on session load — visit `/dashboard` once after the SSO redirect lands. Check the `member` row exists; if it does but the typed sibling doesn't, the sync is failing. Check server logs. |
 | ssoProvider row FK-cascades when admin deactivates owner | `userId` was set on row creation. This PR leaves `userId` null; re-check the `create` call in `providers/route.ts`. |
 
 ---

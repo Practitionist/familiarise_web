@@ -14,21 +14,43 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
 ) {
+  const { orgId } = await params;
   try {
-    const { orgId } = await params;
-    const access = await requireOrgAccess(orgId);
+    const access = await requireOrgAccess(orgId, { minimumRole: "LEARNER" });
     if (access.error) return access.error;
 
-    const organization = await prisma.organization.findUnique({
-      where: { id: orgId },
-      select: { id: true, name: true, slug: true, logo: true },
-    });
+    // `profile` mirrors the Organization row — callers need the
+    // capability booleans + paymentTermsDays + description/website/etc.
+    // BillingAccount is included so the settings page can show the
+    // funding source without a second round-trip.
+    const [organization, billingAccount] = await Promise.all([
+      prisma.organization.findUnique({
+        where: { id: orgId },
+        select: { id: true, name: true, slug: true, logo: true },
+      }),
+      prisma.billingAccount.findFirst({
+        where: { ownerOrgId: orgId },
+        select: { fundingSource: true, currency: true, creditLimit: true },
+      }),
+    ]);
+
     return NextResponse.json({
       organization,
-      profile: access.org,
+      profile: {
+        ...access.org,
+        billingAccount,
+      },
     });
   } catch (error) {
-    console.error("[API /organizations/[orgId]/settings GET] error:", error);
+    console.error(
+      JSON.stringify({
+        event: "org_settings_fetch_failed",
+        route: "GET /api/organizations/[orgId]/settings",
+        orgId,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      }),
+    );
     return NextResponse.json(
       { error: "Failed to fetch settings" },
       { status: 500 },

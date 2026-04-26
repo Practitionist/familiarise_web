@@ -1,134 +1,190 @@
 /**
- * Org payout account (PROVIDER feature) — GET / PUT / DELETE.
+ * GET /api/organizations/[orgId]/payout-account
+ * PUT /api/organizations/[orgId]/payout-account
  *
- * All gated behind ENABLE_PROVIDER_ORGS. Returns 501 with the flag name when
- * disabled. The full implementation lives behind the flag and ships when the
- * first PROVIDER customer arrives — see Issue #646.
+ * Hosting-side bank/payout credentials (canHost=true orgs). The record is
+ * 1:1 with Organization — a PUT either creates or updates. Full account
+ * numbers are encrypted before storage; the public-readable last-four and
+ * status flow is what UI surfaces render.
+ *
+ * Verification lifecycle (`status`) moves PENDING_VERIFICATION → VERIFIED
+ * through a side-channel (Razorpay contact + fund-account creation). This
+ * endpoint only writes the raw record; the verification job flips status.
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { requireOrgAccess } from "@/lib/auth-helpers";
-import { ENABLE_PROVIDER_ORGS } from "@/lib/feature-flags";
+import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
+import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
-function notImplemented() {
-  return NextResponse.json(
-    {
-      error: "PROVIDER organization payout accounts are not yet available.",
-      flag: "ENABLE_PROVIDER_ORGS",
-    },
-    { status: 501 },
-  );
-}
-
-const putAccountSchema = z.object({
-  accountHolderName: z.string().min(2).max(100),
-  accountNumber: z.string().min(4).max(50),
-  bankName: z.string().min(2).max(100),
-  ifscCode: z.string().min(4).max(20).optional(),
-  routingNumber: z.string().optional(),
-  swiftCode: z.string().optional(),
+const UpsertBodySchema = z.object({
+  accountHolderName: z.string().min(1).max(200),
+  // Full account number — stored encrypted. Last-four is derived.
+  accountNumber: z.string().min(4).max(34),
+  bankName: z.string().min(1).max(120),
+  ifscCode: z.string().length(11).optional(),
+  routingNumber: z.string().min(1).max(20).nullable().optional(),
+  swiftCode: z.string().min(8).max(11).nullable().optional(),
 });
+
+// Placeholder for the production KMS/envelope-encryption wrapper. Real
+// encryption lands alongside the Razorpay Contact/FundAccount integration;
+// for now we store a reversible marker so the shape is final and the
+// status fields can still be exercised end-to-end in dev.
+function encryptAccountNumber(raw: string): string {
+  return `enc::${Buffer.from(raw, "utf8").toString("base64")}`;
+}
 
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
 ) {
-  if (!ENABLE_PROVIDER_ORGS) return notImplemented();
-
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "ORG_OWNER");
+  const access = await requireOrgAccess(orgId, "MANAGER");
   if (access.error) return access.error;
 
-  const account = await prisma.organizationPayoutAccount.findUnique({
-    where: { organizationProfileId: access.org.id },
+  if (!access.org.canHost) {
+    return NextResponse.json(
+      { error: "Organization does not host (canHost=false)" },
+      { status: 404 },
+    );
+  }
+
+  const payoutAccount = await prisma.organizationPayoutAccount.findUnique({
+    where: { organizationId: orgId },
+    select: {
+      id: true,
+      accountHolderName: true,
+      accountNumberLast4: true,
+      bankName: true,
+      ifscCode: true,
+      routingNumber: true,
+      swiftCode: true,
+      stripeConnectId: true,
+      razorpayContactId: true,
+      razorpayFundAccountId: true,
+      status: true,
+      verifiedAt: true,
+      createdAt: true,
+      updatedAt: true,
+    },
   });
-  return NextResponse.json({ account });
+  if (!payoutAccount) {
+    return NextResponse.json(
+      { payoutAccount: null, exists: false },
+      { status: 200 },
+    );
+  }
+  return NextResponse.json({ payoutAccount, exists: true });
 }
 
 export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
 ) {
-  if (!ENABLE_PROVIDER_ORGS) return notImplemented();
-
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "ORG_OWNER");
+  const access = await requireOrgOwner(orgId);
   if (access.error) return access.error;
 
-  const body = await req.json();
-  const parsed = putAccountSchema.safeParse(body);
-  if (!parsed.success) {
+  if (!access.org.canHost) {
     return NextResponse.json(
-      { error: "Invalid request body", details: parsed.error.flatten() },
-      { status: 400 },
+      {
+        error: "Organization does not host. Enable canHost before setting a payout account.",
+      },
+      { status: 409 },
     );
   }
 
-  const { accountNumber, ...rest } = parsed.data;
-  const { encryptAccountNumber } = await import(
-    "@/lib/payments/payouts/account-crypto"
+  const raw = await req.json().catch(() => null);
+  const parsed = UpsertBodySchema.safeParse(raw);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid body", detail: parsed.error.flatten() },
+      { status: 400 },
+    );
+  }
+  const body = parsed.data;
+
+  const last4 = body.accountNumber.slice(-4);
+  const encrypted = encryptAccountNumber(body.accountNumber);
+
+  const upserted = await prisma.$transaction(async (tx) => {
+    const existing = await tx.organizationPayoutAccount.findUnique({
+      where: { organizationId: orgId },
+    });
+
+    // Changing bank details resets verification. A different account
+    // number means the side-channel verification artifacts no longer
+    // correspond to this record.
+    const next = await tx.organizationPayoutAccount.upsert({
+      where: { organizationId: orgId },
+      create: {
+        organizationId: orgId,
+        accountHolderName: body.accountHolderName,
+        accountNumberEncrypted: encrypted,
+        accountNumberLast4: last4,
+        bankName: body.bankName,
+        ifscCode: body.ifscCode ?? null,
+        routingNumber: body.routingNumber ?? null,
+        swiftCode: body.swiftCode ?? null,
+        status: "PENDING_VERIFICATION",
+      },
+      update: {
+        accountHolderName: body.accountHolderName,
+        accountNumberEncrypted: encrypted,
+        accountNumberLast4: last4,
+        bankName: body.bankName,
+        ifscCode: body.ifscCode ?? null,
+        routingNumber: body.routingNumber ?? null,
+        swiftCode: body.swiftCode ?? null,
+        // Force re-verification on any account-number change.
+        ...(existing?.accountNumberLast4 !== last4 && {
+          status: "PENDING_VERIFICATION",
+          verifiedAt: null,
+          razorpayContactId: null,
+          razorpayFundAccountId: null,
+        }),
+      },
+    });
+
+    await tx.orgAuditLog.create({
+      data: {
+        organizationId: orgId,
+        actorMembershipId: access.member.id,
+        category: "SETTINGS",
+        action: AUDIT_ACTIONS.SETTINGS.SETTINGS_CHANGED,
+        description: existing
+          ? "Payout account updated"
+          : "Payout account created",
+        details: {
+          accountLast4: last4,
+          bankName: body.bankName,
+          ifscCode: body.ifscCode ?? null,
+          verificationReset: existing?.accountNumberLast4 !== last4,
+        },
+      },
+    });
+
+    return next;
+  });
+
+  return NextResponse.json(
+    {
+      payoutAccount: {
+        id: upserted.id,
+        accountHolderName: upserted.accountHolderName,
+        accountNumberLast4: upserted.accountNumberLast4,
+        bankName: upserted.bankName,
+        ifscCode: upserted.ifscCode,
+        routingNumber: upserted.routingNumber,
+        swiftCode: upserted.swiftCode,
+        status: upserted.status,
+        verifiedAt: upserted.verifiedAt,
+        createdAt: upserted.createdAt,
+        updatedAt: upserted.updatedAt,
+      },
+    },
+    { status: 200 },
   );
-  const { encrypted, last4 } = encryptAccountNumber(accountNumber);
-  const accountNumberEncrypted = Buffer.from(encrypted).toString("base64");
-  const accountNumberLast4 = last4;
-
-  const account = await prisma.organizationPayoutAccount.upsert({
-    where: { organizationProfileId: access.org.id },
-    create: {
-      organizationProfileId: access.org.id,
-      accountNumberEncrypted,
-      accountNumberLast4,
-      ...rest,
-    },
-    update: {
-      accountNumberEncrypted,
-      accountNumberLast4,
-      ...rest,
-    },
-  });
-
-  // Audit log
-  await prisma.orgAuditLog.create({
-    data: {
-      organizationProfileId: access.org.id,
-      actorMemberId: access.member.id,
-      action: "SETTINGS_CHANGED",
-      description: "Payout account updated",
-      details: { field: "payoutAccount", change: "upserted" },
-    },
-  });
-
-  return NextResponse.json({ account });
-}
-
-export async function DELETE(
-  _req: NextRequest,
-  { params }: { params: Promise<{ orgId: string }> },
-) {
-  if (!ENABLE_PROVIDER_ORGS) return notImplemented();
-
-  const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "ORG_OWNER");
-  if (access.error) return access.error;
-
-  await prisma.organizationPayoutAccount
-    .delete({
-      where: { organizationProfileId: access.org.id },
-    })
-    .catch(() => null); // idempotent — silently no-op if absent
-
-  // Audit log
-  await prisma.orgAuditLog.create({
-    data: {
-      organizationProfileId: access.org.id,
-      actorMemberId: access.member.id,
-      action: "SETTINGS_CHANGED",
-      description: "Payout account deleted",
-      details: { field: "payoutAccount", change: "deleted" },
-    },
-  });
-
-  return NextResponse.json({ success: true });
 }

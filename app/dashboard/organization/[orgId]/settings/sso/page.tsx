@@ -7,6 +7,23 @@ import Link from "next/link";
 import { useRequireOrgRole } from "../../useOrgRole";
 import { useToast } from "@/hooks/use-toast";
 import { deriveAcsUrl, deriveMetadataUrl } from "@/lib/sso/derive-urls";
+import type { MemberRole } from "@prisma/client";
+import {
+  MEMBER_ROLE_LABEL,
+  MemberRoleSchema,
+} from "@/lib/labels/org-labels";
+import {
+  CreateSsoProviderPayloadSchema,
+  PatchSsoSettingsPayloadSchema,
+  SsoSettingsResponseSchema,
+  type CreateSsoProviderPayload,
+  type SsoSettingsResponse,
+} from "@/schemas/organizations";
+import {
+  parseJsonResponse,
+  validateOutboundPayload,
+  errorMessageFromBody,
+} from "@/lib/fetch-helpers";
 
 import {
   DashboardHeader,
@@ -35,6 +52,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -47,13 +65,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-interface Provider {
-  id: string;
-  providerId: string;
-  issuer: string;
-  domain: string;
-  providerType: "saml" | "oidc" | null;
-}
+// Provider + SsoResponse shapes are imported from `@/schemas/organizations`
+// so the same definitions back the UI, the payload validators, and any
+// future operator/admin tooling.
+type Provider = SsoSettingsResponse["providers"][number];
 
 function CopyableUrl({ label, value }: { label: string; value: string }) {
   const { toast } = useToast();
@@ -94,61 +109,51 @@ function CopyableUrl({ label, value }: { label: string; value: string }) {
   );
 }
 
-interface SsoResponse {
-  settings: {
-    allowedEmailDomains: string[];
-    enforceSSO: boolean;
-    defaultRoleForAutoJoin: string;
-  };
-  providers: Provider[];
-}
-
-async function fetchSso(orgId: string): Promise<SsoResponse> {
+async function fetchSso(orgId: string): Promise<SsoSettingsResponse> {
   const res = await fetch(`/api/organizations/${orgId}/sso`);
-  if (!res.ok) throw new Error("Failed to load SSO settings");
-  return res.json();
+  return parseJsonResponse(
+    res,
+    SsoSettingsResponseSchema,
+    "Failed to load SSO settings",
+  );
 }
 
-interface PatchPayload {
+type PatchPayload = {
   allowedEmailDomains?: string[];
   enforceSSO?: boolean;
-  defaultRoleForAutoJoin?: string;
-}
+  defaultRoleForAutoJoin?: MemberRole;
+};
 
 async function patchSso(orgId: string, payload: PatchPayload) {
+  const validated = validateOutboundPayload(
+    PatchSsoSettingsPayloadSchema,
+    payload,
+  );
   const res = await fetch(`/api/organizations/${orgId}/sso`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(validated),
   });
-  const body = await res.json();
-  if (!res.ok) throw new Error(body.error || "Failed to update SSO settings");
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(errorMessageFromBody(body, "Failed to update SSO settings"));
   return body;
 }
 
-interface ProviderPayload {
-  providerId: string;
-  domain: string;
-  issuer: string;
-  providerType: "saml" | "oidc";
-  samlConfig?: { issuer: string; entryPoint: string; cert: string };
-  oidcConfig?: {
-    issuer: string;
-    clientId: string;
-    clientSecret: string;
-    discoveryEndpoint: string;
-    pkce: boolean;
-  };
-}
-
-async function createProvider(orgId: string, payload: ProviderPayload) {
+async function createProvider(orgId: string, payload: CreateSsoProviderPayload) {
+  // Discriminated union enforces "providerType: 'saml' ⇒ samlConfig" and
+  // "providerType: 'oidc' ⇒ oidcConfig" — flipping the radio without
+  // re-validating the matching config block fails before we hit the wire.
+  const validated = validateOutboundPayload(
+    CreateSsoProviderPayloadSchema,
+    payload,
+  );
   const res = await fetch(`/api/organizations/${orgId}/sso/providers`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(validated),
   });
-  const body = await res.json();
-  if (!res.ok) throw new Error(body.error || "Failed to register provider");
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(errorMessageFromBody(body, "Failed to register provider"));
   return body;
 }
 
@@ -158,16 +163,21 @@ async function deleteProvider(orgId: string, providerId: string) {
     { method: "DELETE" },
   );
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || "Failed to delete provider");
+    const body = await res.json().catch(() => null);
+    throw new Error(errorMessageFromBody(body, "Failed to delete provider"));
   }
 }
 
-const ROLE_OPTIONS = [
-  { value: "ORG_LEARNER", label: "Learner" },
-  { value: "ORG_MANAGER", label: "Manager" },
-  { value: "ORG_ADMIN", label: "Admin" },
-];
+// Auto-join via SSO grants one of the non-privileged MemberRoles. OWNER +
+// SUPPORT + EXPERT are deliberately excluded: OWNER is destructive to
+// grant automatically, SUPPORT is an operator role assigned manually,
+// and EXPERT is invite-driven at the org level (not auto-joinable via
+// SSO — the invite-accept path provisions the ConsultantProfile FK).
+const AUTO_JOIN_ROLES = ["LEARNER", "MANAGER", "MAINTAINER"] as const;
+const ROLE_OPTIONS = AUTO_JOIN_ROLES.map((value) => ({
+  value,
+  label: MEMBER_ROLE_LABEL[value],
+}));
 
 export default function OrgSsoPage({
   params,
@@ -175,16 +185,19 @@ export default function OrgSsoPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = use(params);
-  const { allowed } = useRequireOrgRole(orgId, "ORG_OWNER");
+  const { allowed } = useRequireOrgRole(orgId, "OWNER");
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ["org-sso", orgId],
     queryFn: () => fetchSso(orgId),
+    // SSO settings are OWNER-only. Gate the fetch so non-owners who
+    // land here via direct URL don't trigger a 403 before the redirect.
+    enabled: allowed,
   });
 
   const [domains, setDomains] = useState("");
   const [enforce, setEnforce] = useState(false);
-  const [defaultRole, setDefaultRole] = useState("ORG_LEARNER");
+  const [defaultRole, setDefaultRole] = useState<MemberRole>("LEARNER");
 
   useEffect(() => {
     if (!data) return;
@@ -192,6 +205,13 @@ export default function OrgSsoPage({
     setEnforce(data.settings.enforceSSO);
     setDefaultRole(data.settings.defaultRoleForAutoJoin);
   }, [data]);
+
+  // shadcn's Select hands onValueChange a bare string. Narrow via Zod
+  // so downstream state + the PATCH body are always a valid MemberRole.
+  const handleRoleChange = (v: string) => {
+    const parsed = MemberRoleSchema.safeParse(v);
+    if (parsed.success) setDefaultRole(parsed.data);
+  };
 
   const settingsMutation = useMutation({
     mutationFn: () =>
@@ -222,14 +242,16 @@ export default function OrgSsoPage({
   const [providerError, setProviderError] = useState<string | null>(null);
 
   const createProviderMutation = useMutation({
-    mutationFn: () =>
-      createProvider(orgId, {
-        providerId: providerId.trim(),
-        domain: domain.trim(),
-        issuer: issuer.trim(),
-        providerType,
-        ...(providerType === "saml"
+    mutationFn: () => {
+      // Build the discriminated payload up-front so TS narrows correctly
+      // and the schema's union sees a complete object.
+      const payload: CreateSsoProviderPayload =
+        providerType === "saml"
           ? {
+              providerId: providerId.trim(),
+              domain: domain.trim(),
+              issuer: issuer.trim(),
+              providerType: "saml",
               samlConfig: {
                 issuer: issuer.trim(),
                 entryPoint: samlEntryPoint.trim(),
@@ -237,6 +259,10 @@ export default function OrgSsoPage({
               },
             }
           : {
+              providerId: providerId.trim(),
+              domain: domain.trim(),
+              issuer: issuer.trim(),
+              providerType: "oidc",
               oidcConfig: {
                 issuer: issuer.trim(),
                 clientId: oidcClientId.trim(),
@@ -244,8 +270,9 @@ export default function OrgSsoPage({
                 discoveryEndpoint: oidcDiscoveryUrl.trim(),
                 pkce: true,
               },
-            }),
-      }),
+            };
+      return createProvider(orgId, payload);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["org-sso", orgId] });
       setShowAdd(false);
@@ -339,7 +366,7 @@ export default function OrgSsoPage({
                 <Label htmlFor="default-role">
                   Default role for auto-joined users
                 </Label>
-                <Select value={defaultRole} onValueChange={setDefaultRole}>
+                <Select value={defaultRole} onValueChange={handleRoleChange}>
                   <SelectTrigger id="default-role">
                     <SelectValue />
                   </SelectTrigger>
@@ -443,6 +470,9 @@ export default function OrgSsoPage({
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Add SSO provider</DialogTitle>
+            <DialogDescription>
+              Configure a SAML or OIDC identity provider for this organization.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">

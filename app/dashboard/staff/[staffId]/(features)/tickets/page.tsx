@@ -60,6 +60,11 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import type { Ticket, TicketCounts, TicketListResponse } from "@/types/tickets";
 
+// Manual refunds will ship with the live checkout/program wiring. The
+// staff ticket panel shows linked payments + automated refund history
+// read-only until that flow is rebuilt on top of `WalletEntry` +
+// `SettlementLedgerEntry` + `OrganizationEarnings.refundedAmountPaise`.
+
 const getStatusColor = (status: string) => {
   switch (status.toUpperCase()) {
     case "OPEN":
@@ -161,7 +166,6 @@ export default function SupportTicketsPage() {
   const [isInternalNote, setIsInternalNote] = useState(false);
   const [sendingReply, setSendingReply] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
-  const [initiatingRefund, setInitiatingRefund] = useState(false);
 
   // Fetch tickets
   const fetchTickets = useCallback(async () => {
@@ -291,49 +295,6 @@ export default function SupportTicketsPage() {
       });
     } finally {
       setSendingReply(false);
-    }
-  };
-
-  // Initiate refund
-  const handleInitiateRefund = async () => {
-    if (!ticketDetail?.linkedPayment) return;
-    setInitiatingRefund(true);
-    try {
-      const response = await fetch("/api/payments/refunds", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          paymentId: ticketDetail.linkedPayment.id,
-          reason: `Refund initiated from support ticket ${ticketDetail.id}`,
-        }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to initiate refund");
-      }
-
-      const refund = await response.json();
-
-      // Update ticket with refund ID
-      await fetch(`/api/staff/support-tickets/${ticketDetail.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refundId: refund.id }),
-      });
-
-      toast({ title: "Success", description: "Refund initiated successfully" });
-      fetchTicketDetail(ticketDetail.id);
-    } catch (error) {
-      console.error("Error initiating refund:", error);
-      toast({
-        title: "Error",
-        description:
-          error instanceof Error ? error.message : "Failed to initiate refund",
-        variant: "destructive",
-      });
-    } finally {
-      setInitiatingRefund(false);
     }
   };
 
@@ -770,23 +731,6 @@ export default function SupportTicketsPage() {
                             Linked Payment
                           </span>
                         </div>
-                        {ticketDetail.linkedPayment.paymentStatus ===
-                          "SUCCEEDED" &&
-                          !ticketDetail.linkedRefund && (
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              onClick={handleInitiateRefund}
-                              disabled={initiatingRefund}
-                            >
-                              {initiatingRefund ? (
-                                <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                              ) : (
-                                <DollarSign className="h-4 w-4 mr-2" />
-                              )}
-                              Initiate Refund
-                            </Button>
-                          )}
                       </div>
                       <div className="text-sm space-y-1">
                         <p>
@@ -796,7 +740,7 @@ export default function SupportTicketsPage() {
                             ticketDetail.linkedPayment.currency,
                           )}
                         </p>
-                        <p>
+                        <div>
                           <strong>Status:</strong>{" "}
                           <Badge
                             variant="outline"
@@ -809,7 +753,7 @@ export default function SupportTicketsPage() {
                           >
                             {ticketDetail.linkedPayment.paymentStatus}
                           </Badge>
-                        </p>
+                        </div>
                         <p>
                           <strong>Gateway:</strong>{" "}
                           {ticketDetail.linkedPayment.paymentGateway}
@@ -835,7 +779,7 @@ export default function SupportTicketsPage() {
                             ticketDetail.linkedRefund.currency,
                           )}
                         </p>
-                        <p>
+                        <div>
                           <strong>Status:</strong>{" "}
                           <Badge
                             variant="outline"
@@ -847,7 +791,7 @@ export default function SupportTicketsPage() {
                           >
                             {ticketDetail.linkedRefund.status}
                           </Badge>
-                        </p>
+                        </div>
                         {ticketDetail.linkedRefund.reason && (
                           <p>
                             <strong>Reason:</strong>{" "}

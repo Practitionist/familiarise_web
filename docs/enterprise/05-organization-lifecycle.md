@@ -1,243 +1,194 @@
-# Organization Lifecycle
+# Organization lifecycle
 
-**Status**: Implemented (Apr 2026)
-**Branch**: `feature/enterprise`
-**Scope**: Creation, verification, activation, deactivation
+Three models carry their own lifecycle state machine in the enterprise
+layer: `Organization`, `Contract`, and `Program`. Each is driven by a
+Prisma enum and guarded by explicit allowed-transition tables in the
+API.
 
-## Overview
+## `OrgStatus` state machine
 
-Organizations are the enterprise container on Familiarise. Every org progresses through a lifecycle: it is created via a multi-step wizard, may require admin verification (PROVIDER/HYBRID), becomes ACTIVE when verified, and can later be suspended or deactivated. Three org kinds exist -- BUYER (corporates/schools purchasing sessions for employees), PROVIDER (consultant agencies hosting multiple consultants), and HYBRID (both). PROVIDER and HYBRID orgs are gated behind the `ENABLE_PROVIDER_ORGS` feature flag; attempting to create one while the flag is off returns 501.
-
----
-
-## Creation
-
-### Wizard Steps
-
-The creation wizard lives at `/dashboard/organization/create`. The number of steps varies by org kind:
-
-- **BUYER** — 5 steps: Org Info → Billing & Seats → Branding → Invite Team → Review
-- **PROVIDER** — 5 steps: Org Info → Revenue Rates → Branding → Invite Team → Review (no Billing step; `billingMode` is omitted from the POST)
-- **HYBRID** — 6 steps: Org Info → Billing & Seats → Revenue Rates → Branding → Invite Team → Review
-
-```
-BUYER (5 steps):
-Step 0      Step 1           Step 2      Step 3       Step 4
-OrgInfo ──► Billing & Seats ──► Branding ──► InviteTeam ──► Review
-
-PROVIDER (5 steps):
-Step 0      Step 1            Step 2      Step 3       Step 4
-OrgInfo ──► Revenue Rates ──► Branding ──► InviteTeam ──► Review
-
-HYBRID (6 steps):
-Step 0      Step 1           Step 2           Step 3      Step 4       Step 5
-OrgInfo ──► Billing & Seats ──► Revenue Rates ──► Branding ──► InviteTeam ──► Review
-
-   └── Org created on Step 0 "Next" (POST /api/organizations)
-       because Step 2/3 file uploads need the org ID
+```prisma
+enum OrgStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+}
 ```
 
-| Step | Kind | Fields | Notes |
-| ---- | ---- | ------ | ----- |
-| 0 - OrgInfo | All | name, kind, description, industry, sizeBucket, website, billingEmail | Org created here (Organization + OrganizationProfile + Member + OrgMemberProfile in one transaction) |
-| 1 - Billing & Seats | BUYER, HYBRID | billingMode, paymentTermsDays, seatsTotal | billingMode options: TAG_ONLY, SEAT_PACK, INVOICED_MONTHLY |
-| 1/2 - Revenue Rates | PROVIDER (step 1), HYBRID (step 2) | platformCommissionRate, orgRetainRate, consultantPayoutRate | Three percentage inputs; must sum to 100% (validated at API layer). `RevenueRatesStep` component. |
-| - Branding | All | logo, bannerImage, primaryColor, secondaryColor | File uploads require orgId from Step 0 |
-| - InviteTeam | All | inviteEmails[], inviteRole | Send email invitations via Resend |
-| - Review | All | (read-only summary) | Final confirmation |
-
-**File**: `app/dashboard/organization/create/types.ts` (OrgWizardData interface)
-
-### What Gets Created (Step 0 Transaction)
-
-A single Prisma `$transaction` creates four rows atomically:
-
 ```
-┌──────────────────────┐     1:1     ┌──────────────────────────┐
-│ Organization         │────────────►│ OrganizationProfile      │
-│ (BetterAuth table)   │             │                          │
-│ name, slug, logo     │             │ kind, status, billingMode│
-└──────────────────────┘             │ billingEmail, rates ...  │
-         │                           └──────────────────────────┘
-         │ 1:1                                    │ 1:many
-         ▼                                        ▼
-┌──────────────────────┐     1:1     ┌──────────────────────────┐
-│ Member               │────────────►│ OrganizationMemberProfile│
-│ (BetterAuth table)   │             │                          │
-│ userId, role         │             │ role: ORG_OWNER          │
-│                      │             │ status: ACTIVE           │
-└──────────────────────┘             └──────────────────────────┘
+                      ┌──────► SUSPENDED ──────┐
+PENDING_VERIFICATION ─┤                        │──► DEACTIVATED (terminal)
+                      └──────► ACTIVE ◄────────┘
+                                │
+                                └──► DEACTIVATED
 ```
 
-If `billingMode === SEAT_PACK`, an `OrgCreditPool` row with zero balance is also created so the dashboard can render without a null check.
+Transitions are gated by `POST /api/admin/organizations/[orgId]/verify`
+(`app/api/admin/organizations/[orgId]/verify/route.ts`). The route
+accepts `action: VERIFY | SUSPEND | REACTIVATE | DEACTIVATE` and
+enforces:
 
-### Slug Generation
+| From                   | Allowed actions          |
+|------------------------|--------------------------|
+| `PENDING_VERIFICATION` | `VERIFY`, `DEACTIVATE`   |
+| `ACTIVE`               | `SUSPEND`, `DEACTIVATE`  |
+| `SUSPENDED`            | `REACTIVATE`, `DEACTIVATE` |
+| `DEACTIVATED`          | none — terminal          |
 
-Slugs are derived from the org name (`slugify()`), or the caller can supply one. On unique-constraint collision (Prisma P2002), a random 6-character suffix is appended and the transaction is retried once.
+Every transition emits an `OrgAuditLog` row in the `SYSTEM` category
+with one of `AUDIT_ACTIONS.SYSTEM.{VERIFIED, SUSPENDED, REACTIVATED,
+DEACTIVATED}`.
 
-### Ownership Limit
+## What each status allows
 
-A user may own at most 5 organizations (mirroring BetterAuth's `organizationLimit`). Exceeding this returns 403.
+- **PENDING_VERIFICATION** — the default on org creation. The org owner
+  can configure settings, BillingAccount, invite members, and sketch
+  contracts. `requireOrgAccess` still lets members in. Payments and
+  payouts are not intended to flow until an admin flips the status to
+  ACTIVE.
+- **ACTIVE** — the only status where every feature is live.
+- **SUSPENDED** — read-only guards are up to each caller; the org
+  record is still accessible. The suspension reason is captured in the
+  `OrgAuditLog.details.reason` field.
+- **DEACTIVATED** — `requireOrgAccess` rejects every caller with a
+  `403 "Organization has been deactivated"`. The row is retained for
+  audit; admins use this instead of `DELETE` when the org has any
+  contracts, invoices, POs, or earnings.
 
----
+## Deletion
 
-## Status Transitions
+`DELETE /api/organizations/[orgId]` (`app/api/organizations/[orgId]/route.ts`)
+is owner-only and refuses if the org has **any** of:
 
-The following state diagram shows all valid organization status transitions and the conditions that trigger them.
+- `contracts` (any status)
+- `invoices`
+- `purchaseOrders`
+- `earnings`
+
+The error message tells the caller to use the admin deactivate path
+instead. This is not a compliance rule — it's an audit-trail guarantee.
+
+## Organization creation
+
+`POST /api/organizations` (`app/api/organizations/route.ts`) runs a
+single Prisma transaction that:
+
+1. Validates a unique lower-case slug.
+2. Creates the `Organization` with `status = PENDING_VERIFICATION` and
+   `rootId = <the new org's own id>` (hierarchy is schema-only in v1;
+   root orgs self-point).
+3. If `canSponsor=true`, creates the `BillingAccount` with the chosen
+   `fundingSource`. `walletBalance = 0` is set when the source is
+   `WALLET`, and `null` otherwise.
+4. Creates an `OWNER` `Membership` row AND a matching BetterAuth `Member`
+   row, bridged via `Membership.betterAuthMemberId`.
+5. Upserts an `OrgAdminProfile` for the creator (one row per user who
+   operates an org, shared across multiple orgs) and stamps
+   `User.orgAdminProfileId`. The response body includes
+   `orgAdminProfileId` so the client can land the user on
+   `/dashboard/org-admin/:id/home` without a follow-up fetch.
+6. Writes the first `OrgAuditLog` row (category `MEMBER`, action
+   `MEMBER_ADDED`).
+
+If `canSponsor || canHost` is false the request is rejected at the Zod
+boundary.
+
+### Wizard flow: commit-on-review
+
+The UI wizard at `components/organization/create-wizard/` **defers the
+POST to the final Review step's "Launch" action**. Earlier steps
+accumulate state in local React state only — dropping out before
+Review leaves zero rows in the database. This avoids orphan
+`Organization` records from users who bail mid-setup.
 
 ```mermaid
-stateDiagram-v2
-    [*] --> PENDING_VERIFICATION : PROVIDER/HYBRID created
-    [*] --> ACTIVE : BUYER created
+sequenceDiagram
+    participant U as User
+    participant W as Wizard (client state)
+    participant API as POST /api/organizations
+    participant R as ReviewStep
 
-    PENDING_VERIFICATION --> ACTIVE : Admin approves
-    PENDING_VERIFICATION --> DEACTIVATED : Admin rejects
-
-    ACTIVE --> SUSPENDED : Admin suspends
-    ACTIVE --> DEACTIVATED : Admin deactivates
-
-    SUSPENDED --> ACTIVE : Admin reinstates
-    SUSPENDED --> DEACTIVATED : Admin deactivates
-
-    DEACTIVATED --> [*]
-
-    note right of ACTIVE : Members active\nBookings allowed\nPayouts processable
-    note right of SUSPENDED : Members locked out\nNo new bookings\nPayouts held
-    note right of DEACTIVATED : Terminal state\nAll access revoked
+    U->>W: Fill Org Info (name, capability, email)
+    Note over W: state only — no API call
+    U->>W: Fill Billing / Revenue Rates
+    Note over W: state only — no API call
+    U->>W: Fill Branding / Invites
+    Note over W: state only — no API call
+    U->>R: Review + edit pass
+    U->>R: Launch Organization
+    R->>API: POST / (create + BillingAccount + OWNER)
+    API-->>R: { organization: {...} }
+    opt Branding / rate-card fields
+        R->>API: PATCH /[orgId] (colors, bps)
+    end
+    opt Invitees staged
+        R->>API: POST /[orgId]/invitations (parallel)
+    end
+    R->>U: Redirect /dashboard/organization/[orgId]/home
 ```
 
-```
-                   APPROVE
-PENDING_VERIFICATION ──────────► ACTIVE ──────────► SUSPENDED
-        │                          │                    │
-        │ REJECT                   │                    │
-        ▼                          │                    ▼
-   DEACTIVATED ◄───────────────────┘              DEACTIVATED
-                    (manual)
-```
+If `Launch` fails after the POST succeeded but before the PATCH or
+invites land, the wizard keeps `initialData.orgId` in state so the
+retry hits the same org row — the POST path is short-circuited and the
+retry is fully idempotent.
 
-| Org Kind | Initial Status | Reason |
-| -------- | -------------- | ------ |
-| BUYER | ACTIVE | No verification needed -- self-serve |
-| PROVIDER | PENDING_VERIFICATION | Requires platform admin approval |
-| HYBRID | PENDING_VERIFICATION | Requires platform admin approval |
+## `Contract` lifecycle
 
-### Admin Verification
-
-**Endpoint**: `POST /api/admin/organizations/[orgId]/verify`
-**Auth**: Platform ADMIN only (`requireAdminAuth`)
-**Body**: `{ action: "APPROVE" | "REJECT", reason?: string }`
-
-| Action | Result |
-| ------ | ------ |
-| APPROVE | status set to ACTIVE |
-| REJECT | status set to DEACTIVATED, reason stored |
-
-Concurrency: Uses atomic `updateMany({ where: { status: "PENDING_VERIFICATION" } })`. If two admins race, the second sees `count = 0` and gets 404. Prevents double-approve/double-reject. See `docs/enterprise/15-concurrency-and-locking.md` §6.
-
-**File**: `app/api/admin/organizations/[orgId]/verify/route.ts`
-
----
-
-## Member Management
-
-### Roles
-
-| Role | Available In | Capabilities |
-| ---- | ------------ | ------------ |
-| ORG_OWNER | All kinds | Full control: billing, deletion, settings, members |
-| ORG_ADMIN | All kinds | Members + plans + settings (no billing/deletion) |
-| ORG_MANAGER | All kinds | BUYER: team analytics + seat mgmt. PROVIDER: consultant earnings view |
-| ORG_CONSULTANT | PROVIDER/HYBRID | Provides services on behalf of the org (feature-flagged) |
-| ORG_LEARNER | BUYER/HYBRID | Employee/student consuming sessions |
-| ORG_SUPPORT | All kinds | Support staff with no billing access |
-
-### Invitations
-
-Invitations are sent by email (via Resend). The flow:
-
-```
-ORG_OWNER/ADMIN sends invite
-        │
-        ▼
-Email delivered to invitee
-        │
-        ▼
-Invitee clicks accept link
-        │
-        ▼
-Member + OrganizationMemberProfile created
-(role from invitation, status: ACTIVE)
+```prisma
+enum ContractStatus {
+  DRAFT
+  ACTIVE
+  EXPIRED
+  TERMINATED
+}
 ```
 
-Concurrency notes:
-- **Sending** (`POST /api/organizations/[orgId]/invitations`): wrapped in a Serializable TX to prevent two concurrent POSTs creating duplicate pending invitations for the same email. PostgreSQL SSI aborts the loser (P2034 → 409).
-- **Accepting** (`POST /api/organizations/invitations/accept`): atomic `updateMany({ where: { status: "pending" } })` at TX start — only one concurrent accept sees `count = 1`; the other gets 409 INVITATION_ALREADY_ACCEPTED.
+- `DRAFT` → `ACTIVE` via `PATCH /api/organizations/[orgId]/contracts/[contractId]`
+  (OWNER only). The handler sets `signedAt = now()` and flips the status.
+- `ACTIVE` → `EXPIRED` is set by a cron walk (stub in v1) when `effectiveTo`
+  passes. Earnings already snapshot their `rateCardId` + bps so in-flight
+  settlement isn't affected.
+- `ACTIVE` → `TERMINATED` is an OWNER-initiated early exit. Programs
+  attached to a terminated contract can't accept new bookings
+  (`POST /programs` refuses to attach to a TERMINATED/EXPIRED contract
+  in `app/api/organizations/[orgId]/programs/route.ts`).
 
-See `docs/enterprise/15-concurrency-and-locking.md` §§1 and 4.
+`DELETE /api/organizations/[orgId]/contracts/[contractId]` is only
+permitted on `DRAFT` contracts; anything else must transition to
+`TERMINATED`.
 
-### Seat Management (BUYER / HYBRID)
+Each transition emits an `OrgAuditLog` entry in the `CONTRACT` category
+via `AUDIT_ACTIONS.CONTRACT.{CONTRACT_CREATED, CONTRACT_SIGNED,
+CONTRACT_TERMINATED, CONTRACT_EXPIRED}`.
 
-BUYER orgs track seats via `seatsTotal` and `seatsUsed` on OrganizationProfile. When a new ORG_LEARNER is added:
+## `Program` lifecycle
 
-- Atomic seat acquisition: `UPDATE ... SET seatsUsed = seatsUsed + 1 WHERE seatsUsed < seatsTotal`
-- `seatAssignedAt` timestamp recorded on the member profile
-- `seatsTotal = null` means unlimited seats (rare; custom enterprise plans)
+```prisma
+enum ProgramStatus {
+  ACTIVE
+  PAUSED
+  EXPIRED
+  CANCELLED
+}
+```
 
----
+- `PAUSED` stops new `ProgramAssignment`s and new bookings against
+  existing assignments. Existing sessions already in-flight are not
+  cancelled.
+- `EXPIRED` is driven by the cron that walks contract `effectiveTo`.
+- `CANCELLED` is a terminal state set by
+  `DELETE /api/organizations/[orgId]/programs/[programId]` (MAINTAINER)
+  when there are no assignments. If assignments exist, the route flips
+  to `CANCELLED` status rather than hard-deleting.
 
-## Wizard Abandonment
+`POST /api/organizations/[orgId]/programs/[programId]/assignments`
+only accepts assignments when `program.status = ACTIVE`.
 
-**Problem**: The org is created on Step 0 "Next" (to provide an orgId for file uploads in Step 2). If the user abandons the wizard at Step 1 or later, a partially-configured org exists in the database.
+## Related docs
 
-**Current state**: These orphaned orgs remain in the database. BUYER orgs are ACTIVE but lack branding/billing config. PROVIDER/HYBRID orgs remain PENDING_VERIFICATION, so they are inert.
-
-**Planned solution**: Cleanup cron job (Issue #661) or introduction of a DRAFT status that precedes PENDING_VERIFICATION/ACTIVE.
-
----
-
-## SSO Setup
-
-SSO is configured after org creation by the ORG_OWNER. It is part of the org lifecycle but has its own complexity. See `08-sso-and-authentication.md` for full details.
-
----
-
-## Deactivation
-
-When an org is deactivated:
-
-- Members lose access to the org dashboard
-- Sessions tied to the org are no longer bookable
-- Payouts (PROVIDER/HYBRID) are held until resolved
-- The org is filtered out from member listing queries (`status !== "DEACTIVATED"`)
-- SSO domain claims are not automatically released (manual cleanup needed)
-
----
-
-## Key Files
-
-| File | Purpose |
-| ---- | ------- |
-| `app/api/organizations/route.ts` | GET (list orgs) + POST (create org) |
-| `app/api/admin/organizations/[orgId]/verify/route.ts` | Admin verification (APPROVE/REJECT) |
-| `app/dashboard/organization/create/types.ts` | OrgWizardData + StepProps interfaces |
-| `prisma/schema.prisma` (lines 458-567) | Organization, OrganizationProfile, enums |
-| `prisma/schema.prisma` (lines 569-627) | OrganizationMemberProfile, OrgMemberRole |
-| `lib/auth-helpers.ts` | `requireOrgAccess()` helper for role-gated endpoints |
-| `lib/feature-flags.ts` | `ENABLE_PROVIDER_ORGS` flag |
-
----
-
-## Edge Cases
-
-| Scenario | Behavior |
-| -------- | -------- |
-| Wizard abandoned after Step 0 | Partially-configured org persists; cleanup cron planned (Issue #661) |
-| Slug collision on create | Random suffix appended, transaction retried once |
-| Reducing `seatsTotal` below `seatsUsed` | Not currently blocked at API layer -- needs validation guard |
-| Deactivating org with pending payouts | Payouts remain in PENDING status; manual admin resolution required |
-| User owns 5 orgs and tries to create a 6th | 403: "maximum number of owned organizations (5)" |
-| Creating PROVIDER org with flag off | 501: "PROVIDER organizations are not yet available" |
-| Two concurrent invitation accepts | Second gets 409 INVITATION_ALREADY_ACCEPTED (atomic `updateMany` in TX) |
-| Two owners concurrently demoting each other | Post-update count inside TX: whichever commits last sees 0 owners → 409 LAST_OWNER |
-| Two admins approving the same org simultaneously | Atomic `updateMany` on `PENDING_VERIFICATION`; second gets 404 |
+- `01-organization-types.md` — capability flips also gate status
+  mutations (can't disable canSponsor with a non-zero wallet).
+- `08-sso-and-authentication.md` — SSO enforcement for
+  PENDING_VERIFICATION orgs.
+- `16-programs.md` — the program subtypes behind this lifecycle.

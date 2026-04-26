@@ -1,207 +1,97 @@
-# Public Pages and Discovery
+# Public pages and discovery
 
-**Status**: Implemented (Apr 2026)
-**Branch**: `feature/enterprise`
-**Scope**: PROVIDER and HYBRID orgs (ACTIVE status only)
+The enterprise layer's only public-facing surface in the current
+product is the org-curated catalog feeding the marketplace explore
+experience:
 
-## Overview
+1. **Org catalog** — a member-facing list of `OrganizationPlan` rows,
+   the org-curated subset of the marketplace catalog.
 
-PROVIDER and HYBRID organizations get a public presence on the Familiarise platform through three surfaces: a dedicated org page at `/org/[slug]`, a listing in the company directory at `/explore/companies`, and a small badge on affiliated consultant cards in the expert explorer at `/explore/experts`. BUYER orgs have no public visibility -- they are internal-facing entities (corporates/schools buying coaching for employees/students).
+> The standalone "public org page" surface (`/org/[slug]` page +
+> `/api/organizations/public/[slug]` route) was removed in
+> `2b9da181` along with the rest of the pre-Arch-4 stubs. The org
+> identity that learners see now flows entirely through the explore
+> badge described in **Explore-side visibility** below — there is no
+> separate org landing page until the explore redesign brings one
+> back as part of a real surface, not a stub.
 
----
+## `OrganizationPlan`
 
-## Public Org Page: /org/[slug]
-
-### What It Shows
-
-```
-+------------------------------------------------------+
-|  [Logo]  Organization Name                            |
-|          [Industry Badge]                             |
-|          Description text...                          |
-|          [Users icon] 12 consultants  [Globe] Website |
-+------------------------------------------------------+
-|                                                       |
-|  Our Consultants                                      |
-|  +-------------+  +-------------+  +-------------+   |
-|  | [Avatar]    |  | [Avatar]    |  | [Avatar]    |   |
-|  | Name        |  | Name        |  | Name        |   |
-|  | Headline    |  | Headline    |  | Headline    |   |
-|  | * 4.8  5yr  |  | * 4.2  3yr  |  | * 4.9  8yr  |   |
-|  +-------------+  +-------------+  +-------------+   |
-|                                                       |
-|  Are you a consultant? Join this organization.        |
-|  [ Browse all organizations ]                         |
-+------------------------------------------------------+
-```
-
-- **Hero section**: Logo, banner image, org name, industry badge, description, consultant count, website link
-- **Branding**: `primaryColor` and `secondaryColor` from `OrganizationProfile` applied as a CSS gradient on the hero
-- **Banner image**: Rendered behind the hero with 20% opacity overlay
-- **Consultant roster**: Grid (1/2/3 columns responsive) of cards showing name, avatar, headline, rating, experience, verified badge
-- **CTAs**:
-  - **"Apply as Consultant"** button (client component `ApplyButton.tsx`). POSTs to `/api/organizations/[orgId]/consultants/apply` with inline loading/error/success feedback and status-specific handling:
-    - **401 (unauthenticated)** — redirects to `/auth/signin?callbackUrl=<current-path>` so the user returns to the org page after signing in
-    - **403 (not a verified consultant)** — shows "You need a verified consultant profile to apply. Complete consultant onboarding first."
-    - **409 (already a member)** — shows the duplicate-member message from the API
-    - **2xx** — shows the success message (either "Application submitted" or "Auto-approved")
-  - **"Browse all organizations"** link pointing to `/explore/companies`
-
-### Access Rules
-
-The page returns a Next.js `notFound()` (404) when any of these conditions are true:
-
-- No organization exists for the given slug
-- The org has no `organizationProfile`
-- `kind` is neither `PROVIDER` nor `HYBRID`
-- `status` is not `ACTIVE`
-
-### Server Component
-
-The page is a React Server Component that queries Prisma directly (no API call). The query fetches:
-
-- Organization: `id`, `name`, `slug`, `logo`
-- OrganizationProfile: `kind`, `status`, branding fields, `description`, `industry`, `website`
-- Members: filtered to `role: ORG_CONSULTANT`, `status: ACTIVE`, with nested `user` (name, image) and `consultantProfile` (headline, rating, isVerified, experience)
-
-Each consultant card links to `/explore/experts/[consultantProfileId]`.
-
-**File**: `app/org/[slug]/page.tsx`
-
----
-
-## Company Directory: /explore/companies
-
-### What It Shows
-
-```
-+------------------------------------------------------+
-|  [Building2]  Consulting Organizations               |
-|  Browse agencies and organizations that host expert   |
-|  consultants on Familiarise.                         |
-+------------------------------------------------------+
-|                                                       |
-|  +-------------+  +-------------+  +-------------+   |
-|  | [Logo]      |  | [Logo]      |  | [Logo]      |   |
-|  | Org Name    |  | Org Name    |  | Org Name    |   |
-|  | [Industry]  |  | [Industry]  |  | [Industry]  |   |
-|  | Description |  | Description |  | Description |   |
-|  |-------------|  |-------------|  |-------------|   |
-|  | 5 consultants  | 12 consultants | 3 consultants  |
-|  +-------------+  +-------------+  +-------------+   |
-+------------------------------------------------------+
-```
-
-- Grid of company cards (1/2/3 columns responsive)
-- Each card shows: logo (or `Building2` icon fallback), name, industry badge, description (2-line clamp), consultant count, website indicator
-- Cards link to `/org/[slug]`
-- Empty state: "No organizations listed yet. Check back soon!"
-
-### Data Source
-
-Server component with direct Prisma query on `OrganizationProfile`:
-
-```
-where: {
-  kind: { in: ["PROVIDER", "HYBRID"] },
-  status: "ACTIVE",
+```prisma
+model OrganizationPlan {
+  id             String @id @default(uuid())
+  organizationId String
+  planType       AppointmentsType   // CONSULTATION | SUBSCRIPTION | WEBINAR | CLASS | TRIAL
+  title          String
+  description    String?
+  price          Int                // paise
+  priceCurrency  Currency @default(INR)
+  isActive       Boolean @default(true)
+  config         Json
+  assignedConsultantIds String[] @default([])
+  ...
 }
-orderBy: { createdAt: "desc" }
 ```
 
-Includes a count of active `ORG_CONSULTANT` members for each org.
+A plan is the org's curated offering — a subset of the platform
+catalog plus (optionally) an assignment list of expert ids that the
+org's members can book from. `enforceOrganizationPlans = true` on the
+Organization restricts members to the org's list.
 
-**File**: `app/explore/companies/page.tsx`
+## Catalog CRUD
 
----
+- `GET /api/organizations/[orgId]/catalog` — MANAGER. Lists
+  `OrganizationPlan` rows, filterable by `planType` and `isActive`.
+- `POST /api/organizations/[orgId]/catalog` — OWNER. Creates a plan.
+- `DELETE /api/organizations/[orgId]/catalog` — OWNER. Bulk deactivate
+  by `{ planIds: string[] }`.
+- `GET /api/organizations/[orgId]/catalog/search?q=` — any active
+  member. Postgres ILIKE on `title` + `description`. Returns a thin
+  projection (no internal ids, no consultant assignments). This is a
+  deliberately shallow search — at catalog sizes below ~5k plans it's
+  cheaper than maintaining a Typesense index per tenant.
 
-## Org Badge on Consultant Cards
+## Old per-plan routes
 
-### How It Works
+The pre-Arch-4 `/api/organizations/[orgId]/plans/**` placeholders
+were deleted in `2b9da181` rather than left behind as 501 stubs. The
+collection catalog route set above (`/catalog`, `/catalog/search`)
+covers all current needs; per-plan CRUD will return as a real
+implementation when the plan refactor PR lands, not before.
 
-On the `/explore/experts` page, consultants affiliated with a PROVIDER or HYBRID org display a small badge next to their verified badge:
+## Catalog search performance
 
-```
-  John Smith [Verified] [TechConsult Agency]
-```
+With ILIKE:
+- No full-text index. Queries are O(n) per tenant but tenants are small.
+- Case-insensitive by flag, not by `lower()` index.
+- Ordering is `createdAt DESC`; no relevance ranking.
 
-The badge is an outlined `Badge` component with a `Building2` icon and the org name, styled in indigo. Clicking it navigates to `/org/[slug]`.
+When a single tenant's catalog exceeds ~5k rows the search route
+should be swapped for the existing Typesense pipeline — the route is
+sandboxed to make the swap a single-file change.
 
-### Data Flow
+## Attribution-only semantics for PERSONAL funding
 
-```
-consultantListInclude (lib/data/explore-experts.ts)
-       |
-       +-- orgMembershipInclude
-              |
-              +-- organizationMemberProfiles
-                    where: role = ORG_CONSULTANT
-                           status = ACTIVE
-                           org.kind in [PROVIDER, HYBRID]
-                           org.status = ACTIVE
-                    select: organization.name, slug, logo
-                    take: 1
-       |
-       v
-API route maps first result to:
-  organizationBadge: { name, slug, logo }
-       |
-       v
-ConsultantCard renders badge (if organizationBadge truthy)
-```
+A `FundingSource = PERSONAL` org tags the learner's `Payment` with
+`organizationId` so analytics can roll up "all sessions booked by Acme
+employees". No money flows through the org — the learner pays at
+checkout on their own card. This is the attribution leg `PaymentLeg`
+cannot represent on its own (it carries source=CARD), so the org tag
+lives on the `Payment.organizationId` column directly.
 
-The `orgMembershipInclude` is a separate include block (not under `as const`) to avoid Prisma readonly array type issues. It takes only the first matching membership, so consultants in multiple orgs show only one badge.
+## Explore-side visibility
 
-### Key Files
+When `canHost = true` and the org has ACTIVE experts, the org's name
+appears as a badge on each expert's marketplace card. The `/explore`
+page resolves the badge by joining `Membership(status=ACTIVE,
+role=EXPERT)` ordered by `createdAt ASC` so multi-org experts surface
+a deterministic primary org.
 
-| File | Purpose |
-|------|---------|
-| `lib/data/explore-experts.ts` | `consultantListInclude` and `orgMembershipInclude` definitions |
-| `app/explore/experts/components/ConsultantCard.tsx` | Badge rendering (search for `organizationBadge`) |
-| `types/consultant.ts` | `IConsultantCardData` type with `organizationBadge` field |
+The explore query itself is part of the marketplace surface and lives
+outside the `/api/organizations` tree.
 
----
+## Related docs
 
-## Public API
-
-### GET /api/organizations/public/[slug]
-
-No authentication required. Returns public-facing org data for PROVIDER/HYBRID orgs.
-
-**Response (200)**:
-- `organization`: `{ id, name, slug, logo }`
-- `profile`: `{ description, industry, website, logo, bannerImage, primaryColor, secondaryColor }`
-- `consultants`: Array of `{ id, name, image, headline, rating, isVerified, experience }`
-- `consultantCount`: Number of active ORG_CONSULTANT members
-
-**Response (404)**: Returned for non-PROVIDER/HYBRID orgs, non-ACTIVE orgs, or unknown slugs. Error message is a generic "Organization not found" to avoid leaking existence of BUYER orgs.
-
-The query mirrors the server component page -- same data, same access rules, but available as a JSON API for potential mobile clients or third-party integrations.
-
-**File**: `app/api/organizations/public/[slug]/route.ts`
-
----
-
-## Key Files
-
-| File | Purpose |
-|------|---------|
-| `app/org/[slug]/page.tsx` | Public org page (server component) |
-| `app/explore/companies/page.tsx` | Company directory listing |
-| `app/explore/experts/components/ConsultantCard.tsx` | Org badge on consultant cards |
-| `lib/data/explore-experts.ts` | Shared Prisma includes for org membership |
-| `app/api/organizations/public/[slug]/route.ts` | Public API for org profile |
-| `types/consultant.ts` | `IConsultantCardData` type definition |
-
----
-
-## Edge Cases
-
-| Case | Behavior |
-|------|----------|
-| Org deactivated after page cached | Next request hits Prisma, gets non-ACTIVE status, returns 404 |
-| Consultant removed from org but page cached | Next roster query excludes non-ACTIVE members |
-| Org has zero consultants | Roster section shows "No consultants listed yet." |
-| BUYER org slug accessed at /org/[slug] | Returns 404 (BUYER orgs have no public page) |
-| Consultant in multiple PROVIDER orgs | Badge shows the **oldest** active membership (`orderBy: createdAt asc, take: 1`). Matches `resolveOrgSplit` ordering so earnings and badge always agree. |
-| Org slug collision at creation | Retry with random suffix appended (e.g., `techconsult-a3kz7m`) |
+- `12-dashboard-pages.md` — dashboard pages that feed this surface.
+- `06-expert-lifecycle.md` — how an expert becomes discoverable in the
+  org's public context.

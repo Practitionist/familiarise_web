@@ -3,9 +3,10 @@ import { NextResponse } from "next/server";
 import type { Session } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import type {
-  OrganizationProfile,
-  OrganizationMemberProfile,
-  OrgMemberRole,
+  FundingSource,
+  Organization,
+  Membership,
+  MemberRole,
 } from "@prisma/client";
 
 /**
@@ -264,80 +265,95 @@ export async function authorizeEventAccess(
 }
 
 // ============================================================================
-// ORGANIZATION ACCESS HELPERS (ENTERPRISE)
+// ORGANIZATION ACCESS HELPERS — Arch 4-Modified (Issue #681)
 // ============================================================================
 
-/**
- * Numeric rank for OrgMemberRole — higher = more privileged.
- *
- * Used for "minimum role" checks via {@link orgRoleSatisfies}. Note that
- * ORG_SUPPORT and ORG_LEARNER deliberately sit between ORG_MANAGER and the
- * absolute floor — they have legitimate access to view their own data but
- * shouldn't be promoted above MANAGER without an explicit role change.
- */
-const ORG_ROLE_RANK: Record<OrgMemberRole, number> = {
-  ORG_OWNER: 100,
-  ORG_ADMIN: 80,
-  ORG_MANAGER: 60,
-  ORG_CONSULTANT: 40,
-  ORG_SUPPORT: 30,
-  ORG_LEARNER: 20,
+/** Numeric rank for MemberRole — higher = more privileged. */
+const ORG_ROLE_RANK: Record<MemberRole, number> = {
+  OWNER: 100,
+  MAINTAINER: 80,
+  MANAGER: 60,
+  EXPERT: 40,
+  SUPPORT: 30,
+  LEARNER: 20,
 };
 
-/**
- * Whether `actual` role meets the `minimum` role requirement.
- *
- * Examples:
- *   orgRoleSatisfies("ORG_OWNER", "ORG_ADMIN") → true
- *   orgRoleSatisfies("ORG_LEARNER", "ORG_MANAGER") → false
- *   orgRoleSatisfies("ORG_ADMIN", "ORG_ADMIN") → true (>=)
- */
+/** Whether `actual` role meets the `minimum` role requirement. */
 export function orgRoleSatisfies(
-  actual: OrgMemberRole,
-  minimum: OrgMemberRole,
+  actual: MemberRole,
+  minimum: MemberRole,
 ): boolean {
   return ORG_ROLE_RANK[actual] >= ORG_ROLE_RANK[minimum];
 }
 
 export type OrgAccessGrant = {
   session: Session;
-  member: OrganizationMemberProfile;
-  org: OrganizationProfile;
+  member: Membership;
+  org: Organization;
 };
 
 /**
- * Require that the session user is an active member of the specified
- * organization (by `organizationId` — the BetterAuth `Organization.id`).
+ * Capability gate for {@link requireOrgAccess}. All fields are optional;
+ * any field that is set must match for the request to proceed.
  *
- * Optionally require a minimum role. Roles are ranked via {@link ORG_ROLE_RANK}
- * and compared with {@link orgRoleSatisfies}.
+ * - `canSponsor: true` — require the org to sponsor bookings
+ *   (BillingAccount present, sponsor-side APIs). A host-only org gets a
+ *   404 (the page / API endpoint "doesn't exist" for that org shape).
+ * - `canHost: true` — mirror for host-side APIs.
+ * - `fundingSource` — require the org's BillingAccount to be in a
+ *   specific funding mode. Used by WALLET-only endpoints like
+ *   /billing-account/wallet. 404 on mismatch.
+ */
+export type OrgCapabilityGate = {
+  minimumRole?: MemberRole;
+  canSponsor?: true;
+  canHost?: true;
+  fundingSource?: FundingSource;
+  /**
+   * Require `Organization.status === "ACTIVE"`. A newly created org sits
+   * in PENDING_VERIFICATION until a platform admin runs the verify action;
+   * setting this on side-effecting routes (invite send, wallet top-up,
+   * contract submit) keeps the graceful pre-verification UX while still
+   * blocking spam surfaces. Returns 409 ORG_NOT_VERIFIED so the UI can
+   * distinguish this from plain 403.
+   */
+  requireActive?: true;
+};
+
+/**
+ * Require that the session user is an active Membership of the specified
+ * organization.
  *
- * **Platform admins (UserRole.ADMIN) bypass org membership checks.** They can
- * manage any org for operability/support reasons. STAFF do NOT bypass — they're
- * platform-side, not org-side.
- *
- * @returns On success: { session, member, org } where `org` is the
- *          OrganizationProfile (with full enterprise fields) and `member` is
- *          the user's OrganizationMemberProfile (with the typed role enum).
- *          On failure: { error: NextResponse } with 401/403/404 as appropriate.
- *
- * @example
- *   export async function GET(_req, { params }) {
- *     const access = await requireOrgAccess((await params).orgId);
- *     if (access.error) return access.error;
- *     // access.session, access.member, access.org are all defined
- *   }
+ * Accepts either a bare `MemberRole` (legacy single-arg callers) or an
+ * options object that also enforces capability + funding-source gates.
+ * Platform admins (`UserRole.ADMIN`) bypass membership + role checks and
+ * get a synthesized OWNER-rank stub; capability checks still apply so
+ * an admin hitting a WALLET-only endpoint on an INVOICE org still gets
+ * the structural 404.
  */
 export async function requireOrgAccess(
   organizationId: string,
-  minimumRole?: OrgMemberRole,
+  opts?: MemberRole | OrgCapabilityGate,
 ): Promise<({ error?: never } & OrgAccessGrant) | { error: NextResponse }> {
+  const options: OrgCapabilityGate =
+    typeof opts === "string" ? { minimumRole: opts } : (opts ?? {});
+  const { minimumRole, canSponsor, canHost, fundingSource, requireActive } =
+    options;
+
   const auth = await requireApiAuth();
   if (auth.error) return { error: auth.error };
 
-  // Resolve OrganizationProfile by the BetterAuth Organization.id
-  const org = await prisma.organizationProfile.findUnique({
-    where: { organizationId },
+  // Pull the billingAccount alongside the org so fundingSource gates
+  // don't need a second round-trip. Non-capability callers pay the same
+  // (cheap) cost — this read is LEFT JOIN one row keyed on a unique
+  // index.
+  const org = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    include: {
+      billingAccount: {
+        select: { id: true, fundingSource: true },
+      },
+    },
   });
   if (!org) {
     return {
@@ -357,39 +373,78 @@ export async function requireOrgAccess(
     };
   }
 
+  if (requireActive && org.status !== "ACTIVE") {
+    return {
+      error: NextResponse.json(
+        {
+          error: "ORG_NOT_VERIFIED",
+          message:
+            "This action is paused until a platform admin verifies your organization.",
+          status: org.status,
+        },
+        { status: 409 },
+      ),
+    };
+  }
+
+  // Capability guards are structural, not authorization — a host-only
+  // org doesn't have sponsor APIs at all, so "404 not found" is the
+  // honest response (rather than 403, which implies "you're allowed
+  // elsewhere"). Mirrors how filesystems surface missing paths.
+  if (canSponsor === true && !org.canSponsor) {
+    return {
+      error: NextResponse.json(
+        { error: "This organization does not sponsor bookings" },
+        { status: 404 },
+      ),
+    };
+  }
+  if (canHost === true && !org.canHost) {
+    return {
+      error: NextResponse.json(
+        { error: "This organization does not host consultants" },
+        { status: 404 },
+      ),
+    };
+  }
+  if (fundingSource && org.billingAccount?.fundingSource !== fundingSource) {
+    return {
+      error: NextResponse.json(
+        {
+          error: `This endpoint requires ${fundingSource} funding`,
+          currentFundingSource: org.billingAccount?.fundingSource ?? null,
+        },
+        { status: 404 },
+      ),
+    };
+  }
+
   const userId = auth.session.user.id;
 
-  // Platform admins bypass org membership checks for operability.
-  // They get a synthesized OWNER-rank member record so callers don't have to
-  // special-case admin paths.
+  // Platform admins bypass org membership checks. Capability guards
+  // above still apply so the admin gets the same structural 404 as a
+  // regular user — the endpoint genuinely doesn't exist on that org.
   if (auth.session.user.role === "ADMIN") {
-    const stub: OrganizationMemberProfile = {
+    const stub: Membership = {
       id: `__admin_stub_${userId}`,
-      memberId: `__admin_stub_${userId}`,
-      organizationProfileId: org.id,
-      role: "ORG_OWNER",
+      userId,
+      organizationId: org.id,
       status: "ACTIVE",
-      consultantProfileId: null,
+      role: "OWNER",
+      departmentLabel: null,
       consulteeProfileId: null,
-      customConsultantPayoutRate: null,
-      earningsRecipient: "CONSULTANT",
-      applicationNote: null,
-      appliedAt: null,
-      approvedAt: null,
-      approvedBy: null,
-      seatAssignedAt: null,
+      consultantProfileId: null,
+      payoutRecipient: "SELF",
+      rateCardOverrideId: null,
+      betterAuthMemberId: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
     return { session: auth.session, member: stub, org };
   }
 
-  // Look up the typed member profile by joining through BetterAuth's Member.
-  const member = await prisma.organizationMemberProfile.findFirst({
-    where: {
-      organizationProfileId: org.id,
-      member: { userId },
-    },
+  const member = await prisma.membership.findUnique({
+    where: { userId_organizationId: { userId, organizationId: org.id } },
   });
 
   if (!member) {
@@ -423,11 +478,13 @@ export async function requireOrgAccess(
 }
 
 /**
- * Convenience wrapper around {@link requireOrgAccess} for owner-only operations:
- * settings mutation, billing changes, payout account, organization deletion.
+ * Convenience wrapper around {@link requireOrgAccess} for owner-only operations.
+ * Accepts the same capability gate as `requireOrgAccess` (sans `minimumRole`,
+ * which is always OWNER here).
  */
 export async function requireOrgOwner(
   organizationId: string,
+  opts?: Omit<OrgCapabilityGate, "minimumRole">,
 ): Promise<({ error?: never } & OrgAccessGrant) | { error: NextResponse }> {
-  return requireOrgAccess(organizationId, "ORG_OWNER");
+  return requireOrgAccess(organizationId, { ...(opts ?? {}), minimumRole: "OWNER" });
 }

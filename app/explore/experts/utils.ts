@@ -4,6 +4,8 @@ import { ReadonlyURLSearchParams } from "next/navigation";
 
 export const CONSULTANTS_PER_PAGE = 10;
 
+export type AffiliationType = "independent" | "agency" | null;
+
 export interface IExpertFilters {
   domain: string | null;
   subdomain: string | null;
@@ -16,6 +18,7 @@ export interface IExpertFilters {
   minRating?: number;
   companies: string[];
   language?: string;
+  affiliationType: AffiliationType;
 }
 
 export const DEFAULT_EXPERT_FILTERS: IExpertFilters = {
@@ -30,6 +33,7 @@ export const DEFAULT_EXPERT_FILTERS: IExpertFilters = {
   minRating: undefined,
   companies: [],
   language: undefined,
+  affiliationType: null,
 };
 
 export interface IExpertsMetaData {
@@ -128,6 +132,7 @@ export function filtersFromSearchParams(
     minRating: parseNumberParam(params.get("minRating")),
     companies: params.get("companies")?.split(",").filter(Boolean) || [],
     language: params.get("language") || undefined,
+    affiliationType: (params.get("affiliationType") as AffiliationType) || null,
   };
 }
 
@@ -149,5 +154,6 @@ export function filtersToSearchParams(filters: IExpertFilters): string {
     params.set("minRating", String(filters.minRating));
   if (filters.companies.length > 0) params.set("companies", filters.companies.join(","));
   if (filters.language) params.set("language", filters.language);
+  if (filters.affiliationType) params.set("affiliationType", filters.affiliationType);
   return params.toString();
 }

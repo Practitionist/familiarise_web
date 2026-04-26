@@ -1,184 +1,245 @@
 /**
- * Organization invitations — GET (list) / POST (create).
+ * GET  /api/organizations/[orgId]/invitations
+ * POST /api/organizations/[orgId]/invitations
  *
- * Invitations target an email address that may or may not have a platform
- * account yet. The invited user accepts via /api/organizations/invitations/accept
- * which creates the Member + OrganizationMemberProfile rows.
+ * Backed by BetterAuth's `Invitation` table — we keep the invitation
+ * token lifecycle inside BetterAuth so the accept flow can verify the
+ * token natively. The typed `Membership` row is created separately at
+ * accept time (see /api/organizations/invitations/accept/route.ts).
  *
- * Auth:
- *   GET  — any active org member
- *   POST — ORG_ADMIN+
- *
- * ORG_CONSULTANT and ORG_SUPPORT roles in the invite are gated by
- * ENABLE_PROVIDER_ORGS. Email delivery is fire-and-forget — failure to send
- * does not roll back the invitation row (the org admin can resend).
+ * Self-service cannot invite into EXPERT or SUPPORT roles. EXPERT
+ * requires canHost=true and the apply flow, SUPPORT is assigned from
+ * Settings by an OWNER. The guard lives in the Zod schema.
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import crypto from "node:crypto";
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-import { ENABLE_PROVIDER_ORGS } from "@/lib/feature-flags";
-import { sendOrgInvitationEmail } from "@/lib/email";
-import { getAppUrl } from "@/lib/url";
-import { OrgMemberRole, Prisma } from "@prisma/client";
+import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import {
+  DomainVerificationRequiredError,
+  hasVerifiedDomain,
+  UNVERIFIED_ORG_SEAT_CAP,
+} from "@/lib/enterprise/governance";
+import { notifyOrgInviteSent } from "@/lib/novu/org-workflows";
 
-const inviteSchema = z.object({
+// Subset of MemberRole an inviter can assign without elevated flows.
+// Mirrors SELF_SERVICE_MEMBER_ROLES in lib/labels/org-labels.ts — two
+// places because this is the server-side enforcement and the UI
+// subset should never drift from the API subset.
+const InvitableRoleSchema = z.enum([
+  "OWNER",
+  "MAINTAINER",
+  "MANAGER",
+  "LEARNER",
+]);
+
+const InviteBodySchema = z.object({
   email: z.string().email(),
-  role: z.nativeEnum(OrgMemberRole).default("ORG_LEARNER"),
+  role: InvitableRoleSchema,
+  // Default expiry: 14 days. Overridable up to 30 to avoid long-lived
+  // invite tokens sitting in inboxes indefinitely.
+  expiresInDays: z.coerce.number().int().min(1).max(30).default(14),
 });
 
-const PROVIDER_GATED_ROLES: OrgMemberRole[] = ["ORG_CONSULTANT", "ORG_SUPPORT"];
-
-const INVITATION_TTL_DAYS = 14;
-
-function makeInviteToken(): string {
-  // Cryptographically random 32-byte token, hex-encoded.
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-}
+const StatusFilterSchema = z.enum([
+  "pending",
+  "accepted",
+  "rejected",
+  "expired",
+  "canceled",
+]);
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
 ) {
-  try {
-    const { orgId } = await params;
-    const access = await requireOrgAccess(orgId);
-    if (access.error) return access.error;
+  const { orgId } = await params;
+  const access = await requireOrgAccess(orgId, "MAINTAINER");
+  if (access.error) return access.error;
 
-    const invitations = await prisma.invitation.findMany({
-      where: { organizationId: orgId },
-      include: {
-        inviter: { select: { id: true, name: true, email: true } },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+  const url = new URL(req.url);
+  const rawStatus = url.searchParams.get("status");
+  const status = rawStatus
+    ? StatusFilterSchema.safeParse(rawStatus)
+    : null;
 
-    return NextResponse.json({ invitations });
-  } catch (error) {
-    console.error(
-      "[API /organizations/[orgId]/invitations GET] error:",
-      error,
-    );
-    return NextResponse.json(
-      { error: "Failed to fetch invitations" },
-      { status: 500 },
-    );
-  }
+  const invitations = await prisma.invitation.findMany({
+    where: {
+      organizationId: orgId,
+      ...(status?.success ? { status: status.data } : {}),
+    },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      email: true,
+      role: true,
+      status: true,
+      expiresAt: true,
+      createdAt: true,
+      inviterId: true,
+    },
+  });
+
+  return NextResponse.json({ data: invitations });
 }
 
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
 ) {
-  try {
-    const { orgId } = await params;
-    const access = await requireOrgAccess(orgId, "ORG_ADMIN");
-    if (access.error) return access.error;
+  const { orgId } = await params;
+  // Invitations require an ACTIVE org. Pre-verification we return
+  // 409 ORG_NOT_VERIFIED instead of spawning orphan tokens that
+  // would never get an email sent. The UI banner explains the state.
+  const access = await requireOrgAccess(orgId, {
+    minimumRole: "MAINTAINER",
+    requireActive: true,
+  });
+  if (access.error) return access.error;
 
-    const body = await req.json();
-    const parsed = inviteSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: "Invalid request body", details: parsed.error.flatten() },
-        { status: 400 },
-      );
-    }
-
-    const { email, role } = parsed.data;
-
-    if (!ENABLE_PROVIDER_ORGS && PROVIDER_GATED_ROLES.includes(role)) {
-      return NextResponse.json(
-        {
-          error: `${role} role is gated behind PROVIDER orgs.`,
-          flag: "ENABLE_PROVIDER_ORGS",
-        },
-        { status: 501 },
-      );
-    }
-
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + INVITATION_TTL_DAYS);
-
-    // BetterAuth Invitation.id is a CUID — we use it as the accept token.
-    // We pass an explicit id so we control the token without an extra column.
-    const token = makeInviteToken();
-
-    // Wrap duplicate-check + create in a Serializable transaction to close the
-    // TOCTOU race where two concurrent POST requests both see no pending invite
-    // and both successfully create one. Under Serializable SSI, PostgreSQL
-    // detects the overlapping read-write and aborts the loser with P2034
-    // (serialization failure), which we surface as 409.
-    let invitation;
-    try {
-      invitation = await prisma.$transaction(
-        async (tx) => {
-          const existing = await tx.invitation.findFirst({
-            where: { organizationId: orgId, email, status: "pending" },
-          });
-          if (existing) throw new Error("DUPLICATE_INVITATION");
-
-          return tx.invitation.create({
-            data: {
-              id: token,
-              organizationId: orgId,
-              email,
-              role,
-              status: "pending",
-              expiresAt,
-              inviterId: access.session.user.id,
-            },
-          });
-        },
-        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-      );
-    } catch (txError) {
-      if (
-        txError instanceof Error &&
-        txError.message === "DUPLICATE_INVITATION"
-      ) {
-        return NextResponse.json(
-          { error: "An invitation for this email is already pending." },
-          { status: 409 },
-        );
-      }
-      // P2034 = serialization failure — concurrent request won the race.
-      if ((txError as { code?: string })?.code === "P2034") {
-        return NextResponse.json(
-          { error: "An invitation for this email is already pending." },
-          { status: 409 },
-        );
-      }
-      throw txError;
-    }
-
-    // Send invitation email (fire-and-forget — failure doesn't roll back the invitation).
-    const org = await prisma.organization.findUnique({
-      where: { id: orgId },
-      select: { name: true },
-    });
-    sendOrgInvitationEmail({
-      email,
-      inviterName: access.session.user.name ?? "An administrator",
-      orgName: org?.name ?? "an organization",
-      role,
-      inviteUrl: `${getAppUrl()}/organizations/invite/${invitation.id}`,
-      expiresAt: expiresAt.toISOString(),
-    }).catch((err) =>
-      console.error("[Invitations] Failed to send email:", err),
-    );
-
-    return NextResponse.json({ invitation }, { status: 201 });
-  } catch (error) {
-    console.error(
-      "[API /organizations/[orgId]/invitations POST] error:",
-      error,
-    );
+  const raw = await req.json().catch(() => null);
+  const parsed = InviteBodySchema.safeParse(raw);
+  if (!parsed.success) {
     return NextResponse.json(
-      { error: "Failed to create invitation" },
-      { status: 500 },
+      { error: "Invalid body", detail: parsed.error.flatten() },
+      { status: 400 },
     );
   }
+  const { email, role, expiresInDays } = parsed.data;
+
+  const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000);
+
+  // De-dupe active invitations by (orgId, email). An inviter retrying
+  // from the UI shouldn't spawn two tokens that both resolve to the
+  // same membership — the second POST extends the expiry instead.
+  //
+  // The findFirst → create/update sequence is wrapped in a Serializable
+  // tx because two concurrent POSTs against the same (orgId, email) would
+  // otherwise both observe `existing = null` under the default Read
+  // Committed isolation and both INSERT, leaving two pending rows.
+  //
+  // TODO(infra/partial-unique): once Prisma graduates the `partialIndexes`
+  // preview feature to stable we can lean on a true partial unique
+  // constraint in schema.prisma (see Invitation model) and demote this
+  // back to the default isolation level. Tracked in:
+  //   https://github.com/Practitionist/familiarise_web/issues/685
+  let wasExisting = false;
+  let invitation;
+  try {
+    invitation = await prisma.$transaction(
+      async (tx) => {
+        const existing = await tx.invitation.findFirst({
+          where: {
+            organizationId: orgId,
+            email,
+            status: "pending",
+          },
+        });
+        wasExisting = !!existing;
+
+        // PR-1d / #675: an unverified org may onboard a small founding
+        // team but is hard-capped until at least one OrgDomainClaim is
+        // verified. Skip the gate for re-invites (the seat is already
+        // counted in the active+pending sum from the original send).
+        if (!existing) {
+          const verified = await hasVerifiedDomain(tx, orgId);
+          if (!verified) {
+            const [activeMembers, pendingInvites] = await Promise.all([
+              tx.membership.count({
+                where: { organizationId: orgId, status: "ACTIVE" },
+              }),
+              tx.invitation.count({
+                where: { organizationId: orgId, status: "pending" },
+              }),
+            ]);
+            if (activeMembers + pendingInvites >= UNVERIFIED_ORG_SEAT_CAP) {
+              throw new DomainVerificationRequiredError("BULK_SEATS");
+            }
+          }
+        }
+
+        const token = existing?.id ?? crypto.randomUUID();
+        const record = existing
+          ? await tx.invitation.update({
+              where: { id: existing.id },
+              data: { role, expiresAt },
+            })
+          : await tx.invitation.create({
+              data: {
+                id: token,
+                organizationId: orgId,
+                email,
+                role,
+                status: "pending",
+                expiresAt,
+                inviterId: access.session.user.id,
+              },
+            });
+
+        await tx.orgAuditLog.create({
+          data: {
+            organizationId: orgId,
+            actorMembershipId: access.member.id,
+            category: "MEMBER",
+            action: existing
+              ? AUDIT_ACTIONS.MEMBER.INVITE_RESENT
+              : AUDIT_ACTIONS.MEMBER.INVITE_SENT,
+            description: `${existing ? "Re-sent" : "Sent"} invite to ${email} as ${role}`,
+            details: { email, role, expiresAt: expiresAt.toISOString() },
+          },
+        });
+
+        return record;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  } catch (err) {
+    if (err instanceof DomainVerificationRequiredError) {
+      return NextResponse.json(
+        {
+          error: `Verify a domain to invite more than ${UNVERIFIED_ORG_SEAT_CAP} members`,
+          code: err.code,
+        },
+        { status: err.httpStatus },
+      );
+    }
+    // P2002 from a future partial unique index would land here; today
+    // we hit it only if the Serializable retry budget exhausts. Convert
+    // to 409 so the client can simply re-render the existing invitation.
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002"
+    ) {
+      return NextResponse.json(
+        {
+          error: "Pending invitation already exists for this email",
+          code: "INVITATION_EXISTS",
+        },
+        { status: 409 },
+      );
+    }
+    throw err;
+  }
+
+  // Side-effect: trigger Novu email delivery to the invitee. Non-blocking
+  // — on failure we still return the invitation response. The existing
+  // email-send flow (lib/email.ts / Resend) continues to run; Novu is
+  // additive so in-app bell delivery works once the invitee has a user
+  // account.
+  const origin = new URL(req.url).origin;
+  notifyOrgInviteSent(email, {
+    inviterName: access.session.user.name ?? access.session.user.email,
+    orgName: access.org.name,
+    role,
+    inviteUrl: `${origin}/organizations/invite/${invitation.id}`,
+    expiresAt: expiresAt.toISOString(),
+  }).catch((err) =>
+    console.error("[notifyOrgInviteSent] failed:", err),
+  );
+
+  return NextResponse.json({ invitation }, { status: wasExisting ? 200 : 201 });
 }

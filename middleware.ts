@@ -13,6 +13,9 @@ import {
   eligibilityLimiter,
   newsletterLimiter,
   availabilityLimiter,
+  orgInviteAcceptLimiter,
+  ssoDomainCheckLimiter,
+  orgWalletTopUpLimiter,
   applyRateLimit,
   getClientIp,
 } from "@/lib/rate-limit";
@@ -208,6 +211,55 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   if (pathname.startsWith("/api/slots/availability/")) {
     const rl = await applyRateLimit(availabilityLimiter, clientIp);
     if (rl) return rl;
+  }
+
+  // Enterprise rate limits — skip for localhost so dev/test flows aren't
+  // blocked by the same token the test would try to burn.
+  if (!isLocalhost) {
+    // Invite-accept floods. The orgId isn't in the URL path (it's
+    // inside the invitation token body), so keyed by IP here —
+    // org-level observability is handled by the per-accept audit
+    // log. Covers credential-stuffing where a script sprays accepts
+    // against stolen invite tokens.
+    if (
+      req.method === "POST" &&
+      pathname === "/api/organizations/invitations/accept"
+    ) {
+      const rl = await applyRateLimit(orgInviteAcceptLimiter, clientIp);
+      if (rl) return rl;
+    }
+
+    // SSO domain-check enumeration. Pre-login endpoint returns
+    // "enforceSSO: true" + org name for any domain the platform
+    // recognizes — hit in a loop it leaks the tenant list. IP-keyed
+    // 60/hr is wide enough for a legitimate shared-office NAT.
+    if (
+      req.method === "GET" &&
+      pathname.startsWith("/api/auth/sso/domain-check")
+    ) {
+      const rl = await applyRateLimit(ssoDomainCheckLimiter, clientIp);
+      if (rl) return rl;
+    }
+
+    // Wallet top-up create — orgId is in the URL path
+    // (/api/organizations/<orgId>/billing-account/wallet/top-ups).
+    // Extract it and key the bucket per-org so one tenant can't
+    // DoS their own top-up endpoint or mint hundreds of Razorpay
+    // orders under a single billing account.
+    if (
+      req.method === "POST" &&
+      pathname.endsWith("/billing-account/wallet/top-ups") &&
+      pathname.startsWith("/api/organizations/")
+    ) {
+      const orgId = pathname.split("/")[3];
+      if (orgId) {
+        const rl = await applyRateLimit(
+          orgWalletTopUpLimiter,
+          `org:${orgId}`,
+        );
+        if (rl) return rl;
+      }
+    }
   }
 
   // Handle public API routes first (most common, no auth needed)

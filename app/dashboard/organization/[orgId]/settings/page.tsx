@@ -1,12 +1,15 @@
 "use client";
 
-import { use, useEffect, useRef, useState } from "react";
+import { use, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import Image from "next/image";
-import { Shield, Upload, X } from "lucide-react";
+import { Globe, Shield } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
+import type { FundingSource, OrgStatus } from "@prisma/client";
 
 import { useOrgRole, useRequireOrgRole } from "../useOrgRole";
+import { orgDetailsQueryKey } from "@/lib/api/organizations/org-details";
 import {
   DashboardHeader,
   DashboardContent,
@@ -18,11 +21,35 @@ import {
   Card,
   CardContent,
   CardDescription,
+  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  FUNDING_SOURCE_LABEL,
+  CAPABILITY_BADGE_CLASS,
+  CAPABILITY_LABEL,
+  deriveCapabilityKind,
+} from "@/lib/labels/org-labels";
 
-interface OrgSettings {
+// ---------------------------------------------------------------------------
+// Types — GET /api/organizations/[orgId]/settings returns
+//   { organization: { id, name, slug, logo }, profile: Organization }
+// where `profile` is the Prisma Organization row (Arch 4 shape).
+// ---------------------------------------------------------------------------
+
+interface SettingsResponse {
   organization: {
     id: string;
     name: string;
@@ -31,19 +58,20 @@ interface OrgSettings {
   } | null;
   profile: {
     id: string;
-    kind: string;
-    status: string;
-    billingMode: string | null;
-    billingEmail: string;
+    status: OrgStatus;
+    canSponsor: boolean;
+    canHost: boolean;
+    billingEmail: string | null;
     description: string | null;
     industry: string | null;
     website: string | null;
     paymentTermsDays: number;
-    seatsTotal: number | null;
+    isPublic: boolean;
+    billingAccount?: { fundingSource: FundingSource } | null;
   };
 }
 
-async function fetchSettings(orgId: string): Promise<OrgSettings> {
+async function fetchSettings(orgId: string): Promise<SettingsResponse> {
   const res = await fetch(`/api/organizations/${orgId}/settings`);
   if (!res.ok) throw new Error("Failed to load settings");
   return res.json();
@@ -51,12 +79,15 @@ async function fetchSettings(orgId: string): Promise<OrgSettings> {
 
 interface PatchPayload {
   name?: string;
-  billingEmail?: string;
+  slug?: string;
+  billingEmail?: string | null;
   description?: string | null;
   industry?: string | null;
   website?: string | null;
   paymentTermsDays?: number;
-  seatsTotal?: number | null;
+  isPublic?: boolean;
+  canSponsor?: boolean;
+  canHost?: boolean;
 }
 
 async function patchSettings(orgId: string, payload: PatchPayload) {
@@ -77,90 +108,57 @@ export default function OrgSettingsPage({
 }) {
   const { orgId } = use(params);
   const { isAtLeast } = useOrgRole(orgId);
-  const { allowed } = useRequireOrgRole(orgId, "ORG_ADMIN");
+  const { allowed } = useRequireOrgRole(orgId, "MAINTAINER");
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
     queryKey: ["org-settings", orgId],
     queryFn: () => fetchSettings(orgId),
+    enabled: allowed,
   });
 
   const [name, setName] = useState("");
+  const [slug, setSlug] = useState("");
   const [billingEmail, setBillingEmail] = useState("");
   const [description, setDescription] = useState("");
   const [industry, setIndustry] = useState("");
   const [website, setWebsite] = useState("");
-  const [paymentTermsDays, setPaymentTermsDays] = useState("30");
-  const [seatsTotal, setSeatsTotal] = useState("");
+  const [paymentTermsDays, setPaymentTermsDays] = useState("60");
+  const [isPublic, setIsPublic] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
-
-  // Logo upload state
-  const logoInputRef = useRef<HTMLInputElement>(null);
-  const [logoPreview, setLogoPreview] = useState<string | null>(null);
-  const [uploadingLogo, setUploadingLogo] = useState(false);
-  const [logoError, setLogoError] = useState<string | null>(null);
+  const [pendingDisable, setPendingDisable] = useState<
+    null | "canSponsor" | "canHost"
+  >(null);
 
   useEffect(() => {
     if (!data) return;
     setName(data.organization?.name ?? "");
-    setBillingEmail(data.profile.billingEmail);
+    setSlug(data.organization?.slug ?? "");
+    setBillingEmail(data.profile.billingEmail ?? "");
     setDescription(data.profile.description ?? "");
     setIndustry(data.profile.industry ?? "");
     setWebsite(data.profile.website ?? "");
     setPaymentTermsDays(String(data.profile.paymentTermsDays));
-    setSeatsTotal(
-      data.profile.seatsTotal != null ? String(data.profile.seatsTotal) : "",
-    );
-    // Seed logo preview from existing org logo
-    if (data.organization?.logo) setLogoPreview(data.organization.logo);
+    setIsPublic(data.profile.isPublic ?? false);
   }, [data]);
 
-  const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setLogoError(null);
-    const objectUrl = URL.createObjectURL(file);
-    setLogoPreview(objectUrl);
-    uploadLogo(file);
-  };
-
-  const uploadLogo = async (file: File) => {
-    setUploadingLogo(true);
-    setLogoError(null);
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("type", "logo");
-      const res = await fetch(`/api/organizations/${orgId}/images`, {
-        method: "POST",
-        body: formData,
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || "Upload failed");
-      queryClient.invalidateQueries({ queryKey: ["org-settings", orgId] });
-      queryClient.invalidateQueries({ queryKey: ["organization", orgId] });
-    } catch (err) {
-      setLogoError((err as Error).message);
-    } finally {
-      setUploadingLogo(false);
-    }
-  };
-
   const mutation = useMutation({
-    mutationFn: () =>
+    mutationFn: (overrides?: PatchPayload) =>
       patchSettings(orgId, {
         name: name.trim(),
-        billingEmail: billingEmail.trim(),
+        slug: slug.trim() || undefined,
+        billingEmail: billingEmail.trim() || null,
         description: description.trim() || null,
         industry: industry.trim() || null,
         website: website.trim() || null,
         paymentTermsDays: parseInt(paymentTermsDays, 10),
-        seatsTotal: seatsTotal ? parseInt(seatsTotal, 10) : null,
+        isPublic,
+        ...overrides,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["org-settings", orgId] });
-      queryClient.invalidateQueries({ queryKey: ["organization", orgId] });
+      queryClient.invalidateQueries({ queryKey: orgDetailsQueryKey(orgId) });
       setSuccess(true);
       setError(null);
       setTimeout(() => setSuccess(false), 2500);
@@ -171,9 +169,34 @@ export default function OrgSettingsPage({
     },
   });
 
+  // Capability toggle is a narrow single-field PATCH so flipping a
+  // capability doesn't accidentally save every Profile field. Server
+  // enforces guards (disable-both, wallet>0) — surfaced inline via
+  // `error` from onError. Source of truth stays on `data.profile.*`,
+  // so a 409 leaves the checkbox at its true value with no manual rollback.
+  const handleCapabilityToggle = (
+    field: "canSponsor" | "canHost",
+    nextValue: boolean,
+  ) => {
+    if (!data) return;
+    const current = field === "canSponsor" ? data.profile.canSponsor : data.profile.canHost;
+    if (nextValue === current) return;
+    if (nextValue === false) {
+      setPendingDisable(field);
+      return;
+    }
+    mutation.mutate({ [field]: nextValue });
+  };
+
+  const confirmCapabilityDisable = () => {
+    if (!pendingDisable) return;
+    mutation.mutate({ [pendingDisable]: false });
+    setPendingDisable(null);
+  };
+
   if (!allowed) return null;
 
-  if (isLoading) {
+  if (isLoading || !data) {
     return (
       <>
         <DashboardHeader title="Settings" />
@@ -184,13 +207,19 @@ export default function OrgSettingsPage({
     );
   }
 
+  const capabilityKind = deriveCapabilityKind(
+    data.profile.canSponsor,
+    data.profile.canHost,
+  );
+  const fundingSource = data.profile.billingAccount?.fundingSource;
+
   return (
     <>
       <DashboardHeader
         title="Settings"
         subtitle="Organization profile, billing email, and limits"
         actions={
-          isAtLeast("ORG_OWNER") && (
+          isAtLeast("OWNER") && (
             <Link href={`/dashboard/organization/${orgId}/settings/sso`}>
               <Button size="sm" variant="outline">
                 <Shield className="h-4 w-4 mr-1" /> SSO settings
@@ -200,72 +229,79 @@ export default function OrgSettingsPage({
         }
       />
       <DashboardContent>
-        {/* Logo upload */}
-        {isAtLeast("ORG_ADMIN") && (
-          <Card className="mb-6">
-            <CardHeader>
-              <CardTitle>Organization logo</CardTitle>
-              <CardDescription>
-                Shown in the sidebar and on invoices. JPG, PNG, or WebP — max 4 MB.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center gap-5">
-                {/* Preview */}
-                <div className="w-20 h-20 rounded-xl bg-zinc-100 border border-zinc-200 flex items-center justify-center overflow-hidden shrink-0">
-                  {logoPreview ? (
-                    <Image
-                      src={logoPreview}
-                      alt="Org logo"
-                      width={80}
-                      height={80}
-                      className="object-cover w-full h-full"
-                    />
-                  ) : (
-                    <Upload className="w-6 h-6 text-zinc-400" />
-                  )}
-                </div>
+        {/* Capability + funding summary. Owners can flip canSponsor /
+            canHost in-place; non-owners see the read-only badge.
+            Funding source changes still go through the billing-account
+            route since they cascade to wallet / contract state. */}
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="text-base">Organization shape</CardTitle>
+            <CardDescription>
+              Capability + funding source determine what checkout does when
+              members book.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-wrap gap-3">
+              <Badge
+                variant="secondary"
+                className={CAPABILITY_BADGE_CLASS[capabilityKind]}
+              >
+                {CAPABILITY_LABEL[capabilityKind]}
+              </Badge>
+              {fundingSource && (
+                <Badge variant="outline">
+                  Funding: {FUNDING_SOURCE_LABEL[fundingSource]}
+                </Badge>
+              )}
+              <Badge variant="outline">Status: {data.profile.status}</Badge>
+            </div>
 
-                <div className="space-y-2">
-                  <input
-                    ref={logoInputRef}
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    className="hidden"
-                    onChange={handleLogoChange}
+            {isAtLeast("OWNER") && (
+              <div className="space-y-3 border-t border-zinc-200 pt-4">
+                <p className="text-xs font-medium uppercase text-zinc-500">
+                  Capability
+                </p>
+                <label className="flex items-start gap-3 rounded-md border border-zinc-200 p-3 cursor-pointer hover:border-zinc-300">
+                  <Checkbox
+                    checked={data.profile.canSponsor}
+                    disabled={mutation.isPending}
+                    onCheckedChange={(v) =>
+                      handleCapabilityToggle("canSponsor", v === true)
+                    }
+                    className="mt-0.5"
                   />
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => logoInputRef.current?.click()}
-                    disabled={uploadingLogo}
-                  >
-                    {uploadingLogo ? "Uploading…" : "Upload logo"}
-                  </Button>
-                  {logoPreview && !uploadingLogo && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      className="text-zinc-500 ml-2"
-                      onClick={() => {
-                        setLogoPreview(null);
-                        if (logoInputRef.current) logoInputRef.current.value = "";
-                      }}
-                    >
-                      <X className="w-3.5 h-3.5 mr-1" />
-                      Clear
-                    </Button>
-                  )}
-                  {logoError && (
-                    <p className="text-xs text-red-600">{logoError}</p>
-                  )}
-                </div>
+                  <div>
+                    <p className="text-sm font-medium">Sponsor members</p>
+                    <p className="text-xs text-zinc-500">
+                      The organization pays for its members&apos; sessions via
+                      its billing account. Disabling requires a zero wallet
+                      balance.
+                    </p>
+                  </div>
+                </label>
+                <label className="flex items-start gap-3 rounded-md border border-zinc-200 p-3 cursor-pointer hover:border-zinc-300">
+                  <Checkbox
+                    checked={data.profile.canHost}
+                    disabled={mutation.isPending}
+                    onCheckedChange={(v) =>
+                      handleCapabilityToggle("canHost", v === true)
+                    }
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <p className="text-sm font-medium">Host consultants</p>
+                    <p className="text-xs text-zinc-500">
+                      The organization hosts consultants who deliver sessions.
+                      Enables the payout account, rate cards, and the Experts +
+                      Payouts sidebar entries.
+                    </p>
+                  </div>
+                </label>
               </div>
-            </CardContent>
-          </Card>
-        )}
+            )}
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader>
@@ -278,7 +314,7 @@ export default function OrgSettingsPage({
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                mutation.mutate();
+                mutation.mutate(undefined);
               }}
               className="space-y-4"
             >
@@ -289,7 +325,7 @@ export default function OrgSettingsPage({
                     id="name"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    disabled={!isAtLeast("ORG_ADMIN")}
+                    disabled={!isAtLeast("MAINTAINER")}
                   />
                 </div>
                 <div className="space-y-2">
@@ -299,9 +335,37 @@ export default function OrgSettingsPage({
                     type="email"
                     value={billingEmail}
                     onChange={(e) => setBillingEmail(e.target.value)}
-                    disabled={!isAtLeast("ORG_ADMIN")}
+                    disabled={!isAtLeast("MAINTAINER")}
                   />
                 </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="slug">URL slug</Label>
+                <div className="flex items-center gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm">
+                  <span className="text-zinc-500">
+                    /explore/enterprise/organisations/
+                  </span>
+                  <Input
+                    id="slug"
+                    value={slug}
+                    onChange={(e) =>
+                      setSlug(
+                        e.target.value
+                          .toLowerCase()
+                          .replace(/[^a-z0-9-]/g, "-"),
+                      )
+                    }
+                    disabled={!isAtLeast("OWNER")}
+                    className="border-0 bg-transparent px-1 py-0 h-auto shadow-none focus-visible:ring-0"
+                    placeholder="acme-school"
+                  />
+                </div>
+                <p className="text-xs text-zinc-500">
+                  Public discovery URL for the org. Changing the slug breaks
+                  any inbound links pointing to the old URL — only owners can
+                  edit.
+                </p>
               </div>
 
               <div className="space-y-2">
@@ -311,7 +375,7 @@ export default function OrgSettingsPage({
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="Short description of the organization"
-                  disabled={!isAtLeast("ORG_ADMIN")}
+                  disabled={!isAtLeast("MAINTAINER")}
                 />
               </div>
 
@@ -323,7 +387,7 @@ export default function OrgSettingsPage({
                     value={industry}
                     onChange={(e) => setIndustry(e.target.value)}
                     placeholder="e.g. Education, Software"
-                    disabled={!isAtLeast("ORG_ADMIN")}
+                    disabled={!isAtLeast("MAINTAINER")}
                   />
                 </div>
                 <div className="space-y-2">
@@ -334,7 +398,7 @@ export default function OrgSettingsPage({
                     value={website}
                     onChange={(e) => setWebsite(e.target.value)}
                     placeholder="https://example.com"
-                    disabled={!isAtLeast("ORG_ADMIN")}
+                    disabled={!isAtLeast("MAINTAINER")}
                   />
                 </div>
               </div>
@@ -349,20 +413,12 @@ export default function OrgSettingsPage({
                     max="120"
                     value={paymentTermsDays}
                     onChange={(e) => setPaymentTermsDays(e.target.value)}
-                    disabled={!isAtLeast("ORG_ADMIN")}
+                    disabled={!isAtLeast("MAINTAINER")}
                   />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="seats">Seat budget (optional)</Label>
-                  <Input
-                    id="seats"
-                    type="number"
-                    min="0"
-                    value={seatsTotal}
-                    onChange={(e) => setSeatsTotal(e.target.value)}
-                    placeholder="Leave blank for unlimited"
-                    disabled={!isAtLeast("ORG_ADMIN")}
-                  />
+                  <p className="text-xs text-zinc-500">
+                    India default is NET-60. Only applies when funding
+                    source is INVOICE.
+                  </p>
                 </div>
               </div>
 
@@ -371,7 +427,7 @@ export default function OrgSettingsPage({
                 <p className="text-sm text-emerald-600">Settings saved.</p>
               )}
 
-              {isAtLeast("ORG_ADMIN") && (
+              {isAtLeast("MAINTAINER") && (
                 <div>
                   <Button type="submit" disabled={mutation.isPending}>
                     {mutation.isPending ? "Saving…" : "Save changes"}
@@ -382,18 +438,86 @@ export default function OrgSettingsPage({
           </CardContent>
         </Card>
 
-        {data?.profile.kind !== "PROVIDER" && (
+        {/* Marketplace Visibility — only HOST/HYBRID orgs can opt in */}
+        {data.profile.canHost && (
           <Card className="mt-6">
             <CardHeader>
-              <CardTitle className="text-base">Billing mode</CardTitle>
+              <CardTitle className="flex items-center gap-2">
+                <Globe className="w-4 h-4" /> Marketplace Visibility
+              </CardTitle>
               <CardDescription>
-                Currently <strong>{data?.profile.billingMode ?? "—"}</strong>.
-                Billing mode is locked after the first payment to prevent
-                ambiguity in the ledger.
+                Allow learners and companies to discover this organisation on{" "}
+                <Link
+                  href="/explore/enterprise/organisations"
+                  className="underline hover:text-zinc-700"
+                >
+                  Explore Organisations
+                </Link>
+                . Your experts and programs will be visible to anonymous
+                visitors.
               </CardDescription>
             </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium">Public listing</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">
+                    {data.profile.status !== "ACTIVE"
+                      ? "Organisation must be ACTIVE before enabling public listing."
+                      : isPublic
+                        ? "Your organisation appears on the Explore page."
+                        : "Your organisation is hidden from the Explore page."}
+                  </p>
+                </div>
+                <Switch
+                  checked={isPublic}
+                  onCheckedChange={setIsPublic}
+                  disabled={
+                    data.profile.status !== "ACTIVE" ||
+                    !isAtLeast("OWNER") ||
+                    mutation.isPending
+                  }
+                />
+              </div>
+            </CardContent>
+            {isAtLeast("OWNER") && (
+              <CardFooter>
+                <Button
+                  onClick={() => mutation.mutate(undefined)}
+                  disabled={mutation.isPending}
+                >
+                  {mutation.isPending ? "Saving…" : "Save visibility"}
+                </Button>
+              </CardFooter>
+            )}
           </Card>
         )}
+
+        <AlertDialog
+          open={pendingDisable !== null}
+          onOpenChange={(open) => !open && setPendingDisable(null)}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                {pendingDisable === "canSponsor"
+                  ? "Disable sponsor capability?"
+                  : "Disable host capability?"}
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                {pendingDisable === "canSponsor"
+                  ? "Members will no longer be able to bill the organization for new sessions. The Billing surface and any active programs will be hidden. The wallet must already be at ₹0 — the server will reject the change otherwise."
+                  : "External consultants will stop earning through this organization. The Experts and Payouts surfaces will be hidden. Existing earnings remain payable."}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={confirmCapabilityDisable}>
+                Disable
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DashboardContent>
     </>
   );

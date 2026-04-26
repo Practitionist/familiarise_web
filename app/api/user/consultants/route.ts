@@ -115,6 +115,15 @@ export async function GET(request: NextRequest) {
       conditions.push({ languages: { has: language } });
     }
 
+    // Affiliation type filter: independent (isIndependent=true) or agency
+    // (isIndependent=false). When null/absent, show all verified consultants.
+    const affiliationType = searchParams.get("affiliationType");
+    if (affiliationType === "independent") {
+      conditions.push({ isIndependent: true });
+    } else if (affiliationType === "agency") {
+      conditions.push({ isIndependent: false });
+    }
+
     // Search filter
     if (search) {
       conditions.push({
@@ -177,22 +186,18 @@ export async function GET(request: NextRequest) {
     // Get total count for pagination
     const total = await prisma.consultantProfile.count({ where });
 
-    // Map organizationMemberProfiles -> organizationBadge for frontend
-    const mappedConsultants = consultants.map((c: Record<string, unknown>) => {
-      const orgProfiles = c.organizationMemberProfiles as
-        | Array<{
-            organizationProfile: {
-              organization: { name: string; slug: string; logo: string | null };
-            };
-          }>
-        | undefined;
-      const firstOrg = orgProfiles?.[0]?.organizationProfile?.organization;
+    // Map memberships -> organizationBadge for frontend.
+    // Arch 4-Modified: the include pulls `memberships[0].organization`
+    // for the first ACTIVE EXPERT membership at a canHost org.
+    // `c` is typed via Prisma's payload inference from the include shape —
+    // no explicit type annotation or narrowing cast needed.
+    const mappedConsultants = consultants.map(({ memberships, ...rest }) => {
+      const firstOrg = memberships[0]?.organization ?? null;
       return {
-        ...c,
+        ...rest,
         organizationBadge: firstOrg
           ? { name: firstOrg.name, slug: firstOrg.slug, logo: firstOrg.logo }
           : null,
-        organizationMemberProfiles: undefined,
       };
     });
 

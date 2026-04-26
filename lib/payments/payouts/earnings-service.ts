@@ -2,30 +2,30 @@
  * Earnings Service
  * Manages consultant and organization earnings from payments.
  *
- * For PROVIDER/HYBRID orgs, implements a 3-way revenue split:
+ * For HOST / HYBRID orgs, implements a 3-way revenue split:
  *   Payment (100%) = Platform fee (configurable, default 10%)
  *                   + Org retain (configurable, default 5%)
  *                   + Consultant payout (configurable, default 85%)
  *
- * The split is controlled by OrganizationProfile rates and can be overridden
- * per-consultant via OrganizationMemberProfile.customConsultantPayoutRate.
+ * The split is controlled by the org's active `RateCard` row and can be
+ * overridden per-membership via `Membership.rateCardOverrideId`.
  *
- * When earningsRecipient = ORGANIZATION, the consultant's share is redirected
- * to the org (internal/salaried consultant case).
+ * When `Membership.payoutRecipient = ORGANIZATION`, the consultant's share
+ * is redirected to the org (internal / salaried consultant case) and the
+ * consultant's personal payout for that booking is zero.
  */
 
 import prisma from "@/lib/prisma";
 import {
   EarningRole,
   EarningStatus,
-  EarningsRecipient,
   Payment,
   Prisma,
 } from "@prisma/client";
 import { PAYOUT_CONSTANTS, AppointmentType } from "./constants";
 import { calculateRevenueSplit } from "@/lib/collaborators/service";
 import { getIndianFYQuarter } from "@/lib/payments/tax/tds-service";
-import { ENABLE_PROVIDER_ORGS } from "@/lib/feature-flags";
+import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
 import type { RevenueSplit } from "@/types/collaborators";
 
 // ============================================
@@ -41,18 +41,22 @@ export interface EarningsSummary {
   heldEarnings: number;
 }
 
-/** Resolved 3-way split for a PROVIDER/HYBRID org consultant */
+/** Resolved 3-way split for a canHost=true org consultant */
 export interface OrgEarningsSplit {
-  organizationProfileId: string;
+  organizationId: string;
+  rateCardIdApplied: string | null;
+  platformBps: number;
+  orgBps: number;
+  consultantBps: number;
   platformFee: number; // in paise
   orgShare: number; // in paise (org retains this)
   consultantShare: number; // in paise (goes to consultant, or 0 if internal)
-  earningsRecipient: EarningsRecipient;
+  payoutRecipient: "SELF" | "ORGANIZATION";
 }
 
 /** Summary of an org's earnings across all statuses */
 export interface OrgEarningsSummary {
-  organizationProfileId: string;
+  organizationId: string;
   totalEarnings: number;
   pendingEarnings: number;
   readyEarnings: number;
@@ -78,6 +82,19 @@ export interface CreateEarningsParams {
 }
 
 // ============================================
+// Status transition guard (#700 LED-2)
+// ============================================
+// The transition predicate lives in its own file so consumers (esp.
+// unit tests) can import it without dragging in earnings-service's
+// transitive Stream / Razorpay deps. We re-export here for ergonomics
+// at existing call sites.
+export {
+  IllegalEarningStatusTransitionError,
+  assertEarningStatusTransitionLegal,
+} from "./earning-status";
+import { assertEarningStatusTransitionLegal } from "./earning-status";
+
+// ============================================
 // Org Split Resolution
 // ============================================
 
@@ -86,96 +103,97 @@ type PrismaTransaction = Prisma.TransactionClient;
 /**
  * Determine if a consultant's payment should use a 3-way org split.
  *
- * Returns an OrgEarningsSplit if the consultant is an active ORG_CONSULTANT
- * in a PROVIDER/HYBRID org. Returns null for independent consultants or
- * when the PROVIDER feature flag is off.
+ * Returns an OrgEarningsSplit if the consultant is an active EXPERT
+ * membership at a canHost org. Returns null for independent consultants
+ * or when the HOST-orgs feature flag is off.
  *
- * For multi-org consultants, uses the first active PROVIDER/HYBRID membership.
+ * For multi-org consultants, uses the first active canHost membership.
  * (Future: allow consultant to select which org gets credit per-booking.)
  */
 async function resolveOrgSplit(
   tx: PrismaTransaction,
   consultantProfileId: string,
   grossAmount: number,
+  /** Point in time at which the rate card is resolved. Default = now(),
+   *  but callers processing a historical payment MUST pass
+   *  `payment.createdAt` — otherwise a retroactive rate bump on the org
+   *  would silently rewrite what the consultant was owed for bookings
+   *  made before the bump. */
+  at: Date = new Date(),
 ): Promise<OrgEarningsSplit | null> {
-  if (!ENABLE_PROVIDER_ORGS) return null;
+  if (!ENABLE_HOST_ORGS) return null;
 
-  // Deterministic ordering: oldest membership wins. This ensures earnings
-  // always route to the same org for multi-org consultants. The badge query
-  // in explore-experts.ts uses the same orderBy for consistency.
-  const orgMembership = await tx.organizationMemberProfile.findFirst({
+  // Arch-4: Membership where role=EXPERT and parent org canHost=true.
+  // Oldest membership wins (multi-org consultants route deterministically
+  // to the same org). Rate card resolved via the time-scoped resolver at
+  // the booking instant.
+  const membership = await tx.membership.findFirst({
     where: {
       consultantProfileId,
-      role: "ORG_CONSULTANT",
+      role: "EXPERT",
       status: "ACTIVE",
-      organizationProfile: {
-        kind: { in: ["PROVIDER", "HYBRID"] },
-        status: "ACTIVE",
-      },
+      organization: { canHost: true, status: "ACTIVE" },
     },
     orderBy: { createdAt: "asc" },
     include: {
-      organizationProfile: {
-        select: {
-          id: true,
-          platformCommissionRate: true,
-          orgRetainRate: true,
-          consultantPayoutRate: true,
-        },
-      },
+      organization: { select: { id: true } },
     },
   });
 
-  if (!orgMembership) return null;
+  if (!membership) return null;
 
-  const org = orgMembership.organizationProfile;
-  const earningsRecipient = orgMembership.earningsRecipient;
+  const orgId = membership.organization.id;
+  const payoutRecipient = membership.payoutRecipient;
 
-  // Determine effective consultant rate (per-member override or org default)
-  const effectiveConsultantRate =
-    orgMembership.customConsultantPayoutRate ?? org.consultantPayoutRate;
+  const { resolveEffectiveRateCard } = await import("@/lib/api/organizations/rate-card");
+  const resolved = await resolveEffectiveRateCard(tx, {
+    orgId,
+    membershipOverrideId: membership.rateCardOverrideId,
+    at,
+  });
 
-  // Calculate splits in paise (integer arithmetic to avoid float rounding)
-  const platformFee = Math.round(grossAmount * org.platformCommissionRate);
+  // Integer paise × basis-point math, no float drift.
+  const platformFee = Math.floor((grossAmount * resolved.platformBps) / 10_000);
+  const consultantShare = Math.floor((grossAmount * resolved.consultantBps) / 10_000);
+  const orgShare = grossAmount - platformFee - consultantShare;
 
-  if (earningsRecipient === "ORGANIZATION") {
-    // Internal/salaried consultant: org captures everything except platform fee
+  const base = {
+    organizationId: orgId,
+    rateCardIdApplied: resolved.rateCardId,
+    platformBps: resolved.platformBps,
+    orgBps: resolved.orgBps,
+    consultantBps: resolved.consultantBps,
+    payoutRecipient,
+  };
+
+  if (payoutRecipient === "ORGANIZATION") {
+    // Internal/salaried consultant: org absorbs the consultant slice.
     return {
-      organizationProfileId: org.id,
+      ...base,
       platformFee,
       orgShare: grossAmount - platformFee,
       consultantShare: 0,
-      earningsRecipient,
     };
   }
 
-  // Standard PROVIDER split: platform + org retain + consultant
-  const consultantShare = Math.round(grossAmount * effectiveConsultantRate);
-  const orgShare = grossAmount - platformFee - consultantShare;
-
-  // Guard: customConsultantPayoutRate can push platform + consultant > 100%,
-  // making orgShare negative. Clamp to 0 and log the misconfiguration.
   if (orgShare < 0) {
     console.error(
-      `[Earnings] Negative orgShare (${orgShare}) for org ${org.id}: ` +
-        `platform=${org.platformCommissionRate}, consultant=${effectiveConsultantRate}. ` +
-        `Clamping orgShare to 0. Fix the rate configuration.`,
+      `[Earnings] Negative orgShare (${orgShare}) for org ${orgId}: ` +
+        `platformBps=${resolved.platformBps}, consultantBps=${resolved.consultantBps}. Clamping.`,
     );
     return {
-      organizationProfileId: org.id,
+      ...base,
       platformFee,
       orgShare: 0,
-      consultantShare: grossAmount - platformFee, // consultant gets the remainder
-      earningsRecipient,
+      consultantShare: grossAmount - platformFee,
     };
   }
 
   return {
-    organizationProfileId: org.id,
+    ...base,
     platformFee,
     orgShare,
     consultantShare,
-    earningsRecipient,
   };
 }
 
@@ -238,11 +256,17 @@ export async function createEarningsFromPayment({
         return existingEarnings.id;
       }
 
-      // Check if this consultant belongs to a PROVIDER/HYBRID org (3-way split)
+      // Check if this consultant belongs to a HOST/HYBRID org (3-way
+      // split). Settlement uses the rate card that was EFFECTIVE AT
+      // PAYMENT-CREATION TIME — hold periods can be days long, so by the
+      // time earnings are settled the live rate may have been bumped.
+      // Passing `payment.createdAt` keeps the split stable across that
+      // window.
       const orgSplit = await resolveOrgSplit(
         tx,
         consultantProfileId,
         grossAmount,
+        payment.createdAt,
       );
 
       // Determine platform fee and consultant pool based on whether org split applies
@@ -305,7 +329,7 @@ export async function createEarningsFromPayment({
           }
 
           console.log(
-            `Earnings created for ${split.role} (${split.consultantProfileId}): ${split.share / 100} from payment ${payment.id}${orgSplit ? " [PROVIDER 3-way split]" : ""}`,
+            `Earnings created for ${split.role} (${split.consultantProfileId}): ${split.share / 100} from payment ${payment.id}${orgSplit ? " [HOST 3-way split]" : ""}`,
           );
         }
       } else {
@@ -335,30 +359,59 @@ export async function createEarningsFromPayment({
         ownerId = earnings.id;
       }
 
-      // Create OrganizationEarnings row for the PROVIDER/HYBRID org (3-way split).
+      // Create OrganizationEarnings row for the HOST/HYBRID org (3-way split).
       // Skip when orgShare is 0 (Platform-only mode: platformCommissionRate = 1.0)
       // — creating 0-value rows adds noise without value.
+      //
+      // PR-1d / #687: if the sponsoring org is still PENDING_VERIFICATION
+      // and has never paid an invoice, accruals start in PENDING_TRUST
+      // instead of PENDING. The `release-pending-trust-earnings` cron
+      // promotes them once the org is verified or first invoice clears.
       if (orgSplit && orgSplit.orgShare > 0) {
+        const sponsorOrg = await tx.organization.findUnique({
+          where: { id: orgSplit.organizationId },
+          select: { status: true },
+        });
+        let initialStatus: EarningStatus = EarningStatus.PENDING;
+        if (sponsorOrg?.status === "PENDING_VERIFICATION") {
+          const paidInvoiceCount = await tx.organizationInvoice.count({
+            where: {
+              organizationId: orgSplit.organizationId,
+              status: "PAID",
+            },
+          });
+          if (paidInvoiceCount === 0) {
+            initialStatus = EarningStatus.PENDING_TRUST;
+          }
+        }
+
         await tx.organizationEarnings.create({
           data: {
-            organizationProfileId: orgSplit.organizationProfileId,
+            organizationId: orgSplit.organizationId,
             paymentId: payment.id,
-            grossAmount,
-            platformFee: orgSplit.platformFee,
-            orgShare: orgSplit.orgShare,
-            refundedAmount: 0,
-            status: EarningStatus.PENDING,
+            grossAmountPaise: grossAmount,
+            platformFeePaise: orgSplit.platformFee,
+            orgSharePaise: orgSplit.orgShare,
+            consultantSharePaise: orgSplit.consultantShare,
+            refundedAmountPaise: 0,
+            status: initialStatus,
             holdUntil,
             currency: "INR",
+            // Rate-card snapshot: persist the exact split applied so
+            // payout reconciliation reads this row, never the live card.
+            rateCardIdApplied: orgSplit.rateCardIdApplied,
+            platformBpsApplied: orgSplit.platformBps,
+            orgBpsApplied: orgSplit.orgBps,
+            consultantBpsApplied: orgSplit.consultantBps,
           },
         });
 
         console.log(
-          `Org earnings created for ${orgSplit.organizationProfileId}: org=${orgSplit.orgShare / 100} consultant=${orgSplit.consultantShare / 100} (recipient=${orgSplit.earningsRecipient}) from payment ${payment.id}`,
+          `Org earnings created for ${orgSplit.organizationId}: org=${orgSplit.orgShare / 100} consultant=${orgSplit.consultantShare / 100} (recipient=${orgSplit.payoutRecipient}) from payment ${payment.id}`,
         );
       } else if (orgSplit && orgSplit.orgShare === 0) {
         console.log(
-          `Platform-only mode for ${orgSplit.organizationProfileId}: skipping 0-value org earnings for payment ${payment.id}`,
+          `Platform-only mode for ${orgSplit.organizationId}: skipping 0-value org earnings for payment ${payment.id}`,
         );
       }
 
@@ -522,7 +575,14 @@ export async function getConsultantEarnings(
 }
 
 /**
- * Refund earnings (called when a payment is refunded)
+ * Refund earnings (called when a payment is refunded).
+ *
+ * Accepts an optional `tx` so callers inside `$transaction` blocks (most
+ * notably the Razorpay refund webhook) can commit earnings reversals,
+ * org-earnings reversals, and TDS-reversal records atomically with the
+ * surrounding refund-row + wallet-credit + utilization-reversal writes.
+ * When `tx` is omitted we fall back to the global `prisma` client for
+ * legacy callers that drive refunds outside a transaction.
  */
 export async function refundEarnings(
   paymentId: string,
@@ -532,9 +592,12 @@ export async function refundEarnings(
     refundAmount?: number;
     /** For partial refunds: the original payment amount in smallest currency unit */
     paymentAmount?: number;
+    /** Optional Prisma transaction client; see function docblock. */
+    tx?: Prisma.TransactionClient;
   },
 ): Promise<boolean> {
-  const allEarnings = await prisma.consultantEarnings.findMany({
+  const db = options?.tx ?? prisma;
+  const allEarnings = await db.consultantEarnings.findMany({
     where: { paymentId },
   });
 
@@ -570,28 +633,28 @@ export async function refundEarnings(
     );
   }
 
-  // Also refund any org earnings for this payment (PROVIDER 3-way split)
-  const orgEarnings = await prisma.organizationEarnings.findMany({
+  // Also refund any org earnings for this payment (HOST 3-way split)
+  const orgEarnings = await db.organizationEarnings.findMany({
     where: { paymentId },
   });
 
   for (const orgEarning of orgEarnings) {
     if (orgEarning.status === EarningStatus.REFUNDED) continue;
 
-    const alreadyRefunded = orgEarning.refundedAmount ?? 0;
-    const maxReversible = Math.max(0, orgEarning.orgShare - alreadyRefunded);
-    const rawOrgRefund = Math.round(orgEarning.orgShare * refundRatio);
+    const alreadyRefunded = orgEarning.refundedAmountPaise ?? 0;
+    const maxReversible = Math.max(0, orgEarning.orgSharePaise - alreadyRefunded);
+    const rawOrgRefund = Math.round(orgEarning.orgSharePaise * refundRatio);
     const orgRefundAmount = Math.min(rawOrgRefund, maxReversible);
 
     if (orgRefundAmount <= 0) continue;
 
     const isOrgFullyRefunded =
-      alreadyRefunded + orgRefundAmount >= orgEarning.orgShare;
+      alreadyRefunded + orgRefundAmount >= orgEarning.orgSharePaise;
 
-    await prisma.organizationEarnings.update({
+    await db.organizationEarnings.update({
       where: { id: orgEarning.id },
       data: {
-        refundedAmount: { increment: orgRefundAmount },
+        refundedAmountPaise: { increment: orgRefundAmount },
         ...(isOrgFullyRefunded && { status: EarningStatus.REFUNDED }),
       },
     });
@@ -636,10 +699,20 @@ export async function refundEarnings(
         );
         continue;
       }
+      if (isFullyRefunded) {
+        // Defensive double-check: forceRefund is the only path that
+        // writes PAID → REFUNDED, but if another code path ever forgets
+        // the assertion this throws before any state mutates.
+        assertEarningStatusTransitionLegal(
+          earnings.id,
+          earnings.status,
+          EarningStatus.REFUNDED,
+        );
+      }
 
       // Force refund of PAID earnings: create TDS reversal record
       if (earnings.payoutId) {
-        const tdsRecord = await prisma.tDSRecord.findFirst({
+        const tdsRecord = await db.tDSRecord.findFirst({
           where: {
             payoutId: earnings.payoutId,
             consultantProfileId: earnings.consultantProfileId,
@@ -649,7 +722,7 @@ export async function refundEarnings(
 
         if (tdsRecord && tdsRecord.tdsDeducted > 0) {
           const tdsToReverse = Math.round(tdsRecord.tdsDeducted * refundRatio);
-          await prisma.tDSRecord.create({
+          await db.tDSRecord.create({
             data: {
               consultantProfileId: earnings.consultantProfileId,
               financialYear: tdsRecord.financialYear,
@@ -670,7 +743,7 @@ export async function refundEarnings(
       }
 
       // Update earnings: always track refundedShareAmount, set REFUNDED when fully exhausted
-      await prisma.consultantEarnings.update({
+      await db.consultantEarnings.update({
         where: { id: earnings.id },
         data: {
           refundedShareAmount: { increment: shareToReverse },
@@ -679,7 +752,7 @@ export async function refundEarnings(
       });
 
       // For PAID earnings, decrement totalRevenue (not pendingRevenue — already paid)
-      await prisma.consultantProfile.update({
+      await db.consultantProfile.update({
         where: { id: earnings.consultantProfileId },
         data: { totalRevenue: { decrement: shareToReverse } },
       });
@@ -689,7 +762,7 @@ export async function refundEarnings(
 
     // Update earnings for non-paid earnings (PENDING/HELD/READY):
     // always track refundedShareAmount, set REFUNDED when fully exhausted
-    await prisma.consultantEarnings.update({
+    await db.consultantEarnings.update({
       where: { id: earnings.id },
       data: {
         refundedShareAmount: { increment: shareToReverse },
@@ -698,7 +771,7 @@ export async function refundEarnings(
     });
 
     // Decrease consultant's pending revenue by the capped share
-    await prisma.consultantProfile.update({
+    await db.consultantProfile.update({
       where: { id: earnings.consultantProfileId },
       data: {
         pendingRevenue: { decrement: shareToReverse },
@@ -844,34 +917,34 @@ export async function getEarningsStats() {
  * Get org earnings summary (parallels getConsultantEarningsSummary)
  */
 export async function getOrgEarningsSummary(
-  organizationProfileId: string,
+  organizationId: string,
 ): Promise<OrgEarningsSummary> {
   const [pending, ready, paid, held] = await Promise.all([
     prisma.organizationEarnings.aggregate({
-      where: { organizationProfileId, status: EarningStatus.PENDING },
-      _sum: { orgShare: true },
+      where: { organizationId, status: EarningStatus.PENDING },
+      _sum: { orgSharePaise: true },
     }),
     prisma.organizationEarnings.aggregate({
-      where: { organizationProfileId, status: EarningStatus.READY },
-      _sum: { orgShare: true },
+      where: { organizationId, status: EarningStatus.READY },
+      _sum: { orgSharePaise: true },
     }),
     prisma.organizationEarnings.aggregate({
-      where: { organizationProfileId, status: EarningStatus.PAID },
-      _sum: { orgShare: true },
+      where: { organizationId, status: EarningStatus.PAID },
+      _sum: { orgSharePaise: true },
     }),
     prisma.organizationEarnings.aggregate({
-      where: { organizationProfileId, status: EarningStatus.HELD },
-      _sum: { orgShare: true },
+      where: { organizationId, status: EarningStatus.HELD },
+      _sum: { orgSharePaise: true },
     }),
   ]);
 
-  const pendingEarnings = pending._sum.orgShare || 0;
-  const readyEarnings = ready._sum.orgShare || 0;
-  const paidEarnings = paid._sum.orgShare || 0;
-  const heldEarnings = held._sum.orgShare || 0;
+  const pendingEarnings = pending._sum.orgSharePaise ?? 0;
+  const readyEarnings = ready._sum.orgSharePaise ?? 0;
+  const paidEarnings = paid._sum.orgSharePaise ?? 0;
+  const heldEarnings = held._sum.orgSharePaise ?? 0;
 
   return {
-    organizationProfileId,
+    organizationId,
     totalEarnings:
       pendingEarnings + readyEarnings + paidEarnings + heldEarnings,
     pendingEarnings,
@@ -885,7 +958,7 @@ export async function getOrgEarningsSummary(
  * Get paginated org earnings list
  */
 export async function getOrgEarnings(
-  organizationProfileId: string,
+  organizationId: string,
   options?: {
     status?: EarningStatus;
     limit?: number;
@@ -897,7 +970,7 @@ export async function getOrgEarnings(
   const [earnings, total] = await Promise.all([
     prisma.organizationEarnings.findMany({
       where: {
-        organizationProfileId,
+        organizationId,
         ...(status ? { status } : {}),
       },
       include: {
@@ -930,7 +1003,7 @@ export async function getOrgEarnings(
     }),
     prisma.organizationEarnings.count({
       where: {
-        organizationProfileId,
+        organizationId,
         ...(status ? { status } : {}),
       },
     }),

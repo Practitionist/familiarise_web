@@ -112,6 +112,47 @@ function SignInContent() {
     });
   };
 
+  // Manual SSO trigger for IT admins testing their setup before enforcement
+  // is turned on. Same domain-check logic as the email blur handler, but
+  // immediately fires the redirect if a provider is found.
+  const handleManualSSOClick = async () => {
+    if (!email || !email.includes("@")) {
+      toast({
+        title: "Enter your work email first",
+        description: "Type your corporate email address above, then try again.",
+      });
+      return;
+    }
+    setSsoChecking(true);
+    try {
+      const res = await fetch(`/api/auth/sso/domain-check?email=${encodeURIComponent(email)}`);
+      if (!res.ok) throw new Error("check failed");
+      const data = await res.json();
+      if (data.enforceSSO) {
+        setSsoCheck({ enforceSSO: true, organizationName: data.organizationName, ssoBody: data.ssoBody });
+        await signIn.sso({
+          providerId: data.ssoBody.providerId,
+          domain: data.ssoBody.domain,
+          callbackURL: data.ssoBody.callbackURL,
+        });
+      } else {
+        toast({
+          title: "No SSO provider found",
+          description: "No corporate SSO is configured for this email domain. Contact your IT admin.",
+          variant: "destructive",
+        });
+      }
+    } catch {
+      toast({
+        title: "SSO check failed",
+        description: "Could not verify SSO for this domain. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setSsoChecking(false);
+    }
+  };
+
   const friendlyAuthError = (raw: string | undefined): string => {
     if (!raw) return "Invalid email or password.";
     const lower = raw.toLowerCase();
@@ -277,6 +318,8 @@ function SignInContent() {
                 newUserCallbackURL="/form/onboarding"
                 isLoading={isLoading}
                 ssoEnforced={false}
+                onSSOClick={handleManualSSOClick}
+                ssoChecking={ssoChecking}
               />
             </>
           )}

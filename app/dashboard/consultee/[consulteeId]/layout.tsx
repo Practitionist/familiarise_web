@@ -137,7 +137,10 @@ function AuthRequired() {
   );
 }
 
-function getGreeting(): string {
+// Prefixed with `_` because it is referenced only inside a commented-out
+// JSX block (greeting in consultee navbar, hidden until navbar is redesigned
+// to free horizontal space — see comment at the usage site).
+function _getGreeting(): string {
   const hour = new Date().getHours();
   if (hour >= 5 && hour < 12) return "Good morning";
   if (hour >= 12 && hour < 17) return "Good afternoon";

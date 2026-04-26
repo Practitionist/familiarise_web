@@ -1,20 +1,26 @@
 /**
- * Admin Organization Verification
- *
  * POST /api/admin/organizations/[orgId]/verify
  *
- * Approves or rejects a PENDING_VERIFICATION organization (PROVIDER/HYBRID).
- * Admin-only endpoint.
+ * Platform-admin action: flip an Organization from PENDING_VERIFICATION
+ * to ACTIVE. This is the last-mile gate before an org can create
+ * contracts, invite members, or initiate payouts — an admin has reviewed
+ * the verification docs (GSTIN, PAN, PO sample) and signed off.
+ *
+ * Admins can also SUSPEND an active org or REACTIVATE a suspended one.
+ * DEACTIVATED is terminal and not reversible from this endpoint.
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireAdminAuth } from "@/lib/auth-helpers";
+import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
-const verifySchema = z.object({
-  action: z.enum(["APPROVE", "REJECT"]),
-  reason: z.string().max(500).optional(),
+const ActionSchema = z.enum(["VERIFY", "SUSPEND", "REACTIVATE", "DEACTIVATE"]);
+
+const BodySchema = z.object({
+  action: ActionSchema,
+  reason: z.string().max(2000).optional(),
 });
 
 export async function POST(
@@ -26,50 +32,90 @@ export async function POST(
 
   const { orgId } = await params;
 
-  const body = await req.json();
-  const parsed = verifySchema.safeParse(body);
+  const raw = await req.json().catch(() => null);
+  const parsed = BodySchema.safeParse(raw);
   if (!parsed.success) {
     return NextResponse.json(
-      { error: "Invalid request body", details: parsed.error.flatten() },
+      { error: "Invalid body", detail: parsed.error.flatten() },
       { status: 400 },
     );
   }
+  const body = parsed.data;
 
-  const { action, reason } = parsed.data;
-  const newStatus = action === "APPROVE" ? "ACTIVE" : "DEACTIVATED";
+  try {
+    const updated = await prisma.$transaction(async (tx) => {
+      const current = await tx.organization.findUnique({
+        where: { id: orgId },
+      });
+      if (!current) {
+        throw Object.assign(new Error("Organization not found"), {
+          httpStatus: 404,
+        });
+      }
 
-  // Atomic check-and-update — prevents double-approve/reject race where two
-  // admins act on the same org concurrently. The WHERE status='PENDING_VERIFICATION'
-  // clause ensures count=0 if already actioned, and the update is one round-trip.
-  const claimed = await prisma.organizationProfile.updateMany({
-    where: {
-      organization: { id: orgId },
-      status: "PENDING_VERIFICATION",
-    },
-    data: { status: newStatus },
-  });
+      const allowedFrom: Record<string, string[]> = {
+        PENDING_VERIFICATION: ["VERIFY", "DEACTIVATE"],
+        ACTIVE: ["SUSPEND", "DEACTIVATE"],
+        SUSPENDED: ["REACTIVATE", "DEACTIVATE"],
+        DEACTIVATED: [],
+      };
+      const allowed = allowedFrom[current.status] ?? [];
+      if (!allowed.includes(body.action)) {
+        throw Object.assign(
+          new Error(
+            `Cannot ${body.action} an organization in ${current.status} state`,
+          ),
+          { httpStatus: 409 },
+        );
+      }
 
-  if (claimed.count === 0) {
-    return NextResponse.json(
-      { error: "Organization not found or not pending verification." },
-      { status: 404 },
-    );
+      const nextStatus =
+        body.action === "VERIFY" || body.action === "REACTIVATE"
+          ? "ACTIVE"
+          : body.action === "SUSPEND"
+            ? "SUSPENDED"
+            : "DEACTIVATED";
+
+      const next = await tx.organization.update({
+        where: { id: orgId },
+        data: { status: nextStatus },
+      });
+
+      const actionKey =
+        body.action === "VERIFY"
+          ? AUDIT_ACTIONS.SYSTEM.VERIFIED
+          : body.action === "SUSPEND"
+            ? AUDIT_ACTIONS.SYSTEM.SUSPENDED
+            : body.action === "REACTIVATE"
+              ? AUDIT_ACTIONS.SYSTEM.REACTIVATED
+              : AUDIT_ACTIONS.SYSTEM.DEACTIVATED;
+
+      await tx.orgAuditLog.create({
+        data: {
+          organizationId: orgId,
+          actorMembershipId: null,
+          category: "SYSTEM",
+          action: actionKey,
+          description: `Admin ${body.action.toLowerCase()}: ${current.status} → ${nextStatus}`,
+          details: {
+            adminUserId: auth.session.user.id,
+            from: current.status,
+            to: nextStatus,
+            reason: body.reason ?? null,
+          },
+        },
+      });
+
+      return next;
+    });
+
+    return NextResponse.json({ organization: updated });
+  } catch (err) {
+    if (err instanceof Error && "httpStatus" in err) {
+      const status =
+        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      return NextResponse.json({ error: err.message }, { status });
+    }
+    throw err;
   }
-
-  // Non-critical read for response display — happens after the atomic update.
-  const orgProfile = await prisma.organizationProfile.findFirst({
-    where: { organization: { id: orgId } },
-    include: { organization: { select: { name: true } } },
-  });
-  const orgName = orgProfile?.organization.name ?? "Unknown";
-
-  return NextResponse.json({
-    success: true,
-    status: newStatus,
-    message:
-      action === "APPROVE"
-        ? `Organization "${orgName}" has been approved.`
-        : `Organization "${orgName}" has been rejected.`,
-    ...(action === "REJECT" && { reason: reason || null }),
-  });
 }

@@ -1,310 +1,433 @@
 /**
- * Organizations API — top-level collection.
+ * GET  /api/organizations
+ * POST /api/organizations
  *
- * GET  — list the caller's orgs (ADMIN sees all)
- * POST — create a new organization + profile + owner membership atomically
+ * GET returns the orgs the caller is a member of — the list behind the
+ * "your organizations" switcher in the UI. Each entry carries the light
+ * fields the switcher needs (capability booleans, fundingSource, role).
  *
- * PROVIDER orgs are gated by the ENABLE_PROVIDER_ORGS feature flag. When the
- * flag is off, a POST with `kind === "PROVIDER"` (or `HYBRID`) is rejected
- * with 501. See lib/feature-flags.ts and Issue #646.
+ * POST creates a new Organization + BillingAccount + OWNER Membership in
+ * a single transaction. The caller is the OWNER of the created org; a
+ * matching BetterAuth `Member` row is also written (so the org-scope
+ * session gets populated on the next login).
+ *
+ * Invariants:
+ *  - slug is unique and lower-cased;
+ *  - at least one capability must be true (canSponsor OR canHost);
+ *  - canSponsor=true → BillingAccount created with the chosen fundingSource;
+ *  - rootId points at the org itself (hierarchy is schema-only in v1).
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
+import { randomUUID } from "crypto";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
-import { ENABLE_PROVIDER_ORGS } from "@/lib/feature-flags";
-import {
-  OrganizationKind,
-  OrganizationBillingMode,
-  OrgSizeBucket,
-} from "@prisma/client";
+import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { isValidGstin } from "@/lib/compliance/gst";
+import { isValidPan } from "@/lib/compliance/tds";
 
-const createOrgSchema = z.object({
-  name: z.string().trim().min(2).max(100),
-  slug: z
-    .string()
-    .trim()
-    .regex(/^[a-z0-9-]+$/, "Slug must be lowercase alphanumeric with hyphens")
-    .min(2)
-    .max(50)
-    .optional(),
-  kind: z.nativeEnum(OrganizationKind).default(OrganizationKind.BUYER),
-  // billingMode is required for BUYER/HYBRID, ignored/nulled for PROVIDER.
-  // Validated at handler level based on `kind` — see logic below.
-  billingMode: z.nativeEnum(OrganizationBillingMode).optional(),
-  billingEmail: z.string().email(),
-  description: z.string().max(2000).optional(),
-  industry: z.string().max(100).optional(),
-  sizeBucket: z.nativeEnum(OrgSizeBucket).optional(),
-  website: z.string().url().optional(),
-  logo: z.string().url().optional(),
-});
+// PROJECT is reserved in the Prisma enum for the v2 milestone workflow
+// (scoped project-billing engine), but not accepted at the API boundary
+// yet — callers that pick it would otherwise silently fall into the
+// TAG_ONLY path in checkout. Re-add here once checkout has a dedicated
+// PROJECT branch.
+const FundingSourceSchema = z.enum([
+  "PERSONAL",
+  "LICENSE",
+  "WALLET",
+  "INVOICE",
+]);
+const CurrencySchema = z.enum(["INR", "USD", "EUR", "GBP"]);
+const DataRegionSchema = z.enum(["IN", "US", "EU"]);
+const SizeBucketSchema = z.enum([
+  "SMALL_1_50",
+  "MEDIUM_51_200",
+  "LARGE_201_1000",
+  "ENTERPRISE_1000_PLUS",
+]);
+
+const SLUG_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 /**
- * Slugify a name into a URL-safe string. Collisions resolved at insert time
- * by appending a short random suffix on unique-constraint failure.
+ * Carries an HTTP status (and optional machine-readable code) on a thrown
+ * Error so the route's bottom-of-handler catch can serialise it without
+ * untagged-Error guesswork. Replaces the previous `Object.assign(new
+ * Error(...), { httpStatus: 409 })` pattern, which forced every reader
+ * of the catch to cast through `unknown` to pull the status back out.
  */
+class HttpError extends Error {
+  readonly httpStatus: number;
+  readonly code?: string;
+
+  constructor(message: string, httpStatus: number, code?: string) {
+    super(message);
+    this.name = "HttpError";
+    this.httpStatus = httpStatus;
+    this.code = code;
+  }
+}
+
+const CreateBodySchema = z
+  .object({
+    name: z.string().trim().min(2).max(200),
+    slug: z
+      .string()
+      .trim()
+      .toLowerCase()
+      .min(2)
+      .max(63)
+      .regex(SLUG_REGEX, "slug must be lower-case alphanumeric with hyphens")
+      .optional(),
+    canSponsor: z.boolean().default(true),
+    canHost: z.boolean().default(false),
+    fundingSource: FundingSourceSchema.default("PERSONAL"),
+    billingEmail: z.string().email(),
+    currency: CurrencySchema.default("INR"),
+    paymentTermsDays: z.coerce.number().int().min(0).max(180).optional(),
+    description: z.string().max(5000).nullable().optional(),
+    industry: z.string().max(120).nullable().optional(),
+    website: z.string().url().nullable().optional(),
+    sizeBucket: SizeBucketSchema.nullable().optional(),
+    dataResidencyRegion: DataRegionSchema.default("IN"),
+    // GSTIN / PAN: format-only validation here; live API verification
+    // (NIC GST taxpayer search, sanctions screening) lands in PR-2.
+    // Format validators reject the obvious "made up" values that the
+    // book-everything-then-ghost fraud pattern (#687) relies on.
+    gstin: z
+      .string()
+      .nullable()
+      .optional()
+      .refine(
+        (v) => v === null || v === undefined || isValidGstin(v),
+        { message: "INVALID_GSTIN_FORMAT" },
+      ),
+    pan: z
+      .string()
+      .nullable()
+      .optional()
+      .refine(
+        (v) => v === null || v === undefined || isValidPan(v),
+        { message: "INVALID_PAN_FORMAT" },
+      ),
+    requiresPO: z.boolean().default(false),
+  })
+  .refine((v) => v.canSponsor || v.canHost, {
+    message: "At least one of canSponsor or canHost must be true",
+  });
+
 function slugify(name: string): string {
   return name
     .toLowerCase()
     .trim()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 40);
+    .slice(0, 63);
 }
 
-/**
- * GET /api/organizations
- * Lists the caller's active org memberships. Platform ADMINs see every org.
- */
 export async function GET() {
-  try {
-    const auth = await requireApiAuth();
-    if (auth.error) return auth.error;
+  const auth = await requireApiAuth();
+  if (auth.error) return auth.error;
 
-    const userId = auth.session.user.id;
-
-    if (auth.session.user.role === "ADMIN") {
-      const orgs = await prisma.organizationProfile.findMany({
-        include: {
-          organization: {
-            select: { id: true, name: true, slug: true, logo: true },
-          },
-        },
-        orderBy: { createdAt: "desc" },
-      });
-      return NextResponse.json({
-        organizations: orgs.map((o) => ({
-          id: o.organization.id,
-          profileId: o.id,
-          name: o.organization.name,
-          slug: o.organization.slug,
-          logo: o.organization.logo,
-          kind: o.kind,
-          status: o.status,
-          billingMode: o.billingMode,
-          role: "ORG_OWNER" as const,
-          isPlatformAdmin: true,
-        })),
-      });
-    }
-
-    const memberships = await prisma.organizationMemberProfile.findMany({
-      where: {
-        status: "ACTIVE",
-        member: { userId },
-      },
-      include: {
-        organizationProfile: {
-          include: {
-            organization: {
-              select: { id: true, name: true, slug: true, logo: true },
-            },
+  const userId = auth.session.user.id;
+  const memberships = await prisma.membership.findMany({
+    where: { userId, status: "ACTIVE" },
+    include: {
+      organization: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          logo: true,
+          status: true,
+          canSponsor: true,
+          canHost: true,
+          billingAccount: {
+            select: { fundingSource: true, walletBalance: true, currency: true },
           },
         },
       },
-      orderBy: { createdAt: "desc" },
-    });
+    },
+    orderBy: { createdAt: "asc" },
+  });
 
-    return NextResponse.json({
-      organizations: memberships
-        .filter((m) => m.organizationProfile.status !== "DEACTIVATED")
-        .map((m) => ({
-          id: m.organizationProfile.organization.id,
-          profileId: m.organizationProfileId,
-          name: m.organizationProfile.organization.name,
-          slug: m.organizationProfile.organization.slug,
-          logo: m.organizationProfile.organization.logo,
-          kind: m.organizationProfile.kind,
-          status: m.organizationProfile.status,
-          billingMode: m.organizationProfile.billingMode,
-          role: m.role,
-          isPlatformAdmin: false,
-        })),
-    });
-  } catch (error) {
-    console.error("[API /organizations GET] error:", error);
+  return NextResponse.json({
+    data: memberships.map((m) => ({
+      membershipId: m.id,
+      role: m.role,
+      status: m.status,
+      organization: m.organization,
+    })),
+  });
+}
+
+export async function POST(req: NextRequest) {
+  const auth = await requireApiAuth();
+  if (auth.error) return auth.error;
+
+  // Only UserRole.ORG_ADMIN can create organizations. Platform ADMIN can
+  // also seed orgs (used by fixtures and back-office tooling). CONSULTANT
+  // and CONSULTEE are distinct user types — they join orgs via invitation,
+  // they don't create them. Blocks UI-bypass attempts via direct API.
+  const creatorRole = auth.session.user.role;
+  if (creatorRole !== "ORG_ADMIN" && creatorRole !== "ADMIN") {
     return NextResponse.json(
-      { error: "Failed to fetch organizations" },
-      { status: 500 },
+      {
+        error:
+          "Only organization administrators can create organizations. Sign up with the Organization Owner role to continue.",
+      },
+      { status: 403 },
     );
   }
-}
 
-/**
- * POST /api/organizations
- * Creates a new organization with the caller as ORG_OWNER. All four rows
- * (Organization, OrganizationProfile, Member, OrganizationMemberProfile) are
- * inserted in a single transaction. PROVIDER and HYBRID kinds are rejected
- * with 501 unless ENABLE_PROVIDER_ORGS is set.
- */
-export async function POST(req: NextRequest) {
+  const raw = await req.json().catch(() => null);
+  const parsed = CreateBodySchema.safeParse(raw);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid body", detail: parsed.error.flatten() },
+      { status: 400 },
+    );
+  }
+  const body = parsed.data;
+
+  const desiredSlug = body.slug ?? slugify(body.name);
+  if (!SLUG_REGEX.test(desiredSlug)) {
+    return NextResponse.json(
+      { error: "Generated slug is invalid — pass `slug` explicitly." },
+      { status: 400 },
+    );
+  }
+
   try {
-    const auth = await requireApiAuth();
-    if (auth.error) return auth.error;
+    const result = await prisma.$transaction(async (tx) => {
+      const dupSlug = await tx.organization.findUnique({
+        where: { slug: desiredSlug },
+        select: { id: true },
+      });
+      if (dupSlug) {
+        throw new HttpError(
+          `Slug '${desiredSlug}' is already taken`,
+          409,
+          "SLUG_TAKEN",
+        );
+      }
 
-    const body = await req.json();
-    const parsed = createOrgSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: "Invalid request body", details: parsed.error.flatten() },
-        { status: 400 },
-      );
-    }
-
-    const {
-      name,
-      slug: slugInput,
-      kind,
-      billingMode,
-      billingEmail,
-      description,
-      industry,
-      sizeBucket,
-      website,
-      logo,
-    } = parsed.data;
-
-    // Feature-flag gate for PROVIDER-adjacent kinds.
-    if (
-      !ENABLE_PROVIDER_ORGS &&
-      (kind === "PROVIDER" || kind === "HYBRID")
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "PROVIDER organizations are not yet available. Contact support if you represent a consultant agency.",
-          flag: "ENABLE_PROVIDER_ORGS",
+      // Create the org first WITHOUT billingAccountId so we can then
+      // create the BillingAccount (it needs ownerOrgId). Then patch
+      // back the link.
+      const orgTmpId = randomUUID();
+      const org = await tx.organization.create({
+        data: {
+          id: orgTmpId,
+          name: body.name,
+          slug: desiredSlug,
+          canSponsor: body.canSponsor,
+          canHost: body.canHost,
+          rootId: orgTmpId,
+          depth: 0,
+          dataResidencyRegion: body.dataResidencyRegion,
+          contractCurrency: body.currency,
+          reportingCurrency: body.currency,
+          billingEmail: body.billingEmail,
+          paymentTermsDays: body.paymentTermsDays ?? 60,
+          description: body.description ?? null,
+          industry: body.industry ?? null,
+          website: body.website ?? null,
+          sizeBucket: body.sizeBucket ?? null,
+          gstin: body.gstin ?? null,
+          pan: body.pan ?? null,
+          requiresPO: body.requiresPO,
+          status: "PENDING_VERIFICATION",
         },
-        { status: 501 },
-      );
-    }
-
-    // Billing mode semantics by org kind:
-    //   BUYER / HYBRID → billingMode is required (defaults to TAG_ONLY if unspecified)
-    //   PROVIDER        → billingMode is null (PROVIDER orgs earn money, they don't pay)
-    const resolvedBillingMode: OrganizationBillingMode | null =
-      kind === "PROVIDER"
-        ? null
-        : (billingMode ?? OrganizationBillingMode.TAG_ONLY);
-
-    // Enforce the 5-org creation limit to mirror BetterAuth's organizationLimit.
-    const ownedCount = await prisma.member.count({
-      where: {
-        userId: auth.session.user.id,
-        role: "ORG_OWNER",
-      },
-    });
-    if (ownedCount >= 5) {
-      return NextResponse.json(
-        { error: "You have reached the maximum number of owned organizations (5)." },
-        { status: 403 },
-      );
-    }
-
-    // Generate slug from name if not supplied; retry once with a random
-    // suffix if the initial insert collides on the unique constraint.
-    const baseSlug = slugInput ?? slugify(name);
-    if (!baseSlug) {
-      return NextResponse.json(
-        { error: "Could not derive a valid slug from the organization name" },
-        { status: 400 },
-      );
-    }
-
-    const runTransaction = (slug: string) =>
-      prisma.$transaction(async (tx) => {
-        const organization = await tx.organization.create({
-          data: { name, slug, logo: logo ?? null },
-        });
-
-        const profile = await tx.organizationProfile.create({
-          data: {
-            organizationId: organization.id,
-            kind,
-            billingMode: resolvedBillingMode,
-            billingEmail,
-            description: description ?? null,
-            industry: industry ?? null,
-            sizeBucket: sizeBucket ?? null,
-            website: website ?? null,
-            logo: logo ?? null,
-            // PROVIDER/HYBRID orgs require admin approval before activation
-            status:
-              kind === "PROVIDER" || kind === "HYBRID"
-                ? "PENDING_VERIFICATION"
-                : "ACTIVE",
-          },
-        });
-
-        const member = await tx.member.create({
-          data: {
-            organizationId: organization.id,
-            userId: auth.session.user.id,
-            role: "ORG_OWNER",
-          },
-        });
-
-        await tx.organizationMemberProfile.create({
-          data: {
-            memberId: member.id,
-            organizationProfileId: profile.id,
-            role: "ORG_OWNER",
-            status: "ACTIVE",
-          },
-        });
-
-        // SEAT_PACK orgs get a zeroed credit pool created up front so the
-        // dashboard can render without a null check.
-        if (resolvedBillingMode === "SEAT_PACK") {
-          await tx.orgCreditPool.create({
-            data: {
-              organizationProfileId: profile.id,
-              balance: 0,
-              totalPurchased: 0,
-            },
-          });
-        }
-
-        return { organization, profile };
       });
 
-    let result: Awaited<ReturnType<typeof runTransaction>>;
-    try {
-      result = await runTransaction(baseSlug);
-    } catch (error) {
-      // P2002 = unique constraint violation (most likely: slug collision)
-      const code = (error as { code?: string })?.code;
-      if (code === "P2002") {
-        const fallbackSlug = `${baseSlug}-${Math.random().toString(36).slice(2, 8)}`;
-        result = await runTransaction(fallbackSlug);
-      } else {
-        throw error;
+      let billingAccountId: string | null = null;
+      if (body.canSponsor) {
+        const ba = await tx.billingAccount.create({
+          data: {
+            ownerOrgId: org.id,
+            billingEmail: body.billingEmail,
+            currency: body.currency,
+            fundingSource: body.fundingSource,
+            walletBalance: body.fundingSource === "WALLET" ? 0 : null,
+          },
+        });
+        billingAccountId = ba.id;
+        await tx.organization.update({
+          where: { id: org.id },
+          data: { billingAccountId: ba.id },
+        });
+      }
+
+      // OWNER Membership + a matching BetterAuth Member for invitation
+      // + org-scope session support. The Member row's id becomes the
+      // betterAuthMemberId pointer on Membership so the bridge is live
+      // from the moment the org exists.
+      const betterAuthMember = await tx.member.create({
+        data: {
+          organizationId: org.id,
+          userId: auth.session.user.id,
+          role: "OWNER",
+        },
+      });
+      const membership = await tx.membership.create({
+        data: {
+          userId: auth.session.user.id,
+          organizationId: org.id,
+          status: "ACTIVE",
+          role: "OWNER",
+          betterAuthMemberId: betterAuthMember.id,
+        },
+      });
+
+      // Lazy-create the operator-side profile for this user. Idempotent
+      // across the creator's 2nd+ org — they already have one
+      // OrgAdminProfile row pinned by `userId @unique`. The user.update
+      // via updateMany keeps the call cheap when the link is already set.
+      const orgAdmin = await tx.orgAdminProfile.upsert({
+        where: { userId: auth.session.user.id },
+        create: { userId: auth.session.user.id },
+        update: {},
+        select: { id: true },
+      });
+      await tx.user.updateMany({
+        where: { id: auth.session.user.id, orgAdminProfileId: null },
+        data: { orgAdminProfileId: orgAdmin.id },
+      });
+
+      await tx.orgAuditLog.create({
+        data: {
+          organizationId: org.id,
+          actorMembershipId: membership.id,
+          targetMembershipId: membership.id,
+          category: "MEMBER",
+          action: AUDIT_ACTIONS.MEMBER.MEMBER_ADDED,
+          description: `Organization '${org.name}' created by OWNER`,
+          details: {
+            slug: org.slug,
+            canSponsor: org.canSponsor,
+            canHost: org.canHost,
+            fundingSource: body.canSponsor ? body.fundingSource : null,
+          },
+        },
+      });
+
+      return {
+        organization: org,
+        billingAccountId,
+        membership,
+        orgAdminProfileId: orgAdmin.id,
+      };
+    });
+
+    return NextResponse.json(result, { status: 201 });
+  } catch (err) {
+    // Centralised error mapper. Every branch returns a structured envelope
+    // so the wizard never falls through to its generic "Failed to create
+    // organization" toast — which loses every byte of useful diagnostic
+    // information and was the actual cause of the bug we're fixing here.
+    //
+    // Always log the unwrapped error so dev console / Sentry capture the
+    // real stack trace; the response body intentionally redacts internals
+    // in production.
+    const userId = auth.session.user.id;
+    console.error("POST /api/organizations failed", {
+      userId,
+      slug: desiredSlug,
+      err,
+    });
+
+    // 1) Errors we tagged ourselves (slug-409 etc.).
+    if (err instanceof HttpError) {
+      return NextResponse.json(
+        {
+          error: err.message,
+          ...(err.code ? { code: err.code } : {}),
+        },
+        { status: err.httpStatus },
+      );
+    }
+
+    // 2) Prisma known request errors — map the common ones onto useful
+    //    HTTP statuses so the client can branch (especially P2034, where
+    //    a retry is the right answer).
+    if (err instanceof Prisma.PrismaClientKnownRequestError) {
+      switch (err.code) {
+        case "P2002":
+          return NextResponse.json(
+            {
+              error: "Conflict — a unique constraint was violated",
+              code: "P2002",
+              detail: { target: err.meta?.target ?? null },
+            },
+            { status: 409 },
+          );
+        case "P2003":
+          return NextResponse.json(
+            {
+              error: "Database foreign-key violation",
+              code: "P2003",
+              detail: { field: err.meta?.field_name ?? null },
+            },
+            { status: 500 },
+          );
+        case "P2025":
+          return NextResponse.json(
+            {
+              error: err.message,
+              code: "P2025",
+            },
+            { status: 404 },
+          );
+        case "P2034":
+          return NextResponse.json(
+            {
+              error: "Transaction conflict — please retry",
+              code: "P2034",
+            },
+            { status: 503 },
+          );
+        default:
+          return NextResponse.json(
+            {
+              error: "Database error",
+              code: err.code,
+              ...(process.env.NODE_ENV !== "production"
+                ? { message: err.message }
+                : {}),
+            },
+            { status: 500 },
+          );
       }
     }
 
+    // 3) Prisma client-side validation (wrong types, unknown columns).
+    //    These mean *we* sent a malformed query — return 400 so the
+    //    client sees a different bucket than a runtime DB error.
+    if (err instanceof Prisma.PrismaClientValidationError) {
+      return NextResponse.json(
+        {
+          error: "Invalid query for Prisma client",
+          code: "PRISMA_VALIDATION",
+          ...(process.env.NODE_ENV !== "production"
+            ? { message: err.message }
+            : {}),
+        },
+        { status: 400 },
+      );
+    }
+
+    // 4) Genuine unknown — still return JSON so the client doesn't see an
+    //    empty body. In production the message is suppressed.
     return NextResponse.json(
       {
-        organization: {
-          id: result.organization.id,
-          name: result.organization.name,
-          slug: result.organization.slug,
-          logo: result.organization.logo,
-        },
-        profile: {
-          id: result.profile.id,
-          kind: result.profile.kind,
-          status: result.profile.status,
-          billingMode: result.profile.billingMode,
-        },
+        error: "Internal server error",
+        code: "INTERNAL",
+        ...(process.env.NODE_ENV !== "production"
+          ? { message: err instanceof Error ? err.message : String(err) }
+          : {}),
       },
-      { status: 201 },
-    );
-  } catch (error) {
-    console.error("[API /organizations POST] error:", error);
-    return NextResponse.json(
-      { error: "Failed to create organization" },
       { status: 500 },
     );
   }

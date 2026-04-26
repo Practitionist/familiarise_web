@@ -1,185 +1,111 @@
-# Organization Types
+# Organization types — capability-driven
 
-**Status**: Implemented (Apr 2026)
-**Branch**: `feature/enterprise`
-**Scope**: `OrganizationKind` enum, dashboard visibility, feature gating
+The `OrganizationKind` enum is gone. An organization's "type" is now
+computed from two boolean columns on the `Organization` row and surfaced
+via `deriveCapabilityKind()` in `lib/labels/org-labels.ts`.
 
-## Overview
+## The two capability booleans
 
-Every organization on Familiarise has a `kind` field on its `OrganizationProfile` that determines its capabilities, billing options, dashboard sections, and available roles. There are three kinds: **BUYER** (companies sponsoring training for employees), **PROVIDER** (consulting agencies hosting freelance consultants), and **HYBRID** (both streams running independently). PROVIDER and HYBRID are gated by the `ENABLE_PROVIDER_ORGS` feature flag and require platform admin verification before activation.
-
----
-
-## BUYER
-
-A BUYER organization sponsors its employees or students to consume services on the platform. The org does not host consultants -- it pays for sessions delivered by independent consultants in the marketplace.
-
-```
-Money Flow (BUYER)
-┌──────────┐                          ┌────────────────┐
-│ Org Admin│──── purchases credits ──►│ OrgCreditPool  │
-│ (Wipro)  │     or pays invoice      │ or Invoice     │
-└──────────┘                          └───────┬────────┘
-                                              │
-                                              ▼
-┌──────────┐    books session      ┌──────────────────┐
-│ Employee │───────────────────────►│ Checkout         │
-│ (Learner)│                       │ deducts credits / │
-└──────────┘                       │ bills to invoice  │
-                                   └────────┬─────────┘
-                                            │
-                               standard 80/20 split
-                                            │
-                              ┌─────────────┴──────────────┐
-                              ▼                            ▼
-                     ┌──────────────┐             ┌──────────────┐
-                     │ Consultant   │             │ Platform     │
-                     │ gets 80%     │             │ gets 20%     │
-                     └──────────────┘             └──────────────┘
-```
-
-**Who uses it**: Corporates (Wipro, TCS), schools (DPS), bootcamps buying mentoring for students.
-
-**Example**: Wipro buys a SEAT_PACK of 500 sessions. Employee Ravi opens the marketplace, books a React consultation, and the ₹2,000 fee is deducted from the org credit pool instead of his personal card.
-
-**Available billing modes**: TAG_ONLY, SEAT_PACK, INVOICED_MONTHLY, PREPAID_UNLIMITED
-
-**Available roles**: ORG_OWNER, ORG_ADMIN, ORG_MANAGER, ORG_LEARNER, ORG_SUPPORT
-
-**Dashboard sections**: Overview, Members, Invitations, Learners, Plans, Credits (SEAT_PACK only), Billing, Analytics, Settings
-
----
-
-## PROVIDER
-
-A PROVIDER organization is a consulting agency that hosts multiple consultants. When a learner books with one of those consultants, the payment is split three ways: platform, org, and consultant.
-
-```
-Money Flow (PROVIDER)
-┌──────────┐                          ┌────────────────┐
-│ Learner  │──── pays ₹10,000 ──────►│ Checkout       │
-│ (public) │                          └───────┬────────┘
-└──────────┘                                  │
-                                    3-way split (default rates)
-                                              │
-                          ┌───────────────────┼────────────────────┐
-                          ▼                   ▼                    ▼
-                 ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-                 │ Platform     │    │ Org (Agency)  │    │ Consultant   │
-                 │ 10% = ₹1,000│    │ 5% = ₹500     │    │ 85% = ₹8,500│
-                 └──────────────┘    └──────────────┘    └──────────────┘
-```
-
-**Who uses it**: Freelancer collectives, boutique consulting firms, tutoring agencies.
-
-**Example**: "LearnPro Academy" hosts 12 tutors. Platform admin verifies the org, sets `status = ACTIVE`. Each tutor applies via `/api/organizations/[orgId]/consultants/apply` and is approved by an ORG_ADMIN. When a student books with tutor Priya, her ₹5,000 session is split: ₹500 platform, ₹250 LearnPro, ₹4,250 Priya.
-
-**Feature flag**: `ENABLE_PROVIDER_ORGS` must be `true`. When `false`:
-- POST `/api/organizations` rejects `kind === "PROVIDER"` with 501
-- POST `/api/organizations/[id]/members` rejects `role === "ORG_CONSULTANT"` with 501
-- Payout, payout-account, and consultant routes return 501
-- Dashboard hides Consultants and Payouts nav items
-
-**Requires**: Platform admin sets `status` from `PENDING_VERIFICATION` to `ACTIVE`.
-
-**Available roles**: ORG_OWNER, ORG_ADMIN, ORG_MANAGER, ORG_CONSULTANT, ORG_SUPPORT
-
-**Public page**: `/org/[slug]` -- org profile visible to the public, lists hosted consultants.
-
-**Org badge**: Consultants belonging to a PROVIDER org show the org logo/name on their `/explore` card.
-
----
-
-## HYBRID
-
-A HYBRID organization combines both BUYER and PROVIDER capabilities. The two streams are independent -- a HYBRID org can sponsor its students to book external consultants (BUYER stream) while simultaneously hosting its own professors as consultants with revenue sharing (PROVIDER stream).
-
-**Who uses it**: Universities, corporate training firms, research labs.
-
-**Example**: IIT Bombay creates a HYBRID org:
-- **BUYER stream**: Students (ORG_LEARNER) are assigned seats. The university pays for external mentoring sessions via INVOICED_MONTHLY.
-- **PROVIDER stream**: Professor Sharma (ORG_CONSULTANT) teaches a public webinar. Revenue is split 3 ways: 10% platform, 5% IIT, 85% Prof. Sharma.
-
-**Edge case**: A student and a professor from the same HYBRID org -- the student books a session with the professor. Both streams fire: the org's credit pool (or invoice) pays for the session, and the professor's earnings go through the 3-way split. The org effectively pays on one side and receives on the other.
-
----
-
-## Decision Tree
-
-```
-"Which type do I need?"
-
-Start
-  │
-  ├─► Does the org PAY for sessions consumed by its members?
-  │     │
-  │     ├─► Yes ──► Does the org also HOST consultants who earn revenue?
-  │     │             │
-  │     │             ├─► Yes ──► HYBRID
-  │     │             │
-  │     │             └─► No  ──► BUYER
-  │     │
-  │     └─► No  ──► Does the org HOST consultants who earn revenue?
-  │                   │
-  │                   ├─► Yes ──► PROVIDER
-  │                   │
-  │                   └─► No  ──► BUYER (TAG_ONLY — analytics only)
-  │
-  Scenarios:
-  ┌────────────────────────────────────────────────────────────┐
-  │ Wipro sponsors employee coaching          → BUYER         │
-  │ LearnPro Academy hosts freelance tutors   → PROVIDER      │
-  │ IIT with students and professors          → HYBRID        │
-  │ StartupCo just wants usage analytics      → BUYER TAG_ONLY│
-  └────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Feature Comparison
-
-| Feature | BUYER | PROVIDER | HYBRID |
-|---------|-------|----------|--------|
-| Billing modes (TAG_ONLY, SEAT_PACK, etc.) | All 4 (required) | `billingMode = NULL` (field is nullable in the DB; PROVIDER orgs don't pay, they earn) | All 4 (required for the BUYER stream) |
-| Credit pool / invoicing | Yes | No | Yes |
-| 3-way revenue split | No (standard 80/20) | Yes | Yes (PROVIDER stream) |
-| Org payouts | No | Yes | Yes |
-| OrganizationPayoutAccount | N/A | Required | Required |
-| OrganizationEarnings rows | N/A | Created per payment | Created per payment |
-| SSO / domain enforcement | Yes | Yes | Yes |
-| ORG_LEARNER role | Yes | No | Yes |
-| ORG_CONSULTANT role | No | Yes | Yes |
-| Public page `/org/[slug]` | No | Yes | Yes |
-| Org badge on `/explore` cards | No | Yes | Yes |
-| `/explore/companies` listing | No | Yes | Yes |
-| `enforceOrganizationPlans` | N/A | Yes (optional) | Yes (optional) |
-| `autoApproveConsultants` | N/A | Yes (optional) | Yes (optional) |
-| Requires admin verification | No | Yes | Yes |
-| Feature flag gate | None | `ENABLE_PROVIDER_ORGS` | `ENABLE_PROVIDER_ORGS` |
-| Dashboard: Learners page | Yes | No | Yes |
-| Dashboard: Consultants page | No | Yes | Yes |
-| Dashboard: Payouts page | No | Yes | Yes |
-| Dashboard: Credits page | SEAT_PACK only | No | SEAT_PACK only |
-
----
-
-## Schema
-
-**File**: `prisma/schema.prisma` (line 542)
-
-```
-enum OrganizationKind {
-  BUYER     // Schools, corporates, agencies buying for their employees/students
-  PROVIDER  // Consultant agencies hosting multiple consultants (FEATURE-FLAGGED)
-  HYBRID    // Both — covers university/training-firm scenarios (FEATURE-FLAGGED)
+```prisma
+model Organization {
+  canSponsor Boolean @default(true)
+  canHost    Boolean @default(false)
+  capabilitiesExtra Json?   // escape hatch, e.g. { "RESELL": true }
+  ...
 }
 ```
 
-The `kind` field is set at org creation (POST `/api/organizations`) and is effectively immutable -- there is no migration path between kinds because each kind implies different financial models, role assignments, and payout accounts.
+| canSponsor | canHost | Derived kind | Meaning |
+|------------|---------|--------------|---------|
+| `true`     | `false` | `SPONSOR`    | Pays for its members' sessions. Has a `BillingAccount`. No hosting-side payout flow. |
+| `false`    | `true`  | `HOST`       | Hosts experts who earn through the org. Has an `OrganizationPayoutAccount`. No billing account. |
+| `true`     | `true`  | `HYBRID`     | Both flows run independently. Has both records. |
+| `false`    | `false` | `INERT`      | Transitional — rejected at create time (`app/api/organizations/route.ts` validates `canSponsor || canHost`). |
 
-**How kind affects the dashboard sidebar**: The layout at `app/dashboard/organization/[orgId]/layout.tsx` computes two booleans from `kind`:
+`capabilitiesExtra` is a JSON blob reserved for one-off capabilities
+(e.g. an org that also resells third-party content) so future additions
+don't need a migration. The 90% path is covered by the two typed
+booleans; consumers that care about the typed booleans must not read
+`capabilitiesExtra` — its shape is deliberately undocumented.
 
-- `isBuyerOrHybrid` = BUYER or HYBRID -- shows Learners page
-- `isProviderOrHybrid` = PROVIDER or HYBRID -- shows Consultants and Payouts pages
+## Why booleans and not an enum
 
-These booleans control which nav items render. The API layer enforces the same constraints independently, so hiding nav items is cosmetic safety, not the auth boundary.
+A single enum collapses two orthogonal questions (does it buy? does it
+sell?) into one column, which makes HYBRID a special case everywhere it
+appears. Booleans let every consumer answer only the question it cares
+about:
+
+- Checkout reads `canSponsor` to decide whether org funding is even
+  eligible.
+- Payout reconciliation reads `canHost` to decide whether the org has
+  an earnings flow.
+- The dashboard reads both to render the navigation.
+
+`deriveCapabilityKind()` still exists, but it is a presentation helper,
+not an access gate.
+
+## Label + badge source of truth
+
+Every user-facing string for capability kind lives in
+`lib/labels/org-labels.ts`:
+
+| Capability | Label | Badge class |
+|------------|-------|-------------|
+| `SPONSOR`  | "Sponsor" | `bg-blue-100 text-blue-900 border-blue-200` |
+| `HOST`     | "Host"    | `bg-emerald-100 text-emerald-900 border-emerald-200` |
+| `HYBRID`   | "Hybrid"  | `bg-purple-100 text-purple-900 border-purple-200` |
+| `INERT`    | "Inactive"| `bg-zinc-100 text-zinc-600 border-zinc-200` |
+
+Descriptions (`CAPABILITY_DESCRIPTION`) are the authoritative tooltips;
+the wizard, OrgSwitcher, and Home page all render straight from there.
+
+## INERT guard
+
+An INERT org can't exist in the wild:
+
+- `POST /api/organizations` rejects a body with both booleans false
+  (`CreateBodySchema.refine(v => v.canSponsor || v.canHost)` in
+  `app/api/organizations/route.ts`).
+- `PATCH /api/organizations/[orgId]` rejects any patch that would flip
+  both to false (same guard, inline in the PATCH handler).
+
+Flipping `canSponsor = false` also requires the wallet to be drained
+first — see the PATCH guard in `app/api/organizations/[orgId]/route.ts`.
+Otherwise the org would own a positive wallet balance with no billing
+surface to reconcile it against.
+
+## HYBRID semantics
+
+A HYBRID org runs two independent flows:
+
+1. **Sponsor side.** The sponsor flow is identical to a pure SPONSOR
+   org: a `BillingAccount`, a `FundingSource`, optional contracts,
+   programs, and invoices.
+2. **Host side.** The host flow is identical to a pure HOST org: an
+   `OrganizationPayoutAccount`, `OrganizationEarnings` rows created on
+   each booking whose expert is a member of the org, and
+   `OrganizationPayout` cycles.
+
+The two flows never intersect inside a single `Payment` record. A HYBRID
+org that sponsors its own expert's session routes the money through the
+sponsor flow AND books an earnings row on the host flow — the two
+settlements are computed from the same `Payment.amount` but each
+uses its own `RateCard`.
+
+## What replaced what
+
+| Pre-Arch-4 term | Now | Notes |
+|-----------------|-----|-------|
+| `OrganizationKind.BUYER` | `canSponsor=true, canHost=false` | — |
+| `OrganizationKind.PROVIDER` | `canSponsor=false, canHost=true` | — |
+| `OrganizationKind.HYBRID` | `canSponsor=true, canHost=true` | — |
+| `OrganizationProfile` | merged into `Organization` | branding + policies are now columns on the base row. |
+| `OrganizationProfile.id` (session) | `organizationId` | session exposes the Organization id directly. |
+
+## Related docs
+
+- `02-funding-and-programs.md` — funding sources on the sponsor side.
+- `04-roles-and-permissions.md` — roles are the same regardless of
+  capability; seat of expert vs learner is controlled via Membership.
+- `12-dashboard-pages.md` — which pages render for which capability.
+- `14-scenarios-and-examples.md` — four end-to-end worked cases.

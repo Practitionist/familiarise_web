@@ -10,29 +10,34 @@
  */
 
 /**
- * PROVIDER organizations (consultant agencies that host multiple consultants
- * and capture a slice of every booking via a 3-way revenue split).
+ * Hosting organizations (agencies that host multiple experts and capture
+ * a slice of every booking via a 3-way revenue split).
  *
- * The schema, role enum, code paths, and API routes for PROVIDER orgs all
- * exist in this codebase but are gated by this flag. When false (the default
- * pre-MVP):
- *   - POST /api/organizations rejects `kind === "PROVIDER"` with 501
- *   - POST /api/organizations/[id]/members rejects `role === "ORG_CONSULTANT"` with 501
- *   - The org-create dashboard form hides PROVIDER from the kind dropdown
- *   - /api/organizations/[id]/payouts, /payout-account, /consultants return 501
- *   - /dashboard/organization/[id]/{consultants,payouts} are unreachable (nav links hidden)
+ * The schema (`Organization.canHost`, `MemberRole.EXPERT`,
+ * `OrganizationEarnings`), code paths, and API routes for hosting orgs
+ * all exist in this codebase but are gated by this flag. When false (the
+ * default pre-MVP):
+ *   - POST /api/organizations rejects `canHost=true` with 501
+ *   - POST /api/organizations/[id]/members rejects `role === "EXPERT"` with 501
+ *   - The org-create wizard hides the "host experts" capability checkbox
+ *   - /api/organizations/[id]/{payouts,payout-account,earnings,rate-cards}
+ *     return 501
+ *   - /dashboard/organization/[id]/{experts,payouts} nav links hidden
  *   - The earnings split in lib/payments/payouts/earnings-service.ts takes
- *     the BUYER (= unchanged) path even if the schema's `kind === PROVIDER`
+ *     the sponsor-only path even if the org has `canHost=true`
  *
- * To enable for a real PROVIDER customer:
- *   1. Set `ENABLE_PROVIDER_ORGS=true` in the deployment environment
+ * To enable for a real hosting org customer:
+ *   1. Set `ENABLE_HOST_ORGS=true` in the deployment environment
  *   2. Redeploy
  *   3. Verify the rejection paths above now succeed
- *   4. See Issue #646 for the full PROVIDER follow-up checklist
+ *   4. See Issue #646 for the full hosting-org follow-up checklist
  *
  * The flag is intentionally NOT a runtime toggle — flipping it mid-stream
- * would mean some payments use BUYER split logic and others use PROVIDER,
- * which is a compliance nightmare.
+ * would mean some payments use sponsor-only split logic and others use
+ * the 3-way split, which is a compliance nightmare.
+ *
+ * Renamed from `ENABLE_PROVIDER_ORGS` in the Arch-4 terminology purge —
+ * "provider" is dead vocabulary; the capability is `canHost` and the
+ * kind label is `HOST`. No back-compat shim because the app is pre-launch.
  */
-export const ENABLE_PROVIDER_ORGS =
-  process.env.ENABLE_PROVIDER_ORGS === "true";
+export const ENABLE_HOST_ORGS = process.env.ENABLE_HOST_ORGS === "true";

@@ -1,0 +1,48 @@
+/**
+ * DPDP ConsentArtifact management page — scaffold until the dashboard
+ * UI ships on top of the live /api/organizations/[id]/consent routes.
+ * 7-year retention required by the DPDP Act 2023 Rules.
+ */
+
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import { requireOrgAccess } from "@/lib/auth-helpers";
+
+export default async function ConsentPage({
+  params,
+}: {
+  params: Promise<{ orgId: string }>;
+}) {
+  const { orgId } = await params;
+  const access = await requireOrgAccess(orgId, { minimumRole: "MANAGER" });
+  if (access.error) {
+    redirect(`/dashboard/organization/${orgId}/home`);
+  }
+
+  return (
+    <div className="space-y-6">
+      <header>
+        <h1 className="text-2xl font-semibold">DPDP Consent</h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Privacy consent artifacts. Tamper-evident, retained 7 years per
+          DPDP Act 2023.
+        </p>
+      </header>
+
+      <div className="rounded-lg border bg-card p-6">
+        <h2 className="font-medium">Consent dashboard UI coming soon</h2>
+        <p className="text-sm text-muted-foreground mt-2">
+          The API surface at <code>/api/organizations/{orgId}/consent</code>{" "}
+          is live. The dashboard UI ships in a follow-up PR. See{" "}
+          <Link
+            href="https://github.com/Practitionist/familiarise_web/issues/681"
+            className="underline text-primary"
+          >
+            Issue #681
+          </Link>
+          .
+        </p>
+      </div>
+    </div>
+  );
+}

@@ -1,197 +1,234 @@
-# Roles and Permissions
+# Roles and permissions
 
-**Status**: Implemented (Apr 2026)
-**Branch**: `feature/enterprise`
-**Scope**: `OrgMemberRole` enum, API authorization, dashboard visibility
+Every membership row carries a typed `MemberRole`. The enum is unified —
+there is exactly one role namespace, with values chosen to avoid any
+collision with the platform-level `UserRole` enum.
 
-## Overview
+## `MemberRole` (schema.prisma)
 
-Every organization member has exactly one role, stored as the `OrgMemberRole` enum on `OrganizationMemberProfile.role`. Roles are ranked numerically (20-100) so that authorization checks reduce to a single comparison: "does the caller's rank meet the minimum required rank?" The ranking is defined in `ORG_ROLE_RANK` in `lib/auth-helpers.ts` and mirrored in the dashboard layout for nav visibility. Platform admins (UserRole `ADMIN`) bypass org membership checks entirely -- they receive a synthesized `ORG_OWNER` stub.
-
----
-
-## Role Reference
-
-| Role | Rank | Available In | Purpose | Feature-Flagged |
-|------|------|-------------|---------|-----------------|
-| `ORG_OWNER` | 100 | BUYER, PROVIDER, HYBRID | Full control: billing, deletion, settings, members | No |
-| `ORG_ADMIN` | 80 | BUYER, PROVIDER, HYBRID | Members + plans + settings (no billing or org deletion) | No |
-| `ORG_MANAGER` | 60 | BUYER, PROVIDER, HYBRID | BUYER: team analytics + seat management. PROVIDER: consultant earnings view | No |
-| `ORG_CONSULTANT` | 40 | PROVIDER, HYBRID only | Provides services on behalf of the org; earnings split 3 ways | Yes (`ENABLE_PROVIDER_ORGS`) |
-| `ORG_SUPPORT` | 30 | BUYER, PROVIDER, HYBRID | Support staff with no billing access | Yes (for PROVIDER) |
-| `ORG_LEARNER` | 20 | BUYER, HYBRID only | Employee or student consuming sessions | No |
-
----
-
-## Role Hierarchy
-
-```
-         ┌──────────────┐
-         │  ORG_OWNER   │  rank 100
-         │  Full control │
-         └──────┬───────┘
-                │
-         ┌──────▼───────┐
-         │  ORG_ADMIN   │  rank 80
-         │  Members +   │
-         │  settings    │
-         └──────┬───────┘
-                │
-         ┌──────▼───────┐
-         │  ORG_MANAGER │  rank 60
-         │  Analytics + │
-         │  seat mgmt   │
-         └──────┬───────┘
-                │
-         ┌──────▼────────┐
-         │ ORG_CONSULTANT│  rank 40  (PROVIDER/HYBRID only)
-         │ Provides      │
-         │ services      │
-         └──────┬────────┘
-                │
-         ┌──────▼───────┐
-         │  ORG_SUPPORT │  rank 30
-         │  Support     │
-         │  staff       │
-         └──────┬───────┘
-                │
-         ┌──────▼───────┐
-         │  ORG_LEARNER │  rank 20
-         │  Consumes    │
-         │  sessions    │
-         └──────────────┘
-```
-
-**How it works**: A role satisfies a minimum-role check if its rank is >= the required rank. ORG_OWNER (100) satisfies every check. ORG_LEARNER (20) only satisfies checks requiring ORG_LEARNER itself.
-
-**File**: `lib/auth-helpers.ts` (line 278)
-
-```
-const ORG_ROLE_RANK: Record<OrgMemberRole, number> = {
-  ORG_OWNER: 100,
-  ORG_ADMIN: 80,
-  ORG_MANAGER: 60,
-  ORG_CONSULTANT: 40,
-  ORG_SUPPORT: 30,
-  ORG_LEARNER: 20,
-};
-```
-
----
-
-## API Authorization
-
-### requireOrgAccess(orgId, minimumRole?)
-
-**File**: `lib/auth-helpers.ts` (line 331)
-
-The primary guard for all org API routes. Called at the start of every route handler that operates on org data.
-
-**What it does**:
-1. Authenticates the session via `requireApiAuth()`
-2. Resolves `OrganizationProfile` by the BetterAuth `Organization.id`
-3. Rejects if org `status === "DEACTIVATED"` (403)
-4. Platform admins (UserRole `ADMIN`) bypass membership lookup -- get a synthesized `ORG_OWNER` stub
-5. Looks up `OrganizationMemberProfile` by joining through BetterAuth's `Member` table
-6. Rejects if member not found (403: "Not a member of this organization")
-7. Rejects if member `status !== "ACTIVE"` (403: "Membership is suspended/removed/pending")
-8. If `minimumRole` is specified, checks `orgRoleSatisfies(member.role, minimumRole)`
-
-**Returns on success**: `{ session, member, org }` where `member` is the `OrganizationMemberProfile` and `org` is the `OrganizationProfile`.
-
-**Returns on failure**: `{ error: NextResponse }` with 401, 403, or 404.
-
-**Usage in route handlers**:
-```
-const access = await requireOrgAccess(orgId, "ORG_ADMIN");
-if (access.error) return access.error;
-// access.session, access.member, access.org are all available
-```
-
-### requireOrgOwner(orgId)
-
-Convenience wrapper: calls `requireOrgAccess(orgId, "ORG_OWNER")`. Used for billing changes, payout account setup, org deletion, and settings mutation.
-
-### orgRoleSatisfies(actual, minimum)
-
-Pure comparison function. Returns `true` if `ORG_ROLE_RANK[actual] >= ORG_ROLE_RANK[minimum]`.
-
-Examples:
-- `orgRoleSatisfies("ORG_OWNER", "ORG_ADMIN")` -- true (100 >= 80)
-- `orgRoleSatisfies("ORG_LEARNER", "ORG_MANAGER")` -- false (20 < 60)
-- `orgRoleSatisfies("ORG_ADMIN", "ORG_ADMIN")` -- true (80 >= 80)
-
----
-
-## Platform Admin Bypass
-
-Platform-level `ADMIN` users (the Familiarise team) can access any organization without being a member. When `requireOrgAccess` detects `session.user.role === "ADMIN"`, it skips the membership lookup and returns a synthesized member stub:
-
-```
-{
-  id: "__admin_stub_<userId>",
-  role: "ORG_OWNER",       // highest rank — passes all minimumRole checks
-  status: "ACTIVE",
-  earningsRecipient: "CONSULTANT",
-  ...                      // all nullable fields set to null
+```prisma
+enum MemberRole {
+  OWNER
+  MAINTAINER
+  MANAGER
+  EXPERT
+  LEARNER
+  SUPPORT
 }
 ```
 
-**Why**: Platform admins need to manage any org for support/operability without being invited as a member. The synthesized stub means callers don't need to special-case admin paths -- they just use `access.member.role` normally.
+Prisma comments on the enum call out why the names differ from the
+intuitive ones:
 
-**STAFF do NOT bypass**: `STAFF` users are platform-side operators, not org-side. They must be explicitly added as org members to access org data.
+- `MAINTAINER` was `ADMIN`. Renamed to avoid collision with
+  `UserRole.ADMIN` (platform admin).
+- `EXPERT` was `CONSULTANT`. Renamed to avoid collision with
+  `UserRole.CONSULTANT` (platform consultant user).
+- `LEARNER` chosen over `MEMBER` for an explicit "receives sessions"
+  semantic.
 
----
+## Rank ladder
 
-## Dashboard Visibility
+`lib/auth-helpers.ts` exports `ORG_ROLE_RANK`:
 
-**File**: `app/dashboard/organization/[orgId]/layout.tsx` (line 99)
+| Role         | Rank | Typical responsibility |
+|--------------|------|-------------------------|
+| `OWNER`      | 100  | Billing, contracts, payouts, settings, organization delete. |
+| `MAINTAINER` | 80   | Members, invites, programs, rate cards (view-only), settings. |
+| `MANAGER`    | 60   | Team analytics, seat management, read-only views of invoices/earnings/payouts/rate-cards. |
+| `EXPERT`     | 40   | Delivers services on behalf of the org. |
+| `SUPPORT`    | 30   | Views support tickets and assists members. No billing. |
+| `LEARNER`    | 20   | Consumes services through the org's programs. |
 
-The sidebar computes which nav items to show based on both `org.profile.kind` and `membership.role`. The layout mirrors `ORG_ROLE_RANK` locally for the `isAtLeast()` check.
+`orgRoleSatisfies(actual, minimum)` returns `rank[actual] >= rank[minimum]`.
 
-| Page | Path | Minimum Role | Kind Required |
-|------|------|-------------|---------------|
-| Overview | `home` | Any member | Any |
-| Members | `members` | Any member | Any |
-| Invitations | `invitations` | `ORG_ADMIN` (rank 80) | Any |
-| Learners | `learners` | Any member | BUYER or HYBRID |
-| Consultants | `consultants` | Any member | PROVIDER or HYBRID |
-| Plans | `plans` | Any member | Any |
-| Credits | `credits` | `ORG_MANAGER` (rank 60) | BUYER or HYBRID + SEAT_PACK billing mode |
-| Billing | `billing` | `ORG_MANAGER` (rank 60) | Any |
-| Payouts | `payouts` | Any member | PROVIDER or HYBRID |
-| Analytics | `analytics` | `ORG_MANAGER` (rank 60) | Any |
-| Settings | `settings` | `ORG_ADMIN` (rank 80) | Any |
+## `requireOrgAccess` / `requireOrgOwner`
 
-**Important**: Dashboard nav visibility is cosmetic. The API layer enforces permissions independently via `requireOrgAccess` with the appropriate minimum role. Hiding nav items prevents confusion but is not the security boundary.
+Every API route under `app/api/organizations/[orgId]/**` uses one of
+two gates from `lib/auth-helpers.ts`:
 
----
+```ts
+await requireOrgAccess(orgId, "LEARNER");      // any active member
+await requireOrgAccess(orgId, "MAINTAINER");   // promotes
+await requireOrgOwner(orgId);                  // OWNER-only
+```
 
-## Feature-Flagged Roles
+Platform admins (`UserRole.ADMIN`) bypass membership checks entirely;
+`requireOrgAccess` returns a synthesized OWNER-rank stub membership so
+admin-initiated writes still produce valid `OrgAuditLog.actorMembershipId`
+values (the stub id is `__admin_stub_<userId>`).
 
-Two roles are gated by `ENABLE_PROVIDER_ORGS`:
+## Gate matrix — every org-scoped API route
 
-**ORG_CONSULTANT** (rank 40):
-- Only available in PROVIDER and HYBRID orgs
-- When the flag is `false`: POST `/api/organizations/[id]/members` rejects `role === "ORG_CONSULTANT"` with 501
-- Dashboard hides the Consultants nav item (because `isProviderOrHybrid` is false for BUYER orgs, and PROVIDER/HYBRID creation is blocked)
-- Consultants apply via `/api/organizations/[orgId]/consultants/apply` and are approved by ORG_ADMIN+
+| Route | Verbs | Gate |
+|-------|-------|------|
+| `/api/organizations` | `GET` | any authenticated user |
+| `/api/organizations` | `POST` | any authenticated user (creator becomes OWNER) |
+| `/api/organizations/[orgId]` | `GET` | `LEARNER` |
+| `/api/organizations/[orgId]` | `PATCH`, `DELETE` | OWNER |
+| `/api/organizations/[orgId]/members` | `GET` | any active member |
+| `/api/organizations/[orgId]/members` | `POST` | MAINTAINER |
+| `/api/organizations/[orgId]/members/[memberId]` | `GET`, `PATCH`, `DELETE` | MAINTAINER |
+| `/api/organizations/[orgId]/invitations` | `GET`, `POST` | MAINTAINER |
+| `/api/organizations/[orgId]/invitations/[invitationId]` | `GET`, `DELETE` | MAINTAINER |
+| `/api/organizations/invitations/accept` | `POST` | any authenticated user |
+| `/api/organizations/[orgId]/contracts` | `GET` | MAINTAINER |
+| `/api/organizations/[orgId]/contracts` | `POST` | OWNER |
+| `/api/organizations/[orgId]/contracts/[contractId]` | `GET` | MAINTAINER |
+| `/api/organizations/[orgId]/contracts/[contractId]` | `PATCH`, `DELETE` | OWNER |
+| `/api/organizations/[orgId]/programs` | `GET` | any active member |
+| `/api/organizations/[orgId]/programs` | `POST` | MAINTAINER |
+| `/api/organizations/[orgId]/programs/[programId]` | `GET` | any active member |
+| `/api/organizations/[orgId]/programs/[programId]` | `PATCH`, `DELETE` | MAINTAINER |
+| `/api/organizations/[orgId]/programs/[programId]/assignments` | `GET` | any active member |
+| `/api/organizations/[orgId]/programs/[programId]/assignments` | `POST` | MAINTAINER |
+| `/api/organizations/[orgId]/programs/[programId]/assignments/[assignmentId]` | `GET` | any active member |
+| `/api/organizations/[orgId]/programs/[programId]/assignments/[assignmentId]` | `PATCH`, `DELETE` | MAINTAINER |
+| `/api/organizations/[orgId]/billing-account` | `GET` | MANAGER |
+| `/api/organizations/[orgId]/billing-account` | `PATCH` | OWNER |
+| `/api/organizations/[orgId]/billing-account/wallet` | `GET` | MANAGER |
+| `/api/organizations/[orgId]/billing-account/wallet/top-ups` | `GET` | MANAGER |
+| `/api/organizations/[orgId]/billing-account/wallet/top-ups` | `POST` | OWNER |
+| `/api/organizations/[orgId]/billing-account/wallet/top-ups/[topUpId]` | `GET` | MANAGER |
+| `/api/organizations/[orgId]/billing-account/invoices` | `GET` | MANAGER |
+| `/api/organizations/[orgId]/billing-account/invoices` | `POST` | OWNER |
+| `/api/organizations/[orgId]/billing-account/invoices/[invoiceId]` | `GET` | MANAGER |
+| `/api/organizations/[orgId]/billing-account/invoices/[invoiceId]` | `PATCH` | OWNER |
+| `/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pay` | `POST` | OWNER |
+| `/api/organizations/[orgId]/billing-account/purchase-orders` | `GET` | MANAGER |
+| `/api/organizations/[orgId]/billing-account/purchase-orders` | `POST` | OWNER |
+| `/api/organizations/[orgId]/billing-account/purchase-orders/[poId]` | `GET` | MANAGER |
+| `/api/organizations/[orgId]/billing-account/purchase-orders/[poId]` | `PATCH`, `DELETE` | OWNER |
+| `/api/organizations/[orgId]/rate-cards` | `GET` | MANAGER |
+| `/api/organizations/[orgId]/rate-cards` | `POST` | OWNER |
+| `/api/organizations/[orgId]/rate-cards/[cardId]` | `GET` | MANAGER |
+| `/api/organizations/[orgId]/rate-cards/[cardId]` | `PATCH` | OWNER |
+| `/api/organizations/[orgId]/payout-account` | `GET` | MANAGER |
+| `/api/organizations/[orgId]/payout-account` | `PUT` | OWNER |
+| `/api/organizations/[orgId]/earnings` | `GET` | MANAGER |
+| `/api/organizations/[orgId]/payouts` | `GET` | MANAGER |
+| `/api/organizations/[orgId]/payouts` | `POST` | OWNER |
+| `/api/organizations/[orgId]/payouts/[payoutId]` | `GET` | MANAGER |
+| `/api/organizations/[orgId]/payouts/[payoutId]` | `PATCH` | OWNER |
+| `/api/organizations/[orgId]/sso` | `GET` | MANAGER |
+| `/api/organizations/[orgId]/sso` | `PATCH` | OWNER |
+| `/api/organizations/[orgId]/sso/providers` | `GET` | MANAGER |
+| `/api/organizations/[orgId]/sso/providers` | `POST` | OWNER |
+| `/api/organizations/[orgId]/sso/providers/[providerId]` | `GET` | MANAGER |
+| `/api/organizations/[orgId]/sso/providers/[providerId]` | `DELETE` | OWNER |
+| `/api/organizations/[orgId]/domain-claims` | `GET` | MANAGER |
+| `/api/organizations/[orgId]/domain-claims` | `POST` | OWNER |
+| `/api/organizations/[orgId]/domain-claims/[domain]` | `DELETE` | OWNER |
+| `/api/organizations/[orgId]/hris` | `GET` | MANAGER |
+| `/api/organizations/[orgId]/hris` | `PUT`, `DELETE` | OWNER |
+| `/api/organizations/[orgId]/hris/sync` | `GET` | MANAGER |
+| `/api/organizations/[orgId]/hris/sync` | `POST` | OWNER |
+| `/api/organizations/[orgId]/hris/csv-upload` | `POST` | OWNER |
+| `/api/organizations/[orgId]/consent` | `GET`, `POST` | MANAGER |
+| `/api/organizations/[orgId]/analytics` | `GET` | MANAGER |
+| `/api/organizations/[orgId]/activity` | `GET` | MANAGER |
+| `/api/organizations/[orgId]/catalog` | `GET` | MANAGER |
+| `/api/organizations/[orgId]/catalog` | `POST`, `DELETE` | OWNER |
+| `/api/organizations/[orgId]/catalog/search` | `GET` | MANAGER |
+| `/api/organizations/[orgId]/settings` | `GET` | MANAGER (read-only wrapper) |
+| `/api/admin/organizations/[orgId]/verify` | `POST` | platform ADMIN |
 
-**ORG_SUPPORT** (rank 30):
-- Available in all org kinds, but for PROVIDER orgs the support workflows (consultant dispute resolution, payout queries) only function when the flag is on
-- When the flag is off in a BUYER org, ORG_SUPPORT still works for basic support tasks (member queries, session issues)
+## Role narrowing at the API boundary
 
----
+`MemberRole` is the single vocabulary — no aliases, no back-compat
+mapping. Strings crossing the API boundary (BetterAuth `Invitation.role`,
+query params) are narrowed via `MemberRoleSchema` from
+`lib/labels/org-labels.ts`:
 
-## Edge Cases
+```ts
+import { MemberRoleSchema } from "@/lib/labels/org-labels";
 
-| Scenario | Behavior |
-|----------|----------|
-| Single role per org | A user can only have one `OrganizationMemberProfile` per org. No dual membership (e.g., cannot be both ORG_LEARNER and ORG_CONSULTANT in the same org). |
-| Multi-org membership | A user CAN be ORG_CONSULTANT in Org A and ORG_LEARNER in Org B. Each org has its own `OrganizationMemberProfile`. |
-| Org is DEACTIVATED | `requireOrgAccess` returns 403 "Organization has been deactivated" for ALL roles including ORG_OWNER. Only platform admins can reactivate. |
-| Member status is SUSPENDED | `requireOrgAccess` returns 403 "Membership is suspended". The member exists but cannot access any org resources. |
-| Member status is PENDING | Same as SUSPENDED: 403 "Membership is pending". Must be activated by an admin before access is granted. |
-| Role downgrade | Changing a member from ORG_ADMIN to ORG_LEARNER immediately restricts their API access. Dashboard nav updates on next page load. Audited in `OrgAuditLog` with action `ROLE_CHANGE`. |
-| ORG_OWNER transfer | Platform admin can set another member to ORG_OWNER and demote the original. There is no constraint limiting ORG_OWNER count per org. |
-| ADMIN user who is also an org member | The ADMIN bypass triggers first (line 365 in `auth-helpers.ts`). The user gets the synthesized ORG_OWNER stub, not their actual membership role. This is intentional -- platform admins always have full access. |
+const parsed = MemberRoleSchema.safeParse(invitation.role);
+if (!parsed.success) {
+  return NextResponse.json({ error: "Unknown role" }, { status: 400 });
+}
+// parsed.data is typed as MemberRole here.
+```
+
+No legacy `ORG_*` aliases are accepted. The DB is pre-MVP and will be
+reset; seeded roles use canonical values.
+
+## Membership status
+
+`MemberStatus` controls whether a role is live:
+
+| Value       | Meaning |
+|-------------|---------|
+| `PENDING`   | Invitation accepted or HRIS auto-provisioned but not yet activated (rare). |
+| `ACTIVE`    | The role is live. |
+| `SUSPENDED` | Temporarily blocked. API returns 403 with `"Membership is suspended"`. |
+| `REMOVED`   | Terminal. Row is retained for audit. |
+
+`requireOrgAccess` rejects anything that isn't `ACTIVE`.
+
+## Zod narrowers for self-service
+
+`lib/labels/org-labels.ts` exposes the subset roles allowed at
+self-service onboarding:
+
+```ts
+SelfServiceMemberRoleSchema = z.enum(["OWNER", "MAINTAINER", "MANAGER", "LEARNER"]);
+```
+
+`EXPERT` and `SUPPORT` are deliberately excluded — the first needs
+`canHost=true` plus the invite-driven EXPERT entry (see
+`06-expert-lifecycle.md`), the second is an operator role that only an
+existing OWNER can assign from Settings.
+
+## LEARNER ↔ EXPERT is disjoint
+
+LEARNER and EXPERT are treated as disjoint roles on a single
+`Membership`. The server refuses `PATCH /members/[memberId]` and the
+reactivation branch of `POST /members` when the requested transition
+is `LEARNER → EXPERT` or `EXPERT → LEARNER`. The policy lives in
+`lib/enterprise/role-transitions.ts::isBlockedRoleTransition`; callers
+that violate it receive a `409 ROLE_TRANSITION_BLOCKED`, which the
+dashboard translates through `humanizeOrgError` (see
+`lib/labels/org-errors.ts`) into: _"Members cannot switch between
+Learner and Expert roles. Remove the member and re-invite them with
+the new role instead."_
+
+The two roles wire the user up to different profile models
+(`ConsulteeProfile` vs `ConsultantProfile`) and different earnings
+flows, so flipping them in place would leave stale FKs. Removing +
+re-inviting forces a fresh Membership row with the right profile
+links and a clean audit trail. The pre-Arch-4 "apply to deliver"
+workflow — which used to live on `Membership.applicationNote /
+appliedAt / approvedAt / approvedBy` — was removed alongside this
+rule; those columns are gone (see `06-expert-lifecycle.md`).
+
+## Per-role landing in `/dashboard/organization/[orgId]`
+
+The bare org route is no longer a one-way bounce-to-personal for consumer
+roles. The entry-point router at
+`app/dashboard/organization/[orgId]/page.tsx` chooses the destination
+from the role:
+
+| Role | Lands on | Why |
+|------|----------|-----|
+| `OWNER` / `MAINTAINER` / `MANAGER` / `SUPPORT` | `/home` | Operator overview (analytics, members, billing). |
+| `LEARNER` | `/my-program` | Per-cycle ProgramAssignment + utilization. The only in-org consumer surface for sponsored bookings. |
+| `EXPERT` | `/my-arrangement` | Membership.payoutRecipient + RateCard split + recent earnings on org-tagged payments. |
+| no membership | personal dashboard fallback (`resolvePersonalDashboardHref` → `/dashboard`) | Stranger to this org — bounce out entirely. |
+
+Both `/my-program` and `/my-arrangement` are read-only in v1. A LEARNER
+cannot self-assign to a Program; an EXPERT cannot flip their own
+`payoutRecipient`. Mutations remain on operator pages. The "Personal
+Dashboard" footer chip on the sidebar (`resolvePersonalDashboardHref`)
+stays so consumers can hop back to their personal surface without
+hunting for the URL.
+
+## Related docs
+
+- `05-organization-lifecycle.md` — what a membership looks like in
+  each org status.
+- `06-expert-lifecycle.md` — how EXPERT gets populated.
+- `08-sso-and-authentication.md` — `defaultRoleForAutoJoin` on
+  `OrganizationSSOSettings`.
+- `21-api-reference.md` — exhaustive table with the audit actions
+  each route emits.

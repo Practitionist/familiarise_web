@@ -1,291 +1,312 @@
 /**
- * Organization resource — GET / PATCH / DELETE by Organization.id.
+ * GET    /api/organizations/[orgId]
+ * PATCH  /api/organizations/[orgId]
+ * DELETE /api/organizations/[orgId]
  *
- *   GET    — active member (read)
- *   PATCH  — ORG_ADMIN (profile + branding + limited BetterAuth Organization fields)
- *   DELETE — ORG_OWNER (soft delete → status DEACTIVATED)
- *
- * Rate validation for PROVIDER orgs (platformCommissionRate + orgRetainRate +
- * consultantPayoutRate must sum to 1.0) runs only when ENABLE_PROVIDER_ORGS is
- * on AND the caller is actually editing those fields on a PROVIDER/HYBRID org.
+ * Core org-record CRUD. GET returns the full merged shape the dashboard
+ * Home uses (capabilities, billing account summary, hosting-side summary,
+ * counts). PATCH accepts a narrow set of owner-editable fields and guards
+ * capability flips so we never end up with canSponsor=false && canHost=false.
+ * DELETE is owner-only AND only for orgs with no active contracts/invoices
+ * — otherwise admins must DEACTIVATE via the admin-verify endpoint.
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
-import { ENABLE_PROVIDER_ORGS } from "@/lib/feature-flags";
-import { OrganizationBillingMode, OrgSizeBucket } from "@prisma/client";
+import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
-const patchOrgSchema = z.object({
-  // BetterAuth Organization fields
-  name: z.string().trim().min(2).max(100).optional(),
-  logo: z.string().url().nullable().optional(),
+const SizeBucketSchema = z.enum([
+  "SMALL_1_50",
+  "MEDIUM_51_200",
+  "LARGE_201_1000",
+  "ENTERPRISE_1000_PLUS",
+]);
+const GstRegStatusSchema = z.enum(["REGULAR", "COMPOSITION", "UNREGISTERED"]);
 
-  // OrganizationProfile fields
-  billingEmail: z.string().email().optional(),
-  billingMode: z.nativeEnum(OrganizationBillingMode).optional(),
-  description: z.string().max(2000).nullable().optional(),
-  industry: z.string().max(100).nullable().optional(),
-  sizeBucket: z.nativeEnum(OrgSizeBucket).nullable().optional(),
-  website: z.string().url().nullable().optional(),
-  bannerImage: z.string().url().nullable().optional(),
-  primaryColor: z
-    .string()
-    .regex(/^#[0-9a-fA-F]{6}$/)
-    .nullable()
-    .optional(),
-  secondaryColor: z
-    .string()
-    .regex(/^#[0-9a-fA-F]{6}$/)
-    .nullable()
-    .optional(),
-  defaultCancellationPolicy: z.string().max(5000).nullable().optional(),
-  defaultRefundPolicy: z.string().max(5000).nullable().optional(),
-  seatsTotal: z.number().int().positive().nullable().optional(),
-  orgInvoiceCreditLimit: z.number().int().positive().nullable().optional(),
-  paymentTermsDays: z.number().int().min(1).max(120).optional(),
-
-  // PROVIDER-only fields (feature-flagged)
-  platformCommissionRate: z.number().min(0).max(1).optional(),
-  orgRetainRate: z.number().min(0).max(1).optional(),
-  consultantPayoutRate: z.number().min(0).max(1).optional(),
-  autoApproveConsultants: z.boolean().optional(),
-  payoutFrequency: z.enum(["WEEKLY", "BI_WEEKLY", "MONTHLY"]).optional(),
-  enforceOrganizationPlans: z.boolean().optional(),
-});
+const PatchBodySchema = z
+  .object({
+    name: z.string().trim().min(2).max(200).optional(),
+    slug: z
+      .string()
+      .trim()
+      .toLowerCase()
+      .min(2)
+      .max(80)
+      .regex(/^[a-z0-9-]+$/, "Slug may only contain lowercase letters, digits, and hyphens")
+      .optional(),
+    description: z.string().max(5000).nullable().optional(),
+    industry: z.string().max(120).nullable().optional(),
+    website: z.string().url().nullable().optional(),
+    sizeBucket: SizeBucketSchema.nullable().optional(),
+    logo: z.string().url().nullable().optional(),
+    bannerImage: z.string().url().nullable().optional(),
+    primaryColor: z
+      .string()
+      .regex(/^#[0-9a-fA-F]{6}$/, "Hex colour required")
+      .nullable()
+      .optional(),
+    secondaryColor: z
+      .string()
+      .regex(/^#[0-9a-fA-F]{6}$/, "Hex colour required")
+      .nullable()
+      .optional(),
+    billingEmail: z.string().email().optional(),
+    canSponsor: z.boolean().optional(),
+    canHost: z.boolean().optional(),
+    requiresPO: z.boolean().optional(),
+    paymentTermsDays: z.coerce.number().int().min(0).max(180).optional(),
+    gstin: z.string().length(15).nullable().optional(),
+    pan: z.string().length(10).nullable().optional(),
+    gstRegStatus: GstRegStatusSchema.optional(),
+    gstStateCode: z.string().length(2).nullable().optional(),
+    defaultCancellationPolicy: z.string().max(5000).nullable().optional(),
+    defaultRefundPolicy: z.string().max(5000).nullable().optional(),
+    enforceOrganizationPlans: z.boolean().optional(),
+    isPublic: z.boolean().optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, {
+    message: "PATCH body must contain at least one field",
+  });
 
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
 ) {
-  try {
-    const { orgId } = await params;
-    const access = await requireOrgAccess(orgId);
-    if (access.error) return access.error;
+  const { orgId } = await params;
+  const access = await requireOrgAccess(orgId, "LEARNER");
+  if (access.error) return access.error;
 
-    const organization = await prisma.organization.findUnique({
-      where: { id: orgId },
-      select: { id: true, name: true, slug: true, logo: true, createdAt: true },
-    });
-
-    return NextResponse.json({
-      organization,
-      profile: access.org,
-      membership: {
-        role: access.member.role,
-        status: access.member.status,
+  const org = await prisma.organization.findUnique({
+    where: { id: orgId },
+    include: {
+      billingAccount: {
+        select: {
+          id: true,
+          fundingSource: true,
+          currency: true,
+          walletBalance: true,
+          creditLimit: true,
+        },
       },
-    });
-  } catch (error) {
-    console.error("[API /organizations/[orgId] GET] error:", error);
+      payoutAccount: {
+        select: {
+          id: true,
+          status: true,
+          accountNumberLast4: true,
+          bankName: true,
+        },
+      },
+      _count: {
+        select: {
+          memberships: true,
+          contracts: true,
+          invoices: true,
+          purchaseOrders: true,
+          auditLogs: true,
+        },
+      },
+    },
+  });
+  if (!org) {
     return NextResponse.json(
-      { error: "Failed to fetch organization" },
-      { status: 500 },
+      { error: "Organization not found" },
+      { status: 404 },
     );
   }
+
+  return NextResponse.json({
+    organization: org,
+    membership: { role: access.member.role, status: access.member.status },
+  });
 }
 
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
 ) {
-  try {
-    const { orgId } = await params;
-    const access = await requireOrgAccess(orgId, "ORG_ADMIN");
-    if (access.error) return access.error;
+  const { orgId } = await params;
+  const access = await requireOrgOwner(orgId);
+  if (access.error) return access.error;
 
-    const body = await req.json();
-    const parsed = patchOrgSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: "Invalid request body", details: parsed.error.flatten() },
-        { status: 400 },
-      );
-    }
-
-    const data = parsed.data;
-
-    // Guard seatsTotal reduction below current usage.
-    // Setting seatsTotal < seatsUsed would create an impossible over-capacity state.
-    if (data.seatsTotal !== undefined && data.seatsTotal !== null) {
-      if (data.seatsTotal < access.org.seatsUsed) {
-        return NextResponse.json(
-          {
-            error: `Cannot set seat limit to ${data.seatsTotal} — ${access.org.seatsUsed} seats are currently in use. Remove learners first or choose a higher limit.`,
-          },
-          { status: 400 },
-        );
-      }
-    }
-
-    // PROVIDER orgs don't have a billingMode — reject any attempt to set one.
-    if (data.billingMode !== undefined && access.org.kind === "PROVIDER") {
-      return NextResponse.json(
-        {
-          error:
-            "PROVIDER organizations do not have a billing mode. Billing modes apply to BUYER and HYBRID orgs only.",
-        },
-        { status: 400 },
-      );
-    }
-
-    // Rate-sum validation for PROVIDER orgs (FEATURE-FLAGGED).
-    const ratesTouched =
-      data.platformCommissionRate !== undefined ||
-      data.orgRetainRate !== undefined ||
-      data.consultantPayoutRate !== undefined;
-    if (ratesTouched) {
-      if (!ENABLE_PROVIDER_ORGS) {
-        return NextResponse.json(
-          {
-            error:
-              "Revenue split rates are only editable on PROVIDER organizations.",
-            flag: "ENABLE_PROVIDER_ORGS",
-          },
-          { status: 501 },
-        );
-      }
-      if (access.org.kind === "BUYER") {
-        return NextResponse.json(
-          { error: "BUYER orgs do not have a consultant payout split." },
-          { status: 400 },
-        );
-      }
-      const platform =
-        data.platformCommissionRate ?? access.org.platformCommissionRate;
-      const orgRetain = data.orgRetainRate ?? access.org.orgRetainRate;
-      const consultant =
-        data.consultantPayoutRate ?? access.org.consultantPayoutRate;
-      const sum = platform + orgRetain + consultant;
-      if (Math.abs(sum - 1) > 0.0001) {
-        return NextResponse.json(
-          {
-            error: `Revenue rates must sum to 1.0 (got ${sum.toFixed(4)})`,
-          },
-          { status: 400 },
-        );
-      }
-    }
-
-    // Split the patch between BetterAuth Organization (name, logo) and
-    // OrganizationProfile (everything else).
-    const { name, logo, ...profileFields } = data;
-
-    const [updatedOrg, updatedProfile] = await prisma.$transaction(
-      async (tx) => {
-        // Guard billingMode mutation after first payment — runs INSIDE the
-        // transaction to close the TOCTOU gap where a payment webhook could
-        // land between the count check and the update if done outside.
-        // The billing mode is selected at org creation and must be immutable
-        // once real payments exist — switching mid-stream leaves the ledger
-        // inconsistent (e.g., credit pool for TAG_ONLY, unbilled payments
-        // after switching away from INVOICED_MONTHLY).
-        if (
-          data.billingMode !== undefined &&
-          data.billingMode !== access.org.billingMode
-        ) {
-          const hasPayments = await tx.payment.count({
-            where: { organizationProfileId: access.org.id },
-            take: 1,
-          });
-          if (hasPayments > 0) throw new Error("BILLING_MODE_LOCKED");
-        }
-
-        // When billingMode is set/changed to SEAT_PACK, ensure a credit pool
-        // exists. The POST handler creates the pool only when the org is
-        // created with SEAT_PACK — the two-step wizard creates the org with
-        // TAG_ONLY first (billingMode unknown at step 1), then PATCHes to the
-        // real mode at step 2, so the pool would otherwise never be created.
-        if (data.billingMode === "SEAT_PACK") {
-          await tx.orgCreditPool.upsert({
-            where: { organizationProfileId: access.org.id },
-            create: {
-              organizationProfileId: access.org.id,
-              balance: 0,
-              totalPurchased: 0,
-            },
-            update: {}, // pool already exists — don't reset balance
-          });
-        }
-
-        return Promise.all([
-          tx.organization.update({
-            where: { id: orgId },
-            data: {
-              ...(name !== undefined && { name }),
-              ...(logo !== undefined && { logo }),
-            },
-          }),
-          tx.organizationProfile.update({
-            where: { id: access.org.id },
-            data: {
-              ...profileFields,
-              ...(logo !== undefined && { logo }),
-            },
-          }),
-        ]);
-      },
-    );
-
-    return NextResponse.json({
-      organization: {
-        id: updatedOrg.id,
-        name: updatedOrg.name,
-        slug: updatedOrg.slug,
-        logo: updatedOrg.logo,
-      },
-      profile: updatedProfile,
-    });
-  } catch (error) {
-    if (error instanceof Error && error.message === "BILLING_MODE_LOCKED") {
-      return NextResponse.json(
-        {
-          error:
-            "Billing mode cannot be changed after the first payment. Contact support for billing mode migration.",
-        },
-        { status: 400 },
-      );
-    }
-    console.error("[API /organizations/[orgId] PATCH] error:", error);
+  const raw = await req.json().catch(() => null);
+  const parsed = PatchBodySchema.safeParse(raw);
+  if (!parsed.success) {
     return NextResponse.json(
-      { error: "Failed to update organization" },
-      { status: 500 },
+      { error: "Invalid body", detail: parsed.error.flatten() },
+      { status: 400 },
     );
+  }
+  const body = parsed.data;
+
+  try {
+    const updated = await prisma.$transaction(async (tx) => {
+      const current = await tx.organization.findUnique({
+        where: { id: orgId },
+        include: { billingAccount: { select: { id: true, walletBalance: true } } },
+      });
+      if (!current) {
+        throw Object.assign(new Error("Organization not found"), {
+          httpStatus: 404,
+        });
+      }
+
+      const nextCanSponsor = body.canSponsor ?? current.canSponsor;
+      const nextCanHost = body.canHost ?? current.canHost;
+      if (!nextCanSponsor && !nextCanHost) {
+        throw Object.assign(
+          new Error(
+            "Cannot disable both capabilities — at least one of canSponsor/canHost must remain true.",
+          ),
+          { httpStatus: 409 },
+        );
+      }
+
+      // Turning canSponsor OFF with a non-zero wallet would orphan the
+      // money. The owner must drain or refund the wallet first.
+      if (
+        body.canSponsor === false &&
+        (current.billingAccount?.walletBalance ?? 0) > 0
+      ) {
+        throw Object.assign(
+          new Error(
+            "Cannot disable canSponsor while wallet has a non-zero balance",
+          ),
+          { httpStatus: 409 },
+        );
+      }
+
+      // Slug uniqueness — only check on actual change so a no-op PATCH
+      // (e.g., wizard resubmit) doesn't 409 against the org's own row.
+      if (body.slug && body.slug !== current.slug) {
+        const slugTaken = await tx.organization.findUnique({
+          where: { slug: body.slug },
+          select: { id: true },
+        });
+        if (slugTaken && slugTaken.id !== orgId) {
+          throw Object.assign(
+            new Error(`Slug "${body.slug}" is already taken`),
+            { httpStatus: 409 },
+          );
+        }
+      }
+
+      const next = await tx.organization.update({
+        where: { id: orgId },
+        data: {
+          ...(body.name !== undefined && { name: body.name }),
+          ...(body.slug !== undefined && { slug: body.slug }),
+          ...(body.description !== undefined && { description: body.description }),
+          ...(body.industry !== undefined && { industry: body.industry }),
+          ...(body.website !== undefined && { website: body.website }),
+          ...(body.sizeBucket !== undefined && { sizeBucket: body.sizeBucket }),
+          ...(body.logo !== undefined && { logo: body.logo }),
+          ...(body.bannerImage !== undefined && { bannerImage: body.bannerImage }),
+          ...(body.primaryColor !== undefined && { primaryColor: body.primaryColor }),
+          ...(body.secondaryColor !== undefined && { secondaryColor: body.secondaryColor }),
+          ...(body.billingEmail !== undefined && { billingEmail: body.billingEmail }),
+          ...(body.canSponsor !== undefined && { canSponsor: body.canSponsor }),
+          ...(body.canHost !== undefined && { canHost: body.canHost }),
+          ...(body.requiresPO !== undefined && { requiresPO: body.requiresPO }),
+          ...(body.paymentTermsDays !== undefined && {
+            paymentTermsDays: body.paymentTermsDays,
+          }),
+          ...(body.gstin !== undefined && { gstin: body.gstin }),
+          ...(body.pan !== undefined && { pan: body.pan }),
+          ...(body.gstRegStatus !== undefined && { gstRegStatus: body.gstRegStatus }),
+          ...(body.gstStateCode !== undefined && { gstStateCode: body.gstStateCode }),
+          ...(body.defaultCancellationPolicy !== undefined && {
+            defaultCancellationPolicy: body.defaultCancellationPolicy,
+          }),
+          ...(body.defaultRefundPolicy !== undefined && {
+            defaultRefundPolicy: body.defaultRefundPolicy,
+          }),
+          ...(body.enforceOrganizationPlans !== undefined && {
+            enforceOrganizationPlans: body.enforceOrganizationPlans,
+          }),
+          ...(body.isPublic !== undefined && { isPublic: body.isPublic }),
+        },
+      });
+
+      await tx.orgAuditLog.create({
+        data: {
+          organizationId: orgId,
+          actorMembershipId: access.member.id,
+          category: "SETTINGS",
+          action: AUDIT_ACTIONS.SETTINGS.SETTINGS_CHANGED,
+          description: "Organization record updated",
+          details: { patch: body },
+        },
+      });
+
+      return next;
+    });
+
+    return NextResponse.json({ organization: updated });
+  } catch (err) {
+    if (err instanceof Error && "httpStatus" in err) {
+      const status =
+        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      return NextResponse.json({ error: err.message }, { status });
+    }
+    throw err;
   }
 }
 
-/**
- * DELETE — soft delete via status=DEACTIVATED. We keep the Organization row
- * intact so payment history and audit trails don't dangle.
- */
 export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
 ) {
-  try {
-    const { orgId } = await params;
-    const access = await requireOrgOwner(orgId);
-    if (access.error) return access.error;
+  const { orgId } = await params;
+  const access = await requireOrgOwner(orgId);
+  if (access.error) return access.error;
 
-    // Wrap in a transaction: clear OrgDomainClaim rows so those domains become
-    // available for other orgs to claim, then soft-delete the profile.
+  try {
     await prisma.$transaction(async (tx) => {
-      await tx.orgDomainClaim.deleteMany({
-        where: { organizationProfileId: access.org.id },
+      const current = await tx.organization.findUnique({
+        where: { id: orgId },
+        include: {
+          _count: {
+            select: {
+              contracts: true,
+              invoices: true,
+              purchaseOrders: true,
+              earnings: true,
+            },
+          },
+        },
       });
-      await tx.organizationProfile.update({
-        where: { id: access.org.id },
-        data: { status: "DEACTIVATED" },
-      });
+      if (!current) {
+        throw Object.assign(new Error("Organization not found"), {
+          httpStatus: 404,
+        });
+      }
+
+      const refs =
+        current._count.contracts +
+        current._count.invoices +
+        current._count.purchaseOrders +
+        current._count.earnings;
+      if (refs > 0) {
+        throw Object.assign(
+          new Error(
+            `Cannot delete an organization with contracts (${current._count.contracts}), invoices (${current._count.invoices}), POs (${current._count.purchaseOrders}), or earnings (${current._count.earnings}). Use the admin DEACTIVATE path instead.`,
+          ),
+          { httpStatus: 409 },
+        );
+      }
+
+      await tx.organization.delete({ where: { id: orgId } });
     });
 
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error("[API /organizations/[orgId] DELETE] error:", error);
-    return NextResponse.json(
-      { error: "Failed to delete organization" },
-      { status: 500 },
-    );
+    return new NextResponse(null, { status: 204 });
+  } catch (err) {
+    if (err instanceof Error && "httpStatus" in err) {
+      const status =
+        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      return NextResponse.json({ error: err.message }, { status });
+    }
+    throw err;
   }
 }

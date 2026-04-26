@@ -1,225 +1,187 @@
 /**
- * Curated plan catalog — GET / POST / DELETE.
+ * GET    /api/organizations/[orgId]/catalog
+ * POST   /api/organizations/[orgId]/catalog
+ * DELETE /api/organizations/[orgId]/catalog
  *
- * GET    — any active member. Lists consultant plans linked to this org.
- * POST   — ORG_ADMIN+. Links an existing plan to this org.
- * DELETE — ORG_ADMIN+. Unlinks a plan from this org.
+ * Org-curated plan catalog. An OrganizationPlan is a sponsored plan
+ * offering that the org pre-selects on behalf of its members — a subset
+ * of the public marketplace catalog with optional consultant assignments.
  *
- * Uses the existing organizationProfileId FK on ConsultationPlan,
- * SubscriptionPlan, WebinarPlan, and ClassPlan tables.
+ * DELETE at the collection endpoint is a bulk deactivate; per-plan
+ * detail + update lives under /plans/[planId] (managed by the existing
+ * plans route family, untouched here).
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
-interface CatalogItem {
-  id: string;
-  planType: "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS";
-  title: string;
-  price: number;
-  priceCurrency: string;
-  consultant: { name: string | null; image: string | null } | null;
-}
+const PlanTypeSchema = z.enum([
+  "CONSULTATION",
+  "SUBSCRIPTION",
+  "WEBINAR",
+  "CLASS",
+  "TRIAL",
+]);
 
-const planTypeSchema = z.enum(["CONSULTATION", "SUBSCRIPTION", "WEBINAR", "CLASS"]);
+const CurrencySchema = z.enum(["INR", "USD", "EUR", "GBP"]);
 
-const linkSchema = z.object({
-  planId: z.string().min(1),
-  planType: planTypeSchema,
+const CreateBodySchema = z.object({
+  planType: PlanTypeSchema,
+  title: z.string().min(1).max(200),
+  description: z.string().max(5000).nullable().optional(),
+  price: z.coerce.number().int().min(0),
+  priceCurrency: CurrencySchema.default("INR"),
+  isActive: z.boolean().default(true),
+  config: z.record(z.string(), z.unknown()).default({}),
+  assignedConsultantIds: z.array(z.string().uuid()).default([]),
 });
 
-async function getCatalog(orgProfileId: string): Promise<CatalogItem[]> {
-  const consultantSelect = {
-    select: {
-      user: { select: { name: true, image: true } },
-    },
-  };
+const QuerySchema = z.object({
+  planType: PlanTypeSchema.optional(),
+  active: z.enum(["true", "false"]).optional(),
+});
 
-  const [consultations, subscriptions, webinars, classes] = await Promise.all([
-    prisma.consultationPlan.findMany({
-      where: { organizationProfileId: orgProfileId },
-      select: {
-        id: true, title: true, price: true, priceCurrency: true,
-        consultantProfile: consultantSelect,
-      },
-    }),
-    prisma.subscriptionPlan.findMany({
-      where: { organizationProfileId: orgProfileId },
-      select: {
-        id: true, title: true, price: true, priceCurrency: true,
-        consultantProfile: consultantSelect,
-      },
-    }),
-    prisma.webinarPlan.findMany({
-      where: { organizationProfileId: orgProfileId },
-      select: {
-        id: true, title: true, price: true, priceCurrency: true,
-        consultantProfile: consultantSelect,
-      },
-    }),
-    prisma.classPlan.findMany({
-      where: { organizationProfileId: orgProfileId },
-      select: {
-        id: true, title: true, price: true, priceCurrency: true,
-        consultantProfile: consultantSelect,
-      },
-    }),
-  ]);
-
-  const items: CatalogItem[] = [];
-  for (const p of consultations)
-    items.push({ ...p, planType: "CONSULTATION", consultant: p.consultantProfile?.user ?? null });
-  for (const p of subscriptions)
-    items.push({ ...p, planType: "SUBSCRIPTION", consultant: p.consultantProfile?.user ?? null });
-  for (const p of webinars)
-    items.push({ ...p, planType: "WEBINAR", consultant: p.consultantProfile?.user ?? null });
-  for (const p of classes)
-    items.push({ ...p, planType: "CLASS", consultant: p.consultantProfile?.user ?? null });
-
-  return items;
-}
+const DeleteBodySchema = z.object({
+  planIds: z.array(z.string().uuid()).min(1).max(100),
+});
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
 ) {
-  try {
-    const { orgId } = await params;
-    const access = await requireOrgAccess(orgId);
-    if (access.error) return access.error;
+  const { orgId } = await params;
+  const access = await requireOrgAccess(orgId, { minimumRole: "MANAGER", canSponsor: true });
+  if (access.error) return access.error;
 
-    const catalog = await getCatalog(access.org.id);
-    return NextResponse.json({ catalog });
-  } catch (error) {
-    console.error("[API /catalog GET] error:", error);
-    return NextResponse.json({ error: "Failed to fetch catalog" }, { status: 500 });
+  const url = new URL(req.url);
+  const parsedQuery = QuerySchema.safeParse(
+    Object.fromEntries(url.searchParams.entries()),
+  );
+  if (!parsedQuery.success) {
+    return NextResponse.json(
+      { error: "Invalid query", detail: parsedQuery.error.flatten() },
+      { status: 400 },
+    );
   }
+  const q = parsedQuery.data;
+
+  const plans = await prisma.organizationPlan.findMany({
+    where: {
+      organizationId: orgId,
+      ...(q.planType && { planType: q.planType }),
+      ...(q.active === "true" && { isActive: true }),
+      ...(q.active === "false" && { isActive: false }),
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  return NextResponse.json({ data: plans });
 }
 
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
 ) {
-  try {
-    const { orgId } = await params;
-    const access = await requireOrgAccess(orgId, "ORG_ADMIN");
-    if (access.error) return access.error;
+  const { orgId } = await params;
+  const access = await requireOrgAccess(orgId, { minimumRole: "OWNER", canSponsor: true });
+  if (access.error) return access.error;
 
-    const body = await req.json();
-    const parsed = linkSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: "Invalid request", details: parsed.error.flatten() },
-        { status: 400 },
-      );
-    }
-
-    const { planId, planType } = parsed.data;
-
-    // IDOR guard: plan must exist and be unclaimed (organizationProfileId IS NULL).
-    // Prevents an ORG_ADMIN from hijacking a plan that already belongs to another org.
-    const planExists = await (async () => {
-      switch (planType) {
-        case "CONSULTATION": return prisma.consultationPlan.findUnique({ where: { id: planId }, select: { id: true, organizationProfileId: true } });
-        case "SUBSCRIPTION":  return prisma.subscriptionPlan.findUnique({ where: { id: planId }, select: { id: true, organizationProfileId: true } });
-        case "WEBINAR":       return prisma.webinarPlan.findUnique({ where: { id: planId }, select: { id: true, organizationProfileId: true } });
-        case "CLASS":         return prisma.classPlan.findUnique({ where: { id: planId }, select: { id: true, organizationProfileId: true } });
-      }
-    })();
-
-    if (!planExists) {
-      return NextResponse.json({ error: "Plan not found." }, { status: 404 });
-    }
-    if (planExists.organizationProfileId !== null) {
-      return NextResponse.json(
-        { error: "Plan is already linked to an organization." },
-        { status: 409 },
-      );
-    }
-
-    const data = { organizationProfileId: access.org.id };
-
-    switch (planType) {
-      case "CONSULTATION":
-        await prisma.consultationPlan.update({ where: { id: planId }, data });
-        break;
-      case "SUBSCRIPTION":
-        await prisma.subscriptionPlan.update({ where: { id: planId }, data });
-        break;
-      case "WEBINAR":
-        await prisma.webinarPlan.update({ where: { id: planId }, data });
-        break;
-      case "CLASS":
-        await prisma.classPlan.update({ where: { id: planId }, data });
-        break;
-    }
-
-    return NextResponse.json({ success: true }, { status: 201 });
-  } catch (error) {
-    console.error("[API /catalog POST] error:", error);
-    return NextResponse.json({ error: "Failed to link plan" }, { status: 500 });
+  const raw = await req.json().catch(() => null);
+  const parsed = CreateBodySchema.safeParse(raw);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid body", detail: parsed.error.flatten() },
+      { status: 400 },
+    );
   }
+  const body = parsed.data;
+
+  const plan = await prisma.$transaction(async (tx) => {
+    const created = await tx.organizationPlan.create({
+      data: {
+        organizationId: orgId,
+        planType: body.planType,
+        title: body.title,
+        description: body.description ?? null,
+        price: body.price,
+        priceCurrency: body.priceCurrency,
+        isActive: body.isActive,
+        // Cast lives here because Prisma's JSON type is unknown-ish;
+        // we've already validated shape via z.record above.
+        config: body.config as object,
+        assignedConsultantIds: body.assignedConsultantIds,
+      },
+    });
+
+    await tx.orgAuditLog.create({
+      data: {
+        organizationId: orgId,
+        actorMembershipId: access.member.id,
+        category: "CATALOG",
+        action: AUDIT_ACTIONS.CATALOG.CATALOG_PLAN_CREATED,
+        description: `Plan added to catalog: ${created.title}`,
+        details: {
+          planId: created.id,
+          planType: created.planType,
+          pricePaise: created.price,
+          currency: created.priceCurrency,
+        },
+      },
+    });
+
+    return created;
+  });
+
+  return NextResponse.json({ plan }, { status: 201 });
 }
 
 export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
 ) {
-  try {
-    const { orgId } = await params;
-    const access = await requireOrgAccess(orgId, "ORG_ADMIN");
-    if (access.error) return access.error;
+  const { orgId } = await params;
+  const access = await requireOrgAccess(orgId, { minimumRole: "OWNER", canSponsor: true });
+  if (access.error) return access.error;
 
-    const body = await req.json();
-    const parsed = linkSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: "Invalid request", details: parsed.error.flatten() },
-        { status: 400 },
-      );
-    }
-
-    const { planId, planType } = parsed.data;
-
-    // Ownership guard: plan must exist and belong to THIS org before unlinking.
-    const planExists = await (async () => {
-      switch (planType) {
-        case "CONSULTATION": return prisma.consultationPlan.findUnique({ where: { id: planId }, select: { id: true, organizationProfileId: true } });
-        case "SUBSCRIPTION":  return prisma.subscriptionPlan.findUnique({ where: { id: planId }, select: { id: true, organizationProfileId: true } });
-        case "WEBINAR":       return prisma.webinarPlan.findUnique({ where: { id: planId }, select: { id: true, organizationProfileId: true } });
-        case "CLASS":         return prisma.classPlan.findUnique({ where: { id: planId }, select: { id: true, organizationProfileId: true } });
-      }
-    })();
-
-    if (!planExists || planExists.organizationProfileId !== access.org.id) {
-      return NextResponse.json(
-        { error: "Plan not found or does not belong to this organization." },
-        { status: 404 },
-      );
-    }
-
-    const data = { organizationProfileId: null };
-
-    switch (planType) {
-      case "CONSULTATION":
-        await prisma.consultationPlan.update({ where: { id: planId }, data });
-        break;
-      case "SUBSCRIPTION":
-        await prisma.subscriptionPlan.update({ where: { id: planId }, data });
-        break;
-      case "WEBINAR":
-        await prisma.webinarPlan.update({ where: { id: planId }, data });
-        break;
-      case "CLASS":
-        await prisma.classPlan.update({ where: { id: planId }, data });
-        break;
-    }
-
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error("[API /catalog DELETE] error:", error);
-    return NextResponse.json({ error: "Failed to unlink plan" }, { status: 500 });
+  const raw = await req.json().catch(() => null);
+  const parsed = DeleteBodySchema.safeParse(raw);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid body", detail: parsed.error.flatten() },
+      { status: 400 },
+    );
   }
+
+  const { count } = await prisma.$transaction(async (tx) => {
+    const updated = await tx.organizationPlan.updateMany({
+      where: {
+        organizationId: orgId,
+        id: { in: parsed.data.planIds },
+      },
+      data: { isActive: false },
+    });
+
+    if (updated.count > 0) {
+      await tx.orgAuditLog.create({
+        data: {
+          organizationId: orgId,
+          actorMembershipId: access.member.id,
+          category: "CATALOG",
+          action: AUDIT_ACTIONS.CATALOG.CATALOG_PLAN_DEACTIVATED,
+          description: `Deactivated ${updated.count} catalog plan(s)`,
+          details: {
+            planIds: parsed.data.planIds,
+            deactivated: updated.count,
+          },
+        },
+      });
+    }
+
+    return updated;
+  });
+
+  return NextResponse.json({ deactivated: count });
 }

@@ -1,328 +1,173 @@
-# Payout Pipeline
+# Payout pipeline (host-side)
 
-**Status**: Implemented (Apr 2026)
-**Branch**: `feature/enterprise`
-**Scope**: PROVIDER and HYBRID orgs
-**Feature Flag**: `ENABLE_PROVIDER_ORGS`
+When a booking fires for an expert whose active EXPERT membership has
+`payoutRecipient = ORGANIZATION`, or for any org with `canHost = true`
+that captures its own share, an `OrganizationEarnings` row is written.
+A weekly / monthly / quarterly cron rolls those earnings into an
+`OrganizationPayout`.
 
-## Overview
+## `OrganizationEarnings`
 
-When a learner books a session with an org-affiliated consultant, the payment is split three ways: platform fee, org share, and consultant share. The org's slice is tracked as an `OrganizationEarnings` row. After a service-type-specific hold period, earnings become READY. The org owner can then batch all READY earnings into an `OrganizationPayout`, which a platform admin processes through Razorpay or Stripe. This pipeline mirrors the existing consultant payout system.
+```prisma
+model OrganizationEarnings {
+  id             String @id @default(uuid())
+  organizationId String
+  paymentId      String
+  grossAmountPaise     Int
+  platformFeePaise     Int
+  orgSharePaise        Int
+  consultantSharePaise Int
+  refundedAmountPaise  Int @default(0)
+  currency             Currency @default(INR)
 
----
+  // Rate-card snapshot at earnings creation.
+  rateCardIdApplied    String?
+  platformBpsApplied   Int?
+  orgBpsApplied        Int?
+  consultantBpsApplied Int?
 
-## Pipeline Stages
+  status    EarningStatus
+  holdUntil DateTime?
 
-The following sequence diagram shows the full payout pipeline from payment receipt through hold release, batch creation with distributed locking, to admin-initiated gateway disbursement.
-
-```mermaid
-sequenceDiagram
-    participant P as Payment
-    participant OE as OrganizationEarnings
-    participant Cron as releaseEarningsFromHold
-    participant Owner as Org Owner
-    participant API as Payouts API
-    participant Lock as Redis Lock
-    participant Admin as Platform Admin
-    participant GW as Payment Gateway
-
-    P->>OE: Created (PENDING, holdUntil set)
-    Note over OE: Hold: 24-168h by service type
-
-    Cron->>OE: holdUntil expired?
-    OE->>OE: Status: PENDING -> READY
-
-    Owner->>API: POST /payouts (create batch)
-    API->>Lock: acquireLock(org-payout:orgId, 30s)
-    Lock-->>API: token (or null = 409)
-    API->>OE: Find all READY + unbatched
-    API->>API: Sum orgShare, check >= 500 INR
-    API->>OE: Create OrganizationPayout (PENDING)
-    API->>OE: Link earnings via orgPayoutId
-    API->>Lock: releaseLock
-    API-->>Owner: Batch created
-
-    Admin->>API: POST /admin/org-payouts/process
-    API->>GW: Razorpay/Stripe payout
-    GW-->>API: Success
-    API->>OE: Update payout: COMPLETED
-    API->>OE: Update earnings: PAID
+  orgPayoutId String?
+  orgPayout   OrganizationPayout? @relation(...)
+  ...
+}
 ```
 
-```
-Payment received (learner checkout)
-        │
-        ▼
-┌──────────────────────────────────────────────┐
-│ OrganizationEarnings created                 │
-│ status: PENDING                              │
-│ holdUntil: now + hold period                 │
-│                                              │
-│ grossAmount    ── full payment amount        │
-│ platformFee    ── 10% (default)              │
-│ orgShare       ── 5% (default)               │
-│ refundedAmount ── 0                          │
-└──────────────────────┬───────────────────────┘
-                       │
-                       ▼ [hold period elapses]
-              Cron: releaseEarningsFromHold
-                       │
-                       ▼
-              status: READY
-              orgPayoutId: null (unbatched)
-                       │
-                       ▼ [ORG_OWNER clicks "Create Payout Batch"]
-┌──────────────────────────────────────────────┐
-│ OrganizationPayout created                   │
-│ status: PENDING                              │
-│ All READY earnings linked via orgPayoutId    │
-└──────────────────────┬───────────────────────┘
-                       │
-                       ▼ [Platform ADMIN processes]
-              POST /api/admin/org-payouts/process
-                       │
-                       ▼
-              Gateway disbursement
-              (Razorpay IMPS/RTGS or Stripe Connect)
-                       │
-                       ▼
-              OrganizationPayout.status: COMPLETED
-              Linked earnings status: PAID
-```
+Writes happen in the settlement path alongside `ConsultantEarnings` and
+`PaymentLeg` rows. The `refundedAmountPaise` column is decremented by
+the refund handler rather than the earnings row being deleted — an
+earnings row is append-only.
 
-### Hold Periods
+## `EarningStatus`
 
-Earnings remain in PENDING status until the hold period elapses, at which point a cron job transitions them to READY.
+| Value      | Transitions                                 |
+|------------|---------------------------------------------|
+| `PENDING`  | → `HELD` (cron moves past-hold), `REFUNDED` |
+| `HELD`     | → `RELEASED`, `REFUNDED`                    |
+| `RELEASED` | → `PAID`                                    |
+| `PAID`     | terminal                                    |
+| `REFUNDED` | terminal                                    |
 
-| Service Type | Hold Period | Rationale |
-| ------------ | ----------- | --------- |
-| CONSULTATION | 24 hours | Short sessions -- quick confirmation |
-| CLASS | 24 hours | Similar to consultations |
-| WEBINAR | 48 hours | Larger audiences -- more refund risk |
-| SUBSCRIPTION | 168 hours (7 days) | Recurring -- needs churn buffer |
+`holdUntil` is the earliest instant at which earnings may roll into a
+payout; it's typically `booking.completedAt + 3d` to cover dispute
+windows.
 
-**File**: `lib/payments/payouts/constants.ts` -- `PAYOUT_CONSTANTS.HOLD_PERIOD_HOURS`
-
----
-
-## Revenue Split (Default)
-
-The org-level rates are stored on `OrganizationProfile`:
-
-| Party | Default Rate | Field |
-| ----- | ------------ | ----- |
-| Platform | 10% | `platformCommissionRate` |
-| Organization | 5% | `orgRetainRate` |
-| Consultant | 85% | `consultantPayoutRate` |
-
-**Validation**: The three rates must sum to 1.0, enforced at the PATCH endpoint.
-
-**Worked example** -- ₹10,000 consultation:
-
-```
-┌─────────────────────────────────────────────────┐
-│ Payment: ₹10,000                                │
-│                                                  │
-│ Platform fee:    ₹1,000  (10%)  ── retained     │
-│ Org share:       ₹500    (5%)   ── OrgEarnings  │
-│ Consultant share:₹8,500  (85%)  ── separate     │
-│                                    payout system │
-└─────────────────────────────────────────────────┘
-```
-
-Per-consultant override: if `OrgMemberProfile.customConsultantPayoutRate` is set (e.g. 90%), that consultant's share is ₹9,000 and the remaining split adjusts accordingly.
-
----
-
-## Batch Creation
-
-### Who
-
-ORG_OWNER only.
-
-### Endpoint
+## Payout roll-up
 
 `POST /api/organizations/[orgId]/payouts`
+(`app/api/organizations/[orgId]/payouts/route.ts`) rolls a
+`periodStart..periodEnd` window of RELEASED earnings into a single
+`OrganizationPayout`. OWNER only. The handler:
 
-### What Happens
+1. Selects all `OrganizationEarnings` rows for the org that are
+   RELEASED and have `orgPayoutId IS NULL` within the window.
+2. Sums `orgSharePaise` minus `refundedAmountPaise` across the
+   selection.
+3. Creates an `OrganizationPayout` with `status = PENDING`.
+4. Updates each selected earnings row with `orgPayoutId = <new.id>`.
+5. Emits an `OrgAuditLog` entry (`PAYOUT` category,
+   `PAYOUT_INITIATED`).
 
-1. Pre-check eligibility via `getOrgPayoutEligibility()`
-2. If eligible, call `createOrgPayoutBatch()`
-3. Inside the batch function:
-   - Acquire a Redis distributed lock (`org-payout:{orgProfileId}`, 30s TTL)
-   - Find all READY, unbatched OrganizationEarnings
-   - Calculate totals: grossRevenue, platformFee, totalOrgShare, refunds, netPayout
-   - Verify `netPayout >= MINIMUM_PAYOUT_AMOUNT` (₹500)
-   - Verify payout account exists and is VERIFIED
-   - Create OrganizationPayout record (status: PENDING)
-   - Link all earnings to the payout via `orgPayoutId`
-   - Write PAYOUT_INITIATED audit log entry
-   - Release the lock
+A cron that processes PENDING payouts (calls Razorpay Payouts /
+Cashfree Payouts) is stubbed in v1 — see the harness verdict. The
+current API response marks the row as "ready for manual processing"
+and the admin flips it to `PROCESSED` via the PATCH handler.
 
-### Safety: Distributed Lock
+## `OrganizationPayout` fields for India statutory
 
-```
-acquireLock("org-payout:{orgProfileId}", 30_000)
-        │
-        ├── Success (token returned) → proceed with batch
-        │
-        └── Failure (null) → throw "Another payout batch is being
-                              created... Please try again." → 409
-```
+The model already carries every statutory column the Indian payout
+pipeline needs; population is stubbed but the fields are authoritative:
 
-The lock uses Upstash Redis `SET NX PX` and is released in a `finally` block. If Redis is unavailable (circuit breaker OPEN), `acquireLock` returns null and the caller sees the "try again" message.
-
-**File**: `lib/redis.ts` -- `acquireLock()`, `releaseLock()`
-
-### Minimum Threshold
-
-`PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT = 50000` (₹500 in paise)
-
-If the net payout amount is below ₹500, the batch is rejected with a 400 error.
-
-### Payout Account Requirement
-
-An `OrganizationPayoutAccount` must exist and have `status: VERIFIED`. Without it, batch creation fails.
-
----
-
-## Processing
-
-### Who
-
-Platform ADMIN only.
-
-### Endpoint
-
-`POST /api/admin/org-payouts/process`
-
-### What Happens
-
-1. Finds all OrganizationPayout records with `status: PENDING`
-2. For each payout, calls `processOrgPayout(payoutId)`
-3. Processing flow:
-
-```
-PENDING ──► PROCESSING ──► COMPLETED
-                │               │
-                │ on error      │
-                ▼               ▼
-             FAILED         Linked earnings
-                            status: PAID
+```prisma
+tdsSectionApplied String?   // "194J" | "194O" | "194C"
+tdsAmountPaise    Int?
+mustPayByDate     DateTime? // derived from MSME 15/45-day rule
+paRouteProvider   String?   // "RAZORPAYX" | "CASHFREE_PAYOUTS"
+paReferenceId     String?
+form15caPartCRef  String?
+form15cbRef       String?
+dtaaRateApplied   Decimal?
+rbiPurposeCode    String?   // P0802 | P0807
+fxRateUsed        Decimal?
+firceRef          String?
 ```
 
-**Claim-once atomicity**: The PENDING → PROCESSING transition uses a conditional
-`updateMany({ where: { id, status: PENDING } })`. If the affected row count is 0,
-another concurrent call already claimed the payout — the current call throws
-without dispatching to the gateway. This prevents duplicate disbursements even
-if the admin process route is triggered multiple times.
+### TDS
 
-### Gateway Dispatch
+- `ConsultantTaxInfo` + `ConsultantProfile.tdsSection` drive the TDS
+  section per expert. Org-side payouts default to `194J` (professional
+  services) unless `ConsultantProfile.tdsLowerRateCert` is populated
+  (Section 197 cert reference, rare).
+- The withheld amount is stored in `tdsAmountPaise` and filed against
+  the org's PAN. A follow-up cron emits quarterly `TDSRecord` rows.
 
-| Gateway | Condition | Transfer Mode |
-| ------- | --------- | ------------- |
-| Razorpay | `razorpayFundAccountId` set on payout account | IMPS (< ₹2L) or RTGS (>= ₹2L) |
-| Stripe | `stripeConnectId` set on payout account | Connect Transfer |
-| Neither | No gateway IDs configured | Marked as manual (COMPLETED with failureReason note) |
+### MSME 15/45-day rule
 
-**Razorpay mode selection**: `payout.amount >= 20000000` (₹2,00,000 in paise) uses RTGS; otherwise IMPS.
+When an expert has `ConsultantProfile.msmeStatus != NONE` and
+`writtenAgreementWithFamiliarise = true`, payment must land within 15
+days (no written agreement → 45 days) of the invoice date. The cron
+sets `mustPayByDate` accordingly; breaches are flagged on the admin
+payouts dashboard.
 
-**Idempotency**: Both Razorpay and Stripe payouts pass `idempotencyKey: "org-payout-{payoutId}"` to prevent duplicate disbursements. Combined with the atomic claim-once status transition above, this gives defence-in-depth: even if two jobs race past the claim check, the gateway itself will reject the duplicate.
+### Cross-border (FEMA)
 
-**File**: `lib/payments/payouts/org-payout-service.ts`
+For non-resident experts (`ConsultantProfile.residencyStatus =
+NON_RESIDENT`):
 
----
+- `form15caPartCRef` + `form15cbRef` hold the CA-certified tax
+  clearance references.
+- `rbiPurposeCode` is `P0802` (computing services) or `P0807`
+  (consultancy), read from the expert's profile.
+- `dtaaRateApplied` overrides `194J` when a DTAA treaty applies.
+- `fxRateUsed` + `firceRef` record the FX conversion and the FIRC
+  reference when the bank issues one.
 
-## Payout Account
+## `OrgPayoutAccount`
 
-**Endpoints**: `GET / PUT / DELETE /api/organizations/[orgId]/payout-account`
-**Auth**: ORG_OWNER only
+```prisma
+model OrganizationPayoutAccount {
+  id                     String @id @default(uuid())
+  organizationId         String @unique
+  accountHolderName      String
+  accountNumberEncrypted String
+  accountNumberLast4     String
+  bankName               String
+  ifscCode               String?
+  routingNumber          String?
+  swiftCode              String?
 
-### Bank Details (PUT body)
+  stripeConnectId       String? @unique
+  razorpayContactId     String? @unique
+  razorpayFundAccountId String?
 
-| Field | Required | Example |
-| ----- | -------- | ------- |
-| `accountHolderName` | Yes | "Acme Consulting Pvt Ltd" |
-| `accountNumber` | Yes | "1234567890123456" |
-| `bankName` | Yes | "HDFC Bank" |
-| `ifscCode` | No | "HDFC0001234" |
-| `routingNumber` | No | (for international banks) |
-| `swiftCode` | No | (for international banks) |
-
-### Encryption
-
-Account numbers are encrypted at rest using AES-256-GCM:
-
+  status     OrgPayoutAccountStatus @default(PENDING_VERIFICATION)
+  verifiedAt DateTime?
+  ...
+}
 ```
-Format:  [12 bytes IV] [ciphertext] [16 bytes auth tag]
-Key:     ORG_PAYOUT_ENCRYPTION_KEY env var (64 hex chars = 32 bytes)
-Generate: openssl rand -hex 32
-```
 
-The encrypted bytes are base64-encoded before storage. GET never returns the full account number -- only `accountNumberLast4`.
+`PUT /api/organizations/[orgId]/payout-account` (OWNER only) creates or
+replaces the row. The account number is encrypted at rest (column
+`accountNumberEncrypted`); only the last-4 is kept plain-text for
+display. Payout processing refuses to run against an account that
+isn't `VERIFIED`.
 
-**File**: `lib/payments/payouts/account-crypto.ts`
+## Payment attribution
 
-### Account Status
+`Payment.organizationId` carries the org that sponsored the payment;
+`Payment.earningsOrgId` (read via the relation through
+`OrganizationEarnings.paymentId`) is the hosting org for the booking.
+The two are equal when a HYBRID org sponsors its own expert; they are
+independent in every other case.
 
-| Status | Meaning |
-| ------ | ------- |
-| PENDING_VERIFICATION | Just created -- awaiting admin verification |
-| VERIFIED | Ready for payouts |
-| FAILED_VERIFICATION | Admin rejected or verification failed |
-| SUSPENDED | Temporarily blocked |
+## Related docs
 
----
-
-## Configurable Frequency
-
-`OrganizationProfile.payoutFrequency` supports three values:
-
-| Value | Meaning |
-| ----- | ------- |
-| WEEKLY | Payouts every week |
-| BI_WEEKLY | Payouts every two weeks |
-| MONTHLY (default) | Payouts once a month |
-
-**Current state**: Payout batch creation is manual (org owner triggers via dashboard). Automated cron-based batching based on `payoutFrequency` is a planned follow-up.
-
----
-
-## Audit Trail
-
-| Action | When | Description Example |
-| ------ | ---- | ------------------- |
-| `PAYOUT_INITIATED` | Batch created | "Payout batch created: 5000 INR (12 earnings)" |
-| `PAYOUT_PROCESSED` | Admin processes | "Payout {id} processed: 5000 INR" |
-| `SETTINGS_CHANGED` | Payout account upserted/deleted | "Payout account updated" / "Payout account deleted" |
-
----
-
-## Key Files
-
-| File | Purpose |
-| ---- | ------- |
-| `lib/payments/payouts/org-payout-service.ts` | Core: eligibility check, batch creation, processing |
-| `lib/payments/payouts/constants.ts` | Hold periods, minimum payout, RTGS threshold |
-| `lib/payments/payouts/account-crypto.ts` | AES-256-GCM encrypt/decrypt for bank account numbers |
-| `app/api/organizations/[orgId]/payouts/route.ts` | GET (list payouts) + POST (create batch) |
-| `app/api/organizations/[orgId]/payout-account/route.ts` | GET/PUT/DELETE payout account |
-| `app/api/admin/org-payouts/process/route.ts` | Admin: process all pending payouts |
-| `lib/redis.ts` | `acquireLock()` / `releaseLock()` for distributed lock |
-| `prisma/schema.prisma` (lines 660-766) | OrganizationPayoutAccount, OrganizationPayout, OrganizationEarnings |
-
----
-
-## Edge Cases
-
-| Scenario | Behavior | Status Code |
-| -------- | -------- | ----------- |
-| Concurrent batch creation | Redis lock prevents second call -- "try again" | 409 |
-| Below minimum threshold | "Net payout amount (X) is below minimum threshold (500)" | 400 |
-| Unverified payout account | "Payout account must be verified" | 400 |
-| No payout account configured | Eligibility check returns ineligible | 400 |
-| No READY earnings | "No earnings ready for payout" | 400 |
-| Gateway processing fails | Payout marked FAILED with `failureReason`, error re-thrown | 500 |
-| BUYER org requests payout | "BUYER orgs do not have payouts" | 400 |
-| Redis unavailable (circuit open) | `acquireLock` returns null -- treated as lock held | 409 |
-| Razorpay not configured | Payout marked COMPLETED with manual processing note | 200 |
+- `03-earnings-and-revenue.md` — rate-card bps snapshots that feed the
+  earnings row.
+- `06-expert-lifecycle.md` — how `payoutRecipient` determines whether
+  an earnings row even exists.
+- `18-three-ledger-discipline.md` — the Settlement ledger invariants.
+- `docs/compliance/india/**` — the live source of truth on TDS/MSME/FEMA
+  obligations (NOT edited by this doc set).

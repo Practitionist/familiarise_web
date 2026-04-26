@@ -1,276 +1,228 @@
-# Dashboard Pages
+# Dashboard pages
 
-**Status**: Implemented (Apr 2026)
-**Branch**: `feature/enterprise`
-**Scope**: `/dashboard/organization/[orgId]/*`
+Every organization-scoped dashboard page lives under
+`app/dashboard/organization/[orgId]/**`. Roles are gated server-side
+via `requireOrgAccess` at the API layer; the pages themselves do a
+thin `requireOrgAccess` check plus role-driven conditional rendering.
 
-## Overview
-
-The org dashboard is a parallel dashboard that lives alongside the personal consultant and consultee dashboards. Each organization a user belongs to gets its own dashboard with a collapsible sidebar, role-gated navigation, and kind-specific pages. The layout fetches org metadata on mount and uses it to compute which sidebar items are visible.
-
----
-
-## Entry Point
-
-### Organization List
-
-`/dashboard/organization` lists all organizations the user is a member of. Each card shows the org name, logo, kind, status, and the user's role. Clicking a card navigates to `/dashboard/organization/[orgId]/home`.
-
-The billing mode badge on each card is conditional: it is hidden for PROVIDER orgs, which have `billingMode = null` (PROVIDER orgs have no billing mode — they earn via revenue splits rather than purchasing sessions).
-
-### OrgSwitcher
-
-A dropdown in `DashboardNavbar` (visible in consultant, consultee, and admin layouts) that lists the user's org memberships. It self-hides when the user has zero memberships. Clicking an org navigates to its dashboard.
-
----
-
-## Layout
-
-The layout (`app/dashboard/organization/[orgId]/layout.tsx`) is a client component that:
-
-1. Fetches org details from `GET /api/organizations/[orgId]` (profile kind, billing mode, user role)
-2. Computes sidebar items based on role rank and org kind
-3. Renders a `CollapsibleSidebar` with the org's name, logo, and a bottom chip showing the logged-in user's name and role
-4. Redirects bare `/dashboard/organization/[orgId]` to `/dashboard/organization/[orgId]/home`
-
-### Role Rank Hierarchy
-
-The layout mirrors `ORG_ROLE_RANK` from `lib/auth-helpers.ts`:
-
-| Role | Rank |
-|------|------|
-| ORG_OWNER | 100 |
-| ORG_ADMIN | 80 |
-| ORG_MANAGER | 60 |
-| ORG_CONSULTANT | 40 |
-| ORG_SUPPORT | 30 |
-| ORG_LEARNER | 20 |
-
-A sidebar item with "minimum role ORG_MANAGER" is visible to ORG_MANAGER, ORG_ADMIN, and ORG_OWNER.
-
-### Sidebar Navigation
-
-| Page | Icon | Path | Minimum Role | Kind Required |
-|------|------|------|-------------|---------------|
-| Overview | Home | `home` | Any | Any |
-| Members | Users | `members` | Any | Any |
-| Invitations | Mail | `invitations` | ORG_ADMIN | Any |
-| Learners | GraduationCap | `learners` | Any | BUYER or HYBRID |
-| Consultants | UserCog | `consultants` | Any | PROVIDER or HYBRID |
-| Plans | Briefcase | `plans` | Any | Any |
-| Credits | Coins | `credits` | ORG_MANAGER | SEAT_PACK billing only |
-| Billing | CreditCard | `billing` | ORG_MANAGER | Any |
-| Payouts | Wallet | `payouts` | Any | PROVIDER or HYBRID |
-| Analytics | BarChart3 | `analytics` | ORG_MANAGER | Any |
-| Settings | Settings | `settings` | ORG_ADMIN | Any |
-
-Items where `show` evaluates to `false` are filtered out entirely -- they do not appear as disabled links.
-
----
-
-## Page-by-Page
-
-### Overview (/home)
-
-The hub page showing a snapshot of the organization. Built as a client component using React Query for parallel data fetching.
-
-**Stat cards (top row, 4 columns)**:
-- Active members (with learner count subtitle)
-- Learners (with seat usage: "X / Y seats" or "Unlimited seats")
-- Active plans
-- This month (gross revenue with booking count and month-over-month trend)
-
-**Billing-mode secondary cards (ORG_MANAGER+)**:
-- Outstanding invoices (count + amount) -- shown when count > 0
-- Pending charges (INVOICED_MONTHLY only): unbilled amount and payment count
-- Credit balance (SEAT_PACK only): current balance and lifetime purchased
-
-**PROVIDER/HYBRID stats (third row)**:
-- Active consultants count
-- Total payouts (completed payout amount)
-
-**Onboarding checklist** (ORG_ADMIN+, dismissible via localStorage):
-- Create organization (always done)
-- Invite your first team member (done when members > 1)
-- Create your first plan (done when active plans > 0)
-- Configure billing settings (done when billing data loads)
-
-Progress bar shows completion percentage. Dismiss button persists to `localStorage` key `orgOnboardingDismissed_[orgId]`.
-
-**Quick action cards** (role-gated, 2x4 grid):
-- Invite member (ORG_ADMIN)
-- Create plan (ORG_ADMIN)
-- View billing (ORG_MANAGER)
-- Org settings (ORG_ADMIN)
-
-**Recent activity feed**: Last 5 events (member_joined, payment, invoice_generated, invitation_sent) with time-ago labels.
-
-**File**: `app/dashboard/organization/[orgId]/home/page.tsx`
-
-### Members
-
-Member list with roles. Supports add/remove/edit operations (ORG_ADMIN+). Shows all member types: owners, admins, managers, consultants, support staff, and learners.
-
-Seat management: adding ORG_LEARNER members increments `seatsUsed` on the org profile. If `seatsTotal` is set, new additions are blocked when the seat budget is exhausted.
-
-### Invitations
-
-Send invites by email -- supports comma-separated or newline-separated addresses. Each invite creates a pending invitation record and sends an email via Resend.
-
-Pending invitations list with resend/cancel actions. Invitations expire after a configurable period.
-
-### Learners
-
-Filtered view of ORG_LEARNER members. Shows seat join timestamps and allows removal (which decrements `seatsUsed`).
-
-### Consultants (PROVIDER/HYBRID only)
-
-Two sections rendered on `app/dashboard/organization/[orgId]/consultants/page.tsx`:
-
-1. **Pending Applications** card (ORG_ADMIN+): a table of all PENDING consultant applications with Applicant, Note, Applied date, and Approve/Reject action buttons. Buttons POST to `/api/organizations/[orgId]/consultants` with `{ memberId, action: "APPROVE" | "REJECT" }`. Only rendered when there are pending applications.
-
-2. **Active Consultants** card: a table of all ACTIVE consultants with Consultant, Headline, Rating, Earnings mode, Verified columns. The Earnings column shows:
-   - `Internal` badge when `earningsRecipient === ORGANIZATION`
-   - Custom rate percentage (e.g., `90%`) when `customConsultantPayoutRate` is set
-   - `Default` otherwise
-
-**Per-consultant payout controls** are edited via the member PATCH endpoint:
+## Page tree
 
 ```
-PATCH /api/organizations/[orgId]/members/[memberId]
-{ customConsultantPayoutRate?: number | null, earningsRecipient?: "CONSULTANT" | "ORGANIZATION" }
+/dashboard/organization                        → switcher + "create org" CTA
+/dashboard/organization/create                 → org-creation wizard
+/dashboard/organization/[orgId]                → role-aware redirect:
+                                                  MANAGER+ / OWNER / SUPPORT → /home;
+                                                  LEARNER → /my-program;
+                                                  EXPERT  → /my-arrangement;
+                                                  no membership → personal
+                                                  dashboard via
+                                                  resolvePersonalDashboardHref
+/dashboard/organization/[orgId]/home           → overview: capability badges,
+                                                  counts, quick actions (operator
+                                                  view); sub-MANAGERs who deep-link
+                                                  here see a ConsumerViewCard with
+                                                  a role-specific deep link to
+                                                  /my-program or /my-arrangement
+/dashboard/organization/[orgId]/my-program     → LEARNER's per-org allocation:
+                                                  ProgramAssignment progress,
+                                                  coverage rules, utilization
+                                                  history. canSponsor only.
+/dashboard/organization/[orgId]/my-arrangement → EXPERT's per-org payout view:
+                                                  Membership.payoutRecipient,
+                                                  RateCard split, recent earnings
+                                                  on org-tagged payments. canHost
+                                                  only.
+/dashboard/organization/[orgId]/members        → unified Membership list
+/dashboard/organization/[orgId]/experts        → filtered list (role=EXPERT)
+/dashboard/organization/[orgId]/learners       → filtered list (role=LEARNER)
+/dashboard/organization/[orgId]/invitations    → pending/accepted/revoked
+/dashboard/organization/[orgId]/contracts      → contracts + linked programs
+/dashboard/organization/[orgId]/programs       → programs + assignments
+/dashboard/organization/[orgId]/purchase-orders → PO list + 3-way match view
+/dashboard/organization/[orgId]/billing        → BillingAccount + top-ups + invoices
+/dashboard/organization/[orgId]/credits        → legacy alias for /billing
+                                                  (wallet view; kept for redirects)
+/dashboard/organization/[orgId]/payouts        → OrganizationPayout list + TDS
+                                                  summary (host-side only)
+/dashboard/organization/[orgId]/analytics      → rollups (bookings, revenue,
+                                                  earnings, wallet burn-down)
+/dashboard/organization/[orgId]/consent        → ConsentArtifact roster +
+                                                  DPDP breach log
+/dashboard/organization/[orgId]/settings       → branding + policy
+/dashboard/organization/[orgId]/settings/sso   → SSO policy + providers +
+                                                  domain claims
 ```
 
-Both fields are gated behind `ENABLE_PROVIDER_ORGS`. The inline edit UI for these fields is a follow-up — for now they are editable via direct API call or SQL.
+A few additional surfaces are not in the org-scoped tree:
 
-When `ENABLE_PROVIDER_ORGS=false`, the consultants page shows a lock card (see Lock Card Pattern below).
+- `/organizations/invite/[token]` — invite-accept landing
+  (`app/organizations/invite/[token]/page.tsx`).
+- `/dashboard/org-admin/[orgAdminId]/**` — **the operator (cross-org)
+  dashboard.** Keyed on `OrgAdminProfile.id`. Has its own sidebar
+  (mirrors /dashboard/admin and /dashboard/staff) with four pages:
+    - `/home` — cross-org stats row + grid of orgs you OWN + "+ New
+      organization" CTA. Replaces the old `/dashboard/organization`
+      switcher list (which now 308-redirects here for OrgAdmins).
+    - `/activity` — cross-org audit feed aggregating `OrgAuditLog` rows
+      across all owned orgs. Cursor-paginated. Distinct from per-org
+      `/audit` which scopes to one org and supports rich filters.
+    - `/billing` — cross-org outstanding invoices + wallet balance
+      roll-up. Distinct from per-org `/billing` which mutates one org's
+      wallet/invoices. Read-only.
+    - `/settings` — operator-level preferences scaffold (default
+      landing org, notification routing). Storage decision deferred to
+      v1.1; the page exists so the sidebar route doesn't 404.
+    - `/create` — same `<CreateOrganizationWizard />` as
+      `/dashboard/organization/create`, but inside this dashboard's
+      chrome (operators creating their 2nd, 3rd, … org never leave the
+      chrome). Both entry points redirect to
+      `/dashboard/organization/<newOrgId>/home` on success.
+- `/dashboard/admin/**` — the platform admin surface that can verify,
+  suspend, or deactivate any org. Lives outside this doc set.
 
-**Files**:
-- Page: `app/dashboard/organization/[orgId]/consultants/page.tsx`
-- List/approval API: `app/api/organizations/[orgId]/consultants/route.ts`
-- Payout-controls PATCH: `app/api/organizations/[orgId]/members/[memberId]/route.ts`
+The bare `/dashboard/organization` URL is now a server-redirect:
+OrgAdmin → `/dashboard/org-admin/<id>/home`; non-OrgAdmin → `/dashboard`.
+The org grid that used to live there is gone — non-OrgAdmin members
+(LEARNER, EXPERT) navigate between orgs via the OrganizationSwitcher
+dropdown in the top bar, which never required a list page.
 
-### Plans
+## Visibility by capability
 
-Org-owned plan catalog spanning all four service types: CONSULTATION, SUBSCRIPTION, WEBINAR, CLASS. Plans are assigned to specific consultants or made available to all org consultants.
+Visibility here is the **capability** gate only. Every tab is **also** role-gated — see the "Min role" column. "Min role" reflects what the page itself enforces via `useRequireOrgAccess` / `useRequireOrgRole` (or, for pages that have no page-level gate, the API gate that fails first). The canonical API gate matrix lives in `04-roles-and-permissions.md:63-134`.
 
-When `enforceOrganizationPlans=true`, consultants in the org can only use org-created plans (personal plans are hidden).
+| Page           | SPONSOR | HOST | HYBRID | Min role  | In sidebar? | Notes |
+|----------------|---------|------|--------|-----------|-------------|-------|
+| `/home`        | ✅      | ✅   | ✅     | any       | yes | Renders operator stat grid for MANAGER+; role-branched ConsumerViewCard for sub-MANAGER deep-links. |
+| `/my-program`  | ✅      | —    | ✅     | any active member (page filters server-side to caller's assignments) | yes (LEARNER + canSponsor only) | Per-cycle ProgramAssignment progress, coverage rules, utilization history. 404 on canSponsor=false. |
+| `/my-arrangement` | —    | ✅   | ✅     | any active member (page filters to caller's earnings) | yes (EXPERT + canHost only) | Membership.payoutRecipient, default RateCard split, recent earnings on org-tagged payments. 404 on canHost=false. |
+| `/members`     | ✅      | ✅   | ✅     | MANAGER   | yes | — |
+| `/experts`     | —       | ✅   | ✅     | MANAGER   | yes (if `canHost`) | Hidden when `canHost = false`. |
+| `/learners`    | ✅      | —    | ✅     | MANAGER   | yes (if `canSponsor`) | Hidden when `canSponsor = false`. |
+| `/invitations` | ✅      | ✅   | ✅     | MAINTAINER| yes | Send-invite button disabled pre-verification; uses `humanizeOrgError` for `ORG_NOT_VERIFIED`. |
+| `/programs`    | ✅      | —    | ✅     | MAINTAINER| yes (if `canSponsor`) | Program subtypes only apply to sponsored bookings. |
+| `/billing`     | ✅      | —    | ✅     | MANAGER   | yes (if `canSponsor`) | BillingAccount summary + wallet + invoices. See TODO below — code currently splits this into two pages (`/billing` + `/credits`), which diverges from the unified design described here. |
+| `/payouts`     | —       | ✅   | ✅     | MANAGER   | yes (if `canHost`) | Host-side only. |
+| `/analytics`   | ✅      | ✅   | ✅     | MANAGER   | yes | Rollups respect capability — host-side numbers hidden when `canHost = false` and vice versa. |
+| `/settings`    | ✅      | ✅   | ✅     | MAINTAINER| yes | Branding + policy. |
+| `/settings/sso`| ✅      | ✅   | ✅     | **OWNER** | no — reached from inside /settings | SSO policy + providers + domain claims. |
+| `/contracts`   | ✅      | —    | ✅     | MAINTAINER (API) | **no — deep-link only** | Page has no `useRequireOrgAccess` gate today; relies on API rejection + sidebar omission. |
+| `/purchase-orders` | ✅  | —    | ✅     | MANAGER (API) | **no — deep-link only** | Same as `/contracts` — page renders but API calls fail for sub-MANAGER. |
+| `/consent`     | ✅      | ✅   | ✅     | MANAGER (API) | **no — deep-link only** | DPDP artifact roster; not capability-gated. |
 
-### Credits (SEAT_PACK only)
+> The `/plans` page (previous "org catalog" over `OrganizationPlan`)
+> was removed in the legacy-stub cleanup; its capability-driven
+> replacement (`/catalog`) is reserved in the sidebar with
+> `show: false` and will re-enable when the page ships.
 
-Visible only when `billingMode === SEAT_PACK` and role >= ORG_MANAGER.
+### TODO — `/billing` vs `/credits` unification (code drift)
 
-- **Credit pool**: Current balance and total purchased
-- **Purchase credits**: Razorpay checkout to add credits to the pool
-- **Credit ledger**: Immutable transaction log showing every credit/debit (purchases, bookings, refunds)
+This doc describes `/billing` as the single BillingAccount surface
+(top-ups + invoices together), with `/credits` kept only as a
+redirect alias for backward compatibility.
 
-### Billing
+The code currently diverges from that design:
 
-Invoice list with status badges (DRAFT, SENT, PAID, OVERDUE, CANCELLED). Manual invoice generation button (ORG_OWNER). Outstanding balance summary card.
+- `app/dashboard/organization/[orgId]/billing/BillingPageClient.tsx`
+  (671 lines) ships the invoice / payment-terms / pending-charges
+  view only.
+- `app/dashboard/organization/[orgId]/credits/page.tsx` (475 lines)
+  ships the wallet balance / top-up / WalletEntry history view as
+  a distinct, non-redirecting page.
+- The sidebar renders both as separate tabs under different gates
+  (`layout.tsx:186-199`).
 
-For INVOICED_MONTHLY orgs: shows pending charges (unbilled bookings) and credit limit status.
+Impact: a WALLET-funded org's OWNER visits Credits to top up the
+wallet but Billing to see receipts / invoices — two tabs for one
+conceptual concern. Observed during manual testing: the Billing
+page shows "NET-60 payment terms" and a "Create invoice" button
+even for WALLET-funded orgs where neither applies.
 
-See `docs/enterprise/10-invoicing.md` for full invoicing details.
+Resolution options for the senior-dev owner:
 
-### Payouts (PROVIDER/HYBRID only)
+1. **Preferred — unify (docs are right).** Fold the wallet UI from
+   `/credits/page.tsx` into `BillingPageClient.tsx` as a
+   `fundingSource`-branching section. Turn `/credits` into a
+   server-side redirect to `/billing` (per the docs' "legacy alias
+   kept for redirects"). Drop the separate Credits sidebar tab.
 
-```
-+------------------------------------------------------+
-|  Payouts                                              |
-|  Settlement history for the organization              |
-+------------------------------------------------------+
-|  [Total paid out]  [Pending]  [Total payouts]        |
-|   Rs 2,40,000       Rs 45,000   8                    |
-+------------------------------------------------------+
-|  [ Create Payout Batch ]  (ORG_OWNER only)           |
-+------------------------------------------------------+
-|  Payout History                                       |
-|  Period      | Gross      | Net       | Status | Date|
-|  01/03-31/03 | Rs 3,00,000| Rs 2,70,000| Paid  | 5/4|
-|  01/02-28/02 | Rs 2,50,000| Rs 2,25,000| Paid  | 3/3|
-+------------------------------------------------------+
-```
+2. **Alternate — embrace the split.** If the separation is
+   deliberate, update this doc to describe two first-class pages
+   and clean up the BillingPage surface so non-WALLET-specific
+   cards (NET terms, Create invoice) don't render on a WALLET
+   org's `/billing`.
 
-- **Summary cards**: Total paid out, pending amount, total payout count
-- **Create Payout Batch**: ORG_OWNER only. Calls `POST /api/organizations/[orgId]/payouts` which checks eligibility and creates a batch from READY earnings
-- **Payout history table**: Period, gross, net, status badge, date
+Do NOT legitimize the current drift by leaving both pages as-is —
+the duplicate-purpose sidebar surface is a real UX bug.
 
-When `ENABLE_PROVIDER_ORGS=false`, shows a lock card.
+> **Sidebar vs page-level note.** `/contracts`, `/purchase-orders`,
+> and `/consent` exist as routes but are not listed in the sidebar
+> memo (`layout.tsx:164-208`). They also lack page-level
+> `useRequireOrgAccess` guards, so a sub-MANAGER who deep-links to
+> them will see the page chrome load, then watch every API call
+> fail. Worth adding either a `useRequireOrgAccess` guard + sidebar
+> entry, or an explicit redirect — tracked as follow-up.
 
-**File**: `app/dashboard/organization/[orgId]/payouts/page.tsx`
+## Navigation source of truth
 
-### Analytics
+The sidebar is built in
+`app/dashboard/organization/[orgId]/layout.tsx` (`sidebarItems`
+memo) from three inputs: the org's `canSponsor` / `canHost` /
+`fundingSource` booleans, and the current user's `MemberRole`
+ranked via the local `isAtLeast()` helper (duplicated narrowly from
+`lib/auth-helpers.ts` because the layout runs before the org query
+cache is warm). The sidebar is cosmetic — it does not re-derive
+from `deriveCapabilityKind()` and it does not enforce authorization.
+Every page and API route still calls `requireOrgAccess` / `useRequireOrgAccess`
+independently. Items that would 404/403/501 are simply hidden to
+keep the nav tidy.
 
-Six-card stat grid for ORG_MANAGER+. Shows aggregate metrics across bookings, revenue, member growth, and plan performance.
+## Personal dashboard routing
 
-### Settings
+The "Personal Dashboard" chip at the bottom of the org sidebar
+resolves its href through a single helper,
+`resolvePersonalDashboardHref` in `lib/labels/personal-dashboard.ts`.
+Priority: `orgAdminProfile → consultantProfile → consulteeProfile` —
+operator identity wins over consumer identity, and
+`ConsultantProfile` wins over `ConsulteeProfile` for users who have
+both. If the user has none of the three, the chip is hidden. The same
+resolver backs the invitations dialog, `OrgContextBar`, and the org
+layout shell; do not inline a ternary.
 
-ORG_ADMIN+ access. Sub-sections:
+## Invitations dialog polish
 
-- **Profile**: Name, description, industry, website
-- **Branding**: Logo, banner image, primary/secondary colors
-- **Billing config**: Payment terms, seat budget, credit limit — this card is hidden for PROVIDER orgs (`billingMode = null`)
-- **PROVIDER/HYBRID specific**: Rate configuration (`platformCommissionRate`, `orgRetainRate`, `consultantPayoutRate` -- must sum to 1.0), payout frequency (`payoutFrequency`: WEEKLY, BIWEEKLY, MONTHLY), `autoApproveConsultants` toggle, `enforceOrganizationPlans` toggle
-- **SSO sub-page**: `/settings/sso` for SAML/OIDC configuration
+`/dashboard/organization/[orgId]/invitations` disables the "Send
+invite" button with a tooltip when the org's status is
+`PENDING_VERIFICATION`. Any `ORG_NOT_VERIFIED` error returned from
+the POST is run through `humanizeOrgError` (`lib/labels/org-errors.ts`)
+before it reaches the toast, so users see the friendly sentence
+instead of the raw error code.
 
----
+## Wizard
 
-## Lock Card Pattern
+`/dashboard/organization/create` uses the self-service narrowers from
+`lib/labels/org-labels.ts`:
 
-When `ENABLE_PROVIDER_ORGS=false`, the Consultants and Payouts pages display a lock card instead of their normal content:
+- `SelfServiceFundingSourceSchema` limits the dropdown to `PERSONAL |
+  WALLET | INVOICE | LICENSE` (no PROJECT).
+- `SelfServiceMemberRoleSchema` limits the default-role selector to
+  `OWNER | MAINTAINER | MANAGER | LEARNER`.
 
-```
-+------------------------------------------------------+
-|  [Lock icon]  Provider tier required                 |
-|                                                       |
-|  Payouts are available once your organization joins   |
-|  the Provider tier. Contact us to enable it.          |
-+------------------------------------------------------+
-```
+The wizard POSTs `{ canSponsor, canHost, fundingSource, ... }` to
+`/api/organizations`. An INERT-result body (both booleans false) is
+blocked at the Zod layer before reaching the server.
 
-The detection mechanism:
-1. Page fetches data from the API (e.g., `GET /api/organizations/[orgId]/payouts`)
-2. API returns `{ error: "...", flag: "ENABLE_PROVIDER_ORGS" }` with status 501
-3. Dashboard checks `res.status === 501` and inspects the `flag` field
-4. If `flag` is present, renders the lock card instead of the normal view
+## Session refetch on membership change
 
-This pattern ensures the sidebar links can remain visible (for discoverability) while clearly communicating that the feature requires a tier upgrade.
+Any API call that flips a membership role (e.g.
+`PATCH /members/[memberId]`) returns a fresh `Membership` shape. The
+dashboard shell listens for the response and re-fetches the session
+via BetterAuth's session client so `organizationMemberships[]` is
+updated without a full reload.
 
----
+## Related docs
 
-## Org Creation Wizard
-
-The org creation flow at `/dashboard/organization/create` has a variable number of steps depending on org kind:
-
-- **BUYER** — 5 steps: Org Info → Billing & Seats → Branding → Invite Team → Review
-- **PROVIDER** — 5 steps: Org Info → Revenue Rates → Branding → Invite Team → Review (`billingMode` is omitted from the POST)
-- **HYBRID** — 6 steps: Org Info → Billing & Seats → Revenue Rates → Branding → Invite Team → Review
-
-| Step | Kind | Name | Fields |
-|------|------|------|--------|
-| 1 | All | OrgInfo | Name, slug, description, industry, size bucket, kind selector |
-| 2 | BUYER, HYBRID | Billing & Seats | Billing email, billing mode (TAG_ONLY / SEAT_PACK / INVOICED_MONTHLY), seats |
-| 2 (PROVIDER) / 3 (HYBRID) | PROVIDER, HYBRID | Revenue Rates | Platform commission %, org retain %, consultant payout % — must sum to 100% |
-| 3/4 | All | Branding | Logo upload, primary color, secondary color |
-| 4/5 | All | InviteTeam | Email addresses (comma/newline separated), role selector |
-| 5/6 | All | Review | Summary of all fields, "Create Organization" button |
-
-The `RevenueRatesStep` component renders three percentage inputs with a live sum validator; the "Next" button is disabled until all three values sum to exactly 100%.
-
-When `ENABLE_PROVIDER_ORGS=false`, PROVIDER and HYBRID options are hidden from the kind selector in Step 1.
-
-**Types file**: `app/dashboard/organization/create/types.ts`
-
----
-
-## Key Files
-
-| File | Purpose |
-|------|---------|
-| `app/dashboard/organization/[orgId]/layout.tsx` | Sidebar, role gating, org data fetch |
-| `app/dashboard/organization/[orgId]/home/page.tsx` | Overview dashboard |
-| `app/dashboard/organization/[orgId]/payouts/page.tsx` | Payouts page with lock card |
-| `app/dashboard/organization/create/types.ts` | Wizard step types |
-| `components/dashboard/CollapsibleSidebar.tsx` | Shared sidebar component |
-| `components/dashboard/StatCard.tsx` | Stat card component |
-| `app/dashboard/organization/[orgId]/useOrgRole.ts` | `useOrgRole` hook (`isAtLeast` helper) |
+- `00-overview.md` — the session shape each page consumes.
+- `01-organization-types.md` — capability behaviour that drives
+  visibility.
+- `04-roles-and-permissions.md` — role gates at the API layer.
+- `21-api-reference.md` — the route each page calls.

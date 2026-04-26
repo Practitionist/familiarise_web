@@ -1,15 +1,11 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Textarea } from "@/components/ui/textarea";
-import { useToast } from "@/hooks/use-toast";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { use, useState } from "react";
+import { use } from "react";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import type {
   PaymentDetail,
@@ -17,7 +13,12 @@ import type {
   PaymentDetailDispute,
 } from "@/types/payments";
 
-// Fetch payment details
+// Manual refunds ship with the live checkout/program wiring — the admin
+// refund flow will rebuild on top of `WalletEntry` + `SettlementLedgerEntry`
+// + `OrganizationEarnings.refundedAmountPaise`. Until then this page is
+// read-only: operators can see refund history that the system wrote from
+// automated paths (gateway-originated refunds, dispute resolutions).
+
 async function fetchPaymentDetails(paymentId: string): Promise<PaymentDetail> {
   const response = await fetch(`/api/admin/payments/${paymentId}`);
   if (!response.ok) {
@@ -26,37 +27,12 @@ async function fetchPaymentDetails(paymentId: string): Promise<PaymentDetail> {
   return response.json() as Promise<PaymentDetail>;
 }
 
-// Create refund
-async function createRefund(data: {
-  paymentId: string;
-  amount?: number;
-  reason?: string;
-}) {
-  const response = await fetch("/api/payments/refunds", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || "Failed to create refund");
-  }
-
-  return response.json();
-}
-
 interface PageProps {
   params: Promise<{ paymentId: string }>;
 }
 
 export default function PaymentDetailsPage({ params }: PageProps) {
   const resolvedParams = use(params);
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
-  const [refundAmount, setRefundAmount] = useState("");
-  const [refundReason, setRefundReason] = useState("");
-  const [showRefundForm, setShowRefundForm] = useState(false);
 
   const {
     data: payment,
@@ -67,37 +43,6 @@ export default function PaymentDetailsPage({ params }: PageProps) {
     queryFn: () => fetchPaymentDetails(resolvedParams.paymentId),
     staleTime: 30 * 1000,
   });
-
-  const refundMutation = useMutation({
-    mutationFn: createRefund,
-    onSuccess: () => {
-      toast({
-        title: "Refund Created",
-        description: "The refund has been initiated successfully.",
-      });
-      queryClient.invalidateQueries({
-        queryKey: ["admin-payment", resolvedParams.paymentId],
-      });
-      setShowRefundForm(false);
-      setRefundAmount("");
-      setRefundReason("");
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Refund Failed",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-
-  const handleRefund = () => {
-    refundMutation.mutate({
-      paymentId: resolvedParams.paymentId,
-      amount: refundAmount ? parseFloat(refundAmount) : undefined,
-      reason: refundReason || undefined,
-    });
-  };
 
   if (error) {
     return (
@@ -149,11 +94,6 @@ export default function PaymentDetailsPage({ params }: PageProps) {
           </Link>
           <h1 className="text-3xl font-bold text-gray-900">Payment Details</h1>
         </div>
-        {payment.paymentStatus === "SUCCEEDED" && !showRefundForm && (
-          <Button onClick={() => setShowRefundForm(true)} variant="destructive">
-            Issue Refund
-          </Button>
-        )}
       </div>
 
       {/* Payment Info */}
@@ -254,89 +194,6 @@ export default function PaymentDetailsPage({ params }: PageProps) {
           </CardContent>
         </Card>
       </div>
-
-      {/* Refund Form */}
-      {showRefundForm && (
-        <Card className="border-red-200">
-          <CardHeader>
-            <CardTitle className="text-red-600">Issue Refund</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <Label htmlFor="refundAmount">
-                Refund Amount (leave empty for full refund)
-              </Label>
-              {/* H7 FIX: Calculate remaining refundable balance accounting for
-                  already-processed refunds to prevent over-refunding */}
-              {(() => {
-                const successfulRefunds = (payment.refunds || [])
-                  .filter(
-                    (r: PaymentDetailRefund) =>
-                      r.status === "SUCCEEDED" || r.status === "PENDING",
-                  )
-                  .reduce(
-                    (sum: number, r: PaymentDetailRefund) => sum + r.amount,
-                    0,
-                  );
-                const remainingRefundable = payment.amount - successfulRefunds;
-                return (
-                  <>
-                    <Input
-                      id="refundAmount"
-                      type="number"
-                      placeholder={`Max: ${formatCurrencyAmount(remainingRefundable, payment.currency)}`}
-                      value={refundAmount}
-                      onChange={(e) => setRefundAmount(e.target.value)}
-                      max={remainingRefundable}
-                      min={1}
-                    />
-                    {successfulRefunds > 0 && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Already refunded:{" "}
-                        {formatCurrencyAmount(
-                          successfulRefunds,
-                          payment.currency,
-                        )}{" "}
-                        • Remaining:{" "}
-                        {formatCurrencyAmount(
-                          remainingRefundable,
-                          payment.currency,
-                        )}
-                      </p>
-                    )}
-                  </>
-                );
-              })()}
-            </div>
-            <div>
-              <Label htmlFor="refundReason">Reason (optional)</Label>
-              <Textarea
-                id="refundReason"
-                placeholder="Enter refund reason..."
-                value={refundReason}
-                onChange={(e) => setRefundReason(e.target.value)}
-                rows={3}
-              />
-            </div>
-            <div className="flex gap-2">
-              <Button
-                onClick={handleRefund}
-                variant="destructive"
-                disabled={refundMutation.isPending}
-              >
-                {refundMutation.isPending ? "Processing..." : "Confirm Refund"}
-              </Button>
-              <Button
-                onClick={() => setShowRefundForm(false)}
-                variant="outline"
-                disabled={refundMutation.isPending}
-              >
-                Cancel
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       {/* Refunds List */}
       {payment.refunds && payment.refunds.length > 0 && (

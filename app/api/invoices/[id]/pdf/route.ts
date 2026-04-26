@@ -9,9 +9,9 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import {
-  generateInvoicePdf,
-  getInvoicePdfData,
-} from "@/lib/payments/payouts/invoice-pdf";
+  generateConsumerInvoicePdf,
+  getConsumerInvoicePdfData,
+} from "@/lib/pdf/invoice-renderer";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -74,10 +74,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     }
 
     // Build PDF data from invoice record
-    const pdfData = await getInvoicePdfData(invoice);
+    const pdfData = await getConsumerInvoicePdfData(invoice);
 
     // Generate PDF buffer
-    const pdfBuffer = await generateInvoicePdf(pdfData);
+    const pdfBuffer = await generateConsumerInvoicePdf(pdfData);
 
     // Try to upload to Supabase Storage for caching (fire-and-forget)
     uploadToStorage(invoice.id, invoice.invoiceNumber, pdfBuffer).catch(

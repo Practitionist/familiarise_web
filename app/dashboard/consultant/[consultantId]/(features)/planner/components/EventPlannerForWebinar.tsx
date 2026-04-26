@@ -291,7 +291,7 @@ export function EventPlannerForWebinar({
           topics: formData.topics,
           consultantProfileId: consultantId,
           consultantProfile: null,
-          organizationProfileId: null,
+          organizationId: null,
           imageUrl: initialData?.webinarPlan?.imageUrl ?? null,
           createdAt: initialData?.webinarPlan?.createdAt ?? now,
           updatedAt: now,

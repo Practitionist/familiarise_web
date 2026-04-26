@@ -37,6 +37,7 @@ export function useConsultants(filters: IExpertFilters) {
     minRating,
     companies,
     language,
+    affiliationType,
   } = filters;
 
   const getKey = useCallback(
@@ -55,6 +56,7 @@ export function useConsultants(filters: IExpertFilters) {
         ...(minRating !== undefined && { minRating: String(minRating) }),
         ...(companies.length > 0 && { companies: companies.join(",") }),
         ...(language && { language }),
+        ...(affiliationType && { affiliationType }),
       });
 
       return `/api/user/consultants?${params}`;
@@ -71,6 +73,7 @@ export function useConsultants(filters: IExpertFilters) {
       minRating,
       companies,
       language,
+      affiliationType,
     ],
   );
 
@@ -97,6 +100,7 @@ export function useConsultants(filters: IExpertFilters) {
       minRating,
       companies,
       language,
+      affiliationType,
     ],
     queryFn: ({ pageParam = 0 }) => fetchConsultantsData(getKey(pageParam)),
     getNextPageParam: (lastPage, pages) => {

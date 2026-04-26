@@ -207,6 +207,7 @@ export async function POST(request: NextRequest) {
       consultantProfileId,
       subscriptionPlanId,
       notes,
+      organizationId,
     } = result.data;
 
     const isPrivileged =
@@ -295,6 +296,36 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Enterprise: if the caller passed `organizationId`, verify they're
+    // an ACTIVE LEARNER (or higher) member of that org before we stamp
+    // attribution. Trials are free, so this is org-tagging for analytics
+    // (conversion-rate per org) — never a payment claim. Silently
+    // dropping the field on membership mismatch would let a curious
+    // user forge org-tagged trial attribution; we return 403 instead so
+    // the client bug becomes obvious. `findFirst` with `userId`
+    // resolves against the BetterAuth User id on the session.
+    let resolvedOrgId: string | null = null;
+    if (organizationId) {
+      const membership = await prisma.membership.findFirst({
+        where: {
+          organizationId,
+          userId: session.user.id,
+          status: "ACTIVE",
+        },
+        select: { id: true },
+      });
+      if (!membership) {
+        return NextResponse.json(
+          {
+            error:
+              "You are not an active member of the specified organization.",
+          },
+          { status: 403 },
+        );
+      }
+      resolvedOrgId = organizationId;
+    }
+
     // Create the trial session
     const trialSession = await prisma.trialSession.create({
       data: {
@@ -303,6 +334,7 @@ export async function POST(request: NextRequest) {
         subscriptionPlanId,
         notes,
         status: TrialSessionStatus.PENDING,
+        organizationId: resolvedOrgId,
       },
       include: {
         consulteeProfile: {

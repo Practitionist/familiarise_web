@@ -14,11 +14,14 @@ import {
   CreditCard,
   Coins,
   BarChart3,
+  ClipboardList,
   Settings,
   Wallet,
   UserCog,
   Building2,
   LayoutDashboard,
+  Clock,
+  FileText,
   type LucideIcon,
 } from "lucide-react";
 
@@ -45,26 +48,55 @@ import {
 import { OrgContextBar } from "@/components/dashboard/OrgContextBar";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { signOut, useSession } from "@/lib/auth-client";
+import { MEMBER_ROLE_LABEL } from "@/lib/labels/org-labels";
+import { resolvePersonalDashboardHref } from "@/lib/labels/personal-dashboard";
 import { disconnectStreamClients } from "@/providers/StreamProvider";
+import type { MemberRole, OrgStatus } from "@prisma/client";
+import {
+  fetchOrgDetails,
+  orgDetailsQueryKey,
+} from "@/lib/api/organizations/org-details";
 
-interface OrgDetailsResponse {
-  organization: { id: string; name: string; slug: string; logo: string | null };
-  profile: {
-    id: string;
-    kind: "BUYER" | "PROVIDER" | "HYBRID";
-    status: string;
-    billingMode: "TAG_ONLY" | "SEAT_PACK" | "INVOICED_MONTHLY" | "PREPAID_UNLIMITED" | null;
+/**
+ * Banner rendered across the org dashboard when `Organization.status !== ACTIVE`.
+ * A newly created org sits in PENDING_VERIFICATION until a platform admin
+ * runs the verify action. OWNER can still configure branding, draft programs,
+ * and explore the product — but invitations, wallet top-ups, and contracts
+ * are paused server-side. The banner explains why the write surfaces are
+ * returning 409 ORG_NOT_VERIFIED.
+ */
+function OrgStatusBanner({ status }: { status: OrgStatus }) {
+  const copy: Record<OrgStatus, { title: string; body: string; tone: string } | null> = {
+    PENDING_VERIFICATION: {
+      title: "Awaiting platform review",
+      body: "You can set up branding and draft programs now. Inviting members and moving money unlocks as soon as an admin verifies your organization.",
+      tone: "bg-amber-50 border-amber-200 text-amber-900",
+    },
+    SUSPENDED: {
+      title: "Organization suspended",
+      body: "Invitations and payments are paused. Contact support to restore access.",
+      tone: "bg-rose-50 border-rose-200 text-rose-900",
+    },
+    ACTIVE: null,
+    DEACTIVATED: {
+      title: "Organization deactivated",
+      body: "This organization is no longer operational.",
+      tone: "bg-zinc-100 border-zinc-300 text-zinc-800",
+    },
   };
-  membership: { role: string; status: string };
-}
-
-async function fetchOrg(orgId: string): Promise<OrgDetailsResponse> {
-  const res = await fetch(`/api/organizations/${orgId}`);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || "Failed to load organization");
-  }
-  return res.json();
+  const message = copy[status];
+  if (!message) return null;
+  return (
+    <div
+      className={`border-b px-4 sm:px-6 py-2.5 flex items-start gap-3 text-sm ${message.tone}`}
+    >
+      <Clock className="w-4 h-4 mt-0.5 shrink-0" />
+      <div className="flex-1">
+        <span className="font-semibold">{message.title}.</span>{" "}
+        <span>{message.body}</span>
+      </div>
+    </div>
+  );
 }
 
 function AccessDenied({ title, message }: { title: string; message: string }) {
@@ -105,59 +137,95 @@ export default function OrgLayout({
     error,
     isLoading,
   } = useQuery({
-    queryKey: ["organization", orgId],
-    queryFn: () => fetchOrg(orgId),
+    queryKey: orgDetailsQueryKey(orgId),
+    queryFn: () => fetchOrgDetails(orgId),
     enabled: !!orgId && !!session?.user?.id,
     staleTime: 60_000,
   });
 
-  // Compute the sidebar items based on org kind, billing mode, AND role.
-  // Lower roles see fewer nav items — the API layer enforces this too,
-  // but hiding the pages prevents confusion.
+  // Compute sidebar items from capabilities + fundingSource + role. The
+  // API layer enforces the same gates, but hiding items that the user
+  // can't act on keeps the sidebar tidy. One source of truth for role
+  // ranks lives in useOrgRole.ts — we duplicate it here narrowly because
+  // this layout runs before the query cache is warm.
   const sidebarItems: CollapsibleSidebarItem[] = useMemo(() => {
     if (!org) return [];
-    const isProviderOrHybrid =
-      org.profile.kind === "PROVIDER" || org.profile.kind === "HYBRID";
-    const isBuyerOrHybrid =
-      org.profile.kind === "BUYER" || org.profile.kind === "HYBRID";
+    const { canSponsor, canHost, fundingSource } = org.organization;
 
-    // Role rank check — mirrors ORG_ROLE_RANK from lib/auth-helpers.ts
-    const role = org.membership.role;
-    const RANKS: Record<string, number> = {
-      ORG_OWNER: 100, ORG_ADMIN: 80, ORG_MANAGER: 60,
-      ORG_CONSULTANT: 40, ORG_SUPPORT: 30, ORG_LEARNER: 20,
+    const RANKS: Record<MemberRole, number> = {
+      OWNER: 100,
+      MAINTAINER: 80,
+      MANAGER: 60,
+      EXPERT: 40,
+      SUPPORT: 30,
+      LEARNER: 20,
     };
-    const isAtLeast = (min: string) =>
-      (RANKS[role] ?? 0) >= (RANKS[min] ?? 0);
+    const role = org.membership.role;
+    const isAtLeast = (min: MemberRole) => RANKS[role] >= RANKS[min];
 
     const items: { name: string; icon: LucideIcon; path: string; show?: boolean }[] = [
       { name: "Overview", icon: Home, path: "home" },
-      { name: "Members", icon: Users, path: "members" },
-      { name: "Invitations", icon: Mail, path: "invitations", show: isAtLeast("ORG_ADMIN") },
-      { name: "Learners", icon: GraduationCap, path: "learners", show: isBuyerOrHybrid },
-      { name: "Consultants", icon: UserCog, path: "consultants", show: isProviderOrHybrid },
-      { name: "Plans", icon: Briefcase, path: "plans" },
+      // Consumer-role surfaces — the only in-org pages a LEARNER or
+      // EXPERT sees. Operators (MANAGER+) don't need these because
+      // their richer pages (Programs, Payouts, Members) supersede.
+      // Gated on the matching capability so we don't show "My Program"
+      // on a non-sponsor org.
+      {
+        name: "My Program",
+        icon: GraduationCap,
+        path: "my-program",
+        show: role === "LEARNER" && canSponsor,
+      },
+      {
+        name: "My Arrangement",
+        icon: UserCog,
+        path: "my-arrangement",
+        show: role === "EXPERT" && canHost,
+      },
+      { name: "Members", icon: Users, path: "members", show: isAtLeast("MANAGER") },
+      { name: "Invitations", icon: Mail, path: "invitations", show: isAtLeast("MAINTAINER") },
+      // Members filtered by role — a sponsor-only org gets the
+      // "Learners" view; hosts see "Experts" alongside. Both are
+      // operator views (manage who consumes / who hosts), so they
+      // gate on MANAGER the same way Members does — consumers see
+      // only the Overview ConsumerViewCard. The canonical role
+      // names come straight from `MemberRole` so nothing here
+      // carries the legacy "consultant" vocabulary.
+      { name: "Learners", icon: GraduationCap, path: "learners", show: canSponsor && isAtLeast("MANAGER") },
+      { name: "Experts", icon: UserCog, path: "experts", show: canHost && isAtLeast("MANAGER") },
+      { name: "Programs", icon: Briefcase, path: "programs", show: canSponsor && isAtLeast("MAINTAINER") },
+      { name: "Contracts", icon: FileText, path: "contracts", show: canSponsor && isAtLeast("MAINTAINER") },
+      // Catalog nav has no page today (deleted alongside the legacy
+      // OrganizationPlan-based curated catalog). Hidden until the
+      // capability-driven replacement ships. Leaving the entry here so
+      // it's easy to re-enable once `/catalog/page.tsx` exists.
+      { name: "Catalog", icon: Briefcase, path: "catalog", show: false },
+      // Credits surface only when this org's BillingAccount uses WALLET
+      // funding (the credit-pool mode). Other funding sources don't have
+      // a wallet balance to display.
       {
         name: "Credits",
         icon: Coins,
         path: "credits",
-        show: org.profile.billingMode === "SEAT_PACK" && isAtLeast("ORG_MANAGER"),
+        show: fundingSource === "WALLET" && isAtLeast("MANAGER"),
       },
+      // Billing surfaces whenever the org can sponsor. MANAGER-level
+      // visibility keeps support staff out of invoice history.
       {
         name: "Billing",
         icon: CreditCard,
         path: "billing",
-        // BUYER/HYBRID only — PROVIDER orgs don't have a billing mode
-        show: isBuyerOrHybrid && isAtLeast("ORG_MANAGER"),
+        show: canSponsor && isAtLeast("MANAGER"),
       },
       {
         name: "Payouts",
         icon: Wallet,
         path: "payouts",
-        show: isProviderOrHybrid,
+        show: canHost && isAtLeast("MANAGER"),
       },
-      { name: "Analytics", icon: BarChart3, path: "analytics", show: isAtLeast("ORG_MANAGER") },
-      { name: "Settings", icon: Settings, path: "settings", show: isAtLeast("ORG_ADMIN") },
+      { name: "Analytics", icon: BarChart3, path: "analytics", show: isAtLeast("MANAGER") },
+      { name: "Audit", icon: ClipboardList, path: "audit", show: isAtLeast("MAINTAINER") },
+      { name: "Settings", icon: Settings, path: "settings", show: isAtLeast("MAINTAINER") },
     ];
 
     return items
@@ -220,6 +288,7 @@ export default function OrgLayout({
   // context am I in?", the bottom answers "who am I?".
   const userExt = session?.user as
     | (NonNullable<typeof session>["user"] & {
+        orgAdminProfileId?: string | null;
         consultantProfileId?: string | null;
         consulteeProfileId?: string | null;
         organizationMemberships?: Array<{
@@ -231,11 +300,11 @@ export default function OrgLayout({
       })
     | undefined;
 
-  const personalHref = userExt?.consultantProfileId
-    ? `/dashboard/consultant/${userExt.consultantProfileId}/home`
-    : userExt?.consulteeProfileId
-      ? `/dashboard/consultee/${userExt.consulteeProfileId}/home`
-      : null;
+  const personalHref = resolvePersonalDashboardHref({
+    orgAdminProfileId: userExt?.orgAdminProfileId,
+    consultantProfileId: userExt?.consultantProfileId,
+    consulteeProfileId: userExt?.consulteeProfileId,
+  });
 
   // Other orgs the user belongs to (excluding the current one)
   const otherOrgs = (userExt?.organizationMemberships ?? []).filter(
@@ -279,20 +348,10 @@ export default function OrgLayout({
     },
   ];
 
-  // Subtitle under the org name: the user's role in THIS org.
-  // Kind + billing mode live in the top-bar badges (non-redundant split —
-  // sidebar subtitle is user-specific, top-bar badges are org-specific).
-  const ROLE_LABELS: Record<string, string> = {
-    ORG_OWNER: "Owner",
-    ORG_ADMIN: "Admin",
-    ORG_MANAGER: "Manager",
-    ORG_CONSULTANT: "Consultant",
-    ORG_SUPPORT: "Support",
-    ORG_LEARNER: "Learner",
-  };
-  const topSubtitle = org
-    ? (ROLE_LABELS[org.membership.role] ?? org.membership.role)
-    : null;
+  // Subtitle under the org name: the user's role in THIS org. Capability
+  // badges (Sponsor/Host/Hybrid) + funding source live in the top-bar —
+  // sidebar subtitle is user-specific, top-bar badges are org-specific.
+  const topSubtitle = org ? MEMBER_ROLE_LABEL[org.membership.role] : null;
 
   // Map URL segments to human-readable page names so the breadcrumbs match
   // the heading the user actually sees on the page.
@@ -301,12 +360,14 @@ export default function OrgLayout({
     members:     "Members",
     invitations: "Invitations",
     learners:    "Learners",
-    consultants: "Consultants",
-    plans:       "Plans",
+    experts:     "Experts",
+    programs:    "Programs",
+    contracts:   "Contracts",
     credits:     "Credits",
     billing:     "Billing",
     payouts:     "Payouts",
     analytics:   "Analytics",
+    audit:       "Audit",
     settings:    "Settings",
     sso:         "SSO",
   };
@@ -355,11 +416,16 @@ export default function OrgLayout({
           <OrgContextBar
             orgName={org.organization.name}
             orgLogo={org.organization.logo}
-            kind={org.profile.kind}
-            billingMode={org.profile.billingMode}
+            canSponsor={org.organization.canSponsor}
+            canHost={org.organization.canHost}
+            fundingSource={org.organization.fundingSource}
             breadcrumbs={breadcrumbs}
             personalHref={personalHref}
           />
+        )}
+
+        {org && org.organization.status !== "ACTIVE" && (
+          <OrgStatusBanner status={org.organization.status} />
         )}
 
         <main className="flex-1 overflow-y-auto pb-16 md:pb-0">

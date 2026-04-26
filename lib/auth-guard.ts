@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import type { UserRole } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 
 type SessionUser = NonNullable<Awaited<ReturnType<typeof getSession>>>["user"];
@@ -63,6 +64,21 @@ export async function requireOnboarded() {
   }
   if (!hasRequiredProfile(session.user)) {
     redirect("/form/onboarding?error=missing_profile");
+  }
+  return session;
+}
+
+/**
+ * Require an onboarded user whose `UserRole` is in the allowed set.
+ * Use for pages restricted to a specific user type (e.g. `/dashboard/organization/create`
+ * for ORG_ADMIN). Sends other roles to the generic dashboard — which in turn
+ * routes them to their role-specific home.
+ */
+export async function requireUserRole(allowed: UserRole | UserRole[]) {
+  const session = await requireOnboarded();
+  const roles = Array.isArray(allowed) ? allowed : [allowed];
+  if (!session.user.role || !roles.includes(session.user.role as UserRole)) {
+    redirect("/dashboard");
   }
   return session;
 }

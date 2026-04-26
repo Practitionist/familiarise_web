@@ -23,6 +23,7 @@ import {
   ApprovalLock,
 } from "@/utils/appointmentlock";
 import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
+import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import { isMinuteWithinWeeklySlot } from "@/utils/slotAllocation/slotTimeUtils";
 import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
 import {
@@ -42,7 +43,11 @@ import {
   createEarningsFromPayment,
   type AppointmentType,
 } from "@/lib/payments/payouts";
-import { deductCredits } from "@/lib/payments/operations/org-credits";
+import { walletDebit } from "@/lib/api/organizations/wallet";
+import {
+  recordBookingUtilization,
+  ProgramAssignmentLimitError,
+} from "@/lib/api/organizations/program-helpers";
 import {
   determineTax,
   appointmentTypeToServiceType,
@@ -51,6 +56,9 @@ import {
   validatePlanCurrency,
   validateDiscountCurrency,
 } from "@/lib/payments/validation/currency-guards";
+import { checkPaymentLegsSumToAmount } from "@/lib/payments/payment-legs";
+import { getInvoiceCreditLimitPaise } from "@/lib/enterprise/governance";
+import { notifyOrgProgramExhausted } from "@/lib/novu/org-workflows";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -196,7 +204,12 @@ export async function calculateAmountAndValidate(
     let plan;
     let priceCurrency = "INR";
 
-    // Get user profile
+    // Lazy-create ConsulteeProfile if this is the user's first
+    // consumer action. ORG_ADMIN / CONSULTANT users who also book
+    // personal sessions (valid, if rare) would hit "User profile not
+    // found" before this helper existed — now we seed the profile on
+    // demand inside the checkout tx.
+    await ensureConsulteeProfile(tx, userId);
     const user = await tx.user.findUnique({
       where: { id: userId },
       include: {
@@ -956,6 +969,7 @@ async function revalidateInsideLock(
   // Re-run the same validation as calculateAmountAndValidate
   // but this time we're inside the lock, so it's safe
   await prisma.$transaction(async (tx) => {
+    await ensureConsulteeProfile(tx, userId);
     const user = await tx.user.findUnique({
       where: { id: userId },
       include: { consulteeProfile: true },
@@ -1614,6 +1628,10 @@ export async function handleClassCheckout(
     plan,
     amount: plan.price,
     slotsLinked: linkedSlotCount,
+    // For enterprise cap counting (issue #710): one engagement per
+    // class day. The learner is enrolling in every existing class
+    // appointment at this moment, so the count is fully known here.
+    engagementsConsumed: classInstance.appointments.length,
   };
 }
 
@@ -1642,97 +1660,189 @@ export async function handleCheckout(
   let paymentResponse: { id: string; client_secret: string | null } | null =
     null;
 
-  // Enterprise: resolve org context early so it is available when building
-  // the Payment row. For TAG_ONLY orgs this is purely a tag — the gateway
-  // flow is unchanged. SEAT_PACK and INVOICED_MONTHLY branching (Phases J/K)
-  // will read `orgBillingMode` to decide whether to skip the gateway.
-  let organizationProfileId: string | null = null;
-  let orgBillingMode: string | null = null;
-  let orgContractEndDate: Date | null = null;
-  if (validatedData.organizationId) {
-    const orgProfile = await prisma.organizationProfile.findUnique({
-      where: { organizationId: validatedData.organizationId },
-      select: { id: true, billingMode: true, status: true, orgInvoiceCreditLimit: true, contractEndDate: true },
-    });
-    if (!orgProfile || orgProfile.status !== "ACTIVE") {
-      throw new Error("Organization not found or deactivated.");
-    }
+  // Enterprise (Arch 4-Modified): resolve org + Program context up-front.
+  //
+  //   fundingSource=PERSONAL → org is tagged for reporting only; learner pays.
+  //   fundingSource=WALLET   → debit BillingAccount.walletBalance atomically.
+  //   fundingSource=INVOICE  → accrue to the org's monthly invoice.
+  //   fundingSource=LICENSE  → absorbed by a LICENSED_SEAT program, amount=0.
+  //
+  // Every non-PERSONAL path also requires an ACTIVE `ProgramAssignment`
+  // whose Program covers the current `appointmentType` — that's the source
+  // of truth for "is this booking sponsored?". A missing assignment on a
+  // WALLET/INVOICE/LICENSE org fails closed: we refuse rather than
+  // silently bill the learner's card.
+  const appointmentType = validatedData.appointmentType as
+    | "CONSULTATION"
+    | "SUBSCRIPTION"
+    | "WEBINAR"
+    | "CLASS";
 
-    // SECURITY: Verify the caller is an active member of this org before
-    // allowing any org-funded billing. Without this check, any user could
-    // pass another org's ID and drain their credit pool or push bookings
-    // onto their invoice. Fail closed — reject if not a member.
-    // NOTE: Any active member may spend org budget (role-blind). This is
-    // intentional — learners, managers, and admins all book on behalf of
-    // the org. If role-based spending restrictions are needed later, add
-    // them here by checking callerMembership.role.
-    const callerMembership =
-      await prisma.organizationMemberProfile.findFirst({
-        where: {
-          organizationProfileId: orgProfile.id,
-          status: "ACTIVE",
-          member: { userId },
+  let organizationId: string | null = null;
+  let billingAccountId: string | null = null;
+  let fundingSource:
+    | "PERSONAL"
+    | "WALLET"
+    | "INVOICE"
+    | "LICENSE"
+    | null = null;
+  let programAssignmentId: string | null = null;
+  let callerMembershipId: string | null = null;
+
+  if (validatedData.organizationId) {
+    const org = await prisma.organization.findUnique({
+      where: { id: validatedData.organizationId },
+      select: {
+        id: true,
+        status: true,
+        canSponsor: true,
+        billingAccount: {
+          select: {
+            id: true,
+            fundingSource: true,
+            creditLimit: true,
+            walletBalance: true,
+          },
         },
-        select: { role: true, seatAssignedAt: true },
-      });
-    if (!callerMembership) {
+      },
+    });
+    if (!org) {
+      throw new Error("Organization not found.");
+    }
+    // PR-1d: PENDING_VERIFICATION orgs may transact for INVOICE bookings
+    // under the credit-limit gate (#687 invoice-fraud guard). Anything
+    // else still requires fully ACTIVE status.
+    if (
+      org.status !== "ACTIVE" &&
+      org.status !== "PENDING_VERIFICATION"
+    ) {
       throw new Error(
-        "You are not an active member of this organization.",
+        `Organization is ${org.status.toLowerCase()}; cannot process bookings.`,
+      );
+    }
+    if (!org.canSponsor) {
+      throw new Error(
+        "This organization is not configured to sponsor bookings (canSponsor=false).",
       );
     }
 
-    // INVOICED_MONTHLY: enforce orgInvoiceCreditLimit. Calculate net
-    // exposure (unbilled payments minus their refunds + outstanding invoices).
-    if (
-      orgProfile.billingMode === "INVOICED_MONTHLY" &&
-      orgProfile.orgInvoiceCreditLimit !== null
-    ) {
-      const [unbilledPayments, outstandingAgg] = await Promise.all([
-        prisma.payment.findMany({
-          where: {
-            organizationProfileId: orgProfile.id,
-            paymentStatus: "SUCCEEDED",
-            paymentMethod: "ORG_INVOICED",
-            billableToOrgInvoiceId: null,
-          },
-          select: {
-            amount: true,
-            refunds: {
-              where: { status: "SUCCEEDED" },
-              select: { amount: true },
+    // PROJECT is a schema-reserved v2 value — fail fast before anything
+    // else so ops can spot the misconfiguration.
+    if (org.billingAccount?.fundingSource === "PROJECT") {
+      throw new Error(
+        "PROJECT funding source is not yet supported — reserved for the v2 project-billing workflow.",
+      );
+    }
+
+    // SECURITY: Verify the caller is an active Membership of this org.
+    const callerMembership = await prisma.membership.findUnique({
+      where: { userId_organizationId: { userId, organizationId: org.id } },
+      select: { role: true, status: true, id: true },
+    });
+    if (!callerMembership || callerMembership.status !== "ACTIVE") {
+      throw new Error("You are not an active member of this organization.");
+    }
+
+    organizationId = org.id;
+    callerMembershipId = callerMembership.id;
+    billingAccountId = org.billingAccount?.id ?? null;
+    fundingSource = org.billingAccount?.fundingSource ?? "PERSONAL";
+
+    // Block personal referral credits on org-funded bookings.
+    if (validatedData.useReferralCredits && fundingSource !== "PERSONAL") {
+      validatedData = { ...validatedData, useReferralCredits: false };
+    }
+
+    // INVOICE fundingSource: enforce creditLimit. PR-1d (#687):
+    // unverified orgs (PENDING_VERIFICATION) get an automatic
+    // governance credit-limit even when the BillingAccount.creditLimit
+    // column is null — the default ₹50k starter blocks the
+    // book-everything-then-ghost abuse pattern. The cap auto-lifts
+    // once the org is verified OR pays its first invoice.
+    if (fundingSource === "INVOICE") {
+      const explicitLimit = org.billingAccount?.creditLimit ?? null;
+      const isVerified = org.status === "ACTIVE";
+      const governanceLimit = isVerified
+        ? null
+        : getInvoiceCreditLimitPaise();
+      const effectiveLimit =
+        explicitLimit === null
+          ? governanceLimit
+          : governanceLimit === null
+            ? explicitLimit
+            : Math.min(explicitLimit, governanceLimit);
+
+      if (effectiveLimit !== null) {
+        const [accrualAgg, outstandingAgg] = await Promise.all([
+          prisma.paymentLeg.aggregate({
+            where: {
+              source: "INVOICE_ACCRUAL",
+              payment: {
+                organizationId: org.id,
+                paymentStatus: "SUCCEEDED",
+                billableToOrgInvoiceId: null,
+              },
             },
-          },
-        }),
-        prisma.organizationInvoice.aggregate({
-          where: {
-            organizationProfileId: orgProfile.id,
-            status: { in: ["SENT", "OVERDUE"] },
-          },
-          _sum: { amount: true },
-        }),
-      ]);
-      // Net unbilled = sum of (payment.amount - refunded) for each payment
-      const netUnbilled = unbilledPayments.reduce((sum, p) => {
-        const refunded = p.refunds.reduce((s, r) => s + r.amount, 0);
-        return sum + Math.max(0, (p.amount ?? 0) - refunded);
-      }, 0);
-      const exposure = netUnbilled + (outstandingAgg._sum.amount ?? 0);
-      if (exposure >= orgProfile.orgInvoiceCreditLimit) {
-        throw new Error(
-          "Organization has reached its invoice credit limit. Outstanding invoices must be paid before new bookings.",
-        );
+            _sum: { amountPaise: true },
+          }),
+          prisma.organizationInvoice.aggregate({
+            where: {
+              organizationId: org.id,
+              status: { in: ["ISSUED", "OVERDUE"] },
+            },
+            _sum: { totalPaise: true },
+          }),
+        ]);
+        const exposure =
+          (accrualAgg._sum.amountPaise ?? 0) +
+          (outstandingAgg._sum.totalPaise ?? 0);
+        if (exposure >= effectiveLimit) {
+          throw new Error(
+            `Organization has reached its invoice credit limit (${effectiveLimit} paise). Outstanding invoices must be paid before new bookings.`,
+          );
+        }
       }
     }
 
-    organizationProfileId = orgProfile.id;
-    orgBillingMode = orgProfile.billingMode;
-    orgContractEndDate = orgProfile.contractEndDate;
+    // Resolve a currently-active ProgramAssignment for this member that
+    // covers the appointment type. The assignment's Program must be
+    // ACTIVE and attached to an ACTIVE contract still within its
+    // effectiveFrom..effectiveTo window. The Program's
+    // `coveredPlanTypes` array filters which appointment types it
+    // sponsors (empty array = covers everything).
+    if (fundingSource !== "PERSONAL") {
+      const now = new Date();
+      const assignment = await prisma.programAssignment.findFirst({
+        where: {
+          membershipId: callerMembership.id,
+          periodStart: { lte: now },
+          periodEnd: { gte: now },
+          program: {
+            status: "ACTIVE",
+            OR: [
+              { coveredPlanTypes: { isEmpty: true } },
+              { coveredPlanTypes: { has: appointmentType } },
+            ],
+            contract: {
+              organizationId: org.id,
+              status: "ACTIVE",
+              effectiveFrom: { lte: now },
+              OR: [{ effectiveTo: null }, { effectiveTo: { gte: now } }],
+            },
+          },
+        },
+        orderBy: { periodEnd: "desc" },
+        select: { id: true },
+      });
 
-    // Block personal referral credits on org-funded bookings. Mixing a
-    // personal-wallet incentive with employer-funded spend creates murky
-    // reimbursement/accounting and reward economics.
-    if (validatedData.useReferralCredits) {
-      validatedData = { ...validatedData, useReferralCredits: false };
+      if (!assignment) {
+        throw new Error(
+          "No active program assignment covers this booking. Ask your organization admin to assign you to a Program that covers " +
+            appointmentType +
+            ".",
+        );
+      }
+      programAssignmentId = assignment.id;
     }
   }
 
@@ -1791,18 +1901,15 @@ export async function handleCheckout(
       }),
     );
 
-    // Enterprise: SEAT_PACK orgs pay via the credit pool, not the gateway.
-    // Treat like a zero-amount flow — skip PaymentIntent, succeed immediately,
-    // and deduct from the pool inside the Serializable transaction below.
-    const isOrgCreditPayment = orgBillingMode === "SEAT_PACK" && !!organizationProfileId;
-
-    // Enterprise: INVOICED_MONTHLY orgs also skip the gateway — bookings are
-    // accumulated and invoiced at month-end. Marked as succeeded immediately.
-    const isOrgInvoicedPayment = orgBillingMode === "INVOICED_MONTHLY" && !!organizationProfileId;
-
-    // Enterprise: PREPAID_UNLIMITED orgs have a flat-fee license — no per-session billing.
-    // Sessions are free for learners. Payment is synthetic with amount 0.
-    const isOrgPrepaidUnlimited = orgBillingMode === "PREPAID_UNLIMITED" && !!organizationProfileId;
+    // Enterprise funding derived from BillingAccount.fundingSource +
+    // ProgramAssignment (both resolved above). These booleans gate the
+    // "skip the gateway entirely" path — org-funded bookings never go
+    // through Stripe/Razorpay at checkout time.
+    const isOrgWalletPayment = fundingSource === "WALLET" && !!programAssignmentId;
+    const isOrgInvoicedPayment = fundingSource === "INVOICE" && !!programAssignmentId;
+    const isOrgLicensedPayment = fundingSource === "LICENSE" && !!programAssignmentId;
+    const isOrgSponsoredPayment =
+      isOrgWalletPayment || isOrgInvoicedPayment || isOrgLicensedPayment;
 
     // FIX #520: Detect zero-amount payments (credits fully cover cost)
     // Both Stripe and Razorpay reject amount <= 0, so we skip the gateway
@@ -1810,23 +1917,14 @@ export async function handleCheckout(
     const isZeroAmountPayment = amount === 0 && creditsApplied > 0;
 
     // STEP 4: Create payment intent (INSIDE LOCK)
-    // PREPAID_UNLIMITED: verify the license hasn't expired before proceeding.
-    if (isOrgPrepaidUnlimited) {
-      if (orgContractEndDate && new Date() > orgContractEndDate) {
-        return {
-          success: false,
-          error: "Your organization's prepaid license has expired. Please contact your admin to renew.",
-        };
-      }
-    }
 
-    // Enterprise org billing modes skip the gateway entirely.
-    if (isOrgCreditPayment || isOrgInvoicedPayment || isOrgPrepaidUnlimited) {
-      const prefix = isOrgCreditPayment
-        ? "org_credit"
-        : isOrgPrepaidUnlimited
-          ? "org_prepaid"
-          : "org_invoiced";
+    // Enterprise org funding skips the gateway entirely.
+    if (isOrgSponsoredPayment) {
+      const prefix = isOrgWalletPayment
+        ? "org_wallet"
+        : isOrgLicensedPayment
+          ? "org_license"
+          : "org_invoice";
       const syntheticId = `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
       paymentResponse = { id: syntheticId, client_secret: null };
     } else if (isZeroAmountPayment) {
@@ -1864,11 +1962,22 @@ export async function handleCheckout(
       const result = await prisma.$transaction(
         async (tx) => {
           let createdAppointment;
+          // Engagement count for enterprise cap (issue #710). One
+          // engagement = one Appointment row = one calendar occurrence.
+          //   - CONSULTATION/WEBINAR: 1 (single Appointment created here)
+          //   - CLASS: N (count of appointments the learner enrolled in,
+          //     all known at checkout because consultant pre-allocated)
+          //   - SUBSCRIPTION: null → SKIP recordBookingUtilization at
+          //     checkout. Slots are allocated lazily by the consultant;
+          //     debits land in SlotAllocationService.createAppointments,
+          //     1 per allocation batch.
+          let engagementsForCap: number | null = null;
 
           // FIX #520: Zero-amount payments (credits cover full cost) skip the
           // gateway, so slots should be confirmed immediately just like mock payments.
-          // Enterprise: org credit and invoiced payments also skip the gateway.
-          const skipPayment = isMockPayment || isZeroAmountPayment || isOrgCreditPayment || isOrgInvoicedPayment || isOrgPrepaidUnlimited;
+          // Enterprise: org-sponsored payments also skip the gateway.
+          const skipPayment =
+            isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment;
 
           // Create appointment based on type (with isTentative flag)
           switch (validatedData.appointmentType) {
@@ -1881,6 +1990,7 @@ export async function handleCheckout(
                 skipPayment,
               );
               createdAppointment = consultationResult.appointment;
+              engagementsForCap = 1;
               break;
             }
 
@@ -1894,6 +2004,8 @@ export async function handleCheckout(
               // Use placeholder appointment for payment linkage
               // This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)
               createdAppointment = subscriptionResult.appointment;
+              // engagementsForCap stays null — debit happens at
+              // SlotAllocationService.createAppointments time.
               break;
             }
 
@@ -1905,6 +2017,7 @@ export async function handleCheckout(
                 skipPayment,
               );
               createdAppointment = webinarResult.appointment;
+              engagementsForCap = 1;
               break;
             }
 
@@ -1918,6 +2031,7 @@ export async function handleCheckout(
               // Class creates slots across multiple appointments
               // Use first appointment for payment linkage
               createdAppointment = classResult.appointment || null;
+              engagementsForCap = classResult.engagementsConsumed;
               break;
             }
 
@@ -1935,12 +2049,12 @@ export async function handleCheckout(
               originalAmount,
               taxAmount,
               currency,
-              paymentMethod: isOrgCreditPayment
-                ? "ORG_CREDIT"
+              paymentMethod: isOrgWalletPayment
+                ? "WALLET"
                 : isOrgInvoicedPayment
-                  ? "ORG_INVOICED"
-                  : isOrgPrepaidUnlimited
-                    ? "ORG_PREPAID"
+                  ? "INVOICE"
+                  : isOrgLicensedPayment
+                    ? "LICENSE"
                     : isZeroAmountPayment
                       ? "CREDITS"
                       : "CARD",
@@ -1950,7 +2064,8 @@ export async function handleCheckout(
               paymentStatus: skipPayment
                 ? PaymentStatus.SUCCEEDED
                 : PaymentStatus.PENDING,
-              isMockPayment: isMockPayment || isZeroAmountPayment || isOrgCreditPayment || isOrgInvoicedPayment || isOrgPrepaidUnlimited,
+              isMockPayment:
+                isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment,
               userId: userId,
               appointmentId: createdAppointment?.id || null,
               discountCodeId,
@@ -1961,18 +2076,140 @@ export async function handleCheckout(
               isInternational,
               displayCurrencyAtCheckout,
               exchangeRateAtCheckout,
-              // Enterprise: org tag for reporting / billing. For TAG_ONLY this
-              // is purely a tag; SEAT_PACK and INVOICED_MONTHLY branching will
-              // set additional fields here in Phases J/K.
-              organizationProfileId,
+              // Enterprise (Arch 4): org tag for reporting / billing.
+              organizationId,
+              billingAccountId,
             },
           });
 
-          // Enterprise: SEAT_PACK credit deduction inside the Serializable TX.
-          // The pool balance check + decrement is atomic with the Payment creation,
-          // so concurrent checkouts can't overdraw.
-          if (isOrgCreditPayment && organizationProfileId) {
-            await deductCredits(tx, organizationProfileId, amount, payment.id);
+          // Enterprise: WALLET fundingSource — debit from BillingAccount
+          // atomically via the wallet helper (raw-SQL conditional UPDATE).
+          // Triggered only when we also have a resolved program assignment,
+          // which guarantees the booking is actually sponsored.
+          if (isOrgWalletPayment && billingAccountId) {
+            await walletDebit(tx, {
+              billingAccountId,
+              amountPaise: amount,
+              reason: "BOOKING",
+              paymentId: payment.id,
+              membershipId: callerMembershipId ?? undefined,
+            });
+          }
+
+          // Enterprise: write the Program utilization row + a PaymentLeg
+          // that describes where the money (or commitment) actually came
+          // from. This is the runtime source of truth for sponsorship
+          // attribution — analytics / invoicing / cap enforcement all read
+          // these rows rather than back-deriving from `paymentMethod`.
+          if (
+            programAssignmentId &&
+            isOrgSponsoredPayment &&
+            engagementsForCap !== null
+          ) {
+            try {
+              await recordBookingUtilization(tx, {
+                programAssignmentId,
+                paymentId: payment.id,
+                engagementsConsumed: engagementsForCap,
+                priceAtBookingPaise: amount,
+              });
+            } catch (err) {
+              if (err instanceof ProgramAssignmentLimitError) {
+                // Fire-and-forget bell notification to the assignee + org
+                // operators. Lookup uses the outer prisma client (not the
+                // about-to-roll-back `tx`) so the query runs against
+                // committed state. The TX still rolls back on throw —
+                // the notification is the correct signal whether or not
+                // the booking eventually succeeds.
+                //
+                // `Program.organizationId` lives on its parent Contract,
+                // not on Program itself, so the select chain hops
+                // Program → Contract → Organization.
+                prisma.programAssignment
+                  .findUnique({
+                    where: { id: programAssignmentId },
+                    select: {
+                      membership: {
+                        select: {
+                          userId: true,
+                          user: { select: { name: true, email: true } },
+                        },
+                      },
+                      program: {
+                        select: {
+                          name: true,
+                          contract: {
+                            select: {
+                              organizationId: true,
+                              organization: { select: { name: true } },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  })
+                  .then((ctx) => {
+                    if (!ctx) return;
+                    const orgId = ctx.program.contract.organizationId;
+                    return notifyOrgProgramExhausted(orgId, ctx.membership.userId, {
+                      orgName: ctx.program.contract.organization.name,
+                      programName: ctx.program.name,
+                      assigneeName:
+                        ctx.membership.user.name ?? ctx.membership.user.email,
+                      dashboardUrl: `/dashboard/organization/${orgId}/programs`,
+                    });
+                  })
+                  .catch((notifyErr) =>
+                    console.error(
+                      "[notifyOrgProgramExhausted] failed:",
+                      notifyErr,
+                    ),
+                  );
+
+                throw new Error(
+                  "Your program has hit its session cap for this cycle. Ask your organization admin to upgrade the program or wait for the next cycle.",
+                );
+              }
+              throw err;
+            }
+
+            await tx.paymentLeg.create({
+              data: {
+                paymentId: payment.id,
+                source: isOrgWalletPayment
+                  ? "WALLET"
+                  : isOrgLicensedPayment
+                    ? "LICENSE"
+                    : "INVOICE_ACCRUAL",
+                // LICENSE absorbs the cost entirely at the contract level
+                // — the per-booking leg is zero so totals across all legs
+                // still reconcile to the Payment amount.
+                amountPaise: isOrgLicensedPayment ? 0 : amount,
+                sourceRef: programAssignmentId,
+              },
+            });
+          }
+
+          // Enterprise: every successful Payment must have at least one
+          // PaymentLeg (`docs/enterprise/20-payment-legs.md`). For non-
+          // org-sponsored learner-pays-via-gateway flows that's the CARD
+          // leg, written here so the invariant holds whether or not the
+          // payment ever transitions to SUCCEEDED. We record the gateway
+          // payment-intent id in `sourceRef` so refund / reconciliation
+          // jobs can join back to the gateway txn without scanning the
+          // Payment table. `amount` is the post-credit gateway charge,
+          // mirroring the field-level comment on `Payment.amount`. The
+          // REFERRAL_CREDIT leg (if any) is written by
+          // `applyCreditsToPayment` further down in this same TX.
+          if (!isOrgSponsoredPayment && amount > 0) {
+            await tx.paymentLeg.create({
+              data: {
+                paymentId: payment.id,
+                source: "CARD",
+                amountPaise: amount,
+                sourceRef: paymentResponse!.id,
+              },
+            });
           }
 
           // Increment discount code usage count atomically (only after payment is created)
@@ -2043,6 +2280,37 @@ export async function handleCheckout(
             actualCreditsApplied = creditsApplied; // In paise
           }
 
+          // Invariant sweep: every Payment should have legs that sum to
+          // `Payment.amount` (`docs/enterprise/20-payment-legs.md`). We
+          // log-only here rather than throw because the hot checkout
+          // path is the worst place to discover a leg-accounting drift
+          // — a surprise 500 blocks real bookings. A mismatch signals
+          // either (a) an org branch above wrote the wrong amount, or
+          // (b) a future PaymentLegSource was added without updating
+          // its write site. Reconciliation jobs + tests call the
+          // hard-throwing `assertPaymentLegsSumToAmount` instead.
+          if (!isMockPayment) {
+            const writtenLegs = await tx.paymentLeg.findMany({
+              where: { paymentId: payment.id },
+              select: { source: true, amountPaise: true },
+            });
+            const legMismatch = checkPaymentLegsSumToAmount({
+              paymentAmountPaise: payment.amount,
+              legs: writtenLegs,
+            });
+            if (legMismatch) {
+              console.warn(
+                JSON.stringify({
+                  event: "payment_leg_sum_mismatch",
+                  paymentId: payment.id,
+                  organizationId: validatedData.organizationId ?? null,
+                  appointmentType: validatedData.appointmentType,
+                  ...legMismatch,
+                }),
+              );
+            }
+          }
+
           return {
             appointmentId: createdAppointment?.id,
             creditsApplied: actualCreditsApplied,
@@ -2075,10 +2343,11 @@ export async function handleCheckout(
         }),
       );
 
-      // Mock/zero-amount/org-billing payment post-processing: referral qualifying
-      // action + waitlist. Real payments handle this via handlePaymentSuccess()
-      // in the webhook, but these flows bypass webhooks entirely.
-      if (isMockPayment || isZeroAmountPayment || isOrgCreditPayment || isOrgInvoicedPayment || isOrgPrepaidUnlimited) {
+      // Mock/zero-amount/org-sponsored payment post-processing: referral
+      // qualifying action + waitlist. Real payments handle this via
+      // handlePaymentSuccess() in the webhook, but these flows bypass
+      // webhooks entirely.
+      if (isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment) {
         // Trigger referral reward if this is the user's first paid booking
         try {
           await processQualifyingAction(userId, "first_paid_booking");

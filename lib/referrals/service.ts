@@ -404,12 +404,27 @@ export async function applyCreditsToPayment(
 
     // Create ledger entry for accurate per-payment tracking and reversal
     if (paymentId) {
-      await tx.referralCreditUsage.create({
+      const usage = await tx.referralCreditUsage.create({
         data: {
           creditId: credit.id,
           paymentId,
           amount: useAmount,
           originalAmount: useAmount,
+        },
+      });
+
+      // Enterprise (Arch 4-Modified): every credit consumption writes a
+      // matching PaymentLeg so the per-payment leg invariant
+      // (`docs/enterprise/20-payment-legs.md`) holds for any flow that
+      // mixes referral credits with card / wallet / invoice. `sourceRef`
+      // points at the ReferralCreditUsage row so refund + reversal can
+      // join the credit ledger without scanning by paymentId+credit.
+      await tx.paymentLeg.create({
+        data: {
+          paymentId,
+          source: "REFERRAL_CREDIT",
+          amountPaise: useAmount,
+          sourceRef: usage.id,
         },
       });
     }
