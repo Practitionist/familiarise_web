@@ -236,8 +236,6 @@ export function HomePageClient({ orgId }: { orgId: string }) {
   const isLoading = analytics.isLoading;
   const data = analytics.data;
 
-  const canSponsor = data?.capabilities.canSponsor ?? false;
-  const canHost = data?.capabilities.canHost ?? false;
   const currency = data?.capabilities.currency ?? "INR";
   const learners = data ? countByRole(data.members.byRole, "LEARNER") : 0;
   const experts = data ? countByRole(data.members.byRole, "EXPERT") : 0;
