@@ -1,0 +1,53 @@
+name: Release PENDING_TRUST Earnings
+
+# Hourly walk that promotes OrganizationEarnings rows out of PENDING_TRUST
+# (the invoice-fraud guard from #687) once the sponsoring org has either been
+# admin-verified to ACTIVE or paid at least one OrganizationInvoice. After
+# promotion the existing release-earnings cron picks them up and flips
+# PENDING → READY when holdUntil lapses.
+#
+# Slot choice: :30. The :00 slot already has 5 simultaneous jobs per #709's
+# collision map (release-earnings, sync-payment-earnings, alert-dispute-deadlines,
+# auto-complete-appointments, cleanup-invalid-appointments). The :30 slot only
+# has waitlist-reminders + cleanup-stale-pending-consultations — neither in the
+# earnings/payment family — so this addition keeps the pooler load spread.
+
+on:
+  schedule:
+    - cron: "30 * * * *"
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  release-pending-trust-earnings:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      # Database connection (required for Prisma)
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Run release pending-trust earnings job
+        run: npx tsx jobs/cleanup/release-pending-trust-earnings.ts
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "Release PENDING_TRUST earnings job failed"
+          # Add notification logic here (Slack, email, etc.)
