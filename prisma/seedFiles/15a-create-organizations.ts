@@ -30,6 +30,7 @@
  */
 
 import { faker } from "@faker-js/faker";
+import bcrypt from "bcryptjs";
 import {
   Currency,
   FundingSource,
@@ -51,10 +52,15 @@ import {
   ResidencyStatus,
   MsmeStatus,
   PoStatus,
+  UserRole,
 } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { buildConsentArtifact } from "../../lib/compliance/dpdp";
 import type { UserWithProfiles } from "./1a-create-users";
+
+// Same source-of-truth as 1a-create-users.ts so the tour-owner credential
+// matches every other seed user; tour scripts and docs reference this.
+const SEED_PASSWORD = process.env.SEED_PASSWORD || "SeedPass123!";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -175,6 +181,13 @@ export async function createOrganizations(
 
   // -------------------------------------------------------- CONSENT ARTIFACTS
   await seedConsentArtifacts(users.slice(0, 10));
+
+  // ---------------------------------------------------- TOUR OWNER (#723)
+  // Dedicated ORG_ADMIN account with deterministic credentials so tour
+  // scripts and integration tests can sign in without hunting for the
+  // right seed user. Idempotent so re-running `npm run db:seed` doesn't
+  // dup. Adopts the canonical Wipro org as its OWNER membership.
+  await seedTourOwner();
 
   console.log("[15a] ✓ Enterprise seed complete");
 }
@@ -758,4 +771,102 @@ async function seedConsentArtifacts(users: UserWithProfiles[]) {
     await prisma.consentArtifact.create({ data: draft });
   }
   console.log(`[15a]   ✓ ConsentArtifact seeded for ${users.length} users`);
+}
+
+// ---------------------------------------------------------------------------
+// Tour owner — dedicated ORG_ADMIN with deterministic credentials (#723)
+// ---------------------------------------------------------------------------
+
+const TOUR_OWNER_EMAIL = "tour-owner@familiarise.dev";
+
+async function seedTourOwner(): Promise<void> {
+  // Adopt the canonical Wipro org as this owner's primary org. Skip the
+  // seed if Wipro didn't materialize (smaller seed mode) — the tour
+  // matrix only needs an ORG_ADMIN attached to *some* seed org.
+  const wipro = await prisma.organization.findUnique({
+    where: { slug: "wipro" },
+    select: { id: true, name: true },
+  });
+  if (!wipro) {
+    console.warn(
+      "[15a]   skipping tour-owner seed — Wipro org not found (smaller seed mode?)",
+    );
+    return;
+  }
+
+  const hashedPassword = await bcrypt.hash(SEED_PASSWORD, 12);
+
+  // 1. User row (idempotent via email upsert)
+  const user = await prisma.user.upsert({
+    where: { email: TOUR_OWNER_EMAIL },
+    update: { role: UserRole.ORG_ADMIN },
+    create: {
+      email: TOUR_OWNER_EMAIL,
+      name: "Tour Owner",
+      emailVerified: true,
+      role: UserRole.ORG_ADMIN,
+      onboardingCompleted: true,
+      timezone: "Asia/Kolkata",
+      country: "India",
+    },
+    select: { id: true },
+  });
+
+  // 2. BetterAuth credential account — keyed (userId, providerId='credential')
+  // composite, so we look up first and only create when missing. Updating an
+  // existing row also keeps the password hash fresh if SEED_PASSWORD rotates.
+  const existingCred = await prisma.account.findFirst({
+    where: { userId: user.id, providerId: "credential" },
+    select: { id: true },
+  });
+  if (existingCred) {
+    await prisma.account.update({
+      where: { id: existingCred.id },
+      data: { password: hashedPassword },
+    });
+  } else {
+    await prisma.account.create({
+      data: {
+        userId: user.id,
+        accountId: user.id,
+        providerId: "credential",
+        password: hashedPassword,
+      },
+    });
+  }
+
+  // 3. OrgAdminProfile + User.orgAdminProfileId link (mirror the runtime
+  // lazy-create at app/api/organizations/route.ts:288).
+  const orgAdmin = await prisma.orgAdminProfile.upsert({
+    where: { userId: user.id },
+    create: { userId: user.id },
+    update: {},
+    select: { id: true },
+  });
+  await prisma.user.updateMany({
+    where: { id: user.id, orgAdminProfileId: null },
+    data: { orgAdminProfileId: orgAdmin.id },
+  });
+
+  // 4. OWNER membership in Wipro (idempotent — skip if already present)
+  const existingMembership = await prisma.membership.findFirst({
+    where: { userId: user.id, organizationId: wipro.id },
+    select: { id: true },
+  });
+  if (!existingMembership) {
+    await prisma.membership.create({
+      data: {
+        userId: user.id,
+        organizationId: wipro.id,
+        role: MemberRole.OWNER,
+        status: MemberStatus.ACTIVE,
+        departmentLabel: "Tour-Owner",
+        payoutRecipient: PayoutRecipient.SELF,
+      },
+    });
+  }
+
+  console.log(
+    `[15a]   ✓ Tour owner seeded: ${TOUR_OWNER_EMAIL} (password: ${SEED_PASSWORD}) — OWNER of ${wipro.name}`,
+  );
 }
