@@ -1428,7 +1428,7 @@ export class SlotAllocationService {
         tx,
         eventId,
         consulteeUserId,
-        appointments.length,
+        appointments.map((a) => a.id),
       );
     }
 
@@ -1447,7 +1447,7 @@ export class SlotAllocationService {
     tx: PrismaTransaction,
     subscriptionId: string,
     consulteeUserId: string,
-    newEngagements: number,
+    newAppointmentIds: string[],
   ): Promise<void> {
     // Find the original signup Payment via the placeholder Appointment.
     // SUBSCRIPTION checkout creates exactly one Appointment with a
@@ -1527,8 +1527,14 @@ export class SlotAllocationService {
       await recordBookingUtilization(tx, {
         programAssignmentId: assignment.id,
         paymentId: orgPayment.id,
-        engagementsConsumed: newEngagements,
+        engagementsConsumed: newAppointmentIds.length,
         priceAtBookingPaise,
+        // PR-1e (G3): pass the appointment ids so re-allocation
+        // (delete+recreate of the same slot) can't double-debit. The
+        // helper computes the set diff against
+        // BookingUtilization.appointmentIds and increments only by the
+        // genuinely-new ids.
+        appointmentIds: newAppointmentIds,
       });
     } catch (err) {
       if (err instanceof ProgramAssignmentLimitError) {

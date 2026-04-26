@@ -16,6 +16,7 @@ import {
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { getAppUrl } from "@/lib/url";
 import { confirmTopUp, walletCredit } from "@/lib/api/organizations/wallet";
+import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
 // Re-export payment handlers from lib (architectural fix)
@@ -800,6 +801,54 @@ export async function handleRefundCreated(
         console.error(
           `⚠️ Failed to refund earnings for payment ${paymentId}:`,
           earningsError,
+        );
+      }
+
+      // PR-1e Phase A: cap reversal for org-funded bookings. The
+      // `BookingUtilization` row (if any) is keyed by paymentId and
+      // exists only when the booking consumed engagements from a
+      // program. Reversal is proportional to the refund ratio so a
+      // partial refund returns a partial slice of the cap. Idempotent
+      // via the ledger-derived "already reversed" check inside the
+      // helper. Same try/catch posture as refundEarnings — log and
+      // continue; the operator runbook flags any stuck rows that the
+      // reconcile cron surfaces.
+      try {
+        const isPartial =
+          refundAmt !== undefined &&
+          originalPaymentAmt !== undefined &&
+          originalPaymentAmt > 0 &&
+          refundAmt < originalPaymentAmt;
+        let engagementsToReverse: number | undefined;
+        if (isPartial) {
+          const util = await tx.bookingUtilization.findUnique({
+            where: { paymentId },
+            select: { engagementsConsumed: true },
+          });
+          if (util) {
+            const ratio = refundAmt! / originalPaymentAmt!;
+            engagementsToReverse = Math.max(
+              0,
+              Math.round(util.engagementsConsumed * ratio),
+            );
+          }
+        }
+        const result = await reverseBookingUtilization(tx, {
+          paymentId,
+          reason: isPartial
+            ? `Partial refund (${refundAmt}/${originalPaymentAmt})`
+            : "Refund",
+          engagementsToReverse,
+        });
+        if (result.reversed) {
+          console.log(
+            `🪙 Cap reversal for payment ${paymentId}: -${result.engagementsReversed} engagements (fullyReversed=${result.fullyReversed})`,
+          );
+        }
+      } catch (capError) {
+        console.error(
+          `⚠️ Failed to reverse cap utilization for payment ${paymentId}:`,
+          capError,
         );
       }
 

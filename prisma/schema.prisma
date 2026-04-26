@@ -1025,6 +1025,16 @@ model BookingUtilization {
   reversedAt     DateTime?
   reversalReason String?
 
+  /// PR-1e (G3): tracks which Appointment IDs have already been counted
+  /// against this utilization. SUBSCRIPTION lazy-debit calls
+  /// `recordBookingUtilization` once per consultant allocation; if a
+  /// consultant deletes a slot and re-allocates the same appointment, the
+  /// helper computes `newDelta = (incoming - alreadyTracked).length` so
+  /// re-counting is impossible. Empty array = pre-PR-1e rows or non-
+  /// SUBSCRIPTION bookings (which always pass appointmentIds at first
+  /// call, so the set diff returns the full count).
+  appointmentIds String[]  @default([])
+
   createdAt DateTime @default(now())
 
   @@index([programAssignmentId])

@@ -139,8 +139,33 @@ export async function recordBookingUtilization(
     paymentId: string;
     engagementsConsumed: number;
     priceAtBookingPaise: number;
+    /**
+     * PR-1e (G3): identifiers of the appointments this call is counting.
+     * When provided, the helper compares against the BookingUtilization's
+     * `appointmentIds` set and only counts the *new* members of `incoming
+     * - alreadyTracked`. Re-allocation (delete + recreate) flows that pass
+     *  the same appointment id twice become idempotent.
+     *
+     * For CONSULTATION/WEBINAR/CLASS the caller knows all appointments
+     * up front, so passing them here turns the upsert into a true
+     * idempotent operation. For SUBSCRIPTION the caller passes whatever
+     * appointment ids are being added in this allocation batch.
+     *
+     * If omitted (legacy callers), behavior is unchanged: every call
+     * unconditionally increments by `engagementsConsumed`.
+     */
+    appointmentIds?: string[];
   },
-): Promise<{ wasOverage: boolean }> {
+): Promise<{
+  wasOverage: boolean;
+  engagementsConsumedDelta: number;
+}> {
+  if (params.engagementsConsumed < 0) {
+    throw new Error(
+      `recordBookingUtilization: engagementsConsumed must be non-negative; got ${params.engagementsConsumed}`,
+    );
+  }
+
   // Read the program config once — the cap + behavior values aren't racy
   // (schema-side config is stable across the transaction). The racy part
   // is the engagementsUsed increment, which we perform via a conditional
@@ -163,6 +188,30 @@ export async function recordBookingUtilization(
     },
   });
 
+  // PR-1e (G3): if the caller provided appointmentIds, dedup against
+  // any already counted on this BookingUtilization row. The new delta
+  // is the count of incoming ids NOT yet tracked. Skip the helper
+  // entirely if nothing new to count.
+  let actualDelta = params.engagementsConsumed;
+  let newAppointmentIds: string[] | undefined;
+  if (params.appointmentIds !== undefined) {
+    const existing = await tx.bookingUtilization.findUnique({
+      where: { paymentId: params.paymentId },
+      select: { appointmentIds: true },
+    });
+    const alreadyTracked = new Set(existing?.appointmentIds ?? []);
+    newAppointmentIds = params.appointmentIds.filter(
+      (id) => !alreadyTracked.has(id),
+    );
+    actualDelta = newAppointmentIds.length;
+    if (actualDelta === 0) {
+      return { wasOverage: false, engagementsConsumedDelta: 0 };
+    }
+  } else if (params.engagementsConsumed === 0) {
+    // No appointmentIds + zero delta = nothing to do (legacy callers).
+    return { wasOverage: false, engagementsConsumedDelta: 0 };
+  }
+
   const cap =
     assignment.program.licensedSeatConfig?.coveredEngagementsPerCycle ?? null;
   const behavior =
@@ -179,15 +228,15 @@ export async function recordBookingUtilization(
   if (cap === null) {
     await tx.$executeRaw`
       UPDATE "ProgramAssignment"
-      SET "engagementsUsed" = "engagementsUsed" + ${params.engagementsConsumed}
+      SET "engagementsUsed" = "engagementsUsed" + ${actualDelta}
       WHERE "id" = ${params.programAssignmentId}
     `;
   } else if (behavior === "BLOCK") {
     const updated = await tx.$executeRaw`
       UPDATE "ProgramAssignment"
-      SET "engagementsUsed" = "engagementsUsed" + ${params.engagementsConsumed}
+      SET "engagementsUsed" = "engagementsUsed" + ${actualDelta}
       WHERE "id" = ${params.programAssignmentId}
-        AND "engagementsUsed" + ${params.engagementsConsumed} <= ${cap}
+        AND "engagementsUsed" + ${actualDelta} <= ${cap}
     `;
     if (updated === 0) {
       throw new ProgramAssignmentLimitError(
@@ -201,9 +250,9 @@ export async function recordBookingUtilization(
     // follow-up SELECT for the updated engagementsUsed value.
     const rows = await tx.$queryRaw<Array<{ engagementsUsed: number }>>`
       UPDATE "ProgramAssignment"
-      SET "engagementsUsed" = "engagementsUsed" + ${params.engagementsConsumed},
+      SET "engagementsUsed" = "engagementsUsed" + ${actualDelta},
           "overageCount" = "overageCount"
-            + CASE WHEN "engagementsUsed" + ${params.engagementsConsumed} > ${cap} THEN 1 ELSE 0 END
+            + CASE WHEN "engagementsUsed" + ${actualDelta} > ${cap} THEN 1 ELSE 0 END
       WHERE "id" = ${params.programAssignmentId}
       RETURNING "engagementsUsed"
     `;
@@ -215,8 +264,9 @@ export async function recordBookingUtilization(
   //     effectively an insert.
   //   - SUBSCRIPTION: called once per consultant allocation (lazy). The
   //     first allocation inserts the row; subsequent allocations
-  //     increment engagementsConsumed by the new delta. priceAtBookingPaise
-  //     keeps the original (the upfront subscription price); incremental
+  //     increment engagementsConsumed by the *new* delta (computed via
+  //     appointmentIds set-diff above). priceAtBookingPaise keeps the
+  //     original (the upfront subscription price); incremental
   //     allocations pass `priceAtBookingPaise: 0` since no new money
   //     changed hands at allocation time.
   await tx.bookingUtilization.upsert({
@@ -224,15 +274,19 @@ export async function recordBookingUtilization(
     create: {
       programAssignmentId: params.programAssignmentId,
       paymentId: params.paymentId,
-      engagementsConsumed: params.engagementsConsumed,
+      engagementsConsumed: actualDelta,
       priceAtBookingPaise: params.priceAtBookingPaise,
       wasOverage,
+      appointmentIds: newAppointmentIds ?? [],
     },
     update: {
-      engagementsConsumed: { increment: params.engagementsConsumed },
+      engagementsConsumed: { increment: actualDelta },
       // Sticky once true — any allocation that crossed the cap marks
       // the row as having had an overage at some point.
       wasOverage: wasOverage ? true : undefined,
+      appointmentIds: newAppointmentIds
+        ? { push: newAppointmentIds }
+        : undefined,
     },
   });
 
@@ -244,43 +298,116 @@ export async function recordBookingUtilization(
       programAssignmentId: params.programAssignmentId,
       membershipId: assignment.membershipId,
       paymentId: params.paymentId,
-      engagementsConsumed: params.engagementsConsumed,
+      engagementsConsumed: actualDelta,
       priceAtBookingPaise: params.priceAtBookingPaise,
       wasOverage,
     },
   });
 
-  return { wasOverage };
+  return { wasOverage, engagementsConsumedDelta: actualDelta };
 }
 
 /**
  * Reverse a utilization on refund. Decrements engagementsUsed, writes a
  * correcting UsageLedgerEntry (we don't delete the original — the ledger
  * is append-only for audit).
+ *
+ * Partial reversal (PR-1e / G2): callers may pass `engagementsToReverse`
+ * to reverse only a fraction of the original consumption — used by the
+ * refund webhook when `refundAmount < paymentAmount`. The function
+ * derives "already reversed" from the sum of negative
+ * `UsageLedgerEntry` rows for this paymentId, then clamps the new
+ * reversal to `min(target, remaining)`. Multiple partial reversals on
+ * the same booking are supported (e.g., refund 25% now, another 50%
+ * later); `reversedAt` is stamped only when the cumulative reversal
+ * fully exhausts the original consumption.
  */
 export async function reverseBookingUtilization(
   tx: CapTx,
-  params: { paymentId: string; reason?: string },
-): Promise<{ reversed: boolean }> {
+  params: {
+    paymentId: string;
+    reason?: string;
+    /**
+     * Fraction of the original `engagementsConsumed` to reverse.
+     * Defaults to full. Pass an explicit count for partial refunds.
+     * Negative or zero → no-op.
+     */
+    engagementsToReverse?: number;
+  },
+): Promise<{
+  reversed: boolean;
+  engagementsReversed: number;
+  fullyReversed: boolean;
+}> {
   // Restore engagements via a reversal LEDGER ENTRY, not by deleting the
   // original BookingUtilization row. Deleting would destroy the history
   // needed by analytics ("who used seats in Q1?"), audits ("was this
   // member assigned on 2026-04-10?"), and partial-refund support (we may
-  // need to reverse more than once). Instead we stamp `reversedAt` on the
-  // row and append an opposing UsageLedgerEntry; the row stays queryable
-  // forever, and the ledger sum still nets to the correct usage.
+  // need to reverse more than once). Instead we stamp `reversedAt` on
+  // the row when fully exhausted and append an opposing UsageLedgerEntry;
+  // the row stays queryable forever and the ledger sum still nets to the
+  // correct usage.
   const util = await tx.bookingUtilization.findUnique({
     where: { paymentId: params.paymentId },
     include: { programAssignment: true },
   });
-  if (!util) return { reversed: false };
-  if (util.reversedAt) return { reversed: false }; // idempotent
+  if (!util) {
+    return { reversed: false, engagementsReversed: 0, fullyReversed: false };
+  }
+
+  // Derive "already reversed" from the immutable ledger. Negative
+  // entries are reversal markers; their absolute sum is the cumulative
+  // reversed count to date.
+  const reversalLedger = await tx.usageLedgerEntry.aggregate({
+    where: {
+      paymentId: params.paymentId,
+      engagementsConsumed: { lt: 0 },
+    },
+    _sum: { engagementsConsumed: true },
+  });
+  const alreadyReversed = -1 * (reversalLedger._sum.engagementsConsumed ?? 0);
+  const remainingReversible = Math.max(
+    0,
+    util.engagementsConsumed - alreadyReversed,
+  );
+
+  if (remainingReversible === 0) {
+    // Already fully reversed — idempotent no-op.
+    return { reversed: false, engagementsReversed: 0, fullyReversed: true };
+  }
+
+  const target =
+    params.engagementsToReverse === undefined
+      ? util.engagementsConsumed
+      : Math.max(0, params.engagementsToReverse);
+  const actualReversal = Math.min(target, remainingReversible);
+  if (actualReversal <= 0) {
+    return { reversed: false, engagementsReversed: 0, fullyReversed: false };
+  }
+
+  const willBeFullyReversed = alreadyReversed + actualReversal >= util.engagementsConsumed;
+
+  // Prorate the price refund so the ledger sum stays consistent with
+  // the partial reversal. Round to the nearest paise; the integer
+  // round-off lands within ±1 paise of the proportional amount.
+  const priceReversal =
+    util.engagementsConsumed > 0
+      ? Math.round(
+          (util.priceAtBookingPaise * actualReversal) /
+            util.engagementsConsumed,
+        )
+      : 0;
 
   await tx.programAssignment.update({
     where: { id: util.programAssignmentId },
     data: {
-      engagementsUsed: { decrement: util.engagementsConsumed },
-      overageCount: util.wasOverage ? { decrement: 1 } : undefined,
+      engagementsUsed: { decrement: actualReversal },
+      // overageCount tracks the number of OVER-CAP BOOKINGS, not units.
+      // Decrement only on the LAST reversal (the booking is now wholly
+      // un-counted). Partial reversals leave the flag in place — the
+      // booking still happened over cap.
+      overageCount:
+        util.wasOverage && willBeFullyReversed ? { decrement: 1 } : undefined,
     },
   });
 
@@ -289,19 +416,29 @@ export async function reverseBookingUtilization(
       programAssignmentId: util.programAssignmentId,
       membershipId: util.programAssignment.membershipId,
       paymentId: params.paymentId,
-      engagementsConsumed: -util.engagementsConsumed,
-      priceAtBookingPaise: -util.priceAtBookingPaise,
+      engagementsConsumed: -actualReversal,
+      priceAtBookingPaise: -priceReversal,
       wasOverage: util.wasOverage,
       notes: params.reason ?? "Reversal on refund",
     },
   });
 
-  await tx.bookingUtilization.update({
-    where: { paymentId: params.paymentId },
-    data: {
-      reversedAt: new Date(),
-      reversalReason: params.reason ?? "Refund",
-    },
-  });
-  return { reversed: true };
+  // Stamp `reversedAt` only when the cumulative reversal fully exhausts
+  // the original consumption. Subsequent partial calls update the
+  // ledger but don't re-stamp.
+  if (willBeFullyReversed) {
+    await tx.bookingUtilization.update({
+      where: { paymentId: params.paymentId },
+      data: {
+        reversedAt: new Date(),
+        reversalReason: params.reason ?? "Refund",
+      },
+    });
+  }
+
+  return {
+    reversed: true,
+    engagementsReversed: actualReversal,
+    fullyReversed: willBeFullyReversed,
+  };
 }

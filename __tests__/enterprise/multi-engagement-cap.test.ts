@@ -40,7 +40,10 @@ type MockTx = {
     findUnique: jest.Mock;
     update: jest.Mock;
   };
-  usageLedgerEntry: { create: jest.Mock };
+  usageLedgerEntry: {
+    create: jest.Mock;
+    aggregate: jest.Mock;
+  };
   $executeRaw: jest.Mock;
   $queryRaw: jest.Mock;
 };
@@ -78,7 +81,12 @@ function makeTx(opts: {
       findUnique: jest.fn(),
       update: jest.fn().mockResolvedValue({}),
     },
-    usageLedgerEntry: { create: jest.fn().mockResolvedValue({}) },
+    usageLedgerEntry: {
+      create: jest.fn().mockResolvedValue({}),
+      // Defaults to "no prior reversals" for fresh tests; partial-reversal
+      // tests override this to simulate cumulative-reversed state.
+      aggregate: jest.fn().mockResolvedValue({ _sum: { engagementsConsumed: 0 } }),
+    },
     $executeRaw: jest.fn().mockResolvedValue(opts.blockUpdateRows ?? 1),
     $queryRaw: jest.fn().mockResolvedValue(opts.chargeReturning ?? []),
   };
@@ -208,10 +216,100 @@ describe("recordBookingUtilization — engagement counting (issue #710)", () => 
     });
     expect(result.wasOverage).toBe(false);
   });
+
+  // PR-1e (G3): SUBSCRIPTION reallocation idempotency via appointmentIds.
+  describe("appointmentIds idempotency (PR-1e)", () => {
+    it("first call with appointmentIds=[a,b] increments by 2", async () => {
+      const tx = makeTx({ cap: null, behavior: "BLOCK" });
+      // First call: no existing BookingUtilization row.
+      tx.bookingUtilization.findUnique = jest.fn().mockResolvedValue(null);
+      const result = await recordBookingUtilization(tx as never, {
+        programAssignmentId: "asg-1",
+        paymentId: "pay-sub",
+        engagementsConsumed: 2,
+        priceAtBookingPaise: 600_000,
+        appointmentIds: ["a", "b"],
+      });
+      expect(result.engagementsConsumedDelta).toBe(2);
+      expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+      // Upsert was called with appointmentIds in create branch
+      expect(tx.bookingUtilization.upsert.mock.calls[0][0].create).toMatchObject({
+        engagementsConsumed: 2,
+        appointmentIds: ["a", "b"],
+      });
+    });
+
+    it("second call with same appointmentIds is a no-op (zero delta)", async () => {
+      const tx = makeTx({ cap: null, behavior: "BLOCK" });
+      // Existing row already tracks both ids.
+      tx.bookingUtilization.findUnique = jest.fn().mockResolvedValue({
+        appointmentIds: ["a", "b"],
+      });
+      const result = await recordBookingUtilization(tx as never, {
+        programAssignmentId: "asg-1",
+        paymentId: "pay-sub",
+        engagementsConsumed: 2,
+        priceAtBookingPaise: 0,
+        appointmentIds: ["a", "b"], // same as already tracked
+      });
+      expect(result.engagementsConsumedDelta).toBe(0);
+      expect(result.wasOverage).toBe(false);
+      // No DB writes on a zero-delta call
+      expect(tx.$executeRaw).not.toHaveBeenCalled();
+      expect(tx.bookingUtilization.upsert).not.toHaveBeenCalled();
+      expect(tx.usageLedgerEntry.create).not.toHaveBeenCalled();
+    });
+
+    it("third call with appointmentIds=[a,b,c] when row tracks [a,b] increments by 1 (only c is new)", async () => {
+      const tx = makeTx({ cap: null, behavior: "BLOCK" });
+      tx.bookingUtilization.findUnique = jest.fn().mockResolvedValue({
+        appointmentIds: ["a", "b"],
+      });
+      const result = await recordBookingUtilization(tx as never, {
+        programAssignmentId: "asg-1",
+        paymentId: "pay-sub",
+        engagementsConsumed: 3,
+        priceAtBookingPaise: 0,
+        appointmentIds: ["a", "b", "c"],
+      });
+      expect(result.engagementsConsumedDelta).toBe(1);
+      // Upsert append-pushes only the new id
+      expect(tx.bookingUtilization.upsert.mock.calls[0][0].update.appointmentIds).toEqual({
+        push: ["c"],
+      });
+    });
+
+    it("legacy callers (no appointmentIds) keep the old additive semantics", async () => {
+      const tx = makeTx({ cap: null, behavior: "BLOCK" });
+      tx.bookingUtilization.findUnique = jest.fn().mockResolvedValue({
+        appointmentIds: [],
+      });
+      const result = await recordBookingUtilization(tx as never, {
+        programAssignmentId: "asg-1",
+        paymentId: "pay-legacy",
+        engagementsConsumed: 1,
+        priceAtBookingPaise: 50_000,
+        // no appointmentIds → old behavior: increment by params.engagementsConsumed
+      });
+      expect(result.engagementsConsumedDelta).toBe(1);
+    });
+
+    it("rejects negative engagementsConsumed defensively", async () => {
+      const tx = makeTx({ cap: null, behavior: "BLOCK" });
+      await expect(
+        recordBookingUtilization(tx as never, {
+          programAssignmentId: "asg-1",
+          paymentId: "pay-neg",
+          engagementsConsumed: -3,
+          priceAtBookingPaise: 0,
+        }),
+      ).rejects.toThrow(/non-negative/);
+    });
+  });
 });
 
-describe("reverseBookingUtilization — refund decrements by full row count", () => {
-  it("decrements engagementsUsed by util.engagementsConsumed and stamps reversedAt", async () => {
+describe("reverseBookingUtilization — refund cap reversal (full + partial)", () => {
+  it("default (no engagementsToReverse) reverses the full count + stamps reversedAt", async () => {
     const tx = makeTx({ cap: 10, behavior: "BLOCK" });
     tx.bookingUtilization.findUnique = jest.fn().mockResolvedValue({
       programAssignmentId: "asg-1",
@@ -225,18 +323,23 @@ describe("reverseBookingUtilization — refund decrements by full row count", ()
       paymentId: "pay-class-1",
       reason: "Refund",
     });
-    expect(result.reversed).toBe(true);
+    expect(result).toEqual({
+      reversed: true,
+      engagementsReversed: 8,
+      fullyReversed: true,
+    });
     expect(tx.programAssignment.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          engagementsUsed: { decrement: 8 }, // full reversal
+          engagementsUsed: { decrement: 8 },
         }),
       }),
     );
     expect(tx.usageLedgerEntry.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          engagementsConsumed: -8, // signed negative reversal entry
+          engagementsConsumed: -8,
+          priceAtBookingPaise: -200_000,
         }),
       }),
     );
@@ -247,20 +350,119 @@ describe("reverseBookingUtilization — refund decrements by full row count", ()
     );
   });
 
-  it("idempotent: returns reversed=false when reversedAt is already set", async () => {
+  it("partial reversal: 50% refund of an 8-session class reverses 4 cap units", async () => {
     const tx = makeTx({ cap: 10, behavior: "BLOCK" });
     tx.bookingUtilization.findUnique = jest.fn().mockResolvedValue({
       programAssignmentId: "asg-1",
-      engagementsConsumed: 1,
-      priceAtBookingPaise: 50_000,
+      engagementsConsumed: 8,
+      priceAtBookingPaise: 200_000,
+      wasOverage: false,
+      reversedAt: null,
+      programAssignment: { membershipId: "mem-1" },
+    });
+    const result = await reverseBookingUtilization(tx as never, {
+      paymentId: "pay-class-partial",
+      engagementsToReverse: 4, // caller computed Math.round(8 * 0.5)
+      reason: "Partial refund (100000/200000)",
+    });
+    expect(result).toEqual({
+      reversed: true,
+      engagementsReversed: 4,
+      fullyReversed: false,
+    });
+    expect(tx.programAssignment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          engagementsUsed: { decrement: 4 },
+        }),
+      }),
+    );
+    // Price reversal is prorated: 200_000 * (4/8) = 100_000
+    expect(tx.usageLedgerEntry.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          engagementsConsumed: -4,
+          priceAtBookingPaise: -100_000,
+        }),
+      }),
+    );
+    // reversedAt NOT stamped — partial reversal leaves the row open
+    expect(tx.bookingUtilization.update).not.toHaveBeenCalled();
+  });
+
+  it("partial reversal: subsequent calls accumulate, last one stamps reversedAt", async () => {
+    const tx = makeTx({ cap: 10, behavior: "BLOCK" });
+    tx.bookingUtilization.findUnique = jest.fn().mockResolvedValue({
+      programAssignmentId: "asg-1",
+      engagementsConsumed: 8,
+      priceAtBookingPaise: 200_000,
+      wasOverage: false,
+      reversedAt: null,
+      programAssignment: { membershipId: "mem-1" },
+    });
+    // Simulate 3 already reversed (e.g., a prior partial refund of 37.5%)
+    tx.usageLedgerEntry.aggregate = jest.fn().mockResolvedValue({
+      _sum: { engagementsConsumed: -3 },
+    });
+    // Caller wants to reverse 5 more (the remaining 62.5%)
+    const result = await reverseBookingUtilization(tx as never, {
+      paymentId: "pay-class-2nd-partial",
+      engagementsToReverse: 5,
+    });
+    expect(result).toEqual({
+      reversed: true,
+      engagementsReversed: 5,
+      fullyReversed: true, // 3 + 5 = 8 = full
+    });
+    expect(tx.bookingUtilization.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ reversedAt: expect.any(Date) }),
+      }),
+    );
+  });
+
+  it("partial reversal clamps to remaining: caller asks for 10, only 2 remain → reverses 2", async () => {
+    const tx = makeTx({ cap: 10, behavior: "BLOCK" });
+    tx.bookingUtilization.findUnique = jest.fn().mockResolvedValue({
+      programAssignmentId: "asg-1",
+      engagementsConsumed: 8,
+      priceAtBookingPaise: 200_000,
+      wasOverage: false,
+      reversedAt: null,
+      programAssignment: { membershipId: "mem-1" },
+    });
+    tx.usageLedgerEntry.aggregate = jest.fn().mockResolvedValue({
+      _sum: { engagementsConsumed: -6 }, // 6 already reversed; 2 remaining
+    });
+    const result = await reverseBookingUtilization(tx as never, {
+      paymentId: "pay-clamp",
+      engagementsToReverse: 10, // caller over-asks; helper clamps
+    });
+    expect(result.engagementsReversed).toBe(2);
+    expect(result.fullyReversed).toBe(true);
+  });
+
+  it("idempotent: already fully reversed via ledger sum returns reversed=false", async () => {
+    const tx = makeTx({ cap: 10, behavior: "BLOCK" });
+    tx.bookingUtilization.findUnique = jest.fn().mockResolvedValue({
+      programAssignmentId: "asg-1",
+      engagementsConsumed: 8,
+      priceAtBookingPaise: 200_000,
       wasOverage: false,
       reversedAt: new Date(),
       programAssignment: { membershipId: "mem-1" },
     });
+    tx.usageLedgerEntry.aggregate = jest.fn().mockResolvedValue({
+      _sum: { engagementsConsumed: -8 }, // fully reversed already
+    });
     const result = await reverseBookingUtilization(tx as never, {
       paymentId: "pay-already-reversed",
     });
-    expect(result.reversed).toBe(false);
+    expect(result).toEqual({
+      reversed: false,
+      engagementsReversed: 0,
+      fullyReversed: true,
+    });
     expect(tx.programAssignment.update).not.toHaveBeenCalled();
   });
 
@@ -271,5 +473,66 @@ describe("reverseBookingUtilization — refund decrements by full row count", ()
       paymentId: "pay-personal",
     });
     expect(result.reversed).toBe(false);
+    expect(result.fullyReversed).toBe(false);
+  });
+
+  it("zero / negative engagementsToReverse: no-op, no DB writes", async () => {
+    const tx = makeTx({ cap: 10, behavior: "BLOCK" });
+    tx.bookingUtilization.findUnique = jest.fn().mockResolvedValue({
+      programAssignmentId: "asg-1",
+      engagementsConsumed: 8,
+      priceAtBookingPaise: 200_000,
+      wasOverage: false,
+      reversedAt: null,
+      programAssignment: { membershipId: "mem-1" },
+    });
+    const result = await reverseBookingUtilization(tx as never, {
+      paymentId: "pay-zero",
+      engagementsToReverse: 0,
+    });
+    expect(result.reversed).toBe(false);
+    expect(tx.programAssignment.update).not.toHaveBeenCalled();
+    expect(tx.usageLedgerEntry.create).not.toHaveBeenCalled();
+  });
+
+  it("overageCount only decrements on the LAST (fully-reversing) reversal", async () => {
+    const tx = makeTx({ cap: 10, behavior: "BLOCK" });
+    tx.bookingUtilization.findUnique = jest.fn().mockResolvedValue({
+      programAssignmentId: "asg-1",
+      engagementsConsumed: 8,
+      priceAtBookingPaise: 200_000,
+      wasOverage: true, // booking went over cap
+      reversedAt: null,
+      programAssignment: { membershipId: "mem-1" },
+    });
+    // First partial: 4 of 8 — overageCount should NOT decrement
+    const partial = await reverseBookingUtilization(tx as never, {
+      paymentId: "pay-overage",
+      engagementsToReverse: 4,
+    });
+    expect(partial.fullyReversed).toBe(false);
+    expect(tx.programAssignment.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: expect.not.objectContaining({
+          overageCount: expect.anything(),
+        }),
+      }),
+    );
+    // Now the second half — overageCount SHOULD decrement
+    tx.usageLedgerEntry.aggregate = jest.fn().mockResolvedValue({
+      _sum: { engagementsConsumed: -4 },
+    });
+    const final = await reverseBookingUtilization(tx as never, {
+      paymentId: "pay-overage",
+      engagementsToReverse: 4,
+    });
+    expect(final.fullyReversed).toBe(true);
+    expect(tx.programAssignment.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          overageCount: { decrement: 1 },
+        }),
+      }),
+    );
   });
 });
