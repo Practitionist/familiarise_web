@@ -92,7 +92,6 @@ export default async function MyProgramPage({
                 select: {
                   id: true,
                   appointmentType: true,
-                  startTime: true,
                 },
               },
             },
@@ -119,11 +118,11 @@ export default async function MyProgramPage({
             const pool = a.program.creditPoolConfig;
             const cap =
               a.program.type === "LICENSED_SEAT"
-                ? (seat?.coveredSessionsPerCycle ?? null)
+                ? (seat?.coveredEngagementsPerCycle ?? null)
                 : a.program.type === "CREDIT_POOL"
                   ? (pool?.creditsPerCycle ?? null)
                   : null;
-            const used = a.sessionsUsed;
+            const used = a.engagementsUsed;
             const pct =
               cap === null ? null : Math.min(100, Math.round((used / cap) * 100));
             const unitLabel =
@@ -226,7 +225,7 @@ export default async function MyProgramPage({
                       {u.payment.appointment?.appointmentType ?? "—"}
                     </td>
                     <td className="px-4 py-2 text-right">
-                      {u.sessionsConsumed}
+                      {u.engagementsConsumed}
                     </td>
                     <td className="px-4 py-2 text-right">
                       {formatCurrencyAmount(u.priceAtBookingPaise, "INR")}

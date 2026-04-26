@@ -243,6 +243,9 @@ export default function OrgCreditsPage({
       // `handler` (capture succeeded), `paid: false` if `payment.failed`
       // fired or the user dismissed the popup. We only poll for webhook
       // confirmation in the success branch.
+      // QA NOTE: Razorpay test mode rejects repeated-digit mobile numbers
+      // (e.g. 9999999999, 8888888888). Use a varied test number — the
+      // webhook path itself is unaffected. See #717.
       const paid = await new Promise<boolean>((resolve) => {
         const rzp = new window.Razorpay({
           key: result.keyId,
