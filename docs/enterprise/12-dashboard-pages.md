@@ -57,13 +57,34 @@ A few additional surfaces are not in the org-scoped tree:
 
 - `/organizations/invite/[token]` — invite-accept landing
   (`app/organizations/invite/[token]/page.tsx`).
-- `/dashboard/org-admin/[orgAdminId]/home` — the per-operator entry
-  point. Keyed on `OrgAdminProfile.id`. Auto-redirects operators who
-  own exactly one ACTIVE OWNER membership straight to that org's
-  `/home`, renders a chooser for operators who own multiple orgs, and
-  shows a "create an organization" CTA when the operator has none.
+- `/dashboard/org-admin/[orgAdminId]/**` — **the operator (cross-org)
+  dashboard.** Keyed on `OrgAdminProfile.id`. Has its own sidebar
+  (mirrors /dashboard/admin and /dashboard/staff) with four pages:
+    - `/home` — cross-org stats row + grid of orgs you OWN + "+ New
+      organization" CTA. Replaces the old `/dashboard/organization`
+      switcher list (which now 308-redirects here for OrgAdmins).
+    - `/activity` — cross-org audit feed aggregating `OrgAuditLog` rows
+      across all owned orgs. Cursor-paginated. Distinct from per-org
+      `/audit` which scopes to one org and supports rich filters.
+    - `/billing` — cross-org outstanding invoices + wallet balance
+      roll-up. Distinct from per-org `/billing` which mutates one org's
+      wallet/invoices. Read-only.
+    - `/settings` — operator-level preferences scaffold (default
+      landing org, notification routing). Storage decision deferred to
+      v1.1; the page exists so the sidebar route doesn't 404.
+    - `/create` — same `<CreateOrganizationWizard />` as
+      `/dashboard/organization/create`, but inside this dashboard's
+      chrome (operators creating their 2nd, 3rd, … org never leave the
+      chrome). Both entry points redirect to
+      `/dashboard/organization/<newOrgId>/home` on success.
 - `/dashboard/admin/**` — the platform admin surface that can verify,
   suspend, or deactivate any org. Lives outside this doc set.
+
+The bare `/dashboard/organization` URL is now a server-redirect:
+OrgAdmin → `/dashboard/org-admin/<id>/home`; non-OrgAdmin → `/dashboard`.
+The org grid that used to live there is gone — non-OrgAdmin members
+(LEARNER, EXPERT) navigate between orgs via the OrganizationSwitcher
+dropdown in the top bar, which never required a list page.
 
 ## Visibility by capability
 

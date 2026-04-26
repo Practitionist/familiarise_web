@@ -162,6 +162,8 @@ a host arm (RateCard + EXPERT memberships + payouts). T.10.5 / T.10.6
 
 | Integration | Stop |
 |---|---|
+| Operator (cross-org) dashboard at `/dashboard/org-admin/<id>/*` — Home / Activity / Billing / Settings + switcher redirect from `/dashboard/organization` | T.16.5 |
+| Consumer in-org pages — LEARNER `/my-program`, EXPERT `/my-arrangement` | T.14, T.15 |
 | Audit log viewer + CSV export | T.17 |
 | Domain DNS verification + signin gate | T.18 |
 | SSO provider config + cert expiry | T.19 |
@@ -195,7 +197,7 @@ npx prisma validate
 # 4. Seed cohort present (don't reseed; just confirm)
 # Run via Supabase MCP execute_sql against pzmbxqdgibfkhjwzeprf:
 #   SELECT slug FROM "organizations"
-#   WHERE slug IN ('wipro', 'iit-madras', 'learnpro-agency')
+#   WHERE slug IN ('wipro', 'iit-madras', 'learnpro-academy')
 #   ORDER BY slug;
 # expected: 3 rows (the dedicated cohort plus Rahul's solo org).
 ```
@@ -264,7 +266,7 @@ SELECT
   END AS shape,
   status
 FROM "organizations"
-WHERE slug IN ('wipro', 'iit-madras', 'learnpro-agency')
+WHERE slug IN ('wipro', 'iit-madras', 'learnpro-academy')
    OR slug LIKE '%rahul%'
 ORDER BY slug;
 ```
@@ -278,7 +280,7 @@ that's a data bug — flag it and `fix it`.
 ### T.2 — Create our first tour org as a BUYER
 
 **What we're about to do.** Walk the org-creation wizard at
-`/dashboard/org-admin/onboarding` and create a Sponsor-only org named
+`/dashboard/organization/create` and create a Sponsor-only org named
 `tour-2026-04-25-acme`. We'll watch the wizard's three-step funnel
 (role → org details → capability) and confirm the resulting row in
 `organizations` carries `canSponsor=true, canHost=false`.
@@ -295,12 +297,12 @@ the matrix.
 
 > Pick one:
 > - `auto` — I'll
->   `mcp__chrome-devtools__navigate_page("http://localhost:3000/dashboard/org-admin/onboarding")`,
+>   `mcp__chrome-devtools__navigate_page("http://localhost:3000/dashboard/organization/create")`,
 >   take a snapshot, then `fill_form` for each wizard step. I'll
 >   pause after each step's submit so you can watch the dashboard
 >   update.
 > - `manual` — Open
->   <http://localhost:3000/dashboard/org-admin/onboarding> in a fresh
+>   <http://localhost:3000/dashboard/organization/create> in a fresh
 >   browser tab. Pick role "Org admin", fill org name = "Tour Acme"
 >   slug = "tour-2026-04-25-acme", capability = "Sponsor only".
 >   Submit. Type `done` when the dashboard loads.
@@ -1356,60 +1358,87 @@ read-only (or hidden entirely).
 
 **What we're about to do.** Create a tour EXPERT (this requires the
 user to also have a `ConsultantProfile` — see
-`prisma/seedFiles/1a-create-users.ts` for the pattern). Tour the
-chrome — EXPERTs see their own earnings, their own payouts, their
-own assigned programs.
+`prisma/seedFiles/1a-create-users.ts` for the pattern). Sign in as
+that user, navigate to `/dashboard/organization/<acmeId>`, and
+expect the entry router to land them on `/my-arrangement` — the
+EXPERT's per-org view (added in the operator-dashboard consolidation,
+commit `f6876b8e`). Walk that page: payout-recipient card, default
+RateCard split, recent earnings table.
 
 **Why it matters.** EXPERT is the host-side role — the actual
-service deliverer. On a Hybrid org like Acme, an EXPERT is also
-typically a member of the host's pool.
+service deliverer. On a Hybrid org like Acme, an EXPERT also needs
+to know exactly how the org splits revenue with them and where their
+payouts land (SELF vs ORGANIZATION). Before the consolidation, this
+data was buried with no UI surface.
 
-**Coverage.** `MemberRole.EXPERT`.
+**Coverage.** `MemberRole.EXPERT` + `/my-arrangement` consumer page.
 
 **Drive.**
 
 > Pick one (analogous to T.12, but also create a `ConsultantProfile`
-> for the user via Supabase MCP).
+> for the user via Supabase MCP). Then navigate to
+> `/dashboard/organization/<acmeId>` and confirm the URL ends up at
+> `/my-arrangement`.
 
 **Verify.** Membership row + `ConsultantProfile` row exist for the
-tour expert. The dashboard's "My earnings" section renders without
-500 (even if the earnings are empty).
+tour expert. The /my-arrangement page renders three sections: payout
+arrangement (SELF or ORGANIZATION), revenue split (Platform / Org /
+You percentages), and a recent-earnings table (empty if the expert
+hasn't hosted yet).
 
-**Watch for.** EXPERT should see "My earnings", "My payout account"
-in the sidebar. They should NOT see other experts' earnings or
-other members' org-level analytics.
+**Watch for.** Sidebar should ONLY show "Overview" and "My
+Arrangement" — no operator items (Members, Programs, Billing). The
+sidebar gate is in `app/dashboard/organization/[orgId]/layout.tsx`
+(`role === "EXPERT" && canHost`). If an EXPERT sees operator items,
+that's a regression of commit `87a2f0f8`.
 
 ---
 
 ### T.15 — LEARNER lens
 
-**What we're about to do.** Create a tour LEARNER. Tour the chrome
-— LEARNERs see almost nothing in the org admin section because they
-consume rather than administer. They DO see their own program
-assignments, their booking history, and any vouchers/credits they
-have.
+**What we're about to do.** Create a tour LEARNER. Sign in as them,
+navigate to `/dashboard/organization/<acmeId>`, and expect the entry
+router to land them on `/my-program` — the LEARNER's per-org
+allocation view (added in the operator-dashboard consolidation,
+commit `f6876b8e`). Walk that page: cycle progress card per active
+ProgramAssignment, coverage rules, latest 20 BookingUtilization
+rows.
 
 **Why it matters.** LEARNER is the most restrictive lens. If
 anything LEARNER-visible accidentally exposes another member's data,
 that's a privacy bug — the "fix it" rule (Standing Rule #3) kicks
-in immediately.
+in immediately. The /my-program page must show ONLY the caller's
+own ProgramAssignment rows, never other members'.
 
-**Coverage.** `MemberRole.LEARNER`.
+**Coverage.** `MemberRole.LEARNER` + `/my-program` consumer page.
 
 **Drive.**
 
 > Pick one (analogous to T.12; LEARNER also needs a
-> `ConsulteeProfile` for the booking flow to work).
+> `ConsulteeProfile` for the booking flow to work). Then navigate
+> to `/dashboard/organization/<acmeId>` and confirm the URL ends up
+> at `/my-program`.
 
 **Verify.** Membership row + `ConsulteeProfile` row exist for the
-tour learner.
+tour learner. The /my-program page renders the assignment grid (or
+an empty state if the LEARNER hasn't been assigned to any Program
+yet — that's expected for a fresh tour learner; the page must not
+500).
 
-**Watch for.** When a LEARNER navigates to
-`/dashboard/organization/<orgId>`, the sidebar should redirect them
-to a personal scope view (not the org-admin view). If they CAN see
-the org-admin sidebar, that's the bug fixed in commit `a535fea2`
-(consumer roles routed away from operator dashboard) regressing —
-file it.
+**Watch for.** Sidebar should ONLY show "Overview" and "My Program"
+— no operator items. SQL-spot-check that the assignments visible on
+the page filter to `membershipId = <this LEARNER's membership>`:
+
+```sql
+SELECT pa.id, pa."sessionsUsed", pa."periodStart", pa."periodEnd"
+  FROM "ProgramAssignment" pa
+  JOIN "Membership" m ON m.id = pa."membershipId"
+ WHERE m."userId" = (SELECT id FROM "User" WHERE email = 'tour-2026-04-25-learner@example.com');
+```
+
+If the page shows assignments from `membershipId` ≠ this LEARNER, the
+server-side filter at `app/dashboard/organization/[orgId]/my-program/page.tsx`
+regressed — file as a P0 privacy bug.
 
 ---
 
@@ -1436,6 +1465,104 @@ or void anything themselves.
 **Watch for.** Every "save" button on every page should be either
 hidden or disabled for SUPPORT. The audit log viewer (T.17) should
 still be accessible because it's read-only by nature.
+
+---
+
+### T.16.5 — Operator (cross-org) dashboard at `/dashboard/org-admin/<id>/*`
+
+**What we're about to do.** Sign in as the OWNER of `tour-2026-04-25-acme`
+(who, after T.2's org creation, has an `OrgAdminProfile` lazy-created
+by `POST /api/organizations`). Visit `/dashboard/organization` and
+expect a server redirect to `/dashboard/org-admin/<orgAdminId>/home`.
+Walk the four sidebar pages: Overview, Activity, Billing, Settings.
+
+**Why it matters.** Before the consolidation (commits `f6876b8e` +
+`d2bb6e02`), `/dashboard/organization` was a stranded list page with
+no chrome and `/dashboard/org-admin/<id>/home` was a thin chooser
+that auto-redirected single-org operators away. Both surfaces showed
+overlapping content. The consolidation collapses them into one
+operator dashboard with a `CollapsibleSidebar` (mirrors
+`/dashboard/admin` and `/dashboard/staff` patterns) — Home / Activity
+/ Billing / Settings — and the bare `/dashboard/organization` URL is
+now a server-redirect for backward compatibility (old bookmarks,
+dropdown links, Novu payloads keep working).
+
+This is also the *cross-org* surface — per-org operator views
+(members, programs, billing) live one click deeper at
+`/dashboard/organization/[orgId]/*`. The two layers don't overlap.
+
+**Coverage.** Operator dashboard consolidation. Cross-references the
+switcher-redirect, the four operator pages, and the wizard's
+dual-entry behavior (in-dashboard `/create` vs unbranded
+`/dashboard/organization/create`).
+
+**Drive.**
+
+> Pick one:
+> - `auto` — `mcp__chrome-devtools__navigate_page` to
+>   `http://localhost:3000/dashboard/organization`. `take_snapshot`
+>   to confirm the URL settled at `/dashboard/org-admin/<id>/home`.
+>   Then click each sidebar item: Activity, Billing, Settings.
+>   Take a snapshot at each.
+> - `manual` — Open <http://localhost:3000/dashboard/organization>
+>   in a fresh tab signed in as the Acme owner; you should land on
+>   `/dashboard/org-admin/<id>/home`. Click each sidebar item; type
+>   `done` when you've seen all four pages.
+
+**Verify.**
+
+1. URL after redirect matches `/dashboard/org-admin/<id>/home` (NOT
+   `/dashboard/organization`). The redirect lives at
+   `app/dashboard/organization/(switcher)/page.tsx`.
+2. Home page shows: stats row (orgs you own, active members,
+   outstanding ₹), an org grid filtered to OWNER memberships, and a
+   "+ New organization" button linking to
+   `/dashboard/org-admin/<id>/create`.
+3. Activity page renders a timeline of recent `OrgAuditLog` rows
+   across ALL orgs you own. Confirm the orgName chip on each row
+   matches the underlying `organizationId` via SQL spot-check:
+   ```sql
+   SELECT al.id, al.action, al.description, o.name AS org_name
+     FROM "OrgAuditLog" al
+     JOIN "organizations" o ON o.id = al."organizationId"
+    WHERE al."organizationId" IN (
+            SELECT m."organizationId"
+              FROM "Membership" m
+             WHERE m."userId" = (SELECT id FROM "User" WHERE email = '<owner email>')
+               AND m.role = 'OWNER' AND m.status = 'ACTIVE')
+    ORDER BY al."createdAt" DESC LIMIT 10;
+   ```
+4. Billing page shows a stats row + per-org table with funding-source
+   chips, wallet balance, and outstanding-invoice columns. Hit
+   `GET /api/org-admin/<id>/billing` directly and confirm the JSON
+   matches the rendered table.
+5. Settings page renders the "coming soon" scaffold (no schema for
+   operator prefs yet — that ships in v1.1).
+
+**Watch for.**
+
+- A non-OrgAdmin user (regular CONSULTANT or CONSULTEE without an
+  `OrgAdminProfile`) hitting `/dashboard/organization` should be
+  redirected to `/dashboard` (NOT `/dashboard/org-admin/<id>/home`,
+  because they have no profile). They navigate between orgs via the
+  top-bar `OrganizationSwitcher` dropdown.
+- The IDOR guard in `app/dashboard/org-admin/[orgAdminId]/layout.tsx`
+  must 404 if the URL's `orgAdminId` doesn't match the caller's
+  `session.user.orgAdminProfileId`. Try editing the URL to a random
+  UUID and confirm 404 (NOT a redirect, NOT a 403 — same posture as
+  before consolidation).
+- The wizard at `/dashboard/org-admin/<id>/create` and at
+  `/dashboard/organization/create` render the SAME
+  `<CreateOrganizationWizard />` component. Both redirect to
+  `/dashboard/organization/<newOrgId>/home` on success. The cancel
+  paths differ: the in-dashboard URL cancels back to
+  `/dashboard/org-admin/<id>/home`; the standalone URL cancels back
+  to `/dashboard/organization` (which then redirects).
+
+**Bug-fix flag.** If the redirect loops (e.g. `/dashboard/organization`
+→ `/dashboard/org-admin/<id>/home` → `/dashboard/organization`), the
+`OrgAdminShell` is doing something it shouldn't. Standing Rule #3:
+fix it before continuing the tour.
 
 ---
 
@@ -2274,7 +2401,7 @@ flight; trace it via the audit log.
 ```sql
 SELECT slug, name, "canSponsor", "canHost", status
 FROM "organizations"
-WHERE slug IN ('wipro', 'iit-madras', 'learnpro-agency')
+WHERE slug IN ('wipro', 'iit-madras', 'learnpro-academy')
 ORDER BY slug;
 ```
 
