@@ -12,7 +12,6 @@ import {
   GraduationCap,
   Briefcase,
   CreditCard,
-  Coins,
   BarChart3,
   ClipboardList,
   Settings,
@@ -48,6 +47,7 @@ import {
 import { OrgContextBar } from "@/components/dashboard/OrgContextBar";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { signOut, useSession } from "@/lib/auth-client";
+import { isAtLeastRole } from "@/lib/auth/role-ranks";
 import { MEMBER_ROLE_LABEL } from "@/lib/labels/org-labels";
 import { resolvePersonalDashboardHref } from "@/lib/labels/personal-dashboard";
 import { disconnectStreamClients } from "@/providers/StreamProvider";
@@ -145,23 +145,13 @@ export default function OrgLayout({
 
   // Compute sidebar items from capabilities + fundingSource + role. The
   // API layer enforces the same gates, but hiding items that the user
-  // can't act on keeps the sidebar tidy. One source of truth for role
-  // ranks lives in useOrgRole.ts — we duplicate it here narrowly because
-  // this layout runs before the query cache is warm.
+  // can't act on keeps the sidebar tidy.
   const sidebarItems: CollapsibleSidebarItem[] = useMemo(() => {
     if (!org) return [];
     const { canSponsor, canHost, fundingSource } = org.organization;
 
-    const RANKS: Record<MemberRole, number> = {
-      OWNER: 100,
-      MAINTAINER: 80,
-      MANAGER: 60,
-      EXPERT: 40,
-      SUPPORT: 30,
-      LEARNER: 20,
-    };
     const role = org.membership.role;
-    const isAtLeast = (min: MemberRole) => RANKS[role] >= RANKS[min];
+    const isAtLeast = (min: MemberRole) => isAtLeastRole(role, min);
 
     const items: { name: string; icon: LucideIcon; path: string; show?: boolean }[] = [
       { name: "Overview", icon: Home, path: "home" },
@@ -200,22 +190,17 @@ export default function OrgLayout({
       // capability-driven replacement ships. Leaving the entry here so
       // it's easy to re-enable once `/catalog/page.tsx` exists.
       { name: "Catalog", icon: Briefcase, path: "catalog", show: false },
-      // Credits surface only when this org's BillingAccount uses WALLET
-      // funding (the credit-pool mode). Other funding sources don't have
-      // a wallet balance to display.
-      {
-        name: "Credits",
-        icon: Coins,
-        path: "credits",
-        show: fundingSource === "WALLET" && isAtLeast("MANAGER"),
-      },
-      // Billing surfaces whenever the org can sponsor. MANAGER-level
-      // visibility keeps support staff out of invoice history.
+      // Billing combines invoices (INVOICE-funded) + wallet (WALLET-funded)
+      // into a tabs UI. Visible whenever the org can sponsor or has a
+      // wallet to view. MANAGER-level visibility keeps support staff out
+      // of invoice history.
       {
         name: "Billing",
         icon: CreditCard,
         path: "billing",
-        show: canSponsor && isAtLeast("MANAGER"),
+        show:
+          (canSponsor || fundingSource === "WALLET") &&
+          isAtLeast("MANAGER"),
       },
       {
         name: "Payouts",
@@ -363,7 +348,6 @@ export default function OrgLayout({
     experts:     "Experts",
     programs:    "Programs",
     contracts:   "Contracts",
-    credits:     "Credits",
     billing:     "Billing",
     payouts:     "Payouts",
     analytics:   "Analytics",

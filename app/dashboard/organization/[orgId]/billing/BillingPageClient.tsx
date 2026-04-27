@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CreditCard, AlertCircle, Sparkles, Plus, Trash2 } from "lucide-react";
 import { z } from "zod";
@@ -45,8 +46,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { FUNDING_SOURCE_LABEL } from "@/lib/labels/org-labels";
+import { useSession } from "@/lib/auth-client";
+import { buildRazorpayPrefill } from "@/lib/payments/razorpay-prefill";
+import { WalletTab } from "./WalletTab";
 
 // ---------------------------------------------------------------------------
 // Zod schemas — narrow API responses at the network boundary so the rest
@@ -227,6 +232,9 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
     minRole: "MANAGER",
     canSponsor: true,
   });
+  const searchParams = useSearchParams();
+  const initialTab = searchParams?.get("tab") === "wallet" ? "wallet" : "invoices";
+  const { data: session } = useSession();
   const queryClient = useQueryClient();
 
   const summary = useQuery({
@@ -273,6 +281,11 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
       // `handler` fired (capture succeeded). Otherwise we treat the
       // attempt as not-yet-paid and skip polling — the row stays
       // ISSUED, no false "awaiting confirmation" toast.
+      const prefill = buildRazorpayPrefill({
+        name: session?.user?.name ?? null,
+        email: session?.user?.email ?? null,
+        phone: session?.user?.phone ?? null,
+      });
       const paid = await new Promise<boolean>((resolve) => {
         const rzp = new window.Razorpay({
           key: result.keyId,
@@ -281,6 +294,7 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
           name: "Familiarise",
           description: `Invoice ${result.invoice.invoiceNumber}`,
           order_id: result.razorpayOrderId,
+          ...(Object.keys(prefill).length > 0 ? { prefill } : {}),
           handler: () => {
             resolve(true);
           },
@@ -414,57 +428,64 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
         }
       />
       <DashboardContent>
-        {summary.isLoading ? (
-          <p className="text-sm text-zinc-500">Loading…</p>
-        ) : (
-          <DashboardGrid columns={4}>
-            <StatCard
-              title="This month gross"
-              value={formatCurrencyAmount(
-                summary.data?.monthToDate.gross ?? 0,
-                "INR",
-              )}
-              subtitle={`${summary.data?.monthToDate.paymentCount ?? 0} bookings`}
-              icon={CreditCard}
-              variant="success"
-            />
-            <StatCard
-              title="Outstanding"
-              value={formatCurrencyAmount(
-                summary.data?.outstanding.amount ?? 0,
-                "INR",
-              )}
-              subtitle={`${summary.data?.outstanding.invoiceCount ?? 0} invoices`}
-              icon={AlertCircle}
-              variant={
-                (summary.data?.outstanding.invoiceCount ?? 0) > 0
-                  ? "warning"
-                  : "default"
-              }
-            />
-            {summary.data?.pendingCharges && (
-              <StatCard
-                title="Pending charges"
-                value={formatCurrencyAmount(
-                  summary.data.pendingCharges.amount,
-                  "INR",
+        <Tabs defaultValue={initialTab}>
+          <TabsList>
+            <TabsTrigger value="invoices">Invoices</TabsTrigger>
+            <TabsTrigger value="wallet">Wallet</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="invoices" className="space-y-6">
+            {summary.isLoading ? (
+              <p className="text-sm text-zinc-500">Loading…</p>
+            ) : (
+              <DashboardGrid columns={4}>
+                <StatCard
+                  title="This month gross"
+                  value={formatCurrencyAmount(
+                    summary.data?.monthToDate.gross ?? 0,
+                    "INR",
+                  )}
+                  subtitle={`${summary.data?.monthToDate.paymentCount ?? 0} bookings`}
+                  icon={CreditCard}
+                  variant="success"
+                />
+                <StatCard
+                  title="Outstanding"
+                  value={formatCurrencyAmount(
+                    summary.data?.outstanding.amount ?? 0,
+                    "INR",
+                  )}
+                  subtitle={`${summary.data?.outstanding.invoiceCount ?? 0} invoices`}
+                  icon={AlertCircle}
+                  variant={
+                    (summary.data?.outstanding.invoiceCount ?? 0) > 0
+                      ? "warning"
+                      : "default"
+                  }
+                />
+                {summary.data?.pendingCharges && (
+                  <StatCard
+                    title="Pending charges"
+                    value={formatCurrencyAmount(
+                      summary.data.pendingCharges.amount,
+                      "INR",
+                    )}
+                    subtitle={`${summary.data.pendingCharges.paymentCount} unbilled`}
+                    icon={CreditCard}
+                  />
                 )}
-                subtitle={`${summary.data.pendingCharges.paymentCount} unbilled`}
-                icon={CreditCard}
-              />
+                <StatCard
+                  title="Payment terms"
+                  value={`NET-${summary.data?.paymentTermsDays ?? 60}`}
+                />
+                {summary.data?.fundingSource && (
+                  <StatCard
+                    title="Funding source"
+                    value={FUNDING_SOURCE_LABEL[summary.data.fundingSource]}
+                  />
+                )}
+              </DashboardGrid>
             )}
-            <StatCard
-              title="Payment terms"
-              value={`NET-${summary.data?.paymentTermsDays ?? 60}`}
-            />
-            {summary.data?.fundingSource && (
-              <StatCard
-                title="Funding source"
-                value={FUNDING_SOURCE_LABEL[summary.data.fundingSource]}
-              />
-            )}
-          </DashboardGrid>
-        )}
 
         <Card className="mt-6">
           <CardHeader>
@@ -549,6 +570,12 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
             )}
           </CardContent>
         </Card>
+          </TabsContent>
+
+          <TabsContent value="wallet">
+            <WalletTab orgId={orgId} />
+          </TabsContent>
+        </Tabs>
       </DashboardContent>
 
       {/* Manual invoice composer dialog */}

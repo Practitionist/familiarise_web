@@ -17,6 +17,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { encodeAccountEnvelope } from "@/lib/payments/payouts/account-crypto";
 
 const UpsertBodySchema = z.object({
   accountHolderName: z.string().min(1).max(200),
@@ -27,14 +28,6 @@ const UpsertBodySchema = z.object({
   routingNumber: z.string().min(1).max(20).nullable().optional(),
   swiftCode: z.string().min(8).max(11).nullable().optional(),
 });
-
-// Placeholder for the production KMS/envelope-encryption wrapper. Real
-// encryption lands alongside the Razorpay Contact/FundAccount integration;
-// for now we store a reversible marker so the shape is final and the
-// status fields can still be exercised end-to-end in dev.
-function encryptAccountNumber(raw: string): string {
-  return `enc::${Buffer.from(raw, "utf8").toString("base64")}`;
-}
 
 export async function GET(
   _req: NextRequest,
@@ -107,7 +100,18 @@ export async function PUT(
   const body = parsed.data;
 
   const last4 = body.accountNumber.slice(-4);
-  const encrypted = encryptAccountNumber(body.accountNumber);
+  let encrypted: string;
+  try {
+    encrypted = encodeAccountEnvelope(body.accountNumber);
+  } catch (err) {
+    return NextResponse.json(
+      {
+        error: "Payout encryption is not configured on this server",
+        detail: err instanceof Error ? err.message : String(err),
+      },
+      { status: 500 },
+    );
+  }
 
   const upserted = await prisma.$transaction(async (tx) => {
     const existing = await tx.organizationPayoutAccount.findUnique({

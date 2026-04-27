@@ -75,3 +75,20 @@ export function decryptAccountNumber(combined: Buffer): string {
     decipher.final(),
   ]).toString("utf8");
 }
+
+const ENVELOPE_PREFIX = "enc:v1:";
+
+export function encodeAccountEnvelope(accountNumber: string): string {
+  const { encrypted } = encryptAccountNumber(accountNumber);
+  return `${ENVELOPE_PREFIX}${Buffer.from(encrypted).toString("base64")}`;
+}
+
+export function decodeAccountEnvelope(stored: string): string {
+  if (!stored.startsWith(ENVELOPE_PREFIX)) {
+    throw new Error(
+      "decodeAccountEnvelope: stored value is not an enc:v1 envelope",
+    );
+  }
+  const combined = Buffer.from(stored.slice(ENVELOPE_PREFIX.length), "base64");
+  return decryptAccountNumber(combined);
+}

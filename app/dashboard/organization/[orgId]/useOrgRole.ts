@@ -8,25 +8,7 @@ import {
   fetchOrgDetails,
   orgDetailsQueryKey,
 } from "@/lib/api/organizations/org-details";
-
-/**
- * Numeric rank per MemberRole — higher = more privileged. Used for the
- * `isAtLeast` helper. Kept strictly typed via `Record<MemberRole, number>`
- * so that adding a new role to the Prisma enum surfaces a TS error here
- * rather than silently defaulting to rank 0.
- *
- * LEARNER is the default for any user whose role row hasn't been fetched
- * yet; it's the least-privileged role and matches the self-service
- * invitation default used elsewhere in the wizard + members API.
- */
-const RANKS: Record<MemberRole, number> = {
-  OWNER: 100,
-  MAINTAINER: 80,
-  MANAGER: 60,
-  EXPERT: 40,
-  SUPPORT: 30,
-  LEARNER: 20,
-};
+import { isAtLeastRole } from "@/lib/auth/role-ranks";
 
 /**
  * Hook that returns the current user's role in the org and an `isAtLeast`
@@ -63,7 +45,7 @@ export function useOrgRole(orgId: string) {
   const fundingSource = data?.organization.fundingSource ?? null;
 
   const isAtLeast = useCallback(
-    (min: MemberRole) => RANKS[role] >= RANKS[min],
+    (min: MemberRole) => isAtLeastRole(role, min),
     [role],
   );
 

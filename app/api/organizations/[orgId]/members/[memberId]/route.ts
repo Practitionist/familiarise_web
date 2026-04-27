@@ -14,7 +14,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { requireOrgAccess, orgRoleSatisfies } from "@/lib/auth-helpers";
+import { requireOrgAccess } from "@/lib/auth-helpers";
+import { isAtLeastRole } from "@/lib/auth/role-ranks";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { isBlockedRoleTransition } from "@/lib/enterprise/role-transitions";
 import { applyMembershipRoleEffects } from "@/lib/api/organizations/membership-transitions";
@@ -75,7 +76,7 @@ export async function GET(
   }
 
   const isSelf = membership.id === access.member.id;
-  const isManagerPlus = orgRoleSatisfies(access.member.role, "MANAGER");
+  const isManagerPlus = isAtLeastRole(access.member.role, "MANAGER");
   if (!isSelf && !isManagerPlus) {
     return NextResponse.json(
       { error: "Insufficient role to view other members" },
@@ -139,7 +140,7 @@ export async function PATCH(
       // themselves extra privileges by proxy.
       const touchesOwnerRole =
         patch.role === "OWNER" || current.role === "OWNER";
-      if (touchesOwnerRole && !orgRoleSatisfies(access.member.role, "OWNER")) {
+      if (touchesOwnerRole && !isAtLeastRole(access.member.role, "OWNER")) {
         throw Object.assign(
           new Error("Only an OWNER can assign or revoke the OWNER role"),
           { httpStatus: 403 },
@@ -310,6 +311,20 @@ export async function DELETE(
         where: { id: memberId },
         data: { status: "REMOVED" },
       });
+
+      // Cascade: terminate any active ProgramAssignments. Without this,
+      // a removed member's assignments still match the
+      // `periodStart <= now AND periodEnd >= now` filter, so their slot
+      // continues to count against the program cap and a replacement
+      // member can't be added. We close the period at `now` rather than
+      // deleting so engagementsUsed history + UsageLedgerEntry rows
+      // remain queryable for reconciliation.
+      const now = new Date();
+      const terminated = await tx.programAssignment.updateMany({
+        where: { membershipId: memberId, periodEnd: { gte: now } },
+        data: { periodEnd: now },
+      });
+
       await tx.orgAuditLog.create({
         data: {
           organizationId: orgId,
@@ -318,7 +333,11 @@ export async function DELETE(
           category: "MEMBER",
           action: AUDIT_ACTIONS.MEMBER.MEMBER_REMOVED,
           description: `Removed member ${memberId} (soft delete)`,
-          details: { role: current.role, previousStatus: current.status },
+          details: {
+            role: current.role,
+            previousStatus: current.status,
+            assignmentsTerminated: terminated.count,
+          },
         },
       });
     });

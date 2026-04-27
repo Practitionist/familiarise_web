@@ -268,23 +268,7 @@ export async function authorizeEventAccess(
 // ORGANIZATION ACCESS HELPERS — Arch 4-Modified (Issue #681)
 // ============================================================================
 
-/** Numeric rank for MemberRole — higher = more privileged. */
-const ORG_ROLE_RANK: Record<MemberRole, number> = {
-  OWNER: 100,
-  MAINTAINER: 80,
-  MANAGER: 60,
-  EXPERT: 40,
-  SUPPORT: 30,
-  LEARNER: 20,
-};
-
-/** Whether `actual` role meets the `minimum` role requirement. */
-export function orgRoleSatisfies(
-  actual: MemberRole,
-  minimum: MemberRole,
-): boolean {
-  return ORG_ROLE_RANK[actual] >= ORG_ROLE_RANK[minimum];
-}
+import { isAtLeastRole } from "@/lib/auth/role-ranks";
 
 export type OrgAccessGrant = {
   session: Session;
@@ -465,7 +449,7 @@ export async function requireOrgAccess(
     };
   }
 
-  if (minimumRole && !orgRoleSatisfies(member.role, minimumRole)) {
+  if (minimumRole && !isAtLeastRole(member.role, minimumRole)) {
     return {
       error: NextResponse.json(
         { error: `Forbidden — ${minimumRole} or higher required` },
