@@ -1,5 +1,11 @@
 import prisma from "@/lib/prisma";
-import { DayOfWeek, Prisma, ScheduleType, SessionType } from "@prisma/client";
+import {
+  DayOfWeek,
+  type OrgPlanVisibility,
+  Prisma,
+  ScheduleType,
+  SessionType,
+} from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { experienceValidation } from "@/schemas/shared";
@@ -142,6 +148,15 @@ export async function GET(
     // Determine which user fields to include based on access level
     const isPrivilegedAccess = isOwnProfile || isAdmin;
 
+    // #726 — public viewers must not see ORG_ONLY plans surfaced via the
+    // consultant detail page. Privileged viewers (the consultant
+    // themselves + ADMIN) see everything; the public include narrows
+    // to PUBLIC + ORG_AND_PUBLIC.
+    const planVisibilityFilter: { visibility: { in: OrgPlanVisibility[] } } | undefined =
+      isPrivilegedAccess
+        ? undefined
+        : { visibility: { in: ["PUBLIC", "ORG_AND_PUBLIC"] } };
+
     // Fetch consultant with appropriate user data
     const consultant = await prisma.consultantProfile.findUnique({
       where: { id },
@@ -189,16 +204,23 @@ export async function GET(
         tags: true,
         slotsOfAvailabilityWeekly: true,
         slotsOfAvailabilityCustom: true,
-        consultationPlans: true,
+        consultationPlans: planVisibilityFilter
+          ? { where: planVisibilityFilter }
+          : true,
         subscriptionPlans: {
+          ...(planVisibilityFilter && { where: planVisibilityFilter }),
           include: {
             subscriptionContents: {
               orderBy: { order: "asc" },
             },
           },
         },
-        webinarPlans: true,
-        classPlans: true,
+        webinarPlans: planVisibilityFilter
+          ? { where: planVisibilityFilter }
+          : true,
+        classPlans: planVisibilityFilter
+          ? { where: planVisibilityFilter }
+          : true,
         reviews: {
           select: { id: true, rating: true },
           take: 5,

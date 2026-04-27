@@ -1065,6 +1065,24 @@ enum OverageBehavior {
   CHARGE_ORG // cap hit → overage added to org invoice
 }
 
+// #726 — Plan visibility enum + marketplace leak guard. Org-owned plans
+// (ConsultationPlan / SubscriptionPlan / WebinarPlan / ClassPlan with
+// `organizationId` set) need a way to opt out of public marketplace
+// discovery. Personal plans (no organizationId) default to PUBLIC and
+// are unaffected.
+//
+//   PUBLIC          — visible everywhere (default for personal plans).
+//   ORG_ONLY        — only members of the owning org see the plan;
+//                     `/explore/**` queries must filter this out.
+//   ORG_AND_PUBLIC  — discoverable on the marketplace AND surfaced to
+//                     org members. The default for org-owned plans
+//                     until an operator explicitly switches to private.
+enum OrgPlanVisibility {
+  PUBLIC
+  ORG_ONLY
+  ORG_AND_PUBLIC
+}
+
 enum CoveredPlanType {
   CONSULTATION
   CLASS
@@ -2156,6 +2174,11 @@ model ConsultationPlan {
   organization   Organization? @relation(fields: [organizationId], references: [id], onUpdate: Cascade, onDelete: SetNull)
   organizationId String?
 
+  // #726 — marketplace leak guard. PUBLIC for personal plans (the
+  // default); org-owned plans default to ORG_AND_PUBLIC and may be
+  // narrowed to ORG_ONLY to keep them out of /explore/**.
+  visibility OrgPlanVisibility @default(PUBLIC)
+
   consultations Consultation[]
   materials     PlanMaterial[]
 
@@ -2163,6 +2186,7 @@ model ConsultationPlan {
   updatedAt DateTime @updatedAt
 
   @@index([organizationId])
+  @@index([visibility, organizationId])
 }
 
 model Consultation {
@@ -2230,6 +2254,9 @@ model SubscriptionPlan {
   organization   Organization? @relation(fields: [organizationId], references: [id], onUpdate: Cascade, onDelete: SetNull)
   organizationId String?
 
+  // #726 — marketplace leak guard. See ConsultationPlan.visibility.
+  visibility OrgPlanVisibility @default(PUBLIC)
+
   subscriptions        Subscription[]
   subscriptionContents SubscriptionContent[]
   trialSessions        TrialSession[]
@@ -2239,6 +2266,7 @@ model SubscriptionPlan {
   updatedAt DateTime @updatedAt
 
   @@index([organizationId])
+  @@index([visibility, organizationId])
 }
 
 model Subscription {
@@ -2428,6 +2456,9 @@ model WebinarPlan {
   organization   Organization? @relation(fields: [organizationId], references: [id], onUpdate: Cascade, onDelete: SetNull)
   organizationId String?
 
+  // #726 — marketplace leak guard. See ConsultationPlan.visibility.
+  visibility OrgPlanVisibility @default(PUBLIC)
+
   webinars      Webinar[]
   materials     PlanMaterial[]
   collaborators WebinarCollaborator[]
@@ -2437,6 +2468,7 @@ model WebinarPlan {
 
   @@index([consultantProfileId])
   @@index([organizationId])
+  @@index([visibility, organizationId])
 }
 
 model Webinar {
@@ -2498,6 +2530,9 @@ model ClassPlan {
   organization   Organization? @relation(fields: [organizationId], references: [id], onUpdate: Cascade, onDelete: SetNull)
   organizationId String?
 
+  // #726 — marketplace leak guard. See ConsultationPlan.visibility.
+  visibility OrgPlanVisibility @default(PUBLIC)
+
   classes       Class[]
   materials     PlanMaterial[]
   collaborators ClassCollaborator[]
@@ -2507,6 +2542,7 @@ model ClassPlan {
 
   @@index([consultantProfileId])
   @@index([organizationId])
+  @@index([visibility, organizationId])
 }
 
 model Class {

@@ -217,6 +217,12 @@ export async function POST(req: NextRequest) {
       // create the BillingAccount (it needs ownerOrgId). Then patch
       // back the link.
       const orgTmpId = randomUUID();
+      // TODO(#662): canHost=true is accepted at write time but the live
+      // earnings split is gated by `ENABLE_HOST_ORGS` (see
+      // lib/payments/payouts/earnings-service.ts:124). Until that flag
+      // flips on a real host customer, host-side settlement returns null
+      // and `OrganizationEarnings` rows are not written. The wizard's
+      // OrgInfoStep surfaces a WIP banner when canHost is checked.
       const org = await tx.organization.create({
         data: {
           id: orgTmpId,

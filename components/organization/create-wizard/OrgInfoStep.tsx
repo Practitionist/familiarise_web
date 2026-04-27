@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/select";
 import { orgInfoSchema, type OrgInfoFormData } from "./schemas";
 import type { StepProps } from "./types";
+import { EnterpriseWipBanner } from "@/components/enterprise/EnterpriseWipBanner";
 
 const INDUSTRIES = [
   "Education",
@@ -132,6 +133,19 @@ export function OrgInfoStep({
           <p className="text-sm text-red-500" role="alert">
             {capabilityError}
           </p>
+        )}
+        {/* TODO(#662): the host-side settlement (`OrganizationEarnings`,
+            payout submission) is gated by `ENABLE_HOST_ORGS` —
+            lib/payments/payouts/earnings-service.ts:124 short-circuits
+            to null when the flag is off, so a canHost org created today
+            will accrue zero org earnings until #662 / PR-3 lands. The
+            schema accepts it; the banner makes the gap explicit. */}
+        {canHost && (
+          <EnterpriseWipBanner
+            title="Host orgs are pre-launch"
+            description="Schema, members, and rate cards work today. Live earnings split + payout submission is gated by ENABLE_HOST_ORGS — flip it before relying on host-side settlement."
+            issues={[662, 716]}
+          />
         )}
       </div>
 

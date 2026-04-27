@@ -47,6 +47,11 @@ export const CreateOrganizationPayloadSchema = z.object({
   industry: z.string().max(120).optional(),
   sizeBucket: z.string().optional(),
   website: z.string().url().optional(),
+  // TODO(#714): PERSONAL on a sponsor org is reimbursement-only today —
+  // member pays from their own card, the org gets a tag for reporting,
+  // but there is no member-spend / reimbursement-report dashboard
+  // surface yet. The wizard's BillingStep mounts a WIP banner when
+  // PERSONAL is selected so operators see the gap.
   fundingSource: SelfServiceFundingSourceSchema.optional(),
   paymentTermsDays: z.number().int().min(0).max(180).optional(),
 });

@@ -292,6 +292,9 @@ export function EventPlannerForWebinar({
           consultantProfileId: consultantId,
           consultantProfile: null,
           organizationId: null,
+          // #726 — personal plans default to PUBLIC; org-owned plans
+          // surface a visibility toggle in their dedicated catalog UI.
+          visibility: initialData?.webinarPlan?.visibility ?? "PUBLIC",
           imageUrl: initialData?.webinarPlan?.imageUrl ?? null,
           createdAt: initialData?.webinarPlan?.createdAt ?? now,
           updatedAt: now,

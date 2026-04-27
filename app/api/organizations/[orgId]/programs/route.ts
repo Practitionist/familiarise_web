@@ -22,6 +22,13 @@ const CoveredPlanTypeSchema = z.enum([
 ]);
 
 const BillingCycleSchema = z.enum(["MONTHLY", "QUARTERLY", "ANNUAL"]);
+// TODO(#715): CHARGE_MEMBER and CHARGE_ORG are accepted here and
+// `recordBookingUtilization` correctly flags `wasOverage` for bookings
+// past the cap, but the downstream financial side effect is still in
+// flight — member-side card charge for CHARGE_MEMBER and invoice-accrual
+// leg for CHARGE_ORG. Until #715 ships, the safe production grid is
+// BLOCK only; the wizard surfaces a WIP banner when either of the other
+// two is selected so operators don't ship a silent under-charge.
 const OverageBehaviorSchema = z.enum(["BLOCK", "CHARGE_MEMBER", "CHARGE_ORG"]);
 
 // Create bodies are discriminated by `type` so the nested config schema
@@ -38,6 +45,13 @@ const LicensedSeatConfigSchema = z.object({
 // 1 credit = ₹1 = 100 paise (fixed; see schema.prisma). The pool resets
 // every `cycle`. Premium-tier multipliers were dropped from v1 — bespoke
 // per-expert rates live on a Program rate-card override.
+//
+// TODO(#715, #716): CREDIT_POOL works end-to-end at the schema + lazy-
+// debit + reconcile layer, but the refund-back-to-pool path and the
+// consolidated-invoice round-trip have not been acceptance-tested
+// against a finance-grade tenant yet. The wizard surfaces a WIP banner
+// when CREDIT_POOL is picked so operators see the soak status before
+// committing a real customer to it.
 const CreditPoolConfigSchema = z.object({
   cycle: BillingCycleSchema,
   creditsPerCycle: z.coerce.number().int().min(1),
