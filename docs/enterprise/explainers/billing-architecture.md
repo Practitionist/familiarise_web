@@ -439,7 +439,7 @@ Note the different split percentages in example B vs D — that's the `RateCard`
 ## 11. What to read next if you want to go deeper
 
 - `docs/enterprise/06-expert-lifecycle.md` — how EXPERTs enter an org (invite / direct add) and why LEARNER↔EXPERT is disjoint.
-- `docs/enterprise/org-billing-playbook-technical.md` — the 3×4 matrix in more code-level detail; the canonical reference.
+- `docs/enterprise/playbooks/billing-technical.md` — the 3×4 matrix in more code-level detail; the canonical reference.
 - `docs/finances/11-cfo-master-plan.md` — the commission/tier strategy story (why 10% launch → 15-20% later).
 - `docs/payments/payouts/01-architecture.md` — payout state machine diagrams.
 

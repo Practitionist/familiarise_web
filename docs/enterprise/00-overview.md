@@ -100,9 +100,30 @@ Organization                       BillingAccount (at most one per org)
 | 23 | `23-runbooks.md` | Incident-response procedures + scheduled operational tasks. |
 | 24 | `24-monitoring.md` | Log event taxonomy, alert thresholds, dashboards. |
 | 25 | `25-idempotency-keys.md` | Every side-effect endpoint's idempotency key + anti-patterns. |
-| — | `org-billing-playbook-sales.md` | Non-technical pitch framed around capability pairs + funding. |
-| — | `org-billing-playbook-technical.md` | Technical playbook for every capability × funding combo. |
-| — | `sso-testing-guide.md` | Mock IdP recipes for local + CI SSO tests. |
+
+### `explainers/` — narrative high-level docs
+
+| File | Purpose |
+|------|---------|
+| `explainers/business.md` | Non-technical pitch & business context for the enterprise subsystem. |
+| `explainers/technical-assessment.md` | Engineering assessment of the enterprise architecture. |
+| `explainers/complete-guide.md` | End-to-end walkthrough across all enterprise concepts. |
+| `explainers/billing-architecture.md` | Billing-account / funding-source / contract / program architecture. |
+
+### `reference/` — lookup-style docs
+
+| File | Purpose |
+|------|---------|
+| `reference/money-glossary.md` | Plain-English definitions of Refund / Reimbursement / Payout / Referral / Credits + all ~45 money-related models and enums. **Start here if a money term is confusing.** |
+| `reference/schema-diagram.md` | Visual map of the enterprise Prisma schema. |
+
+### `playbooks/` — actionable how-tos
+
+| File | Purpose |
+|------|---------|
+| `playbooks/billing-sales.md` | Non-technical pitch framed around capability pairs + funding. |
+| `playbooks/billing-technical.md` | Technical playbook for every capability × funding combo. |
+| `playbooks/sso-testing.md` | Mock IdP recipes for local + CI SSO tests. |
 
 ## Ground-truth files
 

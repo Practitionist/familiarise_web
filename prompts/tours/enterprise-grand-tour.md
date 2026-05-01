@@ -1324,7 +1324,7 @@ ON CONFLICT DO NOTHING;
 (The user's password is set via BetterAuth's signup flow; for the
 tour, set a known temp password via the BetterAuth admin or via a
 direct insert into the BetterAuth account table — check
-`docs/enterprise/sso-testing-guide.md` for the exact pattern.)
+`docs/enterprise/playbooks/sso-testing.md` for the exact pattern.)
 
 **Watch for.** MAINTAINER should NOT see "Delete organization" in
 Settings. They CAN demote/promote other members but they CAN'T
@@ -1704,7 +1704,7 @@ different ceiling.
 
 **What we're about to do.** Add a SAML SSO provider to Acme via
 the SSO providers page. Use the test certificate from
-`docs/enterprise/sso-testing-guide.md` (or generate one with
+`docs/enterprise/playbooks/sso-testing.md` (or generate one with
 `openssl`). Set the cert's `notAfter` to 20 days from now via
 Supabase MCP, then trigger the cert-expiry alert cron via
 `/api/admin/sso-cert-expiry-alert`. Observe the WARN-level alert

@@ -186,4 +186,4 @@ If an org enables `enforceSSO` but hasn't registered any providers yet, enforcem
 - [../03-sessions-and-hooks.md](../03-sessions-and-hooks.md) — Session hooks, membership bridge
 - [../05-testing.md](../05-testing.md) — SSO tests and static invariants
 - [docs/enterprise/08-sso-and-authentication.md](../../../enterprise/08-sso-and-authentication.md) — Admin-facing SSO configuration guide
-- [docs/enterprise/sso-testing-guide.md](../../../enterprise/sso-testing-guide.md) — Local SSO testing (mocksaml, Keycloak, etc.)
+- [docs/enterprise/playbooks/sso-testing.md](../../../enterprise/playbooks/sso-testing.md) — Local SSO testing (mocksaml, Keycloak, etc.)

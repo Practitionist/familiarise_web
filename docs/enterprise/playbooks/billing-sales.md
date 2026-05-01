@@ -117,7 +117,7 @@ mental model land. The playbook is: capability, then funding.
 
 ## Related docs
 
-- `org-billing-playbook-technical.md` — the engineering playbook for
+- `playbooks/billing-technical.md` — the engineering playbook for
   each combination.
 - `14-scenarios-and-examples.md` — four worked examples (Wipro,
   LearnPro, IIT Madras, a solo expert).

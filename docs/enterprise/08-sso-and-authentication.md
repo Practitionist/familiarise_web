@@ -149,7 +149,7 @@ runs at `sign-in` time rather than at session-read time.
 
 ## Related docs
 
-- `sso-testing-guide.md` — four local-test recipes against mock and
+- `playbooks/sso-testing.md` — four local-test recipes against mock and
   real IdPs.
 - `04-roles-and-permissions.md` — `defaultRoleForAutoJoin` options.
 - `12-dashboard-pages.md` — the `/settings/sso` page that drives these

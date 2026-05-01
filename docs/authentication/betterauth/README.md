@@ -20,7 +20,7 @@ Authorization (role hierarchy, capability gates, `requireOrgAccess`) lives in [`
 ## Companion docs (already in repo, don't duplicate)
 
 - [`docs/enterprise/08-sso-and-authentication.md`](../../enterprise/08-sso-and-authentication.md) — enterprise admin's view of SSO config (allowedEmailDomains, enforceSSO, IdP recipes for Okta/Auth0).
-- [`docs/enterprise/sso-testing-guide.md`](../../enterprise/sso-testing-guide.md) — four ways to exercise the SAML/OIDC flow locally (mocksaml.com, saml-idp, Keycloak, real Auth0/Okta dev tenants).
+- [`docs/enterprise/playbooks/sso-testing.md`](../../enterprise/playbooks/sso-testing.md) — four ways to exercise the SAML/OIDC flow locally (mocksaml.com, saml-idp, Keycloak, real Auth0/Okta dev tenants).
 
 This folder focuses on **the implementation**: what the code does, why
 it does it that way, and the foot-guns. The enterprise docs above focus
@@ -75,7 +75,7 @@ don't repeat content.
 > Run `scripts/verify-sso-invariants.sh` first — it catches eight
 > common regressions statically (missing PKCE, re-added callbackUrl,
 > orphan provider userId, etc.). If green, see
-> `docs/enterprise/sso-testing-guide.md`.
+> `docs/enterprise/playbooks/sso-testing.md`.
 
 > "How do I add a new BetterAuth plugin?"
 >

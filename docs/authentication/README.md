@@ -59,7 +59,7 @@ before touching any auth code.
   — enterprise admin's view of SSO config (allowedEmailDomains,
   IdP recipes for Okta/Auth0). Configuration-side; this folder is
   implementation-side. Keep them in lock-step but don't duplicate.
-- [`docs/enterprise/sso-testing-guide.md`](../enterprise/sso-testing-guide.md)
+- [`docs/enterprise/playbooks/sso-testing.md`](../enterprise/playbooks/sso-testing.md)
   — four ways to exercise SSO locally
   (mocksaml.com / saml-idp / Keycloak / real dev tenants). Read after
   this folder if you need to test.

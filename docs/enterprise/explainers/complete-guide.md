@@ -129,7 +129,7 @@ This doc gives you the holistic mental model. When you need implementation detai
 | Programs deep-dive | `docs/enterprise/16-programs.md` |
 | Hierarchy (parent-child orgs) | `docs/enterprise/17-hierarchy.md` |
 | Ledger discipline | `docs/enterprise/18-three-ledger-discipline.md` |
-| SSO testing | `docs/enterprise/sso-testing-guide.md` |
+| SSO testing | `docs/enterprise/playbooks/sso-testing.md` |
 
 ---
 
@@ -2450,7 +2450,7 @@ Abandoned top-ups:     /api/cleanup/abandoned-org-top-ups
 | `docs/enterprise/23-runbooks.md` | Operations runbooks |
 | `docs/enterprise/24-monitoring.md` | Dashboards + alerts |
 | `docs/enterprise/25-idempotency-keys.md` | Idempotency design |
-| `docs/enterprise/sso-testing-guide.md` | SSO testing |
+| `docs/enterprise/playbooks/sso-testing.md` | SSO testing |
 | `PRICING_STRATEGY.md` (repo root) | Pricing strategy |
 | `HIRING_PLAN.md` (repo root) | Headcount plan |
 | `SALES_MARKETING_PLAYBOOK.md` (repo root) | Sales scripts |
