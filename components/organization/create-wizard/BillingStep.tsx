@@ -78,18 +78,10 @@ export function BillingStep({ onNext, onBack, initialData }: StepProps) {
         </div>
       </div>
 
-      {fundingSource === "PERSONAL" && (
-        // TODO(#714): Sponsor orgs on PERSONAL funding need a member-spend
-        // / reimbursement-report dashboard surface before this is sellable
-        // as a true B2B path. For now, the org is created in attribution-
-        // only mode (Payment.organizationId tags survive; no org-side
-        // ledger). Banner makes that explicit at selection time.
-        <EnterpriseWipBanner
-          title="Personal funding is reimbursement-only today"
-          description="Members pay with their own card; the org is tagged for reporting only. The member-spend / reimbursement-report dashboard is still on the v1 backlog."
-          issues={[714]}
-        />
-      )}
+      {/* C4 (shipped): the reimbursement-report dashboard now lives at
+          /dashboard/organization/[orgId]/reimbursements. Members pay with
+          their own card; the org sees a per-member reimbursement total
+          + CSV export. No banner needed — the surface is real now. */}
 
       {fundingSource === "INVOICE" && (
         <div className="space-y-2">

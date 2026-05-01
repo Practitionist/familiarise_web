@@ -21,6 +21,10 @@ import {
   LayoutDashboard,
   Clock,
   FileText,
+  CalendarCheck,
+  ListOrdered,
+  Sparkles,
+  Video,
   type LucideIcon,
 } from "lucide-react";
 
@@ -185,6 +189,15 @@ export default function OrgLayout({
       { name: "Experts", icon: UserCog, path: "experts", show: canHost && isAtLeast("MANAGER") },
       { name: "Programs", icon: Briefcase, path: "programs", show: canSponsor && isAtLeast("MAINTAINER") },
       { name: "Contracts", icon: FileText, path: "contracts", show: canSponsor && isAtLeast("MAINTAINER") },
+      // B1 personal-vs-org scope split — visibility tools, not capability-
+      // gated. MANAGER+ sees them regardless of canSponsor/canHost so an
+      // operator can audit "what's been booked under our org" without
+      // worrying about funding-source mode.
+      { name: "Appointments", icon: CalendarCheck, path: "appointments", show: isAtLeast("MANAGER") },
+      { name: "Waitlist", icon: ListOrdered, path: "waitlist", show: isAtLeast("MANAGER") },
+      { name: "Trials", icon: Sparkles, path: "trials", show: isAtLeast("MANAGER") },
+      { name: "Documents", icon: FileText, path: "documents", show: isAtLeast("MANAGER") },
+      { name: "Recordings", icon: Video, path: "recordings", show: isAtLeast("MANAGER") },
       // Catalog nav has no page today (deleted alongside the legacy
       // OrganizationPlan-based curated catalog). Hidden until the
       // capability-driven replacement ships. Leaving the entry here so
@@ -207,6 +220,17 @@ export default function OrgLayout({
         icon: Wallet,
         path: "payouts",
         show: canHost && isAtLeast("MANAGER"),
+      },
+      // C4: reimbursement-report — only for sponsor orgs on PERSONAL
+      // funding. Other funding modes settle through their own dashboards.
+      {
+        name: "Reimbursements",
+        icon: Wallet,
+        path: "reimbursements",
+        show:
+          canSponsor &&
+          fundingSource === "PERSONAL" &&
+          isAtLeast("MANAGER"),
       },
       { name: "Analytics", icon: BarChart3, path: "analytics", show: isAtLeast("MANAGER") },
       { name: "Audit", icon: ClipboardList, path: "audit", show: isAtLeast("MAINTAINER") },
@@ -341,19 +365,24 @@ export default function OrgLayout({
   // Map URL segments to human-readable page names so the breadcrumbs match
   // the heading the user actually sees on the page.
   const PAGE_LABELS: Record<string, string> = {
-    home:        "Overview",
-    members:     "Members",
-    invitations: "Invitations",
-    learners:    "Learners",
-    experts:     "Experts",
-    programs:    "Programs",
-    contracts:   "Contracts",
-    billing:     "Billing",
-    payouts:     "Payouts",
-    analytics:   "Analytics",
-    audit:       "Audit",
-    settings:    "Settings",
-    sso:         "SSO",
+    home:         "Overview",
+    members:      "Members",
+    invitations:  "Invitations",
+    learners:     "Learners",
+    experts:      "Experts",
+    programs:     "Programs",
+    contracts:    "Contracts",
+    appointments: "Appointments",
+    waitlist:     "Waitlist",
+    trials:       "Trials",
+    documents:    "Documents",
+    recordings:   "Recordings",
+    billing:      "Billing",
+    payouts:      "Payouts",
+    analytics:    "Analytics",
+    audit:        "Audit",
+    settings:     "Settings",
+    sso:          "SSO",
   };
 
   // Full breadcrumb trail — every URL segment after /organization/{orgId}

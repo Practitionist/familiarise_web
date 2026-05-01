@@ -532,23 +532,12 @@ function CreateProgramDialog({
             </div>
           )}
 
-          {/* TODO(#715): CHARGE_MEMBER and CHARGE_ORG flag the booking with
-              `wasOverage = true` but the downstream financial side effect
-              (member card charge, invoice accrual, wallet debit) is still
-              tracked in #715. Stays selectable so we don't lose the
-              context, but the banner makes the in-flight state explicit. */}
-          {(overageBehavior === "CHARGE_MEMBER" ||
-            overageBehavior === "CHARGE_ORG") && (
-            <EnterpriseWipBanner
-              title="Overage charging is partially wired"
-              description={
-                overageBehavior === "CHARGE_MEMBER"
-                  ? "Bookings past the cap are flagged as overage but the member-side charge to capture the extra cost is still on the v1 backlog."
-                  : "Bookings past the cap are flagged as overage but the invoice accrual that would bill the org for the extra is still on the v1 backlog."
-              }
-              issues={[715]}
-            />
-          )}
+          {/* C2 (shipped): overage charging is now wired in checkout —
+              CHARGE_MEMBER throws 402 ("OVERAGE_REQUIRES_SEPARATE_PAYMENT")
+              so the dashboard can surface a "pay the overage" CTA;
+              CHARGE_ORG writes an extra PaymentLeg(source=INVOICE_ACCRUAL,
+              amountPaise=marginal) that the monthly invoice cron picks
+              up. No banner needed. */}
 
           {error && <p className="text-sm text-red-600">{error}</p>}
         </div>

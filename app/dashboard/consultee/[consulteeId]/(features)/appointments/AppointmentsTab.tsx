@@ -4,6 +4,13 @@ import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { createConsulteeQueries } from "@/lib/dashboard-queries";
+import { useOrgScope } from "@/hooks/useOrgScope";
+import {
+  OrgContextFilter,
+  ORG_FILTER_PERSONAL,
+  ORG_FILTER_ALL,
+  type OrgContextFilterValue,
+} from "@/components/dashboard/OrgContextFilter";
 import { Overview } from "./Overview";
 import { Calendar } from "./Calendar";
 import { BookingHistoryTab } from "../history/BookingHistoryTab";
@@ -14,9 +21,37 @@ export default function AppointmentsTab({
 }: Readonly<{
   consulteeId: string;
 }>) {
-  // Use the centralized query configuration
-  const eventsQuery = createConsulteeQueries(consulteeId).events;
+  // B1-personal-retrofit: drive the events query off the URL ?orgScope=
+  // param via useOrgScope. The OrgContextFilter dropdown above the tab
+  // bar lets the user toggle personal / a specific org / all
+  // (admin-only). Filter self-hides for users with zero org memberships.
+  const { scope, setScope } = useOrgScope();
+  // "all" from the UI means "show my entire activity" — send no orgScope
+  // param so the API returns personal + every org the user belongs to.
+  // Sending orgScope=all is reserved for ADMIN/STAFF and would 403 here.
+  // Issue: #732 (enterprise readiness backlog — scope semantics audit).
+  const orgScopeParam =
+    scope.kind === "personal"
+      ? "personal"
+      : scope.kind === "all"
+        ? undefined
+        : scope.orgId;
+  const eventsQuery = createConsulteeQueries(consulteeId, orgScopeParam).events;
   const { data: eventsData, isLoading, error } = useQuery(eventsQuery);
+
+  // Map the URL Scope shape to the OrgContextFilter component's value
+  // (which uses `__personal__` / `__all__` sentinels).
+  const filterValue: OrgContextFilterValue =
+    scope.kind === "personal"
+      ? ORG_FILTER_PERSONAL
+      : scope.kind === "all"
+        ? ORG_FILTER_ALL
+        : scope.orgId;
+  const handleFilterChange = (next: OrgContextFilterValue) => {
+    if (next === ORG_FILTER_PERSONAL) setScope({ kind: "personal" });
+    else if (next === ORG_FILTER_ALL) setScope({ kind: "all" });
+    else setScope({ kind: "org", orgId: next });
+  };
 
   const {
     consultations = [],
@@ -94,6 +129,16 @@ export default function AppointmentsTab({
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
         >
+          {/* B1-personal-retrofit: scope toggle. Self-hides for non-org
+              users; flipping it re-runs the events query against
+              ?orgScope=<value>. Mounted above the Tabs so it applies to
+              upcoming / calendar / past uniformly. */}
+          <div className="mb-4 flex justify-end">
+            <OrgContextFilter
+              value={filterValue}
+              onChange={handleFilterChange}
+            />
+          </div>
           <Tabs defaultValue="upcoming" className="w-full space-y-6">
             <div className="border-b border-gray-200 bg-white rounded-t-lg">
               <TabsList className="h-auto p-0 bg-transparent w-full justify-start">

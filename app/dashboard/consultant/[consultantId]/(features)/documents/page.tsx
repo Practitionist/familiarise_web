@@ -8,6 +8,13 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { fetchDocuments, type DocumentFetchError } from "../../utils/fetchHelpers";
 import { DocumentsTab } from "./DocumentsTab";
+import { useOrgScope } from "@/hooks/useOrgScope";
+import {
+  OrgContextFilter,
+  ORG_FILTER_PERSONAL,
+  ORG_FILTER_ALL,
+  type OrgContextFilterValue,
+} from "@/components/dashboard/OrgContextFilter";
 import {
   RefreshCw,
   WifiOff,
@@ -38,6 +45,22 @@ export default function DocumentsPage({
   const apiType = typeFilter === "all" ? undefined : typeFilter;
   const offset = (page - 1) * pageSize;
 
+  // S1 (B1-personal-retrofit): forward ?orgScope= into the documents
+  // fetcher. The retrofitted /api/dashboard/consultant/[id]/documents
+  // accepts the param and filters via Appointment.organizationId on
+  // the joined parent appointment.
+  const { scope, setScope } = useOrgScope();
+  // "all" from the UI means "show my entire activity" — send no orgScope
+  // param so the API returns personal + every org the user belongs to.
+  // Sending orgScope=all is reserved for ADMIN/STAFF and would 403 here.
+  // Issue: #732 (enterprise readiness backlog — scope semantics audit).
+  const orgScopeParam =
+    scope.kind === "personal"
+      ? "personal"
+      : scope.kind === "all"
+        ? undefined
+        : scope.orgId;
+
   const {
     data: documentsPage,
     isLoading,
@@ -49,7 +72,7 @@ export default function DocumentsPage({
     queryKey: [
       "documents",
       consultantId,
-      { page, pageSize, status: apiStatus, type: apiType },
+      { page, pageSize, status: apiStatus, type: apiType, orgScope: orgScopeParam },
     ],
     queryFn: () =>
       fetchDocuments(consultantId, {
@@ -57,6 +80,7 @@ export default function DocumentsPage({
         offset,
         status: apiStatus,
         appointmentType: apiType,
+        orgScope: orgScopeParam,
       }),
     placeholderData: keepPreviousData,
     staleTime: 2 * 60 * 1000,
@@ -229,9 +253,25 @@ export default function DocumentsPage({
     );
   }
 
+  const filterValue: OrgContextFilterValue =
+    scope.kind === "personal"
+      ? ORG_FILTER_PERSONAL
+      : scope.kind === "all"
+        ? ORG_FILTER_ALL
+        : scope.orgId;
+  const handleFilterChange = (next: OrgContextFilterValue) => {
+    if (next === ORG_FILTER_PERSONAL) setScope({ kind: "personal" });
+    else if (next === ORG_FILTER_ALL) setScope({ kind: "all" });
+    else setScope({ kind: "org", orgId: next });
+    setPage(1); // reset pagination when scope flips
+  };
+
   return (
     <DashboardErrorBoundary>
       <div className="min-w-0 overflow-x-hidden">
+        <div className="mb-4 flex justify-end">
+          <OrgContextFilter value={filterValue} onChange={handleFilterChange} />
+        </div>
         <DocumentsTab
           documentsPage={documentsPage}
           isPlaceholderData={isPlaceholderData}
