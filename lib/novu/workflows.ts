@@ -87,9 +87,14 @@ export const NOVU_WORKFLOWS = {
   ORG_INVOICE_PAID: "org-invoice-paid",
   ORG_WALLET_TOPUP_CONFIRMED: "org-wallet-topup-confirmed",
   ORG_PAYOUT_COMPLETED: "org-payout-completed",
+  ORG_PAYOUT_FAILED: "org-payout-failed",
+  ORG_PAYOUT_REVERSED: "org-payout-reversed",
   ORG_PROGRAM_EXHAUSTED: "org-program-exhausted",
   ORG_SSO_PROVIDER_DELETED: "org-sso-provider-deleted",
   ORG_SSO_CERT_EXPIRING: "org-sso-cert-expiring",
+  // A7: notify the consultant that their EXPERT membership at an org was
+  // soft-deleted. Triggered from the member DELETE handler.
+  ORG_EXPERT_REMOVED: "org-expert-removed",
 } as const;
 
 export type NovuWorkflowId =
@@ -382,5 +387,29 @@ export type OrgSsoCertExpiringPayload = {
   daysRemaining: number;
   severity: "WARN" | "CRITICAL" | "EXPIRED";
   notAfter: string;
+  dashboardUrl: string;
+};
+
+// A1+A8: discriminated payload for the failed/reversed payout webhook
+// fan-out. `kind` distinguishes a gateway rejection (FAILED) from a bank
+// reversal (REVERSED) so the Novu template can render the right copy.
+export type OrgPayoutFailedPayload = {
+  orgName: string;
+  payoutId: string;
+  amountPaise: number;
+  currency: string;
+  reason: string;
+  kind: "FAILED" | "REVERSED";
+  dashboardUrl: string;
+};
+
+// A7: payload for the EXPERT-removed-from-org notification. `removedByName`
+// is the operator who triggered the soft-delete (or "system" for cron-
+// driven removals such as contract expiry). `reason` is optional free-text.
+export type OrgExpertRemovedPayload = {
+  orgName: string;
+  orgSlug: string;
+  removedByName: string;
+  reason: string | null;
   dashboardUrl: string;
 };

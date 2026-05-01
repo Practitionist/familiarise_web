@@ -18,7 +18,11 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import { isAtLeastRole } from "@/lib/auth/role-ranks";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { isBlockedRoleTransition } from "@/lib/enterprise/role-transitions";
-import { applyMembershipRoleEffects } from "@/lib/api/organizations/membership-transitions";
+import {
+  applyMembershipRoleEffects,
+  recomputeConsultantIsIndependent,
+} from "@/lib/api/organizations/membership-transitions";
+import { notifyOrgExpertRemoved } from "@/lib/novu/service";
 
 const MemberRoleSchema = z.enum([
   "OWNER",
@@ -204,6 +208,23 @@ export async function PATCH(
         },
       });
 
+      // A4: recompute ConsultantProfile.isIndependent if this PATCH touches
+      // an EXPERT membership. PATCH cannot promote *into* EXPERT (Zod schema
+      // blocks LEARNER↔EXPERT and the patch.role union excludes EXPERT in
+      // practice), but PATCH can move a current EXPERT into an operator
+      // role or flip an EXPERT membership's status away from / back to
+      // ACTIVE — both shift the consultant's HOST-membership count.
+      if (
+        current.role === "EXPERT" &&
+        current.consultantProfileId &&
+        (patch.role !== undefined || patch.status !== undefined)
+      ) {
+        await recomputeConsultantIsIndependent(
+          tx,
+          current.consultantProfileId,
+        );
+      }
+
       const auditActions: string[] = [];
       if (patch.role !== undefined && patch.role !== current.role) {
         auditActions.push(AUDIT_ACTIONS.MEMBER.ROLE_CHANGE);
@@ -265,10 +286,19 @@ export async function DELETE(
   const access = await requireOrgAccess(orgId, "MAINTAINER");
   if (access.error) return access.error;
 
+  // A7: capture context for the post-commit Novu fire. Resolved BEFORE
+  // the transaction so the notification payload is ready to dispatch the
+  // moment the soft-delete commits. Set inside the tx; fired after commit.
+  let notifyContext: {
+    consultantUserId: string;
+    payload: import("@/lib/novu/workflows").OrgExpertRemovedPayload;
+  } | null = null;
+
   try {
     await prisma.$transaction(async (tx) => {
       const current = await tx.membership.findFirst({
         where: { id: memberId, organizationId: orgId },
+        include: { user: { select: { id: true } } },
       });
       if (!current) {
         throw Object.assign(new Error("Member not found"), { httpStatus: 404 });
@@ -312,6 +342,28 @@ export async function DELETE(
         data: { status: "REMOVED" },
       });
 
+      // A4: if this was an EXPERT membership, recompute the consultant's
+      // isIndependent flag now that one HOST tie is gone. If it was the
+      // last active EXPERT membership at any HOST org the flag flips back
+      // to true and the consultant re-appears as "independent" on
+      // /explore/experts.
+      if (current.role === "EXPERT" && current.consultantProfileId) {
+        await recomputeConsultantIsIndependent(
+          tx,
+          current.consultantProfileId,
+        );
+      }
+
+      // A7 note: past `OrganizationEarnings` are NOT touched on member
+      // removal. Sessions the consultant already delivered are settled
+      // commitments — the org earned its share at booking time, and the
+      // consultant's `ConsultantEarnings` row will pay out independently.
+      // Cancelling already-accrued earnings here would create
+      // reconciliation drift (LED-3 / LED-4 invariants would break).
+      // Forward-looking: once the consultant is REMOVED, no NEW
+      // `OrganizationEarnings` rows are created (resolveOrgSplit returns
+      // null when no active EXPERT membership at a canHost org exists).
+
       // Cascade: terminate any active ProgramAssignments. Without this,
       // a removed member's assignments still match the
       // `periodStart <= now AND periodEnd >= now` filter, so their slot
@@ -340,7 +392,52 @@ export async function DELETE(
           },
         },
       });
+
+      // A7: stage the Novu fire (executed AFTER the tx commits so a
+      // rollback never pages a notification for a delete that didn't
+      // happen). Only EXPERT removals trigger the personal notification —
+      // operator role removals don't need this.
+      if (current.role === "EXPERT" && current.user) {
+        const org = await tx.organization.findUnique({
+          where: { id: orgId },
+          select: { name: true, slug: true },
+        });
+        const actor = await tx.user.findUnique({
+          where: { id: access.session.user.id },
+          select: { name: true, email: true },
+        });
+        if (org) {
+          notifyContext = {
+            consultantUserId: current.user.id,
+            payload: {
+              orgName: org.name,
+              orgSlug: org.slug,
+              removedByName: actor?.name ?? actor?.email ?? "An operator",
+              reason: null,
+              dashboardUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/dashboard/consultant`,
+            },
+          };
+        }
+      }
     });
+
+    // A7: fire-and-forget Novu trigger after commit. A failure here MUST
+    // NOT roll back the soft-delete (the membership is already gone in
+    // the DB); log the error and continue.
+    if (notifyContext !== null) {
+      const ctx = notifyContext as {
+        consultantUserId: string;
+        payload: import("@/lib/novu/workflows").OrgExpertRemovedPayload;
+      };
+      try {
+        await notifyOrgExpertRemoved(ctx.consultantUserId, ctx.payload);
+      } catch (notifyErr) {
+        console.error(
+          "[member-delete] Novu notify failed (non-fatal):",
+          notifyErr,
+        );
+      }
+    }
 
     return new NextResponse(null, { status: 204 });
   } catch (err) {

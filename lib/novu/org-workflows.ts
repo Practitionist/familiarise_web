@@ -185,6 +185,25 @@ export async function notifyOrgPayoutCompleted(
 }
 
 /**
+ * A1+A8: notifies the visibility roster when a payout transitions to
+ * FAILED (gateway 4xx, bank rejection) or REVERSED (post-success
+ * rollback). The `kind` discriminator on the payload lets the Novu
+ * template render different copy per scenario without us needing two
+ * separate workflow IDs.
+ */
+export async function notifyOrgPayoutFailed(
+  orgId: string,
+  payload: import("./workflows").OrgPayoutFailedPayload,
+): Promise<void> {
+  const recipients = await rosterForOrg(orgId, VISIBILITY_ROLES);
+  const workflowId =
+    payload.kind === "REVERSED"
+      ? NOVU_WORKFLOWS.ORG_PAYOUT_REVERSED
+      : NOVU_WORKFLOWS.ORG_PAYOUT_FAILED;
+  return triggerMany(workflowId, recipients, payload);
+}
+
+/**
  * Fires when a `ProgramAssignment` hits its `coveredEngagementsPerCycle`
  * cap with `overageBehavior = BLOCK`. Delivers in-app to the assignee
  * (they need to know their booking was refused) + OWNER + MAINTAINER

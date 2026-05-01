@@ -139,3 +139,41 @@ async function ensureConsultantProfile(
   });
   return created.id;
 }
+
+/**
+ * Recompute `ConsultantProfile.isIndependent` from current membership
+ * state. Call this AFTER any membership mutation that touches the
+ * consultant's EXPERT memberships:
+ *   - POST /api/organizations/[orgId]/members (create EXPERT)
+ *   - PATCH /api/organizations/[orgId]/members/[memberId] (role / status change)
+ *   - DELETE /api/organizations/[orgId]/members/[memberId] (soft-delete)
+ *   - invitation accept (create EXPERT via accept flow)
+ *   - SSO auto-join (create EXPERT via custom session hook)
+ *
+ * Rule: `isIndependent = true` iff the consultant has ZERO active EXPERT
+ * memberships at HOST-capable orgs (`organization.canHost = true`). The
+ * flag drives the "Hosted by X" badge on the marketplace explore page.
+ *
+ * Idempotent: safe to call multiple times. Only HOST-capable orgs count
+ * — a sponsor-only org doesn't host the expert in the marketplace sense.
+ *
+ * Backfill: `prisma/scripts/backfill-isindependent.ts` walks every
+ * ConsultantProfile and runs this once.
+ */
+export async function recomputeConsultantIsIndependent(
+  tx: PrismaLike,
+  consultantProfileId: string,
+): Promise<void> {
+  const activeExpertCount = await tx.membership.count({
+    where: {
+      consultantProfileId,
+      role: "EXPERT",
+      status: "ACTIVE",
+      organization: { canHost: true },
+    },
+  });
+  await tx.consultantProfile.update({
+    where: { id: consultantProfileId },
+    data: { isIndependent: activeExpertCount === 0 },
+  });
+}

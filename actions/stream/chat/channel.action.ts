@@ -24,6 +24,10 @@ const createChannelSchema = z.object({
   members: membersSchema,
   createdById: memberIdSchema,
   additionalData: z.record(z.unknown()).optional(),
+  // #B2 Stream.io org tagging — pre-launch enterprise tag so admins can later
+  // query Stream API by `custom.organization_id`. Optional so personal
+  // (non-org) channels keep their existing shape (no stray null field).
+  organizationId: z.string().min(1).nullable().optional(),
 });
 
 /**
@@ -37,6 +41,15 @@ export async function createChannel(input: {
   members: string[];
   createdById: string;
   additionalData?: Record<string, unknown>;
+  /**
+   * Optional enterprise organization stamp. When non-null, written to the
+   * channel's custom data as `organization_id` (snake_case per Stream's
+   * convention) so org admins can list / query channels via Stream's
+   * `queryChannels({filter: {organization_id: {$eq: orgId}}})`.
+   * `null` / `undefined` → key omitted entirely so existing personal
+   * channels created before this rollout don't gain a `null` field.
+   */
+  organizationId?: string | null;
 }) {
   // Validate input
   const validated = createChannelSchema.parse(input);
@@ -52,10 +65,21 @@ export async function createChannel(input: {
     channelId: validated.channelId,
     type: validated.channelType,
     memberCount: allMembers.length,
+    organizationId: validated.organizationId ?? undefined,
   });
 
   // Ensure all members exist in Stream before channel creation
   await upsertUsersToStream(allMembers);
+
+  // Merge the optional org stamp into additionalData. Use snake_case
+  // (`organization_id`) to match Stream's chat field convention and the
+  // other event tags in this file (webinar_id, class_id).
+  const mergedAdditionalData: Record<string, unknown> = {
+    ...(validated.additionalData ?? {}),
+    ...(validated.organizationId
+      ? { organization_id: validated.organizationId }
+      : {}),
+  };
 
   // Create the channel with members atomically
   // Note: Explicitly typing channel data for stream-chat v9
@@ -63,7 +87,7 @@ export async function createChannel(input: {
     name: validated.channelName,
     created_by_id: validated.createdById,
     members: allMembers,
-    ...validated.additionalData,
+    ...mergedAdditionalData,
   };
   const channel = client.channel(
     validated.channelType,
@@ -112,8 +136,16 @@ export async function createDirectMessageChannel(
 /**
  * Create a webinar channel with all participants
  * Fetches participants from both waitlist and appointments
+ *
+ * @param webinarId — Webinar entity id
+ * @param organizationId — Optional explicit org override. When omitted, the
+ *   helper falls back to `webinarPlan.organizationId` so callers don't have
+ *   to plumb it through. Pass `null` to force-omit the org tag.
  */
-export async function createWebinarChannel(webinarId: string) {
+export async function createWebinarChannel(
+  webinarId: string,
+  organizationId?: string | null,
+) {
   channelIdSchema.parse(webinarId);
 
   const webinar = await prisma.webinar.findUnique({
@@ -174,6 +206,13 @@ export async function createWebinarChannel(webinarId: string) {
   // Ensure all members exist in Stream before channel creation
   await upsertUsersToStream(allMembers);
 
+  // Fall back to the plan's org if the caller didn't pass one explicitly.
+  // `null` is treated as "explicitly no org"; `undefined` triggers fallback.
+  const resolvedOrgId =
+    organizationId === undefined
+      ? webinar.webinarPlan.organizationId ?? null
+      : organizationId;
+
   return createChannel({
     channelType: "team",
     channelId: `webinar-${webinarId}`,
@@ -181,13 +220,21 @@ export async function createWebinarChannel(webinarId: string) {
     members: allMembers,
     createdById: consultantUserId,
     additionalData: { webinar_id: webinarId },
+    organizationId: resolvedOrgId,
   });
 }
 
 /**
  * Create a class channel with all participants
+ *
+ * @param classId — Class entity id
+ * @param organizationId — Optional explicit org override. Falls back to
+ *   `classPlan.organizationId` when omitted; `null` force-omits the tag.
  */
-export async function createClassChannel(classId: string) {
+export async function createClassChannel(
+  classId: string,
+  organizationId?: string | null,
+) {
   channelIdSchema.parse(classId);
 
   const classData = await prisma.class.findUnique({
@@ -244,6 +291,11 @@ export async function createClassChannel(classId: string) {
   // Ensure all members exist in Stream before channel creation
   await upsertUsersToStream(allMembers);
 
+  const resolvedOrgId =
+    organizationId === undefined
+      ? classData.classPlan.organizationId ?? null
+      : organizationId;
+
   return createChannel({
     channelType: "team",
     channelId: `class-${classId}`,
@@ -251,13 +303,24 @@ export async function createClassChannel(classId: string) {
     members: allMembers,
     createdById: consultantUserId,
     additionalData: { class_id: classId },
+    organizationId: resolvedOrgId,
   });
 }
 
 /**
  * Create a consultation channel
+ *
+ * @param consultationId — Consultation entity id
+ * @param organizationId — Optional explicit org override. Falls back to
+ *   `consultationPlan.organizationId` when omitted; `null` force-omits.
+ *   Note: the underlying DM channel is per consultant-consultee pair, so an
+ *   org tag here reflects the *plan* — if the same pair later books a
+ *   personal-plan consultation, the existing channel keeps the org tag.
  */
-export async function createConsultationChannel(consultationId: string) {
+export async function createConsultationChannel(
+  consultationId: string,
+  organizationId?: string | null,
+) {
   channelIdSchema.parse(consultationId);
 
   const consultation = await prisma.consultation.findUnique({
@@ -292,6 +355,11 @@ export async function createConsultationChannel(consultationId: string) {
   // Ensure both users exist in Stream before channel creation
   await upsertUsersToStream([consultantId, consulteeId]);
 
+  const resolvedOrgId =
+    organizationId === undefined
+      ? consultation.consultationPlan.organizationId ?? null
+      : organizationId;
+
   // DM channel is per consultant-consultee pair (not per event).
   // Per-event IDs are not stored on the channel since multiple
   // consultations/subscriptions between the same pair share one DM.
@@ -304,13 +372,22 @@ export async function createConsultationChannel(consultationId: string) {
       dm_consultant_user_id: consultantId,
       dm_consultee_user_id: consulteeId,
     },
+    organizationId: resolvedOrgId,
   });
 }
 
 /**
  * Create a subscription channel
+ *
+ * @param subscriptionId — Subscription entity id
+ * @param organizationId — Optional explicit org override. Falls back to
+ *   `subscriptionPlan.organizationId` when omitted; `null` force-omits.
+ *   See `createConsultationChannel` for the DM-channel sharing caveat.
  */
-export async function createSubscriptionChannel(subscriptionId: string) {
+export async function createSubscriptionChannel(
+  subscriptionId: string,
+  organizationId?: string | null,
+) {
   channelIdSchema.parse(subscriptionId);
 
   const subscription = await prisma.subscription.findUnique({
@@ -345,6 +422,11 @@ export async function createSubscriptionChannel(subscriptionId: string) {
   // Ensure both users exist in Stream before channel creation
   await upsertUsersToStream([consultantId, consulteeId]);
 
+  const resolvedOrgId =
+    organizationId === undefined
+      ? subscription.subscriptionPlan.organizationId ?? null
+      : organizationId;
+
   // DM channel is per consultant-consultee pair (not per event).
   // Per-event IDs are not stored on the channel since multiple
   // consultations/subscriptions between the same pair share one DM.
@@ -357,6 +439,7 @@ export async function createSubscriptionChannel(subscriptionId: string) {
       dm_consultant_user_id: consultantId,
       dm_consultee_user_id: consulteeId,
     },
+    organizationId: resolvedOrgId,
   });
 }
 

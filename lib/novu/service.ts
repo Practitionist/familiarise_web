@@ -34,6 +34,7 @@ import {
   type CollaboratorAcceptedPayload,
   type CollaboratorRemovedPayload,
   type MaintenancePayload,
+  type OrgExpertRemovedPayload,
 } from "./workflows";
 
 // ============================================================================
@@ -419,6 +420,22 @@ export async function notifyPayoutProcessed(
 ) {
   return triggerWorkflow(
     NOVU_WORKFLOWS.PAYOUT_PROCESSED,
+    consultantUserId,
+    payload,
+  );
+}
+
+/**
+ * A7: notify a consultant that their EXPERT membership at an organization
+ * was soft-deleted. Fire-and-forget — a Novu outage must not block the
+ * member-DELETE API response. Caller is expected to wrap in try/catch.
+ */
+export async function notifyOrgExpertRemoved(
+  consultantUserId: string,
+  payload: OrgExpertRemovedPayload,
+) {
+  return triggerWorkflow(
+    NOVU_WORKFLOWS.ORG_EXPERT_REMOVED,
     consultantUserId,
     payload,
   );
