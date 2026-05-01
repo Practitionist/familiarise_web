@@ -87,30 +87,38 @@ export const consultantFetchers = {
       "Consultant details fetch failed",
     ),
 
-  requests: (consultantId: string) =>
+  requests: (consultantId: string, orgScope?: string | null) =>
     fetchWithErrorHandling<TAppointment[]>(
-      `/api/dashboard/consultant/${consultantId}/requests`,
+      orgScope && orgScope !== "personal"
+        ? `/api/dashboard/consultant/${consultantId}/requests?orgScope=${encodeURIComponent(orgScope)}`
+        : `/api/dashboard/consultant/${consultantId}/requests`,
       "Requests fetch failed",
     ),
 
-  planner: (consultantId: string) =>
+  planner: (consultantId: string, orgScope?: string | null) =>
     fetchWithErrorHandling<PlannerData>(
-      `/api/dashboard/consultant/${consultantId}/planner`,
+      orgScope && orgScope !== "personal"
+        ? `/api/dashboard/consultant/${consultantId}/planner?orgScope=${encodeURIComponent(orgScope)}`
+        : `/api/dashboard/consultant/${consultantId}/planner`,
       "Planner fetch failed",
     ),
 
-  documents: (consultantId: string) =>
+  documents: (consultantId: string, orgScope?: string | null) =>
     fetchWithErrorHandling<TAppointment[]>(
-      `/api/dashboard/consultant/${consultantId}/documents`,
+      orgScope && orgScope !== "personal"
+        ? `/api/dashboard/consultant/${consultantId}/documents?orgScope=${encodeURIComponent(orgScope)}`
+        : `/api/dashboard/consultant/${consultantId}/documents`,
       "Documents fetch failed",
     ),
 };
 
 // Consultee fetchers
 export const consulteeFetchers = {
-  events: (consulteeId: string) =>
+  events: (consulteeId: string, orgScope?: string | null) =>
     fetchWithErrorHandling<TConsulteeEventsResponse>(
-      `/api/dashboard/consultee/${consulteeId}/events`,
+      orgScope && orgScope !== "personal"
+        ? `/api/dashboard/consultee/${consulteeId}/events?orgScope=${encodeURIComponent(orgScope)}`
+        : `/api/dashboard/consultee/${consulteeId}/events`,
       "Events fetch failed",
     ),
 
@@ -194,7 +202,16 @@ const GC_TIME = 10 * 60 * 1000; // 10 minutes
 /**
  * Consultant Dashboard Queries
  */
-export function createConsultantQueries(consultantId: string) {
+export function createConsultantQueries(
+  consultantId: string,
+  /**
+   * B1-personal-retrofit: org-scope filter for the consultant's
+   * requests / planner / documents queries. Threaded into queryKey
+   * so swap-flips invalidate the cache.
+   */
+  orgScope?: string | null,
+) {
+  const scopeKey = orgScope ?? "personal";
   return {
     // Primary data for home dashboard
     dashboard: {
@@ -225,8 +242,8 @@ export function createConsultantQueries(consultantId: string) {
 
     // Pending requests
     requests: {
-      queryKey: ["consultant-requests", consultantId] as const,
-      queryFn: () => consultantFetchers.requests(consultantId),
+      queryKey: ["consultant-requests", consultantId, scopeKey] as const,
+      queryFn: () => consultantFetchers.requests(consultantId, orgScope),
       staleTime: STALE_TIMES.SHORT,
       gcTime: GC_TIME,
       retry: 2,
@@ -234,8 +251,8 @@ export function createConsultantQueries(consultantId: string) {
 
     // Planner/calendar data
     planner: {
-      queryKey: ["consultant-planner", consultantId] as const,
-      queryFn: () => consultantFetchers.planner(consultantId),
+      queryKey: ["consultant-planner", consultantId, scopeKey] as const,
+      queryFn: () => consultantFetchers.planner(consultantId, orgScope),
       staleTime: STALE_TIMES.MEDIUM,
       gcTime: GC_TIME,
       retry: 2,
@@ -243,8 +260,8 @@ export function createConsultantQueries(consultantId: string) {
 
     // Documents for review
     documents: {
-      queryKey: ["consultant-documents", consultantId] as const,
-      queryFn: () => consultantFetchers.documents(consultantId),
+      queryKey: ["consultant-documents", consultantId, scopeKey] as const,
+      queryFn: () => consultantFetchers.documents(consultantId, orgScope),
       staleTime: STALE_TIMES.MEDIUM,
       gcTime: GC_TIME,
       retry: 2,
@@ -255,12 +272,21 @@ export function createConsultantQueries(consultantId: string) {
 /**
  * Consultee Dashboard Queries
  */
-export function createConsulteeQueries(consulteeId: string) {
+export function createConsulteeQueries(
+  consulteeId: string,
+  /**
+   * B1-personal-retrofit: org-scope filter for the events query.
+   * Pass `personal` (default) | `<orgId>` | `all`. Threaded into the
+   * queryKey so swap-flips invalidate the cache.
+   */
+  orgScope?: string | null,
+) {
+  const scopeKey = orgScope ?? "personal";
   return {
     // All events (appointments, subscriptions, classes, webinars)
     events: {
-      queryKey: ["consultee-events", consulteeId] as const,
-      queryFn: () => consulteeFetchers.events(consulteeId),
+      queryKey: ["consultee-events", consulteeId, scopeKey] as const,
+      queryFn: () => consulteeFetchers.events(consulteeId, orgScope),
       staleTime: STALE_TIMES.MEDIUM,
       gcTime: GC_TIME,
       retry: 2,
