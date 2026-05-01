@@ -20,6 +20,8 @@ export interface FetchDocumentsParams {
   offset?: number;
   status?: string; // "PENDING" | "IN_REVIEW" | "APPROVED" | "REJECTED" | "NEEDS_REVISION"
   appointmentType?: string; // "Consultation" | "Subscription"
+  /** B1-personal-retrofit: org-scope filter ("personal" | <orgId> | "all"). */
+  orgScope?: string | null;
 }
 
 /** Enhanced error with additional diagnostic fields for the document fetch system */
@@ -162,6 +164,10 @@ export async function fetchDocuments(
     if (params.status) qs.set("status", params.status);
     if (params.appointmentType)
       qs.set("appointmentType", params.appointmentType);
+    // B1-personal-retrofit: forward orgScope to the dashboard endpoint
+    // (which was retrofitted in PR-1 to accept ?orgScope=).
+    if (params.orgScope && params.orgScope !== "personal")
+      qs.set("orgScope", params.orgScope);
 
     const query = qs.toString();
     const url = `/api/dashboard/consultant/${consultantId}/documents${query ? `?${query}` : ""}`;

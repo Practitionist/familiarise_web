@@ -7,6 +7,7 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
+import { resolveOrgScope } from "@/lib/api/scope/parse";
 
 // =============================================================================
 // Prisma Query Types - Derived from actual query shape for type safety
@@ -170,9 +171,6 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ consultantId: string }> },
 ) {
-  // Note: request parameter kept for Next.js API route signature compatibility
-  void request;
-
   const authResult = await requireApiAuth();
   if (authResult.error) return authResult.error;
   const { session } = authResult;
@@ -194,6 +192,69 @@ export async function GET(
       );
     }
 
+    // B1-personal-retrofit: parse + authorize ?orgScope=. Filter applies
+    // to the appointment.organizationId attached to each Webinar/Class.
+    // Plans without bookings yet are NOT filtered (the planner shows
+    // owned + collaborated plans regardless of whether anyone has
+    // booked them).
+    const url = new URL(request.url);
+    const consultantUser = await prisma.consultantProfile.findUnique({
+      where: { id: consultantId },
+      select: { userId: true },
+    });
+    const callerMemberships = consultantUser
+      ? await prisma.membership.findMany({
+          where: { userId: consultantUser.userId, status: "ACTIVE" },
+          select: { organizationId: true, status: true },
+        })
+      : [];
+    const scopeResolution = resolveOrgScope({
+      raw: url.searchParams.get("orgScope"),
+      memberships: callerMemberships,
+      userRole: session.user.role,
+    });
+    if (!scopeResolution.ok) {
+      return NextResponse.json(
+        { error: scopeResolution.message, code: scopeResolution.code },
+        { status: scopeResolution.status },
+      );
+    }
+    // For Webinar (1:1 appointment) — `appointment.is.organizationId`.
+    // For Class (1:many appointments) — `appointments.some.organizationId`.
+    //
+    // Personal scope: include events that have NO appointment yet (unbooked)
+    // OR have an appointment with organizationId=null. Using only
+    // `{ appointment: { is: { organizationId: null } } }` would exclude
+    // freshly created unbooked events, hiding them from the consultant's
+    // own inventory view. Issue: #732 (planner inventory vs booking-history
+    // semantics — flagged in the May 2026 readiness audit).
+    const webinarApptOrg: Prisma.WebinarWhereInput | undefined =
+      scopeResolution.scope.kind === "personal"
+        ? {
+            OR: [
+              { appointment: { is: null } },
+              { appointment: { is: { organizationId: null } } },
+            ],
+          }
+        : scopeResolution.scope.kind === "org"
+          ? { appointment: { is: { organizationId: scopeResolution.scope.orgId } } }
+          : undefined;
+    const classApptOrg: Prisma.ClassWhereInput | undefined =
+      scopeResolution.scope.kind === "personal"
+        ? {
+            OR: [
+              { appointments: { none: {} } },
+              { appointments: { some: { organizationId: null } } },
+            ],
+          }
+        : scopeResolution.scope.kind === "org"
+          ? {
+              appointments: {
+                some: { organizationId: scopeResolution.scope.orgId },
+              },
+            }
+          : undefined;
+
     // Fetch owned plans, collaborated plans, and collaborator roles in parallel
     const [
       ownedWebinarsRaw,
@@ -205,11 +266,17 @@ export async function GET(
     ] = await Promise.all([
       // Owned plans
       prisma.webinar.findMany({
-        where: { webinarPlan: { consultantProfileId: consultantId } },
+        where: {
+          webinarPlan: { consultantProfileId: consultantId },
+          ...(webinarApptOrg ?? {}),
+        },
         include: webinarInclude,
       }),
       prisma.class.findMany({
-        where: { classPlan: { consultantProfileId: consultantId } },
+        where: {
+          classPlan: { consultantProfileId: consultantId },
+          ...(classApptOrg ?? {}),
+        },
         include: classInclude,
       }),
       // Collaborated plans (only ACCEPTED)
@@ -220,6 +287,7 @@ export async function GET(
               some: { consultantProfileId: consultantId, status: "ACCEPTED" },
             },
           },
+          ...(webinarApptOrg ?? {}),
         },
         include: webinarInclude,
       }),
@@ -230,6 +298,7 @@ export async function GET(
               some: { consultantProfileId: consultantId, status: "ACCEPTED" },
             },
           },
+          ...(classApptOrg ?? {}),
         },
         include: classInclude,
       }),

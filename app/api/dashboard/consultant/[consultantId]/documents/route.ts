@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma, DocumentReviewStatus } from "@prisma/client";
+import { resolveOrgScope } from "@/lib/api/scope/parse";
 
 import { getSession } from "@/lib/auth-server";
 // GET - Get all documents for review by consultant
@@ -140,6 +141,33 @@ export async function GET(
       );
     }
 
+    // B1-personal-retrofit: parse + authorize ?orgScope=. Filter applies
+    // to the parent Appointment.organizationId.
+    const callerMembershipsForScope = await prisma.membership.findMany({
+      where: { userId: session.user.id, status: "ACTIVE" },
+      select: { organizationId: true, status: true },
+    });
+    const docScopeResolution = resolveOrgScope({
+      raw: searchParams.get("orgScope"),
+      memberships: callerMembershipsForScope,
+      userRole: session.user.role,
+    });
+    if (!docScopeResolution.ok) {
+      return NextResponse.json(
+        {
+          error: docScopeResolution.message,
+          code: docScopeResolution.code,
+        },
+        { status: docScopeResolution.status },
+      );
+    }
+    const docOrgFilter: Partial<Prisma.AppointmentWhereInput> =
+      docScopeResolution.scope.kind === "personal"
+        ? { organizationId: null }
+        : docScopeResolution.scope.kind === "org"
+          ? { organizationId: docScopeResolution.scope.orgId }
+          : {};
+
     // Build where clause
     const where: Prisma.AppointmentDocumentWhereInput = {
       appointment: {
@@ -161,6 +189,7 @@ export async function GET(
             },
           },
         ],
+        ...docOrgFilter,
       },
     };
 
