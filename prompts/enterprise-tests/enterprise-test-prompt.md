@@ -488,7 +488,6 @@ docs/enterprise/playbooks/billing-technical.md
 docs/enterprise/explainers/billing-architecture.md
 docs/enterprise/13-feature-flags-and-rollout.md
 docs/enterprise/00-overview.md   # ENABLE_HOST_ORGS rename
-docs/roadmap/enterprise/*.md                        # ARCHIVED banner
 
 # WIP banner removals
 app/dashboard/organization/[orgId]/programs/page.tsx        # C2 banner removed

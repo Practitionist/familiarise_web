@@ -263,7 +263,7 @@ All documentation for features, integrations, and improvements that are **not ye
 ### Highlights
 
 - [Auth Migration (BetterAuth)](./roadmap/auth/betterauth-migration.md) - NextAuth → BetterAuth migration
-- [Enterprise B2B Tier](./roadmap/enterprise/README.md) - SSO, org management, recording library
+- [Enterprise Subsystem](./enterprise/00-overview.md) - SSO, org management, billing, payouts (canonical implementation docs)
 - [Infrastructure Hardening](./roadmap/infrastructure/README.md) - Security, monitoring, scaling (14 audit documents)
 - [Service Integration Architecture](./roadmap/content-strategy/README.md) - Directus, ConvertKit, Enterprise interlinking (planned)
 - [Content Strategy](./roadmap/content-strategy/README.md) - CMS, blog, gated community

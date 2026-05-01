@@ -105,8 +105,6 @@ Organization                       BillingAccount (at most one per org)
 
 | File | Purpose |
 |------|---------|
-| `explainers/business.md` | Non-technical pitch & business context for the enterprise subsystem. |
-| `explainers/technical-assessment.md` | Engineering assessment of the enterprise architecture. |
 | `explainers/complete-guide.md` | End-to-end walkthrough across all enterprise concepts. |
 | `explainers/billing-architecture.md` | Billing-account / funding-source / contract / program architecture. |
 
