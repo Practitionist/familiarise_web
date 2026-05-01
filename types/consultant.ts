@@ -86,9 +86,38 @@ export interface IConsultantCardData {
  * Data shape for the expert detail page.
  * Includes plans and slots for booking flow, but NOT reviews
  * (reviews are fetched separately and passed as a distinct prop).
+ *
+ * Mirrors the explicit `select` in `lib/data/consultant-detail.ts` —
+ * never includes India statutory PII (panNumber, tdsRate, ibanOrAccount,
+ * etc.) or cached balances (totalRevenue, pendingRevenue) so the row can
+ * safely cross the Server→Client boundary without leaking sensitive data
+ * or tripping the "Decimal cannot be passed to Client Components" check.
  */
 export type TConsultantDetailData = Prisma.ConsultantProfileGetPayload<{
-  include: {
+  select: {
+    id: true;
+    description: true;
+    experience: true;
+    rating: true;
+    headline: true;
+    websiteUrl: true;
+    twitterUrl: true;
+    githubUrl: true;
+    videoIntroUrl: true;
+    languages: true;
+    toolsAndTechnologies: true;
+    mentoringStyle: true;
+    sessionTypes: true;
+    profileCompletionPercentage: true;
+    isVerified: true;
+    verificationStatus: true;
+    totalMenteesHelped: true;
+    domainId: true;
+    scheduleType: true;
+    userId: true;
+    isIndependent: true;
+    createdAt: true;
+    updatedAt: true;
     user: {
       select: {
         id: true;

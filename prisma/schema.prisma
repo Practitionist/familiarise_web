@@ -530,6 +530,12 @@ model Organization {
   // (that's a Programs v2 item in epic #703).
   trialsByOrg TrialSession[] @relation("TrialsByOrg")
 
+  // #674 personal-vs-org scope split — appointments / waitlist entries /
+  // recordings booked or produced by org members. Mirrors TrialsByOrg.
+  appointmentsByOrg Appointment[] @relation("AppointmentByOrg")
+  waitlistByOrg     Waitlist[]    @relation("WaitlistByOrg")
+  recordingsByOrg   Recording[]   @relation("RecordingByOrg")
+
   // Payment attribution
   payments Payment[] @relation("PaymentOrgTag")
 
@@ -1237,6 +1243,22 @@ model OrganizationPayout {
   payoutReference String?
   failureReason   String?
   processedAt     DateTime?
+  failedAt        DateTime?
+
+  /// A1: live RazorpayX/Stripe Connect submission response.
+  /// `gatewayPayoutId` is the gateway's `id` (Razorpay payout id or
+  /// Stripe transfer id). `gatewayUtr` populates only after the
+  /// `payout.processed`/`transfer.paid` webhook reconciles. The full
+  /// response is stashed in `gatewayResponseRaw` for debugging.
+  gatewayPayoutId    String? @unique
+  gatewayUtr         String?
+  gatewayResponseRaw Json?
+
+  /// C1 (PR-4) refund clawback — when an OrganizationEarnings already
+  /// rolled into this payout is later refunded. Manual recovery only
+  /// in v1; admin sees this in the payout-detail page.
+  clawbackAmountPaise   Int       @default(0)
+  clawbackInitiatedAt   DateTime?
 
   /// Cron-driven duplicate-guard key. The weekly batch cron derives a
   /// deterministic key from (organizationId, periodStart) so a retried
@@ -1863,7 +1885,10 @@ model ConsultantProfile {
   panNumber                       String?           @db.VarChar(10)
   residencyStatus                 ResidencyStatus   @default(RESIDENT)
   tdsSection                      String? // "194J" | "194O" | "194C"
-  tdsRate                         Decimal?
+  // Stored as Float (not Decimal) so the field can safely cross the
+  // Server→Client boundary in Next.js. TDS rates are at most 2 decimal
+  // places (10.00, 7.50, 0.10), well within Float precision.
+  tdsRate                         Float?
   tdsLowerRateCert                String? // Section 197 cert reference
   msmeStatus                      MsmeStatus        @default(NONE)
   udyamNumber                     String?           @db.VarChar(19)
@@ -2677,6 +2702,10 @@ model Waitlist {
   class   Class?  @relation(fields: [classId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classId String?
 
+  // #674 personal-vs-org scope split — set when joiner is an org LEARNER.
+  organization   Organization? @relation("WaitlistByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
+  organizationId String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -2690,6 +2719,7 @@ model Waitlist {
   @@index([status, classId])
   @@index([expiresAt])
   @@index([priority, joinedAt])
+  @@index([organizationId, createdAt])
 }
 
 ////////////////////////////////////////////// APPOINTMENT ////////////////////////////////////////////////////
@@ -2718,6 +2748,10 @@ model Appointment {
   payment   Payment[]
   documents AppointmentDocument[]
 
+  // #674 personal-vs-org scope split — set at checkout for org-context bookings.
+  organization   Organization? @relation("AppointmentByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
+  organizationId String?
+
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
@@ -2726,6 +2760,7 @@ model Appointment {
   @@index([consultationId])
   @@index([webinarId])
   @@index([appointmentType])
+  @@index([organizationId, createdAt])
 }
 
 enum AppointmentsType {
@@ -2954,10 +2989,16 @@ model Recording {
   meetingSession   MeetingSession @relation(fields: [meetingSessionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   meetingSessionId String
 
+  // #674 personal-vs-org scope split — denormalized via parent appointment
+  // (Recording → MeetingSession → SlotOfAppointment → Appointment.organizationId).
+  organization   Organization? @relation("RecordingByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
+  organizationId String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([meetingSessionId])
+  @@index([organizationId, createdAt])
   @@index([streamRecordingId])
   @@index([status])
   @@index([storageType])
