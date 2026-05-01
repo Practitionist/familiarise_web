@@ -90,10 +90,10 @@ The `user.additionalFields` config extends BetterAuth's `User` model with platfo
 
 | Field | Type | Purpose |
 |---|---|---|
-| `role` | `string` | Platform role (`ADMIN`, `STAFF`, `CONSULTANT`, `CONSULTEE`, `ORG_ADMIN`) |
+| `role` | `string` | Platform role (`ADMIN`, `STAFF`, `CONSULTANT`, `CONSULTEE`, `ORG_WORKSPACE`) |
 | `onboardingCompleted` | `boolean` | Gate for post-signup onboarding flow |
 | `phone`, `timezone`, `address` | `string` | Profile data |
-| `consultantProfileId`, `consulteeProfileId`, `staffProfileId`, `adminProfileId`, `orgAdminProfileId` | `string` | FK links to role-specific profile tables |
+| `consultantProfileId`, `consulteeProfileId`, `staffProfileId`, `adminProfileId`, `orgWorkspaceProfileId` | `string` | FK links to role-specific profile tables |
 
 Fields marked `input: false` cannot be set by the client during sign-up — they're written server-side by hooks or onboarding flows.
 
@@ -140,7 +140,7 @@ These are server-component guards — they `redirect()` (never return an error r
 |---|---|---|
 | `requireAuth()` | Any page needing a logged-in user | Redirects to `/api/auth/clear-stale-session` → `/auth/signin` if no session |
 | `requireOnboarded()` | Dashboard, settings, profile pages | Redirects to onboarding if `!onboardingCompleted` or missing profile |
-| `requireUserRole(roles)` | Role-restricted pages (e.g., org creation for `ORG_ADMIN`) | Redirects to `/dashboard` if role doesn't match |
+| `requireUserRole(roles)` | Role-restricted pages (e.g., org creation for `ORG_WORKSPACE`) | Redirects to `/dashboard` if role doesn't match |
 | `requireNotOnboarded()` | Onboarding page itself | Redirects to `/dashboard` if already onboarded |
 
 ## 5. Operational Concerns

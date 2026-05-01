@@ -715,7 +715,7 @@ The system explicitly refuses to execute operations that would leave the org in 
 
 **Important:** `MemberRole` (org-internal) is distinct from `UserRole` (platform-wide). A single user has:
 
-- One `UserRole` (CONSULTANT, CONSULTEE, STAFF, ADMIN, ORG_ADMIN) — their platform identity.
+- One `UserRole` (CONSULTANT, CONSULTEE, STAFF, ADMIN, ORG_WORKSPACE) — their platform identity.
 - Zero or many `MemberRole`s — one per org they belong to.
 
 A platform ADMIN (Staff member of Familiarise) always passes every `requireOrgAccess` check — admins can see + operate on any org for support purposes. This is logged to the audit trail.
@@ -889,7 +889,7 @@ flowchart TD
     D --> E[Step 2: Organization Setup org name, slug, capability, funding]
     E --> F[Step 3: Review + Launch]
     F --> G[Submit]
-    G --> H[Atomic TX: 1. Create User 2. Create Organization 3. Create BillingAccount if canSponsor 4. Create OWNER Membership 5. Create OrgAdminProfile]
+    G --> H[Atomic TX: 1. Create User 2. Create Organization 3. Create BillingAccount if canSponsor 4. Create OWNER Membership 5. Create OrgWorkspaceProfile]
     H --> I[Redirected to /dashboard/organization/orgId/home]
     I --> J[PENDING_VERIFICATION banner shows]
     J --> K[Platform admin reviews + verifies]
@@ -1565,7 +1565,7 @@ The enterprise-flavored section of `prisma/schema.prisma` is ~1200 lines coverin
 | `Membership` | User-to-org relationship with role |
 | `Member` | BetterAuth-compat bridge row |
 | `Invitation` | Pending / accepted / revoked invites |
-| `OrgAdminProfile` | Lazy-created for any user creating an org |
+| `OrgWorkspaceProfile` | Lazy-created for any user creating an org |
 
 ### 24.2 Billing & funding
 
@@ -2318,7 +2318,7 @@ See `docs/enterprise/24-monitoring.md` for suggested BetterStack / Grafana dashb
 
 **MSME** — Micro Small Medium Enterprises Act §15 (45-day payment rule for registered MSMEs).
 
-**OrgAdminProfile** — Lazy-created profile for any user creating an org.
+**OrgWorkspaceProfile** — Lazy-created profile for any user creating an org.
 
 **OrganizationEarnings** — Per-session earnings for canHost orgs (3-way split).
 

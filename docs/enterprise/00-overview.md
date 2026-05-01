@@ -30,15 +30,15 @@ Every booking that an org sponsors is attributed to a Program, and every
 Program subtype (`LICENSED_SEAT`, `CREDIT_POOL`) is a row in its own
 config table. See `16-programs.md`.
 
-### `OrgAdminProfile`
+### `OrgWorkspaceProfile`
 
-Orthogonal to Membership: `OrgAdminProfile` is a per-user profile row
+Orthogonal to Membership: `OrgWorkspaceProfile` is a per-user profile row
 (mirrors `StaffProfile` / `AdminProfile`) that exists for any user who
 operates at least one org. `POST /api/organizations` provisions one
-inside the creation transaction; `prisma/scripts/backfill-org-admin-profiles.ts`
+inside the creation transaction; `prisma/scripts/backfill-org-workspace-profiles.ts`
 covers existing OWNERs. The profile id surfaces on the BetterAuth
 session and backs the operator home at
-`/dashboard/org-admin/:orgAdminId/home`, which redirects single-org
+`/dashboard/org-workspace/:orgWorkspaceId/home`, which redirects single-org
 operators straight into that org, shows a chooser for multi-org
 operators, and a "create an organization" CTA for operators whose
 orgs have all been deactivated. See
@@ -136,7 +136,7 @@ Every doc below defers to the following files when the prose drifts:
 - `lib/enterprise/role-transitions.ts` — `isBlockedRoleTransition`, the
   single source of truth for the disjoint LEARNER ↔ EXPERT rule.
 - `lib/labels/personal-dashboard.ts` — `resolvePersonalDashboardHref`
-  (priority: `orgAdminProfile → consultantProfile → consulteeProfile`).
+  (priority: `orgWorkspaceProfile → consultantProfile → consulteeProfile`).
 - `lib/labels/org-errors.ts` — humanized copy for `ORG_NOT_VERIFIED`
   and `ROLE_TRANSITION_BLOCKED` (surfaced via `humanizeOrgError`).
 - `lib/profiles/ensure-consultee-profile.ts` — lazy
@@ -181,7 +181,7 @@ directly — labels come from `lib/labels/org-labels.ts`.
 At the user level (outside the `organizationMemberships[]` list) the
 session also carries the four profile-id FKs — `consultantProfileId`,
 `consulteeProfileId`, `staffProfileId`, `adminProfileId`,
-`orgAdminProfileId` — surfaced from `lib/auth.ts` so client code can
+`orgWorkspaceProfileId` — surfaced from `lib/auth.ts` so client code can
 resolve the "Personal Dashboard" href via
 `resolvePersonalDashboardHref` without re-querying the DB.
 
@@ -202,8 +202,8 @@ across `prisma migrate reset`). Source: `prisma/seedFiles/15a-create-organizatio
 
 **Tour owner:** `tour-owner@familiarise.dev`, password from
 `SEED_PASSWORD` (default `SeedPass123!`). Created with
-`UserRole = ORG_ADMIN` and `OrgAdminProfile`; OWNER of `wipro` so
-the operator portfolio (`/dashboard/org-admin/<id>/home`) renders
+`UserRole = ORG_WORKSPACE` and `OrgWorkspaceProfile`; OWNER of `wipro` so
+the operator portfolio (`/dashboard/org-workspace/<id>/home`) renders
 populated on first sign-in.
 
 `19-harness-verdict.md` cross-references this grid for the harness

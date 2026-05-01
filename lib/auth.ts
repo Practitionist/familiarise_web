@@ -137,7 +137,7 @@ export const auth = betterAuth({
         required: false,
         input: false,
       },
-      orgAdminProfileId: {
+      orgWorkspaceProfileId: {
         type: "string",
         required: false,
         input: false,
@@ -155,7 +155,7 @@ export const auth = betterAuth({
             // (booking, trial, invite-accept as LEARNER, onboarding when
             // role=CONSULTEE) via `ensureConsulteeProfile` in
             // lib/profiles/ensure-consultee-profile.ts. This prevents
-            // org-operators (UserRole.ORG_ADMIN) and consultants from
+            // org-operators (UserRole.ORG_WORKSPACE) and consultants from
             // carrying a dangling consumer profile they never use.
 
             // Create CookiePreference
@@ -348,7 +348,7 @@ export const auth = betterAuth({
         consulteeProfileId?: string | null;
         staffProfileId?: string | null;
         adminProfileId?: string | null;
-        orgAdminProfileId?: string | null;
+        orgWorkspaceProfileId?: string | null;
       };
 
       // SSO membership sync: BetterAuth auto-provisioning creates a BetterAuth
@@ -530,7 +530,7 @@ export const auth = betterAuth({
           consulteeProfileId: user.consulteeProfileId ?? undefined,
           staffProfileId: user.staffProfileId ?? undefined,
           adminProfileId: user.adminProfileId ?? undefined,
-          orgAdminProfileId: user.orgAdminProfileId ?? undefined,
+          orgWorkspaceProfileId: user.orgWorkspaceProfileId ?? undefined,
           organizationMemberships,
           ssoEnforcementFailed,
         },

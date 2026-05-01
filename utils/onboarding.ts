@@ -180,12 +180,12 @@ export const OnboardingDataSchema = z.discriminatedUnion("role", [
     adminProfile: AdminProfileCreateObjectSchema.optional(),
   }),
   OnboardingBaseSchema.extend({
-    role: z.literal(UserRole.ORG_ADMIN),
+    role: z.literal(UserRole.ORG_WORKSPACE),
     consultantProfile: z.undefined().optional(),
     consulteeProfile: z.undefined().optional(),
     staffProfile: z.undefined().optional(),
-    // ORG_ADMIN onboarding no longer collects org fields — the user is
-    // marked onboarded as ORG_ADMIN and redirected to
+    // ORG_WORKSPACE onboarding no longer collects org fields — the user is
+    // marked onboarded as ORG_WORKSPACE and redirected to
     // /dashboard/organization/create where the full wizard runs.
   }),
 ]);
@@ -371,11 +371,11 @@ const adminFormFields = sharedFormFields.extend({
   adminNotes: z.string().optional(),
 });
 
-// ORG_ADMIN onboarding collects only personal info + agreement. The full
+// ORG_WORKSPACE onboarding collects only personal info + agreement. The full
 // organization-creation wizard lives at /dashboard/organization/create and
 // runs after onboarding completes.
-const orgAdminFormFields = sharedFormFields.extend({
-  role: z.literal("ORG_ADMIN" as const),
+const orgWorkspaceFormFields = sharedFormFields.extend({
+  role: z.literal("ORG_WORKSPACE" as const),
 });
 
 // Combined mega-schema: discriminated union on role to prevent
@@ -385,7 +385,7 @@ export const OnboardingFormDataSchema = z.discriminatedUnion("role", [
   consulteeFormFields,
   staffFormFields,
   adminFormFields,
-  orgAdminFormFields,
+  orgWorkspaceFormFields,
 ]);
 
 // ============================================================================
@@ -434,7 +434,7 @@ export type OnboardingFormData = Omit<
   Partial<Omit<z.infer<typeof consulteeFormFields>, "role">> &
   Partial<Omit<z.infer<typeof staffFormFields>, "role">> &
   Partial<Omit<z.infer<typeof adminFormFields>, "role">> &
-  Partial<Omit<z.infer<typeof orgAdminFormFields>, "role">> & {
+  Partial<Omit<z.infer<typeof orgWorkspaceFormFields>, "role">> & {
     role: UserRole;
   };
 
@@ -617,7 +617,7 @@ export function transformOnboardingFormToServerData(
         },
       };
 
-    case UserRole.ORG_ADMIN:
+    case UserRole.ORG_WORKSPACE:
       return {
         ...base,
         role: formData.role,
@@ -733,7 +733,7 @@ export function transformFrontendToServerData(
         staffProfile: undefined,
       };
 
-    case UserRole.ORG_ADMIN:
+    case UserRole.ORG_WORKSPACE:
       return {
         ...base,
         role: frontendData.role,

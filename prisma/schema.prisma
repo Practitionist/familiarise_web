@@ -53,8 +53,8 @@ model User {
   staffProfileId      String?            @unique
   adminProfile        AdminProfile?
   adminProfileId      String?            @unique
-  orgAdminProfile     OrgAdminProfile?
-  orgAdminProfileId   String?            @unique
+  orgWorkspaceProfile     OrgWorkspaceProfile?
+  orgWorkspaceProfileId   String?            @unique
 
   slotsOfAppointment SlotOfAppointment[] @relation("SlotOfAppointmentToUser")
   Waitlist           Waitlist[]
@@ -92,7 +92,7 @@ model User {
   @@index([adminProfileId])
   @@index([role])
   @@index([staffProfileId])
-  @@index([orgAdminProfileId])
+  @@index([orgWorkspaceProfileId])
   @@map("users")
 }
 
@@ -2030,12 +2030,12 @@ model AdminProfile {
 /// (default notification channel, org-switcher pinned order, etc.).
 ///
 /// Created inside POST /api/organizations when a user creates their first
-/// org, and surfaced to the UI via user.orgAdminProfileId. The
+/// org, and surfaced to the UI via user.orgWorkspaceProfileId. The
 /// "Personal Dashboard" link in the org sidebar resolves here first
-/// (priority order: orgAdmin > consultant > consultee), so an org-owner
+/// (priority order: orgWorkspace > consultant > consultee), so an org-owner
 /// no longer gets routed into the consumer ConsulteeProfile surface by
 /// default.
-model OrgAdminProfile {
+model OrgWorkspaceProfile {
   id String @id @default(uuid())
 
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
@@ -2045,7 +2045,7 @@ model OrgAdminProfile {
   updatedAt DateTime @updatedAt
 
   @@index([userId])
-  @@map("org_admin_profiles")
+  @@map("org_workspace_profiles")
 }
 
 //////////////////////////////////////////////////// PROFESSIONAL BACKGROUND MODELS ////////////////////////////////////////////////////
@@ -3710,7 +3710,7 @@ enum UserRole {
   CONSULTEE
   ADMIN
   STAFF
-  ORG_ADMIN // Enterprise org administrator — manages orgs, no booking/consulting
+  ORG_WORKSPACE // Enterprise org operator — manages orgs, no booking/consulting
 }
 
 enum DayOfWeek {

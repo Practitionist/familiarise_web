@@ -205,7 +205,7 @@ export async function calculateAmountAndValidate(
     let priceCurrency = "INR";
 
     // Lazy-create ConsulteeProfile if this is the user's first
-    // consumer action. ORG_ADMIN / CONSULTANT users who also book
+    // consumer action. ORG_WORKSPACE / CONSULTANT users who also book
     // personal sessions (valid, if rare) would hit "User profile not
     // found" before this helper existed — now we seed the profile on
     // demand inside the checkout tx.

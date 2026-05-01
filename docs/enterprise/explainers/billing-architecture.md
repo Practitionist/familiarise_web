@@ -334,7 +334,7 @@ You mentioned you created an issue for a "separate dashboards + org switcher to 
 
 My read: keep the personal dashboard consolidated, keep the org dashboard separate, and add a "Source" column / filter chip on the personal dashboard rather than splitting it. But your judgment — ship the filtered approach if user testing shows confusion.
 
-What the new `OrgAdminProfile` unlocks is a third dashboard specifically for org *operators* (OWNER / MAINTAINER who are not consumers or experts). Today `/dashboard/org-admin/[id]` is minimal — auto-redirects single-org owners into their org home, shows a chooser for multi-org. Future: operator-only preferences (notification defaults, pinned orgs, cross-org reporting).
+What the new `OrgWorkspaceProfile` unlocks is a third dashboard specifically for org *operators* (OWNER / MAINTAINER who are not consumers or experts). Today `/dashboard/org-workspace/[id]` is minimal — auto-redirects single-org owners into their org home, shows a chooser for multi-org. Future: operator-only preferences (notification defaults, pinned orgs, cross-org reporting).
 
 ---
 

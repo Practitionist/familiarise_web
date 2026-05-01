@@ -9,13 +9,13 @@ import { UserRole } from "@prisma/client";
 // Roles a user is allowed to self-select via this action. Privileged
 // roles (ADMIN, STAFF) MUST never be reachable from a client-driven
 // action — they are assigned by platform operators out-of-band. Today
-// only the ORG_ADMIN handoff routes through this action; CONSULTANT /
+// only the ORG_WORKSPACE handoff routes through this action; CONSULTANT /
 // CONSULTEE selection happens earlier in the form via the regular
 // `processOnboardingData` path which does not let the caller pick the
 // role string. Keep this list narrow on purpose — if a new self-
 // service role needs to flow through here, add it explicitly.
 const SELF_SELECTABLE_ONBOARDING_ROLES: ReadonlySet<UserRole> = new Set([
-  UserRole.ORG_ADMIN,
+  UserRole.ORG_WORKSPACE,
 ]);
 
 // `setOnboardingRoleAction`'s `personalInfo` was previously typed but
@@ -74,8 +74,8 @@ export async function updateOnboardingInformationAction(
 
 /**
  * Persist the user's selected UserRole mid-onboarding. Used by the
- * ORG_ADMIN path so step 1's `POST /api/organizations` sees a session
- * with `role = ORG_ADMIN` (the API gate rejects anything else).
+ * ORG_WORKSPACE path so step 1's `POST /api/organizations` sees a session
+ * with `role = ORG_WORKSPACE` (the API gate rejects anything else).
  *
  * This is scoped narrowly on purpose: only the authenticated user
  * can flip their own row, the caller's id must match the session,
@@ -137,13 +137,13 @@ export async function setOnboardingRoleAction(
 }
 
 /**
- * Flip `user.onboardingCompleted = true` after the ORG_ADMIN wizard
+ * Flip `user.onboardingCompleted = true` after the ORG_WORKSPACE wizard
  * finishes launching their first org. Role + personal info were already
  * committed by `setOnboardingRoleAction`; the owner Membership was
  * created atomically by `POST /api/organizations`. All that's left is
  * the onboarding flag so the session no longer redirects to /form/onboarding.
  */
-export async function completeOrgAdminOnboardingAction(
+export async function completeOrgWorkspaceOnboardingAction(
   userId: string,
 ): Promise<{ success: boolean; error?: string }> {
   const session = await getSession(true);

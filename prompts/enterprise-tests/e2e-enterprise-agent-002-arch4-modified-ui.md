@@ -153,7 +153,7 @@ ask the user to start `npm run dev` — do NOT start it yourself.
 > (capability + funding + branding-colours), and land on a freshly
 > minted org's dashboard with `Membership.role = 'OWNER'`.
 
-### U.1.1 — Sign up a fresh ORG_ADMIN candidate
+### U.1.1 — Sign up a fresh ORG_WORKSPACE candidate
 
 1. `navigate_page` → `http://localhost:3000/auth/signup`.
 2. `take_snapshot`.
@@ -185,7 +185,7 @@ ask the user to start `npm run dev` — do NOT start it yourself.
     ORDER BY "createdAt" DESC LIMIT 1;
    ```
 
-   Expect `role = 'ORG_ADMIN'`. (If it's `CONSULTEE`, the role-picker
+   Expect `role = 'ORG_WORKSPACE'`. (If it's `CONSULTEE`, the role-picker
    wired to the wrong action — fix in
    `actions/forms/onboarding.action.ts`.)
 

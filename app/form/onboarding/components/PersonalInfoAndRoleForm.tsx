@@ -42,7 +42,7 @@ const ROLE_INFO: Record<
     title: "Consultee",
     description: "Learn from experienced professionals",
   },
-  ORG_ADMIN: {
+  ORG_WORKSPACE: {
     title: "Organization Owner",
     description: "Create and manage an organization for your school or company",
   },
@@ -336,7 +336,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
                 experts in your field.
               </>
             )}
-            {selectedRole === "ORG_ADMIN" && (
+            {selectedRole === "ORG_WORKSPACE" && (
               <>
                 As an <strong>Organization Owner</strong>, you&apos;ll be able
                 to create and manage an organization, invite team members,

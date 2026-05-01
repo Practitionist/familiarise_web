@@ -82,27 +82,27 @@ interface BillingRollup {
   totalWalletPaise: number;
 }
 
-async function fetchRollup(orgAdminId: string): Promise<BillingRollup> {
-  const res = await fetch(`/api/org-admin/${orgAdminId}/billing`);
+async function fetchRollup(orgWorkspaceId: string): Promise<BillingRollup> {
+  const res = await fetch(`/api/org-workspace/${orgWorkspaceId}/billing`);
   if (!res.ok) throw new Error("Failed to load billing roll-up");
   const json = (await res.json()) as { summary: BillingRollup };
   return json.summary;
 }
 
-export default function OrgAdminHomePage({
+export default function OrgWorkspaceHomePage({
   params,
 }: {
-  params: Promise<{ orgAdminId: string }>;
+  params: Promise<{ orgWorkspaceId: string }>;
 }) {
-  const { orgAdminId } = use(params);
+  const { orgWorkspaceId } = use(params);
 
   const orgs = useQuery({
-    queryKey: ["org-admin-orgs"],
+    queryKey: ["org-workspace-orgs"],
     queryFn: fetchOrgs,
   });
   const rollup = useQuery({
-    queryKey: ["org-admin-rollup", orgAdminId],
-    queryFn: () => fetchRollup(orgAdminId),
+    queryKey: ["org-workspace-rollup", orgWorkspaceId],
+    queryFn: () => fetchRollup(orgWorkspaceId),
   });
 
   const rows = (orgs.data?.data ?? []).filter((r) => r.role === "OWNER");
@@ -113,7 +113,7 @@ export default function OrgAdminHomePage({
         title="Operator dashboard"
         subtitle="Cross-org snapshot of the organisations you run"
         actions={
-          <Link href={`/dashboard/org-admin/${orgAdminId}/create`}>
+          <Link href={`/dashboard/org-workspace/${orgWorkspaceId}/create`}>
             <Button size="sm">
               <Plus className="h-4 w-4 mr-1" /> New organization
             </Button>
@@ -229,7 +229,7 @@ export default function OrgAdminHomePage({
                 <p className="text-sm text-zinc-600">
                   You don&apos;t own any organisations yet.
                 </p>
-                <Link href={`/dashboard/org-admin/${orgAdminId}/create`}>
+                <Link href={`/dashboard/org-workspace/${orgWorkspaceId}/create`}>
                   <Button size="sm" className="mt-4">
                     Create your first organisation
                   </Button>

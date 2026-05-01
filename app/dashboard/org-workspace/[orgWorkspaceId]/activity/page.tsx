@@ -47,11 +47,11 @@ interface ActivityResponse {
 }
 
 async function fetchActivity(
-  orgAdminId: string,
+  orgWorkspaceId: string,
   cursor: string | null,
 ): Promise<ActivityResponse> {
   const url = new URL(
-    `/api/org-admin/${orgAdminId}/activity`,
+    `/api/org-workspace/${orgWorkspaceId}/activity`,
     window.location.origin,
   );
   if (cursor) url.searchParams.set("cursor", cursor);
@@ -89,17 +89,17 @@ function timeAgo(iso: string): string {
   });
 }
 
-export default function OrgAdminActivityPage({
+export default function OrgWorkspaceActivityPage({
   params,
 }: {
-  params: Promise<{ orgAdminId: string }>;
+  params: Promise<{ orgWorkspaceId: string }>;
 }) {
-  const { orgAdminId } = use(params);
+  const { orgWorkspaceId } = use(params);
 
   const query = useInfiniteQuery({
-    queryKey: ["org-admin-activity", orgAdminId],
+    queryKey: ["org-workspace-activity", orgWorkspaceId],
     queryFn: ({ pageParam }) =>
-      fetchActivity(orgAdminId, pageParam as string | null),
+      fetchActivity(orgWorkspaceId, pageParam as string | null),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) =>
       lastPage.pagination.hasMore ? lastPage.pagination.nextCursor : undefined,

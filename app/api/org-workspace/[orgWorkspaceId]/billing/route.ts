@@ -1,7 +1,7 @@
 /**
- * GET /api/org-admin/[orgAdminId]/billing
+ * GET /api/org-workspace/[orgWorkspaceId]/billing
  *
- * Cross-org billing roll-up for an OrgAdmin operator. Aggregates:
+ * Cross-org billing roll-up for an OrgWorkspace operator. Aggregates:
  *   - Outstanding invoice paise across all orgs the caller OWNS
  *     (status ∈ {ISSUED, OVERDUE} — i.e. issued but not paid)
  *   - Wallet balance across all orgs (BillingAccount.walletBalance)
@@ -10,8 +10,8 @@
  *   - Per-org breakdown so the dashboard table can list each org's
  *     numbers without a second round-trip
  *
- * Auth: the URL's orgAdminId must match the caller's
- * `orgAdminProfileId`. We never let one operator browse another
+ * Auth: the URL's orgWorkspaceId must match the caller's
+ * `orgWorkspaceProfileId`. We never let one operator browse another
  * operator's portfolio — same posture as the dashboard layout's
  * IDOR guard.
  *
@@ -26,15 +26,15 @@ import { requireApiAuth } from "@/lib/auth-helpers";
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: Promise<{ orgAdminId: string }> },
+  { params }: { params: Promise<{ orgWorkspaceId: string }> },
 ) {
-  const { orgAdminId } = await params;
+  const { orgWorkspaceId } = await params;
   const auth = await requireApiAuth();
   if (auth.error) return auth.error;
 
-  // `orgAdminProfileId` is part of the customSession-augmented user
+  // `orgWorkspaceProfileId` is part of the customSession-augmented user
   // type (lib/auth.ts:522) — direct access is type-safe.
-  if (auth.session.user.orgAdminProfileId !== orgAdminId) {
+  if (auth.session.user.orgWorkspaceProfileId !== orgWorkspaceId) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 

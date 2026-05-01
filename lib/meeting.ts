@@ -54,7 +54,7 @@ export interface MeetingAppointment {
  * @param client The Stream Video client
  * @param options Meeting options. `organizationId` (optional) stamps the
  *   Stream Video call's `custom.organizationId` for #B2 enterprise tagging
- *   so org admins can later list calls scoped to their org. Omit (or pass
+ *   so org workspace operators can later list calls scoped to their org. Omit (or pass
  *   `null`) for personal meetings — the key is left out entirely so older
  *   calls don't accumulate stray null fields.
  * @returns The meeting ID (Stream Call ID)

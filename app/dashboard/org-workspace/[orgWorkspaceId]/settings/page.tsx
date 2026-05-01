@@ -9,7 +9,7 @@
 import { DashboardHeader, DashboardContent } from "@/components/dashboard/DashboardShell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-export default function OrgAdminSettingsPage() {
+export default function OrgWorkspaceSettingsPage() {
   return (
     <>
       <DashboardHeader
@@ -23,7 +23,7 @@ export default function OrgAdminSettingsPage() {
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-muted-foreground">
             <p>
-              Operator preferences are scoped to your OrgAdmin profile, not
+              Operator preferences are scoped to your OrgWorkspace profile, not
               to any single organisation. The following toggles are planned
               for the next release:
             </p>

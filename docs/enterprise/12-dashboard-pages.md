@@ -9,7 +9,7 @@ thin `requireOrgAccess` check plus role-driven conditional rendering.
 
 ```
 /dashboard/organization                        → server-redirect (see § below):
-                                                  OrgAdmin → /dashboard/org-admin/
+                                                  OrgWorkspace → /dashboard/org-workspace/
                                                   <id>/home; everyone else → /dashboard
 /dashboard/organization/create                 → org-creation wizard
 /dashboard/organization/[orgId]                → role-aware redirect:
@@ -59,12 +59,12 @@ A few additional surfaces are not in the org-scoped tree:
 
 - `/organizations/invite/[token]` — invite-accept landing
   (`app/organizations/invite/[token]/page.tsx`).
-- `/dashboard/org-admin/[orgAdminId]/**` — **the operator (cross-org)
-  dashboard.** Keyed on `OrgAdminProfile.id`. Has its own sidebar
+- `/dashboard/org-workspace/[orgWorkspaceId]/**` — **the operator (cross-org)
+  dashboard.** Keyed on `OrgWorkspaceProfile.id`. Has its own sidebar
   (mirrors /dashboard/admin and /dashboard/staff) with four pages:
     - `/home` — cross-org stats row + grid of orgs you OWN + "+ New
       organization" CTA. Replaces the old `/dashboard/organization`
-      switcher list (which now 308-redirects here for OrgAdmins).
+      switcher list (which now 308-redirects here for OrgWorkspaces).
     - `/activity` — cross-org audit feed aggregating `OrgAuditLog` rows
       across all owned orgs. Cursor-paginated. Distinct from per-org
       `/audit` which scopes to one org and supports rich filters.
@@ -83,8 +83,8 @@ A few additional surfaces are not in the org-scoped tree:
   suspend, or deactivate any org. Lives outside this doc set.
 
 The bare `/dashboard/organization` URL is now a server-redirect:
-OrgAdmin → `/dashboard/org-admin/<id>/home`; non-OrgAdmin → `/dashboard`.
-The org grid that used to live there is gone — non-OrgAdmin members
+OrgWorkspace → `/dashboard/org-workspace/<id>/home`; non-OrgWorkspace → `/dashboard`.
+The org grid that used to live there is gone — non-OrgWorkspace members
 (LEARNER, EXPERT) navigate between orgs via the OrganizationSwitcher
 dropdown in the top bar, which never required a list page.
 
@@ -183,7 +183,7 @@ keep the nav tidy.
 The "Personal Dashboard" chip at the bottom of the org sidebar
 resolves its href through a single helper,
 `resolvePersonalDashboardHref` in `lib/labels/personal-dashboard.ts`.
-Priority: `orgAdminProfile → consultantProfile → consulteeProfile` —
+Priority: `orgWorkspaceProfile → consultantProfile → consulteeProfile` —
 operator identity wins over consumer identity, and
 `ConsultantProfile` wins over `ConsulteeProfile` for users who have
 both. If the user has none of the three, the chip is hidden. The same

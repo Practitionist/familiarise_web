@@ -175,7 +175,7 @@ CURRENT STACK → AWS EQUIVALENT MAPPING
 │  │  • custom:consultantProfileId           • CONSULTANT                                      │ │
 │  │  • custom:consulteeProfileId            • STAFF                                           │ │
 │  │  • custom:organizationId                • ADMIN                                           │ │
-│  │  • custom:orgRole (MemberRole)          • ORG_ADMIN                                       │ │
+│  │  • custom:orgRole (MemberRole)          • ORG_WORKSPACE                                       │ │
 │  │    OWNER/MAINTAINER/MANAGER/            • (MemberRole scoped to Membership row,           │ │
 │  │    EXPERT/LEARNER/SUPPORT                 not Cognito groups)                             │ │
 │  │  Triggers (Lambda):                                                                       │ │

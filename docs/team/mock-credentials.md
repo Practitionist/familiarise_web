@@ -30,7 +30,7 @@ Three manually-created test accounts (`owner-test`, `learner-test`, `a@gmail.com
 | `STAFF` | `/dashboard/staff/[id]/…` | Day-to-day ops — payments, refunds, disputes, moderation, support tickets, system jobs |
 | `CONSULTANT` | `/dashboard/consultant/[id]/…` | Expert who creates services, manages availability, earns money |
 | `CONSULTEE` | `/dashboard/consultee/[id]/…` | Client who books sessions, attends calls, leaves reviews |
-| `ORG_ADMIN` | `/dashboard/org-admin/[id]/…` | Enterprise org administrator — manages orgs, no booking/consulting |
+| `ORG_WORKSPACE` | `/dashboard/org-workspace/[id]/…` | Enterprise org administrator — manages orgs, no booking/consulting |
 
 ---
 
@@ -123,7 +123,7 @@ All passwords: `SeedPass123!`
 
 ---
 
-### ORG_ADMIN accounts
+### ORG_WORKSPACE accounts
 
 | Name | Email | Password | Orgs owned | PayoutRecipient on membership |
 |------|-------|----------|------------|-------------------------------|
@@ -200,7 +200,7 @@ All passwords: `SeedPass123!`
 
 | Member | Email | Password | MemberRole | UserRole | PayoutRecipient |
 |--------|-------|----------|------------|----------|----------------|
-| charlotte | charlotte.anderson@gmail.com | `SeedPass123!` | **OWNER** | ORG_ADMIN | ORGANIZATION |
+| charlotte | charlotte.anderson@gmail.com | `SeedPass123!` | **OWNER** | ORG_WORKSPACE | ORGANIZATION |
 | Andrew Anderson | andrew.anderson@gmail.com | `SeedPass123!` | EXPERT | CONSULTANT | **ORGANIZATION** (salaried) |
 | Angela Anderson | angela.anderson@outlook.com | `SeedPass123!` | EXPERT | CONSULTANT | **ORGANIZATION** (salaried) |
 | Arjun Anderson | arjun.anderson@yahoo.com | `SeedPass123!` | EXPERT | CONSULTANT | SELF (marketplace share) |
@@ -227,7 +227,7 @@ Single-consultant convenience org.
 
 | Member | Email | Password | MemberRole | UserRole | PayoutRecipient |
 |--------|-------|----------|------------|----------|----------------|
-| owner-test | owner-test@example.com | **Unknown** | **OWNER** | ORG_ADMIN | SELF |
+| owner-test | owner-test@example.com | **Unknown** | **OWNER** | ORG_WORKSPACE | SELF |
 | learner-test | learner-test@example.com | **Unknown** | LEARNER | CONSULTEE | SELF |
 
 ---
@@ -236,7 +236,7 @@ Single-consultant convenience org.
 
 | Member | Email | Password | MemberRole | UserRole | PayoutRecipient |
 |--------|-------|----------|------------|----------|----------------|
-| owner-test | owner-test@example.com | **Unknown** | **OWNER** | ORG_ADMIN | SELF |
+| owner-test | owner-test@example.com | **Unknown** | **OWNER** | ORG_WORKSPACE | SELF |
 
 ---
 
@@ -244,7 +244,7 @@ Single-consultant convenience org.
 
 | Member | Email | Password | MemberRole | UserRole | PayoutRecipient |
 |--------|-------|----------|------------|----------|----------------|
-| a | a@gmail.com | **Unknown** | **OWNER** | ORG_ADMIN | SELF |
+| a | a@gmail.com | **Unknown** | **OWNER** | ORG_WORKSPACE | SELF |
 | Aditi Anderson | aditi.anderson@outlook.com | `SeedPass123!` | EXPERT | CONSULTANT | SELF |
 
 ---
@@ -269,9 +269,9 @@ Every valid combination of `UserRole × org capability kind × MemberRole`.
 
 | UserRole | Org kind | MemberRole | Seeded example |
 |----------|----------|------------|----------------|
-| ORG_ADMIN | SPONSOR | OWNER | owner-test@example.com (Wipro test) |
-| ORG_ADMIN | HYBRID | OWNER | charlotte.anderson@gmail.com (IIT Madras); owner-test@example.com (GitHub India Test) |
-| ORG_ADMIN | HOST | OWNER | a@gmail.com (LearnPro Test) |
+| ORG_WORKSPACE | SPONSOR | OWNER | owner-test@example.com (Wipro test) |
+| ORG_WORKSPACE | HYBRID | OWNER | charlotte.anderson@gmail.com (IIT Madras); owner-test@example.com (GitHub India Test) |
+| ORG_WORKSPACE | HOST | OWNER | a@gmail.com (LearnPro Test) |
 | CONSULTEE | SPONSOR | OWNER | samantha.anderson@yahoo.com (Wipro) — unusual but valid |
 | CONSULTEE | SPONSOR | LEARNER | olivia/patrick/priya.anderson (Wipro); learner-test (Wipro test) |
 | CONSULTEE | HYBRID | LEARNER | rachel/raj/rebecca/robert.anderson (IIT Madras) |
@@ -295,7 +295,7 @@ Every valid combination of `UserRole × org capability kind × MemberRole`.
 | Staff dashboard | `/dashboard/staff/[staffProfileId]/…` |
 | Consultant dashboard | `/dashboard/consultant/[consultantProfileId]/…` |
 | Consultee dashboard | `/dashboard/consultee/[consulteeProfileId]/…` |
-| Org-admin dashboard | `/dashboard/org-admin/[orgAdminProfileId]/…` |
+| Org-admin dashboard | `/dashboard/org-workspace/[orgWorkspaceProfileId]/…` |
 | Org dashboard (any member) | `/dashboard/organization/[orgId]` → routes by MemberRole |
 | Org OWNER/MAINTAINER/MANAGER/SUPPORT landing | `/dashboard/organization/[orgId]/home` |
 | Org LEARNER landing | `/dashboard/organization/[orgId]/my-program` |

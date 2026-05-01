@@ -1,7 +1,7 @@
 /**
- * GET /api/org-admin/[orgAdminId]/activity
+ * GET /api/org-workspace/[orgWorkspaceId]/activity
  *
- * Cross-org audit feed for an OrgAdmin. Aggregates `OrgAuditLog` rows
+ * Cross-org audit feed for an OrgWorkspace. Aggregates `OrgAuditLog` rows
  * from every org where the caller has an ACTIVE OWNER membership and
  * stitches them into a single timeline. Distinct from the per-org
  * /audit endpoint which scopes to one org and supports rich filters.
@@ -13,8 +13,8 @@
  * `@@index([organizationId, createdAt])` covers the per-org slice;
  * Postgres composes them via the `IN` clause without a new index.
  *
- * Auth: same IDOR posture as /billing — orgAdminId in URL must match
- * the caller's `orgAdminProfileId`.
+ * Auth: same IDOR posture as /billing — orgWorkspaceId in URL must match
+ * the caller's `orgWorkspaceProfileId`.
  *
  * Returns enriched rows: each row carries the orgName + actor's display
  * name so the UI doesn't need a follow-up join.
@@ -32,15 +32,15 @@ const QuerySchema = z.object({
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ orgAdminId: string }> },
+  { params }: { params: Promise<{ orgWorkspaceId: string }> },
 ) {
-  const { orgAdminId } = await params;
+  const { orgWorkspaceId } = await params;
   const auth = await requireApiAuth();
   if (auth.error) return auth.error;
 
-  // `orgAdminProfileId` is part of the customSession-augmented user
+  // `orgWorkspaceProfileId` is part of the customSession-augmented user
   // type (lib/auth.ts:522) — direct access is type-safe.
-  if (auth.session.user.orgAdminProfileId !== orgAdminId) {
+  if (auth.session.user.orgWorkspaceProfileId !== orgWorkspaceId) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 

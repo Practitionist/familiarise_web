@@ -166,12 +166,12 @@ export async function POST(req: NextRequest) {
   const auth = await requireApiAuth();
   if (auth.error) return auth.error;
 
-  // Only UserRole.ORG_ADMIN can create organizations. Platform ADMIN can
+  // Only UserRole.ORG_WORKSPACE can create organizations. Platform ADMIN can
   // also seed orgs (used by fixtures and back-office tooling). CONSULTANT
   // and CONSULTEE are distinct user types — they join orgs via invitation,
   // they don't create them. Blocks UI-bypass attempts via direct API.
   const creatorRole = auth.session.user.role;
-  if (creatorRole !== "ORG_ADMIN" && creatorRole !== "ADMIN") {
+  if (creatorRole !== "ORG_WORKSPACE" && creatorRole !== "ADMIN") {
     return NextResponse.json(
       {
         error:
@@ -289,17 +289,17 @@ export async function POST(req: NextRequest) {
 
       // Lazy-create the operator-side profile for this user. Idempotent
       // across the creator's 2nd+ org — they already have one
-      // OrgAdminProfile row pinned by `userId @unique`. The user.update
+      // OrgWorkspaceProfile row pinned by `userId @unique`. The user.update
       // via updateMany keeps the call cheap when the link is already set.
-      const orgAdmin = await tx.orgAdminProfile.upsert({
+      const orgWorkspace = await tx.orgWorkspaceProfile.upsert({
         where: { userId: auth.session.user.id },
         create: { userId: auth.session.user.id },
         update: {},
         select: { id: true },
       });
       await tx.user.updateMany({
-        where: { id: auth.session.user.id, orgAdminProfileId: null },
-        data: { orgAdminProfileId: orgAdmin.id },
+        where: { id: auth.session.user.id, orgWorkspaceProfileId: null },
+        data: { orgWorkspaceProfileId: orgWorkspace.id },
       });
 
       await tx.orgAuditLog.create({
@@ -323,7 +323,7 @@ export async function POST(req: NextRequest) {
         organization: org,
         billingAccountId,
         membership,
-        orgAdminProfileId: orgAdmin.id,
+        orgWorkspaceProfileId: orgWorkspace.id,
       };
     });
 

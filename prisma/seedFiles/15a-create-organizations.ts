@@ -183,7 +183,7 @@ export async function createOrganizations(
   await seedConsentArtifacts(users.slice(0, 10));
 
   // ---------------------------------------------------- TOUR OWNER (#723)
-  // Dedicated ORG_ADMIN account with deterministic credentials so tour
+  // Dedicated ORG_WORKSPACE account with deterministic credentials so tour
   // scripts and integration tests can sign in without hunting for the
   // right seed user. Idempotent so re-running `npm run db:seed` doesn't
   // dup. Adopts the canonical Wipro org as its OWNER membership.
@@ -774,7 +774,7 @@ async function seedConsentArtifacts(users: UserWithProfiles[]) {
 }
 
 // ---------------------------------------------------------------------------
-// Tour owner — dedicated ORG_ADMIN with deterministic credentials (#723)
+// Tour owner — dedicated ORG_WORKSPACE with deterministic credentials (#723)
 // ---------------------------------------------------------------------------
 
 const TOUR_OWNER_EMAIL = "tour-owner@familiarise.dev";
@@ -782,7 +782,7 @@ const TOUR_OWNER_EMAIL = "tour-owner@familiarise.dev";
 async function seedTourOwner(): Promise<void> {
   // Adopt the canonical Wipro org as this owner's primary org. Skip the
   // seed if Wipro didn't materialize (smaller seed mode) — the tour
-  // matrix only needs an ORG_ADMIN attached to *some* seed org.
+  // matrix only needs an ORG_WORKSPACE attached to *some* seed org.
   const wipro = await prisma.organization.findUnique({
     where: { slug: "wipro" },
     select: { id: true, name: true },
@@ -799,12 +799,12 @@ async function seedTourOwner(): Promise<void> {
   // 1. User row (idempotent via email upsert)
   const user = await prisma.user.upsert({
     where: { email: TOUR_OWNER_EMAIL },
-    update: { role: UserRole.ORG_ADMIN },
+    update: { role: UserRole.ORG_WORKSPACE },
     create: {
       email: TOUR_OWNER_EMAIL,
       name: "Tour Owner",
       emailVerified: true,
-      role: UserRole.ORG_ADMIN,
+      role: UserRole.ORG_WORKSPACE,
       onboardingCompleted: true,
       timezone: "Asia/Kolkata",
       country: "India",
@@ -835,17 +835,17 @@ async function seedTourOwner(): Promise<void> {
     });
   }
 
-  // 3. OrgAdminProfile + User.orgAdminProfileId link (mirror the runtime
+  // 3. OrgWorkspaceProfile + User.orgWorkspaceProfileId link (mirror the runtime
   // lazy-create at app/api/organizations/route.ts:288).
-  const orgAdmin = await prisma.orgAdminProfile.upsert({
+  const orgWorkspace = await prisma.orgWorkspaceProfile.upsert({
     where: { userId: user.id },
     create: { userId: user.id },
     update: {},
     select: { id: true },
   });
   await prisma.user.updateMany({
-    where: { id: user.id, orgAdminProfileId: null },
-    data: { orgAdminProfileId: orgAdmin.id },
+    where: { id: user.id, orgWorkspaceProfileId: null },
+    data: { orgWorkspaceProfileId: orgWorkspace.id },
   });
 
   // 4. OWNER membership in Wipro (idempotent — skip if already present)

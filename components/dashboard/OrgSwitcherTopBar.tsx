@@ -5,7 +5,7 @@
  * full sidebar of their own:
  *   - /dashboard/organization              (the switcher list)
  *   - /dashboard/organization/create       (create-org wizard)
- *   - /dashboard/org-admin/[orgAdminId]/*  (operator chooser)
+ *   - /dashboard/org-workspace/[orgWorkspaceId]/*  (operator chooser)
  *
  * Each of those routes used to ship with a noop layout — no back link,
  * no user menu, no notification bell. Users had no way out of the page
@@ -45,11 +45,11 @@ import { disconnectStreamClients } from "@/providers/StreamProvider";
  *
  * The back link uses `resolvePersonalDashboardHref` so a consultant
  * lands on /dashboard/consultant/<id>, a consultee on
- * /dashboard/consultee/<id>, an OrgAdmin on its operator home, and a
+ * /dashboard/consultee/<id>, an OrgWorkspace operator on its operator home, and a
  * user with none of those (rare — e.g. mid-onboarding) on /dashboard.
  *
- * `hideBackLink` lets the org-admin layout suppress the back link
- * specifically for the OrgAdmin chooser page (where "back to personal
+ * `hideBackLink` lets the org-workspace layout suppress the back link
+ * specifically for the OrgWorkspace chooser page (where "back to personal
  * dashboard" would loop the user right back to the same screen).
  */
 export function OrgSwitcherTopBar({
@@ -64,7 +64,7 @@ export function OrgSwitcherTopBar({
   // Session, so direct field access is type-safe.
   const personalHref = session?.user
     ? resolvePersonalDashboardHref({
-        orgAdminProfileId: session.user.orgAdminProfileId,
+        orgWorkspaceProfileId: session.user.orgWorkspaceProfileId,
         consultantProfileId: session.user.consultantProfileId,
         consulteeProfileId: session.user.consulteeProfileId,
       })

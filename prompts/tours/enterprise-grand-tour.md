@@ -162,7 +162,7 @@ a host arm (RateCard + EXPERT memberships + payouts). T.10.5 / T.10.6
 
 | Integration | Stop |
 |---|---|
-| Operator (cross-org) dashboard at `/dashboard/org-admin/<id>/*` — Home / Activity / Billing / Settings + switcher redirect from `/dashboard/organization` | T.16.5 |
+| Operator (cross-org) dashboard at `/dashboard/org-workspace/<id>/*` — Home / Activity / Billing / Settings + switcher redirect from `/dashboard/organization` | T.16.5 |
 | Consumer in-org pages — LEARNER `/my-program`, EXPERT `/my-arrangement` | T.14, T.15 |
 | Audit log viewer + CSV export | T.17 |
 | Domain DNS verification + signin gate | T.18 |
@@ -1470,17 +1470,17 @@ still be accessible because it's read-only by nature.
 
 ---
 
-### T.16.5 — Operator (cross-org) dashboard at `/dashboard/org-admin/<id>/*`
+### T.16.5 — Operator (cross-org) dashboard at `/dashboard/org-workspace/<id>/*`
 
 **What we're about to do.** Sign in as the OWNER of `tour-2026-04-25-acme`
-(who, after T.2's org creation, has an `OrgAdminProfile` lazy-created
+(who, after T.2's org creation, has an `OrgWorkspaceProfile` lazy-created
 by `POST /api/organizations`). Visit `/dashboard/organization` and
-expect a server redirect to `/dashboard/org-admin/<orgAdminId>/home`.
+expect a server redirect to `/dashboard/org-workspace/<orgWorkspaceId>/home`.
 Walk the four sidebar pages: Overview, Activity, Billing, Settings.
 
 **Why it matters.** Before the consolidation (commits `f6876b8e` +
 `d2bb6e02`), `/dashboard/organization` was a stranded list page with
-no chrome and `/dashboard/org-admin/<id>/home` was a thin chooser
+no chrome and `/dashboard/org-workspace/<id>/home` was a thin chooser
 that auto-redirected single-org operators away. Both surfaces showed
 overlapping content. The consolidation collapses them into one
 operator dashboard with a `CollapsibleSidebar` (mirrors
@@ -1503,23 +1503,23 @@ dual-entry behavior (in-dashboard `/create` vs unbranded
 > Pick one:
 > - `auto` — `mcp__chrome-devtools__navigate_page` to
 >   `http://localhost:3000/dashboard/organization`. `take_snapshot`
->   to confirm the URL settled at `/dashboard/org-admin/<id>/home`.
+>   to confirm the URL settled at `/dashboard/org-workspace/<id>/home`.
 >   Then click each sidebar item: Activity, Billing, Settings.
 >   Take a snapshot at each.
 > - `manual` — Open <http://localhost:3000/dashboard/organization>
 >   in a fresh tab signed in as the Acme owner; you should land on
->   `/dashboard/org-admin/<id>/home`. Click each sidebar item; type
+>   `/dashboard/org-workspace/<id>/home`. Click each sidebar item; type
 >   `done` when you've seen all four pages.
 
 **Verify.**
 
-1. URL after redirect matches `/dashboard/org-admin/<id>/home` (NOT
+1. URL after redirect matches `/dashboard/org-workspace/<id>/home` (NOT
    `/dashboard/organization`). The redirect lives at
    `app/dashboard/organization/(switcher)/page.tsx`.
 2. Home page shows: stats row (orgs you own, active members,
    outstanding ₹), an org grid filtered to OWNER memberships, and a
    "+ New organization" button linking to
-   `/dashboard/org-admin/<id>/create`.
+   `/dashboard/org-workspace/<id>/create`.
 3. Activity page renders a timeline of recent `OrgAuditLog` rows
    across ALL orgs you own. Confirm the orgName chip on each row
    matches the underlying `organizationId` via SQL spot-check:
@@ -1536,34 +1536,34 @@ dual-entry behavior (in-dashboard `/create` vs unbranded
    ```
 4. Billing page shows a stats row + per-org table with funding-source
    chips, wallet balance, and outstanding-invoice columns. Hit
-   `GET /api/org-admin/<id>/billing` directly and confirm the JSON
+   `GET /api/org-workspace/<id>/billing` directly and confirm the JSON
    matches the rendered table.
 5. Settings page renders the "coming soon" scaffold (no schema for
    operator prefs yet — that ships in v1.1).
 
 **Watch for.**
 
-- A non-OrgAdmin user (regular CONSULTANT or CONSULTEE without an
-  `OrgAdminProfile`) hitting `/dashboard/organization` should be
-  redirected to `/dashboard` (NOT `/dashboard/org-admin/<id>/home`,
+- A non-OrgWorkspace user (regular CONSULTANT or CONSULTEE without an
+  `OrgWorkspaceProfile`) hitting `/dashboard/organization` should be
+  redirected to `/dashboard` (NOT `/dashboard/org-workspace/<id>/home`,
   because they have no profile). They navigate between orgs via the
   top-bar `OrganizationSwitcher` dropdown.
-- The IDOR guard in `app/dashboard/org-admin/[orgAdminId]/layout.tsx`
-  must 404 if the URL's `orgAdminId` doesn't match the caller's
-  `session.user.orgAdminProfileId`. Try editing the URL to a random
+- The IDOR guard in `app/dashboard/org-workspace/[orgWorkspaceId]/layout.tsx`
+  must 404 if the URL's `orgWorkspaceId` doesn't match the caller's
+  `session.user.orgWorkspaceProfileId`. Try editing the URL to a random
   UUID and confirm 404 (NOT a redirect, NOT a 403 — same posture as
   before consolidation).
-- The wizard at `/dashboard/org-admin/<id>/create` and at
+- The wizard at `/dashboard/org-workspace/<id>/create` and at
   `/dashboard/organization/create` render the SAME
   `<CreateOrganizationWizard />` component. Both redirect to
   `/dashboard/organization/<newOrgId>/home` on success. The cancel
   paths differ: the in-dashboard URL cancels back to
-  `/dashboard/org-admin/<id>/home`; the standalone URL cancels back
+  `/dashboard/org-workspace/<id>/home`; the standalone URL cancels back
   to `/dashboard/organization` (which then redirects).
 
 **Bug-fix flag.** If the redirect loops (e.g. `/dashboard/organization`
-→ `/dashboard/org-admin/<id>/home` → `/dashboard/organization`), the
-`OrgAdminShell` is doing something it shouldn't. Standing Rule #3:
+→ `/dashboard/org-workspace/<id>/home` → `/dashboard/organization`), the
+`OrgWorkspaceShell` is doing something it shouldn't. Standing Rule #3:
 fix it before continuing the tour.
 
 ---

@@ -63,7 +63,7 @@ You have access to one critical MCP tool here:
 
 > **Pre-flight**: every POST in A.1-A.3 fails **403** with
 > `"Only organization administrators can create organizations…"` if the
-> session user's `users.role` is not `ORG_ADMIN` or `ADMIN`. See
+> session user's `users.role` is not `ORG_WORKSPACE` or `ADMIN`. See
 > prereq P.4. Run that first or every cell below will be red.
 
 ### A.0 — Creator-role gate (sanity)

@@ -91,20 +91,20 @@ export default function Dashboard() {
                   : "/",
               );
               break;
-            case "ORG_ADMIN": {
-              // ORG_ADMIN users land on the cross-org operator portfolio
-              // (`/dashboard/org-admin/<id>/home`) so a multi-org operator
+            case "ORG_WORKSPACE": {
+              // ORG_WORKSPACE users land on the cross-org operator portfolio
+              // (`/dashboard/org-workspace/<id>/home`) so a multi-org operator
               // sees every owned org, not just whichever membership sorts
               // first. The `/dashboard/organization` redirect target uses
               // the same path; the role router mirrors it here so
               // `/dashboard` and `/dashboard/organization` agree.
-              if (userDetails.orgAdminProfileId) {
+              if (userDetails.orgWorkspaceProfileId) {
                 router.push(
-                  `/dashboard/org-admin/${userDetails.orgAdminProfileId}/home`,
+                  `/dashboard/org-workspace/${userDetails.orgWorkspaceProfileId}/home`,
                 );
               } else {
                 // Fallback for the half-onboarded edge case (#724) — no
-                // OrgAdminProfile yet. Send them to the create wizard
+                // OrgWorkspaceProfile yet. Send them to the create wizard
                 // via /dashboard/organization so they can finish
                 // onboarding instead of bouncing off a 404.
                 router.push("/dashboard/organization");

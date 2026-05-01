@@ -2,7 +2,7 @@
  * BetterAuth auto-mounts these routes from the `sso()` plugin. Keep this
  * derivation in sync with the plugin's default endpoint templates — changing
  * the paths here without a matching override in `lib/auth.ts` will break the
- * IdP-setup instructions shown to org admins in the Add Provider dialog.
+ * IdP-setup instructions shown to org workspace operators in the Add Provider dialog.
  *
  * These helpers are pure so they can be unit-tested without a DOM / React
  * runtime. See `__tests__/sso/derive-urls.test.ts`.

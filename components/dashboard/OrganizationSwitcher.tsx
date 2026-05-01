@@ -36,11 +36,11 @@ import {
 export function OrganizationSwitcher() {
   const { data: session } = useSession();
   const memberships = session?.user?.organizationMemberships ?? [];
-  const isOrgAdmin = session?.user?.role === "ORG_ADMIN";
+  const isOrgWorkspace = session?.user?.role === "ORG_WORKSPACE";
 
-  // ORG_ADMIN users always see the switcher (they need "Create or manage"
+  // ORG_WORKSPACE users always see the switcher (they need "Create or manage"
   // access). Other roles only see it when they have at least one org.
-  if (memberships.length === 0 && !isOrgAdmin) {
+  if (memberships.length === 0 && !isOrgWorkspace) {
     return null;
   }
 

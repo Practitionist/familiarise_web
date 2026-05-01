@@ -327,7 +327,7 @@ async function upsertProfileByRole(
         );
       }
       return {};
-    case UserRole.ORG_ADMIN:
+    case UserRole.ORG_WORKSPACE:
       // No personal profile — org creation happens post-transaction.
       return {};
     default: {
@@ -579,10 +579,10 @@ export async function processOnboardingData(
 
     await assertUserExists(userId);
 
-    // ORG_ADMIN onboarding no longer flows through this transaction. The
+    // ORG_WORKSPACE onboarding no longer flows through this transaction. The
     // role + personal info are committed by `setOnboardingRoleAction` at
     // step 0, the org is created via `POST /api/organizations` during the
-    // shared wizard, and `completeOrgAdminOnboardingAction` flips the
+    // shared wizard, and `completeOrgWorkspaceOnboardingAction` flips the
     // onboardingCompleted flag at launch. This path now only handles
     // CONSULTANT / CONSULTEE / STAFF / ADMIN profiles.
 

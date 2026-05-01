@@ -11,7 +11,7 @@ in parentheses. Constants live in `lib/enterprise/audit-actions.ts`.
 | Path | Verb | Min role | Purpose | Audit actions |
 |------|------|----------|---------|----------------|
 | `/api/organizations` | `GET` | authenticated | List the caller's orgs (switcher feed) | — |
-| `/api/organizations` | `POST` | authenticated | Create org + BillingAccount + OWNER Membership. Also upserts an `OrgAdminProfile` for the creator (so they become "an operator of at least one org") and returns `orgAdminProfileId` on the response. | `MEMBER_ADDED` (MEMBER) |
+| `/api/organizations` | `POST` | authenticated | Create org + BillingAccount + OWNER Membership. Also upserts an `OrgWorkspaceProfile` for the creator (so they become "an operator of at least one org") and returns `orgWorkspaceProfileId` on the response. | `MEMBER_ADDED` (MEMBER) |
 | `/api/organizations/invitations/accept` | `POST` | authenticated | Accept an invite via token. Side-effects: LEARNER invites lazily upsert a `ConsulteeProfile` (via `ensureConsulteeProfile`); EXPERT invites upsert a placeholder `ConsultantProfile` (`Domain "General"`, `scheduleType = WEEKLY`, `verificationStatus = PENDING_VERIFICATION`) if the user doesn't already have one. | `INVITE_ACCEPTED` (MEMBER) |
 
 ## Org record

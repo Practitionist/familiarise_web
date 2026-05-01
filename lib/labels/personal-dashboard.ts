@@ -2,7 +2,7 @@
  * Resolve the href for a user's "Personal Dashboard" link.
  *
  * Priority order:
- *   orgAdminProfile  → /dashboard/org-admin/:id/home
+ *   orgWorkspaceProfile  → /dashboard/org-workspace/:id/home
  *   consultantProfile → /dashboard/consultant/:id/home
  *   consulteeProfile  → /dashboard/consultee/:id/home
  *   (none)            → null
@@ -19,7 +19,7 @@
  */
 
 export interface PersonalProfileIds {
-  orgAdminProfileId?: string | null;
+  orgWorkspaceProfileId?: string | null;
   consultantProfileId?: string | null;
   consulteeProfileId?: string | null;
 }
@@ -27,8 +27,8 @@ export interface PersonalProfileIds {
 export function resolvePersonalDashboardHref(
   user: PersonalProfileIds,
 ): string | null {
-  if (user.orgAdminProfileId) {
-    return `/dashboard/org-admin/${user.orgAdminProfileId}/home`;
+  if (user.orgWorkspaceProfileId) {
+    return `/dashboard/org-workspace/${user.orgWorkspaceProfileId}/home`;
   }
   if (user.consultantProfileId) {
     return `/dashboard/consultant/${user.consultantProfileId}/home`;

@@ -11,7 +11,7 @@
 The platform wires a user to one or more profile models. Each row has
 a matching FK on `User` (all nullable, all `@unique`). Onboarding
 touches `ConsultantProfile` / `ConsulteeProfile` / `StaffProfile` /
-`AdminProfile`; `OrgAdminProfile` is provisioned by the enterprise
+`AdminProfile`; `OrgWorkspaceProfile` is provisioned by the enterprise
 layer.
 
 | Profile | Purpose | FK on `User` | Created by |
@@ -20,7 +20,7 @@ layer.
 | `ConsulteeProfile` | Platform learner — goals, career stage, aboutMe. | `consulteeProfileId` | `/form/onboarding` (CONSULTEE), or **lazily** via `ensureConsulteeProfile(db, userId)` from checkout, slot request-for-approval, and LEARNER invite accept. |
 | `StaffProfile` | Platform operator (support / moderation / ops). | `staffProfileId` | `/form/onboarding` (invite-only; server rejects public submission). |
 | `AdminProfile` | Platform admin. | `adminProfileId` | `/form/onboarding` (invite-only). |
-| `OrgAdminProfile` | One row per user who operates an org. Mirrors `StaffProfile` / `AdminProfile` structure. Backs `/dashboard/org-admin/:id/home`. | `orgAdminProfileId` | `POST /api/organizations` (inside the create transaction) and by the `prisma/scripts/backfill-org-admin-profiles.ts` one-shot for existing OWNERs. |
+| `OrgWorkspaceProfile` | One row per user who operates an org. Mirrors `StaffProfile` / `AdminProfile` structure. Backs `/dashboard/org-workspace/:id/home`. | `orgWorkspaceProfileId` | `POST /api/organizations` (inside the create transaction) and by the `prisma/scripts/backfill-org-workspace-profiles.ts` one-shot for existing OWNERs. |
 
 ### Lazy ConsulteeProfile (Arch-4)
 
@@ -44,13 +44,13 @@ code should treat the FK as optional and use
 `resolvePersonalDashboardHref` (`lib/labels/personal-dashboard.ts`) to
 decide the "Personal Dashboard" target.
 
-### OrgAdminProfile on org creation
+### OrgWorkspaceProfile on org creation
 
-`POST /api/organizations` upserts an `OrgAdminProfile` for the caller
+`POST /api/organizations` upserts an `OrgWorkspaceProfile` for the caller
 inside the same transaction that creates the `Organization`,
 `BillingAccount`, and OWNER `Membership`, and returns the
-`orgAdminProfileId` on the response body so the client can
-immediately navigate to `/dashboard/org-admin/:id/home`. See
+`orgWorkspaceProfileId` on the response body so the client can
+immediately navigate to `/dashboard/org-workspace/:id/home`. See
 `docs/enterprise/12-dashboard-pages.md` for the operator home route.
 
 ### Placeholder ConsultantProfile on EXPERT invite accept
@@ -710,7 +710,7 @@ consultantProfileId  String?  @unique
 consulteeProfileId   String?  @unique
 staffProfileId       String?  @unique
 adminProfileId       String?  @unique
-orgAdminProfileId    String?  @unique    // one row per user who operates an org
+orgWorkspaceProfileId    String?  @unique    // one row per user who operates an org
 ```
 
 #### ConsultantProfile

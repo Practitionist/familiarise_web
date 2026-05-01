@@ -54,22 +54,22 @@ interface RollupResponse {
   perOrg: PerOrgRow[];
 }
 
-async function fetchRollup(orgAdminId: string): Promise<RollupResponse> {
-  const res = await fetch(`/api/org-admin/${orgAdminId}/billing`);
+async function fetchRollup(orgWorkspaceId: string): Promise<RollupResponse> {
+  const res = await fetch(`/api/org-workspace/${orgWorkspaceId}/billing`);
   if (!res.ok) throw new Error("Failed to load billing roll-up");
   return res.json();
 }
 
-export default function OrgAdminBillingPage({
+export default function OrgWorkspaceBillingPage({
   params,
 }: {
-  params: Promise<{ orgAdminId: string }>;
+  params: Promise<{ orgWorkspaceId: string }>;
 }) {
-  const { orgAdminId } = use(params);
+  const { orgWorkspaceId } = use(params);
 
   const { data, isLoading } = useQuery({
-    queryKey: ["org-admin-billing", orgAdminId],
-    queryFn: () => fetchRollup(orgAdminId),
+    queryKey: ["org-workspace-billing", orgWorkspaceId],
+    queryFn: () => fetchRollup(orgWorkspaceId),
   });
 
   const summary = data?.summary;

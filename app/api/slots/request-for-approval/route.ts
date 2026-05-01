@@ -45,8 +45,8 @@ export async function POST(req: NextRequest) {
     const startTime = new Date(slotStartTimeInUTC);
     const endTime = new Date(slotEndTimeInUTC);
 
-    // Lazy-create ConsulteeProfile on first consumer action — org-admins
-    // and consultants who book approvals will otherwise 404 here.
+    // Lazy-create ConsulteeProfile on first consumer action — org-workspace
+    // operators and consultants who book approvals will otherwise 404 here.
     await ensureConsulteeProfile(prisma, session.user.id);
     const consulteeProfile = await prisma.consulteeProfile.findUnique({
       where: { userId: session.user.id },

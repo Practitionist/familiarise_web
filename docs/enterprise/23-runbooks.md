@@ -139,7 +139,7 @@ email from `jobs/compliance/msme-payment-alerts.ts`.
 
 ## 🗓️ Onboarding a new enterprise org
 
-1. Verify creator role: `user.role = ORG_ADMIN` (or platform `ADMIN`).
+1. Verify creator role: `user.role = ORG_WORKSPACE` (or platform `ADMIN`).
 2. Run through the wizard at `/dashboard/organization/create` —
    **org creation only fires on the Review step's "Launch" action**, so
    dropping out mid-flow is safe and leaves no orphan rows.

@@ -2,11 +2,11 @@
  * GET /api/organizations/[orgId]/stream/channels
  *
  * Lists Stream Chat channels tagged with `custom.organization_id = <orgId>`.
- * Surfaces the messaging side of an org's footprint to MANAGER+ org admins
+ * Surfaces the messaging side of an org's footprint to MANAGER+ org workspace operators
  * for compliance, member-management, and audit workflows. Backed by Stream's
  * native `queryChannels` so we don't shadow channel state in our DB.
  *
- * AUTH: MANAGER+ on the target org (matches the rest of the org-admin
+ * AUTH: MANAGER+ on the target org (matches the rest of the org-workspace
  * surface area; viewing chat metadata is on par with viewing audit logs).
  *
  * PAGINATION: Stream caps `queryChannels` at 30 per call; we ship 20/page

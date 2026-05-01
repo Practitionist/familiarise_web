@@ -129,8 +129,8 @@ Per-member entitlement: `ProgramAssignment` (with
   all; the org dropdown shows only the home page.
 - `SUPPORT` — internal ops / CX role.
 
-Disjoint from `UserRole = { CONSULTEE, CONSULTANT, ORG_ADMIN, ADMIN }`,
-which is the platform-level role on `users.role`. `ORG_ADMIN` is the
+Disjoint from `UserRole = { CONSULTEE, CONSULTANT, ORG_WORKSPACE, ADMIN }`,
+which is the platform-level role on `users.role`. `ORG_WORKSPACE` is the
 gate for `POST /api/organizations`; `ADMIN` is the platform super-user.
 
 ### Three ledgers
@@ -316,9 +316,9 @@ npm run lint
 These are guard rails — if either fails you've got pre-existing
 breakage in the branch. Fix before touching test flows.
 
-### P.4 — Promote your test user to `UserRole.ORG_ADMIN`
+### P.4 — Promote your test user to `UserRole.ORG_WORKSPACE`
 
-`POST /api/organizations` is gated to `UserRole.ORG_ADMIN` and the
+`POST /api/organizations` is gated to `UserRole.ORG_WORKSPACE` and the
 platform `UserRole.ADMIN`
 ([`app/api/organizations/route.ts`](../../app/api/organizations/route.ts)
 lines 129-142). A freshly-signed-up `CONSULTEE` cannot create an org —
@@ -326,7 +326,7 @@ the route returns **403** with `"Only organization administrators can
 create organizations. Sign up with the Organization Owner role to
 continue."` This will fail the create-org steps instantly if skipped.
 
-Two ways to land in `ORG_ADMIN`:
+Two ways to land in `ORG_WORKSPACE`:
 
 1. Walk the role-picker in Chrome DevTools at `/form/onboarding` and
    pick "Organization Owner". The form action lives in
@@ -337,7 +337,7 @@ Two ways to land in `ORG_ADMIN`:
 
    ```sql
    UPDATE users
-      SET role = 'ORG_ADMIN', "onboardingCompleted" = true
+      SET role = 'ORG_WORKSPACE', "onboardingCompleted" = true
     WHERE email = '<test-email>';
    ```
 
@@ -416,7 +416,7 @@ CONSENT_GRANTED, CONSENT_WITHDRAWN, HRIS_CONFIGURED, HRIS_SYNC_RAN
 - Auth helpers: `lib/auth-helpers.ts` — `requireApiAuth`,
   `requireOrgAccess(orgId, minRole)`, `requireOrgOwner(orgId)`,
   `requireAdminAuth`, `orgRoleSatisfies`.
-- Create-org route: `app/api/organizations/route.ts` (the `ORG_ADMIN`
+- Create-org route: `app/api/organizations/route.ts` (the `ORG_WORKSPACE`
   gate lives at lines 129-142).
 - Accept-invitation race: `app/api/organizations/invitations/accept/route.ts`
   (the `updateMany WHERE status=pending` atomic-claim is the core).

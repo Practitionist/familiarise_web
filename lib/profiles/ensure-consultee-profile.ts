@@ -6,7 +6,7 @@
  *
  * Before this helper, the BetterAuth `user.create.after` hook force-
  * created a ConsulteeProfile for every signup (see lib/auth.ts). That
- * meant pure org-operators (UserRole.ORG_ADMIN) and consultants dragged
+ * meant pure org-operators (UserRole.ORG_WORKSPACE) and consultants dragged
  * around a dangling consumer profile they never used. We now create on
  * first consumer action instead.
  *

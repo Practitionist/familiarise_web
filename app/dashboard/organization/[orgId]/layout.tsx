@@ -297,7 +297,7 @@ export default function OrgLayout({
   // context am I in?", the bottom answers "who am I?".
   const userExt = session?.user as
     | (NonNullable<typeof session>["user"] & {
-        orgAdminProfileId?: string | null;
+        orgWorkspaceProfileId?: string | null;
         consultantProfileId?: string | null;
         consulteeProfileId?: string | null;
         organizationMemberships?: Array<{
@@ -310,7 +310,7 @@ export default function OrgLayout({
     | undefined;
 
   const personalHref = resolvePersonalDashboardHref({
-    orgAdminProfileId: userExt?.orgAdminProfileId,
+    orgWorkspaceProfileId: userExt?.orgWorkspaceProfileId,
     consultantProfileId: userExt?.consultantProfileId,
     consulteeProfileId: userExt?.consulteeProfileId,
   });

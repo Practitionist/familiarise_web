@@ -1,20 +1,20 @@
 import { resolvePersonalDashboardHref } from "@/lib/labels/personal-dashboard";
 
 describe("resolvePersonalDashboardHref", () => {
-  it("returns the org-admin surface when orgAdminProfileId is set", () => {
+  it("returns the org-workspace surface when orgWorkspaceProfileId is set", () => {
     expect(
       resolvePersonalDashboardHref({
-        orgAdminProfileId: "oa-1",
+        orgWorkspaceProfileId: "ow-1",
         consultantProfileId: "cp-1",
         consulteeProfileId: "ce-1",
       }),
-    ).toBe("/dashboard/org-admin/oa-1/home");
+    ).toBe("/dashboard/org-workspace/ow-1/home");
   });
 
-  it("falls back to consultant when no orgAdmin exists", () => {
+  it("falls back to consultant when no orgWorkspace exists", () => {
     expect(
       resolvePersonalDashboardHref({
-        orgAdminProfileId: null,
+        orgWorkspaceProfileId: null,
         consultantProfileId: "cp-9",
         consulteeProfileId: "ce-1",
       }),
@@ -24,7 +24,7 @@ describe("resolvePersonalDashboardHref", () => {
   it("falls back to consultee when only consulteeProfileId is set", () => {
     expect(
       resolvePersonalDashboardHref({
-        orgAdminProfileId: null,
+        orgWorkspaceProfileId: null,
         consultantProfileId: null,
         consulteeProfileId: "ce-7",
       }),
@@ -34,7 +34,7 @@ describe("resolvePersonalDashboardHref", () => {
   it("returns null when no profile ids are set", () => {
     expect(
       resolvePersonalDashboardHref({
-        orgAdminProfileId: null,
+        orgWorkspaceProfileId: null,
         consultantProfileId: null,
         consulteeProfileId: null,
       }),
@@ -44,7 +44,7 @@ describe("resolvePersonalDashboardHref", () => {
   it("treats undefined and null the same way", () => {
     expect(
       resolvePersonalDashboardHref({
-        orgAdminProfileId: undefined,
+        orgWorkspaceProfileId: undefined,
         consultantProfileId: undefined,
         consulteeProfileId: "ce-only",
       }),

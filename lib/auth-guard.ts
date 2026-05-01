@@ -71,7 +71,7 @@ export async function requireOnboarded() {
 /**
  * Require an onboarded user whose `UserRole` is in the allowed set.
  * Use for pages restricted to a specific user type (e.g. `/dashboard/organization/create`
- * for ORG_ADMIN). Sends other roles to the generic dashboard — which in turn
+ * for ORG_WORKSPACE). Sends other roles to the generic dashboard — which in turn
  * routes them to their role-specific home.
  */
 export async function requireUserRole(allowed: UserRole | UserRole[]) {

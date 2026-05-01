@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Client-side shell for the org-admin (operator) dashboard. Sits inside
+ * Client-side shell for the org-workspace (operator) dashboard. Sits inside
  * the server-side layout that runs the IDOR guard and resolves the user
  * identity props on the server (so the sidebar's displayed name is
  * the same on the server-rendered HTML and the first client render —
@@ -46,14 +46,14 @@ const sidebarItems: CollapsibleSidebarItem[] = [
   { name: "Settings", icon: Settings, path: "settings" },
 ];
 
-export function OrgAdminShell({
-  orgAdminId,
+export function OrgWorkspaceShell({
+  orgWorkspaceId,
   userName,
   userEmail,
   userImage,
   children,
 }: {
-  orgAdminId: string;
+  orgWorkspaceId: string;
   userName: string | null;
   userEmail: string | null;
   userImage: string | null;
@@ -83,7 +83,7 @@ export function OrgAdminShell({
     <div className="flex h-screen-maintenance bg-zinc-50 dark:bg-zinc-950">
       <CollapsibleSidebar
         items={sidebarItems}
-        basePath={`/dashboard/org-admin/${orgAdminId}`}
+        basePath={`/dashboard/org-workspace/${orgWorkspaceId}`}
         title="Operator"
         avatarFallback={avatarFallback}
         userName={displayName}

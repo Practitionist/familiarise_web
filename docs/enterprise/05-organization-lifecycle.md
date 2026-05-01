@@ -83,11 +83,11 @@ single Prisma transaction that:
    `WALLET`, and `null` otherwise.
 4. Creates an `OWNER` `Membership` row AND a matching BetterAuth `Member`
    row, bridged via `Membership.betterAuthMemberId`.
-5. Upserts an `OrgAdminProfile` for the creator (one row per user who
+5. Upserts an `OrgWorkspaceProfile` for the creator (one row per user who
    operates an org, shared across multiple orgs) and stamps
-   `User.orgAdminProfileId`. The response body includes
-   `orgAdminProfileId` so the client can land the user on
-   `/dashboard/org-admin/:id/home` without a follow-up fetch.
+   `User.orgWorkspaceProfileId`. The response body includes
+   `orgWorkspaceProfileId` so the client can land the user on
+   `/dashboard/org-workspace/:id/home` without a follow-up fetch.
 6. Writes the first `OrgAuditLog` row (category `MEMBER`, action
    `MEMBER_ADDED`).
 

@@ -11,7 +11,7 @@ All enterprise-specific models across six domain clusters: Identity & Access, Co
 flowchart TD
     subgraph ORG["Organization (anchor)"]
         Org["Organization\nstatus · canSponsor · canHost\nGST · hierarchy · currency"]
-        OrgAdmin["OrgAdminProfile"]
+        OrgWorkspace["OrgWorkspaceProfile"]
         OrgPlan["OrganizationPlan\ncatalog of plans curated by org"]
     end
 
@@ -68,7 +68,7 @@ flowchart TD
     end
 
     %% ── Org anchors ──────────────────────────────────────────────────────
-    Org --- OrgAdmin
+    Org --- OrgWorkspace
     Org --- OrgPlan
     Org --- AuditLog
 
@@ -164,7 +164,7 @@ flowchart TD
 
 | Cluster | Models |
 |---|---|
-| Organization (anchor) | Organization, OrgAdminProfile, OrganizationPlan |
+| Organization (anchor) | Organization, OrgWorkspaceProfile, OrganizationPlan |
 | Identity & Access | Membership, Member, Invitation, OrganizationSSOSettings, OrgDomainClaim, SsoProvider |
 | Commercial / Billing | BillingAccount, Contract, BillingSubscription, PurchaseOrder, WalletEntry, OrganizationInvoice, RateCard |
 | Programs & Entitlements | Program, LicensedSeatConfig, CreditPoolConfig, ProgramAssignment, BookingUtilization |

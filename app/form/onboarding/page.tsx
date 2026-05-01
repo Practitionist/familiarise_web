@@ -3,7 +3,7 @@
 import {
   updateOnboardingInformationAction,
   setOnboardingRoleAction,
-  completeOrgAdminOnboardingAction,
+  completeOrgWorkspaceOnboardingAction,
 } from "@/actions/forms/onboarding.action";
 import {
   OnboardingFormData,
@@ -47,11 +47,11 @@ const STEP_LABELS = {
     "Agreement",
     "Review",
   ],
-  // ORG_ADMIN: the onboarding shell only owns "Personal Info". Once the
+  // ORG_WORKSPACE: the onboarding shell only owns "Personal Info". Once the
   // role is committed, the shared CreateOrganizationWizard (stepper +
   // cards) takes over the remainder — its own progress bar shows the
   // 5-6 wizard steps, so we don't duplicate them here.
-  ORG_ADMIN: ["Personal Info"],
+  ORG_WORKSPACE: ["Personal Info"],
 };
 
 const MultiStepForm: React.FC = () => {
@@ -88,13 +88,13 @@ const MultiStepForm: React.FC = () => {
     }
     setFormData(merged);
 
-    // ORG_ADMIN handoff: the onboarding shell only owns step 0. When the
+    // ORG_WORKSPACE handoff: the onboarding shell only owns step 0. When the
     // user completes Personal Info we commit their role on the User row
     // so step 1's `POST /api/organizations` authorizes — the API gate
-    // requires `UserRole === "ORG_ADMIN"` and the signup default is
+    // requires `UserRole === "ORG_WORKSPACE"` and the signup default is
     // CONSULTEE. The shared wizard then takes over for the remaining
     // steps. Any other role keeps using this page's step machine.
-    if (step === 0 && merged.role === "ORG_ADMIN") {
+    if (step === 0 && merged.role === "ORG_WORKSPACE") {
       const userId = session?.user?.id;
       if (!userId) {
         toast({
@@ -105,7 +105,7 @@ const MultiStepForm: React.FC = () => {
         signOut();
         return;
       }
-      const result = await setOnboardingRoleAction(userId, "ORG_ADMIN", {
+      const result = await setOnboardingRoleAction(userId, "ORG_WORKSPACE", {
         name: merged.name,
         phone: merged.phone,
         timezone: merged.timezone,
@@ -252,9 +252,9 @@ const MultiStepForm: React.FC = () => {
         return;
       }
 
-      // ORG_ADMIN flow never reaches this handler — the shared
+      // ORG_WORKSPACE flow never reaches this handler — the shared
       // CreateOrganizationWizard's Review step owns the finalize +
-      // redirect via `completeOrgAdminOnboardingAction`.
+      // redirect via `completeOrgWorkspaceOnboardingAction`.
 
       // Redirect based on role (server has already updated the user record,
       // session cookie will refresh automatically)
@@ -421,19 +421,19 @@ const MultiStepForm: React.FC = () => {
   const wideLayoutSteps = ["Availability"];
   const useWideLayout = wideLayoutSteps.includes(stepLabels[step]);
 
-  // ORG_ADMIN handoff: after Personal Info commits the role, render the
+  // ORG_WORKSPACE handoff: after Personal Info commits the role, render the
   // shared create-org wizard instead of this page's shell. The wizard
   // owns the remaining 5-6 steps (Org Info → Review) and has its own
   // stepper; afterLaunch flips `user.onboardingCompleted = true` so the
   // user lands on their new org's home fully onboarded.
-  if (currentRole === "ORG_ADMIN" && step > 0) {
+  if (currentRole === "ORG_WORKSPACE" && step > 0) {
     const userId = session?.user?.id;
     return (
       <CreateOrganizationWizard
         onCancel={() => setStep(0)}
         afterLaunch={async () => {
           if (!userId) return;
-          await completeOrgAdminOnboardingAction(userId);
+          await completeOrgWorkspaceOnboardingAction(userId);
         }}
       />
     );

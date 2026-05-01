@@ -4,15 +4,15 @@ import { requireUserRole } from "@/lib/auth-guard";
 /**
  * /dashboard/organization/create is a backstop, not the primary entry.
  *
- * After the org-admin dashboard consolidation (commits f6876b8e +
- * d2bb6e02), every operator with an OrgAdminProfile uses
- * /dashboard/org-admin/<id>/create — they get the operator chrome,
+ * After the org-workspace dashboard consolidation (commits f6876b8e +
+ * d2bb6e02), every operator with an OrgWorkspaceProfile uses
+ * /dashboard/org-workspace/<id>/create — they get the operator chrome,
  * matching cancel target, and consistent visual context.
  *
  * This route still exists for one narrow case: the user has
- * `User.role === "ORG_ADMIN"` but NO `orgAdminProfileId` yet. That
+ * `User.role === "ORG_WORKSPACE"` but NO `orgWorkspaceProfileId` yet. That
  * window only opens between two writes:
- *   1. setOnboardingRoleAction(userId, "ORG_ADMIN") commits the role
+ *   1. setOnboardingRoleAction(userId, "ORG_WORKSPACE") commits the role
  *   2. POST /api/organizations lazy-creates the profile (line 288)
  *
  * If the user bounces out of the wizard between (1) and (2) and
@@ -25,18 +25,18 @@ import { requireUserRole } from "@/lib/auth-guard";
  * Future roadmap: move the lazy-create from POST /api/organizations
  * into setOnboardingRoleAction, eliminating the half-onboarded
  * window entirely. At that point this route can be deleted. Tracked
- * in the GitHub issue for "collapse half-onboarded ORG_ADMIN state".
+ * in the GitHub issue for "collapse half-onboarded ORG_WORKSPACE state".
  */
 export default async function CreateOrganizationLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const session = await requireUserRole("ORG_ADMIN");
+  const session = await requireUserRole("ORG_WORKSPACE");
 
-  if (session.user.orgAdminProfileId) {
+  if (session.user.orgWorkspaceProfileId) {
     redirect(
-      `/dashboard/org-admin/${session.user.orgAdminProfileId}/create`,
+      `/dashboard/org-workspace/${session.user.orgWorkspaceProfileId}/create`,
     );
   }
 
