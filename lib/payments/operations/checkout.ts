@@ -1212,6 +1212,18 @@ export async function handleConsultationCheckout(
   consulteeProfileId: string,
   userId: string,
   skipPayment: boolean,
+  /**
+   * Resolved org context for this checkout (already validated by caller).
+   * Passed through to `Appointment.organizationId` so the org dashboard's
+   * `/api/organizations/[orgId]/appointments` query (which filters by
+   * `Appointment.organizationId`) actually surfaces fresh org-funded
+   * bookings. Without this stamp, only the `Payment` row carried the org
+   * tag — leaving the appointment invisible to org admins until backfill.
+   *
+   * Issue: #674 (personal vs org scope split). The runtime-stamping gap
+   * was flagged in the May 2026 production-readiness audit.
+   */
+  organizationId: string | null,
 ) {
   const plan = await tx.consultationPlan.findUnique({
     where: { id: data.planId },
@@ -1274,6 +1286,7 @@ export async function handleConsultationCheckout(
     data: {
       appointmentType: AppointmentsType.CONSULTATION,
       consultationId: consultation.id,
+      organizationId,
       slotsOfAppointment: {
         create: slotChunks.map((chunk) => ({
           startsAt: chunk.startsAt,
@@ -1299,6 +1312,8 @@ export async function handleSubscriptionCheckout(
   data: CheckoutInput,
   consulteeProfileId: string,
   _skipPayment: boolean,
+  /** Resolved org context — see handleConsultationCheckout for rationale. */
+  organizationId: string | null,
 ): Promise<SubscriptionCheckoutResult> {
   const plan = await tx.subscriptionPlan.findUnique({
     where: { id: data.planId },
@@ -1408,6 +1423,7 @@ export async function handleSubscriptionCheckout(
     data: {
       appointmentType: AppointmentsType.SUBSCRIPTION,
       subscriptionId: subscription.id,
+      organizationId,
       // No slots created - consultant allocates later via Requests tab
     },
   });
@@ -1506,10 +1522,17 @@ export async function handleWebinarCheckout(
   // Create or reuse appointment
   let appointment = webinar.appointment;
   if (!appointment) {
+    // Webinar appointments are SHARED across registrants — multiple
+    // attendees from different orgs can join the same webinar. So we
+    // tag with the WebinarPlan owner's org (the event host's org), not
+    // the first registrant's booking org. This makes "events we host"
+    // discoverable in the org dashboard, and avoids first-registrant-
+    // wins org leakage.
     appointment = await tx.appointment.create({
       data: {
         appointmentType: AppointmentsType.WEBINAR,
         webinarId: webinar.id,
+        organizationId: plan.organizationId ?? null,
       },
       include: {
         slotsOfAppointment: {
@@ -1988,6 +2011,7 @@ export async function handleCheckout(
                 consulteeProfileId,
                 userId,
                 skipPayment,
+                organizationId,
               );
               createdAppointment = consultationResult.appointment;
               engagementsForCap = 1;
@@ -2000,6 +2024,7 @@ export async function handleCheckout(
                 validatedData,
                 consulteeProfileId,
                 skipPayment,
+                organizationId,
               );
               // Use placeholder appointment for payment linkage
               // This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)
@@ -2106,8 +2131,12 @@ export async function handleCheckout(
             isOrgSponsoredPayment &&
             engagementsForCap !== null
           ) {
+            let utilizationResult: {
+              wasOverage: boolean;
+              engagementsConsumedDelta: number;
+            } = { wasOverage: false, engagementsConsumedDelta: 0 };
             try {
-              await recordBookingUtilization(tx, {
+              utilizationResult = await recordBookingUtilization(tx, {
                 programAssignmentId,
                 paymentId: payment.id,
                 engagementsConsumed: engagementsForCap,
@@ -2188,6 +2217,53 @@ export async function handleCheckout(
                 sourceRef: programAssignmentId,
               },
             });
+
+            // C2: overage charging. recordBookingUtilization above flagged
+            // `wasOverage = true` if the increment crossed the cap (only
+            // possible when overageBehavior is CHARGE_MEMBER or CHARGE_ORG;
+            // BLOCK throws inside the helper). Branch on the program's
+            // configured behavior:
+            //   - CHARGE_MEMBER: throw 402 — the member must pay the marginal
+            //     cost separately. We can't redirect mid-checkout to a
+            //     second card-collection flow, so the cleanest UX is a
+            //     clear error the dashboard surfaces ("your booking
+            //     succeeded but you owe $X for the overage; pay here").
+            //   - CHARGE_ORG: write an extra PaymentLeg(source=INVOICE_ACCRUAL,
+            //     amountPaise=marginal). The monthly invoice cron picks
+            //     it up alongside the rest of the org's accrued usage.
+            //   - BLOCK: never reaches here (already threw).
+            if (utilizationResult.wasOverage) {
+              const programCfg = await tx.licensedSeatConfig.findFirst({
+                where: { program: { assignments: { some: { id: programAssignmentId } } } },
+                select: {
+                  overageBehavior: true,
+                  priceCapPerEngagementPaise: true,
+                },
+              });
+              const marginalPaise =
+                (programCfg?.priceCapPerEngagementPaise ?? 0) *
+                Math.max(1, utilizationResult.engagementsConsumedDelta);
+
+              if (programCfg?.overageBehavior === "CHARGE_MEMBER") {
+                throw Object.assign(
+                  new Error(
+                    "OVERAGE_REQUIRES_SEPARATE_PAYMENT: This booking exceeded your program cap. The marginal cost will be charged to your saved card; please complete the payment from your dashboard.",
+                  ),
+                  { httpStatus: 402, code: "OVERAGE_REQUIRES_SEPARATE_PAYMENT" },
+                );
+              }
+
+              if (programCfg?.overageBehavior === "CHARGE_ORG" && marginalPaise > 0) {
+                await tx.paymentLeg.create({
+                  data: {
+                    paymentId: payment.id,
+                    source: "INVOICE_ACCRUAL",
+                    amountPaise: marginalPaise,
+                    sourceRef: `overage:${programAssignmentId}`,
+                  },
+                });
+              }
+            }
           }
 
           // Enterprise: every successful Payment must have at least one

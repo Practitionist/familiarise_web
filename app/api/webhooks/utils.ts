@@ -1334,7 +1334,20 @@ export async function markWebhookEventProcessed(
 // ============================================================================
 
 /**
- * Handle RazorpayX payout webhook events
+ * Handle RazorpayX payout webhook events.
+ *
+ * A1+A8 dispatcher: try the OrganizationPayout reconciler first (look up
+ * by `gatewayPayoutId`). On hit, route to the org-payout state machine
+ * (`markOrgPayoutCompleted` / `markOrgPayoutFailed` / `markOrgPayoutReversed`)
+ * which already handles audit log + earnings release + Novu fire.
+ *
+ * On miss (no matching OrganizationPayout), fall through to the
+ * consultant-payout path (`handlePayoutWebhook`). The consultant path
+ * already soft-skips orphan IDs and returns 200 to prevent gateway
+ * retry storms.
+ *
+ * Idempotency: the per-payout helpers themselves only progress rows in
+ * the expected source state — duplicate webhook deliveries are a no-op.
  */
 export async function handleRazorpayPayoutWebhook(
   eventType: string,
@@ -1342,9 +1355,69 @@ export async function handleRazorpayPayoutWebhook(
     id: string;
     status: string;
     failure_reason?: string;
+    utr?: string;
   },
 ): Promise<void> {
-  // Map RazorpayX status to our internal status
+  // First: is this an OrganizationPayout? Look up by gatewayPayoutId.
+  // Imported lazily to avoid a circular import (org-payout-service ->
+  // org-workflows -> ... -> webhooks/utils when it grows).
+  const { default: prismaClient } = await import("@/lib/prisma");
+  const orgPayout = await prismaClient.organizationPayout.findUnique({
+    where: { gatewayPayoutId: payoutData.id },
+    select: { id: true, status: true, organizationId: true },
+  });
+
+  if (orgPayout) {
+    const {
+      markOrgPayoutCompleted,
+      markOrgPayoutFailed,
+      markOrgPayoutReversed,
+    } = await import("@/lib/payments/payouts");
+
+    switch (eventType) {
+      case "payout.processed": {
+        // Persist the bank UTR before flipping to COMPLETED so the
+        // notification + audit log have the canonical reference.
+        if (payoutData.utr) {
+          await prismaClient.organizationPayout.update({
+            where: { id: orgPayout.id },
+            data: { gatewayUtr: payoutData.utr },
+          });
+        }
+        await markOrgPayoutCompleted(orgPayout.id);
+        break;
+      }
+      case "payout.failed":
+      case "payout.rejected": {
+        await markOrgPayoutFailed(
+          orgPayout.id,
+          payoutData.failure_reason ?? "RazorpayX failure",
+        );
+        break;
+      }
+      case "payout.reversed": {
+        await markOrgPayoutReversed(
+          orgPayout.id,
+          payoutData.failure_reason ?? "RazorpayX reversal",
+        );
+        break;
+      }
+      // queued / initiated / pending / cancelled — informational only;
+      // the row already sits in PROCESSING and we wait for the terminal
+      // event. No state change here.
+      default:
+        console.log(
+          `[orgPayoutWebhook] non-terminal event ${eventType} for ${orgPayout.id} — no-op`,
+        );
+    }
+    console.log(
+      `✅ Org payout ${orgPayout.id} (gateway=${payoutData.id}) webhook ${eventType} processed`,
+    );
+    return;
+  }
+
+  // Fall through to the consultant-payout path. Map RazorpayX status to
+  // our internal enum.
   const statusMap: Record<
     string,
     "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED" | "CANCELLED"
@@ -1368,7 +1441,7 @@ export async function handleRazorpayPayoutWebhook(
   );
 
   console.log(
-    `✅ RazorpayX payout ${payoutData.id} webhook processed: ${status}`,
+    `✅ RazorpayX consultant payout ${payoutData.id} webhook processed: ${status}`,
   );
 }
 

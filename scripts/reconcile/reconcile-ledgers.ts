@@ -61,6 +61,16 @@
  *      match the payout totals — investigate the
  *      createOrgPayoutBatch tx history)
  *
+ *   Note: as of A3 (per-collaborator HOST-org settlement) one Payment
+ *   can carry N OrganizationEarnings rows — one per (paymentId, orgId)
+ *   pair, capped by the @@unique constraint. The primary expert's org
+ *   gets a row whose grossAmountPaise === Payment.originalAmount; each
+ *   collaborator-at-different-HOST-org gets a row whose
+ *   grossAmountPaise === their slice of the consultant pool. Invariants
+ *   here are payout-scoped (G aggregates per OrganizationPayout, not
+ *   per Payment) so they remain correct without modification. Don't
+ *   assume one OrganizationEarnings per Payment in any future invariant.
+ *
  * This is READ-ONLY. It never writes to any of the audited tables. It
  * only writes its findings to `LedgerReconciliationReport`.
  *

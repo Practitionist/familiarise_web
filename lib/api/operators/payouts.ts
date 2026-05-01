@@ -24,6 +24,17 @@ export type OperatorPayoutFilters = {
   search?: string | null;
   limit?: number;
   offset?: number;
+  /**
+   * #674 comment 7 — optional org-scope filter. Restricts the consultant
+   * payout list to payouts whose underlying ConsultantEarnings rows came
+   * from Payments tagged to the given org. Useful for support drilling
+   * into "Acme paid these consultants out of pocket".
+   *
+   * Note: this is the consultant payout surface (`Payout` model). For
+   * org-side payouts (`OrganizationPayout`), use the dedicated
+   * `/api/organizations/[orgId]/payouts` route.
+   */
+  orgId?: string | null;
 };
 
 export type OperatorPayout = {
@@ -89,6 +100,7 @@ export async function getOperatorPayouts(
   const limit = sanitizePagination(filters.limit, 50, 1, 200);
   const offset = sanitizePagination(filters.offset, 0, 0, Number.MAX_SAFE_INTEGER);
 
+  const orgId = filters.orgId ?? null;
   const where: Prisma.PayoutWhereInput = {};
   if (status) {
     where.status = status;
@@ -101,6 +113,12 @@ export async function getOperatorPayouts(
           { email: { contains: search, mode: "insensitive" } },
         ],
       },
+    };
+  }
+  if (orgId) {
+    // Filter to payouts whose earnings came from this org's payments.
+    where.earnings = {
+      some: { payment: { is: { organizationId: orgId } } },
     };
   }
 

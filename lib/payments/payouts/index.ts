@@ -66,6 +66,9 @@ export {
   getOrgPayoutEligibility,
   createOrgPayoutBatch,
   processOrgPayout,
+  markOrgPayoutCompleted,
+  markOrgPayoutFailed,
+  markOrgPayoutReversed,
 } from "./org-payout-service";
 export type {
   OrgPayoutEligibility,

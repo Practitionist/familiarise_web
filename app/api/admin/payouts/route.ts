@@ -35,6 +35,8 @@ export async function GET(req: NextRequest) {
     const result = await getOperatorPayouts({
       status: searchParams.get("status") as PayoutStatus | null,
       search: searchParams.get("search"),
+      // #674 comment 7 — org-scope filter via earnings.payment.organizationId.
+      orgId: searchParams.get("orgId"),
       limit: parseInt(searchParams.get("limit") || "50"),
       offset: parseInt(searchParams.get("offset") || "0"),
     });

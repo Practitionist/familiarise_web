@@ -270,7 +270,7 @@ export async function createOrgPayoutBatch(
             // for any row still on stub defaults.
             mustPayByDate: computeMsmePaymentDeadline({
               invoiceDate: new Date(),
-              msmeStatus: "NONE",
+              counterpartyMsmeStatus: "NONE",
               writtenAgreement: false,
             }),
           },
@@ -470,7 +470,14 @@ export async function processOrgPayout(
       console.log(
         `[OrgPayoutService] processOrgPayout no-op: payout ${payoutId} status=${current.status}`,
       );
-      return { status: current.status, submittedToGateway: false };
+      // claimed: false — we did NOT advance the row, so the post-tx
+      // submission must NOT fire (preventing double-submit on cron retry
+      // of an already-PROCESSING row).
+      return {
+        status: current.status,
+        submittedToGateway: false,
+        claimed: false,
+      };
     }
 
     const payout = await tx.organizationPayout.findUniqueOrThrow({
@@ -499,18 +506,197 @@ export async function processOrgPayout(
       },
     });
 
-    // Live gateway submission gated on env flag — PR-3 wires actual
-    // RazorpayX `payouts.create` call and webhook reconciler that flips
-    // PROCESSING → COMPLETED on success. The reconciler should call
-    // `markOrgPayoutCompleted(payoutId)` below (closes #718 / BUG-017
-    // by co-locating the Novu fire with the state transition).
-    if (!liveEnabled) {
-      return { status: "PROCESSING" as const, submittedToGateway: false };
+    // Live gateway submission gated on env flag. The actual RazorpayX
+    // `payouts.create` call happens AFTER the tx commits — we don't want
+    // the gateway side-effect inside a serializable tx (long network
+    // call, possibility of double-submit on retry). Returning here marks
+    // the row PROCESSING; the post-tx submission either persists the
+    // gatewayPayoutId on success or rolls the row to FAILED on a 4xx.
+    return {
+      status: "PROCESSING" as const,
+      submittedToGateway: false,
+      claimed: true,
+    };
+  }).then(async (result) => {
+    if (!liveEnabled || !result.claimed || result.status !== "PROCESSING") {
+      // Either live disabled, or this caller didn't claim the row, or
+      // the row is no longer PROCESSING — skip submission.
+      return { status: result.status, submittedToGateway: result.submittedToGateway };
     }
-    throw new PayoutValidationError(
-      "ENABLE_LIVE_PAYOUTS is set but live gateway submission has not yet shipped (see PR-3 tracker).",
-      501,
+
+    // Post-tx submission: actual RazorpayX call. Idempotency key is
+    // deterministic (`payout_<id>`) so a cron retry of the same payout
+    // never creates a second gateway transfer (mandatory since
+    // 2025-03-15 per RazorpayX). 4xx → mark FAILED + release earnings.
+    // 5xx / network error → throw so the cron retries with the same key.
+    try {
+      await submitOrgPayoutToGateway(payoutId);
+      return { status: "PROCESSING" as const, submittedToGateway: true };
+    } catch (err) {
+      const cls = classifyGatewaySubmissionError(err);
+      if (cls === "PERMANENT_4XX") {
+        await markPayoutFailedFromSubmission(
+          payoutId,
+          err instanceof Error ? err.message : String(err),
+        );
+        // Set true because we DID submit to the gateway — the rejection
+        // is recorded on the row. False would imply we early-returned
+        // before any gateway call, which isn't the case.
+        return { status: "FAILED" as PayoutStatus, submittedToGateway: true };
+      }
+      // Transient — leave row in PROCESSING and re-throw so the cron
+      // retries with the same idempotency key.
+      throw err;
+    }
+  });
+}
+
+/**
+ * Submit a payout to the live gateway. Called only when
+ * `ENABLE_LIVE_PAYOUTS=true` and only AFTER `processOrgPayout` has
+ * advanced the row to PROCESSING. Persists `gatewayPayoutId` +
+ * `gatewayResponseRaw` on success. UTR comes later from the webhook.
+ *
+ * Idempotency: passes `payout_<id>` as the X-Payout-Idempotency header
+ * so a duplicate call (cron retry) never creates a second transfer.
+ */
+async function submitOrgPayoutToGateway(payoutId: string): Promise<void> {
+  const payout = await prisma.organizationPayout.findUniqueOrThrow({
+    where: { id: payoutId },
+    select: {
+      id: true,
+      organizationId: true,
+      amountPaise: true,
+      currency: true,
+      paymentGateway: true,
+      payoutReference: true,
+    },
+  });
+
+  if (payout.paymentGateway !== "RAZORPAY") {
+    // Stripe Connect path is deferred to Phase 2; the row stays in
+    // PROCESSING until that lands. Don't throw — let the cron retry
+    // visibility surface it.
+    console.warn(
+      `[OrgPayoutService] payout ${payoutId} gateway=${payout.paymentGateway} not yet supported`,
     );
+    return;
+  }
+
+  // Account lookup is a separate query (the row's own organizationId is
+  // the unique key on OrganizationPayoutAccount). Keeps the service
+  // callable in unit tests that mock the two as independent spies.
+  const account = await prisma.organizationPayoutAccount.findUnique({
+    where: { organizationId: payout.organizationId },
+    select: {
+      status: true,
+      razorpayContactId: true,
+      razorpayFundAccountId: true,
+    },
+  });
+  const fundAccountId = account?.razorpayFundAccountId ?? null;
+  if (!fundAccountId) {
+    throw new PayoutValidationError(
+      `Payout ${payoutId}: organization has no razorpayFundAccountId on its payout account`,
+      400,
+    );
+  }
+
+  const { getRazorpayPayoutsService } = await import("./razorpay-payouts");
+  const sdk = getRazorpayPayoutsService();
+  const idempotencyKey = sdk.generateIdempotencyKey(payoutId);
+  const mode = sdk.determinePayoutMode(payout.amountPaise, "bank_account");
+
+  const response = await sdk.createPayout({
+    fundAccountId,
+    amount: payout.amountPaise,
+    currency: payout.currency,
+    mode,
+    purpose: "payout",
+    referenceId: payoutId,
+    narration: `Familiarise org payout ${payoutId}`,
+    queueIfLowBalance: true,
+    idempotencyKey,
+  });
+
+  await prisma.organizationPayout.update({
+    where: { id: payoutId },
+    data: {
+      gatewayPayoutId: response.id,
+      gatewayResponseRaw: response as unknown as Prisma.JsonObject,
+    },
+  });
+}
+
+/**
+ * Classify a RazorpayX SDK error as permanent (4xx — bank/data
+ * rejection, never retry) vs transient (5xx / network — let the cron
+ * retry with the same idempotency key).
+ *
+ * The SDK wraps fetch and throws a generic Error without HTTP-status
+ * detail, so we sniff the message. Default is TRANSIENT so we never
+ * silently drop a legitimate retry.
+ */
+function classifyGatewaySubmissionError(
+  err: unknown,
+): "PERMANENT_4XX" | "TRANSIENT_OR_UNKNOWN" {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  if (
+    msg.includes("400") ||
+    msg.includes("401") ||
+    msg.includes("403") ||
+    msg.includes("422") ||
+    msg.includes("invalid") ||
+    msg.includes("bad request")
+  ) {
+    return "PERMANENT_4XX";
+  }
+  return "TRANSIENT_OR_UNKNOWN";
+}
+
+/**
+ * Roll a PROCESSING payout to FAILED after a 4xx submission rejection.
+ * Releases the underlying earnings back to READY so the next batch
+ * picks them up. Does NOT fire Novu — the operator-facing audit log
+ * is enough; the consultant-facing notification only fires for
+ * webhook-time failures (where real money was at risk).
+ */
+async function markPayoutFailedFromSubmission(
+  payoutId: string,
+  reason: string,
+): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    const claim = await tx.organizationPayout.updateMany({
+      where: { id: payoutId, status: "PROCESSING" },
+      data: {
+        status: "FAILED",
+        failureReason: reason.slice(0, 500),
+        failedAt: new Date(),
+      },
+    });
+    if (claim.count === 0) return;
+
+    // Release earnings back to READY so they're eligible for the next batch.
+    await tx.organizationEarnings.updateMany({
+      where: { orgPayoutId: payoutId, status: "PAID" },
+      data: { status: "READY", orgPayoutId: null },
+    });
+
+    await tx.orgAuditLog.create({
+      data: {
+        organizationId: (
+          await tx.organizationPayout.findUniqueOrThrow({
+            where: { id: payoutId },
+            select: { organizationId: true },
+          })
+        ).organizationId,
+        actorMembershipId: null,
+        category: "PAYOUT",
+        action: AUDIT_ACTIONS.PAYOUT.PAYOUT_FAILED,
+        description: `Payout ${payoutId} submission rejected by gateway (4xx)`,
+        details: { payoutId, reason: reason.slice(0, 500) },
+      },
+    });
   });
 }
 
@@ -604,4 +790,131 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
   }
 
   return { wasNoOp: result.wasNoOp, status: result.status };
+}
+
+/**
+ * A1+A8: shared internal helper for the "payout failed at the gateway"
+ * and "payout reversed by the bank" code paths. Both reach this — the
+ * `kind` parameter only changes the audit description and the Novu
+ * payload; the state-machine effect is identical (PROCESSING → FAILED,
+ * release earnings to READY, fire Novu).
+ */
+async function markOrgPayoutFailedInternal(
+  payoutId: string,
+  reason: string,
+  kind: "FAILED" | "REVERSED",
+): Promise<{ wasNoOp: boolean; status: PayoutStatus }> {
+  const result = await prisma.$transaction(async (tx) => {
+    const claim = await tx.organizationPayout.updateMany({
+      where: { id: payoutId, status: "PROCESSING" },
+      data: {
+        status: "FAILED",
+        failureReason: reason.slice(0, 500),
+        failedAt: new Date(),
+      },
+    });
+    if (claim.count === 0) {
+      const current = await tx.organizationPayout.findUnique({
+        where: { id: payoutId },
+        select: { status: true },
+      });
+      if (!current) {
+        throw new PayoutValidationError(
+          `Payout ${payoutId} not found`,
+          404,
+        );
+      }
+      console.log(
+        `[OrgPayoutService] markOrgPayoutFailedInternal no-op: payout ${payoutId} status=${current.status}`,
+      );
+      return { wasNoOp: true, status: current.status, notify: null };
+    }
+
+    // Release the underlying earnings back to READY so the next batch
+    // sees them. This is the inverse of the createOrgPayoutBatch claim.
+    await tx.organizationEarnings.updateMany({
+      where: { orgPayoutId: payoutId, status: "PAID" },
+      data: { status: "READY", orgPayoutId: null },
+    });
+
+    const payout = await tx.organizationPayout.findUniqueOrThrow({
+      where: { id: payoutId },
+      select: {
+        id: true,
+        organizationId: true,
+        netPayoutPaise: true,
+        currency: true,
+        organization: { select: { name: true } },
+      },
+    });
+
+    await tx.orgAuditLog.create({
+      data: {
+        organizationId: payout.organizationId,
+        actorMembershipId: null,
+        category: "PAYOUT",
+        action:
+          kind === "REVERSED"
+            ? AUDIT_ACTIONS.PAYOUT.PAYOUT_REVERSED
+            : AUDIT_ACTIONS.PAYOUT.PAYOUT_FAILED,
+        description:
+          kind === "REVERSED"
+            ? `Payout ${payoutId} reversed by gateway: ${reason.slice(0, 200)}`
+            : `Payout ${payoutId} failed at gateway: ${reason.slice(0, 200)}`,
+        details: { payoutId, kind, reason: reason.slice(0, 500) },
+      },
+    });
+
+    return {
+      wasNoOp: false,
+      status: "FAILED" as PayoutStatus,
+      notify: {
+        organizationId: payout.organizationId,
+        orgName: payout.organization.name,
+        netPayoutPaise: payout.netPayoutPaise,
+        currency: payout.currency,
+      },
+    };
+  });
+
+  if (result.notify) {
+    const { notifyOrgPayoutFailed } = await import("@/lib/novu/org-workflows");
+    await notifyOrgPayoutFailed(result.notify.organizationId, {
+      orgName: result.notify.orgName,
+      payoutId,
+      amountPaise: result.notify.netPayoutPaise,
+      currency: result.notify.currency,
+      reason: reason.slice(0, 200),
+      kind,
+      dashboardUrl: `${getAppUrl()}/dashboard/organization/${result.notify.organizationId}/payouts`,
+    });
+  }
+
+  return { wasNoOp: result.wasNoOp, status: result.status };
+}
+
+/**
+ * A1+A8: webhook-time PROCESSING → FAILED transition. Called when the
+ * gateway sends `payout.failed` or `payout.rejected`. Releases earnings
+ * to READY and fires `org-payout-failed` Novu workflow.
+ */
+export async function markOrgPayoutFailed(
+  payoutId: string,
+  reason: string,
+): Promise<{ wasNoOp: boolean; status: PayoutStatus }> {
+  return markOrgPayoutFailedInternal(payoutId, reason, "FAILED");
+}
+
+/**
+ * A1+A8: webhook-time PROCESSING → FAILED transition for `payout.reversed`.
+ * Behaviorally identical to `markOrgPayoutFailed` in v1; the audit log
+ * and Novu payload distinguish the two so future ops can chase them
+ * differently (a reversal often means the consultant's bank rejected
+ * the credit and the org's account holder name needs an update).
+ */
+export async function markOrgPayoutReversed(
+  payoutId: string,
+  reason: string,
+): Promise<{ wasNoOp: boolean; status: PayoutStatus }> {
+  return markOrgPayoutFailedInternal(payoutId, reason, "REVERSED");
 }

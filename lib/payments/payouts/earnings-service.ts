@@ -415,6 +415,109 @@ export async function createEarningsFromPayment({
         );
       }
 
+      // ============================================
+      // A3 (Q3): per-collaborator HOST-org settlement
+      // ============================================
+      // Each ACCEPTED collaborator at a HOST org settles to *their own*
+      // org independently of the primary expert's org. The collaborator's
+      // share (computed by `calculateRevenueSplit` against the
+      // already-org-split consultant pool) becomes the "gross" that flows
+      // through their own org's rate card.
+      //
+      // Independent collaborators (no active EXPERT membership at any
+      // HOST org) do not get an OrganizationEarnings row — their share
+      // sits on `ConsultantEarnings` only and pays out via the personal
+      // payout pipeline.
+      //
+      // Same-org collision (e.g. primary expert AND collaborator both at
+      // LearnPro): the @@unique([paymentId, organizationId]) constraint
+      // rejects the second insert. v1 simplification — log + skip; the
+      // collaborator's share already lives on `ConsultantEarnings` so
+      // their personal payout is unaffected, only the org-side accrual
+      // for that share is dropped (the org already gets its cut of the
+      // primary expert's gross via the OWNER row above). A v2 could roll
+      // the collaborator's slice into the existing row, but that
+      // requires a more invasive refactor of OrganizationEarnings'
+      // single-consultant assumption.
+      //
+      // Runs in the SAME transaction as the OWNER earnings — atomicity
+      // preserved across all per-collab org rows.
+      const collaboratorSplits = splits.filter((s) => s.role !== "OWNER");
+      for (const collab of collaboratorSplits) {
+        if (collab.share <= 0) continue;
+        const collabOrgSplit = await resolveOrgSplit(
+          tx,
+          collab.consultantProfileId,
+          collab.share,
+          payment.createdAt,
+        );
+        if (!collabOrgSplit) continue; // independent collaborator
+        if (collabOrgSplit.orgShare <= 0) {
+          console.log(
+            `Platform-only mode for collaborator org ${collabOrgSplit.organizationId}: skipping 0-value org earnings for payment ${payment.id}`,
+          );
+          continue;
+        }
+
+        const collabSponsorOrg = await tx.organization.findUnique({
+          where: { id: collabOrgSplit.organizationId },
+          select: { status: true },
+        });
+        let collabInitialStatus: EarningStatus = EarningStatus.PENDING;
+        if (collabSponsorOrg?.status === "PENDING_VERIFICATION") {
+          const paidInvoiceCount = await tx.organizationInvoice.count({
+            where: {
+              organizationId: collabOrgSplit.organizationId,
+              status: "PAID",
+            },
+          });
+          if (paidInvoiceCount === 0) {
+            collabInitialStatus = EarningStatus.PENDING_TRUST;
+          }
+        }
+
+        try {
+          await tx.organizationEarnings.create({
+            data: {
+              organizationId: collabOrgSplit.organizationId,
+              paymentId: payment.id,
+              // The collaborator's share is the "gross" that this org
+              // is splitting — NOT the booking's full gross. Persist it
+              // verbatim so reconciliation sees a consistent picture.
+              grossAmountPaise: collab.share,
+              platformFeePaise: collabOrgSplit.platformFee,
+              orgSharePaise: collabOrgSplit.orgShare,
+              consultantSharePaise: collabOrgSplit.consultantShare,
+              refundedAmountPaise: 0,
+              status: collabInitialStatus,
+              holdUntil,
+              currency: "INR",
+              rateCardIdApplied: collabOrgSplit.rateCardIdApplied,
+              platformBpsApplied: collabOrgSplit.platformBps,
+              orgBpsApplied: collabOrgSplit.orgBps,
+              consultantBpsApplied: collabOrgSplit.consultantBps,
+            },
+          });
+          console.log(
+            `Collaborator org earnings created for ${collabOrgSplit.organizationId} (collab ${collab.consultantProfileId}): org=${collabOrgSplit.orgShare / 100} consultant=${collabOrgSplit.consultantShare / 100} from payment ${payment.id}`,
+          );
+        } catch (err) {
+          if (
+            err instanceof Prisma.PrismaClientKnownRequestError &&
+            err.code === "P2002"
+          ) {
+            // Same-org collision with primary expert (or another
+            // collaborator that already wrote a row). v1 strategy: skip.
+            // See the block-level comment above for rationale.
+            console.warn(
+              `[Earnings] Skipping collaborator org earnings for ${collabOrgSplit.organizationId} on payment ${payment.id}: row already exists for this (payment, org) pair (collab ${collab.consultantProfileId}). Their personal share is unaffected.`,
+            );
+            continue;
+          }
+          throw err;
+        }
+      }
+
       return ownerId;
     });
   } catch (error) {

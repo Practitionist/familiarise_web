@@ -24,6 +24,8 @@ export async function GET(req: NextRequest) {
     const result = await getOperatorInvoices({
       status: searchParams.get("status") as PaymentStatus | null,
       search: searchParams.get("search"),
+      // #674 comment 7 — optional org-scope filter (Payment.organizationId).
+      orgId: searchParams.get("orgId"),
       limit: parseInt(searchParams.get("limit") || "20"),
       offset: parseInt(searchParams.get("offset") || "0"),
     });

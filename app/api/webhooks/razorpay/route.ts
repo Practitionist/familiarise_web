@@ -56,6 +56,9 @@ const payoutEntitySchema = z.object({
   id: z.string(),
   status: z.string(),
   failure_reason: z.string().nullable().optional(),
+  // A1+A8: bank-side UTR. Present on `payout.processed`; absent on
+  // queued/initiated/pending. Plumbed through to OrganizationPayout.gatewayUtr.
+  utr: z.string().nullable().optional(),
 });
 import { razorpayClient } from "@/lib/payments/core/razorpay";
 
@@ -423,6 +426,7 @@ async function processWebhookEvent(
           id: payoutEvent.id,
           status: payoutEvent.status,
           failure_reason: payoutEvent.failure_reason ?? undefined,
+          utr: payoutEvent.utr ?? undefined,
         });
         break;
       }
