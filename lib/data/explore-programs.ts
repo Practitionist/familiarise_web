@@ -17,9 +17,18 @@ import type {
  *  - Client hooks in app/explore/programs/hooks.ts handle infinite scroll
  */
 
-/** Shared include for consultant profile in plan queries. */
+/** Shared select for consultant profile in plan queries.
+ *
+ * Public explore-programs surface — explicit `select` (not bare `include`) so
+ * we (a) never leak India statutory PII (panNumber, ibanOrAccount, swiftBic,
+ * residencyStatus, etc.) into a client component, and (b) avoid the
+ * "Decimal cannot be passed to Client Components" runtime error from
+ * `tdsRate: Decimal?`. Mirrors the `ProgramConsultantProfile` shape in
+ * app/explore/programs/utils.ts. */
 const planConsultantInclude = {
-  include: {
+  select: {
+    rating: true,
+    headline: true,
     user: {
       select: {
         name: true,

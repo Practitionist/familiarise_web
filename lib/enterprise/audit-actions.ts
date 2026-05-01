@@ -80,6 +80,20 @@ export const AUDIT_ACTIONS = {
     PAYOUT_FAILED: "PAYOUT_FAILED",
     EARNINGS_HELD: "EARNINGS_HELD",
     EARNINGS_RELEASED: "EARNINGS_RELEASED",
+    /// Emitted by `applyRefundCascade` when a refund hits an
+    /// OrganizationEarnings row whose linked OrganizationPayout has
+    /// already COMPLETED (the bank transfer left). Increments
+    /// `OrganizationPayout.clawbackAmountPaise` and stamps
+    /// `clawbackInitiatedAt` (idempotent — only set when null) so an
+    /// admin can chase the org for the over-paid amount. Manual
+    /// recovery only in v1.
+    PAYOUT_CLAWBACK: "PAYOUT_CLAWBACK",
+    /// A1+A8: emitted when a `payout.reversed` webhook arrives — the
+    /// bank rejected the transfer after we successfully submitted it.
+    /// Distinct from PAYOUT_FAILED (gateway-time rejection) and from
+    /// PAYOUT_CLAWBACK (post-completion refund). Releases earnings to
+    /// READY for the next batch.
+    PAYOUT_REVERSED: "PAYOUT_REVERSED",
   },
   SETTINGS: {
     SETTINGS_CHANGED: "SETTINGS_CHANGED",
