@@ -3145,6 +3145,7 @@ enum PaymentLegSource {
   WALLET // BillingAccount wallet debit (was SEAT_PACK)
   REFERRAL_CREDIT // platform-issued personal credit
   INVOICE_ACCRUAL // rolled into an OrganizationInvoice at month-end
+  OVERAGE_INVOICE_ACCRUAL // marginal charge beyond a LICENSED_SEAT cap (CHARGE_ORG path); distinct source prevents @@unique([paymentId, source]) collision with the base INVOICE_ACCRUAL leg
   LICENSE // absorbed by a LICENSED_SEAT program (no money moves)
 }
 

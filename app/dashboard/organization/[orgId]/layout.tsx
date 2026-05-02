@@ -25,6 +25,8 @@ import {
   ListOrdered,
   Sparkles,
   Video,
+  Receipt,
+  ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
 
@@ -189,6 +191,7 @@ export default function OrgLayout({
       { name: "Experts", icon: UserCog, path: "experts", show: canHost && isAtLeast("MANAGER") },
       { name: "Programs", icon: Briefcase, path: "programs", show: canSponsor && isAtLeast("MAINTAINER") },
       { name: "Contracts", icon: FileText, path: "contracts", show: canSponsor && isAtLeast("MAINTAINER") },
+      { name: "Purchase Orders", icon: Receipt, path: "purchase-orders", show: canSponsor && isAtLeast("MAINTAINER") },
       // B1 personal-vs-org scope split — visibility tools, not capability-
       // gated. MANAGER+ sees them regardless of canSponsor/canHost so an
       // operator can audit "what's been booked under our org" without
@@ -234,6 +237,7 @@ export default function OrgLayout({
       },
       { name: "Analytics", icon: BarChart3, path: "analytics", show: isAtLeast("MANAGER") },
       { name: "Audit", icon: ClipboardList, path: "audit", show: isAtLeast("MAINTAINER") },
+      { name: "Consent", icon: ShieldCheck, path: "consent", show: isAtLeast("MANAGER") },
       { name: "Settings", icon: Settings, path: "settings", show: isAtLeast("MAINTAINER") },
     ];
 

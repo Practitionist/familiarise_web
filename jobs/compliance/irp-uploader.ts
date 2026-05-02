@@ -1,16 +1,23 @@
 /**
- * Cron: IRP (Invoice Registration Portal) uploader — STUB (Issue #681).
+ * Cron: IRP (Invoice Registration Portal) uploader — Issue #681.
  *
- * STATUS: stub. Returns `{ processed: 0 }` without hitting any IRP.
- * Live connector lands in a follow-up PR.
+ * STATUS: This cron job is scaffolded but not yet wired to invoke
+ * lib/compliance/irp.ts. It returns { processed: 0 } today; no invoices
+ * receive an IRN from this job until the wiring PR ships.
+ *
+ * NOTE: lib/compliance/irp.ts (`generateIrn`) is NOT a stub — it makes
+ * real HTTP calls to the ClearTax GSP API when CLEARTAX_API_KEY,
+ * CLEARTAX_GSP_TOKEN, and CLEARTAX_GSTIN env vars are configured.
+ * Production approval requires all of the following:
+ *   1. Sandbox credentials provisioned and end-to-end tested
+ *   2. Payload mapping validated against CBIC schema (HSN, GSTIN, amounts)
+ *   3. 24-hour IRN cancellation window behaviour proven
+ *   4. Accountant / legal sign-off on IRN format and invoice sequence
+ *   5. Retry dashboard and ops runbook in place (see docs/enterprise/23-runbooks.md)
  *
  * Schedule: daily at 02:00 IST.
- * Scope: every `OrganizationInvoice` with `irpStatus = PENDING` and
- *        `issuedAt` within the last 30 days (IRP cut-off per CBIC).
- *
- * See lib/compliance/irp.ts header docblock for the live-implementation
- * plan (IRIS / ClearTax connectors, retry semantics, 24-hour cancellation
- * window).
+ * Scope: OrganizationInvoice with irpStatus=PENDING, issuedAt within 30d
+ *        (CBIC cut-off for retroactive IRN generation).
  */
 
 import prisma from "@/lib/prisma";

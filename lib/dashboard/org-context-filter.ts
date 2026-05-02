@@ -25,6 +25,13 @@ export type OrgContextFilterValue =
  *   ORG_FILTER_ALL       → undefined   (no filter)
  *   ORG_FILTER_PERSONAL  → "none"      (API interprets as: organizationId IS NULL)
  *   <orgId>              → <orgId>     (API filters rows where organizationId = <orgId>)
+ *
+ * TODO #674: The serialization contract ("none", undefined) does not match
+ * the resolveOrgScope API vocabulary ("personal", orgId, "all"). Before
+ * OrgContextFilter is mounted on new pages, unify to a single contract:
+ *   ORG_FILTER_PERSONAL → "personal"   (rename from "none")
+ *   ORG_FILTER_ALL      → "all_mine"   (user-scoped union, vs privileged "all")
+ * and update resolveOrgScope + all mounted pages atomically.
  */
 export function serializeOrgFilter(
   value: OrgContextFilterValue,

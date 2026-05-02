@@ -105,6 +105,11 @@ export const orgWalletTopUpLimiter = makeLimiter(
   "rl:org-wallet-topup",
 );
 
+/** 20 per hour per org — POST /api/organizations/[orgId]/invitations
+ * (orgId-keyed; prevents a malicious OWNER from flooding audit logs and
+ *  Novu ORG_INVITE_SENT workflows via rapid-fire invite spam) */
+export const orgInviteLimiter = makeLimiter(20, "1 h", "rl:org-invite");
+
 /**
  * Apply rate limit to a request.
  * Returns a 429 NextResponse if exceeded, otherwise null.

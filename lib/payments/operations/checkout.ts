@@ -1799,7 +1799,7 @@ export async function handleCheckout(
         const [accrualAgg, outstandingAgg] = await Promise.all([
           prisma.paymentLeg.aggregate({
             where: {
-              source: "INVOICE_ACCRUAL",
+              source: { in: ["INVOICE_ACCRUAL", "OVERAGE_INVOICE_ACCRUAL"] },
               payment: {
                 organizationId: org.id,
                 paymentStatus: "SUCCEEDED",
@@ -2247,17 +2247,24 @@ export async function handleCheckout(
               if (programCfg?.overageBehavior === "CHARGE_MEMBER") {
                 throw Object.assign(
                   new Error(
-                    "OVERAGE_REQUIRES_SEPARATE_PAYMENT: This booking exceeded your program cap. The marginal cost will be charged to your saved card; please complete the payment from your dashboard.",
+                    "PROGRAM_CAP_EXHAUSTED: Your program allocation is full. Contact your organization administrator to extend your program, or book using your personal payment method.",
                   ),
-                  { httpStatus: 402, code: "OVERAGE_REQUIRES_SEPARATE_PAYMENT" },
+                  { httpStatus: 402, code: "PROGRAM_CAP_EXHAUSTED" },
                 );
               }
 
               if (programCfg?.overageBehavior === "CHARGE_ORG" && marginalPaise > 0) {
+                // Use OVERAGE_INVOICE_ACCRUAL (not INVOICE_ACCRUAL) so the
+                // @@unique([paymentId, source]) constraint on PaymentLeg is not
+                // violated — the base leg already holds the INVOICE_ACCRUAL slot
+                // for this paymentId. Both sources count against the org's credit
+                // limit (see getInvoiceCreditLimitPaise aggregation below).
+                // TODO #716: replace with a proper credit-note / receivable once the
+                // refund unification epic ships.
                 await tx.paymentLeg.create({
                   data: {
                     paymentId: payment.id,
-                    source: "INVOICE_ACCRUAL",
+                    source: "OVERAGE_INVOICE_ACCRUAL",
                     amountPaise: marginalPaise,
                     sourceRef: `overage:${programAssignmentId}`,
                   },

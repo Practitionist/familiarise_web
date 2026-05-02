@@ -25,6 +25,7 @@ import {
   UNVERIFIED_ORG_SEAT_CAP,
 } from "@/lib/enterprise/governance";
 import { notifyOrgInviteSent } from "@/lib/novu/org-workflows";
+import { applyRateLimit, orgInviteLimiter } from "@/lib/rate-limit";
 
 // Roles a self-service inviter can assign. EXPERT is included in the
 // canHost-aware widening below; the rest mirror SELF_SERVICE_MEMBER_ROLES
@@ -103,6 +104,12 @@ export async function POST(
     requireActive: true,
   });
   if (access.error) return access.error;
+
+  // Per-org sliding-window cap: 20 invitations per hour. Keyed on orgId
+  // (not IP) so a credential-stuffing attacker that rotates IPs still
+  // trips the limit. Prevents audit-log and Novu notification spam.
+  const rateLimited = await applyRateLimit(orgInviteLimiter, orgId);
+  if (rateLimited) return rateLimited;
 
   const raw = await req.json().catch(() => null);
   const parsed = InviteBodySchema.safeParse(raw);

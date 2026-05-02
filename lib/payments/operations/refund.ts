@@ -333,14 +333,15 @@ export async function applyRefundCascade(
         break;
       }
 
-      case "INVOICE_ACCRUAL": {
-        // If the parent invoice is already PAID, the refund must be
-        // clawed back from the org (handled at the OrganizationEarnings
-        // level below); do NOT write a negative leg, because that would
-        // break the leg-sum invariant on a settled invoice. If the
-        // invoice is still pending (or the payment isn't tied to an
-        // invoice yet), reduce the accrual by appending a negative
-        // sibling leg so the rollup picks up the smaller amount.
+      case "INVOICE_ACCRUAL":
+      case "OVERAGE_INVOICE_ACCRUAL": {
+        // Both base and overage accrual legs share the same reversal
+        // semantics: if the invoice is already PAID, clawback is handled
+        // at the OrganizationEarnings level below (writing a negative leg
+        // here would break the leg-sum invariant on a settled invoice).
+        // If still pending, append a negative sibling leg so the monthly
+        // rollup picks up the corrected amount.
+        // TODO #716: dedicated credit-note flow for overage refunds.
         const billable = payment.billableToOrgInvoiceId
           ? await tx.organizationInvoice.findUnique({
               where: { id: payment.billableToOrgInvoiceId },
@@ -352,7 +353,7 @@ export async function applyRefundCascade(
           await tx.paymentLeg.create({
             data: {
               paymentId: payment.id,
-              source: "INVOICE_ACCRUAL",
+              source: leg.source,
               amountPaise: -reverse,
               sourceRef: leg.sourceRef,
             },

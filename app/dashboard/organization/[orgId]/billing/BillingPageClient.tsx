@@ -474,10 +474,15 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
                     icon={CreditCard}
                   />
                 )}
-                <StatCard
-                  title="Payment terms"
-                  value={`NET-${summary.data?.paymentTermsDays ?? 60}`}
-                />
+                {/* Payment terms only apply to INVOICE-funded orgs.
+                    WALLET orgs pre-fund their balance and have no credit
+                    terms; showing NET-60 there is misleading. */}
+                {summary.data?.fundingSource !== "WALLET" && (
+                  <StatCard
+                    title="Payment terms"
+                    value={`NET-${summary.data?.paymentTermsDays ?? 60}`}
+                  />
+                )}
                 {summary.data?.fundingSource && (
                   <StatCard
                     title="Funding source"

@@ -31,10 +31,16 @@ import type { PaymentLegSource } from "@prisma/client";
  *   REFERRAL_CREDIT  → ReferralCreditUsage.id created by
  *                      `applyCreditsToPayment`. Refund reversal reads
  *                      this to compute how many credits to restore.
- *   INVOICE_ACCRUAL  → ProgramAssignment.id that the accrual is being
- *                      rolled into. At month-end the invoice generator
- *                      groups legs by (organizationId, assignmentId) to
- *                      produce line items.
+ *   INVOICE_ACCRUAL          → ProgramAssignment.id that the accrual is being
+ *                              rolled into. At month-end the invoice generator
+ *                              groups legs by (organizationId, assignmentId) to
+ *                              produce line items.
+ *   OVERAGE_INVOICE_ACCRUAL  → ProgramAssignment.id (with "overage:" prefix in
+ *                              sourceRef). Carries the marginal charge that
+ *                              exceeds a LICENSED_SEAT cap under CHARGE_ORG.
+ *                              Treated identically to INVOICE_ACCRUAL for
+ *                              rollup and refund; separate source value prevents
+ *                              @@unique([paymentId, source]) collision.
  *   LICENSE          → ProgramAssignment.id of the LICENSED_SEAT program
  *                      that absorbed the booking. `amountPaise === 0`
  *                      because licenses are a sunk cost at contract
@@ -57,6 +63,7 @@ export function sourceRefKindFor(
       return "REFERRAL_CREDIT_USAGE_ID";
     case "WALLET":
     case "INVOICE_ACCRUAL":
+    case "OVERAGE_INVOICE_ACCRUAL":
     case "LICENSE":
       return "PROGRAM_ASSIGNMENT_ID";
     default: {
@@ -91,7 +98,7 @@ export type PaymentLegInput =
       referralCreditUsageId: string;
     }
   | {
-      source: "WALLET" | "INVOICE_ACCRUAL" | "LICENSE";
+      source: "WALLET" | "INVOICE_ACCRUAL" | "OVERAGE_INVOICE_ACCRUAL" | "LICENSE";
       amountPaise: number;
       programAssignmentId: string;
     };
@@ -116,6 +123,7 @@ export function makeLeg(input: PaymentLegInput): {
       };
     case "WALLET":
     case "INVOICE_ACCRUAL":
+    case "OVERAGE_INVOICE_ACCRUAL":
     case "LICENSE":
       return {
         source: input.source,
