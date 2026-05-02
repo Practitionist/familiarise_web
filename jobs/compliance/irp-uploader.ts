@@ -1,23 +1,27 @@
 /**
  * Cron: IRP (Invoice Registration Portal) uploader — Issue #681.
  *
- * STATUS: This cron job is scaffolded but not yet wired to invoke
- * lib/compliance/irp.ts. It returns { processed: 0 } today; no invoices
- * receive an IRN from this job until the wiring PR ships.
+ * STATUS: body live, env-gated. The cron iterates eligible invoices and
+ * calls `lib/compliance/irp.generateIrn`. When `CLEARTAX_API_KEY`,
+ * `CLEARTAX_GSP_TOKEN`, and `CLEARTAX_GSTIN` are configured, the
+ * connector posts the invoice payload to ClearTax GSP and persists
+ * `irn`, `ackNumber`, `signedQrPayload`, `irpStatus`, plus retry
+ * telemetry (`irpRetryCount`, `irpLastError`, `irpLastAttemptAt`).
+ * When env vars are absent, `generateIrn` returns
+ * `{ status: "FAILED", reason: "STUB" }` and the uploader records that
+ * as a normal retry — the cron does not crash on missing credentials.
  *
- * NOTE: lib/compliance/irp.ts (`generateIrn`) is NOT a stub — it makes
- * real HTTP calls to the ClearTax GSP API when CLEARTAX_API_KEY,
- * CLEARTAX_GSP_TOKEN, and CLEARTAX_GSTIN env vars are configured.
- * Production approval requires all of the following:
+ * Production approval requires:
  *   1. Sandbox credentials provisioned and end-to-end tested
  *   2. Payload mapping validated against CBIC schema (HSN, GSTIN, amounts)
  *   3. 24-hour IRN cancellation window behaviour proven
  *   4. Accountant / legal sign-off on IRN format and invoice sequence
  *   5. Retry dashboard and ops runbook in place (see docs/enterprise/23-runbooks.md)
  *
- * Schedule: daily at 02:00 IST.
+ * Schedule: daily at 02:30 UTC (08:00 IST).
+ * GH Actions: `.github/workflows/irp-uploader.yml`.
  * Scope: OrganizationInvoice with irpStatus=PENDING, issuedAt within 30d
- *        (CBIC cut-off for retroactive IRN generation).
+ *        (CBIC cut-off for retroactive IRN generation). Batch size: 50.
  */
 
 import prisma from "@/lib/prisma";
@@ -28,7 +32,7 @@ export async function runIrpUploader(): Promise<{
   failed: number;
   skipped: number;
 }> {
-  console.log("[cron][arch4-stub] IRP uploader invoked; no live IRP wired");
+  console.log("[cron][irp-uploader] starting");
 
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -107,4 +111,18 @@ export async function runIrpUploader(): Promise<{
     `[IRP] uploader finished — processed=${processed} failed=${failed} skipped=${skipped}`,
   );
   return { processed, failed, skipped };
+}
+
+// Self-execute when invoked directly via `npx tsx`. Allows imports for
+// unit tests without triggering the cron body. Mirrors the pattern in
+// jobs/contracts/expire-contracts.ts.
+if (require.main === module) {
+  runIrpUploader()
+    .catch((err) => {
+      console.error("[IRP] uploader failed:", err);
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      await prisma.$disconnect();
+    });
 }

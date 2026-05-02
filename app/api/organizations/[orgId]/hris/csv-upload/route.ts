@@ -33,6 +33,15 @@ const BodySchema = z.object({
   rows: z.array(RowSchema).min(1).max(5000),
 });
 
+// 5 MB cap on the JSON body. The Zod schema below already caps row
+// count at 5 000, but Zod runs AFTER `req.json()` has buffered the
+// whole body into memory. A malicious admin (post-token) could still
+// post a 100 MB JSON blob and exhaust process memory before validation
+// kicks in. Reject by Content-Length up-front. 5 MB is generous for
+// 5 000 rows of ~1 KB each; a real CSV that big should chunk client-
+// side and POST in batches.
+const MAX_BODY_BYTES = 5 * 1024 * 1024;
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
@@ -40,6 +49,20 @@ export async function POST(
   const { orgId } = await params;
   const access = await requireOrgOwner(orgId);
   if (access.error) return access.error;
+
+  const contentLength = req.headers.get("content-length");
+  if (contentLength) {
+    const bytes = parseInt(contentLength, 10);
+    if (Number.isFinite(bytes) && bytes > MAX_BODY_BYTES) {
+      return NextResponse.json(
+        {
+          error: "PAYLOAD_TOO_LARGE",
+          message: `Body must be <${MAX_BODY_BYTES} bytes (got ${bytes}). Chunk the upload client-side.`,
+        },
+        { status: 413 },
+      );
+    }
+  }
 
   const raw = await req.json().catch(() => null);
   const parsed = BodySchema.safeParse(raw);

@@ -12,15 +12,39 @@ Method note: Serena MCP was requested but is not available in this session. This
 
 | Readiness lens | Score | Confidence | Verdict |
 |---|---:|---|---|
-| Overall enterprise subsystem production-grade readiness | 82 / 100 | Medium-high | Strong design-partner candidate after P0 money/scope checks, but not broad self-serve enterprise GA. |
+| Overall enterprise subsystem production-grade readiness | 85 / 100 | Medium-high | Strong design-partner candidate after the 2026-05-02 fixes, but not broad self-serve enterprise GA. |
 | Controlled design-partner readiness | 90 / 100 | Medium-high | Viable with manual finance/compliance operations, explicit WIP boundaries, and daily reconciliation. |
-| Broad enterprise GA readiness | 76 / 100 | Medium | Compliance, live payout operations, scope semantics, and admin evidence trails still need closure. |
-| Financial correctness | 83 / 100 | Medium | Payment legs, wallet, utilization, invoice accrual, and payout state are real; overage/refund/clawback paths still carry high-risk edge cases. |
-| Compliance readiness | 58 / 100 | Medium | TDS/MSME derivation improved, GST is partly real, IRP remains env-gated/stubbed, DPDP enforcement is incomplete. |
-| Dashboard/operator readiness | 84 / 100 | Medium-high | Org pages and org-workspace pages are now broad; personal dashboard scope filter semantics still need cleanup. |
-| Cross-cutting integration readiness | 78 / 100 | Medium | BetterAuth/Novu/Redis/Supabase are strong; Stream org scope, recordings retention, compliance ops, and monitoring remain partial. |
+| Broad enterprise GA readiness | 78 / 100 | Medium | Compliance, live payout operations, scope semantics, and admin evidence trails still need closure. |
+| Financial correctness | 86 / 100 | Medium | Payment legs, wallet, utilization, invoice accrual, overage source separation, and payout state are real; refund/clawback paths still carry high-risk edge cases. |
+| Compliance readiness | 65 / 100 | Medium | TDS/MSME/GST core derivation are real; IRP connector is real (env-gated) and now has a daily cron schedule; MSME alert cron now has a daily schedule; DPDP DataBreach now has a 72h deadline cron. PR-2 still owns TDS withholding integration, GSTIN registry verify, RCM/LUT, IRN production approval. |
+| Dashboard/operator readiness | 86 / 100 | Medium-high | Org pages, org-workspace pages, PO/consent sidebar entries, and billing copy are now broad; personal dashboard scope filter semantics still need cleanup. |
+| Cross-cutting integration readiness | 79 / 100 | Medium | BetterAuth/Novu/Redis/Supabase/rate limiting are strong; Stream org scope, recordings retention, compliance ops, and monitoring remain partial. |
 
-Bottom line: the enterprise subsystem is materially better than the May 1 board because org activity pages, runtime appointment org stamping, wallet-in-billing, and several compliance helpers have moved forward. It is still not "production-grade" in the enterprise GA sense until compliance operations, payout submission proof, overage/refund correctness, and scope semantics are hardened.
+Bottom line: the enterprise subsystem is materially better than the May 1 board because org activity pages, runtime appointment org stamping, wallet-in-billing, overage leg separation, invitation rate limiting, and several compliance helpers have moved forward. It is still not "production-grade" in the enterprise GA sense until compliance operations, payout submission proof, refund/clawback correctness, and scope semantics are hardened.
+
+## 2026-05-02 Response Reconciliation
+
+The follow-up response corrected several false or stale findings from the two readiness agents. The current local code confirms:
+
+- Invoice payment POST is idempotent by persisted `OrganizationInvoice.providerPaymentOrderId`; repeated calls reuse the same Razorpay order.
+- Audit CSV export has a hard stream ceiling: `CSV_CHUNK_SIZE = 500` and `MAX_ITERATIONS = 400`, or 200,000 rows.
+- `/dashboard/organization/[orgId]/contracts` uses `useRequireOrgAccess` with `minRole: "MAINTAINER"` and `canSponsor: true`.
+- `Contracts`, `Audit`, `Purchase Orders`, and `Consent` are present in the org sidebar with role/capability gates.
+- `computeMsmePaymentDeadline` implements MICRO/SMALL 15/45-day logic and MEDIUM/NONE default-terms behavior.
+- The CHARGE_ORG P2002 overage bug is fixed by `PaymentLegSource.OVERAGE_INVOICE_ACCRUAL`.
+- The CHARGE_MEMBER overage message now accurately says the sponsored booking is blocked and the user should contact the org admin or book personally.
+- Org invitation POST now has `orgInviteLimiter` at 20/hour per org.
+- The IRP uploader header now distinguishes the env-gated ClearTax connector from the still-not-production-approved cron wiring.
+
+## 2026-05-02 Round 2 Reconciliation
+
+Validation of the updated docs surfaced a sixth false finding and additional pending items, all addressed in commit Round 2:
+
+- **FF-6 (GST):** Both the checklist and `ENTERPRISE_READINESS.md` previously claimed `deriveGstBreakdown()` returned zero tax. False — `lib/compliance/gst.ts:68–128` implements zero-rated export when `buyerCountry !== "IN"`, intra-state CGST 9% + SGST 9% (`Math.round(taxPaise/2)` split), inter-state IGST 18%, HSN defaulting to 999293, and place-of-supply derivation. Compliance score lifted accordingly. Only what is still missing for GA: GSTIN registry API verification, RCM routing, LUT enforcement.
+- **IRP cron schedule wired:** `.github/workflows/irp-uploader.yml` runs daily at 02:30 UTC. The cron body already iterates `OrganizationInvoice.irpStatus = PENDING` rows within the 30-day CBIC window and calls `generateIrn`; this PR adds the GH Actions schedule and a `require.main === module` self-executor.
+- **MSME alert cron schedule wired:** `.github/workflows/msme-payment-alerts.yml` runs daily at 04:30 UTC. Stale "derivation is a stub" header comment removed; the function has been live since the 2026-04 TDS/MSME PR.
+- **DataBreach 72-hour DPDP deadline cron added:** `jobs/compliance/databreach-deadline-alerts.ts` plus an hourly schedule. Sweeps `DataBreach WHERE reportedAt IS NULL` and emails the DPDP-officer inbox (env: `DATABREACH_ALERT_EMAIL`) for rows ≤12h before, or past, the 72-hour Section 8(6) deadline. Closes part of #701 without committing to the full DPDP cascade.
+- **HRIS CSV-upload body-size guard:** `app/api/organizations/[orgId]/hris/csv-upload/route.ts` now returns 413 when `Content-Length > 5 MB`. The Zod 5,000-row cap remains; this catches malicious bodies before they're buffered into memory.
 
 ## Compliance Reality Check
 
@@ -56,16 +80,20 @@ Production implication:
 | RazorpayX org payout submission path | Live org payout submission is gated by `ENABLE_LIVE_PAYOUTS` and the Razorpay path is scaffolded with idempotency; it is no longer only a `NotImplementedError` placeholder. | `lib/payments/payouts/org-payout-service.ts` |
 | IRP retry telemetry | IRP uploader now persists retry count, last error, and failed status after bounded retries instead of silently dropping failures. | `jobs/compliance/irp-uploader.ts`, `OrganizationInvoice` |
 | Marketplace leakage guard | Org-owned plan visibility enum and indexes exist; public marketplace queries have a clear schema-level visibility concept. | `OrgPlanVisibility`, plan models |
+| CHARGE_ORG overage leg source | Overage now uses `OVERAGE_INVOICE_ACCRUAL`, avoiding the prior `@@unique([paymentId, source])` collision with the base `INVOICE_ACCRUAL` leg. | `prisma/schema.prisma`, `lib/payments/operations/checkout.ts`, `lib/payments/payment-legs.ts` |
+| CHARGE_MEMBER overage copy | The error now accurately blocks sponsored checkout and tells the user to extend the program or book personally; it no longer says the booking succeeded. | `lib/payments/operations/checkout.ts` |
+| Invoice payment idempotency | `providerPaymentOrderId` is persisted and reused for repeated invoice pay POSTs, preventing double order creation on retry/double-click. | `app/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pay/route.ts` |
+| Audit export bounds | CSV export streams in chunks with `MAX_ITERATIONS=400` and `CSV_CHUNK_SIZE=500`, capping export work at 200,000 rows. | `app/api/organizations/[orgId]/audit/export/route.ts` |
+| Org invitation rate limiting | Invite POST is rate-limited per org before the Serializable transaction. | `lib/rate-limit.ts`, `app/api/organizations/[orgId]/invitations/route.ts` |
+| PO and consent navigation | Purchase Orders and Consent are first-class sidebar entries instead of deep-link-only pages. | `app/dashboard/organization/[orgId]/layout.tsx` |
+| Wallet billing copy | Wallet-funded orgs no longer see misleading NET-60 payment-terms copy. | `app/dashboard/organization/[orgId]/billing/BillingPageClient.tsx` |
 
 ## Incorrectly Fixed Or High-Risk Fixes
 
 | Area | Problem | Why it matters | Required correction |
 |---|---|---|---|
-| Overage `CHARGE_ORG` payment legs | Checkout can create a base `PaymentLeg(source=INVOICE_ACCRUAL)` and then create another `INVOICE_ACCRUAL` leg for overage, but Prisma enforces `@@unique([paymentId, source])`. | An INVOICE-funded licensed-seat program with `CHARGE_ORG` can fail inside the transaction when overage is hit. | Merge base and overage into one INVOICE_ACCRUAL leg, add a distinct `OVERAGE_INVOICE_ACCRUAL` source, or model grouped sub-ledgers before allowing this path. |
-| Overage `CHARGE_MEMBER` semantics | Code throws after utilization calculation inside the transaction; comments say booking succeeded and user owes a marginal charge, but the throw rolls back the whole checkout. | Product/accounting semantics are misleading and likely fail the intended partial-payment flow. | Choose one behavior: block before booking, or commit the sponsored booking and create a separate receivable/payment request outside the same transaction. |
 | `OrgContextFilter` serialization drift | `serializeOrgFilter` maps `__personal__` to `none` and `__all__` to omitted param, while `resolveOrgScope` expects `personal`, orgId, or privileged `all`. Current mounted pages bypass this with hand-written mapping. | The component helper is stale and dangerous for future mount points; "All activity" means "all mine" in UI but `all` means staff/admin union in API. | Rename normal user union to `mine` or `all_mine`, remove `none`, and make component, hook, and API share one serialization contract. |
-| Compliance comments drift | Some code comments/docs still call MSME/TDS "stubbed" even though helpers now do real derivation. | Stale comments make auditors and implementers misclassify production risk. | Update docs/comments to distinguish real derivation from missing ops, sandbox proof, dashboards, and signoff. |
-| IRP stub status messaging | `jobs/compliance/irp-uploader.ts` header says stub/no live IRP, while it calls `generateIrn`, which can call ClearTax if env is configured. | Operators may think IRP cannot run even when configured, or assume it is production-ready without payload validation. | Reword to "env-gated ClearTax scaffold; not production-approved until sandbox/prod credentials and runbook pass." |
+| Compliance comments drift | Some code comments/docs still call parts of MSME/GST/IRP "stubbed" even where helpers now do real derivation or env-gated calls. | Stale comments make auditors and implementers misclassify production risk. | Continue the docs drift pass so comments distinguish real derivation from missing ops, sandbox proof, dashboards, and signoff. |
 | Stream org scope | Stream channel creation still defaults org metadata to null in generic stream channel creation. | Enterprise operators cannot reliably inspect all org video/chat activity, and retention/discovery boundaries are unclear. | Add org metadata to Stream channels/calls and reconcile it from appointment org context. |
 
 ## Partly Fixed
@@ -106,7 +134,8 @@ Production implication:
 - [x] Server-side access helpers gate org APIs.
 - [x] Role transition rules prevent disallowed LEARNER/EXPERT transitions.
 - [x] Sidebar visibility is cosmetic; API gates still matter.
-- [ ] Page-level guards are not uniformly documented for every deep-link page.
+- [x] Contracts page has a client guard (`useRequireOrgAccess`) and server/API gates.
+- [ ] Keep page-level guard documentation current for every deep-link page; do not infer absence without checking the page.
 - [ ] Need automated IDOR tests for every org route, especially document/recording/activity exports.
 
 ### Lifecycle, Audit, And Deletion
@@ -127,8 +156,10 @@ Production implication:
 - [x] `Payment.organizationId` and `billingAccountId` are written for org-attributed payments.
 - [x] WALLET debits atomically; INVOICE accrues; LICENSE absorbs booking amount with zero-value leg.
 - [x] SUBSCRIPTION cap utilization is lazy at consultant allocation.
+- [x] CHARGE_ORG overage no longer collides with base invoice-accrual legs because it uses `OVERAGE_INVOICE_ACCRUAL`.
+- [x] CHARGE_MEMBER overage messaging now accurately describes a blocked sponsored checkout.
 - [ ] Shared webinar/class semantics need explicit tests for owner org vs sponsoring org vs multi-org attendees.
-- [ ] `CHARGE_MEMBER` and `CHARGE_ORG` overage behavior needs redesign or hard gating before GA.
+- [ ] Overage behavior still needs E2E coverage across funding source x plan type x cap behavior before GA.
 - [ ] Payment leg sum checks log warnings; settlement/test jobs need hard assertion coverage for all source combinations.
 
 ### Funding Sources
@@ -155,7 +186,7 @@ Production implication:
 
 | Compliance area | Repo state | Production verdict |
 |---|---|---|
-| GST tax split | Partly real: `deriveGstBreakdown` computes export/intra/inter-state values. | Needs checksum, sequence, LUT/export/RCM handling, accounting signoff, and invoice fixture tests. |
+| GST tax split | Real: `deriveGstBreakdown` computes zero-rated export, intra-state CGST 9% + SGST 9%, and inter-state IGST 18% with HSN defaulting and place-of-supply derivation *(FF-6 corrected)*. | Needs GSTIN checksum + registry-lookup verification, invoice-sequence controls, LUT/export proof, RCM routing, accountant signoff, invoice fixture tests. |
 | GST e-invoice / IRN | ClearTax scaffold exists; uploader stores retry telemetry. | Not GA until live/sandbox credentials, payload mapping, signed QR persistence, 24h cancel rule, and AP acceptance are proven. |
 | TDS | Real derivation exists for 194O/194J/194C, PAN fallback, certificate, DTAA. | Needs accountant signoff, payout integration proof, non-resident handling, TDS return workflow. |
 | MSME | Deadline helper implements 15/45-day rule; alert job exists. | Needs verified counterparty data, written-agreement evidence, finance dashboard proof, and comment/doc cleanup. |
@@ -177,6 +208,7 @@ Production implication:
 - [x] `/payouts`, `/earnings` API: host-side money views exist.
 - [x] `/appointments`, `/waitlist`, `/trials`, `/documents`, `/recordings`, `/reimbursements`: org activity and compliance-ish surfaces exist.
 - [x] `/settings`, `/settings/sso`, `/audit`, `/consent`, `/analytics`: admin/security/reporting surfaces exist.
+- [x] Contracts, Audit, Purchase Orders, and Consent are visible in sidebar with capability/role gates.
 - [ ] Some pages need stronger empty/error state QA and role-deep-link tests.
 - [ ] Analytics remains thin for enterprise buyers.
 - [ ] Consent dashboard is not DPDP-complete.
@@ -224,7 +256,6 @@ Production implication:
 
 ### P0 Production Gates
 
-- [ ] Fix overage payment-leg uniqueness and `CHARGE_MEMBER` transaction semantics.
 - [ ] Run checkout E2E for every funding source x plan type x overage behavior.
 - [ ] Verify org invoice PDF and consumer invoice PDF under production-like build/start or deploy preview.
 - [ ] Run real SSO acceptance against at least one OIDC or SAML provider.
@@ -283,11 +314,16 @@ Production implication:
 - [x] MSME helper upgraded to 15/45-day rule.
 - [x] RazorpayX org payout submission scaffold.
 - [x] IRP retry telemetry.
+- [x] CHARGE_ORG overage source uniqueness fixed with `OVERAGE_INVOICE_ACCRUAL`.
+- [x] CHARGE_MEMBER overage error copy corrected.
+- [x] Invoice pay endpoint idempotency verified via persisted `providerPaymentOrderId`.
+- [x] Audit export row ceiling verified.
+- [x] Org invite rate limit added.
+- [x] Purchase Orders and Consent sidebar entries added.
+- [x] Wallet org billing copy corrected.
 
 ### Incorrectly Or Riskily Fixed Checklist
 
-- [ ] Overage extra INVOICE_ACCRUAL leg conflicts with source uniqueness.
-- [ ] `CHARGE_MEMBER` overage behavior comments do not match transaction rollback behavior.
 - [ ] `OrgContextFilter` helper is stale relative to `resolveOrgScope`.
 - [ ] UI label "All activity" is ambiguous and should not map mentally to privileged `all`.
 - [ ] Compliance comments/docs still misclassify some now-real helper logic as stubbed.

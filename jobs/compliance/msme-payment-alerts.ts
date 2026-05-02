@@ -1,9 +1,10 @@
 /**
  * Cron: MSME Section 43B(h) payment-deadline alerts.
  *
- * STATUS: plumbing live. The deadline DERIVATION itself is still a
- * stub (see `lib/compliance/msme.ts` — returns a 60-day default), but
- * the ALERT pipeline is real:
+ * STATUS: live (body + derivation). `lib/compliance/msme.ts`
+ * (`computeMsmePaymentDeadline`) implements the real 15/45-day MICRO/
+ * SMALL rule and falls back to `contract.defaultTermsDays` for MEDIUM/
+ * NONE. The pipeline below:
  *
  *   1. Query OrganizationPayout rows within 5 days of `mustPayByDate`
  *      that haven't yet COMPLETED.
@@ -13,16 +14,8 @@
  *   3. Emit a structured log line that Cloud Logging can route to the
  *      #finance-alerts channel via its built-in sink.
  *
- * The derivation stub means `mustPayByDate` is over-generous today
- * (org-default terms instead of the 15/45-day rule). That is intentional:
- * an over-wide window produces false positives — finance acts on them,
- * closing the loop — and never under-alerts. When the live derivation
- * lands, the alert volume will shrink, not grow.
- *
- * Schedule: daily at 07:00 IST.
- *
- * See lib/compliance/msme.ts header docblock for the 15/45-day rule
- * live-implementation plan.
+ * Schedule: daily at 04:30 UTC (10:00 IST).
+ * GH Actions: `.github/workflows/msme-payment-alerts.yml`.
  */
 
 import prisma from "@/lib/prisma";
@@ -123,4 +116,22 @@ export async function runMsmePaymentAlerts(): Promise<{
   }
 
   return { alerted: emailSent ? atRisk : 0, atRisk, emailSent };
+}
+
+// Self-execute when invoked directly via `npx tsx`. Allows imports for
+// unit tests without triggering the cron body.
+if (require.main === module) {
+  runMsmePaymentAlerts()
+    .then((r) => {
+      console.log(
+        `[MSME] cron done — alerted=${r.alerted} atRisk=${r.atRisk} emailSent=${r.emailSent}`,
+      );
+    })
+    .catch((err) => {
+      console.error("[MSME] cron failed:", err);
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      await prisma.$disconnect();
+    });
 }
