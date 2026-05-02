@@ -169,5 +169,8 @@ independent in every other case.
 - `06-expert-lifecycle.md` — how `payoutRecipient` determines whether
   an earnings row even exists.
 - `18-three-ledger-discipline.md` — the Settlement ledger invariants.
-- `docs/compliance/india/**` — the live source of truth on TDS/MSME/FEMA
-  obligations (NOT edited by this doc set).
+- `docs/compliance/**` — the live source of truth on TDS / MSME / FEMA
+  obligations across both rails. See in particular
+  [`docs/compliance/01-tds-overview.md`](../compliance/01-tds-overview.md),
+  [`docs/compliance/03-msme-43b-h.md`](../compliance/03-msme-43b-h.md), and
+  [`docs/compliance/07-cross-border-flows.md`](../compliance/07-cross-border-flows.md).

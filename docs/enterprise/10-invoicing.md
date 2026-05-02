@@ -94,8 +94,8 @@ supply crosses a state boundary:
 
 `placeOfSupply` is the buyer's GST state code (2 chars, e.g. `"27"`
 for Maharashtra). The helper that populates the tax columns is at
-`lib/compliance/india/gst.ts` (stub in v1 — see
-`19-harness-verdict.md`).
+`lib/compliance/gst.ts` (`deriveGstBreakdown` — live as of 2026-05-02;
+see [`docs/compliance/02-gst-overview.md`](../compliance/02-gst-overview.md)).
 
 ## HSN code
 
@@ -198,5 +198,6 @@ If the running sum of invoices against a PO exceeds
 - `02-funding-and-programs.md` — the INVOICE funding source.
 - `20-payment-legs.md` — how `INVOICE_ACCRUAL` legs roll up into a
   monthly invoice.
-- `docs/compliance/india/**` — the statutory source of truth for GST,
-  IRN, and e-invoicing (not maintained in this doc set).
+- [`docs/compliance/02-gst-overview.md`](../compliance/02-gst-overview.md) —
+  the statutory source of truth for GST, TCS Sec 52, IRN, and e-invoicing
+  across both rails (not maintained in this doc set).
