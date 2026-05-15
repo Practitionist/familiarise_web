@@ -705,12 +705,12 @@ function ManageProgramDialog({
   const queryClient = useQueryClient();
   const [membershipId, setMembershipId] = useState("");
   const [periodStart, setPeriodStart] = useState(
-    () => new Date().toISOString().split("T")[0],
+    () => new Date().toLocaleDateString("en-CA"),
   );
   const [periodEnd, setPeriodEnd] = useState(() => {
     const d = new Date();
     d.setMonth(d.getMonth() + 1);
-    return d.toISOString().split("T")[0];
+    return d.toLocaleDateString("en-CA");
   });
   const [assignError, setAssignError] = useState<string | null>(null);
 
