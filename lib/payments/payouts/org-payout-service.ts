@@ -53,6 +53,7 @@ import { Prisma } from "@prisma/client";
 import type { PaymentGateway, PayoutStatus } from "@prisma/client";
 import { acquireLock, releaseLock } from "@/lib/redis";
 import { computeMsmePaymentDeadline } from "@/lib/compliance/msme";
+import { computeTdsForPayout } from "@/lib/compliance/tds";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { notifyOrgPayoutCompleted } from "@/lib/novu/org-workflows";
 import { getAppUrl } from "@/lib/url";
@@ -265,14 +266,11 @@ export async function createOrgPayoutBatch(
             refundsPaise: 0,
             netPayoutPaise: 0,
             idempotencyKey: opts.idempotencyKey ?? null,
-            // MSME deadline is derived now from a stub. The PR-2
-            // compliance cron re-derives this and TDS / Form 15 fields
-            // for any row still on stub defaults.
-            mustPayByDate: computeMsmePaymentDeadline({
-              invoiceDate: new Date(),
-              counterpartyMsmeStatus: "NONE",
-              writtenAgreement: false,
-            }),
+            // mustPayByDate, tdsSectionApplied, tdsAmountPaise,
+            // dtaaRateApplied are derived after we resolve the org's
+            // MSME + PAN fields below and persisted via the second
+            // update (alongside the post-TDS amount). Form 15 / FIRC
+            // still populated manually until cross-border crons land.
           },
         });
 
@@ -338,15 +336,67 @@ export async function createOrgPayoutBatch(
           );
         }
 
+        // Resolve the org's India statutory metadata in one fetch and
+        // use it for both TDS (PAN, residency) and MSME 43B(h) deadline
+        // (msmeStatus, writtenAgreement).
+        //
+        // TDS: Section 194-O default for ECO payouts to host orgs; 20%
+        // Section 206AA fallback when PAN is missing/malformed. Computed
+        // on `netPayout` (= orgShare − refunds), then deducted from what
+        // we actually send through the gateway. The withheld amount is
+        // deposited with the govt and reported quarterly via Form 26Q
+        // (separate cron — see lib/compliance/tds.ts module docblock).
+        //
+        // MSME: when the host org is MICRO / SMALL we owe payment within
+        // 15 / 45 days per CGST Sec 43B(h); fall through to
+        // contract.paymentTermsDays for MEDIUM / NONE.
+        //
+        // All host orgs are assumed RESIDENT in v1. When the first
+        // non-resident host org ships, extend Organization with
+        // `residencyStatus` + `tdsSection` overrides and thread them in.
+        const orgForCompliance = await tx.organization.findUnique({
+          where: { id: orgId },
+          select: {
+            pan: true,
+            msmeStatus: true,
+            msmeWrittenAgreementOnFile: true,
+          },
+        });
+        const tds = computeTdsForPayout({
+          grossAmountPaise: netPayout,
+          consultant: {
+            panNumber: orgForCompliance?.pan ?? null,
+            residencyStatus: "RESIDENT",
+            tdsSection: null,
+            tdsRate: null,
+            tdsLowerRateCert: null,
+            providerCountry: null,
+          },
+        });
+        const amountAfterTds = netPayout - tds.tdsAmountPaise;
+        const mustPayByDate = computeMsmePaymentDeadline({
+          invoiceDate: new Date(),
+          counterpartyMsmeStatus: orgForCompliance?.msmeStatus ?? "NONE",
+          writtenAgreement:
+            orgForCompliance?.msmeWrittenAgreementOnFile ?? false,
+        });
+
         await tx.organizationPayout.update({
           where: { id: created.id },
           data: {
-            amountPaise: netPayout,
+            amountPaise: amountAfterTds,
             currency: first.currency,
             grossRevenuePaise: totals.gross,
             platformFeePaise: totals.platformFee,
             refundsPaise: totals.refunds,
             netPayoutPaise: netPayout,
+            tdsSectionApplied: tds.tdsSection,
+            tdsAmountPaise: tds.tdsAmountPaise,
+            dtaaRateApplied:
+              tds.dtaaRateApplied !== null
+                ? new Prisma.Decimal(tds.dtaaRateApplied)
+                : null,
+            mustPayByDate,
           },
         });
 
@@ -360,11 +410,11 @@ export async function createOrgPayoutBatch(
             organizationId: orgId,
             payoutId: created.id,
             kind: "PAYOUT_SENT",
-            amountPaise: -netPayout,
+            amountPaise: -amountAfterTds,
             currency: first.currency,
             notes:
               opts.notes ??
-              `Payout batch created — ${readyEarnings.length} earnings rolled up`,
+              `Payout batch created — ${readyEarnings.length} earnings rolled up (TDS ${tds.tdsSection}: ${tds.tdsAmountPaise} paise withheld)`,
           },
         });
 
@@ -374,14 +424,20 @@ export async function createOrgPayoutBatch(
             actorMembershipId: opts.actorMembershipId ?? null,
             category: "PAYOUT",
             action: AUDIT_ACTIONS.PAYOUT.PAYOUT_INITIATED,
-            description: `Payout batch created: ${readyEarnings.length} earnings, net ${netPayout} paise ${first.currency}`,
+            description: `Payout batch created: ${readyEarnings.length} earnings, ${amountAfterTds} paise ${first.currency} (after ${tds.tdsAmountPaise} paise TDS ${tds.tdsSection})`,
             details: {
               payoutId: created.id,
               earningsCount: readyEarnings.length,
               netPayoutPaise: netPayout,
+              amountAfterTdsPaise: amountAfterTds,
               grossPaise: totals.gross,
               platformFeePaise: totals.platformFee,
               refundsPaise: totals.refunds,
+              tdsSection: tds.tdsSection,
+              tdsRate: tds.tdsRate,
+              tdsAmountPaise: tds.tdsAmountPaise,
+              tdsFallback: tds.fallbackApplied,
+              tdsReason: tds.reason,
               idempotencyKey: opts.idempotencyKey ?? null,
             },
           },
@@ -389,7 +445,7 @@ export async function createOrgPayoutBatch(
 
         return {
           payoutId: created.id,
-          amountPaise: netPayout,
+          amountPaise: amountAfterTds,
           earningsCount: readyEarnings.length,
           periodStart,
           periodEnd,

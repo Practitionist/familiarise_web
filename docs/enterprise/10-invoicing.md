@@ -74,8 +74,13 @@ DRAFT ──► ISSUED ──► PAID
 `PATCH /api/organizations/[orgId]/billing-account/invoices/[invoiceId]`
 is OWNER-only and gates transitions:
 
-- `DRAFT → ISSUED` — sets `issuedAt = now()` and kicks off the IRN
-  upload stub.
+- `DRAFT → ISSUED` — sets `issuedAt = now()` and enqueues the invoice
+  for the daily IRP uploader (`.github/workflows/irp-uploader.yml`,
+  02:30 UTC). The cron iterates `OrganizationInvoice.irpStatus = PENDING`
+  rows within the 30-day CBIC window and calls `generateIrn` in
+  `lib/compliance/irp.ts`. Returns `FAILED` if `CLEARTAX_API_KEY` /
+  `CLEARTAX_GSP_TOKEN` / `CLEARTAX_GSTIN` env vars are unset; for sub-₹5cr
+  orgs that's acceptable until they cross the AATO threshold.
 - `ISSUED → PAID` — sets `paidAt = now()` and writes a
   `SettlementLedgerEntry(kind=INVOICE_PAID)` in the same transaction.
 - `ISSUED → VOID/CANCELLED` — blocked if already partially paid.
@@ -119,8 +124,27 @@ irpStatus       — PENDING | GENERATED | CANCELLED | FAILED
 irpUploadedAt   — our request timestamp
 ```
 
-Upload is stubbed in v1; the integration lands in a follow-up PR.
-Fields are schema-final.
+Upload is live but env-gated. When `CLEARTAX_API_KEY`,
+`CLEARTAX_GSP_TOKEN`, and `CLEARTAX_GSTIN` are configured, `generateIrn`
+makes real ClearTax HTTP calls and persists `irn`, `ackNumber`,
+`ackDate`, `signedQrPayload`. Without env vars, rows transition to
+`FAILED` after bounded retries (`irpRetryCount`, `irpLastError`,
+`irpLastAttemptAt`). Production approval (ClearTax sandbox proof +
+accountant signoff) is pending; for sub-₹5cr orgs that's acceptable
+since IRN is voluntary below the AATO threshold per Notification
+10/2023.
+
+### Invoice numbering — CGST Rule 46 sequential
+
+`invoiceNumber` is per-org scoped with the format `<PREFIX>-<FY>-<SEQ>`,
+e.g. `ACME-2026-0042`. `PREFIX` is `Organization.invoiceNumberPrefix`
+when set, else the slug (uppercased). `FY` is the Indian fiscal year
+(April–March). `SEQ` is a 4-digit zero-padded monotonic integer per
+`(organizationId, fiscalYear)` allocated atomically from
+`org_invoice_counters` via `INSERT … ON CONFLICT … RETURNING`. The
+`@@unique([organizationId, invoiceNumber])` constraint is the safety
+net; the counter table is the primary mechanism. Helper:
+`lib/payments/billing/invoice-numbering.ts:generateInvoiceNumber`.
 
 ## Line items (`items: Json`)
 

@@ -18,25 +18,6 @@ export type OrgContextFilterValue =
   | typeof ORG_FILTER_PERSONAL
   | string; // an organizationId
 
-/**
- * Translate a filter sentinel to the query-param representation expected
- * by the API. Returns `undefined` when no filter should be sent.
- *
- *   ORG_FILTER_ALL       → undefined   (no filter)
- *   ORG_FILTER_PERSONAL  → "none"      (API interprets as: organizationId IS NULL)
- *   <orgId>              → <orgId>     (API filters rows where organizationId = <orgId>)
- *
- * TODO #674: The serialization contract ("none", undefined) does not match
- * the resolveOrgScope API vocabulary ("personal", orgId, "all"). Before
- * OrgContextFilter is mounted on new pages, unify to a single contract:
- *   ORG_FILTER_PERSONAL → "personal"   (rename from "none")
- *   ORG_FILTER_ALL      → "all_mine"   (user-scoped union, vs privileged "all")
- * and update resolveOrgScope + all mounted pages atomically.
- */
-export function serializeOrgFilter(
-  value: OrgContextFilterValue,
-): string | undefined {
-  if (value === ORG_FILTER_ALL) return undefined;
-  if (value === ORG_FILTER_PERSONAL) return "none";
-  return value;
-}
+// The API query-param contract for the personal scope is the string
+// "personal" (see `resolveOrgScope`). Pages map ORG_FILTER_PERSONAL →
+// "personal" inline at the call site.

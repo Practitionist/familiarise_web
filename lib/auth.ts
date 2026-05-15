@@ -14,6 +14,7 @@ import {
 import { syncSubscriber } from "@/lib/novu/subscriber";
 import { shouldRejectSession } from "@/lib/sso/enforce-session";
 import { applyMembershipRoleEffects } from "@/lib/api/organizations/membership-transitions";
+import { buildConsentArtifact } from "@/lib/compliance/dpdp";
 
 export const auth = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET,
@@ -167,6 +168,36 @@ export const auth = betterAuth({
             await prisma.notificationPreference.create({
               data: { userId: user.id },
             });
+
+            // DPDP Act 2023: stamp a ConsentArtifact for the essential
+            // purposes covered by the signup action (account creation
+            // requires data processing for service delivery + video/chat
+            // handoff to Stream.io). MARKETING_COMMS / analytics consent
+            // is not stamped here — those require an explicit checkbox
+            // on the signup form (P1 follow-up; see #701). When a user
+            // hits the in-app withdrawal flow (/api/.../consent), this
+            // artifact is superseded and `checkConsent` fails closed.
+            try {
+              for (const purposeCode of [
+                "PRIMARY_PROCESSING",
+                "STREAM_DATA_PROCESSING",
+              ] as const) {
+                const draft = buildConsentArtifact({
+                  userId: user.id,
+                  dataFiduciary: "Familiarise",
+                  purposeCodes: [purposeCode],
+                  language: "en-IN",
+                  consentManager: null,
+                  version: 1,
+                });
+                await prisma.consentArtifact.create({ data: draft });
+              }
+            } catch (consentError) {
+              // Fail open on consent stamping — the user-create hook
+              // shouldn't sink a signup over an audit-trail glitch. The
+              // /consent backfill cron (#701) re-creates missing rows.
+              console.error("[AUTH_HOOK] DPDP consent stamp error:", consentError);
+            }
 
             // Send welcome email (fire and forget)
             sendWelcomeEmail({

@@ -2,7 +2,7 @@
 
 The evaluation harness exercises four representative org scenarios
 plus a set of cross-cutting checks, for a total of 19 line items.
-Current verdict: **15 ✅ / 5 ⚠️ / 0 ❌** (with row 20 newly added by the multi-session cap-counting audit; see #710).
+Current verdict: **18 ✅ / 2 ⚠️ / 0 ❌** as of 2026-05-15 Round 3 close-out.
 
 > **Seed cohort:** the four scenarios below map onto the deterministic
 > seed cohort. See `00-overview.md → Seed / production-shaped grid`
@@ -44,7 +44,7 @@ Legend:
 |---|------|---------|-------|
 | 9 | `LICENSE` funding + LICENSED_SEAT Program with `coveredEngagementsPerCycle=null` absorbs bookings | ✅ | Checkout writes a `PaymentLeg(source=LICENSE, amountPaise=0)` for org-sponsored LICENSE bookings and increments `BookingUtilization` against the active assignment. |
 | 10 | SSO enforcement + allowedEmailDomains via `OrganizationSSOSettings` | ✅ | `customSession` hook + `shouldRejectSession`. |
-| 11 | Contract `effectiveTo` cron transitions status to `EXPIRED` | ⚠️ | Schema final; cron stubbed (no loss-of-service risk because `requireOrgAccess` still honours the org). |
+| 11 | Contract `effectiveTo` cron transitions status to `EXPIRED` | ✅ | `jobs/compliance/contract-expiry.ts` runs daily 03:00 UTC via `.github/workflows/expire-contracts.yml`. |
 
 ## 4. Solo marketplace consultant (Rahul)
 
@@ -60,31 +60,28 @@ Legend:
 | 14 | `OrgAuditLog` row emitted for every mutating route (40+ routes verified) | ✅ | Every handler emits via `AUDIT_ACTIONS` constants. |
 | 15 | Rate-card resolver walks the 7-level override chain deterministically | ✅ | `resolveEffectiveRateCard()` unit tests cover each level. |
 | 16 | BookingUtilization reversal stamps `reversedAt` + appends opposing UsageLedgerEntry | ✅ | `reverseBookingUtilization()`. |
-| 17 | India TDS/MSME fields populated on `OrganizationPayout` | ⚠️ | Schema final; derivation cron (reading `ConsultantTaxInfo` / `MsmeStatus`) stubbed. |
-| 18 | E-invoice (IRN) upload + signed QR | ⚠️ | Schema final; live IRP integration stubbed. |
+| 17 | India TDS/MSME fields populated on `OrganizationPayout` | ✅ | `createOrgPayoutBatch` calls `computeTdsForPayout` (Section 194-O default, 206AA fallback) and `computeMsmePaymentDeadline` (real `Organization.msmeStatus` + `msmeWrittenAgreementOnFile`). `tdsAmountPaise` deducted from gross; `mustPayByDate` set per MSME tier. |
+| 18 | E-invoice (IRN) upload + signed QR | ✅ | IRP uploader runs daily 02:30 UTC via `.github/workflows/irp-uploader.yml`; ClearTax connector is real and env-gated. Production approval still pending; sub-₹5cr orgs OK on `FAILED`/`PENDING` until AATO. |
 | 19 | Nightly reconciliation cron for the three ledger identities + ProgramAssignment engagement-counter drift | ✅ | `scripts/reconcile/reconcile-ledgers.ts::runReconcileLedgers` covers wallet balance / funding mirror / settlement coverage / program-assignment engagement-counter (check E). Wired via `.github/workflows/reconcile-ledgers.yml` (nightly 03:45 UTC) calling `jobs/reconcile/reconcile-ledgers.ts`, and via admin route `POST /api/admin/reconcile-ledgers` for on-demand runs. |
 | 20 | LICENSED_SEAT cap counts engagements correctly across plan types (CONSULTATION / WEBINAR / SUBSCRIPTION / CLASS) | ✅ | Issue #710 closed. Counting unit is the engagement (one `Appointment` row = one calendar occurrence). CONSULTATION/WEBINAR debit 1 at checkout; CLASS debits N at enrolment (one per pre-allocated class day); SUBSCRIPTION debits 1 per consultant allocation lazily via `SlotAllocationService.createAppointments`, upserting `BookingUtilization.engagementsConsumed`. Schema renamed: `coveredEngagementsPerCycle`, `engagementsUsed`, `engagementsConsumed`, `priceCapPerEngagementPaise`. Term picked to avoid collision with BetterAuth `Session` and Stream `MeetingSession`. Test coverage: `__tests__/enterprise/multi-engagement-cap.test.ts`. |
 
 ## Summary
 
-- **16 ✅** — core capability, funding, program, rate-card, wallet,
+- **18 ✅** — core capability, funding, program, rate-card, wallet,
   audit, live checkout-leg wiring (rows 3 + 9), ledger reconciliation
-  (row 19), and engagement cap counting (row 20) run end-to-end
-  against the schema.
-- **4 ⚠️** — India-compliance / cron-driven items whose schema is final
-  but whose populator is deferred. The ⚠️ is about *producing* the
-  right value, not about *storing* it.
-- **0 ❌** — every scenario in the harness produces either a correct
-  result or a ⚠️ with a known stub.
+  (row 19), engagement cap counting (row 20), contract-expiry cron
+  (row 11), live TDS/MSME on org payouts (row 17), IRP cron (row 18).
+- **2 ⚠️** — items whose schema is final but whose populator awaits
+  an out-of-scope sandbox proof or schedule wiring.
+- **0 ❌** — every scenario produces a correct result or a ⚠️ with a
+  known follow-up.
 
 The outstanding ⚠️ items are:
 
-1. `jobs/billing/generate-subscription-invoices.ts` (INVOICE monthly
-   roll-up cron).
-2. Live IRP integration for `OrganizationInvoice.irn` population.
-3. Contract-expiry cron (`ContractStatus ACTIVE → EXPIRED`).
-4. TDS / MSME derivation cron for `OrganizationPayout`.
-
-Each ⚠️ has a corresponding issue tracked for the follow-up PR. The
-remaining integrations are compliance-layer code that reads schema-
-final fields; none requires a further schema change.
+1. `jobs/billing/generate-subscription-invoices.ts` — body is live, but
+   the monthly GH Actions schedule is not yet wired. INVOICE-mode orgs
+   are billed via the daily `BillingSubscription.nextInvoiceDate <= now`
+   sweep; the explicit month-end roll-up cron-on-cron is a P1 add.
+2. IRP production approval — connector + cron are live; ClearTax sandbox
+   proof + accountant signoff still needed before flipping production
+   `CLEARTAX_API_KEY`.

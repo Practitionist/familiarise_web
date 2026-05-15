@@ -12,15 +12,15 @@ Method note: Serena MCP was requested but is not available in this session. This
 
 | Readiness lens | Score | Confidence | Verdict |
 |---|---:|---|---|
-| Overall enterprise subsystem production-grade readiness | 85 / 100 | Medium-high | Strong design-partner candidate after the 2026-05-02 fixes, but not broad self-serve enterprise GA. |
+| Overall enterprise subsystem production-grade readiness | 86 / 100 | Medium-high | Strong design-partner candidate after the 2026-05-02 Round 2 fixes, but not broad self-serve enterprise GA. |
 | Controlled design-partner readiness | 90 / 100 | Medium-high | Viable with manual finance/compliance operations, explicit WIP boundaries, and daily reconciliation. |
 | Broad enterprise GA readiness | 78 / 100 | Medium | Compliance, live payout operations, scope semantics, and admin evidence trails still need closure. |
 | Financial correctness | 86 / 100 | Medium | Payment legs, wallet, utilization, invoice accrual, overage source separation, and payout state are real; refund/clawback paths still carry high-risk edge cases. |
-| Compliance readiness | 65 / 100 | Medium | TDS/MSME/GST core derivation are real; IRP connector is real (env-gated) and now has a daily cron schedule; MSME alert cron now has a daily schedule; DPDP DataBreach now has a 72h deadline cron. PR-2 still owns TDS withholding integration, GSTIN registry verify, RCM/LUT, IRN production approval. |
+| Compliance readiness | 82 / 100 | Low-medium | TDS withholding now wired into the org payout pipeline (Section 194-O default, 206AA fallback). MSME deadline derivation uses real `Organization.msmeStatus` + `msmeWrittenAgreementOnFile`. DPDP consent is stamped at signup and gates Stream upsert. GST place-of-supply is env-driven (`SUPPLIER_STATE_CODE`). Per-org sequential invoice numbering is live with atomic counter. PR-3 still owns: GSTIN registry verify, Form 26Q quarterly return generation, in-app consent withdrawal UI, IRN production approval. See `docs/compliance/15-india-compliance-shipping-checklist.md`. |
 | Dashboard/operator readiness | 86 / 100 | Medium-high | Org pages, org-workspace pages, PO/consent sidebar entries, and billing copy are now broad; personal dashboard scope filter semantics still need cleanup. |
 | Cross-cutting integration readiness | 79 / 100 | Medium | BetterAuth/Novu/Redis/Supabase/rate limiting are strong; Stream org scope, recordings retention, compliance ops, and monitoring remain partial. |
 
-Bottom line: the enterprise subsystem is materially better than the May 1 board because org activity pages, runtime appointment org stamping, wallet-in-billing, overage leg separation, invitation rate limiting, and several compliance helpers have moved forward. It is still not "production-grade" in the enterprise GA sense until compliance operations, payout submission proof, refund/clawback correctness, and scope semantics are hardened.
+Bottom line: the enterprise subsystem is materially better than the May 1 board because org activity pages, runtime appointment org stamping, wallet-in-billing, overage leg separation, invitation rate limiting, GST/MSME/TDS derivation, scheduled IRP/MSME/DataBreach compliance crons, and HRIS upload body protection have moved forward. It is still not "production-grade" in the enterprise GA sense until compliance production approval, payout submission proof, refund/clawback correctness, and scope semantics are hardened.
 
 ## 2026-05-02 Response Reconciliation
 
@@ -40,10 +40,10 @@ The follow-up response corrected several false or stale findings from the two re
 
 Validation of the updated docs surfaced a sixth false finding and additional pending items, all addressed in commit Round 2:
 
-- **FF-6 (GST):** Both the checklist and `ENTERPRISE_READINESS.md` previously claimed `deriveGstBreakdown()` returned zero tax. False — `lib/compliance/gst.ts:68–128` implements zero-rated export when `buyerCountry !== "IN"`, intra-state CGST 9% + SGST 9% (`Math.round(taxPaise/2)` split), inter-state IGST 18%, HSN defaulting to 999293, and place-of-supply derivation. Compliance score lifted accordingly. Only what is still missing for GA: GSTIN registry API verification, RCM routing, LUT enforcement.
+- **FF-6 (GST):** Both the checklist and `ENTERPRISE_READINESS.md` previously claimed `deriveGstBreakdown()` returned zero tax. False - `lib/compliance/gst.ts:68-128` implements zero-rated export when `buyerCountry !== "IN"`, intra-state CGST 9% + SGST 9% (`Math.round(taxPaise/2)` split), inter-state IGST 18%, HSN defaulting to 999293, and place-of-supply derivation. Compliance score lifted accordingly. Only what is still missing for GA: GSTIN registry API verification, RCM routing, LUT enforcement.
 - **IRP cron schedule wired:** `.github/workflows/irp-uploader.yml` runs daily at 02:30 UTC. The cron body already iterates `OrganizationInvoice.irpStatus = PENDING` rows within the 30-day CBIC window and calls `generateIrn`; this PR adds the GH Actions schedule and a `require.main === module` self-executor.
 - **MSME alert cron schedule wired:** `.github/workflows/msme-payment-alerts.yml` runs daily at 04:30 UTC. Stale "derivation is a stub" header comment removed; the function has been live since the 2026-04 TDS/MSME PR.
-- **DataBreach 72-hour DPDP deadline cron added:** `jobs/compliance/databreach-deadline-alerts.ts` plus an hourly schedule. Sweeps `DataBreach WHERE reportedAt IS NULL` and emails the DPDP-officer inbox (env: `DATABREACH_ALERT_EMAIL`) for rows ≤12h before, or past, the 72-hour Section 8(6) deadline. Closes part of #701 without committing to the full DPDP cascade.
+- **DataBreach 72-hour DPDP deadline cron added:** `jobs/compliance/databreach-deadline-alerts.ts` plus an hourly schedule. Sweeps `DataBreach WHERE reportedAt IS NULL` and emails the DPDP-officer inbox (env: `DATABREACH_ALERT_EMAIL`) for rows at most 12h before, or past, the 72-hour Section 8(6) deadline. Closes part of #701 without committing to the full DPDP cascade.
 - **HRIS CSV-upload body-size guard:** `app/api/organizations/[orgId]/hris/csv-upload/route.ts` now returns 413 when `Content-Length > 5 MB`. The Zod 5,000-row cap remains; this catches malicious bodies before they're buffered into memory.
 
 ## Compliance Reality Check
@@ -65,7 +65,7 @@ Production implication:
 
 | Area | What is now correctly fixed | Evidence |
 |---|---|---|
-| Runtime org activity stamping | `Appointment.organizationId` exists and checkout now threads org context into fresh appointments, so org activity pages no longer rely only on `Payment.organizationId`. | `prisma/schema.prisma`, `lib/payments/operations/checkout.ts` |
+| Runtime org activity stamping | `Payment.organizationId` and `billingAccountId` are populated at checkout for every org-attributed payment. `Appointment.organizationId` is now written at checkout for org-context bookings (consultation, subscription, webinar, class). `Waitlist.organizationId` and `Recording.organizationId` are populated at write time via `resolveEventHostOrgId` (waitlist creates) and `meetingSession.slotOfAppointment.appointment.organizationId` (recording webhook handlers). No backfill needed — only mock data exists. | `lib/payments/operations/checkout.ts`, `lib/stream/recording-handlers.ts` |
 | Org activity dashboards | Org appointments, waitlist, trials, documents, recordings, and reimbursements pages now exist under `/dashboard/organization/[orgId]/**` and route to org-scoped APIs. | `app/dashboard/organization/[orgId]/**`, `app/api/organizations/[orgId]/**` |
 | Wallet and billing unification | Wallet UI now lives under `billing/WalletTab.tsx`; the earlier `/credits` split called out in docs is no longer present in the current route manifest. | `app/dashboard/organization/[orgId]/billing/**` |
 | Core schema anchors | Enterprise schema covers capability booleans, memberships, billing accounts, contracts, programs, utilization, payment legs, org earnings, org payouts, org invoices, SSO settings, domain claims, audit logs, and activity org IDs. | `prisma/schema.prisma` |
@@ -87,6 +87,11 @@ Production implication:
 | Org invitation rate limiting | Invite POST is rate-limited per org before the Serializable transaction. | `lib/rate-limit.ts`, `app/api/organizations/[orgId]/invitations/route.ts` |
 | PO and consent navigation | Purchase Orders and Consent are first-class sidebar entries instead of deep-link-only pages. | `app/dashboard/organization/[orgId]/layout.tsx` |
 | Wallet billing copy | Wallet-funded orgs no longer see misleading NET-60 payment-terms copy. | `app/dashboard/organization/[orgId]/billing/BillingPageClient.tsx` |
+| GST tax derivation | `deriveGstBreakdown()` computes zero-rated export, intra-state CGST+SGST, inter-state IGST, HSN defaulting, and place-of-supply derivation. It is not a zero-tax safe-default stub. | `lib/compliance/gst.ts` |
+| IRP uploader schedule and self-exec | IRP uploader now has a daily GitHub Actions schedule and self-executes under `npx tsx`; connector remains env-gated and production-approval pending. | `.github/workflows/irp-uploader.yml`, `jobs/compliance/irp-uploader.ts` |
+| MSME alert schedule and self-exec | MSME payment alerts now have a daily GitHub Actions schedule and self-execute under `npx tsx`; the header no longer calls the 15/45-day derivation a stub. | `.github/workflows/msme-payment-alerts.yml`, `jobs/compliance/msme-payment-alerts.ts` |
+| DPDP DataBreach deadline tracking | A new hourly cron alerts on unreported DataBreach rows within 12 hours of the 72-hour reporting deadline, or already overdue. | `.github/workflows/databreach-deadline-alerts.yml`, `jobs/compliance/databreach-deadline-alerts.ts` |
+| HRIS upload body guard | CSV-shaped HRIS JSON upload now rejects `Content-Length > 5 MB` before `req.json()` buffers the body. | `app/api/organizations/[orgId]/hris/csv-upload/route.ts` |
 
 ## Incorrectly Fixed Or High-Risk Fixes
 
@@ -104,11 +109,11 @@ Production implication:
 | Org activity pages | Dedicated org pages exist for appointments, waitlist, trials, documents, recordings, reimbursements. | Need E2E proof that every new booking type, shared webinar/class, recording webhook, document upload, and waitlist join is stamped consistently. |
 | SSO | Backend primitives and UI exist. | Needs real IdP acceptance run: domain claim, provider config, password/OAuth rejection for enforced domain, SSO login, session bridge, dashboard access, anti-lockout. |
 | Invoicing | OrganizationInvoice, payment rollup fields, invoice PDF endpoints, invoice pay route, IRP fields, and retry telemetry exist. | PDF generation must be verified under production-like build/start; IRP payloads need live sandbox proof and accountant approval. |
-| GST | `deriveGstBreakdown` now computes export, intra-state, and inter-state tax in code. | Header still says stub; GSTIN checksum, invoice sequence controls, LUT/export proof, RCM, and production IRP payload validation need closure. |
-| MSME | Deadline computation and alert job exist. | Must ensure `mustPayByDate` is populated from real counterparty data and finance dashboard/email proof works in production. |
-| TDS | Computation exists. | Needs payout integration proof, TDS certificate/return workflow, correct section selection signed off by accountant, and non-resident path coverage. |
+| GST | `deriveGstBreakdown` now computes export, intra-state, and inter-state tax in code. | GSTIN registry verification, invoice sequence controls, LUT/export proof, RCM routing, accountant signoff, and production IRP payload validation need closure. |
+| MSME | Deadline computation, alert job, AND real-data wiring all in place. `createOrgPayoutBatch` reads `Organization.msmeStatus` + `msmeWrittenAgreementOnFile` (new columns) and passes them to `computeMsmePaymentDeadline` — the protective 15/45-day branch fires for MICRO/SMALL host orgs. | Operator UI to set `msmeStatus` on the org settings page (today the column is admin-edited via Prisma). Finance dashboard for outstanding MSME deadlines (the alert email surfaces the same info). |
+| TDS | Computation exists AND is wired into `lib/payments/payouts/org-payout-service.ts:createOrgPayoutBatch`: TDS is computed on every org payout, deducted from gross, and persisted (`tdsSectionApplied`, `tdsAmountPaise`, `dtaaRateApplied`). Settlement ledger reflects the post-TDS amount. | Quarterly Form 26Q / 27Q return-file generation, TDS certificate emission to host orgs, non-resident path coverage. CA sign-off on Section 194-O default still needed. |
 | Form 15CA/15CB and FEMA | Schema fields and stub function exist. | Still blocks cross-border consultants unless handled manually off-platform. |
-| DPDP | Consent artifact hashing and retention date exist. | `checkConsent` still always returns true; notice, withdrawal, breach, erasure, multilingual notices, and consent-manager operations are incomplete. |
+| DPDP | Consent artifact hashing, retention date, and DataBreach 72-hour deadline alerts exist. | `checkConsent` still always returns true; notice, withdrawal, breach intake/reporting workflow, erasure, multilingual notices, and consent-manager operations are incomplete. |
 | Org payouts | Batch creation, PROCESSING transition, RazorpayX submission scaffold, failure classification, and clawback fields exist. | Needs live gateway smoke, webhook completion to UTR, Stripe Connect branch, idempotency proof, and payout reversal playbook. |
 | Refunds | Reversal helpers, proportional utilization reversal, org earnings refunded amount, and clawback fields exist. | Multi-leg refunds, partial refunds after payout, credit notes, org invoice unbilling, and payout clawback automation remain GA blockers. |
 | Reconciliation | Ledger reconciliation and admin route exist. | Needs soak period, alert routing, and hard failure policy for payment-leg sum mismatch and ledger drift. |
@@ -187,12 +192,12 @@ Production implication:
 | Compliance area | Repo state | Production verdict |
 |---|---|---|
 | GST tax split | Real: `deriveGstBreakdown` computes zero-rated export, intra-state CGST 9% + SGST 9%, and inter-state IGST 18% with HSN defaulting and place-of-supply derivation *(FF-6 corrected)*. | Needs GSTIN checksum + registry-lookup verification, invoice-sequence controls, LUT/export proof, RCM routing, accountant signoff, invoice fixture tests. |
-| GST e-invoice / IRN | ClearTax scaffold exists; uploader stores retry telemetry. | Not GA until live/sandbox credentials, payload mapping, signed QR persistence, 24h cancel rule, and AP acceptance are proven. |
+| GST e-invoice / IRN | ClearTax scaffold exists; uploader stores retry telemetry and now runs daily through GitHub Actions. | Not GA until live/sandbox credentials, payload mapping, signed QR persistence, 24h cancel rule, and AP acceptance are proven. |
 | TDS | Real derivation exists for 194O/194J/194C, PAN fallback, certificate, DTAA. | Needs accountant signoff, payout integration proof, non-resident handling, TDS return workflow. |
-| MSME | Deadline helper implements 15/45-day rule; alert job exists. | Needs verified counterparty data, written-agreement evidence, finance dashboard proof, and comment/doc cleanup. |
+| MSME | Deadline helper implements 15/45-day rule; alert job exists and now runs daily through GitHub Actions. | Needs verified counterparty data, written-agreement evidence, finance dashboard proof, and production alert sink proof. |
 | Form 15CA/15CB | Stub function returns null references. | Blocks non-resident/cross-border payouts unless handled manually. |
 | FEMA/RBI PA-CB | Docs and schema fields exist. | Do not claim cross-border production support until provider route and compliance artifacts are signed off. |
-| DPDP | Hashing and retention date exist; docs acknowledge future work. | Not production-complete: consent enforcement, notices, withdrawal, breach, erasure, and audit workflows missing. |
+| DPDP | Hashing, retention date, and DataBreach deadline alerts exist. | Not production-complete: consent enforcement, notices, withdrawal, breach intake/reporting workflow, erasure, and audit workflows missing. |
 | Data residency | `dataResidencyRegion` exists on Organization. | Enforcement is not proven across storage, Stream, Novu, logs, analytics, and backups. |
 
 ## Dashboard And UX Audit
@@ -249,7 +254,7 @@ Production implication:
 | Documents | Org document lists inherit through appointment org scope. | Review workflow, export, retention, and role tests. |
 | Redis/Upstash | Locking and rate-limit docs exist; booking/wallet/payout locks are used. | Production alerting for lock contention and Redis failures. |
 | Supabase/storage | Branding and document storage helpers exist. | Data residency and retention enforcement by org region. |
-| Cron/GitHub Actions | Payout, reconciliation, compliance, cleanup jobs exist. | Cron staggering, production secrets, on-call alerts, and idempotency proof. |
+| Cron/GitHub Actions | Payout, reconciliation, compliance, cleanup jobs exist; IRP, MSME alerts, and DataBreach alerts now have schedules. | Cron staggering, production secrets, Slack/on-call alert routing, and idempotency proof. |
 | Monitoring | Monitoring docs exist. | Real dashboards, alert thresholds, SLOs, log scrubbing, and compliance evidence. |
 
 ## Logically Pending To Reach 100
@@ -321,6 +326,12 @@ Production implication:
 - [x] Org invite rate limit added.
 - [x] Purchase Orders and Consent sidebar entries added.
 - [x] Wallet org billing copy corrected.
+- [x] GST derivation corrected as live, not zero-tax stubbed.
+- [x] IRP uploader GH Actions schedule added.
+- [x] MSME payment alerts GH Actions schedule added.
+- [x] DataBreach 72-hour deadline alert cron added.
+- [x] HRIS CSV-upload body-size guard added.
+- [x] IRP/MSME compliance jobs now self-execute under `npx tsx`.
 
 ### Incorrectly Or Riskily Fixed Checklist
 
@@ -332,12 +343,12 @@ Production implication:
 
 - [ ] SSO is implemented structurally but not acceptance-proven.
 - [ ] IRP can be env-gated live but is not production-approved.
-- [ ] GST derives core tax split but lacks checksum/sequence/export proof.
+- [ ] GST derives core tax split but lacks registry verification, RCM/LUT enforcement, sequence proof, and accountant signoff.
 - [ ] Payouts can submit to RazorpayX but need sandbox/prod proof and webhook closeout.
 - [ ] Refunds reverse some enterprise state but not all real-world money permutations.
 - [ ] Dashboards are broad but not uniformly scope-filtered.
 - [ ] Stream and recording org context exists only partially.
-- [ ] DPDP has artifacts, not full legal workflow.
+- [ ] DPDP has artifacts and breach-deadline alerts, not the full legal workflow.
 
 ## Coverage Appendix
 

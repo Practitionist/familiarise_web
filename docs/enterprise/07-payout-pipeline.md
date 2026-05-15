@@ -70,15 +70,19 @@ windows.
 5. Emits an `OrgAuditLog` entry (`PAYOUT` category,
    `PAYOUT_INITIATED`).
 
-A cron that processes PENDING payouts (calls Razorpay Payouts /
-Cashfree Payouts) is stubbed in v1 — see the harness verdict. The
-current API response marks the row as "ready for manual processing"
-and the admin flips it to `PROCESSED` via the PATCH handler.
+A weekly cron rolls RELEASED earnings into payout batches; live
+submission to RazorpayX is gated by `ENABLE_LIVE_PAYOUTS` and
+implemented in `lib/payments/payouts/org-payout-service.ts` with
+idempotency-key persistence. `PROCESSING → COMPLETED` requires the
+webhook reconciler (PR-3 — currently admin can flip via the PATCH
+handler).
 
 ## `OrganizationPayout` fields for India statutory
 
-The model already carries every statutory column the Indian payout
-pipeline needs; population is stubbed but the fields are authoritative:
+The model carries every statutory column the Indian payout pipeline
+needs. TDS and MSME deadline are populated live by `createOrgPayoutBatch`
+(see below); FEMA (Form 15CA/CB, FIRC) remains manual until the first
+non-resident host org ships.
 
 ```prisma
 tdsSectionApplied String?   // "194J" | "194O" | "194C"
@@ -96,20 +100,29 @@ firceRef          String?
 
 ### TDS
 
-- `ConsultantTaxInfo` + `ConsultantProfile.tdsSection` drive the TDS
-  section per expert. Org-side payouts default to `194J` (professional
-  services) unless `ConsultantProfile.tdsLowerRateCert` is populated
-  (Section 197 cert reference, rare).
-- The withheld amount is stored in `tdsAmountPaise` and filed against
-  the org's PAN. A follow-up cron emits quarterly `TDSRecord` rows.
+- TDS derivation is live in `lib/compliance/tds.ts:computeTdsForPayout`.
+  Default is Section 194-O (1%) for ECO payouts (Familiarise is the
+  e-commerce operator). Explicit overrides honoured: `ConsultantProfile.tdsSection`
+  pivots between 194J / 194-O / 194C; `ConsultantProfile.tdsLowerRateCert`
+  + `tdsRate` applies a Section 197 certificate rate.
+- PAN fallback (Section 206AA): if `panNumber` is null or malformed
+  (`/^[A-Z]{5}[0-9]{4}[A-Z]$/`), withhold at 20% punitive rate.
+- For non-residents, DTAA rates from `lib/compliance/dtaa-rates.json`
+  are applied only when strictly lower than the section default.
+- `createOrgPayoutBatch` deducts `tdsAmountPaise` from the gross before
+  gateway dispatch and persists `tdsSectionApplied`, `tdsAmountPaise`,
+  `dtaaRateApplied`. Settlement ledger reflects the post-TDS amount.
+- Form 26Q / 27Q quarterly returns are still on the backlog
+  (`docs/compliance/15-india-compliance-shipping-checklist.md` §2.1).
 
 ### MSME 15/45-day rule
 
-When an expert has `ConsultantProfile.msmeStatus != NONE` and
-`writtenAgreementWithFamiliarise = true`, payment must land within 15
-days (no written agreement → 45 days) of the invoice date. The cron
-sets `mustPayByDate` accordingly; breaches are flagged on the admin
-payouts dashboard.
+`Organization.msmeStatus` + `msmeWrittenAgreementOnFile` are read by
+`createOrgPayoutBatch` and passed to `computeMsmePaymentDeadline`
+(`lib/compliance/msme.ts`). MICRO + written agreement → 45 days;
+MICRO/SMALL no agreement → 15 days; MEDIUM/NONE → `contract.paymentTermsDays`.
+The MSME alert cron (`jobs/compliance/msme-payment-alerts.ts`, daily
+04:30 UTC) sweeps overdue payouts.
 
 ### Cross-border (FEMA)
 

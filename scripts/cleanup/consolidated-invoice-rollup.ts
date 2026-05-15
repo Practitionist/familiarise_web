@@ -38,11 +38,11 @@
  *   - app/api/cleanup/consolidated-invoice-rollup/route.ts (HTTP endpoint)
  */
 
-import { randomBytes } from "crypto";
 import { Prisma } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { AUDIT_ACTIONS } from "../../lib/enterprise/audit-actions";
 import { BILLABLE_ORG_STATUSES } from "../../lib/enterprise/org-status";
+import { generateOrgInvoiceNumber } from "../../lib/payments/billing/invoice-numbering";
 
 export interface ConsolidatedInvoiceRollupResult {
   success: boolean;
@@ -59,14 +59,11 @@ function isFlagOn(): boolean {
   return process.env.ENABLE_CONSOLIDATED_INVOICE === "true";
 }
 
-function generateInvoiceNumber(parentOrgId: string): string {
-  // Mirrors the format used by POST /organizations/[orgId]/billing-account/invoices.
-  // The "ROLL-" prefix disambiguates rolled-up invoices from regular
-  // billing-account invoices when ops greps the ledger.
-  return `ROLL-${parentOrgId.slice(0, 6)}-${Date.now()}-${randomBytes(3)
-    .toString("hex")
-    .toUpperCase()}`;
-}
+// Rollup invoices share the per-org sequence with regular invoices; the
+// number generator is shared via `lib/payments/billing/invoice-numbering`.
+// Old format was `ROLL-<orgPrefix>-<ts>-<rand>`; the new format is the
+// same `<PREFIX>-<FY>-<SEQ>` as everywhere else so ops can grep a single
+// pattern. The "rollup-ness" is recorded on the audit log + items[] JSON.
 
 export async function runConsolidatedInvoiceRollup(): Promise<ConsolidatedInvoiceRollupResult> {
   const now = new Date();
@@ -103,10 +100,12 @@ export async function runConsolidatedInvoiceRollup(): Promise<ConsolidatedInvoic
     select: {
       id: true,
       name: true,
+      slug: true,
       billingAccountId: true,
       reportingCurrency: true,
       gstin: true,
       hsnDefault: true,
+      invoiceNumberPrefix: true,
       children: { select: { id: true, name: true } },
     },
   });
@@ -162,7 +161,6 @@ export async function runConsolidatedInvoiceRollup(): Promise<ConsolidatedInvoic
         0,
       );
 
-      const invoiceNumber = generateInvoiceNumber(parent.id);
       const dueDate = new Date(now);
       dueDate.setDate(dueDate.getDate() + 30); // parent net-30
 
@@ -178,11 +176,22 @@ export async function runConsolidatedInvoiceRollup(): Promise<ConsolidatedInvoic
       });
 
       await prisma.$transaction(async (tx) => {
+        const { invoiceNumber, fiscalYear } = await generateOrgInvoiceNumber(
+          tx,
+          {
+            id: parent.id,
+            slug: parent.slug,
+            invoiceNumberPrefix: parent.invoiceNumberPrefix,
+          },
+          now,
+        );
+
         const created = await tx.organizationInvoice.create({
           data: {
             billingAccountId: parent.billingAccountId!,
             organizationId: parent.id,
             invoiceNumber,
+            fiscalYear,
             status: "ISSUED",
             displayCurrency: parent.reportingCurrency,
             inrEquivalentPaise: totalPaise,

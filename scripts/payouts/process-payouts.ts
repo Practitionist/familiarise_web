@@ -66,7 +66,11 @@ async function createRazorpayPayout(
     headers: {
       "Content-Type": "application/json",
       Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`,
-      "X-Payout-Idempotency": `payout_${payoutId}_${Date.now()}`,
+      // Deterministic key — must match across retries so RazorpayX dedupes
+      // re-submissions of the same payout (#enterprise close-out 2026-05-15).
+      // Previously included `Date.now()`, which defeated dedupe and risked
+      // double payouts when the network round-trip retried.
+      "X-Payout-Idempotency": `payout_${payoutId}`,
     },
     body: JSON.stringify({
       account_number: accountNumber,

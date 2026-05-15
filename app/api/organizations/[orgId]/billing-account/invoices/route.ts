@@ -12,11 +12,11 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
-import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
+import { generateOrgInvoiceNumber } from "@/lib/payments/billing/invoice-numbering";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { notifyOrgInvoiceIssued } from "@/lib/novu/org-workflows";
 
@@ -115,11 +115,13 @@ export async function POST(
     select: {
       id: true,
       name: true,
+      slug: true,
       gstStateCode: true,
       gstin: true,
       hsnDefault: true,
       dataResidencyRegion: true,
       billingAccountId: true,
+      invoiceNumberPrefix: true,
     },
   });
   if (!org?.billingAccountId) {
@@ -171,23 +173,26 @@ export async function POST(
   // creation so retroactive tax-rule changes don't rewrite history.
   const gst = deriveGstBreakdown({
     subtotalPaise: subtotal,
-    supplierStateCode: "KA",
+    // Env-overridable; see jobs/billing/generate-subscription-invoices.ts
+    // for the same pattern. Falls back to KA when unset.
+    supplierStateCode: process.env.SUPPLIER_STATE_CODE ?? "KA",
     buyerStateCode: org.gstStateCode,
     buyerCountry: org.dataResidencyRegion === "IN" ? "IN" : "US",
     hsnCode: org.hsnDefault,
   });
 
-  // Invoice numbers are per-year-per-org sequences. Kept simple here
-  // (timestamp + random suffix) — a production run would use a lookup-
-  // table counter so numbers stay continuous even after deletions. The
-  // 6-hex random tail prevents collisions when two POSTs land in the
-  // same millisecond for the same org (the unique constraint would
-  // otherwise reject one of them with P2002).
-  const invoiceNumber = `INV-${orgId.slice(0, 6)}-${Date.now()}-${randomBytes(3)
-    .toString("hex")
-    .toUpperCase()}`;
+  const issuedAt = body.issueImmediately ? new Date() : new Date();
 
   const invoice = await prisma.$transaction(async (tx) => {
+    // Per-org sequential numbering: counter row atomically reserves the
+    // next seq under (org, fiscal-year) so two concurrent POSTs can't
+    // collide on the @@unique([organizationId, invoiceNumber]) constraint.
+    const { invoiceNumber, fiscalYear } = await generateOrgInvoiceNumber(
+      tx,
+      { id: org.id, slug: org.slug, invoiceNumberPrefix: org.invoiceNumberPrefix },
+      issuedAt,
+    );
+
     const created = await tx.organizationInvoice.create({
       data: {
         billingAccountId: org.billingAccountId!,
@@ -195,6 +200,7 @@ export async function POST(
         purchaseOrderId: body.purchaseOrderId ?? null,
         contractId: body.contractId ?? null,
         invoiceNumber,
+        fiscalYear,
         status: body.issueImmediately ? "ISSUED" : "DRAFT",
         displayCurrency: body.displayCurrency,
         inrEquivalentPaise: gst.totalPaise,

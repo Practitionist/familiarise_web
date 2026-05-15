@@ -1,7 +1,12 @@
 # Enterprise Subsystem — Prisma Schema Diagram
 
-Generated from `prisma/schema.prisma` (April 2026, enterprise-arch4 branch).
+Generated from `prisma/schema.prisma`. Last refreshed 2026-05-15
+after the Round-3 enterprise close-out (per-org invoice numbering,
+org-side MSME status, contact directory).
 All enterprise-specific models across six domain clusters: Identity & Access, Commercial/Billing, Programs & Entitlements, Supply/Payouts, Three Ledgers, and Compliance/HRIS.
+
+For a compact, Organization-centred ER view (rather than this clustered
+flowchart), see [`../00-overview.md`](../00-overview.md#schema-map--organization-at-the-centre).
 
 ---
 
@@ -10,7 +15,7 @@ All enterprise-specific models across six domain clusters: Identity & Access, Co
 ```mermaid
 flowchart TD
     subgraph ORG["Organization (anchor)"]
-        Org["Organization\nstatus · canSponsor · canHost\nGST · hierarchy · currency"]
+        Org["Organization\nstatus · canSponsor · canHost\nGST · hierarchy · currency\nmsmeStatus · msmeWrittenAgreementOnFile\ninvoiceNumberPrefix · billing/support contacts"]
         OrgWorkspace["OrgWorkspaceProfile"]
         OrgPlan["OrganizationPlan\ncatalog of plans curated by org"]
     end
@@ -30,7 +35,8 @@ flowchart TD
         BillSub["BillingSubscription\nmodel PER_SEAT / FLAT_FEE\ncycle · activeSeatCount"]
         PO["PurchaseOrder\npoNumber · totalAmountPaise\nremainingAmountPaise"]
         Wallet["WalletEntry\ndeltaPaise · reason · balanceAfter\nproviderOrderId (idempotency)"]
-        Invoice["OrganizationInvoice\nIRN · GST fields · e-invoice\nstatus · dueDate · items JSON"]
+        Invoice["OrganizationInvoice\nIRN · GST fields · e-invoice\ninvoiceNumber · fiscalYear (CGST Rule 46)\n@@unique([orgId, invoiceNumber])\nstatus · dueDate · items JSON"]
+        InvCounter["OrgInvoiceCounter\n(organizationId, fiscalYear) PK\nnextSeq — atomic ON CONFLICT increment"]
         RateCard["RateCard\nplatformBps · orgBps · consultantBps\neffectiveFrom · effectiveTo"]
     end
 
@@ -45,7 +51,7 @@ flowchart TD
     subgraph SUPPLY["Supply / Host Side"]
         PayoutAcct["OrganizationPayoutAccount\nencrypted bank details\nstripeConnectId · razorpayContactId\nstatus"]
         OrgEarn["OrganizationEarnings\ngrossAmountPaise · orgSharePaise\nconsultantSharePaise · platformFeePaise\nrate-card snapshot · status"]
-        OrgPayout["OrganizationPayout\namountPaise · status · gateway\nperiodStart · periodEnd\nTDS / RBI / FX fields"]
+        OrgPayout["OrganizationPayout\namountPaise (post-TDS) · netPayoutPaise\ntdsSectionApplied · tdsAmountPaise (194-O default)\nmustPayByDate (MSME 43B(h))\ndtaaRateApplied · idempotencyKey · gateway"]
     end
 
     subgraph LEDGERS["Three Ledgers (immutable)"]
@@ -86,6 +92,8 @@ flowchart TD
     BA -->|"1 : 1"| BillSub
     BA -->|"1 : N"| Wallet
     BA -->|"1 : N"| Invoice
+    Org -->|"1 : N\nper-FY seq"| InvCounter
+    Invoice -.->|"allocates seq from"| InvCounter
     Contract -->|"N : 0/1"| PO
     Contract -->|"1 : 1"| BillSub
     Contract -->|"1 : N"| Invoice
@@ -154,6 +162,9 @@ flowchart TD
 | `OrgInvoiceStatus` | DRAFT · ISSUED · PAID · OVERDUE · VOID · CANCELLED · REFUNDED |
 | `IrpStatus` | PENDING · GENERATED · CANCELLED · FAILED |
 | `OrgAuditCategory` | MEMBER · CONTRACT · PROGRAM · WALLET · INVOICE · PAYOUT · SETTINGS · CONSENT · CATALOG · SYSTEM |
+| `MsmeStatus` | NONE · MICRO · SMALL · MEDIUM |
+| `OrgPlanVisibility` | PUBLIC · ORG_ONLY · ORG_AND_PUBLIC |
+| `PaymentLegSource` | CARD · WALLET · REFERRAL_CREDIT · INVOICE_ACCRUAL · OVERAGE_INVOICE_ACCRUAL · LICENSE |
 | `HrisProvider` | WORKDAY · BAMBOOHR · SAP · ORACLE · CERIDIAN · DARWINBOX · CSV |
 | `PayoutRecipient` | SELF · ORGANIZATION |
 | `SettlementKind` | INVOICE_ISSUED · INVOICE_PAID · PAYMENT_RECEIVED · REFUND_ISSUED · PAYOUT_SENT · PAYOUT_REVERSED · CHARGEBACK · CREDIT_NOTE |
@@ -166,10 +177,10 @@ flowchart TD
 |---|---|
 | Organization (anchor) | Organization, OrgWorkspaceProfile, OrganizationPlan |
 | Identity & Access | Membership, Member, Invitation, OrganizationSSOSettings, OrgDomainClaim, SsoProvider |
-| Commercial / Billing | BillingAccount, Contract, BillingSubscription, PurchaseOrder, WalletEntry, OrganizationInvoice, RateCard |
+| Commercial / Billing | BillingAccount, Contract, BillingSubscription, PurchaseOrder, WalletEntry, OrganizationInvoice, OrgInvoiceCounter, RateCard |
 | Programs & Entitlements | Program, LicensedSeatConfig, CreditPoolConfig, ProgramAssignment, BookingUtilization |
 | Supply / Payouts | OrganizationPayoutAccount, OrganizationEarnings, OrganizationPayout |
 | Three Ledgers | UsageLedgerEntry, FundingLedgerEntry, SettlementLedgerEntry, LedgerReconciliationReport |
 | HRIS | HrisConfig, HrisSyncJob, HrisEmployeeMap |
 | Compliance / DPDP | ConsentArtifact, DataBreach, OrgAuditLog |
-| **Total** | **33 models** |
+| **Total** | **34 models** |

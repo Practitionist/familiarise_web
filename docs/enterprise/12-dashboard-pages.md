@@ -107,62 +107,24 @@ Visibility here is the **capability** gate only. Every tab is **also** role-gate
 | `/analytics`   | ✅      | ✅   | ✅     | MANAGER   | yes | Rollups respect capability — host-side numbers hidden when `canHost = false` and vice versa. |
 | `/settings`    | ✅      | ✅   | ✅     | MAINTAINER| yes | Branding + policy. |
 | `/settings/sso`| ✅      | ✅   | ✅     | **OWNER** | no — reached from inside /settings | SSO policy + providers + domain claims. |
-| `/contracts`   | ✅      | —    | ✅     | MAINTAINER (API) | **no — deep-link only** | Page has no `useRequireOrgAccess` gate today; relies on API rejection + sidebar omission. |
-| `/purchase-orders` | ✅  | —    | ✅     | MANAGER (API) | **no — deep-link only** | Same as `/contracts` — page renders but API calls fail for sub-MANAGER. |
-| `/consent`     | ✅      | ✅   | ✅     | MANAGER (API) | **no — deep-link only** | DPDP artifact roster; not capability-gated. |
+| `/contracts`   | ✅      | —    | ✅     | MAINTAINER (page + API) | **yes** under `canSponsor && MAINTAINER+` | Round-2 close-out added `useRequireOrgAccess({minimumRole: "MAINTAINER", canSponsor: true})` + sidebar entry. |
+| `/purchase-orders` | ✅  | —    | ✅     | MAINTAINER (page + API) | **yes** under `canSponsor && MAINTAINER+` | Receipt icon. |
+| `/consent`     | ✅      | ✅   | ✅     | MANAGER (page + API) | **yes** under `MANAGER+` | ShieldCheck icon; DPDP artifact roster. |
 
 > The `/plans` page (previous "org catalog" over `OrganizationPlan`)
 > was removed in the legacy-stub cleanup; its capability-driven
 > replacement (`/catalog`) is reserved in the sidebar with
 > `show: false` and will re-enable when the page ships.
 
-### TODO — `/billing` vs `/credits` unification (code drift)
+### Billing / Credits surfaces
 
-This doc describes `/billing` as the single BillingAccount surface
-(top-ups + invoices together), with `/credits` kept only as a
-redirect alias for backward compatibility.
-
-The code currently diverges from that design:
-
-- `app/dashboard/organization/[orgId]/billing/BillingPageClient.tsx`
-  (671 lines) ships the invoice / payment-terms / pending-charges
-  view only.
-- `app/dashboard/organization/[orgId]/credits/page.tsx` (475 lines)
-  ships the wallet balance / top-up / WalletEntry history view as
-  a distinct, non-redirecting page.
-- The sidebar renders both as separate tabs under different gates
-  (`layout.tsx:186-199`).
-
-Impact: a WALLET-funded org's OWNER visits Credits to top up the
-wallet but Billing to see receipts / invoices — two tabs for one
-conceptual concern. Observed during manual testing: the Billing
-page shows "NET-60 payment terms" and a "Create invoice" button
-even for WALLET-funded orgs where neither applies.
-
-Resolution options for the senior-dev owner:
-
-1. **Preferred — unify (docs are right).** Fold the wallet UI from
-   `/credits/page.tsx` into `BillingPageClient.tsx` as a
-   `fundingSource`-branching section. Turn `/credits` into a
-   server-side redirect to `/billing` (per the docs' "legacy alias
-   kept for redirects"). Drop the separate Credits sidebar tab.
-
-2. **Alternate — embrace the split.** If the separation is
-   deliberate, update this doc to describe two first-class pages
-   and clean up the BillingPage surface so non-WALLET-specific
-   cards (NET terms, Create invoice) don't render on a WALLET
-   org's `/billing`.
-
-Do NOT legitimize the current drift by leaving both pages as-is —
-the duplicate-purpose sidebar surface is a real UX bug.
-
-> **Sidebar vs page-level note.** `/contracts`, `/purchase-orders`,
-> and `/consent` exist as routes but are not listed in the sidebar
-> memo (`layout.tsx:164-208`). They also lack page-level
-> `useRequireOrgAccess` guards, so a sub-MANAGER who deep-links to
-> them will see the page chrome load, then watch every API call
-> fail. Worth adding either a `useRequireOrgAccess` guard + sidebar
-> entry, or an explicit redirect — tracked as follow-up.
+`/billing` is the primary BillingAccount surface (invoices + payment
+terms + pending charges). Wallet UI now lives under
+`billing/WalletTab.tsx`; the `/credits` route is a backward-compat
+alias. The NET-60 StatCard is conditional on
+`fundingSource !== "WALLET"`. Full collapse of `/credits` into a
+single `/billing` URL is tracked as a P2 UX follow-up — both pages
+work today and route protection is unified.
 
 ## Navigation source of truth
 

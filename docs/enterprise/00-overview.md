@@ -45,29 +45,187 @@ orgs have all been deactivated. See
 `docs/onboarding/onboarding-system-reference.md` §0 for the full
 profile-model roster.
 
-```
-Organization                       BillingAccount (at most one per org)
-┌──────────────────────────────┐   ┌──────────────────────────────────┐
-│ canSponsor, canHost          │1:1│ fundingSource                     │
-│ status                       │◄──┤ walletBalance (WALLET only)       │
-│ capabilitiesExtra (Json)     │   │ creditLimit   (INVOICE only)      │
-│ parentId/rootId/depth        │   └────────┬─────────────────────────┘
-└──────────────┬───────────────┘            │
-               │ memberships[]             contracts[]
-               │                            ▼
-        ┌──────┴────────────┐       ┌─────────────────────────────────┐
-        │ Membership        │       │ Contract                         │
-        │ role (MemberRole) │       │ effectiveFrom/To, paymentTerms  │
-        │ status            │       │ rateCardId, programs[]          │
-        │ payoutRecipient   │       └──────────┬──────────────────────┘
-        │ rateCardOverride  │                  │
-        └────────┬──────────┘                  ▼
-                 │                       ┌──────────────────────────┐
-                 │ programAssignments[]  │ Program (LICENSED_SEAT | │
-                 └──────────────────────►│         CREDIT_POOL)      │
-                                         │   licensedSeatConfig     │
-                                         │   creditPoolConfig       │
-                                         └──────────────────────────┘
+### Schema map — Organization at the centre
+
+The ER diagram below covers the enterprise-specific models in
+`prisma/schema.prisma`. Fields shown are the load-bearing ones (id,
+key FKs, status enums, settlement-relevant amounts); see the model
+definitions for the full list. For a flowchart-style view that clusters
+models by subsystem, see [`reference/schema-diagram.md`](reference/schema-diagram.md).
+
+```mermaid
+erDiagram
+    Organization ||--o{ Membership          : "typed members"
+    Organization ||--o{ Member              : "BetterAuth bridge"
+    Organization ||--o{ Invitation          : "pending invites"
+    Organization ||--o| BillingAccount      : "at most one (canSponsor)"
+    Organization ||--o| OrganizationPayoutAccount : "at most one (canHost)"
+    Organization ||--o| OrganizationSSOSettings   : "at most one"
+    Organization ||--o{ OrgDomainClaim      : "verified domains"
+    Organization ||--o{ Contract            : "commercial agreements"
+    Organization ||--o{ OrganizationInvoice : "invoices"
+    Organization ||--o{ PurchaseOrder       : "POs"
+    Organization ||--o{ OrgInvoiceCounter   : "per-FY seq counters"
+    Organization ||--o{ OrganizationEarnings: "host earnings"
+    Organization ||--o{ OrganizationPayout  : "host payouts"
+    Organization ||--o{ OrgAuditLog         : "audit trail"
+    Organization ||--o| HrisConfig          : "directory sync (opt)"
+    Organization ||--o{ RateCard            : "owned cards"
+
+    User ||--o{ Membership                  : "joined orgs"
+    User ||--o| OrgWorkspaceProfile         : "operator identity"
+    User ||--o{ ConsentArtifact             : "DPDP grants"
+
+    Membership ||--o| Member                : "betterAuthMemberId"
+    Membership ||--o{ ProgramAssignment     : "entitled to"
+    Membership }o--o| RateCard              : "override (optional)"
+
+    BillingAccount ||--o{ Contract          : "funded by"
+    BillingAccount ||--o| BillingSubscription : "recurring billing"
+    BillingAccount ||--o{ WalletEntry       : "wallet ledger"
+    BillingAccount ||--o{ FundingLedgerEntry: "funding ledger"
+    BillingAccount ||--o{ OrganizationInvoice : "billed"
+
+    Contract ||--o{ Program                 : "subtypes"
+    Contract ||--o| BillingSubscription     : "cycle"
+    Contract }o--o| PurchaseOrder           : "linked PO"
+    Contract }o--o| RateCard                : "negotiated card"
+
+    Program ||--o| LicensedSeatConfig       : "if LICENSED_SEAT"
+    Program ||--o| CreditPoolConfig         : "if CREDIT_POOL"
+    Program ||--o{ ProgramAssignment        : "member-scoped"
+
+    ProgramAssignment ||--o{ BookingUtilization : "cap accounting"
+    BookingUtilization ||--|| Payment       : "1:1 lock"
+
+    OrganizationInvoice ||--o{ SettlementLedgerEntry : "issued / paid"
+    OrganizationPayout  ||--o{ SettlementLedgerEntry : "sent / reversed"
+    OrganizationPayout  ||--o{ OrganizationEarnings  : "rolled up"
+
+    Organization {
+        string  id              PK
+        string  slug            UK
+        OrgStatus status
+        bool    canSponsor
+        bool    canHost
+        string  parentId        FK
+        string  rootId
+        string  pan
+        string  gstin
+        string  gstStateCode
+        MsmeStatus msmeStatus
+        bool    msmeWrittenAgreementOnFile
+        string  invoiceNumberPrefix
+        string  billingContactEmail
+        string  supportContactEmail
+        string  billingAccountId FK
+    }
+    BillingAccount {
+        string         id          PK
+        string         ownerOrgId  UK
+        FundingSource  fundingSource
+        Currency       currency
+        int            walletBalance "paise (WALLET only)"
+        int            creditLimit   "paise (INVOICE only)"
+    }
+    Contract {
+        string         id              PK
+        string         organizationId  FK
+        string         billingAccountId FK
+        ContractStatus status
+        date           effectiveFrom
+        date           effectiveTo
+        int            paymentTermsDays "Net-NN"
+        string         rateCardId      FK
+    }
+    Program {
+        string       id           PK
+        string       contractId   FK
+        ProgramType  type         "LICENSED_SEAT | CREDIT_POOL"
+        json         coveredPlanTypes
+        json         allowedCategories
+    }
+    ProgramAssignment {
+        string id            PK
+        string programId     FK
+        string membershipId  FK
+        date   periodStart
+        date   periodEnd
+        int    engagementsUsed
+        int    overageCount
+    }
+    BookingUtilization {
+        string id              PK
+        string programAssignmentId FK
+        string paymentId       UK "1:1 with Payment"
+        int    engagementsConsumed
+        int    priceAtBookingPaise
+        int    platformBpsAtBooking
+        int    orgBpsAtBooking
+        int    consultantBpsAtBooking
+        date   reversedAt
+    }
+    OrganizationInvoice {
+        string           id              PK
+        string           organizationId  FK
+        string           invoiceNumber   "unique per (org, FY)"
+        int              fiscalYear
+        OrgInvoiceStatus status
+        int              subtotalPaise
+        int              igstPaise
+        int              cgstPaise
+        int              sgstPaise
+        int              totalPaise
+        string           irn
+        IrpStatus        irpStatus
+    }
+    OrgInvoiceCounter {
+        string organizationId PK
+        int    fiscalYear     PK
+        int    nextSeq        "atomic ON CONFLICT increment"
+    }
+    OrganizationPayout {
+        string         id                PK
+        string         organizationId    FK
+        int            amountPaise       "= netPayout − TDS"
+        int            netPayoutPaise
+        int            tdsAmountPaise
+        string         tdsSectionApplied "194O default"
+        date           mustPayByDate     "MSME 43B(h) deadline"
+        PayoutStatus   status
+        string         gatewayPayoutId   UK
+        string         idempotencyKey    UK
+    }
+    OrganizationPayoutAccount {
+        string  id                       PK
+        string  organizationId           UK
+        string  accountNumberEncrypted   "AES-GCM"
+        string  razorpayFundAccountId
+        PayoutAccountStatus status
+    }
+    Membership {
+        string       id                 PK
+        string       organizationId     FK
+        string       userId             FK
+        MemberRole   role
+        MemberStatus status
+        string       consulteeProfileId FK
+        string       consultantProfileId FK
+        string       rateCardOverrideId FK
+        PayoutRecipient payoutRecipient
+    }
+    OrgWorkspaceProfile {
+        string userId PK
+    }
+    ConsentArtifact {
+        string id                  PK
+        string userId              FK
+        json   purposeCodes
+        date   grantedAt
+        date   withdrawnAt
+        string hash                "SHA-256 tamper-evident"
+        date   auditRetainedUntil  "+ 7y"
+    }
 ```
 
 ## Index

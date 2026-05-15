@@ -29,6 +29,7 @@
 
 import prisma from "@/lib/prisma";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
+import { generateOrgInvoiceNumber } from "@/lib/payments/billing/invoice-numbering";
 import { BILLABLE_ORG_STATUSES } from "@/lib/enterprise/org-status";
 import { Currency, OrgInvoiceStatus, Prisma } from "@prisma/client";
 
@@ -49,7 +50,13 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
       contract: {
         include: {
           organization: {
-            select: { id: true, gstStateCode: true, gstin: true },
+            select: {
+              id: true,
+              slug: true,
+              gstStateCode: true,
+              gstin: true,
+              invoiceNumberPrefix: true,
+            },
           },
         },
       },
@@ -75,7 +82,11 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
 
     const gst = deriveGstBreakdown({
       subtotalPaise: subtotal,
-      supplierStateCode: "KA",
+      // Supplier state defaults to Karnataka but is env-overridable so a
+      // change of business address (or a regional GSTIN) doesn't require
+      // a code change. Place-of-supply rules use this to decide CGST+SGST
+      // vs IGST split.
+      supplierStateCode: process.env.SUPPLIER_STATE_CODE ?? "KA",
       buyerStateCode: sub.contract.organization.gstStateCode,
       buyerCountry: "IN",
     });
@@ -90,13 +101,6 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
     else if (sub.cycle === "QUARTERLY")
       nextEnd.setMonth(nextEnd.getMonth() + 3);
     else nextEnd.setFullYear(nextEnd.getFullYear() + 1);
-
-    // Include the subscription id suffix so an org with two subs due the
-    // same day doesn't collide on the unique invoiceNumber constraint.
-    const invoiceNumber = `AUTO-${sub.contract.organization.id.slice(0, 6)}-${now
-      .toISOString()
-      .slice(0, 10)
-      .replace(/-/g, "")}-${sub.id.slice(0, 8)}`;
 
     try {
       const result = await prisma.$transaction(
@@ -118,11 +122,23 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
             return { claimed: false as const };
           }
 
+          // Per-org sequential number — atomic counter reservation.
+          const { invoiceNumber, fiscalYear } = await generateOrgInvoiceNumber(
+            tx,
+            {
+              id: sub.contract.organization.id,
+              slug: sub.contract.organization.slug,
+              invoiceNumberPrefix: sub.contract.organization.invoiceNumberPrefix,
+            },
+            now,
+          );
+
           const invoice = await tx.organizationInvoice.create({
             data: {
               billingAccountId: sub.billingAccountId,
               organizationId: sub.contract.organization.id,
               invoiceNumber,
+              fiscalYear,
               status: OrgInvoiceStatus.ISSUED,
               displayCurrency: Currency.INR,
               inrEquivalentPaise: gst.totalPaise,

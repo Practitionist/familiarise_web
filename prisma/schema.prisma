@@ -45,16 +45,16 @@ model User {
   Payment                 Payment[]
 
   // Relations
-  consultantProfile   ConsultantProfile?
-  consultantProfileId String?            @unique
-  consulteeProfile    ConsulteeProfile?
-  consulteeProfileId  String?            @unique
-  staffProfile        StaffProfile?
-  staffProfileId      String?            @unique
-  adminProfile        AdminProfile?
-  adminProfileId      String?            @unique
-  orgWorkspaceProfile     OrgWorkspaceProfile?
-  orgWorkspaceProfileId   String?            @unique
+  consultantProfile     ConsultantProfile?
+  consultantProfileId   String?              @unique
+  consulteeProfile      ConsulteeProfile?
+  consulteeProfileId    String?              @unique
+  staffProfile          StaffProfile?
+  staffProfileId        String?              @unique
+  adminProfile          AdminProfile?
+  adminProfileId        String?              @unique
+  orgWorkspaceProfile   OrgWorkspaceProfile?
+  orgWorkspaceProfileId String?              @unique
 
   slotsOfAppointment SlotOfAppointment[] @relation("SlotOfAppointmentToUser")
   Waitlist           Waitlist[]
@@ -466,9 +466,26 @@ model Organization {
   pan          String?      @db.VarChar(10)
   hsnDefault   String       @default("999293") // SAC code for educational/consulting services
 
+  // MSME 43B(h) classification for HOST orgs receiving payouts.
+  // When MICRO / SMALL, payouts must clear within 15 / 45 days (or 15 days
+  // when no written agreement is on file) per CGST Sec 43B(h) — otherwise
+  // the deduction is disallowed for the deductor's income-tax filing.
+  // MEDIUM and NONE fall back to contract.paymentTermsDays. Mirrors the
+  // same fields on ConsultantProfile.
+  msmeStatus                 MsmeStatus @default(NONE)
+  msmeWrittenAgreementOnFile Boolean    @default(false)
+
   // Procurement
   requiresPO       Boolean @default(false)
   paymentTermsDays Int     @default(60) // India Net-60 default
+
+  // Per-org invoice numbering (#GST sequential rule under CGST Rule 46).
+  // `invoiceNumberPrefix` is the human-readable identifier baked into the
+  // generated number — `<prefix>-<fiscalYear>-<seq>` (e.g. ACME-2026-042).
+  // Sequences are tracked in `OrgInvoiceCounter` (atomic UPSERT…RETURNING);
+  // dropping this column without backfilling the counter table will break
+  // future generation. Null prefix → slug-derived fallback at issue time.
+  invoiceNumberPrefix String?
 
   // Branding (merged from old OrganizationProfile)
   bannerImage    String?
@@ -479,6 +496,18 @@ model Organization {
   website        String?
   sizeBucket     OrgSizeBucket?
   billingEmail   String?
+
+  // Contact directory (added 2026-05-15 per enterprise-procurement ask).
+  // `billingEmail` above remains the legacy single-contact field; the
+  // routing layer prefers `billingContactEmail` and falls back to
+  // `billingEmail` then OWNER membership email when both are null.
+  // `escalationContactEmail` is used by SLA-breach alerts only.
+  billingContactName     String?
+  billingContactEmail    String? @db.VarChar(255)
+  billingContactPhone    String? @db.VarChar(32)
+  supportContactName     String?
+  supportContactEmail    String? @db.VarChar(255)
+  escalationContactEmail String? @db.VarChar(255)
 
   // Policies
   enforceOrganizationPlans  Boolean @default(false)
@@ -522,6 +551,10 @@ model Organization {
   subscriptionPlans SubscriptionPlan[]
   webinarPlans      WebinarPlan[]
   classPlans        ClassPlan[]
+
+  // Per-org invoice number counters — one row per (org, fiscal year).
+  // See `OrgInvoiceCounter` for the atomic increment semantics.
+  invoiceCounters OrgInvoiceCounter[]
 
   // Trial attribution — TrialSession.organizationId is optional. Set
   // only when the trial booker is a LEARNER of an active org. Used for
@@ -1044,7 +1077,7 @@ model BookingUtilization {
   /// re-counting is impossible. Empty array = pre-PR-1e rows or non-
   /// SUBSCRIPTION bookings (which always pass appointmentIds at first
   /// call, so the set diff returns the full count).
-  appointmentIds String[]  @default([])
+  appointmentIds String[] @default([])
 
   createdAt DateTime @default(now())
 
@@ -1257,15 +1290,15 @@ model OrganizationPayout {
   /// C1 (PR-4) refund clawback — when an OrganizationEarnings already
   /// rolled into this payout is later refunded. Manual recovery only
   /// in v1; admin sees this in the payout-detail page.
-  clawbackAmountPaise   Int       @default(0)
-  clawbackInitiatedAt   DateTime?
+  clawbackAmountPaise Int       @default(0)
+  clawbackInitiatedAt DateTime?
 
   /// Cron-driven duplicate-guard key. The weekly batch cron derives a
   /// deterministic key from (organizationId, periodStart) so a retried
   /// invocation never creates a second OrganizationPayout for the same
   /// window. Manual / route-driven payouts leave this null. Unique when
   /// present so two cron runs cannot both insert the same key.
-  idempotencyKey  String?       @unique
+  idempotencyKey String? @unique
 
   earnings OrganizationEarnings[]
 
@@ -1311,7 +1344,14 @@ model OrganizationInvoice {
   contractId       String?
   contract         Contract?      @relation(fields: [contractId], references: [id], onDelete: SetNull)
 
-  invoiceNumber String           @unique
+  // Generated as `<prefix>-<fiscalYear>-<seq>` per CGST Rule 46 sequential
+  // numbering. Uniqueness is enforced per-org (not globally) so two orgs can
+  // both legitimately issue "ACME-2026-001". The seq is allocated atomically
+  // via `OrgInvoiceCounter.nextSeq` (UPSERT…RETURNING) at issue time.
+  invoiceNumber String
+  // April–March Indian fiscal year (e.g. invoices issued Jan–Mar 2026 land
+  // in fiscalYear=2025). Computed at the issue site, never updated.
+  fiscalYear    Int              @default(0)
   status        OrgInvoiceStatus @default(DRAFT)
 
   // Money
@@ -1385,8 +1425,25 @@ model OrganizationInvoice {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([organizationId, invoiceNumber])
   @@index([organizationId, status, dueDate])
+  @@index([organizationId, fiscalYear, issuedAt])
   @@index([billingCycleStart, billingCycleEnd])
+}
+
+// Per-org, per-fiscal-year invoice sequence counter. Allocation pattern
+// is an INSERT…ON CONFLICT DO UPDATE…RETURNING that atomically reserves the
+// next `seq` so concurrent invoice generation can't collide on the
+// `@@unique([organizationId, invoiceNumber])` constraint.
+model OrgInvoiceCounter {
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  fiscalYear     Int
+  nextSeq        Int          @default(1)
+  updatedAt      DateTime     @updatedAt
+
+  @@id([organizationId, fiscalYear])
+  @@map("org_invoice_counters")
 }
 
 model PurchaseOrder {
