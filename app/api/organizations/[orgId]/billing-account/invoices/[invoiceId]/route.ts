@@ -143,6 +143,28 @@ export async function PATCH(
         },
       });
 
+      // PO balance restoration on VOID / CANCELLED. The invoice POST
+      // route atomically decremented `PurchaseOrder.remainingAmountPaise`
+      // at issue time; when the invoice is now being voided or cancelled,
+      // atomically increment the PO balance back so the consumed budget
+      // is released. Unbounded increment is safe — we can never overshoot
+      // `totalAmountPaise` because we only restore amounts we previously
+      // took. The transition is already guarded by the allow-list above.
+      const restorePoBalance =
+        body.status &&
+        body.status !== current.status &&
+        (body.status === "VOID" || body.status === "CANCELLED") &&
+        current.purchaseOrderId !== null;
+
+      if (restorePoBalance && current.purchaseOrderId) {
+        await tx.purchaseOrder.update({
+          where: { id: current.purchaseOrderId },
+          data: {
+            remainingAmountPaise: { increment: current.totalPaise },
+          },
+        });
+      }
+
       if (body.status && body.status !== current.status) {
         await tx.orgAuditLog.create({
           data: {
@@ -160,6 +182,10 @@ export async function PATCH(
               invoiceId,
               from: current.status,
               to: body.status,
+              ...(restorePoBalance && {
+                purchaseOrderId: current.purchaseOrderId,
+                restoredPaise: current.totalPaise,
+              }),
             },
           },
         });

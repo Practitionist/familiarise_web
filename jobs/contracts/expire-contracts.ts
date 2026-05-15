@@ -23,10 +23,9 @@
  *   npx tsx jobs/contracts/expire-contracts.ts
  */
 
-import { PrismaClient } from "@prisma/client";
+import "dotenv/config";
+import prisma from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
-
-const prisma = new PrismaClient();
 
 interface ExpireStats {
   scanned: number;

@@ -381,11 +381,50 @@ handler's inline comments, not in higher-level docs.
 
 ## §9 — Index of case files
 
-- **0-org-lifecycle/** — org creation, capability flips, status transitions, branding upload, wizard UI
-- **1-membership-auth/** — membership roles + RBAC, invite + accept, SSO + domain claims, DPDP signup consent gate
-- **2-programs-contracts/** — LICENSED_SEAT / CREDIT_POOL, program assignment, Programs v2 rejection, contract expiry cron
-- **3-billing-wallet-invoices/** — wallet top-up + invoices, per-org invoice numbering, GST place-of-supply, PO 3-way match, payment UI
-- **4-payouts-earnings/** — rate cards + earnings + payouts, payout UI, TDS withholding, MSME deadline, payout idempotency, refund + clawback
-- **5-compliance-audit/** — India compliance shipping checklist, audit-log + ledger reconciliation, IRP uploader + IRN lifecycle, DPDP breach 72h cron
-- **6-org-scope-and-activity/** — Appointment/Waitlist/Recording org FK, Stream channel org metadata
-- **7-cross-org-operator/** — org-workspace operator portfolio
+Files are numbered `<folder>.<seq>-<slug>.md` so the read order is
+deterministic.
+
+### 0-org-lifecycle/
+- `0.1-api-org-creation-and-capability-flips.md`
+- `0.2-ui-org-creation-wizard.md`
+- `0.3-smoke-org-status-transitions.md`
+
+### 1-membership-auth/
+- `1.1-api-membership-roles-and-rbac.md`
+- `1.2-ui-invite-and-accept.md`
+- `1.3-sso-and-domain-claims.md`
+- `1.4-dpdp-signup-consent-gate.md`
+
+### 2-programs-contracts/
+- `2.1-api-programs-licensed-seat-and-credit-pool.md`
+- `2.2-ui-program-create-and-assign.md`
+- `2.3-programs-v2-rejection.md`
+- `2.4-contracts-expiry-cron.md`
+
+### 3-billing-wallet-invoices/
+- `3.1-api-wallet-top-up-and-invoices.md`
+- `3.2-ui-wallet-and-invoice-pay.md`
+- `3.3-per-org-invoice-numbering.md`
+- `3.4-gst-place-of-supply.md`
+- `3.5-purchase-order-three-way-match.md`
+
+### 4-payouts-earnings/
+- `4.1-api-rate-cards-earnings-payouts.md`
+- `4.2-ui-payout-request.md`
+- `4.3-tds-withholding-on-org-payouts.md`
+- `4.4-msme-deadline-on-org-payouts.md`
+- `4.5-payout-idempotency-and-double-spend.md`
+- `4.6-refund-and-clawback.md`
+
+### 5-compliance-audit/
+- `5.1-india-compliance-shipping-checklist.md`
+- `5.2-audit-log-and-ledger-reconciliation.md`
+- `5.3-irp-uploader-and-irn-lifecycle.md`
+- `5.4-dpdp-breach-72h-cron.md`
+
+### 6-org-scope-and-activity/
+- `6.1-appointment-waitlist-recording-org-fk.md`
+- `6.2-stream-channel-org-metadata.md`
+
+### 7-cross-org-operator/
+- `7.1-org-workspace-portfolio.md`

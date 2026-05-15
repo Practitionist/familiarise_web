@@ -183,7 +183,9 @@ export async function POST(
 
   const issuedAt = body.issueImmediately ? new Date() : new Date();
 
-  const invoice = await prisma.$transaction(async (tx) => {
+  let invoice;
+  try {
+    invoice = await prisma.$transaction(async (tx) => {
     // Per-org sequential numbering: counter row atomically reserves the
     // next seq under (org, fiscal-year) so two concurrent POSTs can't
     // collide on the @@unique([organizationId, invoiceNumber]) constraint.
@@ -192,6 +194,35 @@ export async function POST(
       { id: org.id, slug: org.slug, invoiceNumberPrefix: org.invoiceNumberPrefix },
       issuedAt,
     );
+
+    // PO balance enforcement (race-safe). When the invoice is linked to
+    // a PO, atomically decrement `remainingAmountPaise` and fail closed
+    // (409 `PO_BALANCE_EXCEEDED`) if the PO is no longer ACTIVE or has
+    // insufficient remaining budget. Mirrors the wallet-debit pattern
+    // in `lib/api/organizations/wallet.ts`. Restoration on VOID /
+    // CANCELLED is handled in the PATCH route at
+    // `[invoiceId]/route.ts`.
+    if (body.purchaseOrderId) {
+      const claim = await tx.purchaseOrder.updateMany({
+        where: {
+          id: body.purchaseOrderId,
+          organizationId: orgId,
+          status: "ACTIVE",
+          remainingAmountPaise: { gte: gst.totalPaise },
+        },
+        data: { remainingAmountPaise: { decrement: gst.totalPaise } },
+      });
+      if (claim.count !== 1) {
+        const err = new Error(
+          "PurchaseOrder balance insufficient or no longer ACTIVE",
+        );
+        Object.assign(err, {
+          httpStatus: 409,
+          code: "PO_BALANCE_EXCEEDED",
+        });
+        throw err;
+      }
+    }
 
     const created = await tx.organizationInvoice.create({
       data: {
@@ -248,12 +279,30 @@ export async function POST(
           invoiceNumber,
           totalPaise: created.totalPaise,
           status: created.status,
+          placeOfSupply: created.placeOfSupply,
         },
       },
     });
 
     return created;
-  });
+    });
+  } catch (err) {
+    const httpStatus =
+      err && typeof err === "object" && "httpStatus" in err
+        ? (err as { httpStatus: number }).httpStatus
+        : null;
+    const code =
+      err && typeof err === "object" && "code" in err
+        ? (err as { code: string }).code
+        : null;
+    if (httpStatus && code) {
+      return NextResponse.json(
+        { error: (err as Error).message, code },
+        { status: httpStatus },
+      );
+    }
+    throw err;
+  }
 
   // Side-effect: if the invoice was issued on creation, fire the Novu
   // bell workflow so OWNERs see it immediately (email delivery is via

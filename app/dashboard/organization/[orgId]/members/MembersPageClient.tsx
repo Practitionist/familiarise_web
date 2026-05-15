@@ -125,7 +125,10 @@ async function updateMember(
     },
   );
   const body = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(errorMessageFromBody(body, "Failed to update member"));
+  if (!res.ok) {
+    const raw = errorMessageFromBody(body, "Failed to update member");
+    throw new Error(humanizeOrgError(raw));
+  }
   return body;
 }
 
@@ -136,7 +139,8 @@ async function removeMember(orgId: string, memberId: string) {
   );
   if (!res.ok) {
     const body = await res.json().catch(() => null);
-    throw new Error(errorMessageFromBody(body, "Failed to remove member"));
+    const raw = errorMessageFromBody(body, "Failed to remove member");
+    throw new Error(humanizeOrgError(raw));
   }
 }
 
