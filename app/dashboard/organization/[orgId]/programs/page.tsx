@@ -2,7 +2,7 @@
 
 import { use, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Briefcase, Loader2 } from "lucide-react";
+import { Plus, Briefcase, Loader2, Users } from "lucide-react";
 import type {
   BillingCycle,
   OverageBehavior,
@@ -16,6 +16,7 @@ import {
   DashboardContent,
 } from "@/components/dashboard/DashboardShell";
 import { EnterpriseWipBanner } from "@/components/enterprise/EnterpriseWipBanner";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -137,11 +138,21 @@ async function fetchContracts(
   return res.json();
 }
 
+const COVERED_PLAN_TYPE_OPTIONS = [
+  { value: "CONSULTATION", label: "Consultation", description: "1:1 sessions" },
+  { value: "CLASS", label: "Class", description: "Group classes" },
+  { value: "WEBINAR", label: "Webinar", description: "Live webinars" },
+  { value: "SUBSCRIPTION", label: "Subscription", description: "Recurring plans" },
+] as const;
+
+type CoveredPlanType = (typeof COVERED_PLAN_TYPE_OPTIONS)[number]["value"];
+
 type CreateProgramBody =
   | {
       type: "LICENSED_SEAT";
       contractId: string;
       name: string;
+      coveredPlanTypes: CoveredPlanType[];
       licensedSeatConfig: {
         ratePerSeatPaise: number;
         cycle: BillingCycle;
@@ -153,6 +164,7 @@ type CreateProgramBody =
       type: "CREDIT_POOL";
       contractId: string;
       name: string;
+      coveredPlanTypes: CoveredPlanType[];
       creditPoolConfig: {
         cycle: BillingCycle;
         creditsPerCycle: number;
@@ -169,6 +181,69 @@ async function createProgram(orgId: string, body: CreateProgramBody) {
   if (!res.ok) {
     throw new Error(
       (json as { error?: string }).error ?? "Failed to create program",
+    );
+  }
+  return json;
+}
+
+// ---------------------------------------------------------------------------
+// API layer — assignments (#741)
+// ---------------------------------------------------------------------------
+
+interface MemberListItem {
+  id: string;
+  role: string;
+  user: { id: string; name: string | null; email: string };
+}
+
+interface AssignmentListItem {
+  id: string;
+  periodStart: string;
+  periodEnd: string;
+  status: string;
+  membership: {
+    id: string;
+    role: string;
+    user: { id: string; name: string | null; email: string };
+  };
+}
+
+async function fetchMembers(
+  orgId: string,
+): Promise<{ data: MemberListItem[] }> {
+  const res = await fetch(`/api/organizations/${orgId}/members`);
+  if (!res.ok) throw new Error("Failed to load members");
+  return res.json();
+}
+
+async function fetchAssignments(
+  orgId: string,
+  programId: string,
+): Promise<{ data: AssignmentListItem[] }> {
+  const res = await fetch(
+    `/api/organizations/${orgId}/programs/${programId}/assignments`,
+  );
+  if (!res.ok) throw new Error("Failed to load assignments");
+  return res.json();
+}
+
+async function createAssignment(
+  orgId: string,
+  programId: string,
+  body: { membershipId: string; periodStart: string; periodEnd: string },
+) {
+  const res = await fetch(
+    `/api/organizations/${orgId}/programs/${programId}/assignments`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(
+      (json as { error?: string }).error ?? "Failed to create assignment",
     );
   }
   return json;
@@ -244,6 +319,7 @@ function CreateProgramDialog({
   // 1 credit = ₹1; per-cycle cap is the user-facing input, paise conversion
   // is implicit (credits map to rupees end-to-end).
   const [creditsPerCycle, setCreditsPerCycle] = useState("1000");
+  const [coveredPlanTypes, setCoveredPlanTypes] = useState<CoveredPlanType[]>(["CONSULTATION"]);
   const [error, setError] = useState<string | null>(null);
 
   const reset = () => {
@@ -255,6 +331,7 @@ function CreateProgramDialog({
     setCoveredEngagementsPerCycle("");
     setOverageBehavior("BLOCK");
     setCreditsPerCycle("1000");
+    setCoveredPlanTypes(["CONSULTATION"]);
     setError(null);
   };
 
@@ -278,6 +355,10 @@ function CreateProgramDialog({
       setError("Program name must be at least 2 characters.");
       return;
     }
+    if (coveredPlanTypes.length === 0) {
+      setError("Select at least one appointment type this program covers.");
+      return;
+    }
     if (programType === "LICENSED_SEAT") {
       const ratePaise = rupeesToPaise(ratePerSeatRupees);
       if (ratePaise === null) {
@@ -296,6 +377,7 @@ function CreateProgramDialog({
         type: "LICENSED_SEAT",
         contractId,
         name: name.trim(),
+        coveredPlanTypes,
         licensedSeatConfig: {
           ratePerSeatPaise: ratePaise,
           cycle,
@@ -313,6 +395,7 @@ function CreateProgramDialog({
         type: "CREDIT_POOL",
         contractId,
         name: name.trim(),
+        coveredPlanTypes,
         creditPoolConfig: {
           cycle,
           creditsPerCycle: credits,
@@ -398,6 +481,43 @@ function CreateProgramDialog({
               onChange={(e) => setName(e.target.value)}
               placeholder="Q1 Leadership Coaching"
             />
+          </div>
+
+          {/* Covered plan types (#740) */}
+          <div className="space-y-2">
+            <Label>Covered appointment types</Label>
+            <div className="grid grid-cols-2 gap-2">
+              {COVERED_PLAN_TYPE_OPTIONS.map((opt) => {
+                const checked = coveredPlanTypes.includes(opt.value);
+                return (
+                  <label
+                    key={opt.value}
+                    className="flex items-start gap-2 rounded-md border p-2.5 cursor-pointer hover:bg-zinc-50 transition-colors"
+                  >
+                    <Checkbox
+                      id={`plan-type-${opt.value}`}
+                      checked={checked}
+                      onCheckedChange={(v) => {
+                        setCoveredPlanTypes((prev) =>
+                          v
+                            ? [...prev, opt.value]
+                            : prev.filter((t) => t !== opt.value),
+                        );
+                      }}
+                      className="mt-0.5"
+                    />
+                    <div>
+                      <span className="text-sm font-medium">{opt.label}</span>
+                      <p className="text-xs text-zinc-500">{opt.description}</p>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+            <p className="text-xs text-zinc-500">
+              Only bookings matching a selected type will be covered by this
+              program. Select at least one.
+            </p>
           </div>
 
           {programType === "LICENSED_SEAT" ? (
@@ -568,6 +688,253 @@ function CreateProgramDialog({
 }
 
 // ---------------------------------------------------------------------------
+// Manage-program dialog with assign learner (#741)
+// ---------------------------------------------------------------------------
+
+function ManageProgramDialog({
+  orgId,
+  program,
+  open,
+  onOpenChange,
+}: {
+  orgId: string;
+  program: ProgramListItem;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [membershipId, setMembershipId] = useState("");
+  const [periodStart, setPeriodStart] = useState(
+    () => new Date().toISOString().split("T")[0],
+  );
+  const [periodEnd, setPeriodEnd] = useState(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() + 1);
+    return d.toISOString().split("T")[0];
+  });
+  const [assignError, setAssignError] = useState<string | null>(null);
+
+  const members = useQuery({
+    queryKey: ["org-members", orgId],
+    queryFn: () => fetchMembers(orgId),
+    enabled: open,
+  });
+
+  const assignments = useQuery({
+    queryKey: ["program-assignments", orgId, program.id],
+    queryFn: () => fetchAssignments(orgId, program.id),
+    enabled: open,
+  });
+
+  const assignMutation = useMutation({
+    mutationFn: (body: {
+      membershipId: string;
+      periodStart: string;
+      periodEnd: string;
+    }) => createAssignment(orgId, program.id, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["program-assignments", orgId, program.id],
+      });
+      queryClient.invalidateQueries({ queryKey: ["org-programs", orgId] });
+      setMembershipId("");
+      setAssignError(null);
+    },
+    onError: (err: Error) => setAssignError(err.message),
+  });
+
+  const handleAssign = () => {
+    setAssignError(null);
+    if (!membershipId) {
+      setAssignError("Select a member to assign.");
+      return;
+    }
+    if (!periodStart || !periodEnd) {
+      setAssignError("Both period start and end dates are required.");
+      return;
+    }
+    if (new Date(periodEnd) <= new Date(periodStart)) {
+      setAssignError("Period end must be after period start.");
+      return;
+    }
+    assignMutation.mutate({ membershipId, periodStart, periodEnd });
+  };
+
+  const memberList = members.data?.data ?? [];
+  const assignmentList = assignments.data?.data ?? [];
+  // Filter to LEARNER role members for assignment (the primary use case),
+  // but also include MANAGER and MAINTAINER since they can self-test.
+  const assignableMembers = memberList.filter(
+    (m) => ["LEARNER", "MANAGER", "MAINTAINER", "OWNER"].includes(m.role),
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Manage Program — {program.name}</DialogTitle>
+        </DialogHeader>
+
+        {/* Program info summary */}
+        <div className="rounded-md border p-3 space-y-1 text-sm">
+          <div className="flex gap-2 flex-wrap">
+            <Badge variant="secondary">
+              {PROGRAM_TYPE_META[program.type].label}
+            </Badge>
+            <Badge
+              variant="outline"
+              className={
+                program.status === "ACTIVE"
+                  ? "border-green-300 text-green-800"
+                  : "border-zinc-300 text-zinc-600"
+              }
+            >
+              {program.status}
+            </Badge>
+          </div>
+          {program.coveredPlanTypes.length > 0 && (
+            <p className="text-xs text-zinc-500">
+              Covers:{" "}
+              {program.coveredPlanTypes
+                .map((t) => t.charAt(0) + t.slice(1).toLowerCase())
+                .join(", ")}
+            </p>
+          )}
+        </div>
+
+        {/* Assign learner form */}
+        {program.status === "ACTIVE" && (
+          <div className="space-y-3 rounded-md border p-4">
+            <h4 className="text-sm font-semibold flex items-center gap-1.5">
+              <Users className="h-4 w-4" /> Assign a member
+            </h4>
+            <div className="space-y-2">
+              <Label>Member</Label>
+              <Select value={membershipId} onValueChange={setMembershipId}>
+                <SelectTrigger>
+                  <SelectValue
+                    placeholder={
+                      members.isLoading
+                        ? "Loading members…"
+                        : assignableMembers.length === 0
+                          ? "No assignable members"
+                          : "Pick a member"
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {assignableMembers.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      {m.user.name ?? m.user.email} ({m.role})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="period-start">Period start</Label>
+                <Input
+                  id="period-start"
+                  type="date"
+                  value={periodStart}
+                  onChange={(e) => setPeriodStart(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="period-end">Period end</Label>
+                <Input
+                  id="period-end"
+                  type="date"
+                  value={periodEnd}
+                  onChange={(e) => setPeriodEnd(e.target.value)}
+                />
+              </div>
+            </div>
+            {assignError && (
+              <p className="text-sm text-red-600">{assignError}</p>
+            )}
+            <Button
+              size="sm"
+              onClick={handleAssign}
+              disabled={assignMutation.isPending}
+            >
+              {assignMutation.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-1" /> Assigning…
+                </>
+              ) : (
+                <>
+                  <Plus className="h-4 w-4 mr-1" /> Assign
+                </>
+              )}
+            </Button>
+          </div>
+        )}
+
+        {/* Current assignments list */}
+        <div className="space-y-2">
+          <h4 className="text-sm font-semibold">
+            Assignments ({assignmentList.length})
+          </h4>
+          {assignments.isLoading ? (
+            <div className="flex items-center gap-2 text-sm text-zinc-500">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+            </div>
+          ) : assignmentList.length === 0 ? (
+            <p className="text-sm text-zinc-500">
+              No members assigned yet. Use the form above to assign a learner.
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Member</TableHead>
+                  <TableHead>Role</TableHead>
+                  <TableHead>Period</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {assignmentList.map((a) => (
+                  <TableRow key={a.id}>
+                    <TableCell className="text-sm">
+                      {a.membership.user.name ?? a.membership.user.email}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="secondary" className="text-xs">
+                        {a.membership.role}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-xs text-zinc-600">
+                      {new Date(a.periodStart).toLocaleDateString("en-IN", {
+                        day: "2-digit",
+                        month: "short",
+                      })}
+                      {" → "}
+                      {new Date(a.periodEnd).toLocaleDateString("en-IN", {
+                        day: "2-digit",
+                        month: "short",
+                        year: "numeric",
+                      })}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="text-xs">
+                        {a.status}
+                      </Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
@@ -583,6 +950,9 @@ export default function OrgProgramsPage({
     canSponsor: true,
   });
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [managingProgram, setManagingProgram] = useState<ProgramListItem | null>(
+    null,
+  );
 
   const programs = useQuery({
     queryKey: ["org-programs", orgId],
@@ -665,9 +1035,11 @@ export default function OrgProgramsPage({
                   <TableRow>
                     <TableHead>Name</TableHead>
                     <TableHead>Type</TableHead>
+                    <TableHead>Covers</TableHead>
                     <TableHead>Config</TableHead>
                     <TableHead>Assignments</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -678,6 +1050,16 @@ export default function OrgProgramsPage({
                         <Badge variant="secondary">
                           {PROGRAM_TYPE_META[p.type].label}
                         </Badge>
+                      </TableCell>
+                      <TableCell className="text-xs text-zinc-600">
+                        {p.coveredPlanTypes.length > 0
+                          ? p.coveredPlanTypes
+                              .map(
+                                (t) =>
+                                  t.charAt(0) + t.slice(1).toLowerCase(),
+                              )
+                              .join(", ")
+                          : <span className="text-zinc-400 italic">None</span>}
                       </TableCell>
                       <TableCell className="text-xs text-zinc-600">
                         {p.type === "LICENSED_SEAT" && p.licensedSeatConfig ? (
@@ -719,6 +1101,15 @@ export default function OrgProgramsPage({
                           {p.status}
                         </Badge>
                       </TableCell>
+                      <TableCell>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setManagingProgram(p)}
+                        >
+                          <Users className="h-3.5 w-3.5 mr-1" /> Manage
+                        </Button>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -734,6 +1125,17 @@ export default function OrgProgramsPage({
         onOpenChange={setDialogOpen}
         contracts={contractList}
       />
+
+      {managingProgram && (
+        <ManageProgramDialog
+          orgId={orgId}
+          program={managingProgram}
+          open={!!managingProgram}
+          onOpenChange={(v) => {
+            if (!v) setManagingProgram(null);
+          }}
+        />
+      )}
     </>
   );
 }
