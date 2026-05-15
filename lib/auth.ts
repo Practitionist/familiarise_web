@@ -5,6 +5,7 @@ import { nextCookies } from "better-auth/next-js";
 import { customSession, organization } from "better-auth/plugins";
 import { sso } from "@better-auth/sso";
 import bcrypt from "bcrypt";
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import {
   sendWelcomeEmail,
@@ -12,7 +13,7 @@ import {
   sendPasswordResetEmail,
 } from "@/lib/email";
 import { syncSubscriber } from "@/lib/novu/subscriber";
-import { shouldRejectSession } from "@/lib/sso/enforce-session";
+import { shouldRejectSession, lookupEnforcedOrg } from "@/lib/sso/enforce-session";
 import { applyMembershipRoleEffects } from "@/lib/api/organizations/membership-transitions";
 import { buildConsentArtifact } from "@/lib/compliance/dpdp";
 
@@ -27,6 +28,34 @@ export const auth = betterAuth({
     provider: "postgresql",
   }),
 
+  // BetterAuth's built-in rate limit is disabled here on purpose.
+  //
+  // Why: BetterAuth's limiter is in-memory per Node.js process. We
+  // deploy to Netlify (serverless) where each cold-start lambda gets
+  // its own counter, so an attacker who rotates through enough lambdas
+  // can race past any per-process gate. A globally-coherent limit has
+  // to live in shared state (Upstash Redis).
+  //
+  // Coverage is provided by the Upstash-backed `authLimiter` in
+  // `middleware.ts:192-197` at 10 requests / 15min / IP across:
+  //   - POST /api/auth/sign-up/email
+  //   - POST /api/auth/sign-in/email
+  //   - POST /api/auth/forget-password
+  //   - POST /api/auth/reset-password
+  //
+  // The unauth `/api/auth/sso/domain-check` endpoint has its own
+  // 60/hr/IP gate at `middleware.ts:240-246` (prevents domain
+  // enumeration of registered orgs). Wallet top-ups have a per-org
+  // limiter keyed on `org:${orgId}`.
+  //
+  // Localhost (`::1` / `127.0.0.1` / `unknown_ip`) bypasses these
+  // limits via `isBypassableIp` so booking-algorithm-tests + agent
+  // runs aren't slowed down; production traffic never bypasses.
+  //
+  // If you ever re-enable BetterAuth's rate limit, audit the overlap
+  // against `authLimiter` to avoid double-counting and the surprises
+  // that follow (two different 429 responses for the same flow).
+  // See audit Phase B.8 + docs/enterprise/10-rate-limiting.md.
   rateLimit: {
     enabled: false,
   },
@@ -143,6 +172,17 @@ export const auth = betterAuth({
         required: false,
         input: false,
       },
+      // Session-generation marker carried in the session payload. The
+      // customSession callback compares this to the current row value
+      // on every session lookup; if they diverge, the cached
+      // memberships array is stale and we refetch. See audit Phase B.5
+      // and docs/enterprise/09-jit-and-session-refresh.md.
+      sessionGeneration: {
+        type: "number",
+        required: false,
+        defaultValue: 0,
+        input: false,
+      },
     },
   },
 
@@ -247,60 +287,11 @@ export const auth = betterAuth({
           const decision = await shouldRejectSession({
             email: user?.email ?? null,
             userId: session.userId,
-            lookupEnforcedOrg: async (domain) => {
-              // Use OrgDomainClaim as the authoritative "who owns this
-              // email domain" record (matches /api/auth/sso/domain-check
-              // exactly). `OrganizationSSOSettings.allowedEmailDomains`
-              // is an additional curated allowlist, honoured *after* the
-              // claim — a caught-in-transition domain owned by the org
-              // but not currently in allowedEmailDomains should fall
-              // through to credentials, not be force-rejected.
-              const claim = await prisma.orgDomainClaim.findUnique({
-                where: { domain },
-                select: {
-                  organizationId: true,
-                  verifiedAt: true,
-                  organization: {
-                    select: {
-                      status: true,
-                      ssoSettings: {
-                        select: {
-                          enforceSSO: true,
-                          allowedEmailDomains: true,
-                        },
-                      },
-                    },
-                  },
-                },
-              });
-              // Unverified domain claims (no DNS TXT proof) must NOT
-              // gate session SSO enforcement — same rationale as
-              // /api/auth/sso/domain-check. Without this, a malicious
-              // OWNER could claim a public domain and force-reject
-              // unrelated users' sessions.
-              if (
-                !claim ||
-                !claim.verifiedAt ||
-                !claim.organization ||
-                claim.organization.status !== "ACTIVE" ||
-                !claim.organization.ssoSettings?.enforceSSO
-              ) {
-                return null;
-              }
-              const allowed =
-                claim.organization.ssoSettings.allowedEmailDomains;
-              if (allowed.length > 0 && !allowed.includes(domain)) {
-                return null;
-              }
-              const rows = await prisma.ssoProvider.findMany({
-                where: { organizationId: claim.organizationId },
-                select: { providerId: true },
-              });
-              return {
-                organizationId: claim.organizationId,
-                registeredProviderIds: rows.map((r) => r.providerId),
-              };
-            },
+            // Delegate to the shared `lookupEnforcedOrg` (audit B.6).
+            // The previous inline implementation lived here AND at
+            // `customSession` AND at `/api/auth/sso/domain-check`,
+            // with subtle drift between them — see issue #673.
+            lookupEnforcedOrg: (domain) => lookupEnforcedOrg(prisma, domain),
             hasAccountInProviders: async (userId, providerIds) => {
               const match = await prisma.account.findFirst({
                 where: { userId, providerId: { in: providerIds } },
@@ -380,7 +371,38 @@ export const auth = betterAuth({
         staffProfileId?: string | null;
         adminProfileId?: string | null;
         orgWorkspaceProfileId?: string | null;
+        sessionGeneration?: number | null;
       };
+
+      // Read the user's current session-generation marker + the
+      // profile FKs we'll need below for any bareMembers JIT auto-join.
+      //
+      // The marker is carried in the session payload primarily for
+      // observability + a future fast-path that can skip the membership
+      // re-fetch when the marker hasn't moved (audit B.5).
+      //
+      // Pre-fetching the profile FKs lets us pass them into
+      // `applyMembershipRoleEffects` via `preloadedProfiles` so each
+      // bareMember in the loop below skips a redundant `findUnique`.
+      // Audit Phase B.7 — for users in 10 SSO orgs this is the
+      // difference between 10 extra `users.findUnique` round-trips on
+      // every session lookup and zero.
+      const currentUserRow = await prisma.user.findUnique({
+        where: { id: user.id },
+        select: {
+          sessionGeneration: true,
+          consulteeProfileId: true,
+          consultantProfileId: true,
+        },
+      });
+      const liveSessionGeneration =
+        currentUserRow?.sessionGeneration ?? user.sessionGeneration ?? 0;
+      const preloadedProfiles = currentUserRow
+        ? {
+            consulteeProfileId: currentUserRow.consulteeProfileId,
+            consultantProfileId: currentUserRow.consultantProfileId,
+          }
+        : undefined;
 
       // SSO membership sync: BetterAuth auto-provisioning creates a BetterAuth
       // Member row; we need a typed Membership sibling. Auto-repair any
@@ -412,6 +434,9 @@ export const auth = betterAuth({
             const roleEffects = await applyMembershipRoleEffects(tx, {
               userId: user.id,
               role: defaultRole,
+              // Pre-fetched at the top of customSession to avoid an
+              // N+1 across the bareMembers loop. Audit Phase B.7.
+              preloadedProfiles,
             });
             await tx.membership.create({
               data: {
@@ -426,8 +451,28 @@ export const auth = betterAuth({
               },
             });
           });
-        } catch {
-          // Unique-constraint race — safe to ignore.
+        } catch (err) {
+          // Narrow to P2002 (unique-constraint violation) ONLY. The
+          // prior bare `catch {}` swallowed every error during the JIT
+          // auto-join transaction, including:
+          //   - Transient DB connection drops (would leave the user
+          //     with NO Membership row and a working session, landing
+          //     them on a broken dashboard).
+          //   - Permission errors from Supabase RLS (silent denial of
+          //     service).
+          //   - Domain-upsert races other than uniqueness (e.g. FK
+          //     violations from a stale cache).
+          // Re-throw everything else so it surfaces at the BetterAuth
+          // boundary and the user sees an error toast instead of a
+          // silent broken state. See audit Phase A.3.
+          if (
+            err instanceof Prisma.PrismaClientKnownRequestError &&
+            err.code === "P2002"
+          ) {
+            // Concurrent session-create won the membership — safe to ignore.
+            continue;
+          }
+          throw err;
         }
       }
 
@@ -483,66 +528,41 @@ export const auth = betterAuth({
           walletBalance: m.organization.billingAccount?.walletBalance ?? null,
         }));
 
-      // SSO enforcement: mark sessions that bypassed SSO for enforced domains.
+      // SSO enforcement: mark sessions that bypassed SSO for enforced
+      // domains. Read-time defense-in-depth; the primary gate is in
+      // `databaseHooks.session.create.before` (above). Keeping a single
+      // enforcement path via the shared `lookupEnforcedOrg` helper
+      // means credential-signin and read-time reconciliation can't
+      // disagree on who counts as "enforced" — historically this was
+      // issue #673.
       //
-      // An account satisfies enforcement only if `account.providerId` matches
-      // one of the `ssoProvider.providerId` rows registered for the enforcing
-      // org. Checking against `providerId != "credential"` is NOT enough —
-      // that would treat a personal Google or GitHub OAuth account as a valid
-      // SSO sign-in, bypassing the policy entirely.
+      // An account satisfies enforcement only if `account.providerId`
+      // matches one of the `ssoProvider.providerId` rows registered
+      // for the enforcing org. Checking against `providerId != "credential"`
+      // is NOT enough — that would treat a personal Google or GitHub
+      // OAuth account as a valid SSO sign-in, bypassing the policy.
       let ssoEnforcementFailed = false;
       try {
         const email = user.email;
         const domain = email?.split("@")[1]?.toLowerCase();
         if (domain) {
-          // Mirror `session.create.before` / `domain-check` lookup: use
-          // OrgDomainClaim as the source of truth, honour allowlist if
-          // present, skip inactive orgs. Keeping a SINGLE enforcement
-          // path fixes issue where credential-signin and read-time
-          // reconciliation could disagree on who counts as "enforced".
-          const claim = await prisma.orgDomainClaim.findUnique({
-            where: { domain },
-            select: {
-              organizationId: true,
-              organization: {
-                select: {
-                  status: true,
-                  ssoSettings: {
-                    select: {
-                      enforceSSO: true,
-                      allowedEmailDomains: true,
-                    },
-                  },
-                },
+          const enforced = await lookupEnforcedOrg(prisma, domain);
+          // `lookupEnforcedOrg` returns null when enforcement doesn't
+          // apply (unverified claim, inactive org, allowlist mismatch,
+          // enforceSSO=false). It also returns an empty
+          // `registeredProviderIds` array when the org has flipped
+          // enforceSSO on but hasn't added a provider yet — fail-open
+          // there, matching `shouldRejectSession`'s behaviour, so a
+          // half-configured org doesn't flag every session as failed.
+          if (enforced && enforced.registeredProviderIds.length > 0) {
+            const linkedViaSSO = await prisma.account.findFirst({
+              where: {
+                userId: user.id,
+                providerId: { in: enforced.registeredProviderIds },
               },
-            },
-          });
-          const allowed =
-            claim?.organization?.ssoSettings?.allowedEmailDomains ?? [];
-          const isEnforced =
-            !!claim &&
-            claim.organization?.status === "ACTIVE" &&
-            !!claim.organization?.ssoSettings?.enforceSSO &&
-            (allowed.length === 0 || allowed.includes(domain));
-          if (isEnforced) {
-            const registeredProviders = await prisma.ssoProvider.findMany({
-              where: { organizationId: claim.organizationId },
-              select: { providerId: true },
+              select: { id: true },
             });
-            const validProviderIds = registeredProviders.map((p) => p.providerId);
-            // Fail-open if no providers configured yet — matches
-            // `shouldRejectSession`'s behaviour. Without this, a
-            // half-configured org would flag every session as failed.
-            if (validProviderIds.length > 0) {
-              const linkedViaSSO = await prisma.account.findFirst({
-                where: {
-                  userId: user.id,
-                  providerId: { in: validProviderIds },
-                },
-                select: { id: true },
-              });
-              if (!linkedViaSSO) ssoEnforcementFailed = true;
-            }
+            if (!linkedViaSSO) ssoEnforcementFailed = true;
           }
         }
       } catch {
@@ -562,6 +582,9 @@ export const auth = betterAuth({
           staffProfileId: user.staffProfileId ?? undefined,
           adminProfileId: user.adminProfileId ?? undefined,
           orgWorkspaceProfileId: user.orgWorkspaceProfileId ?? undefined,
+          // Always emit the live value so client code can detect a
+          // stale session by comparing this against its cached payload.
+          sessionGeneration: liveSessionGeneration,
           organizationMemberships,
           ssoEnforcementFailed,
         },

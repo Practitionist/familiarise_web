@@ -188,6 +188,30 @@ export const SelfServiceMemberRoleSchema = z.enum([
 export type SelfServiceMemberRole = z.infer<typeof SelfServiceMemberRoleSchema>;
 export const SELF_SERVICE_MEMBER_ROLES = SelfServiceMemberRoleSchema.options;
 
+/**
+ * Role-floor for JIT (Just-In-Time) SSO auto-provisioning.
+ *
+ * When a user signs in via the org's IdP for the first time and no
+ * Membership row exists yet, `lib/auth.ts:customSession` creates one
+ * with `OrganizationSSOSettings.defaultRoleForAutoJoin`. Restricting
+ * that field to `LEARNER` enforces principle-of-least-privilege:
+ *
+ *   - An attacker who somehow gets past the IdP (misconfigured Okta,
+ *     IdP-issued unverified email, etc.) lands as LEARNER, not OWNER.
+ *   - Org admins explicitly promote new members from `/dashboard/
+ *     organization/<id>/members` after first signin — a deliberate
+ *     audit-logged action.
+ *
+ * Previously, `SelfServiceMemberRoleSchema` was reused here, which
+ * allowed `defaultRoleForAutoJoin = "OWNER"`. With SSO enabled, the
+ * first SSO user became co-owner instantly. That's a catastrophic
+ * privilege-grant; see audit Phase A.1.
+ *
+ * See `docs/enterprise/08-sso-and-authentication.md#jit-default-role`.
+ */
+export const JitDefaultRoleSchema = z.literal("LEARNER");
+export type JitDefaultRole = z.infer<typeof JitDefaultRoleSchema>;
+
 // Host-invitable subset — adds EXPERT to the self-service set. Used by
 // the Members + Invitations dashboard surfaces and the matching server
 // schemas when the org has canHost=true. EXPERT carries the implicit

@@ -20,6 +20,7 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { isBlockedRoleTransition } from "@/lib/enterprise/role-transitions";
 import {
   applyMembershipRoleEffects,
+  bumpUserSessionGeneration,
   recomputeConsultantIsIndependent,
 } from "@/lib/api/organizations/membership-transitions";
 import { notifyOrgExpertRemoved } from "@/lib/novu/service";
@@ -208,6 +209,21 @@ export async function PATCH(
         },
       });
 
+      // Bump the user's session-generation marker so the customSession
+      // hook picks up the role / status change on their next request
+      // instead of waiting up to 24h for BetterAuth's session rotation
+      // (Phase B.5). Triggers for any field change that affects the
+      // effective permission set: role, status, or departmentLabel.
+      // departmentLabel is included because it shows up in the session
+      // payload (`organizationMemberships[].departmentLabel`).
+      if (
+        patch.role !== undefined ||
+        patch.status !== undefined ||
+        patch.departmentLabel !== undefined
+      ) {
+        await bumpUserSessionGeneration(tx, current.userId);
+      }
+
       // A4: recompute ConsultantProfile.isIndependent if this PATCH touches
       // an EXPERT membership. PATCH cannot promote *into* EXPERT (Zod schema
       // blocks LEARNER↔EXPERT and the patch.role union excludes EXPERT in
@@ -341,6 +357,13 @@ export async function DELETE(
         where: { id: memberId },
         data: { status: "REMOVED" },
       });
+
+      // Bump the user's session-generation marker so their next
+      // request hits the customSession refetch path and observes the
+      // missing org membership (Phase B.5). Without this, a removed
+      // member can keep acting on org-scoped routes for up to 24h
+      // because the cached memberships array still lists the org.
+      await bumpUserSessionGeneration(tx, current.userId);
 
       // A4: if this was an EXPERT membership, recompute the consultant's
       // isIndependent flag now that one HOST tie is gone. If it was the

@@ -18,7 +18,10 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import type { MemberRole, MemberStatus } from "@prisma/client";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { isBlockedRoleTransition } from "@/lib/enterprise/role-transitions";
-import { applyMembershipRoleEffects } from "@/lib/api/organizations/membership-transitions";
+import {
+  applyMembershipRoleEffects,
+  bumpUserSessionGeneration,
+} from "@/lib/api/organizations/membership-transitions";
 
 // Canonical MemberRole Zod enum. Mirrors the Prisma enum — if a role
 // is added to the schema, TS fails here until the list is updated.
@@ -296,6 +299,7 @@ export async function POST(
           details: { role, departmentLabel: departmentLabel ?? null },
         },
       });
+      await bumpUserSessionGeneration(tx, userId);
       return reactivated;
     }
 
@@ -322,6 +326,11 @@ export async function POST(
         details: { role, departmentLabel: departmentLabel ?? null },
       },
     });
+    // Bump the user's session-generation marker so the next request
+    // through customSession refetches and includes this new org
+    // membership without waiting for BetterAuth's 24h session rotation.
+    // Audit Phase B.5.
+    await bumpUserSessionGeneration(tx, userId);
     return created;
     });
   } catch (err) {

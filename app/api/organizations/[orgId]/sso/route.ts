@@ -18,7 +18,7 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { DomainSchema } from "@/lib/enterprise/validators";
-import { SelfServiceMemberRoleSchema } from "@/lib/labels/org-labels";
+import { JitDefaultRoleSchema } from "@/lib/labels/org-labels";
 import {
   DomainVerificationRequiredError,
   hasVerifiedDomain,
@@ -28,8 +28,12 @@ const PatchBodySchema = z
   .object({
     allowedEmailDomains: z.array(DomainSchema).max(50).optional(),
     enforceSSO: z.boolean().optional(),
-    // OWNER/MAINTAINER/MANAGER/LEARNER — never SUPPORT/EXPERT via auto-join.
-    defaultRoleForAutoJoin: SelfServiceMemberRoleSchema.optional(),
+    // JIT auto-join is locked to LEARNER. Admins promote new members
+    // explicitly after first signin via /dashboard/.../members. This
+    // closes a privilege-escalation hole where `defaultRoleForAutoJoin
+    // = "OWNER"` would make the first SSO user co-owner. See audit
+    // Phase A.1 + docs/enterprise/08-sso-and-authentication.md.
+    defaultRoleForAutoJoin: JitDefaultRoleSchema.optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
     message: "PATCH body must contain at least one field",

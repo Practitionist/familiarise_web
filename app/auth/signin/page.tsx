@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { signIn, useSession } from "@/lib/auth-client";
+import { ssoSigninWithGuard } from "@/lib/sso/signin-with-toast";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
 import Link from "next/link";
@@ -103,13 +104,25 @@ function SignInContent() {
 
   const handleSSOSignIn = async () => {
     if (!ssoCheck) return;
-    // Must use signIn.sso() — not a raw fetch — so the ssoClient plugin can
-    // generate and persist the OIDC PKCE verifier before the IdP redirect.
-    await signIn.sso({
+    // Use the guarded wrapper around signIn.sso() so the call goes
+    // through the ssoClient plugin (OIDC PKCE verifier persists before
+    // the IdP redirect) AND so failure modes surface as toasts instead
+    // of silent dead-ends. See `lib/sso/signin-with-toast.ts` for the
+    // three failure modes this guards: BetterAuth's resolve-with-error
+    // shape, 500-with-empty-body crashes, and no-redirect-after-2s.
+    // Audit Phase B.1.
+    const result = await ssoSigninWithGuard({
       providerId: ssoCheck.ssoBody.providerId,
       domain: ssoCheck.ssoBody.domain,
       callbackURL: ssoCheck.ssoBody.callbackURL,
     });
+    if (!result.ok && result.errorMessage) {
+      toast({
+        title: "SSO sign-in failed",
+        description: result.errorMessage,
+        variant: "destructive",
+      });
+    }
   };
 
   // Manual SSO trigger for IT admins testing their setup before enforcement
@@ -130,11 +143,18 @@ function SignInContent() {
       const data = await res.json();
       if (data.enforceSSO) {
         setSsoCheck({ enforceSSO: true, organizationName: data.organizationName, ssoBody: data.ssoBody });
-        await signIn.sso({
+        const result = await ssoSigninWithGuard({
           providerId: data.ssoBody.providerId,
           domain: data.ssoBody.domain,
           callbackURL: data.ssoBody.callbackURL,
         });
+        if (!result.ok && result.errorMessage) {
+          toast({
+            title: "SSO sign-in failed",
+            description: result.errorMessage,
+            variant: "destructive",
+          });
+        }
       } else {
         toast({
           title: "No SSO provider found",

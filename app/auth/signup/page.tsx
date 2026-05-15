@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { signIn, signUp, useSession } from "@/lib/auth-client";
+import { ssoSigninWithGuard } from "@/lib/sso/signin-with-toast";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
 import Link from "next/link";
@@ -114,13 +115,22 @@ function SignUpContent() {
    */
   const handleSSOSignIn = async () => {
     if (!ssoCheck) return;
-    // Must use signIn.sso() — not a raw fetch — so the ssoClient plugin can
-    // generate and persist the OIDC PKCE verifier before the IdP redirect.
-    await signIn.sso({
+    // Use the guarded wrapper around signIn.sso() so SSO failures
+    // (resolve-with-error, 500-with-empty-body, no-redirect-after-2s)
+    // surface as a destructive toast instead of a silent dead-end on
+    // the signup form. See `lib/sso/signin-with-toast.ts` + audit B.1.
+    const result = await ssoSigninWithGuard({
       providerId: ssoCheck.ssoBody.providerId,
       domain: ssoCheck.ssoBody.domain,
       callbackURL: ssoCheck.ssoBody.callbackURL,
     });
+    if (!result.ok && result.errorMessage) {
+      toast({
+        title: "SSO sign-in failed",
+        description: result.errorMessage,
+        variant: "destructive",
+      });
+    }
   };
 
   const friendlyAuthError = (raw: string | undefined): string => {

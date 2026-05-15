@@ -120,7 +120,8 @@ When an SSO user lands for the first time:
    domain) and creates a bare `Member` row.
 3. `customSession` (`lib/auth.ts`) spots the bare `Member` without a
    `Membership` sibling and auto-creates one:
-   - `role = defaultRoleForAutoJoin`
+   - `role = defaultRoleForAutoJoin` — **locked to `LEARNER`** (audit
+     Phase A.1; see [#jit-default-role](#jit-default-role) below).
    - `status = ACTIVE`
    - `consulteeProfileId` is populated when the role is LEARNER and
      the user has an existing ConsulteeProfile.
@@ -128,8 +129,80 @@ When an SSO user lands for the first time:
    the bridge between the two tables is live.
 
 The auto-repair is wrapped in a try/catch that swallows Prisma P2002
-(unique-constraint races) — two concurrent sessions creating the same
-Membership is safe and idempotent.
+(unique-constraint races) ONLY — every other error re-throws and
+surfaces at the BetterAuth boundary. Audit Phase A.3 narrowed the
+prior bare `catch {}` because it swallowed transient DB drops + RLS
+denials, leaving users with a session cookie but no Membership row.
+
+For the full sequence (including the `sessionGeneration` marker that
+keeps active sessions fresh after role changes) see
+[`28-jit-and-session-refresh.md`](./28-jit-and-session-refresh.md).
+
+### JIT default role
+
+`OrganizationSSOSettings.defaultRoleForAutoJoin` is locked at
+`LEARNER` — the schema is `z.literal("LEARNER")` in
+`lib/labels/org-labels.ts:JitDefaultRoleSchema`. The PATCH handler at
+`/api/organizations/[orgId]/sso` rejects any other value with 400
+`INVALID_DEFAULT_ROLE`.
+
+Pre-audit, this field accepted any role including `OWNER`. With SSO
+enabled, the first user to sign in via the IdP became co-owner of the
+org instantly — a catastrophic privilege grant if the IdP was ever
+misconfigured (or if anyone in the IT department happened to be on
+that domain). The fix is principle-of-least-privilege: everyone lands
+as LEARNER, admins promote explicitly via `/dashboard/.../members`,
+the promotion is audit-logged (`MEMBER_ROLE_CHANGED`).
+
+### Cert rotation
+
+Cert rotation is **delete-then-recreate**, NOT PATCH. We deliberately
+don't ship a `PATCH /sso/providers/[providerId]` endpoint because
+silent config drift between the dashboard's cached state and the
+actual IdP is a recurring source of broken SAML handshakes.
+
+When your cert is approaching expiry:
+1. Export the new PEM block from your IdP's admin console.
+2. In Familiarise, DELETE the existing provider.
+3. POST a fresh provider with the same `providerId` + new `cert`.
+
+The cron at `scripts/sso-cert-expiry-alert.ts` warns 30 days before
+expiry so this fire-drill is never a surprise.
+
+### Cert format validation
+
+POST validates the `samlConfig.cert` field via Node's
+`crypto.X509Certificate` constructor before any DB write. A malformed
+PEM (e.g. pasting the base64 fingerprint by mistake, or pasting only
+the body without `-----BEGIN/END CERTIFICATE-----` markers) returns
+400 with a friendly error pointing at where to find the correct PEM
+in the IdP console.
+
+Pre-audit, the schema was `z.string().min(1)`. Garbage strings passed
+the schema check and crashed BetterAuth's underlying SAML adapter
+(`@node-saml/node-saml`) at first signin with
+`TypeError: Cannot read properties of undefined (reading 'metadata')`.
+The 500 had an empty body, and the UI gave no feedback. Audit Phase A.2.
+
+### IdP-issued email verification
+
+The SAML assertion / OIDC token's `email` claim is trusted as the
+user's verified identity. We do NOT re-check email ownership in
+Familiarise — the IdP is the authority.
+
+**This means your IdP MUST be configured to:**
+- Only release email claims for verified mailbox owners.
+- Reject sign-ins from accounts whose email is unverified.
+- For Okta: see "Profile → Profile editor → email → required + verified".
+- For Azure AD: see "Enterprise apps → Familiarise → SSO → Edit attributes & claims".
+- For Google Workspace: enforced by default — all `@your-domain.com`
+  emails are verified Workspace addresses.
+
+If your IdP releases an unverified email (e.g. an Azure AD guest
+account whose email was never proven), an attacker could impersonate
+that email. Familiarise's domain-ownership gate
+(`OrgDomainClaim.verifiedAt`) prevents cross-org email spoofing, but
+within-org spoofing depends on IdP hygiene.
 
 ## Session enforcement
 
@@ -149,8 +222,16 @@ runs at `sign-in` time rather than at session-read time.
 
 ## Related docs
 
+- [`28-jit-and-session-refresh.md`](./28-jit-and-session-refresh.md) —
+  JIT auto-join sequence, `sessionGeneration` marker, role-change
+  refresh without forced logout.
+- [`30-rate-limiting.md`](./30-rate-limiting.md) — why BetterAuth's
+  built-in limiter is disabled and where the Upstash-backed limiters
+  cover auth + SSO endpoints.
+- [`reference/sso-error-codes.md`](./reference/sso-error-codes.md) —
+  every typed HTTP error code emitted by the SSO routes.
 - `playbooks/sso-testing.md` — four local-test recipes against mock and
   real IdPs.
-- `04-roles-and-permissions.md` — `defaultRoleForAutoJoin` options.
+- `04-roles-and-permissions.md` — `MemberRole` rank ladder.
 - `12-dashboard-pages.md` — the `/settings/sso` page that drives these
   APIs.

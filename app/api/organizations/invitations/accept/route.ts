@@ -20,7 +20,10 @@ import { requireApiAuth } from "@/lib/auth-helpers";
 import { MemberRoleSchema } from "@/lib/labels/org-labels";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { isOnboardingBlocked } from "@/lib/enterprise/org-status";
-import { applyMembershipRoleEffects } from "@/lib/api/organizations/membership-transitions";
+import {
+  applyMembershipRoleEffects,
+  bumpUserSessionGeneration,
+} from "@/lib/api/organizations/membership-transitions";
 import { notifyOrgInviteAccepted } from "@/lib/novu/org-workflows";
 
 const AcceptBodySchema = z.object({
@@ -266,6 +269,13 @@ export async function POST(req: NextRequest) {
           details: { invitationId: inv.id, role: normalizedRole },
         },
       });
+
+      // Bump the user's session-generation marker so the next request
+      // through customSession picks up the new org membership without
+      // waiting for BetterAuth's 24h session-rotation window. The
+      // accepter sees the org in their sidebar / org-switcher on the
+      // next page load instead of after a manual logout. Audit B.5.
+      await bumpUserSessionGeneration(tx, userId);
 
       return { membership: created, organization: org, alreadyMember: false };
     });

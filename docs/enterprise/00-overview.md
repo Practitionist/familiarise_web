@@ -258,6 +258,8 @@ erDiagram
 | 23 | `23-runbooks.md` | Incident-response procedures + scheduled operational tasks. |
 | 24 | `24-monitoring.md` | Log event taxonomy, alert thresholds, dashboards. |
 | 25 | `25-idempotency-keys.md` | Every side-effect endpoint's idempotency key + anti-patterns. |
+| 28 | `28-jit-and-session-refresh.md` | JIT auto-join, `sessionGeneration` marker, role-change refresh without forced logout. |
+| 30 | `30-rate-limiting.md` | Coverage matrix for auth + SSO + wallet endpoints; why BetterAuth's built-in limiter is disabled. |
 
 ### `explainers/` — narrative high-level docs
 
@@ -272,6 +274,7 @@ erDiagram
 |------|---------|
 | `reference/money-glossary.md` | Plain-English definitions of Refund / Reimbursement / Payout / Referral / Credits + all ~45 money-related models and enums. **Start here if a money term is confusing.** |
 | `reference/schema-diagram.md` | Visual map of the enterprise Prisma schema. |
+| `reference/sso-error-codes.md` | Every typed HTTP error code emitted by the SSO + auth routes, paired with the humanized copy + operator fix. |
 
 ### `playbooks/` — actionable how-tos
 

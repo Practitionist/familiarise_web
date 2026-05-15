@@ -14,6 +14,7 @@
  * forbidden `callbackUrl` key.
  */
 
+import { X509Certificate } from "node:crypto";
 import { z } from "zod";
 
 export const oidcConfigSchema = z.object({
@@ -25,10 +26,46 @@ export const oidcConfigSchema = z.object({
   scopes: z.array(z.string()).optional(),
 });
 
+/**
+ * Validate a SAML signing certificate as a parseable PEM-encoded X.509.
+ *
+ * Why we validate here, not later:
+ *   BetterAuth's underlying SAML adapter (`@node-saml/node-saml`) parses
+ *   the cert lazily inside `validatePostResponse` when an assertion
+ *   arrives. If the cert is garbage, the call chain crashes with
+ *     TypeError: Cannot read properties of undefined (reading 'metadata')
+ *   and returns a 500 with an empty body to the user clicking the SSO
+ *   button. The UI has no way to recover — there's no error message
+ *   to surface. By validating at the schema layer (registration time),
+ *   we fail closed with a friendly PEM-format error that the admin
+ *   actually sees in the Add Provider dialog.
+ *
+ * What Node's X509Certificate accepts:
+ *   - PEM-encoded with `-----BEGIN CERTIFICATE-----` / `-----END CERTIFICATE-----`
+ *     markers and base64 body.
+ *   - DER-encoded (binary) — passed as a Buffer.
+ *   - Throws `ERR_OSSL_*` or `ERR_INVALID_ARG_TYPE` on anything else.
+ *   Wrapping in try/catch normalizes both error families to a boolean.
+ *
+ * See audit Phase A.2 + `docs/enterprise/08-sso-and-authentication.md#cert-rotation`.
+ */
+function validateSamlCert(value: string): boolean {
+  try {
+    // The constructor parses the cert; we don't need the instance.
+    new X509Certificate(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const samlConfigSchema = z.object({
   issuer: z.string().min(1),
   entryPoint: z.string().url(),
-  cert: z.string().min(1),
+  cert: z.string().refine(validateSamlCert, {
+    message:
+      "Invalid X.509 certificate. Paste the PEM block from your IdP — it should start with -----BEGIN CERTIFICATE----- and end with -----END CERTIFICATE-----. If you copied a base64 fingerprint by mistake, your IdP's admin console has a separate 'Certificate (PEM)' download.",
+  }),
 });
 
 export const createProviderSchema = z.object({

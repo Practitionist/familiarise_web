@@ -242,7 +242,10 @@ export const SsoSettingsResponseSchema = z.object({
   settings: z.object({
     allowedEmailDomains: z.array(z.string()).default([]),
     enforceSSO: z.boolean(),
-    defaultRoleForAutoJoin: MemberRoleSchema,
+    // JIT auto-join is hard-locked to LEARNER (audit Phase A.1). The
+    // server enforces this; the client schema mirrors it so a stale
+    // response from a pre-fix server is caught at the parse boundary.
+    defaultRoleForAutoJoin: z.literal("LEARNER"),
   }),
   providers: z.array(SsoProviderRowSchema).default([]),
 });
@@ -255,7 +258,10 @@ export type SsoSettingsResponse = z.infer<typeof SsoSettingsResponseSchema>;
 export const PatchSsoSettingsPayloadSchema = z.object({
   allowedEmailDomains: z.array(z.string()).optional(),
   enforceSSO: z.boolean().optional(),
-  defaultRoleForAutoJoin: MemberRoleSchema.optional(),
+  // Locked to LEARNER per audit Phase A.1 — client cannot pick the
+  // role anymore; if some legacy caller still sends one, the server
+  // rejects anything other than LEARNER with 400.
+  defaultRoleForAutoJoin: z.literal("LEARNER").optional(),
 });
 export type PatchSsoSettingsPayload = z.infer<
   typeof PatchSsoSettingsPayloadSchema

@@ -7,11 +7,6 @@ import Link from "next/link";
 import { useRequireOrgRole } from "../../useOrgRole";
 import { useToast } from "@/hooks/use-toast";
 import { deriveAcsUrl, deriveMetadataUrl } from "@/lib/sso/derive-urls";
-import type { MemberRole } from "@prisma/client";
-import {
-  MEMBER_ROLE_LABEL,
-  MemberRoleSchema,
-} from "@/lib/labels/org-labels";
 import {
   CreateSsoProviderPayloadSchema,
   PatchSsoSettingsPayloadSchema,
@@ -65,10 +60,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-// Provider + SsoResponse shapes are imported from `@/schemas/organizations`
-// so the same definitions back the UI, the payload validators, and any
-// future operator/admin tooling.
-type Provider = SsoSettingsResponse["providers"][number];
+// SsoResponse shape is imported from `@/schemas/organizations` so the
+// same definitions back the UI, the payload validators, and any future
+// operator/admin tooling.
 
 function CopyableUrl({ label, value }: { label: string; value: string }) {
   const { toast } = useToast();
@@ -121,7 +115,10 @@ async function fetchSso(orgId: string): Promise<SsoSettingsResponse> {
 type PatchPayload = {
   allowedEmailDomains?: string[];
   enforceSSO?: boolean;
-  defaultRoleForAutoJoin?: MemberRole;
+  // Locked to LEARNER per JIT principle-of-least-privilege (audit
+  // Phase A.1). The API rejects any other role with 400 even if the
+  // client sends one.
+  defaultRoleForAutoJoin?: "LEARNER";
 };
 
 async function patchSso(orgId: string, payload: PatchPayload) {
@@ -168,16 +165,14 @@ async function deleteProvider(orgId: string, providerId: string) {
   }
 }
 
-// Auto-join via SSO grants one of the non-privileged MemberRoles. OWNER +
-// SUPPORT + EXPERT are deliberately excluded: OWNER is destructive to
-// grant automatically, SUPPORT is an operator role assigned manually,
-// and EXPERT is invite-driven at the org level (not auto-joinable via
-// SSO — the invite-accept path provisions the ConsultantProfile FK).
-const AUTO_JOIN_ROLES = ["LEARNER", "MANAGER", "MAINTAINER"] as const;
-const ROLE_OPTIONS = AUTO_JOIN_ROLES.map((value) => ({
-  value,
-  label: MEMBER_ROLE_LABEL[value],
-}));
+// Auto-join via SSO is hard-locked to LEARNER (audit Phase A.1). The
+// prior "pick a role" dropdown allowed OWNER → catastrophic privilege
+// grant when SSO was enabled. Admins promote explicitly via the
+// members page after first signin; that path is audit-logged.
+//
+// EXPERT remains invite-driven (the ConsultantProfile FK is wired by
+// the invite-accept path), SUPPORT is manual, OWNER/MAINTAINER/MANAGER
+// require deliberate action. LEARNER is the only safe auto-grant.
 
 export default function OrgSsoPage({
   params,
@@ -197,21 +192,12 @@ export default function OrgSsoPage({
 
   const [domains, setDomains] = useState("");
   const [enforce, setEnforce] = useState(false);
-  const [defaultRole, setDefaultRole] = useState<MemberRole>("LEARNER");
 
   useEffect(() => {
     if (!data) return;
     setDomains(data.settings.allowedEmailDomains.join(", "));
     setEnforce(data.settings.enforceSSO);
-    setDefaultRole(data.settings.defaultRoleForAutoJoin);
   }, [data]);
-
-  // shadcn's Select hands onValueChange a bare string. Narrow via Zod
-  // so downstream state + the PATCH body are always a valid MemberRole.
-  const handleRoleChange = (v: string) => {
-    const parsed = MemberRoleSchema.safeParse(v);
-    if (parsed.success) setDefaultRole(parsed.data);
-  };
 
   const settingsMutation = useMutation({
     mutationFn: () =>
@@ -221,7 +207,9 @@ export default function OrgSsoPage({
           .map((s) => s.trim())
           .filter(Boolean),
         enforceSSO: enforce,
-        defaultRoleForAutoJoin: defaultRole,
+        // defaultRoleForAutoJoin is locked to LEARNER server-side; we
+        // don't send it in the PATCH so the API can keep its existing
+        // default-on-create logic without our form forcing a value.
       }),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["org-sso", orgId] }),
@@ -363,21 +351,17 @@ export default function OrgSsoPage({
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="default-role">
-                  Default role for auto-joined users
-                </Label>
-                <Select value={defaultRole} onValueChange={handleRoleChange}>
-                  <SelectTrigger id="default-role">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {ROLE_OPTIONS.map((r) => (
-                      <SelectItem key={r.value} value={r.value}>
-                        {r.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label>Default role for auto-joined users</Label>
+                <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-700">
+                  Learner
+                </div>
+                <p className="text-xs text-zinc-500">
+                  New users who sign in via SSO for the first time are
+                  always granted the Learner role. Promote them
+                  explicitly from the Members page after their first
+                  sign-in — this keeps the audit trail of role grants
+                  deliberate and least-privilege.
+                </p>
               </div>
 
               <div>
