@@ -412,7 +412,7 @@ function CreateProgramDialog({
         onOpenChange(v);
       }}
     >
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <DialogHeader>
           <DialogTitle>Create Program</DialogTitle>
         </DialogHeader>
@@ -770,7 +770,7 @@ function ManageProgramDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <DialogHeader>
           <DialogTitle>Manage Program — {program.name}</DialogTitle>
         </DialogHeader>
