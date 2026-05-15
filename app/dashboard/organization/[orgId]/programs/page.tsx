@@ -211,7 +211,7 @@ interface AssignmentListItem {
 async function fetchMembers(
   orgId: string,
 ): Promise<{ data: MemberListItem[] }> {
-  const res = await fetch(`/api/organizations/${orgId}/members`);
+  const res = await fetch(`/api/organizations/${orgId}/members?perPage=100`);
   if (!res.ok) throw new Error("Failed to load members");
   return res.json();
 }
@@ -786,7 +786,9 @@ function ManageProgramDialog({
               className={
                 program.status === "ACTIVE"
                   ? "border-green-300 text-green-800"
-                  : "border-zinc-300 text-zinc-600"
+                  : program.status === "PAUSED"
+                    ? "border-amber-300 text-amber-800"
+                    : "border-zinc-300 text-zinc-600"
               }
             >
               {program.status}
@@ -816,9 +818,11 @@ function ManageProgramDialog({
                     placeholder={
                       members.isLoading
                         ? "Loading members…"
-                        : assignableMembers.length === 0
-                          ? "No assignable members"
-                          : "Pick a member"
+                        : members.isError
+                          ? "Failed to load members"
+                          : assignableMembers.length === 0
+                            ? "No assignable members"
+                            : "Pick a member"
                     }
                   />
                 </SelectTrigger>
@@ -910,12 +914,14 @@ function ManageProgramDialog({
                       {new Date(a.periodStart).toLocaleDateString("en-IN", {
                         day: "2-digit",
                         month: "short",
+                        timeZone: "UTC",
                       })}
                       {" → "}
                       {new Date(a.periodEnd).toLocaleDateString("en-IN", {
                         day: "2-digit",
                         month: "short",
                         year: "numeric",
+                        timeZone: "UTC",
                       })}
                     </TableCell>
                     <TableCell>
