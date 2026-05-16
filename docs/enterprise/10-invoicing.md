@@ -74,8 +74,13 @@ DRAFT ──► ISSUED ──► PAID
 `PATCH /api/organizations/[orgId]/billing-account/invoices/[invoiceId]`
 is OWNER-only and gates transitions:
 
-- `DRAFT → ISSUED` — sets `issuedAt = now()` and kicks off the IRN
-  upload stub.
+- `DRAFT → ISSUED` — sets `issuedAt = now()` and enqueues the invoice
+  for the daily IRP uploader (`.github/workflows/irp-uploader.yml`,
+  02:30 UTC). The cron iterates `OrganizationInvoice.irpStatus = PENDING`
+  rows within the 30-day CBIC window and calls `generateIrn` in
+  `lib/compliance/irp.ts`. Returns `FAILED` if `CLEARTAX_API_KEY` /
+  `CLEARTAX_GSP_TOKEN` / `CLEARTAX_GSTIN` env vars are unset; for sub-₹5cr
+  orgs that's acceptable until they cross the AATO threshold.
 - `ISSUED → PAID` — sets `paidAt = now()` and writes a
   `SettlementLedgerEntry(kind=INVOICE_PAID)` in the same transaction.
 - `ISSUED → VOID/CANCELLED` — blocked if already partially paid.
@@ -119,8 +124,27 @@ irpStatus       — PENDING | GENERATED | CANCELLED | FAILED
 irpUploadedAt   — our request timestamp
 ```
 
-Upload is stubbed in v1; the integration lands in a follow-up PR.
-Fields are schema-final.
+Upload is live but env-gated. When `CLEARTAX_API_KEY`,
+`CLEARTAX_GSP_TOKEN`, and `CLEARTAX_GSTIN` are configured, `generateIrn`
+makes real ClearTax HTTP calls and persists `irn`, `ackNumber`,
+`ackDate`, `signedQrPayload`. Without env vars, rows transition to
+`FAILED` after bounded retries (`irpRetryCount`, `irpLastError`,
+`irpLastAttemptAt`). Production approval (ClearTax sandbox proof +
+accountant signoff) is pending; for sub-₹5cr orgs that's acceptable
+since IRN is voluntary below the AATO threshold per Notification
+10/2023.
+
+### Invoice numbering — CGST Rule 46 sequential
+
+`invoiceNumber` is per-org scoped with the format `<PREFIX>-<FY>-<SEQ>`,
+e.g. `ACME-2026-0042`. `PREFIX` is `Organization.invoiceNumberPrefix`
+when set, else the slug (uppercased). `FY` is the Indian fiscal year
+(April–March). `SEQ` is a 4-digit zero-padded monotonic integer per
+`(organizationId, fiscalYear)` allocated atomically from
+`org_invoice_counters` via `INSERT … ON CONFLICT … RETURNING`. The
+`@@unique([organizationId, invoiceNumber])` constraint is the safety
+net; the counter table is the primary mechanism. Helper:
+`lib/payments/billing/invoice-numbering.ts:generateInvoiceNumber`.
 
 ## Line items (`items: Json`)
 
@@ -184,6 +208,50 @@ is generated:
 If the running sum of invoices against a PO exceeds
 `PO.totalAmountPaise`, the invoice POST refuses with a 409. When
 `remainingAmountPaise` hits zero, the PO transitions to `CLOSED`.
+
+## PO balance enforcement (PO.2 / PO.4)
+
+The enforcement is **atomic compare-and-swap** in a single transaction.
+`POST .../billing-account/invoices/route.ts` (lines 198-225) runs:
+
+```ts
+const claim = await tx.purchaseOrder.updateMany({
+  where: {
+    id: body.purchaseOrderId,
+    organizationId: orgId,
+    status: "ACTIVE",
+    remainingAmountPaise: { gte: gst.totalPaise },
+  },
+  data: { remainingAmountPaise: { decrement: gst.totalPaise } },
+});
+if (claim.count !== 1) {
+  throw { httpStatus: 409, code: "PO_BALANCE_EXCEEDED", ... };
+}
+```
+
+The predicate (`status: "ACTIVE"` + `remainingAmountPaise >= amount`)
+serves as the lock. The database's MVCC + the conditional UPDATE
+guarantee that two POSTs racing for the last ₹1 of budget on the same
+PO can never both succeed — exactly one observes `claim.count = 1`,
+the other observes `claim.count = 0` and gets the 409.
+
+**Restoration on VOID / CANCELLED.** The PATCH route at
+`[invoiceId]/route.ts:146-166` runs the inverse increment when an
+invoice transitions to `VOID` or `CANCELLED` with a non-null
+`purchaseOrderId`. Unbounded increment is safe because we only
+restore amounts we previously decremented (the route refuses any
+status transition outside the allow-list at lines 100-117).
+
+**Error code surfaced to UI.** The route emits
+`{ error, code: "PO_BALANCE_EXCEEDED" }`. The friendly copy lives in
+`lib/labels/org-errors.ts`; the `humanizeOrgError` helper renders
+"This purchase order doesn't have enough remaining budget for the
+invoice. Reduce the invoice total or add a new PO." in the dashboard.
+
+See `__tests__/enterprise/po-balance-enforcement.test.ts` for the
+regression coverage: happy-path decrement, exact-balance drain,
+over-budget rejection (no invoice row created), skip when no PO,
+restoration on VOID, and no-restore when invoice had no PO.
 
 ## Auto-generated vs hand-rolled
 

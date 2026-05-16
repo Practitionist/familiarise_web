@@ -16,6 +16,9 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+// Why: rate card PATCH (effectiveTo edits, split rotations) is a
+// finance-team mutation; downgrade from OWNER-only.
+import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
 const PatchBodySchema = z
@@ -77,7 +80,7 @@ export async function PATCH(
   },
 ) {
   const { orgId, cardId } = await params;
-  const access = await requireOrgAccess(orgId, { minimumRole: "OWNER", canHost: true });
+  const access = await requireOrgBillingAdminOrOwner(orgId, { canHost: true });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);

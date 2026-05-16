@@ -1,12 +1,14 @@
 # Enterprise (Architecture-4) Grand Tour
 
-> **Read first:** [`prompts/enterprise-tests/e2e-enterprise-shared-setup.md`](../enterprise-tests/e2e-enterprise-shared-setup.md)
+> **Read first:** [`prompts/enterprise-tests/_shared/shared-setup.md`](../enterprise-tests/_shared/shared-setup.md)
 > for the glossary (capability, role, funding source, program type),
-> the schema reference, and the audit-action cheat sheet. This tour
-> assumes you've read it. Tests live next to it; this file is the
-> tour, not a test.
+> the seed cohort, the schema reference, and the Round-3 invariants
+> table. This tour assumes you've read it.
 >
-> **Generated from:** `prompts/tour-prompt-template.md` (template v1).
+> Also load: [`prompts/enterprise-tests/_shared/mcp-recipes.md`](../enterprise-tests/_shared/mcp-recipes.md)
+> for the Supabase + Chrome DevTools idioms, and
+> [`prompts/enterprise-tests/_shared/case-template.md`](../enterprise-tests/_shared/case-template.md)
+> for the fix-and-retest gate.
 
 ---
 
@@ -20,11 +22,18 @@ re-testing failed scenarios before continuing. The goal is for someone
 new to the codebase to walk away having visited every nook and corner
 of the enterprise subsystem.
 
-The exhaustive 4xx-coverage and snapshot-stability work lives in the
-sibling test suites (`e2e-enterprise-agent-001-arch4-modified-api.md`
-and `e2e-enterprise-agent-002-arch4-modified-ui.md`). This tour
-deliberately touches every happy path and a few representative guard
-paths; it is NOT trying to enumerate every error code.
+The exhaustive 4xx-coverage, idempotency, and concurrency work lives
+in the sibling test suites under
+[`prompts/enterprise-tests/`](../enterprise-tests/) — organised into
+0-org-lifecycle / 1-membership-auth / 2-programs-contracts /
+3-billing-wallet-invoices / 4-payouts-earnings / 5-compliance-audit /
+6-org-scope-and-activity / 7-cross-org-operator. Each subfolder carries
+both API and UI files (where applicable) plus Round-3 surfaces (TDS,
+MSME, DPDP gate, per-org invoice numbering, payout idempotency,
+Waitlist/Recording orgId, Programs v2 reject).
+
+This tour deliberately touches every happy path and a few representative
+guard paths; it is NOT trying to enumerate every error code.
 
 ---
 

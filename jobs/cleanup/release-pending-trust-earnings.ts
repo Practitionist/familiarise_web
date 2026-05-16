@@ -18,6 +18,13 @@
  * here, PENDING with `holdUntil <= now` there).
  */
 
+// Why: tsx does not auto-load .env when this script runs outside the
+// Next.js runtime (e.g. `npx tsx jobs/cleanup/release-pending-trust-earnings.ts`).
+// Without dotenv/config, DATABASE_URL is undefined and PrismaClient throws
+// on the first query. GitHub Actions workflows load env via repo secrets
+// and would still work, but local + emergency manual runs fail — see
+// docs/enterprise/23-runbooks.md "Running cron jobs locally".
+import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { EarningStatus } from "@prisma/client";
 

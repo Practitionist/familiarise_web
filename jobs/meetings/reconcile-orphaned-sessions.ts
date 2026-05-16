@@ -8,6 +8,12 @@
  * Runs every 30 minutes via cleanup API route.
  */
 
+// Why: tsx does not auto-load .env when this script runs outside the
+// Next.js runtime. Without dotenv/config, DATABASE_URL + STREAM_API_KEY
+// are undefined, PrismaClient throws on first query, and the Stream
+// client fails to initialize. See
+// docs/enterprise/23-runbooks.md "Running cron jobs locally".
+import "dotenv/config";
 import prisma from "../../lib/prisma";
 import {
   getStreamVideoClient,

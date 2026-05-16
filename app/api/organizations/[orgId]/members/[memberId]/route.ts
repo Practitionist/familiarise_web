@@ -17,9 +17,11 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { isAtLeastRole } from "@/lib/auth/role-ranks";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { isBlockedRoleTransition } from "@/lib/enterprise/role-transitions";
 import {
   applyMembershipRoleEffects,
+  bumpUserSessionGeneration,
   recomputeConsultantIsIndependent,
 } from "@/lib/api/organizations/membership-transitions";
 import { notifyOrgExpertRemoved } from "@/lib/novu/service";
@@ -208,6 +210,21 @@ export async function PATCH(
         },
       });
 
+      // Bump the user's session-generation marker so the customSession
+      // hook picks up the role / status change on their next request
+      // instead of waiting up to 24h for BetterAuth's session rotation
+      // (Phase B.5). Triggers for any field change that affects the
+      // effective permission set: role, status, or departmentLabel.
+      // departmentLabel is included because it shows up in the session
+      // payload (`organizationMemberships[].departmentLabel`).
+      if (
+        patch.role !== undefined ||
+        patch.status !== undefined ||
+        patch.departmentLabel !== undefined
+      ) {
+        await bumpUserSessionGeneration(tx, current.userId);
+      }
+
       // A4: recompute ConsultantProfile.isIndependent if this PATCH touches
       // an EXPERT membership. PATCH cannot promote *into* EXPERT (Zod schema
       // blocks LEARNER↔EXPERT and the patch.role union excludes EXPERT in
@@ -342,6 +359,13 @@ export async function DELETE(
         data: { status: "REMOVED" },
       });
 
+      // Bump the user's session-generation marker so their next
+      // request hits the customSession refetch path and observes the
+      // missing org membership (Phase B.5). Without this, a removed
+      // member can keep acting on org-scoped routes for up to 24h
+      // because the cached memberships array still lists the org.
+      await bumpUserSessionGeneration(tx, current.userId);
+
       // A4: if this was an EXPERT membership, recompute the consultant's
       // isIndependent flag now that one HOST tie is gone. If it was the
       // last active EXPERT membership at any HOST org the flag flips back
@@ -390,6 +414,22 @@ export async function DELETE(
             previousStatus: current.status,
             assignmentsTerminated: terminated.count,
           },
+        },
+      });
+
+      // Outbound webhook: notify integrations that the membership is
+      // gone (HRIS deprovisioning, SaaS-license reclaim). Dispatched
+      // inside the transaction so a rollback (e.g. anti-lockout veto)
+      // also rolls back the webhook delivery row.
+      await dispatchWebhookEvent({
+        prisma: tx,
+        organizationId: orgId,
+        eventType: "member.removed",
+        payload: {
+          membershipId: memberId,
+          userId: current.userId,
+          role: current.role,
+          previousStatus: current.status,
         },
       });
 

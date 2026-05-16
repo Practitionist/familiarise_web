@@ -28,6 +28,37 @@ export const ORG_ERROR_COPY: Record<string, string> = {
     "No user account found with that email. They need to sign up at Familiarise first, or use the Invitations page to send them an invite.",
   EXPERT_REQUIRES_CANHOST:
     "Expert can only be assigned on host-capable organizations. Enable hosting under Settings → Capabilities first.",
+  // Why: surface the "Project / Retainer programs are gated to v2"
+  // rejection as a forward-looking message instead of a confusing
+  // "Invalid body" Zod failure. The server emits this code from the
+  // POST /programs route; matching copy lives here.
+  PROGRAM_TYPE_NOT_AVAILABLE:
+    "Project and Retainer programs ship in Programs v2. For now, only Licensed-Seat and Credit-Pool programs are supported.",
+  // Why: PO balance enforcement (see docs/enterprise/10-invoicing.md
+  // "PO balance enforcement" section). The server emits EXCEEDED; the
+  // INSUFFICIENT alias exists so route renames don't break the UI copy.
+  PO_BALANCE_EXCEEDED:
+    "This purchase order doesn't have enough remaining budget for the invoice. Reduce the invoice total or add a new PO.",
+  PO_BALANCE_INSUFFICIENT:
+    "This purchase order doesn't have enough remaining budget for the invoice. Reduce the invoice total or add a new PO.",
+  // Why: domain-claim gates on SSO provider registration. Operators
+  // pasting the wrong corporate domain saw a 422 with no actionable
+  // copy; these strings point them at the exact recovery flow.
+  DOMAIN_NOT_OWNED:
+    "Your organization hasn't claimed this email domain yet. Add it under Settings → SSO → Domains and verify before registering a provider.",
+  DOMAIN_NOT_VERIFIED:
+    "The domain claim is pending DNS verification. Finish the TXT-record step under Settings → SSO → Domains.",
+  // Why: pre-auth runtime guard at /api/auth/sso/domain-check — see
+  // docs/enterprise/08-sso-and-authentication.md "Pre-auth runtime
+  // guard". Surfaced when a stored SAML cert is unparseable; we want
+  // operators (not end users) to know to re-paste the PEM.
+  SSO_PROVIDER_MISCONFIGURED:
+    "Your SSO provider's certificate is invalid. Contact your IT admin to re-paste the X.509 PEM.",
+  // Why: hard-gate replacing the WIP banner on `canHost`. The friendly
+  // copy points operators at the recovery path (talk to ops) rather
+  // than leaving them stranded with a generic 400.
+  HOST_ORGS_GATED:
+    "Host-capable organizations are not yet enabled on this tenant. Contact ops at support@familiarise.work to flip ENABLE_HOST_ORGS for your account.",
 };
 
 /**

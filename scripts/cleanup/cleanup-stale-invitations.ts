@@ -80,14 +80,22 @@ export async function cleanupStaleInvitations(): Promise<StaleInvitationsCleanup
 
     for (const invite of candidates) {
       try {
-        await prisma.$transaction(async (tx) => {
+        // Why we capture the inner result: the transaction callback
+        // can early-return when the concurrency guard sees the invite
+        // already flipped to `accepted` between the scan and the
+        // status mutation. Without surfacing that signal, the outer
+        // counter would over-count + over-audit, telling the operator
+        // "expired 1" when nothing actually changed. The
+        // pre-PR-#655 cron had this bug — see
+        // `__tests__/enterprise/expire-stale-invitations.test.ts`.
+        const didExpire = await prisma.$transaction(async (tx) => {
           // Re-read inside the TX to guard against a concurrent accept
           // between the scan above and the status flip here.
           const fresh = await tx.invitation.findUnique({
             where: { id: invite.id },
             select: { status: true },
           });
-          if (!fresh || fresh.status !== "pending") return;
+          if (!fresh || fresh.status !== "pending") return false;
 
           await tx.invitation.update({
             where: { id: invite.id },
@@ -109,8 +117,9 @@ export async function cleanupStaleInvitations(): Promise<StaleInvitationsCleanup
               },
             },
           });
+          return true;
         });
-        expired += 1;
+        if (didExpire) expired += 1;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         errors.push(`invitation ${invite.id}: ${message}`);

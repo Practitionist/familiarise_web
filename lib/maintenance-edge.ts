@@ -10,11 +10,49 @@
 
 import { NextRequest } from "next/server";
 
-// Redis key constants
+// Redis key constants.
+//
+// The default keys are PLATFORM-SCOPED ("maintenance:phase" /
+// "maintenance:config") — that's the legacy behaviour and the middleware
+// still reads from them on every request. The per-org variants
+// ("maintenance:phase:org:<orgId>") are introduced in PR #655 as a
+// Tier 1 placeholder so org-aware admin routes can write to them in a
+// post-MVP follow-up without touching middleware again. Today nothing
+// writes to the per-org keys; the helpers below are scaffolding.
 const REDIS_KEYS = {
   PHASE: "maintenance:phase",
   CONFIG: "maintenance:config",
 } as const;
+
+export function platformMaintenanceKeys(): {
+  phase: string;
+  config: string;
+} {
+  return { phase: REDIS_KEYS.PHASE, config: REDIS_KEYS.CONFIG };
+}
+
+/**
+ * Per-org maintenance Redis key scaffolding. Returns the org-scoped
+ * `maintenance:phase:org:<orgId>` + `maintenance:config:org:<orgId>`
+ * pair. Lookup order at read time will be: org-scoped first, fall back
+ * to platform if the org has no active window.
+ *
+ * The middleware does NOT consume these yet — that's the post-MVP
+ * Tier 2 work tracked in the enterprise post-MVP issue. Exporting the
+ * key shape now lets any admin tooling (e.g. a `setOrgMaintenance`
+ * helper added later) write under the canonical namespace from day
+ * one, so the eventual middleware-read changes are a one-line lookup
+ * swap.
+ */
+export function orgMaintenanceKeys(organizationId: string): {
+  phase: string;
+  config: string;
+} {
+  return {
+    phase: `maintenance:phase:org:${organizationId}`,
+    config: `maintenance:config:org:${organizationId}`,
+  };
+}
 
 // Routes exempt from maintenance mode
 const EXEMPT_PREFIXES = [

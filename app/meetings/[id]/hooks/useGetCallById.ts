@@ -3,7 +3,18 @@
 import { useState, useEffect } from "react";
 import { Call, useStreamVideoClient } from "@stream-io/video-react-sdk";
 
-export const useGetCallById = (callId: string) => {
+/**
+ * @param callId  Stream call id from the meeting URL.
+ * @param organizationId  Optional — when provided, stamped onto the Stream
+ *   call's `custom.organizationId` if this hook has to create the call
+ *   itself (the fallback below). The canonical creation path is
+ *   server-side in `lib/meeting.ts`, which already stamps the metadata;
+ *   this fallback only fires for stray/bookmarked meeting URLs where the
+ *   server never minted the call. Callers with access to org context
+ *   (e.g. via /api/meetings/[id]/validate-access) should pass it through
+ *   so org-scoped dashboards stay consistent.
+ */
+export const useGetCallById = (callId: string, organizationId?: string) => {
   const [call, setCall] = useState<Call | null>(null);
   const [isCallLoading, setIsCallLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -51,7 +62,11 @@ export const useGetCallById = (callId: string) => {
           // If not found, try to create it with default type
           console.log(`Creating new call with ID: ${callId}`);
           const callInstance = client.call("default", callId);
-          await callInstance.getOrCreate();
+          await callInstance.getOrCreate(
+            organizationId
+              ? { data: { custom: { organizationId } } }
+              : undefined,
+          );
           console.log(
             `Successfully created/retrieved call: ${callInstance.id}`,
           );
@@ -69,7 +84,7 @@ export const useGetCallById = (callId: string) => {
     };
 
     getCall();
-  }, [client, callId]);
+  }, [client, callId, organizationId]);
 
   return { call, isCallLoading, error };
 };

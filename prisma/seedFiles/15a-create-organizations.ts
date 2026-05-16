@@ -366,6 +366,7 @@ async function seedWipro(learners: UserWithProfiles[], owner: UserWithProfiles) 
       organizationId: org.id,
       purchaseOrderId: po.id,
       invoiceNumber: "INV-WIP-2026-0001",
+      fiscalYear: 2026,
       status: OrgInvoiceStatus.DRAFT,
       displayCurrency: Currency.INR,
       inrEquivalentPaise: 1_00_000 * 100,

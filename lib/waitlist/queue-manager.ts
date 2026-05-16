@@ -440,11 +440,27 @@ async function _getTotalWaitingCount(entry: {
 /**
  * Get all waitlist entries for a user
  */
-export async function getUserWaitlistEntries(userId: string) {
+/**
+ * #674 org-scope filter applied via the caller's resolved scope.
+ *   - `personal` (default) — only personal-tagged waitlist entries
+ *     (Waitlist.organizationId IS NULL)
+ *   - `org:<id>` — only entries tagged to that org
+ *   - `all` (admin) — no scope filter; every entry
+ *
+ * Waitlist.organizationId is populated by the #674 backfill, so the
+ * filter is a simple equality check.
+ */
+export async function getUserWaitlistEntries(
+  userId: string,
+  orgFilter: {
+    organizationId?: string | null;
+  } = { organizationId: null },
+) {
   const entries = await prisma.waitlist.findMany({
     where: {
       userId,
       status: { in: [WaitlistStatus.WAITING, WaitlistStatus.NOTIFIED] },
+      ...orgFilter,
     },
     include: {
       webinar: {

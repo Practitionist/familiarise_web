@@ -42,10 +42,26 @@ export type RoleEffectInput = {
   role:
     | "OWNER"
     | "MAINTAINER"
+    | "BILLING_ADMIN"
     | "MANAGER"
     | "EXPERT"
     | "LEARNER"
     | "SUPPORT";
+  /**
+   * Optional: pre-fetched profile FKs to skip the lazy-creators' own
+   * `findUnique` round-trip when the caller has already loaded the
+   * user row. Used by the customSession bareMembers loop in
+   * `lib/auth.ts` to avoid an N+1 lookup per bare member. See audit
+   * Phase B.7.
+   *
+   * If a value is `null` the helper still attempts the lazy-create
+   * (e.g. LEARNER role + null consulteeProfileId → INSERT). If a value
+   * is set, the helper returns it as-is without re-fetching.
+   */
+  preloadedProfiles?: {
+    consulteeProfileId: string | null;
+    consultantProfileId: string | null;
+  };
 };
 
 export type RoleEffectResult = {
@@ -66,10 +82,13 @@ export async function applyMembershipRoleEffects(
   tx: PrismaLike,
   input: RoleEffectInput,
 ): Promise<RoleEffectResult> {
-  const { userId, role } = input;
+  const { userId, role, preloadedProfiles } = input;
 
   if (role === "LEARNER") {
-    const consulteeProfileId = await ensureConsulteeProfile(tx, userId);
+    // Fast path: caller already knows the consulteeProfileId.
+    const consulteeProfileId =
+      preloadedProfiles?.consulteeProfileId ??
+      (await ensureConsulteeProfile(tx, userId));
     return {
       consulteeProfileId,
       consultantProfileId: null,
@@ -78,7 +97,10 @@ export async function applyMembershipRoleEffects(
   }
 
   if (role === "EXPERT") {
-    const consultantProfileId = await ensureConsultantProfile(tx, userId);
+    // Fast path: caller already knows the consultantProfileId.
+    const consultantProfileId =
+      preloadedProfiles?.consultantProfileId ??
+      (await ensureConsultantProfile(tx, userId));
     return {
       consulteeProfileId: null,
       consultantProfileId,
@@ -86,15 +108,57 @@ export async function applyMembershipRoleEffects(
     };
   }
 
-  // OWNER / MAINTAINER / MANAGER / SUPPORT — operator roles have no
-  // consumer or provider profile linkage. Any previously-hydrated FKs
-  // are cleared so downstream joins (`/my-program`, `/my-arrangement`,
-  // checkout profile resolution) don't pick up stale rows.
+  // OWNER / MAINTAINER / BILLING_ADMIN / MANAGER / SUPPORT — operator
+  // roles have no consumer or provider profile linkage. Any
+  // previously-hydrated FKs are cleared so downstream joins
+  // (`/my-program`, `/my-arrangement`, checkout profile resolution)
+  // don't pick up stale rows. BILLING_ADMIN sits in this group because
+  // it's a finance-only operator role; it has no booking-side surface.
   return {
     consulteeProfileId: null,
     consultantProfileId: null,
     payoutRecipient: "SELF",
   };
+}
+
+/**
+ * Bump the user's session-generation marker so the next request through
+ * `lib/auth.ts:customSession` detects "I'm out of date" and refetches
+ * memberships. Use this on every membership mutation that changes the
+ * effective permission set (role change, removal, soft-suspend).
+ *
+ * Why a counter and not a boolean flag
+ * ------------------------------------
+ * Concurrent role mutations (e.g. a script bulk-promoting interns)
+ * race against the customSession reader. A boolean "stale" flag would
+ * be cleared by the first reader and miss later mutations. A monotonic
+ * integer carried in the session payload means every reader sees an
+ * unambiguous "I've seen up to N" check against the current row value.
+ *
+ * Why we don't force logout
+ * -------------------------
+ * The UX cost of "you've been signed out, please log in again" is high
+ * relative to the marginal security benefit. Role *downgrades* (the
+ * stale-OWNER-session risk) are typically followed by an explicit
+ * member-removal flow that calls BetterAuth's `revokeSession` — the
+ * harder kill. The bump pattern handles the middle case: role changed,
+ * membership still active, session payload must reflect the new role
+ * within a single round-trip.
+ *
+ * Failure mode if not called
+ * --------------------------
+ * The user keeps acting with their old role until BetterAuth's
+ * `updateAge: 24h` session-rotation window passes; up to 24h of acting
+ * with stale permissions. That's the bug this closes — audit Phase B.5.
+ */
+export async function bumpUserSessionGeneration(
+  tx: PrismaLike,
+  userId: string,
+): Promise<void> {
+  await tx.user.update({
+    where: { id: userId },
+    data: { sessionGeneration: { increment: 1 } },
+  });
 }
 
 /**

@@ -18,6 +18,9 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+// Why: invoice PATCH covers status transitions (DRAFT → ISSUED, ISSUED → VOID)
+// which are finance-team mutations; allow BILLING_ADMIN alongside OWNER.
+import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
 const PatchStatusSchema = z.enum(["ISSUED", "CANCELLED", "VOID"]);
@@ -70,7 +73,7 @@ export async function PATCH(
   },
 ) {
   const { orgId, invoiceId } = await params;
-  const access = await requireOrgAccess(orgId, { minimumRole: "OWNER", canSponsor: true });
+  const access = await requireOrgBillingAdminOrOwner(orgId, { canSponsor: true });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);
@@ -143,6 +146,28 @@ export async function PATCH(
         },
       });
 
+      // PO balance restoration on VOID / CANCELLED. The invoice POST
+      // route atomically decremented `PurchaseOrder.remainingAmountPaise`
+      // at issue time; when the invoice is now being voided or cancelled,
+      // atomically increment the PO balance back so the consumed budget
+      // is released. Unbounded increment is safe — we can never overshoot
+      // `totalAmountPaise` because we only restore amounts we previously
+      // took. The transition is already guarded by the allow-list above.
+      const restorePoBalance =
+        body.status &&
+        body.status !== current.status &&
+        (body.status === "VOID" || body.status === "CANCELLED") &&
+        current.purchaseOrderId !== null;
+
+      if (restorePoBalance && current.purchaseOrderId) {
+        await tx.purchaseOrder.update({
+          where: { id: current.purchaseOrderId },
+          data: {
+            remainingAmountPaise: { increment: current.totalPaise },
+          },
+        });
+      }
+
       if (body.status && body.status !== current.status) {
         await tx.orgAuditLog.create({
           data: {
@@ -160,6 +185,10 @@ export async function PATCH(
               invoiceId,
               from: current.status,
               to: body.status,
+              ...(restorePoBalance && {
+                purchaseOrderId: current.purchaseOrderId,
+                restoredPaise: current.totalPaise,
+              }),
             },
           },
         });

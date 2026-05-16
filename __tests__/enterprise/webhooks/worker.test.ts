@@ -1,0 +1,243 @@
+/**
+ * @jest-environment node
+ */
+
+/**
+ * `runDispatchTick` is the only thing that hits the network on the
+ * outbound webhook path, so its retry / backoff / status semantics
+ * carry the integrator contract. The tests below pin:
+ *
+ *   - 2xx → SUCCESS with deliveredAt + endpoint.lastSuccessAt.
+ *   - Permanent 4xx (400/403/404/...) → FAILED with no retry slot.
+ *   - 5xx / 408 / 429 / network error → RETRY with the next backoff
+ *     unless we just used attempt #5, in which case → FAILED.
+ *   - Endpoint flipped to PAUSED/DISABLED after enqueue → row marked
+ *     FAILED with an explicit reason (operator pause wins).
+ */
+
+import { runDispatchTick } from "@/lib/enterprise/outbound-webhooks/worker";
+
+function makeRow(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: "del-1",
+    webhookEndpointId: "ep-1",
+    eventType: "invoice.issued",
+    payload: { id: "inv-1" },
+    signature: null,
+    status: "PENDING",
+    httpStatusCode: null,
+    attempts: 0,
+    nextRetryAt: null,
+    lastError: null,
+    createdAt: new Date("2026-05-15T10:00:00Z"),
+    deliveredAt: null,
+    endpoint: {
+      id: "ep-1",
+      url: "https://receiver.example/webhook",
+      secret: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+      status: "ACTIVE",
+    },
+    ...overrides,
+  };
+}
+
+function makePrismaStub(initialRow: ReturnType<typeof makeRow>) {
+  const updates: Array<Record<string, unknown>> = [];
+  const endpointUpdates: Array<Record<string, unknown>> = [];
+  return {
+    prisma: {
+      outboundWebhookDelivery: {
+        findMany: jest.fn().mockResolvedValue([initialRow]),
+        update: jest.fn().mockImplementation((args) => {
+          updates.push(args);
+          return Promise.resolve({ id: initialRow.id });
+        }),
+      },
+      webhookEndpoint: {
+        update: jest.fn().mockImplementation((args) => {
+          endpointUpdates.push(args);
+          return Promise.resolve({ id: initialRow.endpoint.id });
+        }),
+      },
+    },
+    updates,
+    endpointUpdates,
+  };
+}
+
+function mockFetch(impl: (url: string, init?: RequestInit) => Promise<Response> | Response) {
+  // Cast through `unknown` because the global `fetch` signature carries
+  // request-input overloads we don't need here.
+  return jest.fn(impl) as unknown as typeof fetch;
+}
+
+const FROZEN_NOW_MS = new Date("2026-05-15T12:00:00Z").getTime();
+
+describe("runDispatchTick — success path", () => {
+  it("marks 2xx as SUCCESS, bumps endpoint.lastSuccessAt, resets failureCount", async () => {
+    const row = makeRow();
+    const stub = makePrismaStub(row);
+    const fetchFn = mockFetch(async () => new Response("", { status: 200 }));
+
+    const result = await runDispatchTick({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      prisma: stub.prisma as any,
+      fetchFn,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(result.succeeded).toBe(1);
+    // First update flips PENDING → IN_FLIGHT (soft lock); second finalizes.
+    const finalUpdate = stub.updates[1];
+    expect(finalUpdate).toMatchObject({
+      where: { id: "del-1" },
+      data: expect.objectContaining({
+        status: "SUCCESS",
+        httpStatusCode: 200,
+        attempts: 1,
+      }),
+    });
+    expect(stub.endpointUpdates[0]).toMatchObject({
+      where: { id: "ep-1" },
+      data: expect.objectContaining({
+        failureCount: 0,
+      }),
+    });
+  });
+});
+
+describe("runDispatchTick — permanent client error", () => {
+  it("marks a 400/403/404 as FAILED without scheduling a retry", async () => {
+    const row = makeRow();
+    const stub = makePrismaStub(row);
+    const fetchFn = mockFetch(async () => new Response("bad", { status: 400 }));
+
+    const result = await runDispatchTick({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      prisma: stub.prisma as any,
+      fetchFn,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(result.failed).toBe(1);
+    expect(result.retried).toBe(0);
+    const finalUpdate = stub.updates[1];
+    expect(finalUpdate.data).toMatchObject({
+      status: "FAILED",
+      httpStatusCode: 400,
+      lastError: expect.stringContaining("Permanent client error"),
+    });
+  });
+});
+
+describe("runDispatchTick — transient error / retry schedule", () => {
+  it("5xx → RETRY with attempt 2's backoff (5 minutes) on the first failure", async () => {
+    const row = makeRow();
+    const stub = makePrismaStub(row);
+    const fetchFn = mockFetch(async () => new Response("", { status: 503 }));
+
+    await runDispatchTick({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      prisma: stub.prisma as any,
+      fetchFn,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    const finalUpdate = stub.updates[1];
+    expect(finalUpdate.data).toMatchObject({
+      status: "RETRY",
+      httpStatusCode: 503,
+      attempts: 1,
+    });
+    // Attempt 1 just failed → schedule attempt 2 at +5min.
+    const expectedNext = new Date(FROZEN_NOW_MS + 5 * 60_000);
+    expect((finalUpdate.data as { nextRetryAt: Date }).nextRetryAt.toISOString()).toBe(
+      expectedNext.toISOString(),
+    );
+  });
+
+  it("429 (rate-limit) is treated as transient (NOT a permanent client error)", async () => {
+    const row = makeRow();
+    const stub = makePrismaStub(row);
+    const fetchFn = mockFetch(async () => new Response("", { status: 429 }));
+
+    await runDispatchTick({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      prisma: stub.prisma as any,
+      fetchFn,
+      now: () => FROZEN_NOW_MS,
+    });
+    expect(stub.updates[1].data).toMatchObject({
+      status: "RETRY",
+      httpStatusCode: 429,
+    });
+  });
+
+  it("after attempt 5 fails, flips to FAILED instead of scheduling attempt 6", async () => {
+    const row = makeRow({ attempts: 4 });
+    const stub = makePrismaStub(row);
+    const fetchFn = mockFetch(async () => new Response("", { status: 502 }));
+
+    await runDispatchTick({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      prisma: stub.prisma as any,
+      fetchFn,
+      now: () => FROZEN_NOW_MS,
+    });
+    expect(stub.updates[1].data).toMatchObject({
+      status: "FAILED",
+      attempts: 5,
+      lastError: expect.stringContaining("Exhausted retries"),
+    });
+  });
+
+  it("network error (fetch throws) follows the same retry path as a 5xx", async () => {
+    const row = makeRow();
+    const stub = makePrismaStub(row);
+    const fetchFn = mockFetch(async () => {
+      throw new Error("ECONNREFUSED");
+    });
+
+    await runDispatchTick({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      prisma: stub.prisma as any,
+      fetchFn,
+      now: () => FROZEN_NOW_MS,
+    });
+    expect(stub.updates[1].data).toMatchObject({
+      status: "RETRY",
+      lastError: "ECONNREFUSED",
+    });
+  });
+});
+
+describe("runDispatchTick — operator pause", () => {
+  it("aborts delivery when the endpoint flipped to PAUSED after enqueue", async () => {
+    const row = makeRow({
+      endpoint: {
+        id: "ep-1",
+        url: "https://receiver.example/webhook",
+        secret: "x".repeat(64),
+        status: "PAUSED",
+      },
+    });
+    const stub = makePrismaStub(row);
+    const fetchFn = mockFetch(async () => {
+      // Should never be invoked — operator pause must short-circuit.
+      throw new Error("fetch should not be called");
+    });
+
+    await runDispatchTick({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      prisma: stub.prisma as any,
+      fetchFn,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(stub.updates[0].data).toMatchObject({
+      status: "FAILED",
+      lastError: expect.stringContaining("PAUSED"),
+    });
+  });
+});

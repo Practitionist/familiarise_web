@@ -27,6 +27,9 @@ import {
   Video,
   Receipt,
   ShieldCheck,
+  Webhook,
+  KeyRound,
+  Download,
   type LucideIcon,
 } from "lucide-react";
 
@@ -53,7 +56,11 @@ import {
 import { OrgContextBar } from "@/components/dashboard/OrgContextBar";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { signOut, useSession } from "@/lib/auth-client";
-import { isAtLeastRole } from "@/lib/auth/role-ranks";
+import {
+  isAtLeastRole,
+  canSeeOperatorSurface,
+  canSeeFinanceSurface,
+} from "@/lib/auth/role-ranks";
 import { MEMBER_ROLE_LABEL } from "@/lib/labels/org-labels";
 import { resolvePersonalDashboardHref } from "@/lib/labels/personal-dashboard";
 import { disconnectStreamClients } from "@/providers/StreamProvider";
@@ -158,6 +165,14 @@ export default function OrgLayout({
 
     const role = org.membership.role;
     const isAtLeast = (min: MemberRole) => isAtLeastRole(role, min);
+    // Why two visibility predicates: the rank ladder makes BILLING_ADMIN
+    // (70) > MANAGER (60), so `isAtLeast("MANAGER")` would silently grant
+    // it Members / Invitations / Audit — which contradicts the role
+    // description in `lib/labels/org-labels.ts`. The operator/finance
+    // split keeps the disjunction explicit. See lib/auth/role-ranks.ts
+    // for the full rationale.
+    const isOperator = canSeeOperatorSurface(role);
+    const isFinance = canSeeFinanceSurface(role);
 
     const items: { name: string; icon: LucideIcon; path: string; show?: boolean }[] = [
       { name: "Overview", icon: Home, path: "home" },
@@ -178,8 +193,11 @@ export default function OrgLayout({
         path: "my-arrangement",
         show: role === "EXPERT" && canHost,
       },
-      { name: "Members", icon: Users, path: "members", show: isAtLeast("MANAGER") },
-      { name: "Invitations", icon: Mail, path: "invitations", show: isAtLeast("MAINTAINER") },
+      // Governance surfaces (Members / Invitations / role-scoped views)
+      // intentionally HIDE for BILLING_ADMIN — they're not part of the
+      // finance-team remit.
+      { name: "Members", icon: Users, path: "members", show: isOperator && isAtLeast("MANAGER") },
+      { name: "Invitations", icon: Mail, path: "invitations", show: isOperator && isAtLeast("MAINTAINER") },
       // Members filtered by role — a sponsor-only org gets the
       // "Learners" view; hosts see "Experts" alongside. Both are
       // operator views (manage who consumes / who hosts), so they
@@ -187,42 +205,41 @@ export default function OrgLayout({
       // only the Overview ConsumerViewCard. The canonical role
       // names come straight from `MemberRole` so nothing here
       // carries the legacy "consultant" vocabulary.
-      { name: "Learners", icon: GraduationCap, path: "learners", show: canSponsor && isAtLeast("MANAGER") },
-      { name: "Experts", icon: UserCog, path: "experts", show: canHost && isAtLeast("MANAGER") },
-      { name: "Programs", icon: Briefcase, path: "programs", show: canSponsor && isAtLeast("MAINTAINER") },
-      { name: "Contracts", icon: FileText, path: "contracts", show: canSponsor && isAtLeast("MAINTAINER") },
-      { name: "Purchase Orders", icon: Receipt, path: "purchase-orders", show: canSponsor && isAtLeast("MAINTAINER") },
-      // B1 personal-vs-org scope split — visibility tools, not capability-
-      // gated. MANAGER+ sees them regardless of canSponsor/canHost so an
-      // operator can audit "what's been booked under our org" without
-      // worrying about funding-source mode.
-      { name: "Appointments", icon: CalendarCheck, path: "appointments", show: isAtLeast("MANAGER") },
-      { name: "Waitlist", icon: ListOrdered, path: "waitlist", show: isAtLeast("MANAGER") },
-      { name: "Trials", icon: Sparkles, path: "trials", show: isAtLeast("MANAGER") },
-      { name: "Documents", icon: FileText, path: "documents", show: isAtLeast("MANAGER") },
-      { name: "Recordings", icon: Video, path: "recordings", show: isAtLeast("MANAGER") },
+      { name: "Learners", icon: GraduationCap, path: "learners", show: canSponsor && isOperator && isAtLeast("MANAGER") },
+      { name: "Experts", icon: UserCog, path: "experts", show: canHost && isOperator && isAtLeast("MANAGER") },
+      // Programs / Contracts / Purchase Orders are finance + governance
+      // overlap — both MAINTAINER+ and BILLING_ADMIN should see them.
+      // The route handlers separately enforce who can MUTATE.
+      { name: "Programs", icon: Briefcase, path: "programs", show: canSponsor && (isAtLeast("MAINTAINER") || isFinance) },
+      { name: "Contracts", icon: FileText, path: "contracts", show: canSponsor && (isAtLeast("MAINTAINER") || isFinance) },
+      { name: "Purchase Orders", icon: Receipt, path: "purchase-orders", show: canSponsor && (isAtLeast("MAINTAINER") || isFinance) },
+      // B1 personal-vs-org scope split — visibility tools for OPERATORS,
+      // not BILLING_ADMIN (which has no booking-side remit).
+      { name: "Appointments", icon: CalendarCheck, path: "appointments", show: isOperator && isAtLeast("MANAGER") },
+      { name: "Waitlist", icon: ListOrdered, path: "waitlist", show: isOperator && isAtLeast("MANAGER") },
+      { name: "Trials", icon: Sparkles, path: "trials", show: isOperator && isAtLeast("MANAGER") },
+      { name: "Documents", icon: FileText, path: "documents", show: isOperator && isAtLeast("MANAGER") },
+      { name: "Recordings", icon: Video, path: "recordings", show: isOperator && isAtLeast("MANAGER") },
       // Catalog nav has no page today (deleted alongside the legacy
       // OrganizationPlan-based curated catalog). Hidden until the
       // capability-driven replacement ships. Leaving the entry here so
       // it's easy to re-enable once `/catalog/page.tsx` exists.
       { name: "Catalog", icon: Briefcase, path: "catalog", show: false },
-      // Billing combines invoices (INVOICE-funded) + wallet (WALLET-funded)
-      // into a tabs UI. Visible whenever the org can sponsor or has a
-      // wallet to view. MANAGER-level visibility keeps support staff out
-      // of invoice history.
+      // Billing / Payouts / Reimbursements are the headline BILLING_ADMIN
+      // surfaces — visible to OWNER + MAINTAINER + BILLING_ADMIN + MANAGER
+      // (the latter read-only). SUPPORT is intentionally excluded from
+      // billing pages (PII concentration) — that's the role description.
       {
         name: "Billing",
         icon: CreditCard,
         path: "billing",
-        show:
-          (canSponsor || fundingSource === "WALLET") &&
-          isAtLeast("MANAGER"),
+        show: (canSponsor || fundingSource === "WALLET") && isFinance,
       },
       {
         name: "Payouts",
         icon: Wallet,
         path: "payouts",
-        show: canHost && isAtLeast("MANAGER"),
+        show: canHost && isFinance,
       },
       // C4: reimbursement-report — only for sponsor orgs on PERSONAL
       // funding. Other funding modes settle through their own dashboards.
@@ -230,15 +247,25 @@ export default function OrgLayout({
         name: "Reimbursements",
         icon: Wallet,
         path: "reimbursements",
-        show:
-          canSponsor &&
-          fundingSource === "PERSONAL" &&
-          isAtLeast("MANAGER"),
+        show: canSponsor && fundingSource === "PERSONAL" && isFinance,
       },
-      { name: "Analytics", icon: BarChart3, path: "analytics", show: isAtLeast("MANAGER") },
+      // Analytics is operator-only (booking + member analytics, not
+      // billing). BILLING_ADMIN gets its own finance numbers via Billing/Payouts.
+      { name: "Analytics", icon: BarChart3, path: "analytics", show: isOperator && isAtLeast("MANAGER") },
+      // Audit + Consent + Settings stay strictly MAINTAINER+ —
+      // BILLING_ADMIN rank (70) < MAINTAINER (80), so `isAtLeast` already
+      // hides them. Listed here to make the intent explicit.
       { name: "Audit", icon: ClipboardList, path: "audit", show: isAtLeast("MAINTAINER") },
-      { name: "Consent", icon: ShieldCheck, path: "consent", show: isAtLeast("MANAGER") },
+      { name: "Consent", icon: ShieldCheck, path: "consent", show: isOperator && isAtLeast("MANAGER") },
       { name: "Settings", icon: Settings, path: "settings", show: isAtLeast("MAINTAINER") },
+      // Integrations subroutes — BILLING_ADMIN-reachable. The dedicated
+      // route group (vs. nested under Settings) keeps governance and
+      // integrations as separate IA surfaces — see
+      // `app/dashboard/organization/[orgId]/integrations/*/page.tsx`
+      // and `useRequireFinanceSurface`.
+      { name: "Webhooks", icon: Webhook, path: "integrations/webhooks", show: isFinance },
+      { name: "SCIM", icon: KeyRound, path: "integrations/scim", show: isFinance },
+      { name: "Data exports", icon: Download, path: "integrations/data-exports", show: isFinance },
     ];
 
     return items

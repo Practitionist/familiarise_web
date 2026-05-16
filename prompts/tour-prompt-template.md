@@ -24,9 +24,10 @@ the choice between automation and manual driving, they fix bugs in
 flight when they encounter them, they re-test the failed scenario
 before continuing.
 
-If you're scaffolding a test prompt, use one of the existing test
-suites as your reference instead (e.g.
-`prompts/enterprise-tests/e2e-enterprise-agent-002-arch4-modified-ui.md`).
+If you're scaffolding a test prompt, use one of the feature files in
+`prompts/enterprise-tests/` as your reference instead (e.g.
+`prompts/enterprise-tests/3-billing-wallet-invoices/ui-wallet-and-invoice-pay.md`)
+and pair with `prompts/enterprise-tests/_shared/case-template.md`.
 
 ---
 

@@ -45,16 +45,16 @@ model User {
   Payment                 Payment[]
 
   // Relations
-  consultantProfile   ConsultantProfile?
-  consultantProfileId String?            @unique
-  consulteeProfile    ConsulteeProfile?
-  consulteeProfileId  String?            @unique
-  staffProfile        StaffProfile?
-  staffProfileId      String?            @unique
-  adminProfile        AdminProfile?
-  adminProfileId      String?            @unique
-  orgWorkspaceProfile     OrgWorkspaceProfile?
-  orgWorkspaceProfileId   String?            @unique
+  consultantProfile     ConsultantProfile?
+  consultantProfileId   String?              @unique
+  consulteeProfile      ConsulteeProfile?
+  consulteeProfileId    String?              @unique
+  staffProfile          StaffProfile?
+  staffProfileId        String?              @unique
+  adminProfile          AdminProfile?
+  adminProfileId        String?              @unique
+  orgWorkspaceProfile   OrgWorkspaceProfile?
+  orgWorkspaceProfileId String?              @unique
 
   slotsOfAppointment SlotOfAppointment[] @relation("SlotOfAppointmentToUser")
   Waitlist           Waitlist[]
@@ -81,11 +81,42 @@ model User {
   referral        Referral?        @relation("ReferredUser")
   referralCredits ReferralCredit[]
 
+  // Session-generation marker: increments on every membership role
+  // change so the next request through `customSession` (see
+  // `lib/auth.ts`) detects "I'm out of date" and refetches memberships
+  // without forcing a logout. Carried into the session payload via
+  // BetterAuth's `additionalFields`; the customSession callback
+  // compares the carried value to this row value on each lookup.
+  //
+  // Why a counter and not a boolean "stale" flag: under concurrent
+  // role mutations, a boolean races between writer and reader. A
+  // monotonic integer makes each session's "I've seen up to N" check
+  // unambiguous. See audit Phase B.5 + docs/enterprise/09-jit-and-session-refresh.md.
+  sessionGeneration Int @default(0)
+
+  // DPDP §12 right-to-erasure tombstone marker (audit Phase 2). When set,
+  // the user's PII fields are scrubbed to pseudonymous values and every
+  // active Membership is flipped to MemberStatus.ERASED. Financial rows
+  // (invoices, payouts, ledger entries) are intentionally retained per
+  // IT Act 5–7y obligations — the erasure is selective, not destructive.
+  // SCIM and JIT re-creation paths must return 410 Gone when erasedAt is set.
+  erasedAt       DateTime?
+  // SHA-256(userId + salt) — opaque stable id used to rewrite audit-log
+  // JSON references after scrub so historical investigations still trace
+  // events back to a (deterministic) actor without exposing PII.
+  pseudonymousId String?   @unique
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  invitations  Invitation[]
-  ssoproviders SsoProvider[]
+  invitations              Invitation[]
+  ssoproviders             SsoProvider[]
+  erasureRequests          ErasureRequest[]
+  /// Erasure requests this user processed as an admin. Named relation
+  /// distinguishes it from `erasureRequests` above (requests filed
+  /// against this user) — Prisma requires the disambiguation since
+  /// both edges target ErasureRequest.
+  erasureRequestsProcessed ErasureRequest[] @relation("ErasureRequestProcessor")
 
   @@index([consultantProfileId])
   @@index([consulteeProfileId])
@@ -93,6 +124,7 @@ model User {
   @@index([role])
   @@index([staffProfileId])
   @@index([orgWorkspaceProfileId])
+  @@index([erasedAt])
   @@map("users")
 }
 
@@ -466,9 +498,26 @@ model Organization {
   pan          String?      @db.VarChar(10)
   hsnDefault   String       @default("999293") // SAC code for educational/consulting services
 
+  // MSME 43B(h) classification for HOST orgs receiving payouts.
+  // When MICRO / SMALL, payouts must clear within 15 / 45 days (or 15 days
+  // when no written agreement is on file) per CGST Sec 43B(h) — otherwise
+  // the deduction is disallowed for the deductor's income-tax filing.
+  // MEDIUM and NONE fall back to contract.paymentTermsDays. Mirrors the
+  // same fields on ConsultantProfile.
+  msmeStatus                 MsmeStatus @default(NONE)
+  msmeWrittenAgreementOnFile Boolean    @default(false)
+
   // Procurement
   requiresPO       Boolean @default(false)
   paymentTermsDays Int     @default(60) // India Net-60 default
+
+  // Per-org invoice numbering (#GST sequential rule under CGST Rule 46).
+  // `invoiceNumberPrefix` is the human-readable identifier baked into the
+  // generated number — `<prefix>-<fiscalYear>-<seq>` (e.g. ACME-2026-042).
+  // Sequences are tracked in `OrgInvoiceCounter` (atomic UPSERT…RETURNING);
+  // dropping this column without backfilling the counter table will break
+  // future generation. Null prefix → slug-derived fallback at issue time.
+  invoiceNumberPrefix String?
 
   // Branding (merged from old OrganizationProfile)
   bannerImage    String?
@@ -479,6 +528,18 @@ model Organization {
   website        String?
   sizeBucket     OrgSizeBucket?
   billingEmail   String?
+
+  // Contact directory (added 2026-05-15 per enterprise-procurement ask).
+  // `billingEmail` above remains the legacy single-contact field; the
+  // routing layer prefers `billingContactEmail` and falls back to
+  // `billingEmail` then OWNER membership email when both are null.
+  // `escalationContactEmail` is used by SLA-breach alerts only.
+  billingContactName     String?
+  billingContactEmail    String? @db.VarChar(255)
+  billingContactPhone    String? @db.VarChar(32)
+  supportContactName     String?
+  supportContactEmail    String? @db.VarChar(255)
+  escalationContactEmail String? @db.VarChar(255)
 
   // Policies
   enforceOrganizationPlans  Boolean @default(false)
@@ -523,6 +584,10 @@ model Organization {
   webinarPlans      WebinarPlan[]
   classPlans        ClassPlan[]
 
+  // Per-org invoice number counters — one row per (org, fiscal year).
+  // See `OrgInvoiceCounter` for the atomic increment semantics.
+  invoiceCounters OrgInvoiceCounter[]
+
   // Trial attribution — TrialSession.organizationId is optional. Set
   // only when the trial booker is a LEARNER of an active org. Used for
   // conversion analytics ("what % of Wipro trials convert to paid?")
@@ -543,6 +608,23 @@ model Organization {
   // soft reference (string only) which let mis-bound writes silently
   // settle to the platform default. Now enforced at the DB level.
   rateCards RateCard[] @relation("RateCardOwnerOrg")
+
+  /// Per-org Stream.io recording retention window (days). Powers
+  /// `jobs/stream/cleanup-old-stream-recordings.ts` — recordings older
+  /// than this value are deleted from Stream + tombstoned locally.
+  /// Default 90d matches the platform-wide minimum for compliance
+  /// (most large enterprises require ≥90d for grievance / audit).
+  streamRecordingRetentionDays Int @default(90)
+
+  // Outbound integration surfaces (Batch 3 + 4 + 5 of PR #655 lockdown).
+  webhookEndpoints   WebhookEndpoint[]
+  scimTokens         ScimToken[]
+  scimGroupMappings  ScimGroupMapping[]
+  dataExportJobs     OrgDataExportJob[]
+  /// Per-org maintenance windows (Tier 1 multi-tenant column; admin
+  /// API + scoping logic lands post-MVP). NULL-org rows remain
+  /// platform-wide.
+  maintenanceWindows MaintenanceWindow[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -658,6 +740,15 @@ model Membership {
   betterAuthMemberId String? @unique
   betterAuthMember   Member? @relation(fields: [betterAuthMemberId], references: [id], onUpdate: Cascade, onDelete: SetNull)
 
+  /// SCIM 2.0 stable external identity per org. Populated when the
+  /// membership was created or last-updated via /scim/v2/Users; null for
+  /// memberships created through the in-app invite flow. Indexed under a
+  /// partial unique constraint scoped to (organizationId, externalScimId)
+  /// so two orgs can map the same IdP user without collision. Allows
+  /// idempotent SCIM upserts and is the canonical key for DELETE
+  /// (deprovision = SUSPEND, never erase).
+  externalScimId String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -685,6 +776,13 @@ model Membership {
 enum MemberRole {
   OWNER
   MAINTAINER
+  /// BILLING_ADMIN — Finance-team operator. Sits between MAINTAINER (80)
+  /// and MANAGER (60) on the rank ladder at rank 70 (see
+  /// lib/auth/role-ranks.ts). Can manage invoices, POs, payouts, rate
+  /// cards, wallet top-ups, and outbound webhooks; cannot transition org
+  /// status, change funding source, invite/remove members, or modify SSO.
+  /// Required for large orgs that delegate billing to a separate team.
+  BILLING_ADMIN
   MANAGER
   EXPERT
   LEARNER
@@ -696,6 +794,11 @@ enum MemberStatus {
   ACTIVE
   SUSPENDED
   REMOVED
+  /// ERASED — DPDP §12 tombstone. Set by the erasure pipeline when a
+  /// user exercises right-to-erasure; the Membership row remains for
+  /// audit + financial-trail integrity but the user identifiers are
+  /// scrubbed to pseudonymous values (see User.erasedAt).
+  ERASED
 }
 
 enum OrgStatus {
@@ -1044,7 +1147,7 @@ model BookingUtilization {
   /// re-counting is impossible. Empty array = pre-PR-1e rows or non-
   /// SUBSCRIPTION bookings (which always pass appointmentIds at first
   /// call, so the set diff returns the full count).
-  appointmentIds String[]  @default([])
+  appointmentIds String[] @default([])
 
   createdAt DateTime @default(now())
 
@@ -1257,15 +1360,15 @@ model OrganizationPayout {
   /// C1 (PR-4) refund clawback — when an OrganizationEarnings already
   /// rolled into this payout is later refunded. Manual recovery only
   /// in v1; admin sees this in the payout-detail page.
-  clawbackAmountPaise   Int       @default(0)
-  clawbackInitiatedAt   DateTime?
+  clawbackAmountPaise Int       @default(0)
+  clawbackInitiatedAt DateTime?
 
   /// Cron-driven duplicate-guard key. The weekly batch cron derives a
   /// deterministic key from (organizationId, periodStart) so a retried
   /// invocation never creates a second OrganizationPayout for the same
   /// window. Manual / route-driven payouts leave this null. Unique when
   /// present so two cron runs cannot both insert the same key.
-  idempotencyKey  String?       @unique
+  idempotencyKey String? @unique
 
   earnings OrganizationEarnings[]
 
@@ -1311,7 +1414,14 @@ model OrganizationInvoice {
   contractId       String?
   contract         Contract?      @relation(fields: [contractId], references: [id], onDelete: SetNull)
 
-  invoiceNumber String           @unique
+  // Generated as `<prefix>-<fiscalYear>-<seq>` per CGST Rule 46 sequential
+  // numbering. Uniqueness is enforced per-org (not globally) so two orgs can
+  // both legitimately issue "ACME-2026-001". The seq is allocated atomically
+  // via `OrgInvoiceCounter.nextSeq` (UPSERT…RETURNING) at issue time.
+  invoiceNumber String
+  // April–March Indian fiscal year (e.g. invoices issued Jan–Mar 2026 land
+  // in fiscalYear=2025). Computed at the issue site, never updated.
+  fiscalYear    Int              @default(0)
   status        OrgInvoiceStatus @default(DRAFT)
 
   // Money
@@ -1385,8 +1495,25 @@ model OrganizationInvoice {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([organizationId, invoiceNumber])
   @@index([organizationId, status, dueDate])
+  @@index([organizationId, fiscalYear, issuedAt])
   @@index([billingCycleStart, billingCycleEnd])
+}
+
+// Per-org, per-fiscal-year invoice sequence counter. Allocation pattern
+// is an INSERT…ON CONFLICT DO UPDATE…RETURNING that atomically reserves the
+// next `seq` so concurrent invoice generation can't collide on the
+// `@@unique([organizationId, invoiceNumber])` constraint.
+model OrgInvoiceCounter {
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  fiscalYear     Int
+  nextSeq        Int          @default(1)
+  updatedAt      DateTime     @updatedAt
+
+  @@id([organizationId, fiscalYear])
+  @@map("org_invoice_counters")
 }
 
 model PurchaseOrder {
@@ -1512,6 +1639,7 @@ enum OrgAuditCategory {
   CONSENT // DPDP events
   CATALOG // org-curated plan catalog add/remove/deactivate
   SYSTEM // anything platform-triggered
+  WEBHOOK // outbound webhook endpoint CRUD + delivery results
 }
 
 // Org-curated plan catalog. Unchanged semantics; FK renamed to organizationId.
@@ -4004,9 +4132,20 @@ model MaintenanceWindow {
   bypassSecret String?
   metadata     Json?
 
+  /// PR #655 Tier 1 multi-tenant column. NULL = platform-wide window
+  /// (every legacy row + the default for ops-triggered downtime).
+  /// Non-null = the window only affects the matching tenant; other
+  /// orgs see the platform stay green. The per-org admin API and
+  /// Novu workflow scoping that uses this column land post-MVP in
+  /// #730 — the column exists today so the migration doesn't have
+  /// to ship with the feature work.
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([organizationId, phase])
   @@map("maintenance_windows")
 }
 
@@ -4021,6 +4160,217 @@ model SsoProvider {
   organizationId String?
   domain         String
 
+  // `providerId` is globally unique (BetterAuth uses it as the URL
+  // slug for /api/auth/sso/.../{providerId}/...). The composite below
+  // is belt-and-suspenders for the route-level check in
+  // `app/api/organizations/[orgId]/sso/providers/route.ts` which
+  // already rejects (organizationId, domain) collisions within an org.
+  // Adding the DB constraint makes the invariant load-bearing — if a
+  // future migration / hand-SQL bypasses the route, the DB still
+  // refuses. See audit Phase B.4.
   @@unique([providerId])
+  @@unique([organizationId, domain])
   @@map("ssoProvider")
+}
+
+// =============================================================================
+// PR #655 enterprise lockdown — Batches 3 / 4 / 5
+//
+// The six models below are the schema surface for outbound webhooks (Batch 3),
+// SCIM 2.0 provisioning (Batch 4), and DPDP §12 erasure + DPDP §11 data export
+// (Batch 5 / Batch 6.5). The matching SQL was applied via Supabase MCP under
+// migration `pr655_enterprise_lockdown_schema` — this Prisma block exists for
+// type generation and IDE intellisense; it does NOT drive db push.
+// =============================================================================
+
+/// Outbound webhook destinations per organization. Each row maps an HTTPS
+/// URL to a list of subscribed event types (`member.added`, `invoice.issued`,
+/// `payout.completed`, ...) and carries the HMAC-SHA256 secret used to sign
+/// every delivery body. See lib/enterprise/outbound-webhooks/* + docs at
+/// docs/enterprise/29-outbound-webhooks.md.
+model WebhookEndpoint {
+  id                    String                @id @default(cuid())
+  organizationId        String
+  organization          Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  url                   String                @db.VarChar(2048)
+  secret                String
+  status                WebhookEndpointStatus @default(ACTIVE)
+  /// Event-type tokens this endpoint should receive — e.g.
+  /// ["invoice.issued","payout.completed"]. Empty array == receives nothing
+  /// (useful for staging a paused endpoint before flipping subscriptions on).
+  eventSubscriptions    String[]              @default([])
+  failureCount          Int                   @default(0)
+  lastSuccessAt         DateTime?
+  lastFailureAt         DateTime?
+  /// Rotation grace columns: when the operator rotates the secret via
+  /// /rotate-secret, we stamp `secretRotatedAt` and stash the prior
+  /// HMAC into `previousSecretHash` so the worker can verify deliveries
+  /// signed with either secret for a 24-hour grace window. Receivers
+  /// running the same body through both secrets stay green during the
+  /// rotation cutover. Today the rotate route still overwrites
+  /// `secret` directly; flipping it to grace-aware is a follow-up that
+  /// reads these columns.
+  secretRotatedAt       DateTime?
+  previousSecretHash    String?
+  createdByMembershipId String?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  deliveries OutboundWebhookDelivery[]
+
+  @@index([organizationId, status])
+}
+
+enum WebhookEndpointStatus {
+  ACTIVE
+  PAUSED
+  DISABLED
+}
+
+/// One row per delivery attempt cycle for a (WebhookEndpoint, eventType,
+/// payload) tuple. The worker (jobs/webhooks/dispatch-outbound-webhooks.ts)
+/// polls (status, nextRetryAt) and walks the exponential backoff schedule
+/// (1m → 5m → 30m → 2h → 8h) before marking FAILED at attempt 5. `signature`
+/// stores the `t=...,v1=...` envelope so re-deliveries can reproduce the
+/// same header for the receiver's idempotency key.
+model OutboundWebhookDelivery {
+  id                String          @id @default(cuid())
+  webhookEndpointId String
+  endpoint          WebhookEndpoint @relation(fields: [webhookEndpointId], references: [id], onDelete: Cascade)
+  eventType         String
+  payload           Json
+  signature         String?
+  status            DeliveryStatus  @default(PENDING)
+  httpStatusCode    Int?
+  attempts          Int             @default(0)
+  nextRetryAt       DateTime?
+  lastError         String?         @db.Text
+  createdAt         DateTime        @default(now())
+  deliveredAt       DateTime?
+
+  @@index([status, nextRetryAt])
+  @@index([webhookEndpointId, createdAt])
+}
+
+enum DeliveryStatus {
+  PENDING
+  IN_FLIGHT
+  SUCCESS
+  RETRY
+  FAILED
+}
+
+/// Per-org SCIM 2.0 bearer tokens. Stored as SHA-256 hashes; the raw token
+/// is shown once at creation and never persisted. Auth path: bearer →
+/// sha256 → lookup in this table → load organizationId. Status flips to
+/// REVOKED on explicit DELETE; tokens never expire unless revoked.
+model ScimToken {
+  id                    String          @id @default(cuid())
+  organizationId        String
+  organization          Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  tokenHash             String          @unique
+  label                 String
+  status                ScimTokenStatus @default(ACTIVE)
+  createdByMembershipId String?
+  createdAt             DateTime        @default(now())
+  lastUsedAt            DateTime?
+  revokedAt             DateTime?
+  /// Optional auto-rotation TTL. Null = "never expires"; non-null is
+  /// the absolute deadline after which `requireScimAuth` refuses the
+  /// token even if `status = ACTIVE`. The enforcement read is a
+  /// follow-up — the column exists today so OWNERs can set a 6/12
+  /// month TTL when minting + the rotation reminder cron has a
+  /// stable column to scan.
+  expiresAt             DateTime?
+
+  @@index([organizationId, status])
+  @@index([organizationId, expiresAt])
+}
+
+enum ScimTokenStatus {
+  ACTIVE
+  REVOKED
+}
+
+/// Mapping from SCIM Group name (as the IdP knows it, e.g. "IT-Admins") to
+/// the local MemberRole that should be applied when a user joins that
+/// group. One mapping per (org, group name); the SCIM Groups endpoint
+/// reads from this table when reconciling group memberships.
+model ScimGroupMapping {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  scimGroupName  String
+  role           MemberRole
+  createdAt      DateTime     @default(now())
+
+  @@unique([organizationId, scimGroupName])
+}
+
+/// DPDP §12 right-to-erasure request queue. Users file via
+/// `POST /api/users/me/erasure-requests`; admins process via
+/// `POST /api/admin/erasure-requests/[id]/process`. The cron
+/// `jobs/compliance/process-erasure-requests.ts` walks PENDING rows and
+/// either auto-processes (if `AUTO_PROCESS_ERASURE=true`) or pages ops
+/// when within 7 days of the 30-day SLA cliff. The partial-unique index
+/// on `(userId)` WHERE status IN (PENDING, IN_PROGRESS) lives in the SQL
+/// migration — Prisma 7's `partialIndexes` is still preview and the DB
+/// is the authoritative gate for "at most one open request per user".
+model ErasureRequest {
+  id                 String        @id @default(cuid())
+  userId             String
+  user               User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  requestedAt        DateTime      @default(now())
+  completedAt        DateTime?
+  status             ErasureStatus @default(PENDING)
+  reason             String?       @db.Text
+  /// FK to the admin (User row with role=ADMIN) who processed or
+  /// rejected the request. SetNull on admin deletion so the audit row
+  /// survives — the regulatory evidence-of-erasure trail must outlive
+  /// staff turnover. The processor's role is verified at the route
+  /// layer; no DB-side enum constraint.
+  processedByAdminId String?
+  processedByAdmin   User?         @relation("ErasureRequestProcessor", fields: [processedByAdminId], references: [id], onDelete: SetNull)
+  notes              String?       @db.Text
+
+  @@index([status, requestedAt])
+}
+
+enum ErasureStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  REJECTED
+}
+
+/// DPDP §11 right-to-access bundle job. OWNER / BILLING_ADMIN files via
+/// `POST /api/organizations/[orgId]/data-exports`; the worker
+/// (`scripts/cleanup/process-data-exports.ts`) builds a JSON+CSV bundle
+/// across members / contracts / earnings / invoices / payouts /
+/// audit-log, uploads to Supabase Storage with a 7d signed URL, and
+/// emails the requester. One-export-per-org-per-24h is enforced by
+/// the `orgDataExportLimiter` rate limiter, not by a DB constraint.
+model OrgDataExportJob {
+  id                      String              @id @default(cuid())
+  organizationId          String
+  organization            Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  requestedByMembershipId String
+  status                  OrgDataExportStatus @default(PENDING)
+  fileUrl                 String?
+  fileSizeBytes           BigInt?
+  expiresAt               DateTime?
+  error                   String?             @db.Text
+  createdAt               DateTime            @default(now())
+  startedAt               DateTime?
+  completedAt             DateTime?
+
+  @@index([organizationId, createdAt(sort: Desc)])
+}
+
+enum OrgDataExportStatus {
+  PENDING
+  PROCESSING
+  READY
+  FAILED
+  EXPIRED
 }

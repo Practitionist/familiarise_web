@@ -32,7 +32,6 @@ import { useSession } from "@/lib/auth-client";
 import {
   ORG_FILTER_ALL,
   ORG_FILTER_PERSONAL,
-  serializeOrgFilter,
   type OrgContextFilterValue,
 } from "@/lib/dashboard/org-context-filter";
 
@@ -42,7 +41,6 @@ import {
 export {
   ORG_FILTER_ALL,
   ORG_FILTER_PERSONAL,
-  serializeOrgFilter,
   type OrgContextFilterValue,
 };
 

@@ -914,6 +914,39 @@ async function releaseCheckoutLock(
 }
 
 /**
+ * Resolve the host org id for a webinar/class event so waitlist + recording
+ * rows can stamp `organizationId` consistently with the parent Appointment
+ * (which uses `plan.organizationId` per the SHARED-across-registrants tag).
+ *
+ * Used by the four waitlist creates in handleCheckout's catch blocks; the
+ * tx that loaded the plan is already rolled back at that point so we have
+ * to re-fetch. Returns null when the plan is personal (not org-owned).
+ */
+async function resolveEventHostOrgId(
+  appointmentType: "WEBINAR" | "CLASS",
+  eventId: string,
+): Promise<string | null> {
+  try {
+    if (appointmentType === "WEBINAR") {
+      const w = await prisma.webinar.findUnique({
+        where: { id: eventId },
+        select: { webinarPlan: { select: { organizationId: true } } },
+      });
+      return w?.webinarPlan?.organizationId ?? null;
+    }
+    const c = await prisma.class.findUnique({
+      where: { id: eventId },
+      select: { classPlan: { select: { organizationId: true } } },
+    });
+    return c?.classPlan?.organizationId ?? null;
+  } catch {
+    // Best-effort: an error here shouldn't sink the waitlist add. The org
+    // dashboard's "events I host" rollup tolerates null FKs.
+    return null;
+  }
+}
+
+/**
  * BUG-E: Verify plan still exists inside lock
  * Prevents race condition where plan is deleted between initial validation and checkout
  */
@@ -2616,8 +2649,16 @@ export async function handleCheckout(
         validatedData.eventId
       ) {
         try {
+          const hostOrgId = await resolveEventHostOrgId(
+            "WEBINAR",
+            validatedData.eventId,
+          );
           await prisma.waitlist.create({
-            data: { userId, webinarId: validatedData.eventId },
+            data: {
+              userId,
+              webinarId: validatedData.eventId,
+              organizationId: hostOrgId,
+            },
           });
           throw new Error("Webinar is full. Added to waitlist.");
         } catch (waitlistError) {
@@ -2641,8 +2682,16 @@ export async function handleCheckout(
         validatedData.eventId
       ) {
         try {
+          const hostOrgId = await resolveEventHostOrgId(
+            "CLASS",
+            validatedData.eventId,
+          );
           await prisma.waitlist.create({
-            data: { userId, classId: validatedData.eventId },
+            data: {
+              userId,
+              classId: validatedData.eventId,
+              organizationId: hostOrgId,
+            },
           });
           throw new Error("Class is full. Added to waitlist.");
         } catch (waitlistError) {
@@ -2698,8 +2747,16 @@ export async function handleCheckout(
         validatedData.eventId
       ) {
         try {
+          const hostOrgId = await resolveEventHostOrgId(
+            "WEBINAR",
+            validatedData.eventId,
+          );
           await prisma.waitlist.create({
-            data: { userId, webinarId: validatedData.eventId },
+            data: {
+              userId,
+              webinarId: validatedData.eventId,
+              organizationId: hostOrgId,
+            },
           });
           throw new Error("Webinar is full. Added to waitlist.");
         } catch (waitlistError) {
@@ -2720,8 +2777,16 @@ export async function handleCheckout(
         validatedData.eventId
       ) {
         try {
+          const hostOrgId = await resolveEventHostOrgId(
+            "CLASS",
+            validatedData.eventId,
+          );
           await prisma.waitlist.create({
-            data: { userId, classId: validatedData.eventId },
+            data: {
+              userId,
+              classId: validatedData.eventId,
+              organizationId: hostOrgId,
+            },
           });
           throw new Error("Class is full. Added to waitlist.");
         } catch (waitlistError) {

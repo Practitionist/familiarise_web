@@ -1,12 +1,27 @@
 /**
- * TDS (Tax Deducted at Source) Service — Section 194J
+ * Consultant-side TDS service — Section 194J + Form 26Q audit trail.
  *
- * Handles TDS calculation, deduction, and record-keeping for consultant payouts.
+ * This is the production pipeline for consultant payouts
+ * (`lib/payments/payouts/payout-service.ts`). It owns:
+ *   - Section 194J flat 10% / 20% calculation with the ₹50K fiscal-year threshold
+ *   - Indian FY date arithmetic (Apr–Mar) and quarter mapping
+ *   - Cumulative FY payout aggregation for threshold-crossing math
+ *   - `TDSRecord` audit-trail writes (drives Form 26Q quarterly filing)
+ *   - Admin queries for the TDS dashboard
  *
- * Rules:
+ * The companion lib `lib/compliance/tds.ts` handles the org-side payout
+ * pipeline with the full 2026 statutory surface (Section 194-O ECO default,
+ * 194J, 194C, Section 197 lower-rate certs, Section 206AA PAN fallback,
+ * DTAA rate lookup). The two pipelines have different defaults and
+ * different audit shapes — unifying them requires accountant signoff on
+ * which section governs consultant payouts post-194-O (ECO precedence
+ * argument vs the existing 194J threshold-based approach) and is tracked
+ * as a separate PR. Do not delete this file without that signoff.
+ *
+ * Rules encoded here (Section 194J):
  * - Threshold: ₹50,000/financial year (April–March)
- * - Rate: 10% with verified PAN, 20% without PAN
- * - Applies to professional/technical services (Section 194J)
+ * - Rate: 10% with verified PAN, 20% without PAN (Section 206AA)
+ * - Applies to professional/technical services
  * - Must be deposited by 7th of next month
  * - Quarterly filing: Form 26Q
  */

@@ -6,10 +6,10 @@
  * Checks why Sunday slots appear in the calendar when consultant has no Sunday availability
  */
 
-import { PrismaClient, DayOfWeek } from "@prisma/client";
+import "dotenv/config";
+import { DayOfWeek } from "@prisma/client";
+import prisma from "@/lib/prisma";
 import { minutesToTimeString } from "@/utils/slotAllocation/slotTimeUtils";
-
-const prisma = new PrismaClient();
 
 const CONSULTANT_ID = "31e2e9f4-c9d5-4c4c-b281-e8531da623dd";
 const SUBSCRIPTION_ID = "cmgflwuvk03nymf4gysztdb19"; // Extended subscription with Aug dates

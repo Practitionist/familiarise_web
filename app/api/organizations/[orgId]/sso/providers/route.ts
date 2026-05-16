@@ -36,15 +36,28 @@ export async function GET(
       providerId: true,
       issuer: true,
       domain: true,
-      // oidcConfig/samlConfig are redacted in the list view — only the
-      // detail endpoint returns them (and even then redacted further).
+      // `samlConfig` and `oidcConfig` are JSON-encoded strings (see
+      // `prisma/schema.prisma` lines 4073-4074). We only need to know
+      // *which* is populated to drive ACS URL inference below — the
+      // contents stay opaque to the list view (the detail endpoint
+      // is the one that decodes + redacts secrets). Audit Phase B.2.
+      samlConfig: true,
+      oidcConfig: true,
     },
   });
 
   // Augment each with its derived ACS + metadata URLs so the dashboard
-  // doesn't have to re-compute them client-side.
-  const augmented = providers.map((p) => {
-    const type: "saml" | "oidc" | null = null;
+  // doesn't have to re-compute them client-side. Type inference matters
+  // because OIDC providers use a different callback path; the
+  // pre-audit-B.2 code hardcoded `null` which always picked the SAML
+  // URL — fine for SAML providers, wrong for OIDC providers and very
+  // confusing for admins configuring OIDC in their IdP console.
+  const augmented = providers.map(({ samlConfig, oidcConfig, ...p }) => {
+    const type: "saml" | "oidc" | null = samlConfig
+      ? "saml"
+      : oidcConfig
+        ? "oidc"
+        : null;
     return {
       ...p,
       acsUrl: deriveAcsUrl(p.providerId, type),
@@ -89,6 +102,46 @@ export async function POST(
 
   try {
     const provider = await prisma.$transaction(async (tx) => {
+      // Domain ownership gate — must come BEFORE the dup-providerId
+      // check, because a 422 "domain not owned" is the more
+      // actionable error to surface for an operator who pasted the
+      // wrong domain.
+      //
+      // Pre-audit-B.3 this org could create an SsoProvider for any
+      // domain string. The runtime SSO-enforcement hook at
+      // `lib/auth.ts` + `lib/sso/enforce-session.ts` then refused to
+      // honor the provider (because no verified OrgDomainClaim
+      // existed), but the registration step itself was silent. That
+      // "defended by accident" stance leaves the org-admin staring
+      // at a registered provider that mysteriously never fires.
+      //
+      // Explicit gates: 422 DOMAIN_NOT_OWNED if no claim under this
+      // org; 422 DOMAIN_NOT_VERIFIED if the claim exists but
+      // verifiedAt IS NULL. The auth runtime keeps its
+      // belt-and-suspenders check, but now operators see the
+      // problem at the point of action.
+      const normalizedDomain = body.domain.toLowerCase();
+      const claim = await tx.orgDomainClaim.findUnique({
+        where: { domain: normalizedDomain },
+        select: { organizationId: true, verifiedAt: true },
+      });
+      if (!claim || claim.organizationId !== orgId) {
+        throw Object.assign(
+          new Error(
+            `Domain '${body.domain}' is not claimed by this organization. Claim and verify the domain first under Settings → SSO → Domains.`,
+          ),
+          { httpStatus: 422, code: "DOMAIN_NOT_OWNED" },
+        );
+      }
+      if (!claim.verifiedAt) {
+        throw Object.assign(
+          new Error(
+            `Domain '${body.domain}' is claimed but not yet verified. Add the required DNS TXT record and complete verification before registering an SSO provider.`,
+          ),
+          { httpStatus: 422, code: "DOMAIN_NOT_VERIFIED" },
+        );
+      }
+
       const dupProviderId = await tx.ssoProvider.findUnique({
         where: { providerId: body.providerId },
         select: { id: true },
@@ -103,7 +156,7 @@ export async function POST(
       }
 
       const dupDomain = await tx.ssoProvider.findFirst({
-        where: { organizationId: orgId, domain: body.domain.toLowerCase() },
+        where: { organizationId: orgId, domain: normalizedDomain },
         select: { id: true },
       });
       if (dupDomain) {
@@ -167,7 +220,12 @@ export async function POST(
     if (err instanceof Error && "httpStatus" in err) {
       const status =
         typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      return NextResponse.json({ error: err.message }, { status });
+      const code =
+        "code" in err && typeof err.code === "string" ? err.code : undefined;
+      return NextResponse.json(
+        code ? { error: err.message, code } : { error: err.message },
+        { status },
+      );
     }
     throw err;
   }

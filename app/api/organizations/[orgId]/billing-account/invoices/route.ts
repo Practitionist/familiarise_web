@@ -12,12 +12,17 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
-import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+// Why: invoice creation is the canonical finance-team mutation; downgrade
+// from OWNER-only so BILLING_ADMIN can issue invoices without escalation.
+// MAINTAINER is intentionally excluded — see `lib/auth/billing-admin-gate.ts`.
+import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
+import { generateOrgInvoiceNumber } from "@/lib/payments/billing/invoice-numbering";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { notifyOrgInvoiceIssued } from "@/lib/novu/org-workflows";
 
 const CurrencySchema = z.enum(["INR", "USD", "EUR", "GBP"]);
@@ -97,7 +102,7 @@ export async function POST(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { minimumRole: "OWNER", canSponsor: true });
+  const access = await requireOrgBillingAdminOrOwner(orgId, { canSponsor: true });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);
@@ -115,11 +120,13 @@ export async function POST(
     select: {
       id: true,
       name: true,
+      slug: true,
       gstStateCode: true,
       gstin: true,
       hsnDefault: true,
       dataResidencyRegion: true,
       billingAccountId: true,
+      invoiceNumberPrefix: true,
     },
   });
   if (!org?.billingAccountId) {
@@ -171,23 +178,57 @@ export async function POST(
   // creation so retroactive tax-rule changes don't rewrite history.
   const gst = deriveGstBreakdown({
     subtotalPaise: subtotal,
-    supplierStateCode: "KA",
+    // Env-overridable; see jobs/billing/generate-subscription-invoices.ts
+    // for the same pattern. Falls back to KA when unset.
+    supplierStateCode: process.env.SUPPLIER_STATE_CODE ?? "KA",
     buyerStateCode: org.gstStateCode,
     buyerCountry: org.dataResidencyRegion === "IN" ? "IN" : "US",
     hsnCode: org.hsnDefault,
   });
 
-  // Invoice numbers are per-year-per-org sequences. Kept simple here
-  // (timestamp + random suffix) — a production run would use a lookup-
-  // table counter so numbers stay continuous even after deletions. The
-  // 6-hex random tail prevents collisions when two POSTs land in the
-  // same millisecond for the same org (the unique constraint would
-  // otherwise reject one of them with P2002).
-  const invoiceNumber = `INV-${orgId.slice(0, 6)}-${Date.now()}-${randomBytes(3)
-    .toString("hex")
-    .toUpperCase()}`;
+  const issuedAt = body.issueImmediately ? new Date() : new Date();
 
-  const invoice = await prisma.$transaction(async (tx) => {
+  let invoice;
+  try {
+    invoice = await prisma.$transaction(async (tx) => {
+    // Per-org sequential numbering: counter row atomically reserves the
+    // next seq under (org, fiscal-year) so two concurrent POSTs can't
+    // collide on the @@unique([organizationId, invoiceNumber]) constraint.
+    const { invoiceNumber, fiscalYear } = await generateOrgInvoiceNumber(
+      tx,
+      { id: org.id, slug: org.slug, invoiceNumberPrefix: org.invoiceNumberPrefix },
+      issuedAt,
+    );
+
+    // PO balance enforcement (race-safe). When the invoice is linked to
+    // a PO, atomically decrement `remainingAmountPaise` and fail closed
+    // (409 `PO_BALANCE_EXCEEDED`) if the PO is no longer ACTIVE or has
+    // insufficient remaining budget. Mirrors the wallet-debit pattern
+    // in `lib/api/organizations/wallet.ts`. Restoration on VOID /
+    // CANCELLED is handled in the PATCH route at
+    // `[invoiceId]/route.ts`.
+    if (body.purchaseOrderId) {
+      const claim = await tx.purchaseOrder.updateMany({
+        where: {
+          id: body.purchaseOrderId,
+          organizationId: orgId,
+          status: "ACTIVE",
+          remainingAmountPaise: { gte: gst.totalPaise },
+        },
+        data: { remainingAmountPaise: { decrement: gst.totalPaise } },
+      });
+      if (claim.count !== 1) {
+        const err = new Error(
+          "PurchaseOrder balance insufficient or no longer ACTIVE",
+        );
+        Object.assign(err, {
+          httpStatus: 409,
+          code: "PO_BALANCE_EXCEEDED",
+        });
+        throw err;
+      }
+    }
+
     const created = await tx.organizationInvoice.create({
       data: {
         billingAccountId: org.billingAccountId!,
@@ -195,6 +236,7 @@ export async function POST(
         purchaseOrderId: body.purchaseOrderId ?? null,
         contractId: body.contractId ?? null,
         invoiceNumber,
+        fiscalYear,
         status: body.issueImmediately ? "ISSUED" : "DRAFT",
         displayCurrency: body.displayCurrency,
         inrEquivalentPaise: gst.totalPaise,
@@ -242,12 +284,51 @@ export async function POST(
           invoiceNumber,
           totalPaise: created.totalPaise,
           status: created.status,
+          placeOfSupply: created.placeOfSupply,
         },
       },
     });
 
+    // Outbound webhook only on ISSUED transitions; a DRAFT invoice
+    // hasn't been "sent" yet — integrators should only see invoices
+    // they need to act on (booking entries, AP queues). Resending on
+    // a later DRAFT→ISSUED PATCH happens in the [invoiceId] route.
+    if (body.issueImmediately) {
+      await dispatchWebhookEvent({
+        prisma: tx,
+        organizationId: orgId,
+        eventType: "invoice.issued",
+        payload: {
+          invoiceId: created.id,
+          invoiceNumber: created.invoiceNumber,
+          totalPaise: created.totalPaise,
+          displayCurrency: created.displayCurrency,
+          dueDate: created.dueDate,
+          purchaseOrderId: created.purchaseOrderId,
+          contractId: created.contractId,
+        },
+      });
+    }
+
     return created;
-  });
+    });
+  } catch (err) {
+    const httpStatus =
+      err && typeof err === "object" && "httpStatus" in err
+        ? (err as { httpStatus: number }).httpStatus
+        : null;
+    const code =
+      err && typeof err === "object" && "code" in err
+        ? (err as { code: string }).code
+        : null;
+    if (httpStatus && code) {
+      return NextResponse.json(
+        { error: (err as Error).message, code },
+        { status: httpStatus },
+      );
+    }
+    throw err;
+  }
 
   // Side-effect: if the invoice was issued on creation, fire the Novu
   // bell workflow so OWNERs see it immediately (email delivery is via

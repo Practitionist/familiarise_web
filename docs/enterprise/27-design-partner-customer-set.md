@@ -16,8 +16,8 @@ Reference for engineering: [#703](https://github.com/Practitionist/familiarise_w
 | Criterion | Why it holds given current readiness |
 |---|---|
 | Indian organization (domestic) | GST + Razorpay + INR flows are the live paths |
-| Sub-₹5 crore annual turnover | IRN e-invoice is mandatory only above this threshold ([#703 §2.1](https://github.com/Practitionist/familiarise_web/issues/703)); our uploader stub is fine for sub-₹5cr tenants |
-| All consultants are resident PAN holders | TDS 10% stub is correct for 194J residents; FEMA + DTAA aren't engaged |
+| Sub-₹5 crore annual turnover | IRN e-invoice is mandatory only above this threshold ([#703 §2.1](https://github.com/Practitionist/familiarise_web/issues/703)); our uploader is real (env-gated daily cron, retry telemetry, ClearTax connector live in `lib/compliance/irp.ts`) and `FAILED`/`PENDING` rows are acceptable until the org crosses AATO |
+| All consultants are resident PAN holders | TDS derivation in `lib/compliance/tds.ts` is live for 194-O default (1%), explicit overrides, PAN fallback (Section 206AA 20%), Section 197 lower-rate certs, and DTAA lookup. For resident PAN-holders it returns the correct withholding without manual override; FEMA Form 15CA/CB still manual until first non-resident consultant ships. |
 | BUYER-type organization (sponsoring their own staff) | Core checkout flow + wallet / invoice / license funding paths are live; no PROVIDER-specific features (collaborators 3-way split) are needed |
 | Pricing model is flat-fee OR pay-as-you-go | Programs v1 handles LICENSED_SEAT (flat-fee) + CREDIT_POOL (pay-as-you-go); milestone-billing (PROJECT) + hourly-retainer (RETAINER) are enum-reserved but unimplemented |
 | INR-only contracts | Multi-currency + Razorpay IBT are deferred ([#703 §14](https://github.com/Practitionist/familiarise_web/issues/703)) |

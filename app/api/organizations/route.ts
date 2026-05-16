@@ -27,6 +27,7 @@ import { requireApiAuth } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { isValidGstin } from "@/lib/compliance/gst";
 import { isValidPan } from "@/lib/compliance/tds";
+import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
 
 // PROJECT is reserved in the Prisma enum for the v2 milestone workflow
 // (scoped project-billing engine), but not accepted at the API boundary
@@ -217,12 +218,22 @@ export async function POST(req: NextRequest) {
       // create the BillingAccount (it needs ownerOrgId). Then patch
       // back the link.
       const orgTmpId = randomUUID();
-      // TODO(#662): canHost=true is accepted at write time but the live
-      // earnings split is gated by `ENABLE_HOST_ORGS` (see
-      // lib/payments/payouts/earnings-service.ts:124). Until that flag
-      // flips on a real host customer, host-side settlement returns null
-      // and `OrganizationEarnings` rows are not written. The wizard's
-      // OrgInfoStep surfaces a WIP banner when canHost is checked.
+      // Why we hard-gate canHost here rather than via a WIP banner:
+      // the reviewer's feedback on PR #655 was "WIP banners are not
+      // production gates". The host-side settlement is gated by
+      // ENABLE_HOST_ORGS (lib/payments/payouts/earnings-service.ts:124);
+      // without that flag flipped, accepting canHost would let the org
+      // be created but its earnings flow would silently no-op. We
+      // reject at the API boundary instead so an OWNER receives a
+      // typed 400 rather than a half-functional org.
+      if (body.canHost && !ENABLE_HOST_ORGS) {
+        throw Object.assign(
+          new Error(
+            "Host-capable orgs are gated by ENABLE_HOST_ORGS. Contact ops to flip the flag for your tenant.",
+          ),
+          { httpStatus: 400, code: "HOST_ORGS_GATED" },
+        );
+      }
       const org = await tx.organization.create({
         data: {
           id: orgTmpId,

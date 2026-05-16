@@ -1,0 +1,285 @@
+/**
+ * Outbound webhook delivery worker.
+ *
+ * Drains `OutboundWebhookDelivery` rows whose status is PENDING (first
+ * attempt) or RETRY (any subsequent attempt whose `nextRetryAt` is now
+ * or earlier). One worker tick:
+ *
+ *   1. Picks up to `MAX_BATCH` rows ordered by `nextRetryAt ASC NULLS FIRST`.
+ *   2. For each row, signs the body and POSTs to the endpoint URL with
+ *      a 10-second timeout.
+ *   3. Records the outcome:
+ *        - 2xx → status=SUCCESS, deliveredAt=now, endpoint.lastSuccessAt
+ *        - 4xx (except 408 / 429) → status=FAILED, no retry — receiver
+ *          told us the request is malformed; retrying won't help.
+ *        - 5xx / 408 / 429 / network error → status=RETRY with the next
+ *          backoff slot, OR status=FAILED if we just used the last
+ *          attempt (5).
+ *
+ * Backoff schedule
+ * ----------------
+ *   attempt 1 → 1 minute
+ *   attempt 2 → 5 minutes
+ *   attempt 3 → 30 minutes
+ *   attempt 4 → 2 hours
+ *   attempt 5 → 8 hours (last)
+ *   attempt 6 → FAILED
+ *
+ * Total wall-clock window from first attempt to FAILED: ~10h 36m.
+ * Pairs with the 9h replay window in `signing.ts` so a receiver can
+ * still verify the last attempt's signature even when the worker has
+ * been catching up.
+ *
+ * Why fire-and-forget instead of a proper queue (SQS / RabbitMQ)
+ * --------------------------------------------------------------
+ * The project runs on Netlify primary / Vercel fallback — neither
+ * vendor offers a first-class queue without an extra paid tier. The
+ * delivery table IS the queue: an indexed (status, nextRetryAt) walk
+ * is plenty for the volume (<10k orgs × low single-digit webhook RPS).
+ * When the volume justifies SQS, the swap-in is a single function:
+ * everything else stays.
+ */
+
+import type { Prisma, PrismaClient } from "@prisma/client";
+import {
+  generateEndpointSecret as _unused_re_export,
+  SIGNATURE_HEADER,
+  signPayload,
+} from "./signing";
+
+// Re-export silenced — the worker doesn't generate secrets; this keeps
+// the module's surface area clean while preventing an unused-import lint.
+void _unused_re_export;
+
+type PrismaLike = PrismaClient | Prisma.TransactionClient;
+
+const MAX_BATCH = 50;
+const REQUEST_TIMEOUT_MS = 10_000;
+const MAX_ATTEMPTS = 5;
+
+/**
+ * Backoff lookup keyed by the attempt number AFTER incrementing. So if
+ * a row currently has `attempts = 0` and we just tried once, we look up
+ * `BACKOFF_MS[1]` to compute when to try next.
+ */
+const BACKOFF_MS: Record<number, number> = {
+  1: 60_000, // 1 min
+  2: 5 * 60_000, // 5 min
+  3: 30 * 60_000, // 30 min
+  4: 2 * 60 * 60_000, // 2 h
+  5: 8 * 60 * 60_000, // 8 h
+};
+
+export interface WorkerRunResult {
+  scanned: number;
+  succeeded: number;
+  retried: number;
+  failed: number;
+  errors: string[];
+}
+
+/**
+ * Single-tick worker. Idempotent — safe to call repeatedly (the
+ * `status` flip from PENDING → IN_FLIGHT marks rows in-progress so a
+ * second tick doesn't grab them).
+ */
+export async function runDispatchTick(params: {
+  prisma: PrismaLike;
+  /// Inject for testing — production uses globalThis.fetch.
+  fetchFn?: typeof fetch;
+  /// Override the clock for deterministic tests.
+  now?: () => number;
+  /// Batch ceiling override; defaults to MAX_BATCH.
+  maxBatch?: number;
+}): Promise<WorkerRunResult> {
+  const { prisma } = params;
+  const fetchImpl = params.fetchFn ?? globalThis.fetch;
+  const now = params.now ?? (() => Date.now());
+  const batchLimit = params.maxBatch ?? MAX_BATCH;
+
+  const result: WorkerRunResult = {
+    scanned: 0,
+    succeeded: 0,
+    retried: 0,
+    failed: 0,
+    errors: [],
+  };
+
+  // Why we don't SELECT FOR UPDATE: Prisma's high-level client doesn't
+  // expose row locks, and the worker is single-tenant per cron tick.
+  // The status flip to IN_FLIGHT below is the soft lock — a second
+  // worker grabbing the same row would observe IN_FLIGHT and skip.
+  const nowDate = new Date(now());
+  const dueRows = await prisma.outboundWebhookDelivery.findMany({
+    where: {
+      OR: [
+        { status: "PENDING" },
+        { status: "RETRY", nextRetryAt: { lte: nowDate } },
+      ],
+    },
+    orderBy: [{ nextRetryAt: { sort: "asc", nulls: "first" } }],
+    take: batchLimit,
+    include: {
+      endpoint: {
+        select: { id: true, url: true, secret: true, status: true },
+      },
+    },
+  });
+
+  for (const row of dueRows) {
+    result.scanned += 1;
+    // Skip rows whose endpoint was paused / disabled after the delivery
+    // was queued — the operator's explicit pause should win over our
+    // retry schedule. We mark as FAILED with a descriptive error.
+    if (row.endpoint.status !== "ACTIVE") {
+      await prisma.outboundWebhookDelivery.update({
+        where: { id: row.id },
+        data: {
+          status: "FAILED",
+          lastError: `Endpoint is ${row.endpoint.status}; aborted delivery.`,
+        },
+      });
+      result.failed += 1;
+      continue;
+    }
+
+    // Flip to IN_FLIGHT before issuing the HTTP — protects against two
+    // ticks colliding on the same row if the cron schedule slips.
+    await prisma.outboundWebhookDelivery.update({
+      where: { id: row.id },
+      data: { status: "IN_FLIGHT" },
+    });
+
+    const body = JSON.stringify({
+      id: row.id,
+      type: row.eventType,
+      createdAt: row.createdAt.toISOString(),
+      data: row.payload,
+    });
+    const signature = signPayload(row.endpoint.secret, body, Math.floor(now() / 1000));
+    const attemptNumber = row.attempts + 1;
+
+    let httpStatusCode: number | undefined;
+    let networkError: string | undefined;
+
+    try {
+      // AbortController + timer: fetch's default has no per-request
+      // timeout in the Node runtime. A receiver hanging at the TCP
+      // layer would stall the whole tick.
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), REQUEST_TIMEOUT_MS);
+      try {
+        const res = await fetchImpl(row.endpoint.url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            [SIGNATURE_HEADER]: signature,
+            "User-Agent": "Familiarise-Webhooks/1.0",
+          },
+          body,
+          signal: ac.signal,
+        });
+        httpStatusCode = res.status;
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch (err) {
+      networkError = err instanceof Error ? err.message : String(err);
+    }
+
+    const isSuccess =
+      httpStatusCode !== undefined && httpStatusCode >= 200 && httpStatusCode < 300;
+    // 4xx that are NOT 408 / 429 are permanent: the receiver told us
+    // the request is malformed. Retrying same body + same signature
+    // won't change the outcome.
+    const isPermanentClientError =
+      httpStatusCode !== undefined &&
+      httpStatusCode >= 400 &&
+      httpStatusCode < 500 &&
+      httpStatusCode !== 408 &&
+      httpStatusCode !== 429;
+
+    if (isSuccess) {
+      await prisma.outboundWebhookDelivery.update({
+        where: { id: row.id },
+        data: {
+          status: "SUCCESS",
+          httpStatusCode,
+          signature,
+          attempts: attemptNumber,
+          deliveredAt: nowDate,
+          lastError: null,
+        },
+      });
+      await prisma.webhookEndpoint.update({
+        where: { id: row.endpoint.id },
+        data: { lastSuccessAt: nowDate, failureCount: 0 },
+      });
+      result.succeeded += 1;
+      continue;
+    }
+
+    if (isPermanentClientError) {
+      await prisma.outboundWebhookDelivery.update({
+        where: { id: row.id },
+        data: {
+          status: "FAILED",
+          httpStatusCode,
+          signature,
+          attempts: attemptNumber,
+          lastError: `Permanent client error: ${httpStatusCode}`,
+        },
+      });
+      await prisma.webhookEndpoint.update({
+        where: { id: row.endpoint.id },
+        data: {
+          lastFailureAt: nowDate,
+          failureCount: { increment: 1 },
+        },
+      });
+      result.failed += 1;
+      continue;
+    }
+
+    // Retry path — 5xx / 408 / 429 / network error.
+    const nextAttemptNumber = attemptNumber + 1;
+    if (attemptNumber >= MAX_ATTEMPTS) {
+      await prisma.outboundWebhookDelivery.update({
+        where: { id: row.id },
+        data: {
+          status: "FAILED",
+          httpStatusCode: httpStatusCode ?? null,
+          signature,
+          attempts: attemptNumber,
+          lastError:
+            networkError ??
+            `Exhausted retries; last status ${httpStatusCode ?? "n/a"}`,
+        },
+      });
+      await prisma.webhookEndpoint.update({
+        where: { id: row.endpoint.id },
+        data: {
+          lastFailureAt: nowDate,
+          failureCount: { increment: 1 },
+        },
+      });
+      result.failed += 1;
+    } else {
+      const backoff = BACKOFF_MS[nextAttemptNumber] ?? BACKOFF_MS[MAX_ATTEMPTS];
+      await prisma.outboundWebhookDelivery.update({
+        where: { id: row.id },
+        data: {
+          status: "RETRY",
+          httpStatusCode: httpStatusCode ?? null,
+          signature,
+          attempts: attemptNumber,
+          nextRetryAt: new Date(now() + backoff),
+          lastError: networkError ?? `Transient ${httpStatusCode ?? "network"}`,
+        },
+      });
+      result.retried += 1;
+    }
+  }
+
+  return result;
+}

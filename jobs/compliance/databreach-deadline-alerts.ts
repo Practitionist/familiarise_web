@@ -28,6 +28,12 @@
  * change to a DPB-portal-aware integration.
  */
 
+// Why: tsx does not auto-load .env when this script runs outside the
+// Next.js runtime. Without dotenv/config, DATABASE_URL is undefined and
+// PrismaClient throws on the first query. GitHub Actions loads env via
+// repo secrets, but local + emergency manual runs would fail. See
+// docs/enterprise/23-runbooks.md "Running cron jobs locally".
+import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { Resend } from "resend";
 import { getAppUrl } from "@/lib/url";

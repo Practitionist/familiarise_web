@@ -63,6 +63,11 @@ const CATEGORIES: OrgAuditCategory[] = [
   "CONSENT",
   "CATALOG",
   "SYSTEM",
+  // PR #655 added WEBHOOK as the 11th category for outbound-webhook
+  // lifecycle rows (WEBHOOK_ENDPOINT_CREATED / SECRET_ROTATED /
+  // DELIVERY_SUCCEEDED / etc.). The `satisfies Record<OrgAuditCategory>`
+  // contract on CATEGORY_TONE means we MUST list it here.
+  "WEBHOOK",
 ];
 
 const CATEGORY_TONE: Record<OrgAuditCategory, string> = {
@@ -76,6 +81,7 @@ const CATEGORY_TONE: Record<OrgAuditCategory, string> = {
   CONSENT: "bg-rose-50 text-rose-700",
   CATALOG: "bg-cyan-50 text-cyan-700",
   SYSTEM: "bg-zinc-200 text-zinc-800",
+  WEBHOOK: "bg-sky-50 text-sky-700",
 };
 
 type AuditRow = {

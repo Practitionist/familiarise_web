@@ -105,6 +105,16 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     return NextResponse.next();
   }
 
+  // SCIM 2.0 paths self-authenticate via bearer tokens — they are the
+  // canonical surface IdPs (Okta, Azure AD) hit when provisioning. Any
+  // session-cookie check here would mis-classify them as "unauth user
+  // hitting a protected page" and bounce them to /auth/signin. The
+  // route handler enforces token auth + rate limit + per-org tenant
+  // scoping. See lib/scim/auth.ts and docs/enterprise/31-scim-provisioning.md.
+  if (pathname.startsWith("/scim/v2/")) {
+    return NextResponse.next();
+  }
+
   // Maintenance mode check (fail-open: defaults to OFF if Redis unreachable)
   const maintenanceState = await getMaintenanceState();
   if (maintenanceState.phase !== "OFF" && !isMaintenanceExempt(pathname)) {

@@ -22,6 +22,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+// Why: paying an invoice mints a Razorpay order — finance-team action that
+// BILLING_ADMIN should be able to perform without escalating to OWNER.
+import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { createRazorpayOrder } from "@/lib/payments/core/razorpay";
 import { PaymentError } from "@/lib/payments/core/types";
@@ -35,8 +38,7 @@ export async function POST(
   },
 ) {
   const { orgId, invoiceId } = await params;
-  const access = await requireOrgAccess(orgId, {
-    minimumRole: "OWNER",
+  const access = await requireOrgBillingAdminOrOwner(orgId, {
     canSponsor: true,
     requireActive: true,
   });

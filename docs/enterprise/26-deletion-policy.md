@@ -70,7 +70,59 @@ When a data subject exercises their §12 right under the DPDP Act 2023, the plat
 - `OrgAuditLog.details` JSON is scrubbed in-place for rows mentioning the erased user.
 - Financial rows (Payment, Refund, OrganizationInvoice) are retained — legal retention supersedes erasure. The tombstoned identity is enough to de-link.
 
-Full spec is tracked in **[#706 §3](https://github.com/Practitionist/familiarise_web/issues/706)** — Phase 2 work. Until the API lands, inbound erasure requests are handled manually by a CA + DB-admin pair; the request is logged in `docs/compliance/erasure-requests-manual-log.md` for audit continuity.
+**Status (PR #655, May 2026):** Phase 2 has landed. The manual log
+`docs/compliance/erasure-requests-manual-log.md` is now read-only —
+new requests flow through the API path below. Existing manual
+entries remain for historical audit continuity.
+
+#### Request lifecycle
+
+1. User files via `POST /api/users/me/erasure-requests` (idempotent —
+   re-filing while a PENDING request is open returns the existing row).
+   `ErasureRequest.status = PENDING`.
+2. Admin reviews via `GET /api/admin/erasure-requests` (queue surface).
+3. Admin processes via `POST /api/admin/erasure-requests/[id]/process`
+   (route flips status to IN_PROGRESS, runs `scrubUser`, marks COMPLETED).
+4. OR admin rejects via `POST /api/admin/erasure-requests/[id]/reject`
+   with a required `reason` (e.g. user has an open financial dispute).
+5. 30-day SLA monitored externally — the request's `requestedAt` is the
+   clock start; ops alerts when within 7 days of expiry.
+
+#### What gets scrubbed (canonical reference)
+
+The single source of truth is `lib/compliance/erasure/scrub-user.ts`.
+Summary table:
+
+| Field / Table | Action |
+|---|---|
+| `User.name` | `"Erased User <8-char hash>"` |
+| `User.email` | `erased-<16-char hash>@erased.invalid` |
+| `User.image, phone, address, bio, linkedinUrl, dateOfBirth` | NULL |
+| `User.erasedAt` | `now()` |
+| `User.pseudonymousId` | `sha256(userId + ERASURE_SALT)` |
+| `Membership[].status` | `ERASED` |
+| `ConsultantProfile.headline, videoIntroUrl` | NULL |
+| `Session` + `Account` rows | hard-deleted (forces sign-out) |
+| `Payment*`, `OrganizationInvoice`, `OrganizationPayout`, ledger rows | **retained** |
+
+#### Cross-feature interactions
+
+- **SCIM**: subsequent SCIM PUT/POST for an erased user returns
+  `410 Gone` so the IdP marks the user as permanently un-provisionable.
+- **Outbound webhooks**: a `member.removed` event fires per affected
+  organization with `source: "dpdp_erasure"` so integrators see the
+  deprovisioning even when the user was IdP-managed.
+- **Audit log**: every processed erasure writes a
+  `USER_ERASURE_PROCESSED` row to each affected org under the SYSTEM
+  category. The audit row stays past the user's own erasure as the
+  regulatory evidence-of-erasure record.
+
+#### Recovery path
+
+There isn't one. An erased user cannot be revived; if it turns out the
+erasure was an admin error, the only path is to create a fresh
+`User` (different email) and re-issue invitations. The pseudonymous id
+on the original row is preserved for cross-reference investigations.
 
 ### Case 4 — Reversible config without audit value
 
