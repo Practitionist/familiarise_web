@@ -36,6 +36,7 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { useOrgRole } from "../useOrgRole";
+import { FinanceLeadViewCard } from "./FinanceLeadViewCard";
 
 // ---------------------------------------------------------------------------
 // Types — shaped to match the actual analytics + activity APIs
@@ -148,24 +149,60 @@ function countByRole(
 
 export function HomePageClient({ orgId }: { orgId: string }) {
   const { role, canSponsor, canHost, isAtLeast } = useOrgRole(orgId);
+  // BILLING_ADMIN gets the finance-tuned overview. Operator surfaces
+  // (member analytics, checklist, activity feed) are gated at MANAGER
+  // and intentionally excluded for BILLING_ADMIN — see the role
+  // description in lib/labels/org-labels.ts. The analytics API still
+  // accepts BILLING_ADMIN reads (rank 70 > MANAGER 60), so the
+  // payload comes back; we just render the finance card instead of
+  // the operator dashboard.
+  const isFinanceLead = role === "BILLING_ADMIN";
   // The operator surface (stat grid, checklist, activity feed) requires
   // MANAGER — that matches the analytics + activity API gates. Consumer
   // roles see the ConsumerView below instead of broken "Could not load"
   // cards. Sub-MANAGERs shouldn't normally reach /home anyway because
   // /[orgId]/page.tsx redirects them to /my-program (LEARNER) or
   // /my-arrangement (EXPERT) — this is a deep-link safety net.
-  const isOperator = isAtLeast("MANAGER");
+  // We exclude BILLING_ADMIN from `isOperator` so it doesn't fall into
+  // the operator branch downstream.
+  const isOperator = !isFinanceLead && isAtLeast("MANAGER");
 
   const analytics = useQuery({
     queryKey: ["org-analytics", orgId],
     queryFn: () => fetchAnalytics(orgId),
-    enabled: isOperator,
+    enabled: isOperator || isFinanceLead,
   });
   const activity = useQuery({
     queryKey: ["org-activity", orgId],
     queryFn: () => fetchActivity(orgId),
     enabled: isOperator,
   });
+
+  // Render the BILLING_ADMIN-tuned finance overview ahead of the
+  // operator branch. Bails out early so the operator-only stat grid +
+  // checklist below don't render for the finance lead.
+  if (isFinanceLead) {
+    return (
+      <>
+        <DashboardHeader
+          title="Finance overview"
+          subtitle="Your day-to-day finance surfaces on this organization"
+        />
+        <DashboardContent>
+          {analytics.isLoading ? (
+            <p className="text-sm text-zinc-500">Loading finance summary...</p>
+          ) : analytics.data ? (
+            <FinanceLeadViewCard orgId={orgId} data={analytics.data} />
+          ) : (
+            <p className="text-sm text-zinc-500">
+              Couldn&apos;t load the finance summary. Try refreshing the
+              page or pinging the OWNER if this persists.
+            </p>
+          )}
+        </DashboardContent>
+      </>
+    );
+  }
 
   if (!isOperator) {
     // Per-role CTA — deep-link to the role's in-org page where one

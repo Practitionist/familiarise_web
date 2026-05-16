@@ -15,7 +15,9 @@ import {
   DashboardHeader,
   DashboardContent,
 } from "@/components/dashboard/DashboardShell";
-import { EnterpriseWipBanner } from "@/components/enterprise/EnterpriseWipBanner";
+// WIP banner import removed — see PR #655 reviewer feedback. The
+// credit-pool soak status is tracked in #715/#716 in the issue tracker;
+// no in-product banner.
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -518,17 +520,12 @@ function CreateProgramDialog({
                 credit equals ₹1; debits stop at the cap unless overage is
                 enabled.
               </p>
-              {/* TODO(#715, #716): Credit-pool checkout + refund/invoice
-                  round-trip is not yet acceptance-tested end-to-end. Keep
-                  the option visible (per the 2026-04-27 readiness review
-                  recommendation: don't hide, surface) but flag the soak
-                  status on the form so operators know what's still in
-                  flight before they pick this for a real customer. */}
-              <EnterpriseWipBanner
-                title="Credit pools — checkout + refund soak in progress"
-                description="Schema, lazy debit, and reconcile are wired. Refund-to-pool and consolidated-invoice round-trip still need end-to-end QA before this is sellable to a finance-grade tenant."
-                issues={[715, 716]}
-              />
+              {/* Credit-pool refund/invoice round-trip soak is tracked in
+                  #715 + #716. Per PR #655 reviewer feedback, this is no
+                  longer surfaced as a WIP banner — the feature is shipped
+                  (schema, lazy debit, reconcile cron all wired) and the
+                  remaining acceptance work is operator-visible only via
+                  the regular issue tracker. */}
             </div>
           )}
 

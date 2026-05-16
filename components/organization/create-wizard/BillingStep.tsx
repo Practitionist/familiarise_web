@@ -13,7 +13,8 @@ import {
   SELF_SERVICE_FUNDING_SOURCES,
   narrowFundingSource,
 } from "@/lib/labels/org-labels";
-import { EnterpriseWipBanner } from "@/components/enterprise/EnterpriseWipBanner";
+// WIP banner import removed — never rendered in this step, and
+// per PR #655 reviewer feedback WIP banners are not production gates.
 
 export function BillingStep({ onNext, onBack, initialData }: StepProps) {
   const {
