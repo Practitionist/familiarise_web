@@ -62,8 +62,14 @@ describe("requireOrgBillingAdminOrOwner — disjunction semantics", () => {
     const result = await requireOrgBillingAdminOrOwner("org-1");
 
     if (allowed) {
-      // No error on success; the access object is returned verbatim.
+      // Type-narrow via the success branch: when `error` is null,
+      // TS still sees the union (the upstream `requireOrgAccess`
+      // return-type is `OrgAccessGrant | { error: NextResponse }`).
+      // The runtime assertion below narrows for the compiler too.
       expect(result.error).toBeNull();
+      if (!("member" in result)) {
+        throw new Error("expected access grant on allowed role");
+      }
       expect(result.member.role).toBe(role);
       return;
     }

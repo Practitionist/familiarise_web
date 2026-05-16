@@ -71,14 +71,18 @@ export function isAtLeastRole(actual: MemberRole, minimum: MemberRole): boolean 
  * the explicit disjunction so any future role insertion doesn't
  * accidentally widen the wrong surface.
  */
-const OPERATOR_ROLES: ReadonlySet<MemberRole> = new Set([
+// Why the `MemberRole[]` annotation on the array literal: a bare
+// string array would widen to `string[]`, which can't be passed to
+// `Set<MemberRole>` without losing the narrow type. Annotating the
+// array (rather than the Set) keeps the source readable.
+const OPERATOR_ROLES: ReadonlySet<MemberRole> = new Set<MemberRole>([
   "OWNER",
   "MAINTAINER",
   "MANAGER",
   "SUPPORT",
 ]);
 
-const FINANCE_ROLES: ReadonlySet<MemberRole> = new Set([
+const FINANCE_ROLES: ReadonlySet<MemberRole> = new Set<MemberRole>([
   "OWNER",
   "MAINTAINER",
   "BILLING_ADMIN",

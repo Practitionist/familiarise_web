@@ -162,7 +162,7 @@ export default function ScimPage({ params }: Readonly<PageProps>) {
     <>
       <DashboardHeader
         title="SCIM 2.0 provisioning"
-        description="Connect your IdP (Okta, Azure AD, OneLogin) to push and pull users via SCIM. Bearer tokens authenticate every call."
+        subtitle="Connect your IdP (Okta, Azure AD, OneLogin) to push and pull users via SCIM. Bearer tokens authenticate every call."
       />
       <DashboardContent>
         {actionError && (

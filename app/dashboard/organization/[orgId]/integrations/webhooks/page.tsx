@@ -130,7 +130,7 @@ export default function WebhooksPage({ params }: Readonly<PageProps>) {
     <>
       <DashboardHeader
         title="Outbound webhooks"
-        description="Subscribe external systems to org lifecycle events. Receivers verify HMAC-SHA256 signatures on every delivery."
+        subtitle="Subscribe external systems to org lifecycle events. Receivers verify HMAC-SHA256 signatures on every delivery."
       />
       <DashboardContent>
         <Card>

@@ -421,6 +421,10 @@ export async function requireOrgAccess(
       payoutRecipient: "SELF",
       rateCardOverrideId: null,
       betterAuthMemberId: null,
+      // PR #655 SCIM addition — the stub satisfies the Membership type
+      // by tracking every schema column. Admin sessions never have a
+      // SCIM-provisioned identity by definition; nullable column.
+      externalScimId: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     };

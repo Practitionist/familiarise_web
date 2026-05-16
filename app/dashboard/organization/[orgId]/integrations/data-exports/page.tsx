@@ -128,7 +128,7 @@ export default function DataExportsPage({ params }: Readonly<PageProps>) {
     <>
       <DashboardHeader
         title="Data exports"
-        description="Download a JSON bundle of every entity scoped to this org — members, contracts, programs, invoices, earnings, payouts, audit log. Honours DPDP §11."
+        subtitle="Download a JSON bundle of every entity scoped to this org — members, contracts, programs, invoices, earnings, payouts, audit log. Honours DPDP §11."
       />
       <DashboardContent>
         <Card>

@@ -134,7 +134,10 @@ export function FinanceLeadViewCard({ orgId, data }: FinanceLeadViewProps) {
         {stats.map((stat) => (
           <StatCard
             key={stat.label}
-            label={stat.label}
+            // StatCard names its primary text `title` (not `label`);
+            // we keep the local stat object's `.label` for symmetry
+            // with the CTA buttons below and just remap at render.
+            title={stat.label}
             value={stat.value}
             subtitle={stat.subtitle}
             icon={stat.icon}
