@@ -17,6 +17,7 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import type { MemberRole, MemberStatus } from "@prisma/client";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { isBlockedRoleTransition } from "@/lib/enterprise/role-transitions";
 import {
   applyMembershipRoleEffects,
@@ -331,6 +332,23 @@ export async function POST(
     // membership without waiting for BetterAuth's 24h session rotation.
     // Audit Phase B.5.
     await bumpUserSessionGeneration(tx, userId);
+
+    // Outbound webhook: notify subscribed integrations (HRIS sync,
+    // customer-success tools, ERP). The dispatch helper inserts
+    // delivery rows on the SAME transaction so if this whole block
+    // rolls back, the webhook rows roll back too — the receiver only
+    // sees a member.added event for memberships that actually committed.
+    await dispatchWebhookEvent({
+      prisma: tx,
+      organizationId: orgId,
+      eventType: "member.added",
+      payload: {
+        membershipId: created.id,
+        userId,
+        role,
+        departmentLabel: departmentLabel ?? null,
+      },
+    });
     return created;
     });
   } catch (err) {

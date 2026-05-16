@@ -17,6 +17,7 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { isAtLeastRole } from "@/lib/auth/role-ranks";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { isBlockedRoleTransition } from "@/lib/enterprise/role-transitions";
 import {
   applyMembershipRoleEffects,
@@ -413,6 +414,22 @@ export async function DELETE(
             previousStatus: current.status,
             assignmentsTerminated: terminated.count,
           },
+        },
+      });
+
+      // Outbound webhook: notify integrations that the membership is
+      // gone (HRIS deprovisioning, SaaS-license reclaim). Dispatched
+      // inside the transaction so a rollback (e.g. anti-lockout veto)
+      // also rolls back the webhook delivery row.
+      await dispatchWebhookEvent({
+        prisma: tx,
+        organizationId: orgId,
+        eventType: "member.removed",
+        payload: {
+          membershipId: memberId,
+          userId: current.userId,
+          role: current.role,
+          previousStatus: current.status,
         },
       });
 

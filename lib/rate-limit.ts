@@ -111,6 +111,38 @@ export const orgWalletTopUpLimiter = makeLimiter(
 export const orgInviteLimiter = makeLimiter(20, "1 h", "rl:org-invite");
 
 /**
+ * 5 per minute per org — POST /api/organizations/[orgId]/webhooks
+ * + PATCH endpoint + rotate-secret. Org-keyed to keep a misconfigured
+ * automation from chewing through the audit log (every CRUD writes a
+ * WEBHOOK row). Generous enough for the human admin clicking
+ * "rotate secret" twice on a stuck modal but restrictive enough to
+ * stop a runaway script. See `lib/enterprise/outbound-webhooks/*`.
+ */
+export const orgWebhookLimiter = makeLimiter(5, "1 m", "rl:org-webhook");
+
+/**
+ * 60 requests per minute per token — SCIM 2.0 bearer endpoint.
+ * Matches Okta + Azure AD default polling cadence; integrator IdPs
+ * tend to issue 10–30 RPM at most, so 60 is two-headroom while still
+ * mitigating runaway loops in test scripts. Keyed on tokenHash so a
+ * leaked token can't burn another org's quota.
+ */
+export const scimLimiter = makeLimiter(60, "1 m", "rl:scim");
+
+/**
+ * 1 per 24h per org — POST /api/organizations/[orgId]/data-exports.
+ * The bundle build is expensive (cross-entity walk + zip + Supabase
+ * Storage upload + Resend email). One export per day is well above
+ * the DPDP §11 use-case (responding to a regulator request) and far
+ * below the cost ceiling we want to expose to a single tenant.
+ */
+export const orgDataExportLimiter = makeLimiter(
+  1,
+  "24 h",
+  "rl:org-data-export",
+);
+
+/**
  * Apply rate limit to a request.
  * Returns a 429 NextResponse if exceeded, otherwise null.
  *
