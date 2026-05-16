@@ -10,6 +10,7 @@ collision with the platform-level `UserRole` enum.
 enum MemberRole {
   OWNER
   MAINTAINER
+  BILLING_ADMIN
   MANAGER
   EXPERT
   LEARNER
@@ -22,6 +23,10 @@ intuitive ones:
 
 - `MAINTAINER` was `ADMIN`. Renamed to avoid collision with
   `UserRole.ADMIN` (platform admin).
+- `BILLING_ADMIN` is the finance-team role added by PR #655 (May 2026).
+  Sits between `MAINTAINER` and `MANAGER` on the rank ladder; gates
+  financial routes via the dedicated `requireOrgBillingAdminOrOwner`
+  helper rather than a rank comparison (see below).
 - `EXPERT` was `CONSULTANT`. Renamed to avoid collision with
   `UserRole.CONSULTANT` (platform consultant user).
 - `LEARNER` chosen over `MEMBER` for an explicit "receives sessions"
@@ -29,18 +34,69 @@ intuitive ones:
 
 ## Rank ladder
 
-`lib/auth-helpers.ts` exports `ORG_ROLE_RANK`:
+`lib/auth/role-ranks.ts` exports `ORG_ROLE_RANK`:
 
-| Role         | Rank | Typical responsibility |
-|--------------|------|-------------------------|
-| `OWNER`      | 100  | Billing, contracts, payouts, settings, organization delete. |
-| `MAINTAINER` | 80   | Members, invites, programs, rate cards (view-only), settings. |
-| `MANAGER`    | 60   | Team analytics, seat management, read-only views of invoices/earnings/payouts/rate-cards. |
-| `EXPERT`     | 40   | Delivers services on behalf of the org. |
-| `SUPPORT`    | 30   | Views support tickets and assists members. No billing. |
-| `LEARNER`    | 20   | Consumes services through the org's programs. |
+| Role            | Rank | Typical responsibility |
+|-----------------|------|-------------------------|
+| `OWNER`         | 100  | Everything: billing, contracts, payouts, settings, SSO, org delete. |
+| `MAINTAINER`    | 80   | Members, invites, SSO, domain claims, programs, settings. **No billing** — see `MEMBER_ROLE_DESCRIPTION` in `lib/labels/org-labels.ts`. |
+| `BILLING_ADMIN` | 70   | Invoices, POs, payouts, rate cards, wallet top-ups, outbound webhooks. **No member or SSO changes.** |
+| `MANAGER`       | 60   | Team analytics, seat management, read-only views of invoices/earnings/payouts/rate-cards. |
+| `EXPERT`        | 40   | Delivers services on behalf of the org. |
+| `SUPPORT`       | 30   | Views support tickets and assists members. No billing. |
+| `LEARNER`       | 20   | Consumes services through the org's programs. |
 
 `orgRoleSatisfies(actual, minimum)` returns `rank[actual] >= rank[minimum]`.
+
+### Why BILLING_ADMIN uses a disjunction gate, not a rank gate
+
+A naïve `requireOrgAccess(orgId, { minimumRole: "BILLING_ADMIN" })`
+would let `MAINTAINER` (rank 80) through on the rank comparison —
+which is wrong, because `MAINTAINER` explicitly does not have billing
+rights per the role description. The two roles are
+governance-orthogonal: `MAINTAINER` is the org-admin surface,
+`BILLING_ADMIN` is the finance surface.
+
+The dedicated helper `requireOrgBillingAdminOrOwner` at
+`lib/auth/billing-admin-gate.ts` encodes this:
+
+```ts
+const role = access.member.role;
+if (role !== "OWNER" && role !== "BILLING_ADMIN") {
+  return { error: 403 "BILLING_ADMIN_OR_OWNER_REQUIRED" };
+}
+```
+
+Pin-down regression: `__tests__/enterprise/billing-admin-gate.test.ts`
+asserts that `MAINTAINER` is **denied** even though its rank is
+higher.
+
+### BILLING_ADMIN gate matrix
+
+| Route family | Verb | Gate |
+|---|---|---|
+| `billing-account` | PATCH | OWNER or BILLING_ADMIN |
+| `billing-account/purchase-orders` | POST | OWNER or BILLING_ADMIN |
+| `billing-account/purchase-orders/[poId]` | PATCH / DELETE | OWNER or BILLING_ADMIN |
+| `billing-account/invoices` | POST | OWNER or BILLING_ADMIN |
+| `billing-account/invoices/[invoiceId]` | PATCH | OWNER or BILLING_ADMIN |
+| `billing-account/invoices/[invoiceId]/pay` | POST | OWNER or BILLING_ADMIN |
+| `billing-account/wallet/top-ups` | POST | OWNER or BILLING_ADMIN |
+| `payouts` | POST | OWNER or BILLING_ADMIN |
+| `payouts/[payoutId]` | PATCH | OWNER or BILLING_ADMIN |
+| `rate-cards` | POST | OWNER or BILLING_ADMIN |
+| `rate-cards/[cardId]` | PATCH / DELETE | OWNER or BILLING_ADMIN |
+| `webhooks` (Batch 3) | POST / PATCH / redeliver | OWNER or BILLING_ADMIN |
+
+### Surfaces that stay OWNER-only
+
+- `[orgId]` DELETE (org delete + ownership transfer)
+- `sso/**` (provider CRUD, settings)
+- `domain-claims/**`
+- `members/**` (invite, role change, removal)
+- `invitations/**`
+- `scim/tokens/**` (Batch 4)
+- `webhooks/[endpointId]` DELETE + rotate-secret (governance-sensitive)
 
 ## `requireOrgAccess` / `requireOrgOwner`
 

@@ -184,6 +184,45 @@ the schema check and crashed BetterAuth's underlying SAML adapter
 `TypeError: Cannot read properties of undefined (reading 'metadata')`.
 The 500 had an empty body, and the UI gave no feedback. Audit Phase A.2.
 
+#### Pre-auth runtime guard (SSO.1, May 2026)
+
+Provider rows registered BEFORE `validateSamlCert` landed in the
+schema bypass the registration-time check entirely. The same crash
+can also happen if an operator force-edits the row in psql, or if a
+migration replays a stale dump.
+
+`/api/auth/sso/domain-check` now pre-parses the stored `samlConfig`
+JSON and the X.509 cert before the signin UI hands the user off to
+BetterAuth's SAML flow. If either parse fails, the route returns:
+
+```json
+{
+  "enforceSSO": true,
+  "providerMisconfigured": true,
+  "errorCode": "SSO_PROVIDER_MISCONFIGURED"
+}
+```
+
+The signin page (`app/auth/signin/page.tsx`) renders this as a toast
+("Your SSO provider's certificate is invalid. Contact your IT admin
+to re-paste the X.509 PEM.") and leaves the user on the credentials
+form — which they may have for legacy reasons — instead of bouncing
+into a BetterAuth 500. The friendly copy lives in
+`lib/labels/org-errors.ts` under `SSO_PROVIDER_MISCONFIGURED`.
+
+OIDC providers are not affected by this guard — they have no cert
+and fail differently (unreachable `discoveryEndpoint`, rejected
+`clientSecret`, etc.). Recovering an org from this state means:
+delete the bad provider via the SSO settings UI and recreate it
+with a valid PEM (the `[providerId]` DELETE route is the
+delete-then-recreate path described above; there is intentionally
+no PATCH).
+
+See `__tests__/sso/domain-check-misconfigured-cert.test.ts` for the
+regression coverage and `validateSamlCert` in
+`lib/sso/provider-schemas.ts` for the shared parse helper used at
+both registration time and this runtime guard.
+
 ### IdP-issued email verification
 
 The SAML assertion / OIDC token's `email` claim is trusted as the

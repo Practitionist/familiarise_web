@@ -17,6 +17,11 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+// Why: PO creation is a finance-team mutation that BILLING_ADMIN should
+// be able to perform without escalating to OWNER. The disjunction is
+// enforced by `requireOrgBillingAdminOrOwner`; MAINTAINER is intentionally
+// excluded — see `lib/auth/billing-admin-gate.ts` for the rationale.
+import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
 const CurrencySchema = z.enum(["INR", "USD", "EUR", "GBP"]);
@@ -64,8 +69,7 @@ export async function POST(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, {
-    minimumRole: "OWNER",
+  const access = await requireOrgBillingAdminOrOwner(orgId, {
     canSponsor: true,
     requireActive: true,
   });

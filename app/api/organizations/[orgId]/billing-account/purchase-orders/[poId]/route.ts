@@ -11,6 +11,10 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+// Why: PATCH and DELETE on a PO are finance-team mutations; allow
+// BILLING_ADMIN alongside OWNER while still excluding MAINTAINER. See
+// `lib/auth/billing-admin-gate.ts`.
+import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 
 const PoStatusSchema = z.enum(["ACTIVE", "CLOSED", "CANCELLED"]);
 
@@ -65,7 +69,7 @@ export async function PATCH(
   },
 ) {
   const { orgId, poId } = await params;
-  const access = await requireOrgAccess(orgId, { minimumRole: "OWNER", canSponsor: true });
+  const access = await requireOrgBillingAdminOrOwner(orgId, { canSponsor: true });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);
@@ -126,7 +130,7 @@ export async function DELETE(
   },
 ) {
   const { orgId, poId } = await params;
-  const access = await requireOrgAccess(orgId, { minimumRole: "OWNER", canSponsor: true });
+  const access = await requireOrgBillingAdminOrOwner(orgId, { canSponsor: true });
   if (access.error) return access.error;
 
   try {

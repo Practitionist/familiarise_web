@@ -26,6 +26,15 @@ jest.mock("../../lib/prisma", () => ({
       count: jest.fn(),
       update: jest.fn(),
     },
+    // Why: a role downgrade fires `bumpUserSessionGeneration` inside the
+    // transaction (lib/api/organizations/membership-transitions.ts) which calls
+    // `tx.user.update(...)`. The route would crash with `tx.user undefined`
+    // without this delegate exposed on the prisma mock + the tx shim below.
+    user: {
+      update: jest
+        .fn()
+        .mockResolvedValue({ id: "u-victim", sessionGeneration: 2 }),
+    },
     orgAuditLog: {
       create: jest.fn().mockResolvedValue({}),
     },
@@ -66,6 +75,7 @@ const mockedPrisma = prisma as unknown as {
     count: jest.Mock;
     update: jest.Mock;
   };
+  user: { update: jest.Mock };
   orgAuditLog: { create: jest.Mock };
   $transaction: jest.Mock;
 };
@@ -102,6 +112,12 @@ function wireTxShim() {
     const tx = {
       membership: mockedPrisma.membership,
       orgAuditLog: mockedPrisma.orgAuditLog,
+      // Why: role downgrades bump the user's sessionGeneration counter
+      // inside the same transaction (see bumpUserSessionGeneration in
+      // lib/api/organizations/membership-transitions.ts). The shim has to
+      // forward `tx.user.update` to the module-level mock so the helper
+      // can complete the transaction without crashing.
+      user: mockedPrisma.user,
     };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return (fn as any)(tx);
@@ -193,6 +209,14 @@ describe("PATCH /api/organizations/[orgId]/members/[memberId] — anti-lockout",
         consultantProfileId: null,
         payoutRecipient: "SELF",
       },
+    });
+    // Why: every role mutation must bump the demoted user's
+    // sessionGeneration so their next request triggers a customSession
+    // refetch (lib/auth.ts), eliminating up to 24h of stale-permission
+    // exposure. Audit phase B.5 — see bumpUserSessionGeneration docstring.
+    expect(mockedPrisma.user.update).toHaveBeenCalledWith({
+      where: { id: "u-victim" },
+      data: { sessionGeneration: { increment: 1 } },
     });
   });
 

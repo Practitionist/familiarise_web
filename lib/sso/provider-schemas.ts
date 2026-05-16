@@ -49,7 +49,19 @@ export const oidcConfigSchema = z.object({
  *
  * See audit Phase A.2 + `docs/enterprise/08-sso-and-authentication.md#cert-rotation`.
  */
-function validateSamlCert(value: string): boolean {
+/**
+ * Exported because the same parse-or-fail check needs to run at two
+ * additional sites beyond schema registration:
+ *
+ *   1. The pre-auth `/api/auth/sso/domain-check` endpoint, to short-circuit
+ *      with `SSO_PROVIDER_MISCONFIGURED` BEFORE the user is bounced to
+ *      BetterAuth's SAML flow (which would crash the request and return
+ *      an empty-body 500 — see audit Phase A.2).
+ *
+ *   2. The daily `sso-cert-expiry-alert` cron, to detect legacy provider
+ *      rows whose certs were registered before this validator existed.
+ */
+export function validateSamlCert(value: string): boolean {
   try {
     // The constructor parses the cert; we don't need the instance.
     new X509Certificate(value);

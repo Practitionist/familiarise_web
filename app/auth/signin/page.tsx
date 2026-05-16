@@ -89,11 +89,27 @@ function SignInContent() {
       const res = await fetch(`/api/auth/sso/domain-check?email=${encodeURIComponent(email)}`);
       if (res.ok) {
         const data = await res.json();
-        setSsoCheck(data.enforceSSO ? {
-          enforceSSO: true,
-          organizationName: data.organizationName,
-          ssoBody: data.ssoBody,
-        } : null);
+        // Why: the domain-check route returns `providerMisconfigured: true`
+        // when the stored SAML cert fails parse. Surface a friendly toast
+        // and leave `ssoCheck` null so the user falls back to credentials
+        // (which they may also have for legacy reasons). Without this
+        // branch, clicking "Sign in with SSO" would crash BetterAuth and
+        // present a blank 500.
+        if (data.enforceSSO && data.providerMisconfigured) {
+          toast({
+            title: "Single sign-on is misconfigured",
+            description:
+              "Your SSO provider's certificate is invalid. Contact your IT admin to re-paste the X.509 PEM.",
+            variant: "destructive",
+          });
+          setSsoCheck(null);
+        } else {
+          setSsoCheck(data.enforceSSO ? {
+            enforceSSO: true,
+            organizationName: data.organizationName,
+            ssoBody: data.ssoBody,
+          } : null);
+        }
       }
     } catch {
       // ignore — fall through to normal login
@@ -141,6 +157,17 @@ function SignInContent() {
       const res = await fetch(`/api/auth/sso/domain-check?email=${encodeURIComponent(email)}`);
       if (!res.ok) throw new Error("check failed");
       const data = await res.json();
+      // Same misconfigured-cert short-circuit as the blur handler — see
+      // its comment above for the failure mode this guards against.
+      if (data.enforceSSO && data.providerMisconfigured) {
+        toast({
+          title: "Single sign-on is misconfigured",
+          description:
+            "Your SSO provider's certificate is invalid. Contact your IT admin to re-paste the X.509 PEM.",
+          variant: "destructive",
+        });
+        return;
+      }
       if (data.enforceSSO) {
         setSsoCheck({ enforceSSO: true, organizationName: data.organizationName, ssoBody: data.ssoBody });
         const result = await ssoSigninWithGuard({

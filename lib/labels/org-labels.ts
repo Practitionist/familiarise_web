@@ -100,6 +100,7 @@ export const FUNDING_SOURCE_BADGE_CLASS: Record<FundingSource, string> = {
 export const MEMBER_ROLE_LABEL: Record<MemberRole, string> = {
   OWNER: "Owner",
   MAINTAINER: "Maintainer",
+  BILLING_ADMIN: "Billing admin",
   MANAGER: "Manager",
   EXPERT: "Expert",
   LEARNER: "Learner",
@@ -112,6 +113,7 @@ export const MEMBER_ROLE_LABEL: Record<MemberRole, string> = {
 export const MemberRoleSchema = z.enum([
   "OWNER",
   "MAINTAINER",
+  "BILLING_ADMIN",
   "MANAGER",
   "EXPERT",
   "LEARNER",
@@ -122,6 +124,15 @@ export const MEMBER_ROLE_DESCRIPTION: Record<MemberRole, string> = {
   OWNER: "Full control: billing, members, settings, deletion.",
   MAINTAINER:
     "Members, plans, programs, and settings. No billing or deletion.",
+  // Why a separate finance role: large orgs delegate AP / GL to a
+  // specialized team that needs invoice + payout + rate-card + wallet
+  // mutation rights without the ability to touch SSO, member roster,
+  // or org status. Sitting at rank 70 (between MAINTAINER 80 and
+  // MANAGER 60) means the gate matrix flows naturally — SSO routes
+  // gated at MAINTAINER+ auto-deny, billing routes gated at
+  // BILLING_ADMIN-or-OWNER explicitly allow.
+  BILLING_ADMIN:
+    "Manages invoices, POs, payouts, rate cards, and outbound webhooks. No member or SSO changes.",
   MANAGER: "Team analytics, seat management, earnings view.",
   EXPERT: "Delivers services on behalf of the organization.",
   LEARNER: "Consumes services through the organization's programs.",
@@ -135,6 +146,9 @@ export const MEMBER_STATUS_LABEL: Record<MemberStatus, string> = {
   ACTIVE: "Active",
   SUSPENDED: "Suspended",
   REMOVED: "Removed",
+  // DPDP §12 right-to-erasure tombstone. Surfaced as "Erased" in
+  // member lists so operators understand the row will never reactivate.
+  ERASED: "Erased",
 };
 
 export const MEMBER_STATUS_BADGE_CLASS: Record<MemberStatus, string> = {
@@ -142,6 +156,9 @@ export const MEMBER_STATUS_BADGE_CLASS: Record<MemberStatus, string> = {
   ACTIVE: "bg-green-100 text-green-900 border-green-200",
   SUSPENDED: "bg-orange-100 text-orange-900 border-orange-200",
   REMOVED: "bg-zinc-100 text-zinc-600 border-zinc-200",
+  // Deliberately darker than REMOVED — visually communicates
+  // "permanent, regulatory" rather than "operator action, reversible".
+  ERASED: "bg-zinc-200 text-zinc-700 border-zinc-300 italic",
 };
 
 // ───────────────────────────── Zod narrowing schemas ─────────────────────────────
@@ -179,9 +196,13 @@ export const SELF_SERVICE_FUNDING_SOURCES =
 // non-privileged MemberRoles. EXPERT is assigned only on canHost=true
 // orgs (see HostInvitableMemberRoleSchema below); SUPPORT is an
 // operator role assigned by owners from Settings.
+// BILLING_ADMIN is included here so OWNERs can invite a finance lead
+// from the org-creation wizard onwards without leaving the dashboard.
+// SUPPORT remains operator-only (assigned by OWNERs from Settings).
 export const SelfServiceMemberRoleSchema = z.enum([
   "OWNER",
   "MAINTAINER",
+  "BILLING_ADMIN",
   "MANAGER",
   "LEARNER",
 ]);
@@ -221,6 +242,7 @@ export type JitDefaultRole = z.infer<typeof JitDefaultRoleSchema>;
 export const HostInvitableMemberRoleSchema = z.enum([
   "OWNER",
   "MAINTAINER",
+  "BILLING_ADMIN",
   "MANAGER",
   "LEARNER",
   "EXPERT",

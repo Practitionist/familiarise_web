@@ -29,6 +29,11 @@ import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+// Why: wallet top-ups mint external Razorpay/Stripe orders — finance-team
+// action. BILLING_ADMIN should be able to fund the wallet without
+// escalating to OWNER. The existing pre-Arch-4 comment above said
+// "with the person who pays the bill", which is now BILLING_ADMIN.
+import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { initiateTopUp } from "@/lib/api/organizations/wallet";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { createRazorpayOrder } from "@/lib/payments/core/razorpay";
@@ -101,8 +106,7 @@ export async function POST(
   // charge should live with the person who pays the bill.
   // Also gated on org status=ACTIVE — a pre-verification org cannot
   // charge a card, so we reject before minting a Razorpay order.
-  const access = await requireOrgAccess(orgId, {
-    minimumRole: "OWNER",
+  const access = await requireOrgBillingAdminOrOwner(orgId, {
     canSponsor: true,
     requireActive: true,
   });

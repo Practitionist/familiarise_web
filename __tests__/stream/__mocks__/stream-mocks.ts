@@ -32,6 +32,17 @@ export const createMockPrisma = () => ({
     findFirst: jest.fn(),
     findMany: jest.fn(),
   },
+  // Why: the Stream upsert pipeline calls `checkConsent` (lib/compliance/dpdp.ts)
+  // before mirroring identity into Stream.io. Without a `consentArtifact` delegate
+  // on the mock, the helper crashes with `TypeError: Cannot read properties of
+  // undefined (reading 'findFirst')`. Default to a truthy artifact so existing
+  // happy-path tests treat the user as consenting; tests that exercise the
+  // "no consent" branch override `findFirst` to resolve `null`.
+  consentArtifact: {
+    findFirst: jest.fn().mockResolvedValue({ id: "consent-1" }),
+    updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    count: jest.fn().mockResolvedValue(0),
+  },
 });
 
 // Stream Chat client mock for channel operations

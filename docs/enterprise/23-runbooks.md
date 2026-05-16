@@ -194,3 +194,102 @@ LIMIT 20;
 Use this when a user reports "I paid but nothing happened" — the
 `status` column tells you whether the webhook was received, processed,
 or failed.
+
+## 🔬 Running cron jobs locally
+
+Every standalone job under `jobs/**/*.ts` (cron entry points + their
+shared helpers) is executable via `tsx`. Useful when you need to
+reproduce a GitHub-Actions failure offline, force a one-off sweep,
+or smoke-test a new cron before wiring its workflow.
+
+```bash
+# Minimum required env (loaded via dotenv/config from .env at the top
+# of every standalone job):
+#   DATABASE_URL, DIRECT_URL — Supabase Postgres connection strings
+#   STREAM_API_KEY, STREAM_API_SECRET — for jobs/meetings/* + stream/*
+#   RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET — for jobs/payouts/*
+#   RESEND_API_KEY — for jobs/compliance/* (email out)
+#   DPDP_SWEEPER_DELETE=false — gates destructive scrub in any DPDP runs
+
+npx tsx jobs/contracts/expire-contracts.ts
+npx tsx jobs/compliance/databreach-deadline-alerts.ts
+npx tsx jobs/compliance/irp-uploader.ts
+npx tsx jobs/compliance/msme-payment-alerts.ts
+npx tsx jobs/cleanup/release-pending-trust-earnings.ts
+npx tsx jobs/meetings/reconcile-orphaned-sessions.ts
+```
+
+**Required boilerplate inside each job:**
+1. `import "dotenv/config";` as the FIRST line. Without it, tsx
+   doesn't load `.env` and `PrismaClient` throws on the first query.
+2. An explicit `await prisma.$disconnect()` in `.finally()` of the
+   `if (require.main === module)` block. Without it, the script
+   process hangs after the work completes and CI marks the job as
+   stuck.
+
+The `expire-contracts.ts` job is the canonical template; the other
+standalone jobs mirror its shape. New jobs should copy that
+boilerplate verbatim — `jobs/contracts/expire-contracts.ts` lines
+26 (dotenv) + 115-123 (main block with $disconnect).
+
+**Exit codes:** `0` = success, `1` = at least one row failed and
+the error was captured in the structured-log output. Any other exit
+code indicates the script crashed before completing — check the
+last log line for a stack trace.
+
+## 🗓️ Flipping the CSP from report-only to enforce
+
+The CSP shipped in PR #655 is `Content-Security-Policy-Report-Only`
+by default. Receiver violations stream to `/api/csp-report` and
+surface as `event: "csp_violation"` lines in the structured log.
+
+**Cutover protocol** — do not flip before completing this:
+
+1. **Day 0 → Day 7 (observe).** Tail production logs filtered to
+   `event: "csp_violation"`. Expected steady-state shape:
+   ```
+   { "event": "csp_violation", "ip": "...", "ua": "...",
+     "report": { "csp-report": { "violated-directive": "...",
+                                  "blocked-uri": "...",
+                                  "document-uri": "..." } } }
+   ```
+   Tally by `violated-directive`. Anything **outside** the directive
+   list in `next.config.mjs` `CSP_DIRECTIVES` is a real candidate;
+   anything inside is browser noise (extensions injecting scripts,
+   crawlers ignoring CSP, etc.).
+2. **Day 7 (review).** Aggregate the violation counts. Two checks:
+   - Are any LEGITIMATE third-party resources getting blocked? If
+     yes → add the domain to the matching `script-src` /
+     `connect-src` / etc. directive in `next.config.mjs` and start
+     the 7-day clock again. Common offenders: a new monitoring SDK,
+     a new analytics endpoint, a new Stream.io region.
+   - Are any reports clustering on a single `blocked-uri` that looks
+     malicious (e.g. `data:` URI with base64 payload)? If yes →
+     leave it blocked AND flip enforce; the report-only window
+     surfaced an attack.
+3. **Day 7 — flip.** Set `ENABLE_CSP_ENFORCE=true` in the production
+   env. The header key changes from `Content-Security-Policy-Report-Only`
+   to `Content-Security-Policy`. Same allow-list, same report
+   destination — but browsers now BLOCK violations instead of
+   allowing-but-flagging.
+4. **Day 7 + 24h (smoke).** Curl-fetch `/`, `/auth/signin`,
+   `/dashboard/organization/[orgId]/billing` for an active customer
+   org and verify the dashboard still loads end-to-end. Razorpay
+   checkout popup is the highest-risk path — a missing entry in
+   `frame-src` or `script-src` here will break payments.
+5. **Rollback path.** If enforce breaks anything, flip
+   `ENABLE_CSP_ENFORCE` back to `false` (or unset). The header
+   immediately reverts to report-only on the next request. No
+   restart required; no other change needed.
+
+**What NEVER goes in the directive list:** `*`, `'unsafe-eval'` in
+`connect-src`, `data:` in `script-src`. Each of these defeats the
+purpose. The current allow-list is documented in
+`docs/enterprise/32-security-headers.md` with the rationale per
+directive.
+
+**Reporter URL note.** `/api/csp-report` is unauthenticated by
+design — the browser is the originator, not the user. It's
+rate-limited via `spamLimiter` on IP. Watch for the rate-limit
+hitting (429s in the log) if a single client misconfigures + spams
+violations; that's the signal to widen the spam budget.

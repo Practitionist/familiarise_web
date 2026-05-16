@@ -24,6 +24,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { lookupEnforcedOrg } from "@/lib/sso/enforce-session";
+import { validateSamlCert } from "@/lib/sso/provider-schemas";
 
 const QuerySchema = z.object({
   email: z.string().email(),
@@ -62,10 +63,41 @@ export async function GET(req: NextRequest) {
   // this at the DB level too.)
   const provider = await prisma.ssoProvider.findFirst({
     where: { domain, organizationId: enforced.organizationId },
-    select: { providerId: true },
+    select: { providerId: true, samlConfig: true, oidcConfig: true },
   });
   if (!provider) {
     return NextResponse.json({ enforceSSO: false });
+  }
+
+  // Pre-flight integrity check on the stored cert. Legacy SsoProvider rows
+  // registered before `validateSamlCert` landed in `provider-schemas.ts` may
+  // carry a malformed PEM (or none at all). If we hand BetterAuth's SAML
+  // adapter a bad cert, it crashes inside `validatePostResponse` with an
+  // empty-body 500 — the user clicks "Sign in with SSO" and sees a blank
+  // page with no error to act on. Returning the typed
+  // `SSO_PROVIDER_MISCONFIGURED` response keeps the signin page on the
+  // credentials form and shows a friendly toast.
+  //
+  // OIDC providers don't have a cert; they fail differently (discoveryEndpoint
+  // unreachable, etc.) and are out of scope for this guard.
+  if (provider.samlConfig) {
+    try {
+      const parsed = JSON.parse(provider.samlConfig) as { cert?: string };
+      if (!parsed.cert || !validateSamlCert(parsed.cert)) {
+        return NextResponse.json({
+          enforceSSO: true,
+          providerMisconfigured: true,
+          errorCode: "SSO_PROVIDER_MISCONFIGURED",
+        });
+      }
+    } catch {
+      // Stored config is not parseable JSON — also a misconfiguration.
+      return NextResponse.json({
+        enforceSSO: true,
+        providerMisconfigured: true,
+        errorCode: "SSO_PROVIDER_MISCONFIGURED",
+      });
+    }
   }
 
   // The org name is the only extra field this endpoint emits beyond

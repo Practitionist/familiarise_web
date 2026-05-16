@@ -15,9 +15,14 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+// Why: invoice creation is the canonical finance-team mutation; downgrade
+// from OWNER-only so BILLING_ADMIN can issue invoices without escalation.
+// MAINTAINER is intentionally excluded — see `lib/auth/billing-admin-gate.ts`.
+import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
 import { generateOrgInvoiceNumber } from "@/lib/payments/billing/invoice-numbering";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { notifyOrgInvoiceIssued } from "@/lib/novu/org-workflows";
 
 const CurrencySchema = z.enum(["INR", "USD", "EUR", "GBP"]);
@@ -97,7 +102,7 @@ export async function POST(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { minimumRole: "OWNER", canSponsor: true });
+  const access = await requireOrgBillingAdminOrOwner(orgId, { canSponsor: true });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);
@@ -283,6 +288,27 @@ export async function POST(
         },
       },
     });
+
+    // Outbound webhook only on ISSUED transitions; a DRAFT invoice
+    // hasn't been "sent" yet — integrators should only see invoices
+    // they need to act on (booking entries, AP queues). Resending on
+    // a later DRAFT→ISSUED PATCH happens in the [invoiceId] route.
+    if (body.issueImmediately) {
+      await dispatchWebhookEvent({
+        prisma: tx,
+        organizationId: orgId,
+        eventType: "invoice.issued",
+        payload: {
+          invoiceId: created.id,
+          invoiceNumber: created.invoiceNumber,
+          totalPaise: created.totalPaise,
+          displayCurrency: created.displayCurrency,
+          dueDate: created.dueDate,
+          purchaseOrderId: created.purchaseOrderId,
+          contractId: created.contractId,
+        },
+      });
+    }
 
     return created;
     });

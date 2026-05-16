@@ -94,11 +94,24 @@ model User {
   // unambiguous. See audit Phase B.5 + docs/enterprise/09-jit-and-session-refresh.md.
   sessionGeneration Int @default(0)
 
+  // DPDP §12 right-to-erasure tombstone marker (audit Phase 2). When set,
+  // the user's PII fields are scrubbed to pseudonymous values and every
+  // active Membership is flipped to MemberStatus.ERASED. Financial rows
+  // (invoices, payouts, ledger entries) are intentionally retained per
+  // IT Act 5–7y obligations — the erasure is selective, not destructive.
+  // SCIM and JIT re-creation paths must return 410 Gone when erasedAt is set.
+  erasedAt       DateTime?
+  // SHA-256(userId + salt) — opaque stable id used to rewrite audit-log
+  // JSON references after scrub so historical investigations still trace
+  // events back to a (deterministic) actor without exposing PII.
+  pseudonymousId String?   @unique
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  invitations  Invitation[]
-  ssoproviders SsoProvider[]
+  invitations     Invitation[]
+  ssoproviders    SsoProvider[]
+  erasureRequests ErasureRequest[]
 
   @@index([consultantProfileId])
   @@index([consulteeProfileId])
@@ -106,6 +119,7 @@ model User {
   @@index([role])
   @@index([staffProfileId])
   @@index([orgWorkspaceProfileId])
+  @@index([erasedAt])
   @@map("users")
 }
 
@@ -590,6 +604,19 @@ model Organization {
   // settle to the platform default. Now enforced at the DB level.
   rateCards RateCard[] @relation("RateCardOwnerOrg")
 
+  /// Per-org Stream.io recording retention window (days). Powers
+  /// `jobs/stream/cleanup-old-stream-recordings.ts` — recordings older
+  /// than this value are deleted from Stream + tombstoned locally.
+  /// Default 90d matches the platform-wide minimum for compliance
+  /// (most large enterprises require ≥90d for grievance / audit).
+  streamRecordingRetentionDays Int @default(90)
+
+  // Outbound integration surfaces (Batch 3 + 4 + 5 of PR #655 lockdown).
+  webhookEndpoints  WebhookEndpoint[]
+  scimTokens        ScimToken[]
+  scimGroupMappings ScimGroupMapping[]
+  dataExportJobs    OrgDataExportJob[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -704,6 +731,15 @@ model Membership {
   betterAuthMemberId String? @unique
   betterAuthMember   Member? @relation(fields: [betterAuthMemberId], references: [id], onUpdate: Cascade, onDelete: SetNull)
 
+  /// SCIM 2.0 stable external identity per org. Populated when the
+  /// membership was created or last-updated via /scim/v2/Users; null for
+  /// memberships created through the in-app invite flow. Indexed under a
+  /// partial unique constraint scoped to (organizationId, externalScimId)
+  /// so two orgs can map the same IdP user without collision. Allows
+  /// idempotent SCIM upserts and is the canonical key for DELETE
+  /// (deprovision = SUSPEND, never erase).
+  externalScimId String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -731,6 +767,13 @@ model Membership {
 enum MemberRole {
   OWNER
   MAINTAINER
+  /// BILLING_ADMIN — Finance-team operator. Sits between MAINTAINER (80)
+  /// and MANAGER (60) on the rank ladder at rank 70 (see
+  /// lib/auth/role-ranks.ts). Can manage invoices, POs, payouts, rate
+  /// cards, wallet top-ups, and outbound webhooks; cannot transition org
+  /// status, change funding source, invite/remove members, or modify SSO.
+  /// Required for large orgs that delegate billing to a separate team.
+  BILLING_ADMIN
   MANAGER
   EXPERT
   LEARNER
@@ -742,6 +785,11 @@ enum MemberStatus {
   ACTIVE
   SUSPENDED
   REMOVED
+  /// ERASED — DPDP §12 tombstone. Set by the erasure pipeline when a
+  /// user exercises right-to-erasure; the Membership row remains for
+  /// audit + financial-trail integrity but the user identifiers are
+  /// scrubbed to pseudonymous values (see User.erasedAt).
+  ERASED
 }
 
 enum OrgStatus {
@@ -1582,6 +1630,7 @@ enum OrgAuditCategory {
   CONSENT // DPDP events
   CATALOG // org-curated plan catalog add/remove/deactivate
   SYSTEM // anything platform-triggered
+  WEBHOOK // outbound webhook endpoint CRUD + delivery results
 }
 
 // Org-curated plan catalog. Unchanged semantics; FK renamed to organizationId.
@@ -4102,4 +4151,182 @@ model SsoProvider {
   @@unique([providerId])
   @@unique([organizationId, domain])
   @@map("ssoProvider")
+}
+
+// =============================================================================
+// PR #655 enterprise lockdown — Batches 3 / 4 / 5
+//
+// The six models below are the schema surface for outbound webhooks (Batch 3),
+// SCIM 2.0 provisioning (Batch 4), and DPDP §12 erasure + DPDP §11 data export
+// (Batch 5 / Batch 6.5). The matching SQL was applied via Supabase MCP under
+// migration `pr655_enterprise_lockdown_schema` — this Prisma block exists for
+// type generation and IDE intellisense; it does NOT drive db push.
+// =============================================================================
+
+/// Outbound webhook destinations per organization. Each row maps an HTTPS
+/// URL to a list of subscribed event types (`member.added`, `invoice.issued`,
+/// `payout.completed`, ...) and carries the HMAC-SHA256 secret used to sign
+/// every delivery body. See lib/enterprise/outbound-webhooks/* + docs at
+/// docs/enterprise/29-outbound-webhooks.md.
+model WebhookEndpoint {
+  id                    String                @id @default(cuid())
+  organizationId        String
+  organization          Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  url                   String                @db.VarChar(2048)
+  secret                String
+  status                WebhookEndpointStatus @default(ACTIVE)
+  /// Event-type tokens this endpoint should receive — e.g.
+  /// ["invoice.issued","payout.completed"]. Empty array == receives nothing
+  /// (useful for staging a paused endpoint before flipping subscriptions on).
+  eventSubscriptions    String[]              @default([])
+  failureCount          Int                   @default(0)
+  lastSuccessAt         DateTime?
+  lastFailureAt         DateTime?
+  createdByMembershipId String?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  deliveries OutboundWebhookDelivery[]
+
+  @@index([organizationId, status])
+}
+
+enum WebhookEndpointStatus {
+  ACTIVE
+  PAUSED
+  DISABLED
+}
+
+/// One row per delivery attempt cycle for a (WebhookEndpoint, eventType,
+/// payload) tuple. The worker (jobs/webhooks/dispatch-outbound-webhooks.ts)
+/// polls (status, nextRetryAt) and walks the exponential backoff schedule
+/// (1m → 5m → 30m → 2h → 8h) before marking FAILED at attempt 5. `signature`
+/// stores the `t=...,v1=...` envelope so re-deliveries can reproduce the
+/// same header for the receiver's idempotency key.
+model OutboundWebhookDelivery {
+  id                String          @id @default(cuid())
+  webhookEndpointId String
+  endpoint          WebhookEndpoint @relation(fields: [webhookEndpointId], references: [id], onDelete: Cascade)
+  eventType         String
+  payload           Json
+  signature         String?
+  status            DeliveryStatus  @default(PENDING)
+  httpStatusCode    Int?
+  attempts          Int             @default(0)
+  nextRetryAt       DateTime?
+  lastError         String?         @db.Text
+  createdAt         DateTime        @default(now())
+  deliveredAt       DateTime?
+
+  @@index([status, nextRetryAt])
+  @@index([webhookEndpointId, createdAt])
+}
+
+enum DeliveryStatus {
+  PENDING
+  IN_FLIGHT
+  SUCCESS
+  RETRY
+  FAILED
+}
+
+/// Per-org SCIM 2.0 bearer tokens. Stored as SHA-256 hashes; the raw token
+/// is shown once at creation and never persisted. Auth path: bearer →
+/// sha256 → lookup in this table → load organizationId. Status flips to
+/// REVOKED on explicit DELETE; tokens never expire unless revoked.
+model ScimToken {
+  id                    String          @id @default(cuid())
+  organizationId        String
+  organization          Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  tokenHash             String          @unique
+  label                 String
+  status                ScimTokenStatus @default(ACTIVE)
+  createdByMembershipId String?
+  createdAt             DateTime        @default(now())
+  lastUsedAt            DateTime?
+  revokedAt             DateTime?
+
+  @@index([organizationId, status])
+}
+
+enum ScimTokenStatus {
+  ACTIVE
+  REVOKED
+}
+
+/// Mapping from SCIM Group name (as the IdP knows it, e.g. "IT-Admins") to
+/// the local MemberRole that should be applied when a user joins that
+/// group. One mapping per (org, group name); the SCIM Groups endpoint
+/// reads from this table when reconciling group memberships.
+model ScimGroupMapping {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  scimGroupName  String
+  role           MemberRole
+  createdAt      DateTime     @default(now())
+
+  @@unique([organizationId, scimGroupName])
+}
+
+/// DPDP §12 right-to-erasure request queue. Users file via
+/// `POST /api/users/me/erasure-requests`; admins process via
+/// `POST /api/admin/erasure-requests/[id]/process`. The cron
+/// `jobs/compliance/process-erasure-requests.ts` walks PENDING rows and
+/// either auto-processes (if `AUTO_PROCESS_ERASURE=true`) or pages ops
+/// when within 7 days of the 30-day SLA cliff. The partial-unique index
+/// on `(userId)` WHERE status IN (PENDING, IN_PROGRESS) lives in the SQL
+/// migration — Prisma 7's `partialIndexes` is still preview and the DB
+/// is the authoritative gate for "at most one open request per user".
+model ErasureRequest {
+  id                 String        @id @default(cuid())
+  userId             String
+  user               User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  requestedAt        DateTime      @default(now())
+  completedAt        DateTime?
+  status             ErasureStatus @default(PENDING)
+  reason             String?       @db.Text
+  processedByAdminId String?
+  notes              String?       @db.Text
+
+  @@index([status, requestedAt])
+}
+
+enum ErasureStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  REJECTED
+}
+
+/// DPDP §11 right-to-access bundle job. OWNER / BILLING_ADMIN files via
+/// `POST /api/organizations/[orgId]/data-exports`; the worker
+/// (`scripts/cleanup/process-data-exports.ts`) builds a JSON+CSV bundle
+/// across members / contracts / earnings / invoices / payouts /
+/// audit-log, uploads to Supabase Storage with a 7d signed URL, and
+/// emails the requester. One-export-per-org-per-24h is enforced by
+/// the `orgDataExportLimiter` rate limiter, not by a DB constraint.
+model OrgDataExportJob {
+  id                      String              @id @default(cuid())
+  organizationId          String
+  organization            Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  requestedByMembershipId String
+  status                  OrgDataExportStatus @default(PENDING)
+  fileUrl                 String?
+  fileSizeBytes           BigInt?
+  expiresAt               DateTime?
+  error                   String?             @db.Text
+  createdAt               DateTime            @default(now())
+  startedAt               DateTime?
+  completedAt             DateTime?
+
+  @@index([organizationId, createdAt(sort: Desc)])
+}
+
+enum OrgDataExportStatus {
+  PENDING
+  PROCESSING
+  READY
+  FAILED
+  EXPIRED
 }

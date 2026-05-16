@@ -21,6 +21,9 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
+// Why: payout initiation is a finance-team action; downgrade from
+// requireOrgOwner so BILLING_ADMIN can trigger payouts without escalation.
+import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
 const PayoutStatusSchema = z.enum([
@@ -113,7 +116,7 @@ export async function POST(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgOwner(orgId);
+  const access = await requireOrgBillingAdminOrOwner(orgId);
   if (access.error) return access.error;
 
   if (!access.org.canHost) {

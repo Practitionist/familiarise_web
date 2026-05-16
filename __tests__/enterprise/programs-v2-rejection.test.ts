@@ -15,13 +15,18 @@
 
 import { NextRequest } from "next/server";
 
-jest.mock("@/lib/auth-helpers", () => ({
+// Why: `jest.mock` keys hash on the literal specifier string, while
+// `moduleNameMapper` rewrites import-time specifiers. The other tests in
+// this directory use relative paths for `jest.mock` so the mock registry
+// matches what Node's module resolver actually sees. Keeping `@/` here
+// causes "Cannot find module '@/lib/auth-helpers'" under our Jest version.
+jest.mock("../../lib/auth-helpers", () => ({
   requireOrgAccess: jest.fn(async () => ({
     error: null,
     membership: { id: "mock-mem", role: "OWNER" },
   })),
 }));
-jest.mock("@/lib/prisma", () => ({
+jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     contract: { findUnique: jest.fn() },

@@ -148,6 +148,64 @@ export const AUDIT_ACTIONS = {
     // org itself (soft-deleted targetMembershipId) and is still
     // auditable post-deletion.
     ORG_DELETED: "ORG_DELETED",
+    // PR #655 Batch 6 — audit retention cron emits one summary row per
+    // org per run carrying { deleted7y, deleted2y, cutoff7y, cutoff2y }
+    // in `details`. Pinned under SYSTEM because the operator is the
+    // platform, not a human member.
+    AUDIT_PRUNED: "AUDIT_PRUNED",
+    // Emitted by the Stream recording retention cron when it tombstones
+    // a recording older than the org's `streamRecordingRetentionDays`.
+    STREAM_RECORDING_DELETED: "STREAM_RECORDING_DELETED",
+    // Emitted from GET /api/organizations/[orgId]/stream/calls when a
+    // MANAGER+ exports the call/recording metadata (compliance pull).
+    STREAM_CALLS_EXPORTED: "STREAM_CALLS_EXPORTED",
+    // Emitted by PATCH org settings when the retention window changes;
+    // SYSTEM bucket because it's a platform-policy mutation, not a
+    // member action.
+    STREAM_RETENTION_CHANGED: "STREAM_RETENTION_CHANGED",
+    // PR #655 Batch 5 — DPDP §12 user erasure lifecycle. Pinned under
+    // SYSTEM (the actor is the user-or-admin acting on a regulatory
+    // surface), distinct from CONSENT bucket which records GRANT/WITHDRAW.
+    USER_ERASURE_REQUESTED: "USER_ERASURE_REQUESTED",
+    USER_ERASURE_PROCESSED: "USER_ERASURE_PROCESSED",
+    USER_ERASURE_REJECTED: "USER_ERASURE_REJECTED",
+    USER_ERASURE_SLA_WARNING: "USER_ERASURE_SLA_WARNING",
+    // PR #655 Batch 6.5 — DPDP §11 right-to-access export bundle
+    // lifecycle. Logged per state so an operator can reconstruct
+    // "who pulled what bundle when" without grepping worker logs.
+    DATA_EXPORT_REQUESTED: "DATA_EXPORT_REQUESTED",
+    DATA_EXPORT_GENERATED: "DATA_EXPORT_GENERATED",
+    DATA_EXPORT_FAILED: "DATA_EXPORT_FAILED",
+    DATA_EXPORT_DOWNLOADED: "DATA_EXPORT_DOWNLOADED",
+    // PR #655 Batch 4 — SCIM 2.0 provisioning events that don't map
+    // cleanly to MEMBER (because the actor is an IdP token, not a
+    // human). Grouped here so the SCIM trail is filterable as a unit.
+    SCIM_USER_CREATED: "SCIM_USER_CREATED",
+    SCIM_USER_UPDATED: "SCIM_USER_UPDATED",
+    SCIM_USER_DEPROVISIONED: "SCIM_USER_DEPROVISIONED",
+    SCIM_USER_REPROVISIONED: "SCIM_USER_REPROVISIONED",
+    SCIM_GROUP_MAPPED: "SCIM_GROUP_MAPPED",
+    SCIM_GROUP_UNMAPPED: "SCIM_GROUP_UNMAPPED",
+    SCIM_TOKEN_CREATED: "SCIM_TOKEN_CREATED",
+    SCIM_TOKEN_REVOKED: "SCIM_TOKEN_REVOKED",
+    SCIM_TOKEN_USED_AFTER_REVOKE: "SCIM_TOKEN_USED_AFTER_REVOKE",
+  },
+  // PR #655 Batch 3 — outbound webhook subsystem audit trail. One
+  // category for both endpoint configuration (CRUD) and delivery
+  // results (SUCCEEDED / FAILED / REDELIVERED). The delivery rows
+  // emit one summary per final state, not per attempt, to keep the
+  // audit log readable when an endpoint fails 5 times before
+  // resolving.
+  WEBHOOK: {
+    WEBHOOK_ENDPOINT_CREATED: "WEBHOOK_ENDPOINT_CREATED",
+    WEBHOOK_ENDPOINT_UPDATED: "WEBHOOK_ENDPOINT_UPDATED",
+    WEBHOOK_ENDPOINT_DELETED: "WEBHOOK_ENDPOINT_DELETED",
+    WEBHOOK_SECRET_ROTATED: "WEBHOOK_SECRET_ROTATED",
+    WEBHOOK_ENDPOINT_PAUSED: "WEBHOOK_ENDPOINT_PAUSED",
+    WEBHOOK_ENDPOINT_RESUMED: "WEBHOOK_ENDPOINT_RESUMED",
+    WEBHOOK_DELIVERY_SUCCEEDED: "WEBHOOK_DELIVERY_SUCCEEDED",
+    WEBHOOK_DELIVERY_FAILED: "WEBHOOK_DELIVERY_FAILED",
+    WEBHOOK_DELIVERY_REDELIVERED: "WEBHOOK_DELIVERY_REDELIVERED",
   },
 } as const satisfies Record<OrgAuditCategory, Record<string, string>>;
 
