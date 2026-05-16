@@ -109,9 +109,14 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  invitations     Invitation[]
-  ssoproviders    SsoProvider[]
-  erasureRequests ErasureRequest[]
+  invitations              Invitation[]
+  ssoproviders             SsoProvider[]
+  erasureRequests          ErasureRequest[]
+  /// Erasure requests this user processed as an admin. Named relation
+  /// distinguishes it from `erasureRequests` above (requests filed
+  /// against this user) — Prisma requires the disambiguation since
+  /// both edges target ErasureRequest.
+  erasureRequestsProcessed ErasureRequest[] @relation("ErasureRequestProcessor")
 
   @@index([consultantProfileId])
   @@index([consulteeProfileId])
@@ -612,10 +617,14 @@ model Organization {
   streamRecordingRetentionDays Int @default(90)
 
   // Outbound integration surfaces (Batch 3 + 4 + 5 of PR #655 lockdown).
-  webhookEndpoints  WebhookEndpoint[]
-  scimTokens        ScimToken[]
-  scimGroupMappings ScimGroupMapping[]
-  dataExportJobs    OrgDataExportJob[]
+  webhookEndpoints   WebhookEndpoint[]
+  scimTokens         ScimToken[]
+  scimGroupMappings  ScimGroupMapping[]
+  dataExportJobs     OrgDataExportJob[]
+  /// Per-org maintenance windows (Tier 1 multi-tenant column; admin
+  /// API + scoping logic lands post-MVP). NULL-org rows remain
+  /// platform-wide.
+  maintenanceWindows MaintenanceWindow[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4123,9 +4132,20 @@ model MaintenanceWindow {
   bypassSecret String?
   metadata     Json?
 
+  /// PR #655 Tier 1 multi-tenant column. NULL = platform-wide window
+  /// (every legacy row + the default for ops-triggered downtime).
+  /// Non-null = the window only affects the matching tenant; other
+  /// orgs see the platform stay green. The per-org admin API and
+  /// Novu workflow scoping that uses this column land post-MVP in
+  /// #730 — the column exists today so the migration doesn't have
+  /// to ship with the feature work.
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([organizationId, phase])
   @@map("maintenance_windows")
 }
 
@@ -4182,6 +4202,16 @@ model WebhookEndpoint {
   failureCount          Int                   @default(0)
   lastSuccessAt         DateTime?
   lastFailureAt         DateTime?
+  /// Rotation grace columns: when the operator rotates the secret via
+  /// /rotate-secret, we stamp `secretRotatedAt` and stash the prior
+  /// HMAC into `previousSecretHash` so the worker can verify deliveries
+  /// signed with either secret for a 24-hour grace window. Receivers
+  /// running the same body through both secrets stay green during the
+  /// rotation cutover. Today the rotate route still overwrites
+  /// `secret` directly; flipping it to grace-aware is a follow-up that
+  /// reads these columns.
+  secretRotatedAt       DateTime?
+  previousSecretHash    String?
   createdByMembershipId String?
   createdAt             DateTime              @default(now())
   updatedAt             DateTime              @updatedAt
@@ -4245,8 +4275,16 @@ model ScimToken {
   createdAt             DateTime        @default(now())
   lastUsedAt            DateTime?
   revokedAt             DateTime?
+  /// Optional auto-rotation TTL. Null = "never expires"; non-null is
+  /// the absolute deadline after which `requireScimAuth` refuses the
+  /// token even if `status = ACTIVE`. The enforcement read is a
+  /// follow-up — the column exists today so OWNERs can set a 6/12
+  /// month TTL when minting + the rotation reminder cron has a
+  /// stable column to scan.
+  expiresAt             DateTime?
 
   @@index([organizationId, status])
+  @@index([organizationId, expiresAt])
 }
 
 enum ScimTokenStatus {
@@ -4286,7 +4324,13 @@ model ErasureRequest {
   completedAt        DateTime?
   status             ErasureStatus @default(PENDING)
   reason             String?       @db.Text
+  /// FK to the admin (User row with role=ADMIN) who processed or
+  /// rejected the request. SetNull on admin deletion so the audit row
+  /// survives — the regulatory evidence-of-erasure trail must outlive
+  /// staff turnover. The processor's role is verified at the route
+  /// layer; no DB-side enum constraint.
   processedByAdminId String?
+  processedByAdmin   User?         @relation("ErasureRequestProcessor", fields: [processedByAdminId], references: [id], onDelete: SetNull)
   notes              String?       @db.Text
 
   @@index([status, requestedAt])

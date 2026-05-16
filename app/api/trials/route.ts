@@ -6,6 +6,7 @@ import { notifyTrialSessionRequested } from "@/lib/novu";
 import { CreateTrialSchema } from "@/schemas/trials";
 import { getSession } from "@/lib/auth-server";
 import { trialRequestLimiter, applyRateLimit } from "@/lib/rate-limit";
+import { resolveOrgScope } from "@/lib/api/scope/parse";
 
 /**
  * GET /api/trials
@@ -75,7 +76,31 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const whereClause: Prisma.TrialSessionWhereInput = {};
+    // #674 org-scope filter. TrialSession.organizationId is populated by
+    // the backfill — keeps Acme-context views from leaking Zeta trial
+    // bookings into the consultant's "Trials" tab.
+    const callerMemberships = await prisma.membership.findMany({
+      where: { userId: session.user.id, status: "ACTIVE" },
+      select: { organizationId: true, status: true },
+    });
+    const scopeResolution = resolveOrgScope({
+      raw: searchParams.get("orgScope"),
+      memberships: callerMemberships,
+      userRole: session.user.role,
+    });
+    if (!scopeResolution.ok) {
+      return NextResponse.json(
+        { error: scopeResolution.message, code: scopeResolution.code },
+        { status: scopeResolution.status },
+      );
+    }
+
+    const whereClause: Prisma.TrialSessionWhereInput =
+      scopeResolution.scope.kind === "personal"
+        ? { organizationId: null }
+        : scopeResolution.scope.kind === "org"
+          ? { organizationId: scopeResolution.scope.orgId }
+          : {};
 
     if (consultantProfileId) {
       whereClause.consultantProfileId = consultantProfileId;

@@ -5,6 +5,7 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
+import { resolveOrgScope } from "@/lib/api/scope/parse";
 
 export async function GET(
   request: Request,
@@ -16,6 +17,7 @@ export async function GET(
 
   try {
     const { consulteeId } = await params;
+    const { searchParams } = new URL(request.url);
 
     if (
       !isPrivileged(session.user.role) &&
@@ -45,10 +47,35 @@ export async function GET(
 
     const userId = consulteeProfile.userId;
 
+    // #674 org-scope filter. Payment.organizationId is populated by the
+    // backfill so an Acme + Zeta consultee's payment history correctly
+    // splits per org context. Personal scope = pre-org-tagging history.
+    const callerMemberships = await prisma.membership.findMany({
+      where: { userId: session.user.id, status: "ACTIVE" },
+      select: { organizationId: true, status: true },
+    });
+    const scopeResolution = resolveOrgScope({
+      raw: searchParams.get("orgScope"),
+      memberships: callerMemberships,
+      userRole: session.user.role,
+    });
+    if (!scopeResolution.ok) {
+      return NextResponse.json(
+        { error: scopeResolution.message, code: scopeResolution.code },
+        { status: scopeResolution.status },
+      );
+    }
+    const orgFilter =
+      scopeResolution.scope.kind === "personal"
+        ? { organizationId: null }
+        : scopeResolution.scope.kind === "org"
+          ? { organizationId: scopeResolution.scope.orgId }
+          : {};
+
     const [payments, invoices, credits, creditUsages] = await Promise.all([
-      // All payments for this user
+      // All payments for this user, scoped to the selected org context
       prisma.payment.findMany({
-        where: { userId },
+        where: { userId, ...orgFilter },
         include: {
           appointment: {
             select: {
@@ -86,10 +113,12 @@ export async function GET(
         orderBy: { createdAt: "desc" },
       }),
 
-      // Invoices for this user's payments
+      // Invoices for this user's payments — flow org scope through the
+      // payment join so an Acme-context view doesn't surface a Zeta
+      // invoice the user paid through a different membership.
       prisma.invoice.findMany({
         where: {
-          payment: { userId },
+          payment: { userId, ...orgFilter },
         },
         include: {
           payment: {
