@@ -15,7 +15,6 @@ import {
   DashboardHeader,
   DashboardContent,
 } from "@/components/dashboard/DashboardShell";
-import { EnterpriseWipBanner } from "@/components/enterprise/EnterpriseWipBanner";
 import { Checkbox } from "@/components/ui/checkbox";
 // WIP banner import removed — see PR #655 reviewer feedback. The
 // credit-pool soak status is tracked in #715/#716 in the issue tracker;
