@@ -183,6 +183,20 @@ async function ensureConsultantProfile(
   });
   if (user?.consultantProfileId) return user.consultantProfileId;
 
+  // Guard against seeded users whose ConsultantProfile row exists but
+  // User.consultantProfileId was never backfilled (e.g. faker seed data).
+  const existing = await tx.consultantProfile.findUnique({
+    where: { userId },
+    select: { id: true },
+  });
+  if (existing) {
+    await tx.user.updateMany({
+      where: { id: userId, consultantProfileId: null },
+      data: { consultantProfileId: existing.id },
+    });
+    return existing.id;
+  }
+
   const placeholderDomain = await tx.domain.upsert({
     where: { name: "General" },
     create: { name: "General" },

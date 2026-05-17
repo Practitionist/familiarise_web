@@ -76,30 +76,45 @@ export default async function MyArrangementPage({
         })
       : null;
 
-  // Recent earnings for this consultant on this org's tagged payments.
-  // Empty array if the EXPERT joined recently and hasn't hosted yet.
-  const earnings = member.consultantProfileId
-    ? await prisma.consultantEarnings.findMany({
-        where: {
-          consultantProfileId: member.consultantProfileId,
-          payment: { organizationId: orgId },
-        },
-        orderBy: { id: "desc" },
-        take: 20,
-        include: {
-          payment: {
-            select: {
-              id: true,
-              createdAt: true,
-              currency: true,
-              appointment: {
-                select: { id: true, appointmentType: true },
+  // Recent earnings for this consultant on this org's hosted payments.
+  // For HOST orgs the payment itself has organizationId=null (the learner
+  // pays personally); the org relationship lives on OrganizationEarnings.
+  // We join via paymentId: find OrgEarnings rows for this org, then fetch
+  // the matching ConsultantEarnings rows for this consultant.
+  const orgEarningPaymentIds = member.consultantProfileId
+    ? (
+        await prisma.organizationEarnings.findMany({
+          where: { organizationId: orgId },
+          select: { paymentId: true },
+          orderBy: { createdAt: "desc" },
+          take: 20,
+        })
+      ).map((r) => r.paymentId)
+    : [];
+
+  const earnings =
+    orgEarningPaymentIds.length > 0
+      ? await prisma.consultantEarnings.findMany({
+          where: {
+            consultantProfileId: member.consultantProfileId!,
+            paymentId: { in: orgEarningPaymentIds },
+          },
+          orderBy: { id: "desc" },
+          take: 20,
+          include: {
+            payment: {
+              select: {
+                id: true,
+                createdAt: true,
+                currency: true,
+                appointment: {
+                  select: { id: true, appointmentType: true },
+                },
               },
             },
           },
-        },
-      })
-    : [];
+        })
+      : [];
 
   return (
     <div className="space-y-6">
