@@ -202,7 +202,6 @@ interface AssignmentListItem {
   id: string;
   periodStart: string;
   periodEnd: string;
-  status: string;
   membership: {
     id: string;
     role: string;
@@ -922,9 +921,16 @@ function ManageProgramDialog({
                       })}
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline" className="text-xs">
-                        {a.status}
-                      </Badge>
+                      {(() => {
+                        const now = Date.now();
+                        const start = new Date(a.periodStart).getTime();
+                        const end = new Date(a.periodEnd).getTime();
+                        if (end < now)
+                          return <Badge variant="outline" className="text-xs border-zinc-300 text-zinc-500">Expired</Badge>;
+                        if (start > now)
+                          return <Badge variant="outline" className="text-xs border-blue-300 text-blue-700">Upcoming</Badge>;
+                        return <Badge variant="outline" className="text-xs border-green-300 text-green-700">Active</Badge>;
+                      })()}
                     </TableCell>
                   </TableRow>
                 ))}
