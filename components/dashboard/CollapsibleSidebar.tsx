@@ -28,9 +28,36 @@ export interface CollapsibleSidebarItem {
   path: string;
 }
 
-export interface CollapsibleSidebarProps {
-  /** Items to render in the nav list (flat list, in order). */
+/**
+ * A labelled cluster of nav items. Groups give the per-org sidebar (~20
+ * items) a scanable IA — People / Commerce / Operations / Insights /
+ * Configuration. Optional `defaultCollapsed` lets a caller hide an
+ * "Operations" cluster from an OWNER who doesn't routinely need
+ * appointment-level data in the primary nav.
+ *
+ * Omitting `label` renders the items as a top-level cluster without a
+ * header — used for the always-visible "Overview" link.
+ */
+export interface CollapsibleSidebarGroup {
+  label?: string;
   items: CollapsibleSidebarItem[];
+  /** Initial collapsed state. Defaults to false (group open). */
+  defaultCollapsed?: boolean;
+}
+
+export interface CollapsibleSidebarProps {
+  /**
+   * Items to render in the nav list (flat list, in order). Mutually
+   * exclusive with `groups` — provide one or the other. Kept for the
+   * staff / admin / workspace dashboards that don't need clustering.
+   */
+  items?: CollapsibleSidebarItem[];
+  /**
+   * Grouped items. When provided, rendered as collapsible sections
+   * with optional headers. The per-org sidebar uses this; the simpler
+   * dashboards stay on the flat `items` API.
+   */
+  groups?: CollapsibleSidebarGroup[];
   /** Base path that gets prepended to each `item.path` to build the link href. */
   basePath: string;
   /** Title shown in the sidebar header (e.g. "Staff Portal", "Admin Portal"). */
@@ -103,6 +130,7 @@ export interface CollapsibleSidebarProps {
  */
 export function CollapsibleSidebar({
   items,
+  groups,
   basePath,
   title,
   footerLabel,
@@ -119,6 +147,20 @@ export function CollapsibleSidebar({
   className,
 }: CollapsibleSidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
+
+  // Per-group collapsed map, keyed by the group's label. Defaults to
+  // each group's `defaultCollapsed` on first render so callers can
+  // hint "Operations" closed for OWNER while leaving People + Commerce
+  // open. Headerless groups never collapse (they have no toggle).
+  const [groupCollapsed, setGroupCollapsed] = useState<Record<string, boolean>>(
+    () => {
+      const init: Record<string, boolean> = {};
+      for (const g of groups ?? []) {
+        if (g.label) init[g.label] = !!g.defaultCollapsed;
+      }
+      return init;
+    },
+  );
 
   const isActive = (path: string) => pathname.includes(`${basePath}/${path}`);
 
@@ -267,37 +309,116 @@ export function CollapsibleSidebar({
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto py-4">
         <TooltipProvider delayDuration={0}>
-          <ul className="space-y-1 px-2">
-            {items.map((item) => (
-              <li key={item.path}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Link
-                      href={`${basePath}/${item.path}`}
-                      aria-label={collapsed ? item.name : undefined}
-                      aria-current={isActive(item.path) ? "page" : undefined}
-                      className={cn(
-                        "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
-                        isActive(item.path)
-                          ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-                          : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:text-zinc-100 dark:hover:bg-zinc-800",
-                      )}
-                    >
-                      <item.icon className="h-5 w-5 flex-shrink-0" />
-                      {collapsed ? (
-                        <span className="sr-only">{item.name}</span>
-                      ) : (
-                        <span>{item.name}</span>
-                      )}
-                    </Link>
-                  </TooltipTrigger>
-                  {collapsed && (
-                    <TooltipContent side="right">{item.name}</TooltipContent>
-                  )}
-                </Tooltip>
-              </li>
-            ))}
-          </ul>
+          {groups ? (
+            // Grouped render — used by the per-org sidebar. Each group
+            // gets an optional clickable header that toggles its items'
+            // visibility. When the whole sidebar is in icon-only mode,
+            // group headers hide and all items render flat so the user
+            // can still navigate via tooltips.
+            <div className="space-y-2 px-2">
+              {groups.map((group, gi) => {
+                const isHeaderless = !group.label;
+                const isGroupCollapsed =
+                  !collapsed && !isHeaderless && groupCollapsed[group.label!];
+
+                return (
+                  <div key={group.label ?? `__group_${gi}`}>
+                    {!collapsed && group.label && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setGroupCollapsed((prev) => ({
+                            ...prev,
+                            [group.label!]: !prev[group.label!],
+                          }))
+                        }
+                        className="flex items-center gap-1 w-full px-3 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
+                        aria-expanded={!isGroupCollapsed}
+                      >
+                        <ChevronDown
+                          className={cn(
+                            "h-3 w-3 transition-transform",
+                            isGroupCollapsed && "-rotate-90",
+                          )}
+                        />
+                        {group.label}
+                      </button>
+                    )}
+
+                    {!isGroupCollapsed && (
+                      <ul className="space-y-1">
+                        {group.items.map((item) => (
+                          <li key={item.path}>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Link
+                                  href={`${basePath}/${item.path}`}
+                                  aria-label={collapsed ? item.name : undefined}
+                                  aria-current={
+                                    isActive(item.path) ? "page" : undefined
+                                  }
+                                  className={cn(
+                                    "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
+                                    isActive(item.path)
+                                      ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+                                      : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:text-zinc-100 dark:hover:bg-zinc-800",
+                                  )}
+                                >
+                                  <item.icon className="h-5 w-5 flex-shrink-0" />
+                                  {collapsed ? (
+                                    <span className="sr-only">{item.name}</span>
+                                  ) : (
+                                    <span>{item.name}</span>
+                                  )}
+                                </Link>
+                              </TooltipTrigger>
+                              {collapsed && (
+                                <TooltipContent side="right">
+                                  {item.name}
+                                </TooltipContent>
+                              )}
+                            </Tooltip>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <ul className="space-y-1 px-2">
+              {(items ?? []).map((item) => (
+                <li key={item.path}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Link
+                        href={`${basePath}/${item.path}`}
+                        aria-label={collapsed ? item.name : undefined}
+                        aria-current={isActive(item.path) ? "page" : undefined}
+                        className={cn(
+                          "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
+                          isActive(item.path)
+                            ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+                            : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:text-zinc-100 dark:hover:bg-zinc-800",
+                        )}
+                      >
+                        <item.icon className="h-5 w-5 flex-shrink-0" />
+                        {collapsed ? (
+                          <span className="sr-only">{item.name}</span>
+                        ) : (
+                          <span>{item.name}</span>
+                        )}
+                      </Link>
+                    </TooltipTrigger>
+                    {collapsed && (
+                      <TooltipContent side="right">{item.name}</TooltipContent>
+                    )}
+                  </Tooltip>
+                </li>
+              ))}
+            </ul>
+          )}
         </TooltipProvider>
       </nav>
 

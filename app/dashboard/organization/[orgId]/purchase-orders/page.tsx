@@ -1,53 +1,224 @@
+"use client";
+
 /**
- * PurchaseOrder management page — scaffold until the dashboard UI ships
- * on top of the live /api/organizations/[id]/billing-account/purchase-orders
- * routes. Required field on Contract when Organization.requiresPO=true
- * (India enterprise AP 3-way match).
+ * Purchase Orders dashboard for India AP 3-way-match workflows.
+ *
+ * Thin orchestrator: state for filters + dialog open/close, plus the
+ * list query. All UI primitives live in `./components/*` and shared
+ * helpers in `./utils/*`. Page-level role gate mirrors the API
+ * (MANAGER+canSponsor for read; BILLING_ADMIN-or-OWNER for mutations) —
+ * the server-side enforcement is still authoritative.
  */
 
-import Link from "next/link";
-import { redirect } from "next/navigation";
-import { requireOrgAccess } from "@/lib/auth-helpers";
+import { use, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Plus } from "lucide-react";
 
-export default async function PurchaseOrdersPage({
+import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
+import {
+  DashboardHeader,
+  DashboardContent,
+} from "@/components/dashboard/DashboardShell";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+import { CreatePurchaseOrderDialog } from "./components/CreatePurchaseOrderDialog";
+import { EditPurchaseOrderDialog } from "./components/EditPurchaseOrderDialog";
+import { DeletePurchaseOrderDialog } from "./components/DeletePurchaseOrderDialog";
+import {
+  PurchaseOrderStatCards,
+  type PurchaseOrderStats,
+} from "./components/PurchaseOrderStatCards";
+import { PurchaseOrdersTable } from "./components/PurchaseOrdersTable";
+import { fetchPurchaseOrders } from "./utils/api";
+import type { PoStatus, PurchaseOrderRow } from "./utils/types";
+
+export default function PurchaseOrdersPage({
   params,
 }: {
   params: Promise<{ orgId: string }>;
 }) {
-  const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, {
-    minimumRole: "MAINTAINER",
+  const { orgId } = use(params);
+  const { isAtLeast } = useOrgRole(orgId);
+  const { allowed } = useRequireOrgAccess(orgId, {
+    minRole: "MANAGER",
     canSponsor: true,
   });
-  if (access.error) {
-    redirect(`/dashboard/organization/${orgId}/home`);
-  }
+
+  const [statusFilter, setStatusFilter] = useState<PoStatus | "ALL">("ALL");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<PurchaseOrderRow | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<PurchaseOrderRow | null>(
+    null,
+  );
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const list = useQuery({
+    queryKey: ["org-purchase-orders", orgId, statusFilter],
+    queryFn: () => fetchPurchaseOrders(orgId, statusFilter),
+    enabled: allowed,
+  });
+
+  // BILLING_ADMIN gate is enforced server-side; the client check uses
+  // MAINTAINER-or-higher so OWNER and BILLING_ADMIN both pass without
+  // the page reaching into the disjunction rules. A MANAGER session
+  // never sees the affordances.
+  const canMutate = isAtLeast("MAINTAINER");
+
+  const rows = useMemo(() => {
+    const data = list.data?.data ?? [];
+    if (!searchTerm.trim()) return data;
+    const needle = searchTerm.trim().toLowerCase();
+    return data.filter((po) => po.poNumber.toLowerCase().includes(needle));
+  }, [list.data, searchTerm]);
+
+  const stats: PurchaseOrderStats = useMemo(() => {
+    const data = list.data?.data ?? [];
+    let activeCount = 0;
+    let totalCommittedINR = 0;
+    let totalRemainingINR = 0;
+    for (const po of data) {
+      if (po.status === "ACTIVE") {
+        activeCount += 1;
+        // Forex POs excluded from rollup — mixing currencies in a single
+        // sum is misleading. The stat-card labels say "(INR only)".
+        if (po.currency === "INR") {
+          totalCommittedINR += po.totalAmountPaise;
+          totalRemainingINR += po.remainingAmountPaise;
+        }
+      }
+    }
+    return {
+      total: data.length,
+      activeCount,
+      totalCommittedINR,
+      totalRemainingINR,
+    };
+  }, [list.data]);
+
+  if (!allowed) return null;
 
   return (
-    <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold">Purchase Orders</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          First-class PO records for India AP 3-way match workflows.
-          Invoices reference these; contracts can be PO-backed.
-        </p>
-      </header>
+    <>
+      <DashboardHeader
+        title="Purchase Orders"
+        subtitle="India AP 3-way-match workflow. POs back contracts and invoices; mark CANCELLED to retire when no longer in use."
+        actions={
+          canMutate && (
+            <Button size="sm" onClick={() => setCreateOpen(true)}>
+              <Plus className="h-4 w-4 mr-1" /> New PO
+            </Button>
+          )
+        }
+      />
 
-      <div className="rounded-lg border bg-card p-6">
-        <h2 className="font-medium">PO dashboard UI coming soon</h2>
-        <p className="text-sm text-muted-foreground mt-2">
-          The API surface at{" "}
-          <code>/api/organizations/{orgId}/billing-account/purchase-orders</code>{" "}
-          is live. The dashboard UI ships in a follow-up PR. See{" "}
-          <Link
-            href="https://github.com/Practitionist/familiarise_web/issues/681"
-            className="underline text-primary"
-          >
-            Issue #681
-          </Link>
-          .
-        </p>
-      </div>
-    </div>
+      <DashboardContent>
+        <PurchaseOrderStatCards stats={stats} />
+
+        <Card className="mt-4">
+          <CardHeader>
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <div>
+                <CardTitle className="text-base">
+                  {list.isLoading
+                    ? "Loading…"
+                    : `${rows.length} purchase order${rows.length === 1 ? "" : "s"}`}
+                </CardTitle>
+                <CardDescription>
+                  Caller-issued PO numbers; uniqueness enforced per org.
+                  POs with attached contracts or invoices can only be
+                  CANCELLED, not deleted.
+                </CardDescription>
+              </div>
+              <div className="flex gap-2 flex-shrink-0">
+                <div className="w-40">
+                  <Select
+                    value={statusFilter}
+                    onValueChange={(v) =>
+                      setStatusFilter(v as PoStatus | "ALL")
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ALL">All statuses</SelectItem>
+                      <SelectItem value="ACTIVE">ACTIVE</SelectItem>
+                      <SelectItem value="CLOSED">CLOSED</SelectItem>
+                      <SelectItem value="CANCELLED">CANCELLED</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="w-48">
+                  <Input
+                    placeholder="Search PO number…"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <PurchaseOrdersTable
+              rows={rows}
+              isLoading={list.isLoading}
+              isError={list.isError}
+              canMutate={canMutate}
+              searchTerm={searchTerm}
+              statusFilter={statusFilter}
+              onEdit={(po) => {
+                setActionError(null);
+                setEditTarget(po);
+              }}
+              onDelete={(po) => {
+                setActionError(null);
+                setDeleteTarget(po);
+              }}
+            />
+            {actionError && (
+              <p className="mt-3 text-sm text-red-600">{actionError}</p>
+            )}
+          </CardContent>
+        </Card>
+      </DashboardContent>
+
+      <CreatePurchaseOrderDialog
+        orgId={orgId}
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+      />
+
+      <EditPurchaseOrderDialog
+        orgId={orgId}
+        po={editTarget}
+        open={!!editTarget}
+        onOpenChange={(v) => {
+          if (!v) setEditTarget(null);
+        }}
+      />
+
+      <DeletePurchaseOrderDialog
+        orgId={orgId}
+        po={deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onError={(msg) => setActionError(msg)}
+      />
+    </>
   );
 }

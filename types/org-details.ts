@@ -35,6 +35,14 @@ export interface OrgDetailsResponse {
      * pre-billing-setup state).
      */
     fundingSource: FundingSource | null;
+    /**
+     * India AP 3-way-match toggle. When true the org's finance team
+     * pre-issues Purchase Order numbers from their own AP system and we
+     * require every Contract / Invoice to reference a live PO. The org
+     * dashboard's Purchase Orders tab is hidden when this is false —
+     * showing it to orgs that don't run POs is just nav noise.
+     */
+    requiresPO: boolean;
   };
   /**
    * The caller's membership in this org. Always present in a 200
@@ -78,6 +86,7 @@ export function flattenOrgDetails(
       canSponsor: raw.organization.canSponsor,
       canHost: raw.organization.canHost,
       fundingSource: raw.organization.billingAccount?.fundingSource ?? null,
+      requiresPO: raw.organization.requiresPO,
     },
     membership: raw.membership,
   };
