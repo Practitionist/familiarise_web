@@ -20,6 +20,10 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import {
+  sanitizeAuditDescription,
+  sanitizeAuditDetails,
+} from "@/lib/enterprise/audit-sanitize";
 
 const CategorySchema = z.enum([
   "MEMBER",
@@ -192,13 +196,19 @@ export async function GET(
     members.map((m) => [m.id, { role: m.role, user: m.user }]),
   );
 
+  // Read-side scrub — strip engineering-noise patterns from the
+  // description column AND drop sensitive keys from `details` before
+  // the row ships to org-visible surfaces. This catches legacy rows
+  // written before the call-site discipline landed, plus any future
+  // regression. The raw payload remains in the DB for compliance;
+  // only the projection is sanitized. See lib/enterprise/audit-sanitize.ts.
   return NextResponse.json({
     rows: pageRows.map((r) => ({
       id: r.id,
       category: r.category,
       action: r.action,
-      description: r.description,
-      details: r.details,
+      description: sanitizeAuditDescription(r.description),
+      details: sanitizeAuditDetails(r.details),
       createdAt: r.createdAt.toISOString(),
       actor: r.actorMembershipId
         ? memberMap.get(r.actorMembershipId) ?? null

@@ -13,12 +13,26 @@
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
+import { ENABLE_HRIS } from "@/lib/feature-flags";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { recordSystemError } from "@/lib/enterprise/system-events";
+
+// Match the gating posture in the parent /hris route — return 404 when
+// ENABLE_HRIS is off so a flag-flip is the single switch to expose the
+// whole subsystem.
+function notFoundIfGated() {
+  if (!ENABLE_HRIS) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  return null;
+}
 
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
 ) {
+  const gated = notFoundIfGated();
+  if (gated) return gated;
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, "MANAGER");
   if (access.error) return access.error;
@@ -47,6 +61,8 @@ export async function POST(
   _req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
 ) {
+  const gated = notFoundIfGated();
+  if (gated) return gated;
   const { orgId } = await params;
   const access = await requireOrgOwner(orgId);
   if (access.error) return access.error;
@@ -130,10 +146,12 @@ export async function POST(
 
     return NextResponse.json({ job }, { status: 201 });
   } catch (err) {
-    // The v1 stub shouldn't reach here, but the audit entry makes the
-    // failure path observable once the real runner lands. Kept as a
-    // best-effort write — we still want to surface the 500 to the
-    // caller even if the audit insert itself fails.
+    // Two surfaces for the same failure — clean org-visible audit row,
+    // engineering-only system event with the raw error + stack. The
+    // org owner sees "HRIS sync failed (Workday)" and can act on it
+    // (retry / contact support); engineering gets the actionable
+    // payload in system_events. Both writes are best-effort so the
+    // route still surfaces its 500 to the caller.
     await prisma.orgAuditLog
       .create({
         data: {
@@ -141,15 +159,23 @@ export async function POST(
           actorMembershipId: access.member.id,
           category: "SYSTEM",
           action: AUDIT_ACTIONS.SYSTEM.HRIS_SYNC_FAILED,
-          description: `HRIS sync failed (${config.provider})`,
+          description: `HRIS sync failed (${config.provider}) — engineering team notified.`,
           details: {
             provider: config.provider,
             tenantKey: config.tenantKey,
-            error: err instanceof Error ? err.message : String(err),
           },
         },
       })
       .catch(() => null);
+
+    await recordSystemError({
+      organizationId: orgId,
+      category: "HRIS_SYNC",
+      summary: `HRIS sync failed (${config.provider})`,
+      err,
+      context: { provider: config.provider, tenantKey: config.tenantKey },
+    });
+
     throw err;
   }
 }

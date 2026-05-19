@@ -21,6 +21,10 @@ import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import {
+  sanitizeAuditDescription,
+  sanitizeAuditDetails,
+} from "@/lib/enterprise/audit-sanitize";
 
 type AuditExportRow = {
   id: string;
@@ -235,8 +239,8 @@ export async function GET(
               csvEscape(actor?.email ?? ""),
               actor?.role ?? "",
               csvEscape(target?.email ?? ""),
-              csvEscape(row.description),
-              csvEscape(JSON.stringify(row.details ?? {})),
+              csvEscape(sanitizeAuditDescription(row.description)),
+              csvEscape(JSON.stringify(sanitizeAuditDetails(row.details) ?? {})),
             ].join(",");
             controller.enqueue(encoder.encode(line + "\n"));
           }

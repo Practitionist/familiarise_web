@@ -36,6 +36,7 @@
 import { Resend } from "resend";
 import prisma from "../../lib/prisma";
 import { AUDIT_ACTIONS } from "../../lib/enterprise/audit-actions";
+import { recordSystemError } from "../../lib/enterprise/system-events";
 
 export interface DataExportResult {
   picked: number;
@@ -306,6 +307,15 @@ export async function processDataExports(): Promise<DataExportResult> {
     result.success = false;
     result.errors.push(`job=${job.id}: ${message}`);
 
+    // Split the failure across two surfaces:
+    //   - OrgAuditLog gets a CLEAN, org-visible description. Never
+    //     interpolate raw error messages here — they can carry Prisma
+    //     schema names, stack frames, and other engineering noise that
+    //     leaks internals to the org owner.
+    //   - SystemEvent gets the raw error + stack for platform engineering.
+    //     Same incident, two views, no information leakage. See
+    //     lib/enterprise/audit-sanitize.ts for the read-side guard
+    //     that catches any legacy rows that pre-date this discipline.
     await prisma.$transaction(async (tx) => {
       await tx.orgDataExportJob.update({
         where: { id: job.id },
@@ -316,10 +326,27 @@ export async function processDataExports(): Promise<DataExportResult> {
           organizationId: job.organizationId,
           category: "SYSTEM",
           action: AUDIT_ACTIONS.SYSTEM.DATA_EXPORT_FAILED,
-          description: `Data export bundle failed: ${message}`,
-          details: { exportId: job.id, error: message },
+          description:
+            "Data export bundle could not be generated. Our engineering team has been notified — please retry or contact support if the issue persists.",
+          // `details` stays minimal + org-safe: the export ID lets the
+          // OWNER reference the failed request when contacting support,
+          // but no error payload leaks here.
+          details: { exportId: job.id },
         },
       });
+    });
+
+    // Best-effort write to the engineering-only system_events table.
+    // Carries the full Prisma error + stack trace, indexed by job ID
+    // for correlation. Outside the audit transaction so a slow insert
+    // doesn't hold the export-job lock.
+    await recordSystemError({
+      organizationId: job.organizationId,
+      category: "DATA_EXPORT",
+      summary: "Data export bundle failed",
+      err,
+      context: { exportId: job.id },
+      correlationId: job.id,
     });
   }
 

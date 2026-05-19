@@ -226,7 +226,7 @@ export async function DELETE(
             organizationId: orgId,
             actorMembershipId: access.member.id,
             category: "PROGRAM",
-            action: AUDIT_ACTIONS.PROGRAM.PROGRAM_PAUSED,
+            action: AUDIT_ACTIONS.PROGRAM.PROGRAM_DELETED,
             description: `Program ${programId} deleted (no assignments)`,
             details: { programId },
           },

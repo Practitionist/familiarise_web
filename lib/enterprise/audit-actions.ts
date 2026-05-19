@@ -45,6 +45,11 @@ export const AUDIT_ACTIONS = {
   PROGRAM: {
     PROGRAM_CREATED: "PROGRAM_CREATED",
     PROGRAM_PAUSED: "PROGRAM_PAUSED",
+    // DELETE /api/organizations/[orgId]/programs/[programId] previously
+    // reused PROGRAM_PAUSED which conflated delete with the pause/resume
+    // status transition for audit consumers. Distinct action gives the
+    // audit-log reader a clean signal for permanent removal.
+    PROGRAM_DELETED: "PROGRAM_DELETED",
     PROGRAM_ASSIGNED: "PROGRAM_ASSIGNED",
     PROGRAM_ASSIGNMENT_UPDATED: "PROGRAM_ASSIGNMENT_UPDATED",
     PROGRAM_UNASSIGNED: "PROGRAM_UNASSIGNED",

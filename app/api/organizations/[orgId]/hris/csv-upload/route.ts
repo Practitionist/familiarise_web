@@ -19,7 +19,17 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgOwner } from "@/lib/auth-helpers";
+import { ENABLE_HRIS } from "@/lib/feature-flags";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+
+// Mirror the /hris and /hris/sync gating — a single ENABLE_HRIS flip
+// gates the whole subsystem.
+function notFoundIfGated() {
+  if (!ENABLE_HRIS) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  return null;
+}
 
 const RowSchema = z.object({
   externalEmployeeId: z.string().min(1).max(128),
@@ -46,6 +56,8 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
 ) {
+  const gated = notFoundIfGated();
+  if (gated) return gated;
   const { orgId } = await params;
   const access = await requireOrgOwner(orgId);
   if (access.error) return access.error;

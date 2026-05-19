@@ -18,6 +18,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
+import { ENABLE_HRIS } from "@/lib/feature-flags";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
 const HrisProviderSchema = z.enum([
@@ -36,10 +37,23 @@ const UpsertBodySchema = z.object({
   active: z.boolean().optional(),
 });
 
+// HRIS provider sync wiring isn't shipped in v1 — schema + connector
+// records exist, but Workday/BambooHR/etc. workers are stubbed. Return
+// 404 when the flag is off so the endpoint is invisible to callers.
+// Flip ENABLE_HRIS=true once the first design-partner sync is live.
+function notFoundIfGated() {
+  if (!ENABLE_HRIS) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  return null;
+}
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
 ) {
+  const gated = notFoundIfGated();
+  if (gated) return gated;
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, "MANAGER");
   if (access.error) return access.error;
@@ -69,6 +83,8 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
 ) {
+  const gated = notFoundIfGated();
+  if (gated) return gated;
   const { orgId } = await params;
   const access = await requireOrgOwner(orgId);
   if (access.error) return access.error;
@@ -121,6 +137,8 @@ export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
 ) {
+  const gated = notFoundIfGated();
+  if (gated) return gated;
   const { orgId } = await params;
   const access = await requireOrgOwner(orgId);
   if (access.error) return access.error;

@@ -13,6 +13,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
+    # Gated on the ENABLE_IRP_UPLOADER repo variable (see
+    # lib/feature-flags.ts). On scheduled runs the job exits without
+    # work when the variable is unset, so we don't burn CI minutes on a
+    # stubbed connector. Manual workflow_dispatch still runs so an
+    # operator can validate the pipeline before flipping the flag on.
+    if: ${{ vars.ENABLE_IRP_UPLOADER == 'true' || github.event_name == 'workflow_dispatch' }}
+
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DIRECT_URL: ${{ secrets.DIRECT_URL }}

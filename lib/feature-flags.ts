@@ -41,3 +41,64 @@
  * kind label is `HOST`. No back-compat shim because the app is pre-launch.
  */
 export const ENABLE_HOST_ORGS = process.env.ENABLE_HOST_ORGS === "true";
+
+/**
+ * IRP (Invoice Registration Portal) live e-invoice integration.
+ *
+ * ClearTax GSP connector is wired (`lib/compliance/irp.ts`,
+ * `jobs/compliance/irp-uploader.ts`) but live submission is gated until
+ * CA/legal team signs off on production credentials and the >₹5cr AATO
+ * threshold actually applies to the platform. The scheduled GitHub
+ * Action (`.github/workflows/irp-uploader.yml`) short-circuits when this
+ * flag is false so we don't burn CI minutes hitting a stubbed connector.
+ *
+ * Sub-₹5cr orgs ride along on the stub `{ status: "FAILED", reason: "STUB" }`
+ * return and don't need IRN to claim ITC. When the platform crosses the
+ * threshold (or onboards a customer who does):
+ *   1. Set `ENABLE_IRP_UPLOADER=true` in the deployment environment
+ *   2. Set CLEARTAX_API_KEY + CLEARTAX_GSP_TOKEN + CLEARTAX_GSTIN
+ *      secrets on GitHub Actions
+ *   3. Run the workflow once manually (workflow_dispatch) to confirm
+ *   4. See Issue #713 for the full IRP rollout checklist
+ */
+export const ENABLE_IRP_UPLOADER = process.env.ENABLE_IRP_UPLOADER === "true";
+
+/**
+ * Admin TDS dashboard + Form 26Q filing surfaces.
+ *
+ * `app/api/admin/tds/route.ts` exposes TDS deduction summaries,
+ * consultant-level breakdowns, and (ADMIN-only) decrypted PAN for the
+ * Form 26Q quarterly filing. The data is captured continuously by the
+ * payout pipeline, but the *filing workflow* (mark-as-filed, decrypted
+ * PAN view) is gated until the finance team is ready to operate it.
+ *
+ * When false (default): the endpoint returns 404, hiding it from
+ * casual discovery. Summary/breakdown can still be reached by other
+ * surfaces that read TDSRecord directly if needed for reporting.
+ *
+ * To enable when finance is ready to file:
+ *   1. Set `ENABLE_TDS_ADMIN_VIEW=true` in the deployment environment
+ *   2. Confirm the assigned ADMIN's session has the decryption key
+ *   3. See Issue #737 for the Form 26Q quarterly cadence
+ */
+export const ENABLE_TDS_ADMIN_VIEW = process.env.ENABLE_TDS_ADMIN_VIEW === "true";
+
+/**
+ * HRIS connector endpoints (Workday, BambooHR, SAP, etc.).
+ *
+ * Schema (`HrisConfig`, `HrisSyncJob`, `HrisEmployeeMap`) and the CRUD
+ * routes under `app/api/organizations/[orgId]/hris/**` exist but the
+ * provider-specific sync wiring isn't shipped in v1. CSV imports work
+ * out of band; the API surface is dormant until the first design
+ * partner customer asks for live directory sync.
+ *
+ * When false (default): all `app/api/organizations/[orgId]/hris/*`
+ * routes return 404. The schema rows stay queryable directly via
+ * Prisma but aren't user-reachable.
+ *
+ * To enable for a design-partner customer:
+ *   1. Set `ENABLE_HRIS=true` in the deployment environment
+ *   2. Implement the provider-specific sync worker (currently stubbed)
+ *   3. See Issue #744-E3 for the HRIS UI follow-up scope
+ */
+export const ENABLE_HRIS = process.env.ENABLE_HRIS === "true";
