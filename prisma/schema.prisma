@@ -621,6 +621,9 @@ model Organization {
   scimTokens         ScimToken[]
   scimGroupMappings  ScimGroupMapping[]
   dataExportJobs     OrgDataExportJob[]
+  /// Platform-side operational events scoped to this org (job failures,
+  /// worker errors, etc.). Admin-only — see SystemEvent docstring.
+  systemEvents       SystemEvent[]
   /// Per-org maintenance windows (Tier 1 multi-tenant column; admin
   /// API + scoping logic lands post-MVP). NULL-org rows remain
   /// platform-wide.
@@ -2169,11 +2172,56 @@ model OrgWorkspaceProfile {
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String @unique
 
+  // Operator preferences. Per-field docs: docs/enterprise/34-workspace-preferences.md.
+  // Soft FK on default-landing org (plain String) so org deletes don't cascade here.
+  defaultLandingOrganizationId String?
+  notificationRoutingMode      NotificationRoutingMode @default(BELL_AND_EMAIL)
+  locale                       String? // BCP-47 (e.g. "en-IN")
+  currencyDisplayCode          String? // ISO 4217 (e.g. "INR")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([userId])
   @@map("org_workspace_profiles")
+}
+
+/// Operator-level notification routing for cross-org lifecycle events.
+/// See docs/enterprise/34-workspace-preferences.md.
+enum NotificationRoutingMode {
+  BELL_AND_EMAIL
+  BELL_ONLY
+  EMAIL_ONLY
+  NEITHER
+}
+
+/// Admin-only platform operational events (stack traces, worker errors).
+/// Distinct from OrgAuditLog (org-visible, prose-only).
+/// See docs/enterprise/35-system-events.md.
+model SystemEvent {
+  id String @id @default(uuid())
+
+  organizationId String? // nullable: platform-wide events have no tenant
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  category      String // DATA_EXPORT | HRIS_SYNC | WEBHOOK | PAYOUT | CRON …
+  severity      SystemEventSeverity @default(INFO)
+  message       String              @db.Text
+  context       Json? // stack trace + request id + related row ids
+  correlationId String? // parent job id; groups events for one invocation
+  createdAt     DateTime            @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([category, createdAt])
+  @@index([severity, createdAt])
+  @@index([correlationId])
+  @@map("system_events")
+}
+
+enum SystemEventSeverity {
+  INFO
+  WARN
+  ERROR
 }
 
 //////////////////////////////////////////////////// PROFESSIONAL BACKGROUND MODELS ////////////////////////////////////////////////////
