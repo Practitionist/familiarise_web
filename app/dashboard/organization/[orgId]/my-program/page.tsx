@@ -171,8 +171,10 @@ export default async function MyProgramPage({
 
                 {seat && (
                   <p className="mt-3 text-xs text-muted-foreground">
-                    {OVERAGE_BEHAVIOR_LABEL[seat.overageBehavior] ??
-                      seat.overageBehavior}
+                    {cap === null
+                      ? "Unlimited — no cap"
+                      : (OVERAGE_BEHAVIOR_LABEL[seat.overageBehavior] ??
+                        seat.overageBehavior)}
                   </p>
                 )}
 
