@@ -22,6 +22,7 @@ import {
 } from "@/lib/payments/constants";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
+import { useSession } from "@/lib/auth-client";
 import {
   ConsultantProfile,
   ConsultantReview,
@@ -89,6 +90,16 @@ export default function ConsultationCheckoutPage({
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [useReferralCredits, setUseReferralCredits] = useState(false);
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null);
+  const { data: session } = useSession();
+  const selectedOrgFundingSource = useMemo(() => {
+    if (!selectedOrganizationId) return null;
+    const memberships = session?.user?.organizationMemberships ?? [];
+    return (
+      memberships.find((m) => m.organizationId === selectedOrganizationId)
+        ?.fundingSource ?? null
+    );
+  }, [selectedOrganizationId, session?.user?.organizationMemberships]);
+  const isLicenseCovered = selectedOrgFundingSource === "LICENSE";
   const [availableCredits, setAvailableCredits] = useState(0);
   const [isLoadingCredits, setIsLoadingCredits] = useState(true);
 
@@ -802,8 +813,15 @@ export default function ConsultationCheckoutPage({
               <Separator className="bg-zinc-200" />
               <div className="flex items-center justify-between font-semibold">
                 <div>Total</div>
-                <div>{formatPrice(pricing.total)}</div>
+                <div>
+                  {isLicenseCovered ? formatPrice(0) : formatPrice(pricing.total)}
+                </div>
               </div>
+              {isLicenseCovered && (
+                <p className="text-xs text-emerald-600">
+                  Session value {formatPrice(pricing.total)} — covered by enterprise license
+                </p>
+              )}
             </div>
           </CardContent>
         </Card>
