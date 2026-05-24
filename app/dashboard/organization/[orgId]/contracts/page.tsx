@@ -173,11 +173,13 @@ const STATUS_BADGE: Record<ContractStatus, string> = {
 function CreateContractDialog({
   orgId,
   billingAccountId,
+  fundingSource,
   open,
   onOpenChange,
 }: {
   orgId: string;
   billingAccountId: string;
+  fundingSource: string | undefined;
   open: boolean;
   onOpenChange: (v: boolean) => void;
 }) {
@@ -270,20 +272,22 @@ function CreateContractDialog({
             </div>
           </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="payment-terms">Payment terms (days) *</Label>
-            <Input
-              id="payment-terms"
-              type="number"
-              min={1}
-              max={120}
-              value={paymentTermsDays}
-              onChange={(e) => setPaymentTermsDays(e.target.value)}
-            />
-            <p className="text-xs text-zinc-500">
-              NET-{paymentTermsDays || "?"} — how many days after invoice date the org must pay.
-            </p>
-          </div>
+          {fundingSource !== "LICENSE" && (
+            <div className="space-y-1.5">
+              <Label htmlFor="payment-terms">Payment terms (days) *</Label>
+              <Input
+                id="payment-terms"
+                type="number"
+                min={1}
+                max={120}
+                value={paymentTermsDays}
+                onChange={(e) => setPaymentTermsDays(e.target.value)}
+              />
+              <p className="text-xs text-zinc-500">
+                NET-{paymentTermsDays || "?"} — how many days after invoice date the org must pay.
+              </p>
+            </div>
+          )}
 
           <div className="space-y-2">
             <Label>Initial status</Label>
@@ -490,7 +494,9 @@ export default function OrgContractsPage({
                         {c.effectiveTo ? fmtDate(c.effectiveTo) : "open-ended"}
                       </TableCell>
                       <TableCell className="text-sm text-zinc-600">
-                        NET-{c.paymentTermsDays}
+                        {c.billingAccount?.fundingSource === "LICENSE"
+                          ? "—"
+                          : `NET-${c.paymentTermsDays}`}
                         {c.autoRenew && (
                           <span className="ml-1 text-xs text-zinc-400">(auto-renew)</span>
                         )}
@@ -565,6 +571,7 @@ export default function OrgContractsPage({
         <CreateContractDialog
           orgId={orgId}
           billingAccountId={billingAccountId}
+          fundingSource={billingAccount.data?.billingAccount.fundingSource}
           open={createOpen}
           onOpenChange={setCreateOpen}
         />
