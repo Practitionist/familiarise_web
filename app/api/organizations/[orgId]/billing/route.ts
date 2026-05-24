@@ -44,7 +44,7 @@ export async function GET(
   startOfMonth.setUTCDate(1);
   startOfMonth.setUTCHours(0, 0, 0, 0);
 
-  const [monthAgg, outstandingAgg, pendingAgg] = await Promise.all([
+  const [monthAgg, outstandingAgg, pendingAgg, licenseContract] = await Promise.all([
     prisma.payment.aggregate({
       where: {
         organizationId: orgId,
@@ -74,6 +74,40 @@ export async function GET(
           _count: { _all: true },
         })
       : Promise.resolve(null),
+    // Surface the active LICENSE contract + its BillingSubscription for
+    // the Annual License panel on /billing. T5 (#756 GS-1) wires the
+    // contract create flow to atomically insert a BillingSubscription;
+    // this is the read side that displays it. We explicitly filter to
+    // contracts that HAVE a subscription — an org with multiple ACTIVE
+    // LICENSE contracts (e.g. older fee-less ones alongside a newer one
+    // that captured the fee) should show the one with the actual
+    // commercial value, not whichever has the most recent effectiveFrom.
+    billingAccount?.fundingSource === "LICENSE"
+      ? prisma.contract.findFirst({
+          where: {
+            organizationId: orgId,
+            status: "ACTIVE",
+            subscription: { isNot: null },
+          },
+          orderBy: { effectiveFrom: "desc" },
+          select: {
+            id: true,
+            effectiveFrom: true,
+            effectiveTo: true,
+            autoRenew: true,
+            subscription: {
+              select: {
+                model: true,
+                cycle: true,
+                flatFeePaise: true,
+                currentCycleStart: true,
+                currentCycleEnd: true,
+                nextInvoiceDate: true,
+              },
+            },
+          },
+        })
+      : Promise.resolve(null),
   ]);
 
   const org = await prisma.organization.findUnique({
@@ -98,5 +132,26 @@ export async function GET(
         }
       : null,
     paymentTermsDays: org?.paymentTermsDays ?? 60,
+    licenseContract: licenseContract
+      ? {
+          id: licenseContract.id,
+          effectiveFrom: licenseContract.effectiveFrom.toISOString(),
+          effectiveTo: licenseContract.effectiveTo?.toISOString() ?? null,
+          autoRenew: licenseContract.autoRenew,
+          subscription: licenseContract.subscription
+            ? {
+                model: licenseContract.subscription.model,
+                cycle: licenseContract.subscription.cycle,
+                flatFeePaise: licenseContract.subscription.flatFeePaise,
+                currentCycleStart:
+                  licenseContract.subscription.currentCycleStart.toISOString(),
+                currentCycleEnd:
+                  licenseContract.subscription.currentCycleEnd.toISOString(),
+                nextInvoiceDate:
+                  licenseContract.subscription.nextInvoiceDate.toISOString(),
+              }
+            : null,
+        }
+      : null,
   });
 }
