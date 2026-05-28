@@ -17,6 +17,7 @@
 import { EarningStatus, PayoutStatus, PayoutMethod } from "@prisma/client";
 import { randomUUID, createHash } from "crypto";
 import prisma from "@/lib/prisma";
+import { getActiveOrgMaintenanceWindow } from "@/lib/maintenance";
 import {
   createOrgPayoutBatch,
   PayoutLockError,
@@ -310,6 +311,21 @@ export async function createOrgPayoutBatches(opts?: {
 
   for (const row of eligible) {
     const orgId = row.organizationId;
+
+    // Per-org maintenance gate. The platform-wide check ran at job
+    // entry via `abortIfMaintenance`; this one skips a single tenant
+    // during a planned tenant-scoped downtime so the other orgs in the
+    // batch still get paid. Only OFFLINE blocks payouts — DEGRADED
+    // implies read-only product surfaces, not paused payouts.
+    const orgMaint = await getActiveOrgMaintenanceWindow(orgId);
+    if (orgMaint && orgMaint.phase === "OFFLINE") {
+      result.skippedNotEligible++;
+      result.errors.push(
+        `${orgId}: org-specific OFFLINE maintenance active (${orgMaint.reason ?? "no reason"}); skipped`,
+      );
+      continue;
+    }
+
     // Deterministic per-(org, periodStart) key — re-running the cron in
     // the same window is a no-op via the unique constraint.
     const idempotencyKey = createHash("sha256")
