@@ -256,7 +256,17 @@ export async function POST(
         dueDate: body.dueDate,
         billingCycleStart: body.billingCycleStart ?? null,
         billingCycleEnd: body.billingCycleEnd ?? null,
-        items: body.items,
+        // #768 — line items as typed children (createMany inside the
+        // same transaction so a failed write rolls back atomically).
+        lineItems: {
+          create: body.items.map((item, idx) => ({
+            position: idx,
+            description: item.description,
+            quantity: item.quantity,
+            unitPricePaise: item.unitPrice,
+            paymentId: item.paymentId ?? null,
+          })),
+        },
       },
     });
 

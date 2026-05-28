@@ -1414,8 +1414,10 @@ model OrganizationInvoice {
   totalPaise         Int
   taxRate            Decimal?
 
-  // Line items as JSON: [{ description, quantity, unitPrice, paymentId? }, ...]
-  items Json
+  // Typed line items (was Json `items`). One row per line; HSN code,
+  // tax-per-line, and Payment FK are queryable directly (no JSON
+  // extraction). Cascades on invoice delete.
+  lineItems InvoiceLineItem[]
 
   // GST
   hsnCode       String  @default("999293")
@@ -1478,6 +1480,38 @@ model OrganizationInvoice {
   @@index([organizationId, status, dueDate])
   @@index([organizationId, fiscalYear, issuedAt])
   @@index([billingCycleStart, billingCycleEnd])
+}
+
+// Typed line items for OrganizationInvoice — replaces the `items` Json
+// column (#768 Comment 1.B.2). Storing one row per line lets the GST
+// audit queries ("sum by HSN", "tax by item", "lines rolling up Payment
+// X") run as flat SQL, not as JSON extraction. Cascades on invoice
+// delete; SetNull on Payment delete so historical lines keep their copy
+// of description / quantity / unitPrice even after the booking is gone.
+model InvoiceLineItem {
+  id             String              @id @default(cuid())
+  invoiceId      String
+  invoice        OrganizationInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  position       Int                 @default(0)
+  description    String              @db.VarChar(500)
+  quantity       Int
+  unitPricePaise Int
+  // Per-line tax. Null when GST is computed only at invoice level
+  // (current state); cron migration will distribute totalTaxPaise across
+  // lines once per-line rates ship.
+  taxPaise       Int?
+  // Per-line HSN. Falls back to invoice.hsnCode at render time.
+  hsnCode        String?
+  // Optional Payment link for INVOICE rollups (one Payment per line on
+  // monthly NET-X cycles).
+  paymentId      String?
+  payment        Payment?            @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([invoiceId, position])
+  @@index([hsnCode])
+  @@index([paymentId])
 }
 
 // Per-org, per-fiscal-year invoice sequence counter. Allocation pattern
@@ -3162,6 +3196,7 @@ model Payment {
   organizationEarnings       OrganizationEarnings[] // PROVIDER/HYBRID 3-way split (one per org)
   organizationInvoiceSettled OrganizationInvoice?   @relation("OrgInvoicePayment") // back-relation for OrganizationInvoice.payment
   bookingUtilization         BookingUtilization?    @relation("PaymentBookingUtilization") // Program entitlement usage
+  invoiceLineItems           InvoiceLineItem[] // back-relation for InvoiceLineItem.payment
 
   // Stackable funding. A Payment may be split across multiple sources
   // — e.g. ₹500 referral credit + ₹1,500 card. When `legs.length > 0`,

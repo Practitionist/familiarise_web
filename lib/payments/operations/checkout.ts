@@ -1798,14 +1798,6 @@ export async function handleCheckout(
       );
     }
 
-    // PROJECT is a schema-reserved v2 value — fail fast before anything
-    // else so ops can spot the misconfiguration.
-    if (org.billingAccount?.fundingSource === "PROJECT") {
-      throw new Error(
-        "PROJECT funding source is not yet supported — reserved for the v2 project-billing workflow.",
-      );
-    }
-
     // SECURITY: Verify the caller is an active Membership of this org.
     const callerMembership = await prisma.membership.findUnique({
       where: { userId_organizationId: { userId, organizationId: org.id } },

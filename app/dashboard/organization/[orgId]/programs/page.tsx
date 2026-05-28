@@ -270,16 +270,6 @@ const PROGRAM_TYPE_META: Record<
       "Pool with a per-cycle credit cap (1 credit = ₹1). Each booking debits credits from the org wallet up to the cap.",
     available: true,
   },
-  PROJECT: {
-    label: "Project",
-    description: "Fixed-fee engagement. Reserved for v2.",
-    available: false,
-  },
-  RETAINER: {
-    label: "Retainer",
-    description: "Monthly retainer with rollover. Reserved for v2.",
-    available: false,
-  },
 };
 
 const BILLING_CYCLES: BillingCycle[] = ["MONTHLY", "QUARTERLY", "ANNUAL"];

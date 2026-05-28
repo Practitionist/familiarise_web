@@ -162,20 +162,23 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
               placeOfSupply: gst.placeOfSupply,
               reverseCharge: gst.reverseCharge,
               gstin: sub.contract.organization.gstin,
-              items: [
-                {
-                  description:
-                    sub.model === "FLAT_FEE"
-                      ? "Enterprise license flat fee"
-                      : `Per-seat license × ${sub.activeSeatCount} seats`,
-                  quantity:
-                    sub.model === "PER_SEAT" ? sub.activeSeatCount : 1,
-                  unitPrice:
-                    sub.model === "FLAT_FEE"
-                      ? (sub.flatFeePaise ?? 0)
-                      : (sub.ratePerSeatPaise ?? 0),
-                },
-              ],
+              lineItems: {
+                create: [
+                  {
+                    position: 0,
+                    description:
+                      sub.model === "FLAT_FEE"
+                        ? "Enterprise license flat fee"
+                        : `Per-seat license × ${sub.activeSeatCount} seats`,
+                    quantity:
+                      sub.model === "PER_SEAT" ? sub.activeSeatCount : 1,
+                    unitPricePaise:
+                      sub.model === "FLAT_FEE"
+                        ? (sub.flatFeePaise ?? 0)
+                        : (sub.ratePerSeatPaise ?? 0),
+                  },
+                ],
+              },
               issuedAt: now,
               dueDate,
               billingCycleStart: sub.currentCycleStart,
