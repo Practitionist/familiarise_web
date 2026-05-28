@@ -117,10 +117,13 @@ export async function POST(
 
   try {
     const updated = await prisma.$transaction(async (tx) => {
-      const next = await tx.organization.update({
-        where: { id: orgId },
-        data: { [column]: fileUrl },
-        select: { id: true, logo: true, bannerImage: true },
+      // #768 — branding lives on OrgBrandingProfile (1:1 sibling).
+      // Upsert so the first edit creates the row.
+      const profile = await tx.orgBrandingProfile.upsert({
+        where: { organizationId: orgId },
+        create: { organizationId: orgId, [column]: fileUrl },
+        update: { [column]: fileUrl },
+        select: { logo: true, bannerImage: true },
       });
 
       await tx.orgAuditLog.create({
@@ -134,7 +137,7 @@ export async function POST(
         },
       });
 
-      return next;
+      return { id: orgId, logo: profile.logo, bannerImage: profile.bannerImage };
     });
 
     return NextResponse.json({ organization: updated });
@@ -162,7 +165,10 @@ export async function DELETE(
 
   const current = await prisma.organization.findUnique({
     where: { id: orgId },
-    select: { id: true, logo: true, bannerImage: true },
+    select: {
+      id: true,
+      brandingProfile: { select: { logo: true, bannerImage: true } },
+    },
   });
   if (!current) {
     return NextResponse.json(
@@ -171,7 +177,7 @@ export async function DELETE(
     );
   }
 
-  if (!current[column]) {
+  if (!current.brandingProfile?.[column]) {
     return NextResponse.json({
       organization: current,
       message: `No ${asset} to delete`,
@@ -194,10 +200,10 @@ export async function DELETE(
 
   try {
     const updated = await prisma.$transaction(async (tx) => {
-      const next = await tx.organization.update({
-        where: { id: orgId },
+      const profile = await tx.orgBrandingProfile.update({
+        where: { organizationId: orgId },
         data: { [column]: null },
-        select: { id: true, logo: true, bannerImage: true },
+        select: { logo: true, bannerImage: true },
       });
 
       await tx.orgAuditLog.create({
@@ -211,7 +217,7 @@ export async function DELETE(
         },
       });
 
-      return next;
+      return { id: orgId, logo: profile.logo, bannerImage: profile.bannerImage };
     });
 
     return NextResponse.json({ organization: updated });

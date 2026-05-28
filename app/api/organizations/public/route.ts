@@ -54,13 +54,17 @@ export async function GET(req: NextRequest) {
           id: true,
           name: true,
           slug: true,
-          logo: true,
-          bannerImage: true,
-          description: true,
-          industry: true,
-          website: true,
           canSponsor: true,
           canHost: true,
+          brandingProfile: {
+            select: {
+              logo: true,
+              bannerImage: true,
+              description: true,
+              industry: true,
+              website: true,
+            },
+          },
           _count: {
             select: {
               memberships: {
@@ -80,11 +84,11 @@ export async function GET(req: NextRequest) {
       id: org.id,
       name: org.name,
       slug: org.slug,
-      logo: org.logo,
-      bannerImage: org.bannerImage,
-      description: org.description,
-      industry: org.industry,
-      website: org.website,
+      logo: org.brandingProfile?.logo ?? null,
+      bannerImage: org.brandingProfile?.bannerImage ?? null,
+      description: org.brandingProfile?.description ?? null,
+      industry: org.brandingProfile?.industry ?? null,
+      website: org.brandingProfile?.website ?? null,
       capabilityKind: org.canSponsor ? "hybrid" : "host",
       expertCount: org._count.memberships,
     }));

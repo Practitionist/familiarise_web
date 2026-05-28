@@ -18,19 +18,23 @@ import type { Metadata } from "next";
 export const revalidate = 60;
 
 async function fetchOrgBySlug(slug: string) {
-  return prisma.organization.findFirst({
+  const row = await prisma.organization.findFirst({
     where: { slug, isPublic: true, canHost: true, status: "ACTIVE" },
     select: {
       id: true,
       name: true,
       slug: true,
-      logo: true,
-      bannerImage: true,
-      description: true,
-      industry: true,
-      website: true,
       canSponsor: true,
       canHost: true,
+      brandingProfile: {
+        select: {
+          logo: true,
+          bannerImage: true,
+          description: true,
+          industry: true,
+          website: true,
+        },
+      },
       organizationPlans: {
         where: { isActive: true },
         select: {
@@ -71,6 +75,17 @@ async function fetchOrgBySlug(slug: string) {
       },
     },
   });
+  if (!row) return null;
+  // Flatten brandingProfile into the org shape so the rest of the page reads
+  // org.logo / org.description / etc. directly (avoids touching ~12 read sites).
+  return {
+    ...row,
+    logo: row.brandingProfile?.logo ?? null,
+    bannerImage: row.brandingProfile?.bannerImage ?? null,
+    description: row.brandingProfile?.description ?? null,
+    industry: row.brandingProfile?.industry ?? null,
+    website: row.brandingProfile?.website ?? null,
+  };
 }
 
 type OrgData = NonNullable<Awaited<ReturnType<typeof fetchOrgBySlug>>>;

@@ -140,10 +140,10 @@ export async function GET() {
           id: true,
           name: true,
           slug: true,
-          logo: true,
           status: true,
           canSponsor: true,
           canHost: true,
+          brandingProfile: { select: { logo: true } },
           billingAccount: {
             select: { fundingSource: true, walletBalance: true, currency: true },
           },
@@ -158,7 +158,17 @@ export async function GET() {
       membershipId: m.id,
       role: m.role,
       status: m.status,
-      organization: m.organization,
+      organization: {
+        id: m.organization.id,
+        name: m.organization.name,
+        slug: m.organization.slug,
+        status: m.organization.status,
+        canSponsor: m.organization.canSponsor,
+        canHost: m.organization.canHost,
+        // Flatten brandingProfile.logo so the UI sees the same shape as before.
+        logo: m.organization.brandingProfile?.logo ?? null,
+        billingAccount: m.organization.billingAccount,
+      },
     })),
   });
 }
@@ -246,10 +256,20 @@ export async function POST(req: NextRequest) {
           reportingCurrency: body.currency,
           billingEmail: body.billingEmail,
           paymentTermsDays: body.paymentTermsDays ?? 60,
-          description: body.description ?? null,
-          industry: body.industry ?? null,
-          website: body.website ?? null,
-          sizeBucket: body.sizeBucket ?? null,
+          // #768 — branding fields live on OrgBrandingProfile. Upserted
+          // below in the same transaction when any branding column is set.
+          ...(body.description || body.industry || body.website || body.sizeBucket
+            ? {
+                brandingProfile: {
+                  create: {
+                    description: body.description ?? null,
+                    industry: body.industry ?? null,
+                    website: body.website ?? null,
+                    sizeBucket: body.sizeBucket ?? null,
+                  },
+                },
+              }
+            : {}),
           gstin: body.gstin ?? null,
           // #768 — PAN stored encrypted (parity with ConsultantTaxInfo).
           ...(body.pan

@@ -28,16 +28,73 @@ const PlanTypeSchema = z.enum([
 
 const CurrencySchema = z.enum(["INR", "USD", "EUR", "GBP"]);
 
-const CreateBodySchema = z.object({
-  planType: PlanTypeSchema,
-  title: z.string().min(1).max(200),
-  description: z.string().max(5000).nullable().optional(),
-  price: z.coerce.number().int().min(0),
-  priceCurrency: CurrencySchema.default("INR"),
-  isActive: z.boolean().default(true),
-  config: z.record(z.string(), z.unknown()).default({}),
-  assignedConsultantIds: z.array(z.string().uuid()).default([]),
+// #768 lockdown #28 — typed per-type configs (was z.record Json blob).
+// Each branch maps 1:1 to its OrgXxxPlanConfig child model.
+const ConsultationConfig = z.object({
+  durationInHours: z.coerce.number().positive(),
+  preReadingNotes: z.string().max(2000).nullable().optional(),
 });
+const SubscriptionConfig = z.object({
+  durationInMonths: z.coerce.number().int().positive(),
+  callsPerWeek: z.coerce.number().int().positive(),
+  sessionDurationInHours: z.coerce.number().positive(),
+  totalSessions: z.coerce.number().int().positive(),
+});
+const WebinarConfig = z.object({
+  durationInHours: z.coerce.number().positive(),
+  maxParticipants: z.coerce.number().int().positive(),
+  publicRegistrationAllowed: z.boolean().default(false),
+});
+const ClassConfig = z.object({
+  durationInMonths: z.coerce.number().int().positive(),
+  meetingsPerWeek: z.coerce.number().int().positive(),
+  sessionDurationInHours: z.coerce.number().positive(),
+  totalSessions: z.coerce.number().int().positive(),
+  maxParticipants: z.coerce.number().int().positive(),
+});
+
+const CreateBodySchema = z.discriminatedUnion("planType", [
+  z.object({
+    planType: z.literal("CONSULTATION"),
+    title: z.string().min(1).max(200),
+    description: z.string().max(5000).nullable().optional(),
+    price: z.coerce.number().int().min(0),
+    priceCurrency: CurrencySchema.default("INR"),
+    isActive: z.boolean().default(true),
+    config: ConsultationConfig,
+    assignedConsultantIds: z.array(z.string().uuid()).default([]),
+  }),
+  z.object({
+    planType: z.literal("SUBSCRIPTION"),
+    title: z.string().min(1).max(200),
+    description: z.string().max(5000).nullable().optional(),
+    price: z.coerce.number().int().min(0),
+    priceCurrency: CurrencySchema.default("INR"),
+    isActive: z.boolean().default(true),
+    config: SubscriptionConfig,
+    assignedConsultantIds: z.array(z.string().uuid()).default([]),
+  }),
+  z.object({
+    planType: z.literal("WEBINAR"),
+    title: z.string().min(1).max(200),
+    description: z.string().max(5000).nullable().optional(),
+    price: z.coerce.number().int().min(0),
+    priceCurrency: CurrencySchema.default("INR"),
+    isActive: z.boolean().default(true),
+    config: WebinarConfig,
+    assignedConsultantIds: z.array(z.string().uuid()).default([]),
+  }),
+  z.object({
+    planType: z.literal("CLASS"),
+    title: z.string().min(1).max(200),
+    description: z.string().max(5000).nullable().optional(),
+    price: z.coerce.number().int().min(0),
+    priceCurrency: CurrencySchema.default("INR"),
+    isActive: z.boolean().default(true),
+    config: ClassConfig,
+    assignedConsultantIds: z.array(z.string().uuid()).default([]),
+  }),
+]);
 
 const QuerySchema = z.object({
   planType: PlanTypeSchema.optional(),
@@ -109,10 +166,20 @@ export async function POST(
         price: body.price,
         priceCurrency: body.priceCurrency,
         isActive: body.isActive,
-        // Cast lives here because Prisma's JSON type is unknown-ish;
-        // we've already validated shape via z.record above.
-        config: body.config as object,
         assignedConsultantIds: body.assignedConsultantIds,
+        // #768 lockdown #28 — typed per-type child config.
+        ...(body.planType === "CONSULTATION" && {
+          consultationConfig: { create: body.config },
+        }),
+        ...(body.planType === "SUBSCRIPTION" && {
+          subscriptionConfig: { create: body.config },
+        }),
+        ...(body.planType === "WEBINAR" && {
+          webinarConfig: { create: body.config },
+        }),
+        ...(body.planType === "CLASS" && {
+          classConfig: { create: body.config },
+        }),
       },
     });
 

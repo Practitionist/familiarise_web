@@ -451,10 +451,9 @@ model Verification {
 ////////////////////////////////////////////////////
 
 model Organization {
-  id     String  @id @default(cuid())
-  name   String
-  slug   String  @unique
-  logo   String?
+  id   String @id @default(cuid())
+  name String
+  slug String @unique
 
   status OrgStatus @default(PENDING_VERIFICATION)
 
@@ -483,6 +482,18 @@ model Organization {
   panLast4     String?      @db.VarChar(4)
   hsnDefault   String       @default("999293") // SAC code for educational/consulting services
 
+  // #769 Comment 4 — tax jurisdiction prep. Today always IN; when first
+  // non-India customer signs we refactor India-specific columns into
+  // IndianTaxBreakdown and add UsSalesTaxBreakdown etc. (Approach E).
+  taxJurisdiction TaxJurisdiction @default(IN)
+
+  // #768 lockdown #16 — Sumsub KYB stub (closes #687 invoice-fraud
+  // threat model). UI blocks INVOICE fundingSource selection when
+  // kybVerifiedAt IS NULL; Sumsub integration ships when self-serve
+  // INVOICE opens publicly.
+  kybVerifiedAt     DateTime?
+  sumsubApplicantId String?
+
   // MSME 43B(h) classification for HOST orgs receiving payouts.
   // When MICRO / SMALL, payouts must clear within 15 / 45 days (or 15 days
   // when no written agreement is on file) per CGST Sec 43B(h) — otherwise
@@ -504,15 +515,13 @@ model Organization {
   // future generation. Null prefix → slug-derived fallback at issue time.
   invoiceNumberPrefix String?
 
-  // Branding (merged from old OrganizationProfile)
-  bannerImage    String?
-  primaryColor   String?
-  secondaryColor String?
-  description    String?        @db.Text
-  industry       String?
-  website        String?
-  sizeBucket     OrgSizeBucket?
-  billingEmail   String?
+  // #768 lockdown #6 — branding fields carved out into OrgBrandingProfile.
+  // Optional 1:1 sibling pattern (mirrors ConsultantProfile and
+  // OrgWorkspaceProfile). Org-render code reads via the relation include.
+  brandingProfile OrgBrandingProfile?
+
+  // Legacy single-contact billing email — see contact directory below.
+  billingEmail String?
 
   // Contact directory (added 2026-05-15 per enterprise-procurement ask).
   // `billingEmail` above remains the legacy single-contact field; the
@@ -1036,6 +1045,11 @@ model LicensedSeatConfig {
   overageBehavior            OverageBehavior @default(BLOCK)
   activeSeatCount            Int             @default(0)
   priceCapPerEngagementPaise Int?
+  /// #768 lockdown #14/#15 — circuit breaker on CHARGE_ORG runaway. Null =
+  /// no ceiling. Non-null = cumulative OverageEvent.marginalPaise within
+  /// the current cycle cannot exceed this; subsequent bookings fall back
+  /// to BLOCK regardless of overageBehavior.
+  maxOveragePerCyclePaise    Int?
 }
 
 // 1 credit = ₹1 = 100 paise. Fixed; no per-pool override. Per-tier
@@ -1062,6 +1076,8 @@ model CreditPoolConfig {
   cycle                   BillingCycle
   creditsPerCycle         Int
   minimumCreditsPerPeriod Int?
+  /// #768 lockdown #14/#15 — circuit breaker (see LicensedSeatConfig).
+  maxOveragePerCyclePaise Int?
 }
 
 model ProgramAssignment {
@@ -1083,8 +1099,9 @@ model ProgramAssignment {
 
   utilizations BookingUtilization[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  overageEvents OverageEvent[]
 
   @@unique([programId, membershipId, periodStart])
   @@index([membershipId, periodEnd])
@@ -1136,7 +1153,8 @@ model BookingUtilization {
   /// call, so the set diff returns the full count).
   appointmentIds String[] @default([])
 
-  createdAt DateTime @default(now())
+  createdAt    DateTime      @default(now())
+  overageEvent OverageEvent?
 
   @@index([programAssignmentId])
 }
@@ -1511,7 +1529,8 @@ model InvoiceLineItem {
   paymentId      String?
   payment        Payment?            @relation(fields: [paymentId], references: [id], onDelete: SetNull)
 
-  createdAt DateTime @default(now())
+  createdAt     DateTime       @default(now())
+  overageEvents OverageEvent[]
 
   @@index([invoiceId, position])
   @@index([hsnCode])
@@ -1660,6 +1679,11 @@ enum OrgAuditCategory {
 }
 
 // Org-curated plan catalog. Unchanged semantics; FK renamed to organizationId.
+// #768 lockdown #28 — config Json (a polymorphic discriminator over
+// AppointmentsType) was split into 4 per-type child models. Each row
+// has at most one child (the one matching planType). See
+// OrgConsultationPlanConfig / OrgSubscriptionPlanConfig /
+// OrgWebinarPlanConfig / OrgClassPlanConfig below.
 model OrganizationPlan {
   id             String       @id @default(uuid())
   organizationId String
@@ -1672,7 +1696,14 @@ model OrganizationPlan {
   priceCurrency Currency         @default(INR)
 
   isActive Boolean @default(true)
-  config   Json
+
+  // Per-type typed configs (1:1 each; only the one matching planType is
+  // populated). Reads use `include: { consultationConfig: true, ... }`
+  // and branch on planType.
+  consultationConfig OrgConsultationPlanConfig?
+  subscriptionConfig OrgSubscriptionPlanConfig?
+  webinarConfig      OrgWebinarPlanConfig?
+  classConfig        OrgClassPlanConfig?
 
   assignedConsultantIds String[] @default([])
 
@@ -1681,6 +1712,48 @@ model OrganizationPlan {
 
   @@index([organizationId])
   @@index([planType])
+}
+
+/// #768 lockdown #28 — typed config for CONSULTATION OrganizationPlans.
+/// Mirrors the public ConsultationPlan fields the org catalog needs.
+model OrgConsultationPlanConfig {
+  planId          String           @id
+  plan            OrganizationPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  durationInHours Float
+  /// Free-form notes shown to the booker at checkout.
+  preReadingNotes String?          @db.Text
+}
+
+/// #768 lockdown #28 — typed config for SUBSCRIPTION OrganizationPlans.
+model OrgSubscriptionPlanConfig {
+  planId                 String           @id
+  plan                   OrganizationPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  durationInMonths       Int
+  callsPerWeek           Int
+  sessionDurationInHours Float
+  totalSessions          Int
+}
+
+/// #768 lockdown #28 — typed config for WEBINAR OrganizationPlans.
+model OrgWebinarPlanConfig {
+  planId                    String           @id
+  plan                      OrganizationPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  durationInHours           Float
+  maxParticipants           Int
+  /// Whether the plan allows org members from OUTSIDE this org to register
+  /// when the org publishes the webinar to the marketplace.
+  publicRegistrationAllowed Boolean          @default(false)
+}
+
+/// #768 lockdown #28 — typed config for CLASS OrganizationPlans.
+model OrgClassPlanConfig {
+  planId                 String           @id
+  plan                   OrganizationPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  durationInMonths       Int
+  meetingsPerWeek        Int
+  sessionDurationInHours Float
+  totalSessions          Int
+  maxParticipants        Int
 }
 
 //////////////////////////////////////////////////// THREE-LEDGER DISCIPLINE ////////////////////////////////////////////////////
@@ -3208,8 +3281,9 @@ model Payment {
   // off `amount` + `paymentMethod` alone).
   legs PaymentLeg[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  overageEvents OverageEvent[]
 
   // Allow multiple users to pay for same appointment (webinars/classes)
   @@unique([userId, appointmentId])
@@ -3406,10 +3480,10 @@ model ConsultantEarnings {
   payoutId            String?
 
   // Revenue breakdown (paise)
-  grossAmount         Int // Total sale price (paise)
-  platformFeePaise    Int // Platform cut (20%)
+  grossAmount          Int // Total sale price (paise)
+  platformFeePaise     Int // Platform cut (20%)
   consultantSharePaise Int // Consultant cut (80%)
-  refundedShareAmount Int @default(0) // Cumulative refunded amount in paise
+  refundedShareAmount  Int @default(0) // Cumulative refunded amount in paise
 
   // Collaborator support
   role            EarningRole @default(OWNER)
@@ -3731,7 +3805,11 @@ model WebinarCollaborator {
   consultantProfileId    String
   webinarPlanId          String
   role                   WebinarCollaboratorRole @default(CO_HOST)
-  permissions            Json?
+  // #768 lockdown #12 — replaced permissions Json with typed booleans.
+  canApprovePayment      Boolean                 @default(false)
+  canViewAnalytics       Boolean                 @default(false)
+  canEditEvent           Boolean                 @default(false)
+  canSeeAttendees        Boolean                 @default(false)
   revenueSharePercentage Float
   status                 CollaboratorStatus      @default(PENDING)
   invitedById            String
@@ -3754,7 +3832,11 @@ model ClassCollaborator {
   consultantProfileId    String
   classPlanId            String
   role                   ClassCollaboratorRole @default(CO_INSTRUCTOR)
-  permissions            Json?
+  // #768 lockdown #12 — replaced permissions Json with typed booleans.
+  canApprovePayment      Boolean               @default(false)
+  canViewAnalytics       Boolean               @default(false)
+  canEditEvent           Boolean               @default(false)
+  canSeeAttendees        Boolean               @default(false)
   revenueSharePercentage Float
   status                 CollaboratorStatus    @default(PENDING)
   invitedById            String
@@ -4351,4 +4433,67 @@ enum OrgDataExportStatus {
   READY
   FAILED
   EXPIRED
+}
+
+//////////////////////////////////////////////////// V0 LOCKDOWN ADDITIONS (#768) ////////////////////////////////////////////////////
+
+/// #768 lockdown #6 — branding carve-out from Organization (was God-Model
+/// resident; mirrors ConsultantProfile + OrgWorkspaceProfile pattern).
+/// 1:1 with Organization; row created lazily on first branding edit.
+model OrgBrandingProfile {
+  organizationId String       @id
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  logo           String?
+  bannerImage    String?
+  primaryColor   String?
+  secondaryColor String?
+  description    String?        @db.Text
+  industry       String?
+  website        String?
+  sizeBucket     OrgSizeBucket?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// #768 lockdown #14 — append-only OverageEvent table (Stripe Meter
+/// inspired). One row per booking that exceeded its program cap.
+/// CHARGE_MEMBER rows settle instantly (paymentId stamped at checkout);
+/// CHARGE_ORG rows accumulate until the cycle-close cron rolls them
+/// into a single InvoiceLineItem on the org's renewal invoice.
+model OverageEvent {
+  id                   String             @id @default(cuid())
+  programAssignmentId  String
+  programAssignment    ProgramAssignment  @relation(fields: [programAssignmentId], references: [id], onDelete: Cascade)
+  bookingUtilizationId String             @unique
+  bookingUtilization   BookingUtilization @relation(fields: [bookingUtilizationId], references: [id], onDelete: Cascade)
+  overageBehavior      OverageBehavior
+  marginalPaise        Int
+  currency             Currency           @default(INR)
+  /// CHARGE_MEMBER: Payment row for the instant overage charge.
+  /// CHARGE_ORG: Payment row of the rolled-up cycle invoice.
+  paymentId            String?
+  payment              Payment?           @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  /// CHARGE_ORG: the InvoiceLineItem the cycle-close cron emitted.
+  invoiceLineItemId    String?
+  invoiceLineItem      InvoiceLineItem?   @relation(fields: [invoiceLineItemId], references: [id], onDelete: SetNull)
+  settledAt            DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([programAssignmentId, createdAt])
+  @@index([settledAt])
+}
+
+/// #769 Comment 4 — multi-jurisdiction tax prep. Today every org is IN;
+/// when the first non-India customer signs we refactor India-specific
+/// invoice columns into IndianTaxBreakdown and add UsSalesTaxBreakdown
+/// etc. The enum lives now so the eventual migration is a single shot.
+enum TaxJurisdiction {
+  IN
+  US
+  JP
+  GB
+  EU
 }
