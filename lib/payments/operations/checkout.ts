@@ -94,11 +94,21 @@ type SubscriptionCheckoutResult = {
 
 /**
  * Build payment metadata for both payment intents and webhook handlers
- * Ensures consistency between payment creation and mock payment flows
+ * Ensures consistency between payment creation and mock payment flows.
+ *
+ * When the booking is org-sponsored, `organizationId` and `fundingSource`
+ * are stamped into the gateway's `notes` (C.1, #687). This lets the
+ * webhook attribute the payment to the org without an extra DB lookup
+ * and gives invoice-fraud reconcilers a server-side proof that the
+ * booker's claimed org matches the gateway's record.
  */
 function buildPaymentMetadata(
   data: CheckoutInput,
   userId: string,
+  orgContext?: {
+    organizationId: string | null;
+    fundingSource: "PERSONAL" | "WALLET" | "INVOICE" | "LICENSE" | null;
+  },
 ): { appointmentId: string; appointmentType: string; [key: string]: string } {
   return {
     appointmentId: "pending",
@@ -115,6 +125,12 @@ function buildPaymentMetadata(
     notes: data.notes || "",
     ...(data.eventId && { eventId: data.eventId }),
     ...(data.fromWaitlist && { fromWaitlist: data.fromWaitlist }),
+    ...(orgContext?.organizationId && {
+      organizationId: orgContext.organizationId,
+    }),
+    ...(orgContext?.fundingSource && {
+      fundingSource: orgContext.fundingSource,
+    }),
   };
 }
 
@@ -2000,7 +2016,10 @@ export async function handleCheckout(
         paymentResponse = await PaymentIntentManager.createWithCleanup({
           amount,
           currency,
-          metadata: buildPaymentMetadata(validatedData, userId),
+          metadata: buildPaymentMetadata(validatedData, userId, {
+            organizationId,
+            fundingSource,
+          }),
           paymentGateway: validatedData.paymentGateway,
           isMockPayment,
         });
