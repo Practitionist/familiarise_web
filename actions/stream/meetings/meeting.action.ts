@@ -97,6 +97,15 @@ export async function createDbMeetingSession(
     streamCallId: validatedStreamCallId,
   });
 
+  let organizationId: string | null = null;
+  if (slot.appointmentId) {
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: slot.appointmentId },
+      select: { organizationId: true },
+    });
+    organizationId = appointment?.organizationId ?? null;
+  }
+
   try {
     const meetingSession = await prisma.meetingSession.create({
       data: {
@@ -105,6 +114,9 @@ export async function createDbMeetingSession(
         slotOfAppointment: {
           connect: { id: slot.id },
         },
+        ...(organizationId
+          ? { organization: { connect: { id: organizationId } } }
+          : {}),
       },
     });
 

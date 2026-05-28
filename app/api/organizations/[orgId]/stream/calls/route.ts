@@ -3,11 +3,9 @@
  *
  * Org-scoped Stream call + recording metadata export. MANAGER+ gate
  * because the call log is a compliance surface (who met with whom,
- * when, for how long). The route reads from our local `MeetingSession`
- * table — not Stream's API — because we already denormalize the
- * organizationId via `Appointment.organizationId` and a Stream
- * `queryCalls` call would re-do that join over the network on every
- * page load.
+ * when, for how long). Reads from local MeetingSession (indexed by
+ * organizationId, #674) rather than Stream's API — every page load
+ * would otherwise re-do the join over the network.
  *
  * Recordings are joined eagerly so a dashboard listing 50 calls
  * doesn't fan out 50 separate `listRecordings` HTTP calls. The local
@@ -43,14 +41,7 @@ export async function GET(
   // hits + bytes on the wire.
   const withRecordings = url.searchParams.get("withRecordings") === "1";
 
-  // The join walks MeetingSession → SlotOfAppointment → Appointment to
-  // reach the org. Appointment.organizationId is the denormalized
-  // tenant key (#674), so the WHERE clause stays on a single index.
-  const where = {
-    slotOfAppointment: {
-      appointment: { organizationId: orgId },
-    },
-  };
+  const where = { organizationId: orgId };
 
   const [totalResults, sessions] = await prisma.$transaction([
     prisma.meetingSession.count({ where }),
