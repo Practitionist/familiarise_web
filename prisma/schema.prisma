@@ -597,9 +597,12 @@ model Organization {
 
   // #674 personal-vs-org scope split — appointments / waitlist entries /
   // recordings booked or produced by org members. Mirrors TrialsByOrg.
-  appointmentsByOrg Appointment[] @relation("AppointmentByOrg")
-  waitlistByOrg     Waitlist[]    @relation("WaitlistByOrg")
-  recordingsByOrg   Recording[]   @relation("RecordingByOrg")
+  appointmentsByOrg   Appointment[]    @relation("AppointmentByOrg")
+  waitlistByOrg       Waitlist[]       @relation("WaitlistByOrg")
+  recordingsByOrg     Recording[]      @relation("RecordingByOrg")
+  // Denormalized for org-scoped Stream call audit (#674). See
+  // `MeetingSession.organizationId` for the write-side rationale.
+  streamSessionsByOrg MeetingSession[] @relation("StreamSessionByOrg")
 
   // Payment attribution
   payments Payment[] @relation("PaymentOrgTag")
@@ -3095,10 +3098,22 @@ model MeetingSession {
   slotOfAppointment   SlotOfAppointment @relation(fields: [slotOfAppointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   slotOfAppointmentId String            @unique
 
+  /// Denormalized from `slotOfAppointment.appointment.organizationId` —
+  /// the canonical tenant key (#674). Lets org-scoped Stream call audit
+  /// queries (e.g. `/api/organizations/[orgId]/stream/calls`) index
+  /// directly on (organizationId, createdAt) instead of joining
+  /// MeetingSession → SlotOfAppointment → Appointment. Nullable because
+  /// platform calls (personal bookings) have no org context. Written at
+  /// MeetingSession.create time alongside slotOfAppointmentId; never
+  /// updated after.
+  organizationId String?
+  organization   Organization? @relation("StreamSessionByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([isRecording])
+  @@index([organizationId, createdAt])
 }
 
 // Recording storage types
