@@ -890,7 +890,6 @@ enum FundingSource {
   LICENSE // flat enterprise license (was PREPAID_UNLIMITED)
   WALLET // credit pool (was SEAT_PACK)
   INVOICE // NET-X postpaid (was INVOICED_MONTHLY)
-  PROJECT // v2 reserved
 }
 
 model Contract {
