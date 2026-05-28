@@ -357,7 +357,7 @@ export async function createOrgPayoutBatch(
         const orgForCompliance = await tx.organization.findUnique({
           where: { id: orgId },
           select: {
-            pan: true,
+            panEncrypted: true,
             msmeStatus: true,
             msmeWrittenAgreementOnFile: true,
           },
@@ -365,7 +365,11 @@ export async function createOrgPayoutBatch(
         const tds = computeTdsForPayout({
           grossAmountPaise: netPayout,
           consultant: {
-            panNumber: orgForCompliance?.pan ?? null,
+            // #768 — PAN at rest is encrypted. TDS rate derivation only
+            // needs to know whether a PAN is on file (treats null as
+            // higher-rate). Plaintext decrypt is deferred to Form 26Q
+            // filing (admin-only flow).
+            panNumber: orgForCompliance?.panEncrypted ? "ENCRYPTED" : null,
             residencyStatus: "RESIDENT",
             tdsSection: null,
             tdsRate: null,

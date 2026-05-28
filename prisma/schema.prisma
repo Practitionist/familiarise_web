@@ -476,7 +476,11 @@ model Organization {
   gstin        String?      @db.VarChar(15)
   gstStateCode String?      @db.VarChar(2)
   gstRegStatus GstRegStatus @default(UNREGISTERED)
-  pan          String?      @db.VarChar(10)
+  // #768 lockdown #5 — PAN at rest must be encrypted (compliance posture
+  // parity with ConsultantTaxInfo.panEncrypted). Plaintext column dropped.
+  // Last 4 digits cached separately for "show pan ending XXXX" UI.
+  panEncrypted Bytes?
+  panLast4     String?      @db.VarChar(4)
   hsnDefault   String       @default("999293") // SAC code for educational/consulting services
 
   // MSME 43B(h) classification for HOST orgs receiving payouts.

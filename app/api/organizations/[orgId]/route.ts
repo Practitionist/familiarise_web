@@ -16,6 +16,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { encryptPAN } from "@/lib/payments/tax/pan-crypto";
 
 const SizeBucketSchema = z.enum([
   "SMALL_1_50",
@@ -213,7 +214,14 @@ export async function PATCH(
             paymentTermsDays: body.paymentTermsDays,
           }),
           ...(body.gstin !== undefined && { gstin: body.gstin }),
-          ...(body.pan !== undefined && { pan: body.pan }),
+          ...(body.pan !== undefined && body.pan
+            ? (() => {
+                const { encrypted, last4 } = encryptPAN(body.pan);
+                return { panEncrypted: encrypted, panLast4: last4 };
+              })()
+            : body.pan === null
+              ? { panEncrypted: null, panLast4: null }
+              : {}),
           ...(body.gstRegStatus !== undefined && { gstRegStatus: body.gstRegStatus }),
           ...(body.gstStateCode !== undefined && { gstStateCode: body.gstStateCode }),
           ...(body.defaultCancellationPolicy !== undefined && {

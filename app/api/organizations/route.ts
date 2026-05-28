@@ -26,6 +26,7 @@ import { requireApiAuth } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { isValidGstin } from "@/lib/compliance/gst";
 import { isValidPan } from "@/lib/compliance/tds";
+import { encryptPAN } from "@/lib/payments/tax/pan-crypto";
 import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
 
 // PROJECT is reserved in the Prisma enum for the v2 milestone workflow
@@ -250,7 +251,13 @@ export async function POST(req: NextRequest) {
           website: body.website ?? null,
           sizeBucket: body.sizeBucket ?? null,
           gstin: body.gstin ?? null,
-          pan: body.pan ?? null,
+          // #768 — PAN stored encrypted (parity with ConsultantTaxInfo).
+          ...(body.pan
+            ? (() => {
+                const { encrypted, last4 } = encryptPAN(body.pan);
+                return { panEncrypted: encrypted, panLast4: last4 };
+              })()
+            : {}),
           requiresPO: body.requiresPO,
           status: "PENDING_VERIFICATION",
         },
