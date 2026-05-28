@@ -1165,8 +1165,6 @@ model BookingUtilization {
 enum ProgramType {
   LICENSED_SEAT
   CREDIT_POOL
-  PROJECT // v2 reserved
-  RETAINER // v2 reserved
 }
 
 enum ProgramStatus {
@@ -1389,8 +1387,6 @@ model OrganizationPayout {
 
 enum PayoutArrangement {
   DIRECT // contractor; consultant invoices; TDS 194J/194O; v1 default
-  AOR // Agent of Record; v2 reserved
-  EOR // Employer of Record; v2 reserved
 }
 
 enum ResidencyStatus {

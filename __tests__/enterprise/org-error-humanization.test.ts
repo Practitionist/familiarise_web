@@ -23,7 +23,6 @@ describe("humanizeOrgError", () => {
     ["ROLE_TRANSITION_BLOCKED", /Learner and Expert roles/i],
     ["USER_NOT_FOUND", /sign up at Familiarise/i],
     ["EXPERT_REQUIRES_CANHOST", /host-capable organizations/i],
-    ["PROGRAM_TYPE_NOT_AVAILABLE", /Programs v2/i],
     ["PO_BALANCE_EXCEEDED", /remaining budget/i],
     ["PO_BALANCE_INSUFFICIENT", /remaining budget/i],
     ["DOMAIN_NOT_OWNED", /Add it under Settings → SSO → Domains/i],

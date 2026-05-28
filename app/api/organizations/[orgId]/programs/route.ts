@@ -77,15 +77,6 @@ const CreateBodySchema = z.discriminatedUnion("type", [
   }),
 ]);
 
-// Programs v2 (PROJECT, RETAINER) is enum-reserved in `ProgramType` but
-// not yet implemented. The `CreateBodySchema` discriminated union would
-// otherwise reject these with a generic "Invalid body" — match the
-// reserved values first so ops can distinguish a v2 attempt from a
-// garbage payload. See #703 for v2 readiness.
-const ProgramsV2AttemptSchema = z
-  .object({ type: z.enum(["PROJECT", "RETAINER"]) })
-  .passthrough();
-
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
@@ -137,17 +128,6 @@ export async function POST(
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);
-
-  const v2Attempt = ProgramsV2AttemptSchema.safeParse(raw);
-  if (v2Attempt.success) {
-    return NextResponse.json(
-      {
-        error: `Programs v2 (${v2Attempt.data.type}) is not yet available; track readiness in #703.`,
-        code: "PROGRAM_TYPE_NOT_AVAILABLE",
-      },
-      { status: 400 },
-    );
-  }
 
   const parsed = CreateBodySchema.safeParse(raw);
   if (!parsed.success) {
