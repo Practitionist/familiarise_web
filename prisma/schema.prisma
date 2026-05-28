@@ -893,7 +893,6 @@ model Contract {
   // contract (negotiated, contract-specific splits).
   ownedRateCards RateCard[] @relation("RateCardOwnerContract")
 
-  terms        Json? // NET-X, caps, custom clauses
   programs     Program[]
   subscription BillingSubscription?
   // Back-relation for OrganizationInvoice.contract — optional linkage so
