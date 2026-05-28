@@ -37,6 +37,8 @@ import { Resend } from "resend";
 import prisma from "../../lib/prisma";
 import { AUDIT_ACTIONS } from "../../lib/enterprise/audit-actions";
 import { recordSystemError } from "../../lib/enterprise/system-events";
+import { notifyOrgDataExportReady } from "../../lib/novu/org-workflows";
+import { getAppUrl } from "../../lib/url";
 
 export interface DataExportResult {
   picked: number;
@@ -299,6 +301,23 @@ export async function processDataExports(): Promise<DataExportResult> {
         err,
       );
     });
+
+    // Novu fan-out to the OWNER roster so the requester's teammates
+    // see the bundle even if the requester is OOO.
+    const orgRow = await prisma.organization.findUnique({
+      where: { id: job.organizationId },
+      select: { name: true },
+    });
+    if (orgRow) {
+      await notifyOrgDataExportReady(job.organizationId, {
+        orgName: orgRow.name,
+        exportId: job.id,
+        fileSizeBytes: uploaded.sizeBytes,
+        expiresAt: uploaded.expiresAt.toISOString(),
+        downloadUrl: uploaded.url,
+        dashboardUrl: `${getAppUrl()}/dashboard/organization/${job.organizationId}/integrations/data-exports`,
+      });
+    }
 
     result.succeeded = 1;
   } catch (err) {

@@ -24,6 +24,7 @@ import {
   type OrgInvoiceIssuedPayload,
   type OrgInvoicePaidPayload,
   type OrgLicenseRenewalUpcomingPayload,
+  type OrgDataExportReadyPayload,
   type OrgWalletTopupConfirmedPayload,
   type OrgPayoutCompletedPayload,
   type OrgProgramExhaustedPayload,
@@ -170,6 +171,21 @@ export async function notifyOrgLicenseRenewalUpcoming(
     owners,
     payload,
   );
+}
+
+/**
+ * Fires when an OrgDataExportJob transitions PENDING -> READY. The
+ * existing email path (process-data-exports.ts emailRequester) targets
+ * only the requester; this Novu fan-out adds in-app delivery to the
+ * full OWNER roster so the requester's teammates can act if the
+ * requester is OOO.
+ */
+export async function notifyOrgDataExportReady(
+  orgId: string,
+  payload: OrgDataExportReadyPayload,
+): Promise<void> {
+  const owners = await rosterForOrg(orgId, OWNER_ONLY);
+  return triggerMany(NOVU_WORKFLOWS.ORG_DATA_EXPORT_READY, owners, payload);
 }
 
 /**

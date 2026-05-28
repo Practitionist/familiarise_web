@@ -86,6 +86,7 @@ export const NOVU_WORKFLOWS = {
   ORG_INVOICE_ISSUED: "org-invoice-issued",
   ORG_INVOICE_PAID: "org-invoice-paid",
   ORG_LICENSE_RENEWAL_UPCOMING: "org-license-renewal-upcoming",
+  ORG_DATA_EXPORT_READY: "org-data-export-ready",
   ORG_WALLET_TOPUP_CONFIRMED: "org-wallet-topup-confirmed",
   ORG_PAYOUT_COMPLETED: "org-payout-completed",
   ORG_PAYOUT_FAILED: "org-payout-failed",
@@ -359,6 +360,15 @@ export type OrgLicenseRenewalUpcomingPayload = {
   daysUntilRenewal: number;
   expectedTotalPaise: number;
   currency: string;
+  dashboardUrl: string;
+};
+
+export type OrgDataExportReadyPayload = {
+  orgName: string;
+  exportId: string;
+  fileSizeBytes: number;
+  expiresAt: string;
+  downloadUrl: string;
   dashboardUrl: string;
 };
 
