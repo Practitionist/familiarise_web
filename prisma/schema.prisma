@@ -451,11 +451,10 @@ model Verification {
 ////////////////////////////////////////////////////
 
 model Organization {
-  id       String  @id @default(cuid())
-  name     String
-  slug     String  @unique
-  logo     String?
-  metadata Json?
+  id     String  @id @default(cuid())
+  name   String
+  slug   String  @unique
+  logo   String?
 
   status OrgStatus @default(PENDING_VERIFICATION)
 
