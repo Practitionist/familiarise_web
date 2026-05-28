@@ -10,6 +10,7 @@
  *   programs      { total, active, activeAssignments }
  *   wallet        { balancePaise, recentTopUps, recentDebits } (WALLET only)
  *   invoices      { outstanding, pastDue, paidLast30d }        (INVOICE only)
+ *   reimbursements{ last30dCount, last30dPaise }               (PERSONAL only — #714)
  *   earnings      { pending, ready, paid, refunded }           (canHost only)
  *
  * All aggregates are `count` / `_sum` queries — no per-row enumeration —
@@ -64,6 +65,7 @@ export async function GET(
     pastDueInvoiceCount,
     earningsAggregate,
     licenseSubscription,
+    reimbursementAgg,
   ] = await Promise.all([
     prisma.membership.groupBy({
       by: ["status"],
@@ -144,6 +146,20 @@ export async function GET(
           select: { id: true, model: true, cycle: true, flatFeePaise: true },
         })
       : Promise.resolve(null),
+    // PERSONAL-funded orgs: org-tagged SUCCEEDED payments in the last
+    // 30d (members paid out of pocket). Drives the /home reimbursement
+    // summary card — full report lives at /reimbursements. (#714)
+    org.billingAccount?.fundingSource === "PERSONAL"
+      ? prisma.payment.aggregate({
+          where: {
+            organizationId: orgId,
+            paymentStatus: "SUCCEEDED",
+            createdAt: { gte: thirtyDaysAgo },
+          },
+          _sum: { amount: true },
+          _count: { _all: true },
+        })
+      : Promise.resolve(null),
   ]);
 
   const memberTotal = memberAggregate.reduce(
@@ -207,6 +223,12 @@ export async function GET(
           model: licenseSubscription.model,
           cycle: licenseSubscription.cycle,
           flatFeePaise: licenseSubscription.flatFeePaise,
+        }
+      : null,
+    reimbursements: reimbursementAgg
+      ? {
+          last30dCount: reimbursementAgg._count._all,
+          last30dPaise: reimbursementAgg._sum.amount ?? 0,
         }
       : null,
     earnings: org.canHost

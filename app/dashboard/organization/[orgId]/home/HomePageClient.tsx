@@ -76,6 +76,10 @@ interface OrgAnalytics {
     cycle: "MONTHLY" | "QUARTERLY" | "ANNUAL";
     flatFeePaise: number | null;
   } | null;
+  reimbursements: {
+    last30dCount: number;
+    last30dPaise: number;
+  } | null;
   earnings: Array<{
     status: string;
     count: number;
@@ -500,6 +504,29 @@ export function HomePageClient({ orgId }: { orgId: string }) {
                   />
                 )}
               </>
+            )}
+
+            {/* Reimbursements — PERSONAL-funded orgs only (#714) */}
+            {data.reimbursements && isAtLeast("MANAGER") && (
+              <Link
+                href={`/dashboard/organization/${orgId}/reimbursements`}
+                className="contents"
+              >
+                <StatCard
+                  title="To reimburse (30d)"
+                  value={formatCurrencyAmount(
+                    data.reimbursements.last30dPaise,
+                    currency,
+                  )}
+                  subtitle={`${data.reimbursements.last30dCount} payment${
+                    data.reimbursements.last30dCount === 1 ? "" : "s"
+                  } — view report`}
+                  icon={Wallet}
+                  variant={
+                    data.reimbursements.last30dCount > 0 ? "info" : "default"
+                  }
+                />
+              </Link>
             )}
 
             {/* Host-side earnings summary */}
