@@ -74,6 +74,24 @@ const billingSummarySchema = z.object({
     .object({ amount: z.number(), paymentCount: z.number() })
     .nullable(),
   paymentTermsDays: z.number(),
+  licenseContract: z
+    .object({
+      id: z.string(),
+      effectiveFrom: z.string(),
+      effectiveTo: z.string().nullable(),
+      autoRenew: z.boolean(),
+      subscription: z
+        .object({
+          model: z.enum(["PER_SEAT", "FLAT_FEE"]),
+          cycle: z.enum(["MONTHLY", "QUARTERLY", "ANNUAL"]),
+          flatFeePaise: z.number().nullable(),
+          currentCycleStart: z.string(),
+          currentCycleEnd: z.string(),
+          nextInvoiceDate: z.string(),
+        })
+        .nullable(),
+    })
+    .nullable(),
 });
 type BillingSummary = z.infer<typeof billingSummarySchema>;
 
@@ -435,6 +453,80 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
           </TabsList>
 
           <TabsContent value="invoices" className="space-y-6">
+            {/* Annual License panel — surfaces the LICENSE commercial
+                value (fee, cycle, renewal, auto-renew) that the
+                contract create flow (T5 / #756 GS-1) captures into
+                BillingSubscription. Renders only when funding=LICENSE
+                AND a subscription has been recorded; LICENSE orgs
+                without a subscription see no panel (the contract was
+                created with the fee field skipped). */}
+            {summary.data?.fundingSource === "LICENSE" &&
+              summary.data.licenseContract?.subscription && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Annual License</CardTitle>
+                    <CardDescription>
+                      Pre-paid flat-fee contract. Bookings under this
+                      org consume no per-session charge — they&apos;re
+                      covered by this license.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
+                      <div>
+                        <dt className="text-zinc-500">Fee</dt>
+                        <dd className="font-medium">
+                          {formatCurrencyAmount(
+                            summary.data.licenseContract.subscription.flatFeePaise ?? 0,
+                            "INR",
+                          )}{" "}
+                          / {summary.data.licenseContract.subscription.cycle.toLowerCase()}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-zinc-500">Current cycle</dt>
+                        <dd className="font-medium">
+                          {new Date(
+                            summary.data.licenseContract.subscription.currentCycleStart,
+                          ).toLocaleDateString("en-IN", {
+                            day: "2-digit",
+                            month: "short",
+                            year: "numeric",
+                          })}{" "}
+                          →{" "}
+                          {new Date(
+                            summary.data.licenseContract.subscription.currentCycleEnd,
+                          ).toLocaleDateString("en-IN", {
+                            day: "2-digit",
+                            month: "short",
+                            year: "numeric",
+                          })}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-zinc-500">Next renewal</dt>
+                        <dd className="font-medium">
+                          {new Date(
+                            summary.data.licenseContract.subscription.nextInvoiceDate,
+                          ).toLocaleDateString("en-IN", {
+                            day: "2-digit",
+                            month: "short",
+                            year: "numeric",
+                          })}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-zinc-500">Auto-renew</dt>
+                        <dd className="font-medium">
+                          {summary.data.licenseContract.autoRenew
+                            ? "Enabled"
+                            : "Disabled"}
+                        </dd>
+                      </div>
+                    </dl>
+                  </CardContent>
+                </Card>
+              )}
             {summary.isLoading ? (
               <p className="text-sm text-zinc-500">Loading…</p>
             ) : (
@@ -475,9 +567,12 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
                   />
                 )}
                 {/* Payment terms only apply to INVOICE-funded orgs.
-                    WALLET orgs pre-fund their balance and have no credit
-                    terms; showing NET-60 there is misleading. */}
-                {summary.data?.fundingSource !== "WALLET" && (
+                    WALLET orgs pre-fund their balance, LICENSE orgs pay
+                    a flat fee — neither has NET-X invoice billing, so
+                    showing NET-60 there is misleading. Mirrors the
+                    contracts/page.tsx + form fix for T4/T5. */}
+                {summary.data?.fundingSource !== "WALLET" &&
+                  summary.data?.fundingSource !== "LICENSE" && (
                   <StatCard
                     title="Payment terms"
                     value={`NET-${summary.data?.paymentTermsDays ?? 60}`}
@@ -566,7 +661,11 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
                         colSpan={5}
                         className="text-center text-sm text-zinc-500 py-6"
                       >
-                        No invoices yet.
+                        {summary.data?.fundingSource === "LICENSE"
+                          ? summary.data.licenseContract?.subscription
+                            ? "LICENSE-funded orgs don't generate per-booking invoices. See the Annual License panel above."
+                            : "LICENSE-funded orgs don't generate per-booking invoices. The annual license fee covers all usage."
+                          : "No invoices yet."}
                       </TableCell>
                     </TableRow>
                   )}

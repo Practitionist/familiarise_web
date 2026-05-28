@@ -71,6 +71,11 @@ interface OrgAnalytics {
     paidLast30dCount: number;
     paidLast30dPaise: number;
   } | null;
+  subscription: {
+    model: "PER_SEAT" | "FLAT_FEE";
+    cycle: "MONTHLY" | "QUARTERLY" | "ANNUAL";
+    flatFeePaise: number | null;
+  } | null;
   earnings: Array<{
     status: string;
     count: number;
@@ -296,7 +301,8 @@ export function HomePageClient({ orgId }: { orgId: string }) {
             label: "Configure billing settings",
             done:
               (data?.wallet !== null && data?.wallet !== undefined) ||
-              (data?.invoices !== null && data?.invoices !== undefined),
+              (data?.invoices !== null && data?.invoices !== undefined) ||
+              (data?.subscription !== null && data?.subscription !== undefined),
             href: `/dashboard/organization/${orgId}/billing`,
           },
         ]

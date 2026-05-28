@@ -22,6 +22,8 @@ const ContractStatusSchema = z.enum([
   "TERMINATED",
 ]);
 
+const LicenseCycleSchema = z.enum(["MONTHLY", "QUARTERLY", "ANNUAL"]);
+
 const CreateBodySchema = z
   .object({
     billingAccountId: z.string().min(1),
@@ -37,6 +39,13 @@ const CreateBodySchema = z
     autoRenew: z.coerce.boolean().default(false),
     terms: z.unknown().optional(),
     status: ContractStatusSchema.default("DRAFT"),
+    // LICENSE-funded contracts can include a flat-fee BillingSubscription
+    // at create time. Both fields are optional and only meaningful when
+    // the BillingAccount has fundingSource=LICENSE. When provided, the
+    // server creates Contract + BillingSubscription atomically in one tx
+    // so the LICENSE commercial value (annual fee + cycle) is recorded.
+    licenseFeePaise: z.coerce.number().int().min(1).optional(),
+    licenseCycle: LicenseCycleSchema.optional(),
   })
   .refine(
     (v) => v.effectiveTo === null || v.effectiveTo === undefined
@@ -80,6 +89,14 @@ export async function GET(
       programs: {
         select: { id: true, name: true, type: true, status: true },
       },
+      subscription: {
+        select: {
+          id: true,
+          model: true,
+          cycle: true,
+          flatFeePaise: true,
+        },
+      },
       _count: { select: { programs: true } },
     },
     orderBy: { createdAt: "desc" },
@@ -118,13 +135,45 @@ export async function POST(
   // hitting a FK error later.
   const billingAccount = await prisma.billingAccount.findUnique({
     where: { id: body.billingAccountId },
-    select: { ownerOrgId: true, currency: true },
+    select: {
+      ownerOrgId: true,
+      currency: true,
+      fundingSource: true,
+      subscription: { select: { id: true } },
+    },
   });
   if (!billingAccount || billingAccount.ownerOrgId !== orgId) {
     return NextResponse.json(
       { error: "BillingAccount does not belong to this organization" },
       { status: 400 },
     );
+  }
+
+  // LICENSE subscription gate: license fields are only meaningful when
+  // funding=LICENSE, and we don't currently support overwriting an
+  // existing subscription via contract create (renewals are a separate
+  // flow). Fail loud rather than silently dropping the operator's input.
+  const wantsLicenseSubscription =
+    body.licenseFeePaise !== undefined && body.licenseCycle !== undefined;
+  if (wantsLicenseSubscription) {
+    if (billingAccount.fundingSource !== "LICENSE") {
+      return NextResponse.json(
+        {
+          error:
+            "License fee fields are only allowed when the BillingAccount funding source is LICENSE",
+        },
+        { status: 400 },
+      );
+    }
+    if (billingAccount.subscription) {
+      return NextResponse.json(
+        {
+          error:
+            "A BillingSubscription already exists for this BillingAccount. Subscription updates aren't supported via contract creation yet — terminate the existing subscription first.",
+        },
+        { status: 409 },
+      );
+    }
   }
 
   if (body.purchaseOrderId) {
@@ -154,6 +203,27 @@ export async function POST(
         terms: body.terms === undefined ? null : JSON.parse(JSON.stringify(body.terms)),
       },
     });
+
+    if (wantsLicenseSubscription) {
+      const cycleEnd = computeCycleEnd(body.effectiveFrom, body.licenseCycle!);
+      await tx.billingSubscription.create({
+        data: {
+          contractId: created.id,
+          billingAccountId: body.billingAccountId,
+          model: "FLAT_FEE",
+          cycle: body.licenseCycle!,
+          ratePerSeatPaise: null,
+          flatFeePaise: body.licenseFeePaise!,
+          activeSeatCount: 0,
+          currentCycleStart: body.effectiveFrom,
+          currentCycleEnd: cycleEnd,
+          nextInvoiceDate: cycleEnd,
+          startsAt: body.effectiveFrom,
+          endsAt: body.effectiveTo ?? null,
+        },
+      });
+    }
+
     await tx.orgAuditLog.create({
       data: {
         organizationId: orgId,
@@ -165,6 +235,12 @@ export async function POST(
           contractId: created.id,
           billingAccountId: body.billingAccountId,
           paymentTermsDays: body.paymentTermsDays,
+          ...(wantsLicenseSubscription
+            ? {
+                licenseFeePaise: body.licenseFeePaise,
+                licenseCycle: body.licenseCycle,
+              }
+            : {}),
         },
       },
     });
@@ -172,4 +248,22 @@ export async function POST(
   });
 
   return NextResponse.json({ contract }, { status: 201 });
+}
+
+/**
+ * Compute the end of a billing cycle given a start date and cycle type.
+ * Used to seed BillingSubscription.currentCycleEnd + nextInvoiceDate at
+ * contract create time. Mirrors the cycle math elsewhere in the codebase
+ * (jobs/billing/generate-subscription-invoices.ts uses the same +1mo /
+ * +3mo / +1yr offsets).
+ */
+function computeCycleEnd(
+  start: Date,
+  cycle: "MONTHLY" | "QUARTERLY" | "ANNUAL",
+): Date {
+  const end = new Date(start);
+  if (cycle === "MONTHLY") end.setMonth(end.getMonth() + 1);
+  else if (cycle === "QUARTERLY") end.setMonth(end.getMonth() + 3);
+  else end.setFullYear(end.getFullYear() + 1);
+  return end;
 }

@@ -72,6 +72,12 @@ interface ContractItem {
     status: string;
   } | null;
   programs: Array<{ id: string; name: string; type: string; status: string }>;
+  subscription: {
+    id: string;
+    model: "PER_SEAT" | "FLAT_FEE";
+    cycle: "MONTHLY" | "QUARTERLY" | "ANNUAL";
+    flatFeePaise: number | null;
+  } | null;
   _count: { programs: number };
 }
 
@@ -103,9 +109,11 @@ async function createContract(
     billingAccountId: string;
     effectiveFrom: string;
     effectiveTo?: string | null;
-    paymentTermsDays: number;
+    paymentTermsDays?: number;
     autoRenew: boolean;
     status: "DRAFT" | "ACTIVE";
+    licenseFeePaise?: number;
+    licenseCycle?: "MONTHLY" | "QUARTERLY" | "ANNUAL";
   },
 ) {
   const res = await fetch(`/api/organizations/${orgId}/contracts`, {
@@ -173,11 +181,13 @@ const STATUS_BADGE: Record<ContractStatus, string> = {
 function CreateContractDialog({
   orgId,
   billingAccountId,
+  fundingSource,
   open,
   onOpenChange,
 }: {
   orgId: string;
   billingAccountId: string;
+  fundingSource: string | undefined;
   open: boolean;
   onOpenChange: (v: boolean) => void;
 }) {
@@ -188,6 +198,10 @@ function CreateContractDialog({
   const [paymentTermsDays, setPaymentTermsDays] = useState("60");
   const [autoRenew, setAutoRenew] = useState(false);
   const [status, setStatus] = useState<"DRAFT" | "ACTIVE">("ACTIVE");
+  const [licenseFeeINR, setLicenseFeeINR] = useState("");
+  const [licenseCycle, setLicenseCycle] = useState<
+    "MONTHLY" | "QUARTERLY" | "ANNUAL"
+  >("ANNUAL");
   const [error, setError] = useState<string | null>(null);
 
   const reset = () => {
@@ -196,6 +210,8 @@ function CreateContractDialog({
     setPaymentTermsDays("60");
     setAutoRenew(false);
     setStatus("ACTIVE");
+    setLicenseFeeINR("");
+    setLicenseCycle("ANNUAL");
     setError(null);
   };
 
@@ -214,22 +230,44 @@ function CreateContractDialog({
 
   const handleSubmit = () => {
     setError(null);
-    const terms = parseInt(paymentTermsDays, 10);
-    if (!Number.isFinite(terms) || terms < 1 || terms > 120) {
-      setError("Payment terms must be between 1 and 120 days.");
-      return;
+    const isLicense = fundingSource === "LICENSE";
+    // LICENSE-funded orgs don't see the payment-terms field (annual fee
+    // is paid upfront, not on net-X terms). Skip validation and omit
+    // the field from the payload so the server's default(60) applies —
+    // otherwise stale text typed before switching to LICENSE would fire
+    // a hidden-field error.
+    let terms: number | undefined;
+    if (!isLicense) {
+      const parsed = parseInt(paymentTermsDays, 10);
+      if (!Number.isFinite(parsed) || parsed < 1 || parsed > 120) {
+        setError("Payment terms must be between 1 and 120 days.");
+        return;
+      }
+      terms = parsed;
     }
     if (effectiveTo && new Date(effectiveTo) <= new Date(effectiveFrom)) {
       setError("End date must be after the start date.");
       return;
     }
+    let licenseFeePaise: number | undefined;
+    if (isLicense && licenseFeeINR.trim() !== "") {
+      const inr = parseFloat(licenseFeeINR);
+      if (!Number.isFinite(inr) || inr <= 0) {
+        setError("License fee must be a positive number (₹).");
+        return;
+      }
+      licenseFeePaise = Math.round(inr * 100);
+    }
     createMutation.mutate({
       billingAccountId,
       effectiveFrom: new Date(effectiveFrom).toISOString(),
       effectiveTo: effectiveTo ? new Date(effectiveTo).toISOString() : null,
-      paymentTermsDays: terms,
+      ...(terms !== undefined ? { paymentTermsDays: terms } : {}),
       autoRenew,
       status,
+      ...(licenseFeePaise !== undefined
+        ? { licenseFeePaise, licenseCycle }
+        : {}),
     });
   };
 
@@ -241,7 +279,7 @@ function CreateContractDialog({
         onOpenChange(v);
       }}
     >
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
         <DialogHeader>
           <DialogTitle>New Contract</DialogTitle>
         </DialogHeader>
@@ -270,20 +308,61 @@ function CreateContractDialog({
             </div>
           </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="payment-terms">Payment terms (days) *</Label>
-            <Input
-              id="payment-terms"
-              type="number"
-              min={1}
-              max={120}
-              value={paymentTermsDays}
-              onChange={(e) => setPaymentTermsDays(e.target.value)}
-            />
-            <p className="text-xs text-zinc-500">
-              NET-{paymentTermsDays || "?"} — how many days after invoice date the org must pay.
-            </p>
-          </div>
+          {fundingSource !== "LICENSE" && (
+            <div className="space-y-1.5">
+              <Label htmlFor="payment-terms">Payment terms (days) *</Label>
+              <Input
+                id="payment-terms"
+                type="number"
+                min={1}
+                max={120}
+                value={paymentTermsDays}
+                onChange={(e) => setPaymentTermsDays(e.target.value)}
+              />
+              <p className="text-xs text-zinc-500">
+                NET-{paymentTermsDays || "?"} — how many days after invoice date the org must pay.
+              </p>
+            </div>
+          )}
+
+          {fundingSource === "LICENSE" && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="license-fee">License fee (₹/year)</Label>
+                <Input
+                  id="license-fee"
+                  type="number"
+                  min={1}
+                  step="1"
+                  placeholder="e.g. 7500000"
+                  value={licenseFeeINR}
+                  onChange={(e) => setLicenseFeeINR(e.target.value)}
+                />
+                <p className="text-xs text-zinc-500">
+                  Optional. Recording the fee enables annual renewal billing
+                  and dashboard display. Skipping is reversible only by
+                  terminating this contract and creating a new one.
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="license-cycle">Billing cycle</Label>
+                <select
+                  id="license-cycle"
+                  className="flex h-10 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                  value={licenseCycle}
+                  onChange={(e) =>
+                    setLicenseCycle(
+                      e.target.value as "MONTHLY" | "QUARTERLY" | "ANNUAL",
+                    )
+                  }
+                >
+                  <option value="ANNUAL">Annual</option>
+                  <option value="QUARTERLY">Quarterly</option>
+                  <option value="MONTHLY">Monthly</option>
+                </select>
+              </div>
+            </div>
+          )}
 
           <div className="space-y-2">
             <Label>Initial status</Label>
@@ -460,6 +539,7 @@ export default function OrgContractsPage({
                 )}
               </div>
             ) : (
+              <div className="overflow-x-auto [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -490,7 +570,11 @@ export default function OrgContractsPage({
                         {c.effectiveTo ? fmtDate(c.effectiveTo) : "open-ended"}
                       </TableCell>
                       <TableCell className="text-sm text-zinc-600">
-                        NET-{c.paymentTermsDays}
+                        {c.billingAccount?.fundingSource === "LICENSE"
+                          ? c.subscription?.flatFeePaise != null
+                            ? `₹${(c.subscription.flatFeePaise / 100).toLocaleString("en-IN")} / ${c.subscription.cycle.toLowerCase()}`
+                            : "—"
+                          : `NET-${c.paymentTermsDays}`}
                         {c.autoRenew && (
                           <span className="ml-1 text-xs text-zinc-400">(auto-renew)</span>
                         )}
@@ -552,6 +636,7 @@ export default function OrgContractsPage({
                   ))}
                 </TableBody>
               </Table>
+              </div>
             )}
             {actionError && (
               <p className="mt-3 text-sm text-red-600">{actionError}</p>
@@ -565,6 +650,7 @@ export default function OrgContractsPage({
         <CreateContractDialog
           orgId={orgId}
           billingAccountId={billingAccountId}
+          fundingSource={billingAccount.data?.billingAccount.fundingSource}
           open={createOpen}
           onOpenChange={setCreateOpen}
         />

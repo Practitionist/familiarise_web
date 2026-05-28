@@ -63,6 +63,7 @@ export async function GET(
     paidInvoiceAgg,
     pastDueInvoiceCount,
     earningsAggregate,
+    licenseSubscription,
   ] = await Promise.all([
     prisma.membership.groupBy({
       by: ["status"],
@@ -133,6 +134,16 @@ export async function GET(
           _count: { _all: true },
         })
       : Promise.resolve([]),
+    // BillingSubscription is set up by the LICENSE contract create flow
+    // (see app/api/organizations/[orgId]/contracts/route.ts). For LICENSE
+    // orgs we surface it so the home Get-Started checklist can mark
+    // "Configure billing settings" done once a fee has been captured.
+    org.billingAccount?.fundingSource === "LICENSE" && baId
+      ? prisma.billingSubscription.findUnique({
+          where: { billingAccountId: baId.id },
+          select: { id: true, model: true, cycle: true, flatFeePaise: true },
+        })
+      : Promise.resolve(null),
   ]);
 
   const memberTotal = memberAggregate.reduce(
@@ -191,6 +202,13 @@ export async function GET(
             paidLast30dPaise: paidInvoiceAgg?._sum.totalPaise ?? 0,
           }
         : null,
+    subscription: licenseSubscription
+      ? {
+          model: licenseSubscription.model,
+          cycle: licenseSubscription.cycle,
+          flatFeePaise: licenseSubscription.flatFeePaise,
+        }
+      : null,
     earnings: org.canHost
       ? earningsAggregate.map((e) => ({
           status: e.status,
