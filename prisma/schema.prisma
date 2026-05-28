@@ -4170,7 +4170,6 @@ model MaintenanceWindow {
   startedBy    String?
   endedBy      String?
   bypassSecret String?
-  metadata     Json?
 
   /// PR #655 Tier 1 multi-tenant column. NULL = platform-wide window
   /// (every legacy row + the default for ops-triggered downtime).
