@@ -6,13 +6,15 @@
  * payment list. CSV export downloads via /export endpoint.
  */
 
-import { use } from "react";
+import { use, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { format } from "date-fns";
 import { Download } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   DashboardHeader,
   DashboardContent,
@@ -80,13 +82,35 @@ export default function OrgReimbursementsPage({
   const { orgId } = use(params);
   const searchParams = useSearchParams();
   const page = Number(searchParams?.get("page") ?? "1") || 1;
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+
+  // ISO-encode the date inputs so the server's z.string().datetime()
+  // parser accepts them. Empty inputs are dropped — the API treats
+  // missing from/to as "no bound".
+  const fromIso = fromDate ? new Date(fromDate).toISOString() : undefined;
+  const toIso = toDate
+    ? new Date(`${toDate}T23:59:59.999`).toISOString()
+    : undefined;
+
+  const apiUrl = new URLSearchParams({ page: String(page) });
+  if (fromIso) apiUrl.set("from", fromIso);
+  if (toIso) apiUrl.set("to", toIso);
+
+  const exportUrl = (() => {
+    const q = new URLSearchParams();
+    if (fromIso) q.set("from", fromIso);
+    if (toIso) q.set("to", toIso);
+    const qs = q.toString();
+    return `/api/organizations/${orgId}/reimbursements/export${qs ? `?${qs}` : ""}`;
+  })();
 
   const { data, isLoading, isError, error } =
     useQuery<ReimbursementsResponse>({
-      queryKey: ["org-reimbursements", orgId, page],
+      queryKey: ["org-reimbursements", orgId, page, fromIso, toIso],
       queryFn: async () => {
         const res = await fetch(
-          `/api/organizations/${orgId}/reimbursements?page=${page}`,
+          `/api/organizations/${orgId}/reimbursements?${apiUrl.toString()}`,
         );
         if (res.status === 404) {
           throw new Error(
@@ -107,10 +131,7 @@ export default function OrgReimbursementsPage({
         subtitle="Members paid out of pocket on org bookings — pay them back via your payroll using this report."
         actions={
           <Button asChild variant="outline" size="sm">
-            <a
-              href={`/api/organizations/${orgId}/reimbursements/export`}
-              download
-            >
+            <a href={exportUrl} download>
               <Download className="mr-2 h-4 w-4" />
               Download CSV
             </a>
@@ -118,6 +139,29 @@ export default function OrgReimbursementsPage({
         }
       />
       <DashboardContent>
+        <div className="mb-4 grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-md">
+          <div className="space-y-1.5">
+            <Label htmlFor="from-date">From</Label>
+            <Input
+              id="from-date"
+              type="date"
+              value={fromDate}
+              onChange={(e) => setFromDate(e.target.value)}
+              max={toDate || undefined}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="to-date">To</Label>
+            <Input
+              id="to-date"
+              type="date"
+              value={toDate}
+              onChange={(e) => setToDate(e.target.value)}
+              min={fromDate || undefined}
+            />
+          </div>
+        </div>
+
         {data && (
           <div className="mb-4 flex flex-wrap gap-3">
             <div className="rounded-lg border bg-card p-4">
