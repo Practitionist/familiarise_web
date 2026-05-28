@@ -311,11 +311,17 @@ export async function createClassChannel(
  * Create a consultation channel
  *
  * @param consultationId — Consultation entity id
- * @param organizationId — Optional explicit org override. Falls back to
- *   `consultationPlan.organizationId` when omitted; `null` force-omits.
+ * @param organizationId — Optional explicit org override. When omitted, the
+ *   resolved org tag falls back through this chain:
+ *     1. `consultationPlan.organizationId` (plan is hosted by an org)
+ *     2. `consultation.appointment.organizationId` (booking is funded by
+ *        an org member, even when the plan itself is platform-owned)
+ *     3. `null` — personal channel, no org tag
+ *   Pass `null` explicitly to force-omit the org tag regardless of fallback.
+ *
  *   Note: the underlying DM channel is per consultant-consultee pair, so an
- *   org tag here reflects the *plan* — if the same pair later books a
- *   personal-plan consultation, the existing channel keeps the org tag.
+ *   org tag here reflects the *first booking* — if the same pair later books
+ *   a personal-plan consultation, the existing channel keeps the org tag.
  */
 export async function createConsultationChannel(
   consultationId: string,
@@ -336,6 +342,10 @@ export async function createConsultationChannel(
       requestedBy: {
         include: { user: { select: { id: true } } },
       },
+      // Pull the appointment row so we can fall back to its org tag
+      // when the plan itself isn't org-hosted but the booker is paying
+      // through an org-funded membership (C.3 / #674).
+      appointment: { select: { organizationId: true } },
     },
   });
 
@@ -357,7 +367,9 @@ export async function createConsultationChannel(
 
   const resolvedOrgId =
     organizationId === undefined
-      ? consultation.consultationPlan.organizationId ?? null
+      ? consultation.consultationPlan.organizationId ??
+        consultation.appointment?.organizationId ??
+        null
       : organizationId;
 
   // DM channel is per consultant-consultee pair (not per event).
@@ -380,9 +392,14 @@ export async function createConsultationChannel(
  * Create a subscription channel
  *
  * @param subscriptionId — Subscription entity id
- * @param organizationId — Optional explicit org override. Falls back to
- *   `subscriptionPlan.organizationId` when omitted; `null` force-omits.
- *   See `createConsultationChannel` for the DM-channel sharing caveat.
+ * @param organizationId — Optional explicit org override. When omitted, the
+ *   resolved org tag falls back through this chain:
+ *     1. `subscriptionPlan.organizationId` (plan is hosted by an org)
+ *     2. `subscription.appointment.organizationId` (booking is funded by
+ *        an org member, even when the plan itself is platform-owned)
+ *     3. `null` — personal channel, no org tag
+ *   Pass `null` explicitly to force-omit. See `createConsultationChannel`
+ *   for the DM-channel sharing caveat.
  */
 export async function createSubscriptionChannel(
   subscriptionId: string,
@@ -402,6 +419,18 @@ export async function createSubscriptionChannel(
       },
       requestedBy: {
         include: { user: { select: { id: true } } },
+      },
+      // Pull a single org-tagged appointment so we can fall back to
+      // its org id when the plan itself isn't org-hosted but the
+      // subscription is funded through an org-funded membership.
+      // Subscription has a 1:N appointments relation; all appointments
+      // in one subscription share the same org context (the org pays
+      // for the whole subscription upfront) so taking the first is
+      // sufficient. (C.3 / #674)
+      appointments: {
+        where: { organizationId: { not: null } },
+        select: { organizationId: true },
+        take: 1,
       },
     },
   });
@@ -424,7 +453,9 @@ export async function createSubscriptionChannel(
 
   const resolvedOrgId =
     organizationId === undefined
-      ? subscription.subscriptionPlan.organizationId ?? null
+      ? subscription.subscriptionPlan.organizationId ??
+        subscription.appointments[0]?.organizationId ??
+        null
       : organizationId;
 
   // DM channel is per consultant-consultee pair (not per event).

@@ -40,7 +40,7 @@ describe("getActiveOrgMaintenanceWindow", () => {
       reason: "Annual maintenance",
       estimatedEnd: new Date("2026-06-01T00:00:00.000Z"),
     };
-    findFirst.mockResolvedValueOnce(row);
+    findFirst.mockResolvedValueOnce(row as never);
 
     const result = await getActiveOrgMaintenanceWindow("org-1");
     expect(result).toEqual(row);
@@ -76,7 +76,7 @@ describe("getActiveOrgMaintenanceWindow", () => {
       reason: "Partial outage",
       estimatedEnd: null,
     };
-    findFirst.mockResolvedValueOnce(row);
+    findFirst.mockResolvedValueOnce(row as never);
     const result = await getActiveOrgMaintenanceWindow("org-4");
     expect(result?.phase).toBe("DEGRADED");
   });
