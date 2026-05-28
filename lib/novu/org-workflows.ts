@@ -23,6 +23,7 @@ import {
   type OrgInviteAcceptedPayload,
   type OrgInvoiceIssuedPayload,
   type OrgInvoicePaidPayload,
+  type OrgLicenseRenewalUpcomingPayload,
   type OrgWalletTopupConfirmedPayload,
   type OrgPayoutCompletedPayload,
   type OrgProgramExhaustedPayload,
@@ -151,6 +152,24 @@ export async function notifyOrgInvoicePaid(
 ): Promise<void> {
   const owners = await rosterForOrg(orgId, OWNER_ONLY);
   return triggerMany(NOVU_WORKFLOWS.ORG_INVOICE_PAID, owners, payload);
+}
+
+/**
+ * Fires N days before a LICENSE BillingSubscription's nextInvoiceDate.
+ * Owners can wire the cycle renewal into their procurement calendar
+ * before the invoice lands. Drives off renewalReminderSentAt on
+ * BillingSubscription so the same window only sends once per cycle.
+ */
+export async function notifyOrgLicenseRenewalUpcoming(
+  orgId: string,
+  payload: OrgLicenseRenewalUpcomingPayload,
+): Promise<void> {
+  const owners = await rosterForOrg(orgId, OWNER_ONLY);
+  return triggerMany(
+    NOVU_WORKFLOWS.ORG_LICENSE_RENEWAL_UPCOMING,
+    owners,
+    payload,
+  );
 }
 
 /**
