@@ -54,7 +54,7 @@ import { createDisputes } from "./seedFiles/12b-create-disputes";
 import { createPayoutAccounts } from "./seedFiles/13a-create-payout-accounts";
 import { createConsultantEarnings } from "./seedFiles/13b-create-consultant-earnings";
 import { createPayouts } from "./seedFiles/13c-create-payouts";
-import { createInvoices } from "./seedFiles/13d-create-invoices";
+// 13d-create-invoices removed in #768 lockdown (legacy Invoice model dropped).
 
 // Phase 14: Referrals & Collaborators
 import { createReferralCodes } from "./seedFiles/14a-create-referral-codes";
@@ -182,9 +182,6 @@ async function seed() {
 
     console.log("Creating payouts...");
     await createPayouts();
-
-    console.log("Creating invoices...");
-    await createInvoices();
 
     // Phase 14: Referrals & Collaborators
     console.log("\n[Phase 14] Creating referrals & collaborators...");

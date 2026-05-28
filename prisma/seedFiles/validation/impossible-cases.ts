@@ -183,7 +183,7 @@ export const impossibleCases: ValidationTestCase[] = [
       await prisma.refund.create({
         data: {
           paymentId: payment.id,
-          amount: 50000, // 500 INR - exceeds payment
+          amountPaise: 50000, // 500 INR - exceeds payment
           currency: "INR",
           reason: "Test refund",
           status: "PENDING",
