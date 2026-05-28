@@ -260,6 +260,7 @@ erDiagram
 | 25 | `25-idempotency-keys.md` | Every side-effect endpoint's idempotency key + anti-patterns. |
 | 28 | `28-jit-and-session-refresh.md` | JIT auto-join, `sessionGeneration` marker, role-change refresh without forced logout. |
 | 30 | `30-rate-limiting.md` | Coverage matrix for auth + SSO + wallet endpoints; why BetterAuth's built-in limiter is disabled. |
+| 36 | `36-cross-cutting-integrations.md` | Per-subsystem map of which areas are enterprise-wired vs deliberately skipped, with code paths and rationale. |
 
 ### `explainers/` — narrative high-level docs
 
