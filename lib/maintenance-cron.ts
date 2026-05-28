@@ -33,9 +33,6 @@ const FINANCIAL_JOB_NAMES = new Set([
   "release-earnings",
   "reconcile-payment-status",
   "sync-payment-earnings",
-  // Writes OrganizationInvoice + SettlementLedgerEntry rows; a partial
-  // run during DEGRADED maintenance would leave the ledger inconsistent.
-  "consolidated-invoice-rollup",
 ]);
 
 /**

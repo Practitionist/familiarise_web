@@ -475,14 +475,6 @@ model Organization {
   // ask — speculative slots accumulate into schema noise.
   capabilitiesExtra Json?
 
-  // Hierarchy — schema-only in v1. No subtree UI/walks; columns kept so future
-  // multi-BU (Wipro-style) support lands without a migration.
-  parentId String?
-  parent   Organization?  @relation("OrgTree", fields: [parentId], references: [id])
-  children Organization[] @relation("OrgTree")
-  depth    Int            @default(0)
-  rootId   String
-
   // India / GCC context (all schema-final; compliance logic stubbed)
   dataResidencyRegion DataRegion        @default(IN)
   isGCC               Boolean           @default(false)
@@ -635,8 +627,6 @@ model Organization {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([parentId])
-  @@index([rootId])
   @@index([status])
   @@index([canSponsor, canHost])
   @@index([canHost, isPublic, status])

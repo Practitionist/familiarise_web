@@ -14,8 +14,7 @@
  * Invariants:
  *  - slug is unique and lower-cased;
  *  - at least one capability must be true (canSponsor OR canHost);
- *  - canSponsor=true → BillingAccount created with the chosen fundingSource;
- *  - rootId points at the org itself (hierarchy is schema-only in v1).
+ *  - canSponsor=true → BillingAccount created with the chosen fundingSource.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -241,8 +240,6 @@ export async function POST(req: NextRequest) {
           slug: desiredSlug,
           canSponsor: body.canSponsor,
           canHost: body.canHost,
-          rootId: orgTmpId,
-          depth: 0,
           dataResidencyRegion: body.dataResidencyRegion,
           contractCurrency: body.currency,
           reportingCurrency: body.currency,
