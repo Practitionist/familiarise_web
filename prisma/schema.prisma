@@ -3292,7 +3292,7 @@ enum PaymentStatus {
 
 model Refund {
   id                   String         @id @default(uuid())
-  amount               Int // Amount refunded in smallest currency unit (e.g., cents for USD)
+  amountPaise          Int // Amount refunded in paise
   currency             String
   reason               String? // Reason for refund
   status               RefundStatus
@@ -3323,7 +3323,7 @@ enum RefundStatus {
 
 model Dispute {
   id                 String         @id @default(uuid())
-  amount             Int // Disputed amount in smallest currency unit
+  amountPaise        Int // Disputed amount in paise
   currency           String
   reason             String // Dispute reason from gateway
   status             DisputeStatus
@@ -3401,11 +3401,11 @@ model ConsultantEarnings {
   paymentId           String
   payoutId            String?
 
-  // Revenue breakdown
-  grossAmount         Int // Total sale price
-  platformFee         Int // Platform cut (20%)
-  consultantShare     Int // Consultant cut (80%)
-  refundedShareAmount Int @default(0) // Cumulative refunded amount (for partial refunds, in smallest currency unit)
+  // Revenue breakdown (paise)
+  grossAmount         Int // Total sale price (paise)
+  platformFeePaise    Int // Platform cut (20%)
+  consultantSharePaise Int // Consultant cut (80%)
+  refundedShareAmount Int @default(0) // Cumulative refunded amount in paise
 
   // Collaborator support
   role            EarningRole @default(OWNER)

@@ -73,7 +73,7 @@ export async function cascadeRefundToEarnings(): Promise<RefundEarningCascadeRes
     },
     select: {
       id: true,
-      amount: true,
+      amountPaise: true,
       reason: true,
       paymentId: true,
     },
@@ -90,7 +90,7 @@ export async function cascadeRefundToEarnings(): Promise<RefundEarningCascadeRes
           await applyRefundCascade(tx, {
             paymentId: refund.paymentId,
             refundId: refund.id,
-            amountPaise: refund.amount,
+            amountPaise: refund.amountPaise,
             reason: refund.reason ?? "Gateway refund cascade",
             initiatedByUserId: null, // gateway-initiated
           });

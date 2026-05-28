@@ -117,7 +117,7 @@ export async function GET() {
       }),
       // Refund total
       prisma.refund.aggregate({
-        _sum: { amount: true },
+        _sum: { amountPaise: true },
         where: { status: "SUCCEEDED" },
       }),
     ]);
@@ -146,7 +146,7 @@ export async function GET() {
       totalRevenue,
       revenueThisMonth: revenueThisMonth._sum.amount ?? 0,
       avgSessionValue,
-      totalRefunds: refundTotal._sum.amount ?? 0,
+      totalRefunds: refundTotal._sum?.amountPaise ?? 0,
 
       // Top domains
       topDomains: formattedTopDomains,

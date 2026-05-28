@@ -56,7 +56,7 @@ function fetchRecentRefunds() {
     orderBy: { createdAt: "desc" },
     select: {
       id: true,
-      amount: true,
+      amountPaise: true,
       currency: true,
       status: true,
       paymentGateway: true,
@@ -109,7 +109,7 @@ export async function getOperatorDashboardStats(): Promise<OperatorDashboardStat
       _sum: { amount: true },
       where: { paymentStatus: PaymentStatus.PENDING },
     }),
-    prisma.refund.aggregate({ _sum: { amount: true } }),
+    prisma.refund.aggregate({ _sum: { amountPaise: true } }),
     prisma.payment.groupBy({
       by: ["paymentGateway"],
       _count: true,
@@ -131,7 +131,7 @@ export async function getOperatorDashboardStats(): Promise<OperatorDashboardStat
     pendingPaymentsValue: pendingPaymentsAggregation._sum.amount ?? 0,
     expiredPayments,
     totalRefunds,
-    totalRefundsValue: refundsAggregation._sum.amount ?? 0,
+    totalRefundsValue: refundsAggregation._sum?.amountPaise ?? 0,
     activeDisputes,
     totalDisputes,
     recentPayments,

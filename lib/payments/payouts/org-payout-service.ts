@@ -321,12 +321,12 @@ export async function createOrgPayoutBatch(
         const totals = readyEarnings.reduce(
           (acc, e) => {
             acc.gross += e.grossAmountPaise;
-            acc.platformFee += e.platformFeePaise;
+            acc.platformFeePaise += e.platformFeePaise;
             acc.orgShare += e.orgSharePaise;
             acc.refunds += e.refundedAmountPaise;
             return acc;
           },
-          { gross: 0, platformFee: 0, orgShare: 0, refunds: 0 },
+          { gross: 0, platformFeePaise: 0, orgShare: 0, refunds: 0 },
         );
         const netPayout = totals.orgShare - totals.refunds;
         if (netPayout <= 0) {
@@ -387,7 +387,7 @@ export async function createOrgPayoutBatch(
             amountPaise: amountAfterTds,
             currency: first.currency,
             grossRevenuePaise: totals.gross,
-            platformFeePaise: totals.platformFee,
+            platformFeePaise: totals.platformFeePaise,
             refundsPaise: totals.refunds,
             netPayoutPaise: netPayout,
             tdsSectionApplied: tds.tdsSection,
@@ -431,7 +431,7 @@ export async function createOrgPayoutBatch(
               netPayoutPaise: netPayout,
               amountAfterTdsPaise: amountAfterTds,
               grossPaise: totals.gross,
-              platformFeePaise: totals.platformFee,
+              platformFeePaise: totals.platformFeePaise,
               refundsPaise: totals.refunds,
               tdsSection: tds.tdsSection,
               tdsRate: tds.tdsRate,

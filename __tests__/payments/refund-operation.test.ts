@@ -330,9 +330,9 @@ const tx: any = prisma; // the stub IS the tx in our setup
 function seedSinglePartyWalletPayment({
   paymentId = "pay-1",
   amount = 10000,
-  consultantShare = 8000,
+  consultantSharePaise = 8000,
   orgShare = 1000,
-  platformFee = 1000,
+  platformFeePaise = 1000,
   billingAccountId = "ba-1",
   organizationId = "org-1",
   walletBalance = 50000,
@@ -341,9 +341,9 @@ function seedSinglePartyWalletPayment({
 }: Partial<{
   paymentId: string;
   amount: number;
-  consultantShare: number;
+  consultantSharePaise: number;
   orgShare: number;
-  platformFee: number;
+  platformFeePaise: number;
   billingAccountId: string;
   organizationId: string;
   walletBalance: number;
@@ -375,9 +375,9 @@ function seedSinglePartyWalletPayment({
     id: "ce-1",
     paymentId,
     consultantProfileId: "cp-1",
-    consultantShare,
+    consultantSharePaise,
     grossAmount: amount,
-    platformFee,
+    platformFeePaise,
     refundedShareAmount: 0,
     status: "PENDING",
   });
@@ -387,9 +387,9 @@ function seedSinglePartyWalletPayment({
       paymentId,
       organizationId,
       grossAmountPaise: amount,
-      platformFeePaise: platformFee,
+      platformFeePaise: platformFeePaise,
       orgSharePaise: orgShare,
-      consultantSharePaise: consultantShare,
+      consultantSharePaise: consultantSharePaise,
       refundedAmountPaise: 0,
       status: orgEarningsStatus,
       orgPayoutId: null,
@@ -445,7 +445,7 @@ describe("refundPayment — full single-leg WALLET refund", () => {
 
 describe("refundPayment — partial 50% refund proportional split", () => {
   it("splits proportional, leaves earnings non-REFUNDED", async () => {
-    seedSinglePartyWalletPayment({ amount: 10000, consultantShare: 8000, orgShare: 1000 });
+    seedSinglePartyWalletPayment({ amount: 10000, consultantSharePaise: 8000, orgShare: 1000 });
 
     const result = await refundPayment({
       paymentId: "pay-1",

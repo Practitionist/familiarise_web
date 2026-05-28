@@ -106,7 +106,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       paymentGateway: true,
       displayCurrencyAtCheckout: true,
       exchangeRateAtCheckout: true,
-      refunds: { select: { amount: true, status: true } },
+      refunds: { select: { amountPaise: true, status: true } },
     },
   });
 
@@ -132,7 +132,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
         r.status === RefundStatus.SUCCEEDED ||
         r.status === RefundStatus.PENDING,
     )
-    .reduce((acc, r) => acc + r.amount, 0);
+    .reduce((acc, r) => acc + r.amountPaise, 0);
 
   const refundable = payment.amount - alreadyRefunded;
   if (refundable <= 0) {
@@ -165,9 +165,9 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
           paymentId: input.paymentId,
           status: { in: [RefundStatus.SUCCEEDED, RefundStatus.PENDING] },
         },
-        select: { amount: true },
+        select: { amountPaise: true },
       });
-      const refundedNow = refundsLocked.reduce((a, r) => a + r.amount, 0);
+      const refundedNow = refundsLocked.reduce((a, r) => a + r.amountPaise, 0);
       const remainingNow = payment.amount - refundedNow;
       if (requested > remainingNow) {
         throw new RefundValidationError(
@@ -186,7 +186,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       const created = await tx.refund.create({
         data: {
           paymentId: input.paymentId,
-          amount: requested,
+          amountPaise: requested,
           currency: payment.currency,
           reason: input.reason,
           status: RefundStatus.PENDING,
@@ -417,10 +417,10 @@ export async function applyRefundCascade(
   // -----------------------------------------------------------------------
   let consultantEarningsReversed = 0;
   for (const earnings of payment.earnings) {
-    const shareReversal = proportion(earnings.consultantShare);
+    const shareReversal = proportion(earnings.consultantSharePaise);
     if (shareReversal <= 0) continue;
     const newRefundedShare = earnings.refundedShareAmount + shareReversal;
-    const fully = newRefundedShare >= earnings.consultantShare;
+    const fully = newRefundedShare >= earnings.consultantSharePaise;
 
     let nextStatus = earnings.status;
     if (fully && earnings.status !== EarningStatus.REFUNDED) {
@@ -455,7 +455,7 @@ export async function applyRefundCascade(
 
   for (const orgEarn of payment.organizationEarnings) {
     // Reverse the gross share owed back: org share + consultant share
-    // proportions. (We do NOT include platformFee here — the platform
+    // proportions. (We do NOT include platformFeePaise here — the platform
     // pockets nothing on a fully-refunded transaction; that side of the
     // ledger is accounted for at settlement / TDS.)
     const orgShareRev = proportion(orgEarn.orgSharePaise);
@@ -470,7 +470,7 @@ export async function applyRefundCascade(
     // the consumer (the platform absorbs the gateway fee + own cut).
     // Keying the status flip off `grossAmountPaise` would leave fully-
     // settled earnings stuck in PENDING because totalRev maxes out at
-    // (orgShare + consultantShare).
+    // (orgShare + consultantSharePaise).
     const refundableCeiling =
       orgEarn.orgSharePaise + orgEarn.consultantSharePaise;
     const fully = newRefunded >= refundableCeiling;

@@ -436,7 +436,7 @@ export async function GET(
       // --- Performance Snapshot Queries ---
       // 1a. Earnings this month (consultant share from ConsultantEarnings, excluding refunded, minus partial refunds)
       prisma.consultantEarnings.aggregate({
-        _sum: { consultantShare: true, refundedShareAmount: true },
+        _sum: { consultantSharePaise: true, refundedShareAmount: true },
         where: {
           consultantProfileId,
           status: { not: "REFUNDED" },
@@ -445,7 +445,7 @@ export async function GET(
       }),
       // 1b. Earnings last month
       prisma.consultantEarnings.aggregate({
-        _sum: { consultantShare: true, refundedShareAmount: true },
+        _sum: { consultantSharePaise: true, refundedShareAmount: true },
         where: {
           consultantProfileId,
           status: { not: "REFUNDED" },
@@ -483,7 +483,7 @@ export async function GET(
       // --- Financial Summary Queries ---
       // 5. Net earnings (all-time, excluding refunded, minus partial refunds)
       prisma.consultantEarnings.aggregate({
-        _sum: { consultantShare: true, refundedShareAmount: true },
+        _sum: { consultantSharePaise: true, refundedShareAmount: true },
         where: {
           consultantProfileId,
           status: { not: "REFUNDED" },
@@ -491,7 +491,7 @@ export async function GET(
       }),
       // 6. Ready earnings (eligible for next payout — not yet assigned to a payout)
       prisma.consultantEarnings.aggregate({
-        _sum: { consultantShare: true, refundedShareAmount: true },
+        _sum: { consultantSharePaise: true, refundedShareAmount: true },
         where: {
           consultantProfileId,
           status: "READY",
@@ -660,10 +660,10 @@ export async function GET(
 
     // --- Compute Performance Snapshot derived values ---
     const earningsThisMonthVal =
-      (earningsThisMonth._sum.consultantShare ?? 0) -
+      (earningsThisMonth._sum.consultantSharePaise ?? 0) -
       (earningsThisMonth._sum.refundedShareAmount ?? 0);
     const earningsLastMonthVal =
-      (earningsLastMonth._sum.consultantShare ?? 0) -
+      (earningsLastMonth._sum.consultantSharePaise ?? 0) -
       (earningsLastMonth._sum.refundedShareAmount ?? 0);
 
     // Earnings trend: percentage change (guard against division by zero)
@@ -705,10 +705,10 @@ export async function GET(
 
     // --- Financial Summary derived values ---
     const netEarningsVal =
-      (netEarningsAgg._sum.consultantShare ?? 0) -
+      (netEarningsAgg._sum.consultantSharePaise ?? 0) -
       (netEarningsAgg._sum.refundedShareAmount ?? 0);
     const readyEarningsVal =
-      (readyEarningsAgg._sum.consultantShare ?? 0) -
+      (readyEarningsAgg._sum.consultantSharePaise ?? 0) -
       (readyEarningsAgg._sum.refundedShareAmount ?? 0);
     const payoutMinimum = PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT;
     const payoutEligible = readyEarningsVal >= payoutMinimum;

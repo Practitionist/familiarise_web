@@ -138,7 +138,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
             where: { id: ticket.refundId },
             select: {
               id: true,
-              amount: true,
+              amountPaise: true,
               currency: true,
               status: true,
               reason: true,

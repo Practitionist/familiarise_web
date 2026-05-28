@@ -102,7 +102,7 @@ export async function reconcilePendingRefunds(): Promise<RefundReconciliationRes
 
       // Find matching refund by amount and approximate time window
       const matchingRefund = gatewayRefunds.find((gr) => {
-        const amountMatches = gr.amount === refund.amount;
+        const amountMatches = gr.amount === refund.amountPaise;
         const timeMatches =
           gr.metadata?.created &&
           Math.abs(

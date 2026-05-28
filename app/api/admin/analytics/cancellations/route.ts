@@ -179,7 +179,7 @@ export async function GET(req: NextRequest) {
         status: "SUCCEEDED",
       },
       _sum: {
-        amount: true,
+        amountPaise: true,
       },
       _count: true,
     });
@@ -209,7 +209,7 @@ export async function GET(req: NextRequest) {
         cancellationRate: `${cancellationRate}%`,
         totalBookingsInPeriod: totalBookings,
         potentialRefundAmount,
-        actualRefundedAmount: refunds._sum.amount || 0,
+        actualRefundedAmount: refunds._sum?.amountPaise || 0,
         refundCount: refunds._count,
       },
       byReason,

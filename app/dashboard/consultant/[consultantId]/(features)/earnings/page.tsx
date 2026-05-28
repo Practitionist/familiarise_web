@@ -33,8 +33,8 @@ interface EarningsSummary {
 
 interface EarningRecord {
   id: string;
-  consultantShare: number;
-  platformFee: number;
+  consultantSharePaise: number;
+  platformFeePaise: number;
   status: EarningStatus;
   holdUntil: string | null;
   createdAt: string;
@@ -354,13 +354,13 @@ export default function EarningsPage({
                         </td>
                         <td className="px-4 py-3 text-right font-medium text-zinc-900">
                           {formatEarningAmount(
-                            earning.consultantShare,
+                            earning.consultantSharePaise,
                             earning.payment?.currency ?? "INR",
                           )}
                         </td>
                         <td className="px-4 py-3 text-right text-zinc-400">
                           {formatEarningAmount(
-                            earning.platformFee,
+                            earning.platformFeePaise,
                             earning.payment?.currency ?? "INR",
                           )}
                         </td>

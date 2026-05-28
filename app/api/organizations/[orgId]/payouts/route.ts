@@ -236,12 +236,12 @@ export async function POST(
       const totals = readyEarnings.reduce(
         (acc, e) => {
           acc.gross += e.grossAmountPaise;
-          acc.platformFee += e.platformFeePaise;
+          acc.platformFeePaise += e.platformFeePaise;
           acc.orgShare += e.orgSharePaise;
           acc.refunds += e.refundedAmountPaise;
           return acc;
         },
-        { gross: 0, platformFee: 0, orgShare: 0, refunds: 0 },
+        { gross: 0, platformFeePaise: 0, orgShare: 0, refunds: 0 },
       );
       // Net payout to the org = orgShare - refunds. TDS is withheld by
       // the cron if applicable, so this is the PRE-tax net.
@@ -261,7 +261,7 @@ export async function POST(
           amountPaise: netPayout,
           currency: first.currency,
           grossRevenuePaise: totals.gross,
-          platformFeePaise: totals.platformFee,
+          platformFeePaise: totals.platformFeePaise,
           refundsPaise: totals.refunds,
           netPayoutPaise: netPayout,
         },
@@ -299,7 +299,7 @@ export async function POST(
             earningsCount: readyEarnings.length,
             netPayoutPaise: netPayout,
             grossPaise: totals.gross,
-            platformFeePaise: totals.platformFee,
+            platformFeePaise: totals.platformFeePaise,
             refundsPaise: totals.refunds,
           },
         },

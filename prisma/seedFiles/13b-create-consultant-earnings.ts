@@ -143,8 +143,8 @@ export async function createConsultantEarnings(): Promise<void> {
 
       // Calculate revenue breakdown
       const grossAmount = payment.amount;
-      const platformFee = calculatePlatformFee(grossAmount);
-      const consultantShare = calculateConsultantShare(grossAmount);
+      const platformFeePaise = calculatePlatformFee(grossAmount);
+      const consultantSharePaise = calculateConsultantShare(grossAmount);
 
       // Assign status based on weighted distribution
       const status = weightedRandom(EARNING_STATUS_WEIGHTS);
@@ -160,8 +160,8 @@ export async function createConsultantEarnings(): Promise<void> {
           consultantProfileId,
           paymentId: payment.id,
           grossAmount,
-          platformFee,
-          consultantShare,
+          platformFeePaise,
+          consultantSharePaise,
           status,
           holdUntil,
           paidAt,
@@ -190,13 +190,13 @@ export async function createConsultantEarnings(): Promise<void> {
     by: ["status"],
     _count: true,
     _sum: {
-      consultantShare: true,
+      consultantSharePaise: true,
     },
   });
 
   console.log("\nEarnings by Status:");
   for (const item of statusSummary) {
-    const totalAmount = item._sum.consultantShare || 0;
+    const totalAmount = item._sum.consultantSharePaise || 0;
     console.log(
       `  ${item.status}: ${item._count} records (Total Share: ${(totalAmount / 100).toFixed(2)} INR)`,
     );

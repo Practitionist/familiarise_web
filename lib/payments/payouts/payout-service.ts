@@ -139,7 +139,7 @@ export async function checkPayoutEligibility(
 ): Promise<ConsultantPayoutEligibility> {
   // FIX #617: Subtract refundedShareAmount from payout eligibility.
   // Use aggregate _sum of both fields (efficient DB-side) then subtract in JS.
-  // refundedShareAmount is capped at consultantShare by refundEarnings(), so the
+  // refundedShareAmount is capped at consultantSharePaise by refundEarnings(), so the
   // difference is always >= 0.
   const readyEarningsAgg = await prisma.consultantEarnings.aggregate({
     where: {
@@ -147,11 +147,11 @@ export async function checkPayoutEligibility(
       status: EarningStatus.READY,
       payoutId: null,
     },
-    _sum: { consultantShare: true, refundedShareAmount: true },
+    _sum: { consultantSharePaise: true, refundedShareAmount: true },
   });
 
   const readyAmount =
-    (readyEarningsAgg._sum.consultantShare || 0) -
+    (readyEarningsAgg._sum.consultantSharePaise || 0) -
     (readyEarningsAgg._sum.refundedShareAmount || 0);
 
   // Get default payout account
@@ -214,9 +214,9 @@ export async function createPayoutBatch(
           : {}),
       },
       orderBy: { consultantProfileId: "asc" },
-      _sum: { consultantShare: true },
+      _sum: { consultantSharePaise: true },
       having: {
-        consultantShare: {
+        consultantSharePaise: {
           _sum: { gte: PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT },
         },
       },
@@ -266,7 +266,7 @@ export async function createPayoutBatch(
             status: EarningStatus.READY,
             payoutId: null,
           },
-          select: { id: true, consultantShare: true, refundedShareAmount: true },
+          select: { id: true, consultantSharePaise: true, refundedShareAmount: true },
         });
 
         if (readyEarnings.length === 0) return;
@@ -275,7 +275,7 @@ export async function createPayoutBatch(
         // are paid at the correct (reduced) amount, not the original full share.
         const amount = readyEarnings.reduce(
           (sum, e) =>
-            sum + Math.max(e.consultantShare - e.refundedShareAmount, 0),
+            sum + Math.max(e.consultantSharePaise - e.refundedShareAmount, 0),
           0,
         );
 

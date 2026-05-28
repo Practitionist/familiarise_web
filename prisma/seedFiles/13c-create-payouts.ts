@@ -49,7 +49,7 @@ function groupEarningsByConsultant(
   earnings: Array<{
     id: string;
     consultantProfileId: string;
-    consultantShare: number;
+    consultantSharePaise: number;
   }>,
 ): Map<string, typeof earnings> {
   const grouped = new Map<string, typeof earnings>();
@@ -75,7 +75,7 @@ export async function createPayouts(): Promise<void> {
     select: {
       id: true,
       consultantProfileId: true,
-      consultantShare: true,
+      consultantSharePaise: true,
     },
   });
 
@@ -110,7 +110,7 @@ export async function createPayouts(): Promise<void> {
     try {
       // Calculate total amount for this payout
       const totalAmount = earnings.reduce(
-        (sum, e) => sum + e.consultantShare,
+        (sum, e) => sum + e.consultantSharePaise,
         0,
       );
 

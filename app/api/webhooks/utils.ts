@@ -903,7 +903,7 @@ export async function handleRefundCreated(
     // Create new refund record
     await tx.refund.create({
       data: {
-        amount,
+        amountPaise: amount,
         currency,
         status: mapRefundStatus(status),
         refundId,
@@ -1021,7 +1021,7 @@ export async function handleDisputeCreated(
     // Create dispute record
     await tx.dispute.create({
       data: {
-        amount,
+        amountPaise: amount,
         currency,
         reason,
         status: mapDisputeStatus(status),
@@ -1108,7 +1108,7 @@ export async function handleDisputeUpdated(
         where: { paymentId: dispute.paymentId, status: "HELD" },
         select: {
           id: true,
-          consultantShare: true,
+          consultantSharePaise: true,
           refundedShareAmount: true,
           consultantProfileId: true,
         },
@@ -1116,7 +1116,7 @@ export async function handleDisputeUpdated(
       for (const earning of heldEarnings) {
         const alreadyRefunded = earning.refundedShareAmount ?? 0;
         const remainingRefundable = Math.max(
-          earning.consultantShare - alreadyRefunded,
+          earning.consultantSharePaise - alreadyRefunded,
           0,
         );
 
@@ -1155,7 +1155,7 @@ export async function handleDisputeUpdated(
       if (disputePayment) {
         void notifyDisputeResolved([disputePayment.userId], {
           disputeId,
-          amount: dispute.amount,
+          amount: dispute.amountPaise,
           currency: dispute.currency,
           reason: dispute.reason || undefined,
           status: mappedStatus,

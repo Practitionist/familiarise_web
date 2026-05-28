@@ -95,7 +95,7 @@ export async function alertDisputeDeadlines(): Promise<DisputeDeadlineAlertResul
       id: dispute.id,
       disputeId: dispute.disputeId,
       status: dispute.status,
-      amount: dispute.amount,
+      amount: dispute.amountPaise,
       currency: dispute.currency,
       reason: dispute.reason,
       dueBy: dispute.dueBy!,
@@ -125,7 +125,7 @@ export async function alertDisputeDeadlines(): Promise<DisputeDeadlineAlertResul
 
     console.log(`   Status: ${dispute.status}`);
     console.log(
-      `   Amount: ${dispute.currency} ${(dispute.amount / 100).toFixed(2)}`,
+      `   Amount: ${dispute.currency} ${(dispute.amountPaise / 100).toFixed(2)}`,
     );
     console.log(`   Reason: ${dispute.reason}`);
     console.log(`   Gateway: ${dispute.paymentGateway}`);
@@ -155,7 +155,7 @@ export async function alertDisputeDeadlines(): Promise<DisputeDeadlineAlertResul
     );
     for (const dispute of pastDueDisputes) {
       console.log(
-        `   - ${dispute.disputeId}: ${dispute.currency} ${(dispute.amount / 100).toFixed(2)} (was due ${dispute.dueBy?.toISOString()})`,
+        `   - ${dispute.disputeId}: ${dispute.currency} ${(dispute.amountPaise / 100).toFixed(2)} (was due ${dispute.dueBy?.toISOString()})`,
       );
     }
     criticalCount += pastDueDisputes.length;
