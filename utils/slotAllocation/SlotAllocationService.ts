@@ -236,7 +236,8 @@ export class SlotAllocationService {
             throw new AllocationNotFoundError(`${eventType} not found`);
           }
 
-          const { consultant, config, consulteeUserId } = eventData;
+          const { consultant, config, consulteeUserId, organizationId } =
+            eventData;
 
           // CRITICAL FIX: Check for existing appointments to detect reschedule scenario
           // If tentative slots exist, this is a reschedule and we should preserve the original slot count
@@ -401,6 +402,7 @@ export class SlotAllocationService {
             consultant.userId,
             consulteeUserId,
             config,
+            organizationId,
           );
 
           // Reconnect enrolled users to new slots (for group events like classes)
@@ -491,7 +493,8 @@ export class SlotAllocationService {
             throw new AllocationNotFoundError(`${eventType} not found`);
           }
 
-          const { consultant, config, consulteeUserId } = eventData;
+          const { consultant, config, consulteeUserId, organizationId } =
+            eventData;
 
           // Convert to Date objects with validation
           const slots = slotStrings.map((s, i) => {
@@ -673,6 +676,7 @@ export class SlotAllocationService {
             consultant.userId,
             consulteeUserId,
             config,
+            organizationId,
           );
 
           // Reconnect enrolled users to new slots (for group events like classes)
@@ -1338,6 +1342,12 @@ export class SlotAllocationService {
     consultantUserId: string,
     consulteeUserId?: string,
     config?: EventConfig,
+    // #768 Comment 5 — slots created here inherit the org context
+    // resolved by fetchEventData. SUBSCRIPTION pulls from the placeholder
+    // Appointment's Payment.organizationId; CLASS pulls from
+    // classPlan.organizationId (host wins per #768 design decision);
+    // CONSULTATION/WEBINAR re-read the existing Appointment's tag.
+    organizationId?: string | null,
   ): Promise<any[]> {
     const slotsPerCall = SlotCalculationService.getSlotsPerCall(
       config?.sessionDurationInHours || config?.durationInHours || 1,
@@ -1394,6 +1404,7 @@ export class SlotAllocationService {
             [this.getEventRelationField(eventType)]: {
               connect: { id: eventId },
             },
+            ...(organizationId ? { organizationId } : {}),
             slotsOfAppointment: {
               create: slotsToCreate,
             },
@@ -1803,6 +1814,11 @@ export class SlotAllocationService {
     config: EventConfig;
     consulteeUserId?: string;
     requestedSlots?: Date[];
+    /**
+     * Org context for any Appointment rows created by this allocation.
+     * Resolved per event type; see #768 Comment 5.
+     */
+    organizationId?: string | null;
   } | null> {
     const consultantProfileSelect = {
       select: {
@@ -1825,6 +1841,8 @@ export class SlotAllocationService {
     let config: EventConfig;
     let consulteeUserId: string | undefined;
     let requestedSlots: Date[] | undefined;
+    // #768 Comment 5
+    let organizationId: string | null = null;
 
     switch (eventType) {
       case "consultation": {
@@ -1847,6 +1865,8 @@ export class SlotAllocationService {
         requestedSlots = event.appointment?.slotsOfAppointment?.map(
           (s) => new Date(s.startsAt),
         );
+        // #768 — preserve org tag across reschedule (delete+recreate).
+        organizationId = event.appointment?.organizationId ?? null;
         break;
       }
 
@@ -1858,7 +1878,12 @@ export class SlotAllocationService {
               include: { consultantProfile: consultantProfileSelect },
             },
             requestedBy: { include: { user: true } },
-            appointments: { include: { slotsOfAppointment: true } },
+            appointments: {
+              include: {
+                slotsOfAppointment: true,
+                payment: { select: { organizationId: true } },
+              },
+            },
           },
         });
         if (!event) return null;
@@ -1876,6 +1901,13 @@ export class SlotAllocationService {
         requestedSlots = event.appointments?.flatMap((app) =>
           app.slotsOfAppointment.map((s) => new Date(s.startsAt)),
         );
+        // #768 — placeholder Appointment from checkout carries the org
+        // tag. New lazy-allocated slots inherit it.
+        organizationId =
+          event.appointments?.find((a) => a.organizationId)?.organizationId ??
+          event.appointments?.flatMap((a) => a.payment).find((p) => p?.organizationId)
+            ?.organizationId ??
+          null;
         break;
       }
 
@@ -1893,6 +1925,9 @@ export class SlotAllocationService {
         config = {
           durationInHours: event.webinarPlan?.durationInHours,
         };
+        // #768 — WEBINAR Appointment is SHARED across registrants from
+        // multiple orgs; tag with the plan's host org if any.
+        organizationId = event.webinarPlan?.organizationId ?? null;
         break;
       }
 
@@ -1926,6 +1961,9 @@ export class SlotAllocationService {
           schedulingPeriodStartsAt: event.schedulingPeriodStartsAt ?? undefined,
           schedulingPeriodEndsAt: event.schedulingPeriodEndsAt ?? undefined,
         };
+        // #768 — CLASS sessions inherit host-org from the plan; locked
+        // even on reschedule. Marketplace classes stay null.
+        organizationId = event.classPlan?.organizationId ?? null;
         break;
       }
     }
@@ -1957,6 +1995,7 @@ export class SlotAllocationService {
       config,
       consulteeUserId,
       requestedSlots,
+      organizationId,
     };
   }
 
