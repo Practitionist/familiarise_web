@@ -109,7 +109,7 @@ async function createContract(
     billingAccountId: string;
     effectiveFrom: string;
     effectiveTo?: string | null;
-    paymentTermsDays: number;
+    paymentTermsDays?: number;
     autoRenew: boolean;
     status: "DRAFT" | "ACTIVE";
     licenseFeePaise?: number;
@@ -230,20 +230,27 @@ function CreateContractDialog({
 
   const handleSubmit = () => {
     setError(null);
-    const terms = parseInt(paymentTermsDays, 10);
-    if (!Number.isFinite(terms) || terms < 1 || terms > 120) {
-      setError("Payment terms must be between 1 and 120 days.");
-      return;
+    const isLicense = fundingSource === "LICENSE";
+    // LICENSE-funded orgs don't see the payment-terms field (annual fee
+    // is paid upfront, not on net-X terms). Skip validation and omit
+    // the field from the payload so the server's default(60) applies —
+    // otherwise stale text typed before switching to LICENSE would fire
+    // a hidden-field error.
+    let terms: number | undefined;
+    if (!isLicense) {
+      const parsed = parseInt(paymentTermsDays, 10);
+      if (!Number.isFinite(parsed) || parsed < 1 || parsed > 120) {
+        setError("Payment terms must be between 1 and 120 days.");
+        return;
+      }
+      terms = parsed;
     }
     if (effectiveTo && new Date(effectiveTo) <= new Date(effectiveFrom)) {
       setError("End date must be after the start date.");
       return;
     }
-    // For LICENSE-funded orgs, optionally include the flat fee + cycle
-    // so the server can create a BillingSubscription atomically with
-    // the Contract. Trim/parse the rupee input — empty means "skip".
     let licenseFeePaise: number | undefined;
-    if (fundingSource === "LICENSE" && licenseFeeINR.trim() !== "") {
+    if (isLicense && licenseFeeINR.trim() !== "") {
       const inr = parseFloat(licenseFeeINR);
       if (!Number.isFinite(inr) || inr <= 0) {
         setError("License fee must be a positive number (₹).");
@@ -255,7 +262,7 @@ function CreateContractDialog({
       billingAccountId,
       effectiveFrom: new Date(effectiveFrom).toISOString(),
       effectiveTo: effectiveTo ? new Date(effectiveTo).toISOString() : null,
-      paymentTermsDays: terms,
+      ...(terms !== undefined ? { paymentTermsDays: terms } : {}),
       autoRenew,
       status,
       ...(licenseFeePaise !== undefined
