@@ -7,7 +7,7 @@
  * can tweak copy and analytics in one place when v1.1 ships.
  */
 
-import { cn } from "@/lib/utils";
+import { cn } from "@/utils/tailwind";
 
 export interface ComingSoonBadgeProps {
   feature: string;

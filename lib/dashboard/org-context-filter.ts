@@ -8,16 +8,19 @@
  * sentinel → API query-param contract lives here.
  */
 
-/** Sentinel value for "personal / solo bookings only" (no organizationId). */
-export const ORG_FILTER_PERSONAL = "__personal__";
+/**
+ * Sentinel value for "the caller's own data, not tied to any org".
+ *
+ * Renamed from "__personal__" → "mine" in the #768 lockdown (#674
+ * closure) so the URL contract matches resolveOrgScope (which also
+ * accepts "mine"). The double-underscore prefix added URL noise without
+ * carrying meaning.
+ */
+export const ORG_FILTER_PERSONAL = "mine";
 /** Sentinel value for "all — don't filter". */
-export const ORG_FILTER_ALL = "__all__";
+export const ORG_FILTER_ALL = "all";
 
 export type OrgContextFilterValue =
   | typeof ORG_FILTER_ALL
   | typeof ORG_FILTER_PERSONAL
   | string; // an organizationId
-
-// The API query-param contract for the personal scope is the string
-// "personal" (see `resolveOrgScope`). Pages map ORG_FILTER_PERSONAL →
-// "personal" inline at the call site.
