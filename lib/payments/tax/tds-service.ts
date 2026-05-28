@@ -100,7 +100,7 @@ export async function getCurrentFYCumulativePayments(
   const fy = financialYear || getIndianFinancialYear();
   const { start, end } = getFYDateRange(fy);
 
-  const result = await prisma.payout.aggregate({
+  const result = await prisma.consultantPayout.aggregate({
     where: {
       consultantProfileId,
       status: "COMPLETED",

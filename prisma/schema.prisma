@@ -1931,7 +1931,7 @@ model ConsultantProfile {
 
   // Payout relations
   earnings       ConsultantEarnings[]
-  payouts        Payout[]
+  payouts        ConsultantPayout[]
   payoutAccounts PayoutAccount[]
 
   // Tax & compliance
@@ -3424,7 +3424,7 @@ model ConsultantEarnings {
 
   consultantProfile ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   payment           Payment           @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  payout            Payout?           @relation(fields: [payoutId], references: [id])
+  payout            ConsultantPayout? @relation(fields: [payoutId], references: [id])
 
   @@unique([paymentId, consultantProfileId, role])
   @@index([consultantProfileId, status])
@@ -3433,7 +3433,11 @@ model ConsultantEarnings {
   @@index([paymentId])
 }
 
-model Payout {
+/// Payouts to individual consultants (1099-style). The parallel
+/// OrganizationPayout serves HOST/HYBRID orgs receiving the org-share
+/// portion of a 3-way split. Renamed from `Payout` in the v0 lockdown
+/// (#768 Lockdown #8) to make the split explicit.
+model ConsultantPayout {
   id                  String         @id @default(cuid())
   consultantProfileId String
   provider            PaymentGateway
@@ -3553,7 +3557,7 @@ model TDSRecord {
   form26QFilingDate DateTime?
 
   consultantProfile ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  payout            Payout?           @relation(fields: [payoutId], references: [id])
+  payout            ConsultantPayout? @relation(fields: [payoutId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

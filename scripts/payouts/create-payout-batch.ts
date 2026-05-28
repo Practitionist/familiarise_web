@@ -160,7 +160,7 @@ export async function createPayoutBatch(
 
           const shouldAutoApprove = amount < AUTO_APPROVE_THRESHOLD;
 
-          const payout = await tx.payout.create({
+          const payout = await tx.consultantPayout.create({
             data: {
               consultantProfileId,
               provider: account.provider,
@@ -378,22 +378,22 @@ export async function getPayoutStats(): Promise<{
   completed: { count: number; amount: number };
 }> {
   const [pending, approved, processing, completed] = await Promise.all([
-    prisma.payout.aggregate({
+    prisma.consultantPayout.aggregate({
       where: { status: PayoutStatus.PENDING },
       _sum: { amount: true },
       _count: true,
     }),
-    prisma.payout.aggregate({
+    prisma.consultantPayout.aggregate({
       where: { status: PayoutStatus.APPROVED },
       _sum: { amount: true },
       _count: true,
     }),
-    prisma.payout.aggregate({
+    prisma.consultantPayout.aggregate({
       where: { status: PayoutStatus.PROCESSING },
       _sum: { amount: true },
       _count: true,
     }),
-    prisma.payout.aggregate({
+    prisma.consultantPayout.aggregate({
       where: { status: PayoutStatus.COMPLETED },
       _sum: { amount: true },
       _count: true,

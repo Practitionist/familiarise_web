@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
     const batchId = await createPayoutBatch(consultantProfileIds);
 
     // Get created payouts
-    const payouts = await prisma.payout.findMany({
+    const payouts = await prisma.consultantPayout.findMany({
       where: { batchId },
       include: {
         consultantProfile: {

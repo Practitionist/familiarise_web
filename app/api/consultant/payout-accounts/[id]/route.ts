@@ -124,7 +124,7 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     }
 
     // Don't allow deletion if there are pending payouts using this account
-    const pendingPayouts = await prisma.payout.count({
+    const pendingPayouts = await prisma.consultantPayout.count({
       where: {
         consultantProfileId: consultantProfile.id,
         status: { in: ["PENDING", "APPROVED", "PROCESSING"] },
