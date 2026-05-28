@@ -3175,7 +3175,6 @@ model Payment {
   // Payout relations
   earnings     ConsultantEarnings[]
   creditUsages ReferralCreditUsage[]
-  invoice      Invoice?
 
   // Enterprise: optional org tagging.
   // Set on payments made by an org member (fundingSource: PERSONAL/WALLET/INVOICE/LICENSE).
@@ -3562,33 +3561,6 @@ model TDSRecord {
   @@index([consultantProfileId, financialYear])
   @@index([financialYear, quarter])
   @@index([reportedInForm26Q])
-}
-
-model Invoice {
-  id            String        @id @default(cuid())
-  paymentId     String?       @unique
-  invoiceNumber String        @unique // INV-YYYYMM-XXXXX
-  amount        Int
-  currency      String        @default("INR")
-  status        PaymentStatus @default(PENDING)
-  items         Json // Line items with HSN codes
-  pdfUrl        String?
-  dueDate       DateTime?
-  paidAt        DateTime?
-
-  // Tax breakdown
-  taxAmount Int? // in paise — GST amount
-  taxRate   Float? // 18% for services
-  hsnCode   String? // SAC code (999293 for consulting)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  payment Payment? @relation(fields: [paymentId], references: [id])
-
-  @@index([invoiceNumber])
-  @@index([status])
-  @@index([paymentId])
 }
 
 model WebhookEvent {
