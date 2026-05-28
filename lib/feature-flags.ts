@@ -83,22 +83,3 @@ export const ENABLE_IRP_UPLOADER = process.env.ENABLE_IRP_UPLOADER === "true";
  */
 export const ENABLE_TDS_ADMIN_VIEW = process.env.ENABLE_TDS_ADMIN_VIEW === "true";
 
-/**
- * HRIS connector endpoints (Workday, BambooHR, SAP, etc.).
- *
- * Schema (`HrisConfig`, `HrisSyncJob`, `HrisEmployeeMap`) and the CRUD
- * routes under `app/api/organizations/[orgId]/hris/**` exist but the
- * provider-specific sync wiring isn't shipped in v1. CSV imports work
- * out of band; the API surface is dormant until the first design
- * partner customer asks for live directory sync.
- *
- * When false (default): all `app/api/organizations/[orgId]/hris/*`
- * routes return 404. The schema rows stay queryable directly via
- * Prisma but aren't user-reachable.
- *
- * To enable for a design-partner customer:
- *   1. Set `ENABLE_HRIS=true` in the deployment environment
- *   2. Implement the provider-specific sync worker (currently stubbed)
- *   3. See Issue #744-E3 for the HRIS UI follow-up scope
- */
-export const ENABLE_HRIS = process.env.ENABLE_HRIS === "true";

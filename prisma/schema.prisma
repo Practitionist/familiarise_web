@@ -556,9 +556,6 @@ model Organization {
   ssoSettings  OrganizationSSOSettings?
   domainClaims OrgDomainClaim[]
 
-  // HRIS (stubbed in v1)
-  hrisConfig HrisConfig?
-
   // Plan catalog back-relations
   consultationPlans ConsultationPlan[]
   subscriptionPlans SubscriptionPlan[]
@@ -1838,78 +1835,6 @@ model DataBreach {
   dpbReference    String?
 
   @@index([detectedAt])
-}
-
-model HrisConfig {
-  id             String       @id @default(uuid())
-  organizationId String       @unique
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-
-  provider     HrisProvider
-  tenantKey    String
-  lastSyncedAt DateTime?
-  active       Boolean      @default(false)
-
-  syncJobs    HrisSyncJob[]
-  employeeMap HrisEmployeeMap[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-model HrisSyncJob {
-  id               String         @id @default(uuid())
-  hrisConfigId     String
-  hrisConfig       HrisConfig     @relation(fields: [hrisConfigId], references: [id], onDelete: Cascade)
-  startedAt        DateTime
-  completedAt      DateTime?
-  status           HrisSyncStatus
-  recordsProcessed Int            @default(0)
-  errorLog         String?        @db.Text
-
-  // "Latest sync per config" is the most common read (admin UI shows
-  // last-sync timestamp + status; cron picks up configs whose latest
-  // sync is older than the schedule cadence). Composite ordered by
-  // startedAt DESC effectively serves both `findFirst({ orderBy:
-  // startedAt desc })` and the per-config history view.
-  @@index([hrisConfigId, startedAt])
-  // Powers the failed-sync alerting cron (Phase 5) — `findMany({
-  // where: { status: "FAILED", startedAt: { gte: cutoff } } })`.
-  @@index([status, startedAt])
-}
-
-model HrisEmployeeMap {
-  id                 String     @id @default(uuid())
-  hrisConfigId       String
-  hrisConfig         HrisConfig @relation(fields: [hrisConfigId], references: [id], onDelete: Cascade)
-  organizationId     String
-  membershipId       String?
-  externalEmployeeId String
-  externalDepartment String?
-  externalLocation   String?
-  externalEmail      String?
-  externalManagerId  String?
-  syncedAt           DateTime
-
-  @@unique([hrisConfigId, externalEmployeeId])
-  @@index([organizationId])
-}
-
-enum HrisProvider {
-  WORKDAY
-  BAMBOOHR
-  SAP
-  ORACLE
-  CERIDIAN
-  DARWINBOX
-  CSV
-}
-
-enum HrisSyncStatus {
-  PENDING
-  RUNNING
-  COMPLETED
-  FAILED
 }
 
 //////////////////////////////////////////////////// USER PROFILES and SLOTTING MECHANISM ////////////////////////////////////////////////////
