@@ -31,13 +31,21 @@ import prisma from "@/lib/prisma";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
 import { generateOrgInvoiceNumber } from "@/lib/payments/billing/invoice-numbering";
 import { BILLABLE_ORG_STATUSES } from "@/lib/enterprise/org-status";
+import { notifyOrgLicenseRenewalUpcoming } from "@/lib/novu/org-workflows";
+import { getAppUrl } from "@/lib/url";
 import { Currency, OrgInvoiceStatus, Prisma } from "@prisma/client";
+
+// Reminder fires when nextInvoiceDate is within this many days. Once
+// per cycle (gated by BillingSubscription.renewalReminderSentAt).
+const RENEWAL_REMINDER_WINDOW_DAYS = 7;
 
 export async function runGenerateSubscriptionInvoices(): Promise<{
   generated: number;
   skipped: number;
+  remindersSent: number;
 }> {
   const now = new Date();
+  const remindersSent = await sendRenewalReminders(now);
 
   const dueSubs = await prisma.billingSubscription.findMany({
     where: {
@@ -116,6 +124,9 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
               currentCycleStart: nextStart,
               currentCycleEnd: nextEnd,
               nextInvoiceDate: nextEnd,
+              // New cycle, new reminder window — clear the gate so
+              // the upcoming-renewal Novu fires once before nextEnd.
+              renewalReminderSentAt: null,
             },
           });
           if (claimed.count === 0) {
@@ -222,7 +233,75 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
   }
 
   console.log(
-    `[cron] generate-subscription-invoices: ${generated} invoices created, ${skipped} skipped`,
+    `[cron] generate-subscription-invoices: ${generated} invoices, ${skipped} skipped, ${remindersSent} renewal reminders`,
   );
-  return { generated, skipped };
+  return { generated, skipped, remindersSent };
+}
+
+async function sendRenewalReminders(now: Date): Promise<number> {
+  const horizon = new Date(now);
+  horizon.setDate(horizon.getDate() + RENEWAL_REMINDER_WINDOW_DAYS);
+
+  const due = await prisma.billingSubscription.findMany({
+    where: {
+      renewalReminderSentAt: null,
+      nextInvoiceDate: { gt: now, lte: horizon },
+      contract: {
+        organization: { status: { in: BILLABLE_ORG_STATUSES } },
+      },
+    },
+    include: {
+      contract: {
+        include: {
+          organization: { select: { id: true, name: true } },
+        },
+      },
+    },
+  });
+
+  let sent = 0;
+  for (const sub of due) {
+    const expectedTotalPaise =
+      sub.model === "FLAT_FEE"
+        ? (sub.flatFeePaise ?? 0)
+        : (sub.ratePerSeatPaise ?? 0) * sub.activeSeatCount;
+
+    const daysUntilRenewal = Math.max(
+      0,
+      Math.ceil(
+        (sub.nextInvoiceDate.getTime() - now.getTime()) /
+          (24 * 60 * 60 * 1000),
+      ),
+    );
+
+    // Claim first so a crashed Novu trigger doesn't double-fire on the
+    // next cron tick. Conditional update gates on the still-null
+    // value, mirroring the invoice claim pattern below.
+    const claimed = await prisma.billingSubscription.updateMany({
+      where: { id: sub.id, renewalReminderSentAt: null },
+      data: { renewalReminderSentAt: now },
+    });
+    if (claimed.count === 0) continue;
+
+    try {
+      await notifyOrgLicenseRenewalUpcoming(sub.contract.organization.id, {
+        orgName: sub.contract.organization.name,
+        cycle: sub.cycle,
+        renewalDate: sub.nextInvoiceDate.toISOString(),
+        daysUntilRenewal,
+        expectedTotalPaise,
+        currency: "INR",
+        dashboardUrl: `${getAppUrl()}/dashboard/organization/${sub.contract.organization.id}/billing`,
+      });
+      sent++;
+    } catch (err) {
+      // Novu non-throwing already, but belt-and-braces — the claim
+      // already committed so re-running won't double-send.
+      console.error(
+        `[cron] renewal-upcoming notify failed for sub ${sub.id}:`,
+        err,
+      );
+    }
+  }
+  return sent;
 }

@@ -955,6 +955,9 @@ model BillingSubscription {
   startsAt          DateTime
   endsAt            DateTime?
 
+  /// Stamped when renewal-upcoming reminder fires; cleared on cycle advance (#746).
+  renewalReminderSentAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
