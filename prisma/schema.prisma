@@ -464,16 +464,6 @@ model Organization {
   canSponsor Boolean @default(true)
   canHost    Boolean @default(false)
 
-  // Escape hatch for future capabilities without a migration. The two
-  // columns above (canSponsor, canHost) cover the 90% path; this blob
-  // is for a long-tail capability that we haven't designed a typed
-  // boolean for yet. The UI derives capability labels via
-  // lib/labels/org-labels.ts which consumes both the typed booleans and
-  // this blob, so a new capability can ship without altering every
-  // session-reader. Only add keys here when there's an active customer
-  // ask — speculative slots accumulate into schema noise.
-  capabilitiesExtra Json?
-
   // India / GCC context (all schema-final; compliance logic stubbed)
   dataResidencyRegion DataRegion        @default(IN)
   isGCC               Boolean           @default(false)
