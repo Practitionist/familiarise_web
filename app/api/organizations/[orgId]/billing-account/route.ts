@@ -67,7 +67,7 @@ export async function GET(
             select: {
               invoices: true,
               contracts: true,
-              walletLedger: true,
+              walletTopUps: true,
             },
           },
         },

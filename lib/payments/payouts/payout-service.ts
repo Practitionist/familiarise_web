@@ -19,6 +19,7 @@ import {
   getStripeConnectService,
   isStripeConnectConfigured,
 } from "./stripe-connect";
+import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { randomUUID } from "crypto";
 import { acquireLock, releaseLock } from "@/lib/redis";
 import {
@@ -648,8 +649,10 @@ async function processRazorpayPayout(
     purpose: "payout",
     queueIfLowBalance: true,
     referenceId: payout.id,
+    // #771 P1-6 — use the deterministic key helper (not Date.now(), which
+    // defeats RazorpayX idempotency on retry when payout.idempotencyKey is null).
     idempotencyKey:
-      payout.idempotencyKey || `payout_${payout.id}_${Date.now()}`,
+      payout.idempotencyKey || razorpayPayouts.generateIdempotencyKey(payout.id),
     notes: {
       payoutId: payout.id,
       source: "familiarise_platform",
@@ -795,6 +798,38 @@ export async function handlePayoutWebhook(
           pendingRevenue: { decrement: payout.amount },
         },
       });
+
+      // #771 D1/D5 — double-entry (dual-write): clear what we owed the
+      // consultant. payout.amount is the cash that left; tdsDeducted was
+      // withheld and is owed to the government.
+      //   Dr CONSULTANT_PAYABLE (gross)   Cr CASH (paid)   Cr TDS_PAYABLE (withheld)
+      if (payout.amount > 0) {
+        const tdsPaise = payout.tdsDeducted ?? 0;
+        const payoutPostings: Posting[] = [
+          {
+            account: {
+              kind: "CONSULTANT_PAYABLE",
+              consultantProfileId: payout.consultantProfileId,
+            },
+            direction: "DEBIT",
+            amountPaise: payout.amount + tdsPaise,
+          },
+          { account: { kind: "CASH" }, direction: "CREDIT", amountPaise: payout.amount },
+        ];
+        if (tdsPaise > 0) {
+          payoutPostings.push({
+            account: { kind: "TDS_PAYABLE" },
+            direction: "CREDIT",
+            amountPaise: tdsPaise,
+          });
+        }
+        await postLedgerTxn(tx, {
+          idempotencyKey: `payout:${payout.id}`,
+          kind: "PAYOUT",
+          payoutId: payout.id,
+          postings: payoutPostings,
+        });
+      }
 
       if (payout.tdsDeducted > 0 && payout.tdsRateApplied) {
         await tx.tDSRecord.deleteMany({

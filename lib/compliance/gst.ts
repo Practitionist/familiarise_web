@@ -1,8 +1,12 @@
 /**
- * GST (Goods and Services Tax) derivation — INDIA COMPLIANCE STUB.
+ * GST (Goods and Services Tax) derivation — INDIA COMPLIANCE.
  *
- * STATUS: stub. Returns zero tax / IGST-only defaults so downstream code
- * doesn't null-crash. Live derivation lands in a follow-up PR.
+ * STATUS: LIVE (#771 P2 — header corrected; this was never a stub).
+ * `deriveGstBreakdown` computes CGST/SGST vs IGST and zero-rated export. It
+ * needs `buyerStateCode` (from Organization.gstStateCode) to pick intra- vs
+ * inter-state; it falls back to IGST when the state is unknown — #771 §8 wants
+ * that state made mandatory for B2B invoices. HSN default 999293 (educational);
+ * set 998314 / 998399 for professional / IT-consulting lines.
  *
  * ─────────────────────────────────────────────────────────────────────────
  * LIVE IMPLEMENTATION REQUIREMENTS (follow-up PR)
@@ -112,7 +116,13 @@ export function deriveGstBreakdown(params: {
     };
   }
 
-  // Inter-state (or unknown buyer state): IGST only
+  // Inter-state, or unknown buyer state. #771 §8 — flag the unknown-state case
+  // distinctly so a missing place-of-supply that silently defaulted to IGST is
+  // visible in the stored reason (auditable), rather than masquerading as a real
+  // inter-state supply.
+  const igstReason = !params.buyerStateCode
+    ? "IGST_STATE_UNKNOWN"
+    : "INTER_STATE_IGST";
   return {
     subtotalPaise: params.subtotalPaise,
     igstPaise: taxPaise,
@@ -122,7 +132,7 @@ export function deriveGstBreakdown(params: {
     hsnCode,
     placeOfSupply,
     reverseCharge: false,
-    reason: "INTER_STATE_IGST",
+    reason: igstReason,
   };
 }
 

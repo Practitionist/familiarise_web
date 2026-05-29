@@ -2284,9 +2284,16 @@ export async function handleCheckout(
                   priceCapPerEngagementPaise: true,
                 },
               });
+              // #771 / #715 — marginal cost of the overage. With a per-engagement
+              // price cap, charge that per overage engagement; otherwise the overage
+              // costs the full booking amount. (Previously this defaulted to 0 when
+              // priceCap was null, so CHARGE_ORG silently charged nothing — the #715
+              // no-op.)
               const marginalPaise =
-                (programCfg?.priceCapPerEngagementPaise ?? 0) *
-                Math.max(1, utilizationResult.engagementsConsumedDelta);
+                programCfg?.priceCapPerEngagementPaise != null
+                  ? programCfg.priceCapPerEngagementPaise *
+                    Math.max(1, utilizationResult.engagementsConsumedDelta)
+                  : amount;
 
               if (programCfg?.overageBehavior === "CHARGE_MEMBER") {
                 throw Object.assign(
@@ -2303,8 +2310,6 @@ export async function handleCheckout(
                 // violated — the base leg already holds the INVOICE_ACCRUAL slot
                 // for this paymentId. Both sources count against the org's credit
                 // limit (see getInvoiceCreditLimitPaise aggregation below).
-                // TODO #716: replace with a proper credit-note / receivable once the
-                // refund unification epic ships.
                 await tx.paymentLeg.create({
                   data: {
                     paymentId: payment.id,
@@ -2313,6 +2318,28 @@ export async function handleCheckout(
                     sourceRef: `overage:${programAssignmentId}`,
                   },
                 });
+
+                // #771 / #715 — append-only OverageEvent (Stripe-Meter style): the
+                // audit record AND the row the cycle-close cron rolls into an
+                // InvoiceLineItem. Linked 1:1 to this booking's BookingUtilization.
+                // This write was the missing piece — without it overage was a no-op.
+                const bu = await tx.bookingUtilization.findUnique({
+                  where: { paymentId: payment.id },
+                  select: { id: true },
+                });
+                if (bu) {
+                  await tx.overageEvent.create({
+                    data: {
+                      programAssignmentId,
+                      bookingUtilizationId: bu.id,
+                      overageBehavior: "CHARGE_ORG",
+                      marginalPaise,
+                      currency: "INR",
+                      // paymentId / invoiceLineItemId / settledAt are stamped by the
+                      // cycle-close cron when it rolls this into the org invoice.
+                    },
+                  });
+                }
               }
             }
           }

@@ -274,19 +274,6 @@ export async function POST(
         data: { status: "PAID" },
       });
 
-      await tx.settlementLedgerEntry.create({
-        data: {
-          organizationId: orgId,
-          payoutId: created.id,
-          kind: "PAYOUT_SENT",
-          amountPaise: -netPayout,
-          currency: first.currency,
-          notes:
-            body.notes ??
-            `Payout initiated — ${readyEarnings.length} earnings rolled up`,
-        },
-      });
-
       await tx.orgAuditLog.create({
         data: {
           organizationId: orgId,

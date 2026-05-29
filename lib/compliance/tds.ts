@@ -2,8 +2,10 @@
  * TDS (Tax Deducted at Source) live derivation — INDIA COMPLIANCE.
  *
  * Section selection precedence (CBDT circulars, FY 2025-26):
- *   - Default: Section 194-O (1%) since Familiarise is the e-commerce
- *     operator. Applies to residents AND non-residents on the platform.
+ *   - Default: Section 194-O (0.1% w.e.f. 1-Oct-2024, Finance (No. 2) Act 2024)
+ *     since Familiarise is the e-commerce operator. Applies to RESIDENT
+ *     participants; non-residents pivot to Sec 195 + DTAA (194-O does not apply
+ *     to NR — tracked in #738).
  *   - Explicit override: `consultant.tdsSection` is honoured for
  *     consultants whose engagement is direct (not via the platform e.g.
  *     direct-invoice contractors). This pivots between 194-O / 194J / 194C.
@@ -24,7 +26,7 @@
  *   - Cross-reference `providerCountry` against `dtaa-rates.json`.
  *   - Apply DTAA rate ONLY if it is strictly LOWER than the section
  *     default. India's TDS framework permits the LOWER of section vs
- *     DTAA — so a treaty rate of 10% never reduces a 1% Section 194-O.
+ *     DTAA — so a treaty rate of 10% never reduces a 0.1% Section 194-O.
  *   - Captures `dtaaRateApplied` on the Payout when applied; null
  *     otherwise.
  *
@@ -42,13 +44,22 @@ import dtaaRatesJson from "./dtaa-rates.json";
 
 /** Default rates per section. Update when CBDT changes the rate card. */
 export const TDS_SECTION_DEFAULTS: Record<string, number> = {
-  "194O": 0.01,
+  // #771 P0-1 / #737 / #738 — 194-O was cut to 0.1% (0.001) w.e.f. 1-Oct-2024 by
+  // the Finance (No. 2) Act 2024. Previously wrongly 0.01 (1%) → 10x over-withholding.
+  "194O": 0.001,
   "194J": 0.1,
   "194C": 0.02,
 };
 
-/** Section 206AA punitive rate when PAN is missing or malformed. */
+/** Section 206AA punitive rate when PAN is missing/malformed (applies to 194J/194C). */
 export const PAN_FALLBACK_RATE = 0.2;
+
+/**
+ * #771 P0-1 — Section 194-O carries its OWN no-PAN rate of 5%, a special
+ * carve-out, NOT the 20% of 206AA. Applied when the section is 194-O and PAN is
+ * missing/invalid.
+ */
+export const NO_PAN_RATE_194O = 0.05;
 
 /** Default section when none is explicitly set on the consultant. */
 export const DEFAULT_SECTION = "194O";
@@ -116,13 +127,20 @@ export function computeTdsForPayout(params: {
     reasons.push(`section=${tdsSection} (platform default)`);
   }
 
-  // --- 2. PAN fallback (Section 206AA) — wins over everything else.
+  // --- 2. PAN fallback — wins over everything else. #771 P0-1: 194-O has its
+  // own 5% no-PAN rate; 206AA's 20% applies to 194J/194C.
   if (!isValidPan(consultant.panNumber)) {
-    const amt = Math.floor(grossAmountPaise * PAN_FALLBACK_RATE);
-    reasons.push("Section 206AA fallback (PAN missing or malformed) → 20%");
+    const fallbackRate =
+      tdsSection === "194O" ? NO_PAN_RATE_194O : PAN_FALLBACK_RATE;
+    const amt = Math.floor(grossAmountPaise * fallbackRate);
+    reasons.push(
+      tdsSection === "194O"
+        ? `Section 194-O no-PAN fallback → ${(NO_PAN_RATE_194O * 100).toFixed(0)}%`
+        : `Section 206AA fallback (PAN missing or malformed) → ${(PAN_FALLBACK_RATE * 100).toFixed(0)}%`,
+    );
     return {
       tdsSection,
-      tdsRate: PAN_FALLBACK_RATE,
+      tdsRate: fallbackRate,
       tdsAmountPaise: amt,
       dtaaRateApplied: null,
       fallbackApplied: true,

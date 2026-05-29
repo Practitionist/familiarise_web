@@ -76,13 +76,10 @@ export async function GET(
     Math.max(1, Number(url.searchParams.get("perPage") ?? 20)),
   );
 
-  const where = {
-    billingAccountId: ba.id,
-    reason: "TOPUP" as const,
-  };
+  const where = { billingAccountId: ba.id };
   const [total, topUps] = await prisma.$transaction([
-    prisma.walletEntry.count({ where }),
-    prisma.walletEntry.findMany({
+    prisma.walletTopUp.count({ where }),
+    prisma.walletTopUp.findMany({
       where,
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * perPage,
@@ -147,7 +144,7 @@ export async function POST(
   // (in notes/`razorpayOrderId`) so the client can resume checkout
   // without us minting a fresh order on the gateway side.
   if (clientIdempotencyKey) {
-    const existing = await prisma.walletEntry.findUnique({
+    const existing = await prisma.walletTopUp.findUnique({
       where: { providerOrderId: clientIdempotencyKey },
     });
     if (existing) {
@@ -236,11 +233,11 @@ export async function POST(
     // Razorpay refused — reap the placeholder so abandoned-cleanup
     // doesn't have to. If this delete fails too, the cron will eventually
     // pick it up; the user sees a clean error either way.
-    await prisma.walletEntry
+    await prisma.walletTopUp
       .delete({ where: { providerOrderId: walletEntryOrderId } })
       .catch((cleanupErr) =>
         console.error(
-          "[wallet/top-ups] failed to reap orphan WalletEntry:",
+          "[wallet/top-ups] failed to reap orphan WalletTopUp:",
           cleanupErr,
         ),
       );
@@ -270,7 +267,7 @@ export async function POST(
 
   try {
     await prisma.$transaction(async (tx) => {
-      await tx.walletEntry.update({
+      await tx.walletTopUp.update({
         where: { providerOrderId: walletEntryOrderId },
         data: {
           notes: `Top-up initiated by membership ${access.member.id}; razorpay_order=${razorpayOrderId}`,

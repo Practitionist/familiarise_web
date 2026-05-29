@@ -66,8 +66,8 @@ export async function GET(
       organization: {
         select: {
           name: true,
-          gstin: true,
           billingEmail: true,
+          taxInfo: { select: { gstin: true } },
         },
       },
       lineItems: { orderBy: { position: "asc" } },
@@ -137,7 +137,7 @@ export async function GET(
       items,
       org: {
         name: invoice.organization.name,
-        gstin: invoice.organization.gstin,
+        gstin: invoice.organization.taxInfo?.gstin ?? null,
         billingEmail: invoice.organization.billingEmail,
       },
       supplier: SUPPLIER,

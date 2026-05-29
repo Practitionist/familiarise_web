@@ -15,6 +15,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { ledgerAccountId } from "@/lib/payments/ledger/post";
 
 const LedgerQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -66,15 +67,39 @@ export async function GET(
   }
   const { page, perPage } = parsed.data;
 
-  const [total, ledger] = await prisma.$transaction([
-    prisma.walletEntry.count({ where: { billingAccountId: ba.id } }),
-    prisma.walletEntry.findMany({
-      where: { billingAccountId: ba.id },
+  // #772 B3 — wallet history is now the double-entry journal: the org's
+  // WALLET LedgerAccount holds one entry per cash movement (CREDIT = top-up
+  // / refund-in, DEBIT = booking spend / top-up refund-out). We surface a
+  // WalletEntry-compatible shape (signed deltaPaise + reason) so the client
+  // ledger view is unchanged.
+  const walletAccountId = ledgerAccountId({
+    kind: "WALLET",
+    organizationId: orgId,
+    currency: ba.currency,
+  });
+  const [total, entries] = await prisma.$transaction([
+    prisma.ledgerEntry.count({ where: { accountId: walletAccountId } }),
+    prisma.ledgerEntry.findMany({
+      where: { accountId: walletAccountId },
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * perPage,
       take: perPage,
+      include: {
+        transaction: {
+          select: { kind: true, paymentId: true, description: true },
+        },
+      },
     }),
   ]);
+  const ledger = entries.map((e) => ({
+    id: e.id,
+    deltaPaise:
+      e.direction === "CREDIT" ? Number(e.amountPaise) : -Number(e.amountPaise),
+    reason: e.transaction.kind,
+    paymentId: e.transaction.paymentId,
+    notes: e.transaction.description,
+    createdAt: e.createdAt,
+  }));
 
   return NextResponse.json({
     billingAccount: {

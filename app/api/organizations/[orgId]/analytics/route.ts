@@ -20,6 +20,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { ledgerAccountId } from "@/lib/payments/ledger/post";
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -88,17 +89,36 @@ export async function GET(
         periodEnd: { gte: new Date() },
       },
     }),
-    org.billingAccount?.fundingSource === "WALLET" && baId
-      ? prisma.walletEntry.groupBy({
-          by: ["reason"],
-          where: {
-            billingAccountId: baId.id,
-            createdAt: { gte: thirtyDaysAgo },
-          },
-          _sum: { deltaPaise: true },
-          _count: { _all: true },
-        })
-      : Promise.resolve([]),
+    // #772 B3 — wallet activity now derives from the double-entry journal:
+    // group the org's WALLET-account entries by originating txn kind and sum
+    // the signed delta (CREDIT = +, DEBIT = −) to preserve the old
+    // {reason, count, deltaPaise} shape.
+    org.billingAccount?.fundingSource === "WALLET" &&
+    baId &&
+    org.billingAccount.currency
+      ? prisma.$queryRaw<
+          Array<{ reason: string; count: bigint; deltaPaise: bigint | null }>
+        >`
+          SELECT t."kind" AS reason,
+                 COUNT(*) AS count,
+                 SUM(CASE e."direction" WHEN 'CREDIT' THEN e."amountPaise" ELSE -e."amountPaise" END) AS "deltaPaise"
+          FROM "LedgerEntry" e
+          JOIN "LedgerTransaction" t ON t."id" = e."transactionId"
+          WHERE e."accountId" = ${ledgerAccountId({
+            kind: "WALLET",
+            organizationId: orgId,
+            currency: org.billingAccount.currency,
+          })}
+            AND e."createdAt" >= ${thirtyDaysAgo}
+          GROUP BY t."kind"
+        `
+      : Promise.resolve(
+          [] as Array<{
+            reason: string;
+            count: bigint;
+            deltaPaise: bigint | null;
+          }>,
+        ),
     org.billingAccount?.fundingSource === "INVOICE" && baId
       ? prisma.organizationInvoice.aggregate({
           where: {
@@ -203,8 +223,8 @@ export async function GET(
             balancePaise: org.billingAccount.walletBalance ?? 0,
             recent: recentWallet.map((r) => ({
               reason: r.reason,
-              count: r._count._all,
-              deltaPaise: r._sum.deltaPaise ?? 0,
+              count: Number(r.count),
+              deltaPaise: Number(r.deltaPaise ?? 0),
             })),
           }
         : null,

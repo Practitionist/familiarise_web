@@ -40,6 +40,7 @@
 import prisma from "@/lib/prisma";
 import {
   EarningStatus,
+  type LedgerAccountKind,
   PaymentStatus,
   Prisma,
   RefundStatus,
@@ -49,6 +50,7 @@ import { walletCredit } from "@/lib/api/organizations/wallet";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { assertEarningStatusTransitionLegal } from "@/lib/payments/payouts/earning-status";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 
 // ============================================================================
 // Public types
@@ -561,6 +563,112 @@ export async function applyRefundCascade(
         } as Prisma.InputJsonValue,
       },
     });
+  }
+
+  // -----------------------------------------------------------------------
+  // Step 9 (#771 P0-5): double-entry reversal (dual-write). A refund reverses
+  // recognized revenue / payable / GST and returns the funding to its source.
+  // Balanced by construction — PLATFORM_FEE absorbs the rounding/discount plug.
+  // Wrapped so a ledger imbalance can never block the refund during dual-write.
+  // -----------------------------------------------------------------------
+  try {
+    const orgId = payment.organizationId ?? null;
+    const credits: Posting[] = [];
+    for (const { leg, reverse } of legAmounts) {
+      if (reverse <= 0) continue;
+      let kind: LedgerAccountKind | null = null;
+      let organizationId: string | null = null;
+      switch (leg.source) {
+        case "CARD":
+          kind = "CASH";
+          break;
+        case "WALLET":
+          kind = "WALLET";
+          organizationId = orgId;
+          break;
+        case "INVOICE_ACCRUAL":
+        case "OVERAGE_INVOICE_ACCRUAL":
+          kind = "ORG_RECEIVABLE";
+          organizationId = orgId;
+          break;
+        case "REFERRAL_CREDIT":
+          kind = "PLATFORM_PROMO";
+          break;
+        case "LICENSE":
+          break;
+      }
+      if (kind) {
+        credits.push({
+          account: { kind, organizationId },
+          direction: "CREDIT",
+          amountPaise: reverse,
+        });
+      }
+    }
+    const fundingTotal = credits.reduce((s, c) => s + c.amountPaise, 0);
+    if (fundingTotal > 0) {
+      const consRev = payment.earnings.reduce(
+        (s, e) => s + proportion(e.consultantSharePaise),
+        0,
+      );
+      const orgRev = payment.organizationEarnings.reduce(
+        (s, o) => s + proportion(o.orgSharePaise),
+        0,
+      );
+      const gstRev = proportion(payment.taxAmount);
+      const platformPlug = fundingTotal - consRev - orgRev - gstRev;
+      const debits: Posting[] = [];
+      if (platformPlug > 0) {
+        debits.push({
+          account: { kind: "PLATFORM_FEE" },
+          direction: "DEBIT",
+          amountPaise: platformPlug,
+        });
+      }
+      if (consRev > 0) {
+        const owner =
+          payment.earnings.find((e) => e.role === "OWNER") ??
+          payment.earnings[0];
+        if (owner) {
+          debits.push({
+            account: {
+              kind: "CONSULTANT_PAYABLE",
+              consultantProfileId: owner.consultantProfileId,
+            },
+            direction: "DEBIT",
+            amountPaise: consRev,
+          });
+        }
+      }
+      if (orgRev > 0 && orgId) {
+        debits.push({
+          account: { kind: "ORG_PAYABLE", organizationId: orgId },
+          direction: "DEBIT",
+          amountPaise: orgRev,
+        });
+      }
+      if (gstRev > 0) {
+        debits.push({
+          account: { kind: "GST_PAYABLE" },
+          direction: "DEBIT",
+          amountPaise: gstRev,
+        });
+      }
+      const debitTotal = debits.reduce((s, d) => s + d.amountPaise, 0);
+      // Post only when balanced (the plug keeps Dr sum == fundingTotal).
+      if (platformPlug >= 0 && debitTotal === fundingTotal && debits.length > 0) {
+        await postLedgerTxn(tx, {
+          idempotencyKey: `refund:${input.refundId}`,
+          kind: "REFUND",
+          paymentId: payment.id,
+          postings: [...debits, ...credits],
+        });
+      }
+    }
+  } catch (err) {
+    console.warn(
+      `[ledger] refund reversal posting skipped for payment ${payment.id}: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   return {

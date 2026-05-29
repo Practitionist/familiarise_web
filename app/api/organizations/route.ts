@@ -270,14 +270,19 @@ export async function POST(req: NextRequest) {
                 },
               }
             : {}),
-          gstin: body.gstin ?? null,
-          // #768 — PAN stored encrypted (parity with ConsultantTaxInfo).
-          ...(body.pan
-            ? (() => {
-                const { encrypted, last4 } = encryptPAN(body.pan);
-                return { panEncrypted: encrypted, panLast4: last4 };
-              })()
-            : {}),
+          // #771 D10 — tax identity lives on the OrganizationTaxInfo satellite.
+          taxInfo: {
+            create: {
+              gstin: body.gstin ?? null,
+              // #768 — PAN stored encrypted (parity with ConsultantTaxInfo).
+              ...(body.pan
+                ? (() => {
+                    const { encrypted, last4 } = encryptPAN(body.pan);
+                    return { panEncrypted: encrypted, panLast4: last4 };
+                  })()
+                : {}),
+            },
+          },
           requiresPO: body.requiresPO,
           status: "PENDING_VERIFICATION",
         },

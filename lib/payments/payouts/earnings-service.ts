@@ -17,6 +17,11 @@
 
 import prisma from "@/lib/prisma";
 import {
+  postLedgerTxn,
+  type AccountRef,
+  type Posting,
+} from "@/lib/payments/ledger/post";
+import {
   EarningRole,
   EarningStatus,
   Payment,
@@ -295,9 +300,9 @@ export async function createEarningsFromPayment({
         // Multi-party payment: create earnings for owner and each collaborator
         for (const split of splits) {
           const isOwner = split.role === "OWNER";
-          const sharePercentage =
+          const shareBps =
             totalConsultantPool > 0
-              ? (split.share / totalConsultantPool) * 100
+              ? Math.round((split.share / totalConsultantPool) * 10_000)
               : 0;
 
           const earnings = await tx.consultantEarnings.create({
@@ -308,7 +313,7 @@ export async function createEarningsFromPayment({
               platformFeePaise: isOwner ? platformFeePaise : 0,
               consultantSharePaise: split.share,
               role: isOwner ? EarningRole.OWNER : EarningRole.COLLABORATOR,
-              sharePercentage: Math.round(sharePercentage * 100) / 100,
+              shareBps,
               status: EarningStatus.PENDING,
               holdUntil,
               currency: "INR",
@@ -412,6 +417,101 @@ export async function createEarningsFromPayment({
       } else if (orgSplit && orgSplit.orgShare === 0) {
         console.log(
           `Platform-only mode for ${orgSplit.organizationId}: skipping 0-value org earnings for payment ${payment.id}`,
+        );
+      }
+
+      // #771 D1/D5 / AF-3 — double-entry booking posting (full accrual, dual-write).
+      //   Dr funding legs (CASH/WALLET/ORG_RECEIVABLE) + PLATFORM_PROMO (referral
+      //   credits) + DISCOUNT  ==  Cr PLATFORM_FEE + CONSULTANT_PAYABLE +
+      //   ORG_PAYABLE + GST_PAYABLE.  discount = originalAmount + tax − amount.
+      // Posted for the single-consultant case; multi-collaborator webinars/classes
+      // are deferred (logged). Wrapped so a ledger imbalance can never break the
+      // real booking during the dual-write phase.
+      if (splits.length === 0) {
+        try {
+          const legs = await tx.paymentLeg.findMany({
+            where: { paymentId: payment.id },
+            select: { source: true, amountPaise: true },
+          });
+          const orgId = payment.organizationId ?? null;
+          const debits: Posting[] = [];
+          const pushDebit = (account: AccountRef, amountPaise: number) => {
+            if (amountPaise > 0)
+              debits.push({ account, direction: "DEBIT", amountPaise });
+          };
+          if (legs.length > 0) {
+            let card = 0;
+            let wallet = 0;
+            let receivable = 0;
+            let promo = 0;
+            for (const leg of legs) {
+              if (leg.amountPaise <= 0) continue;
+              switch (leg.source) {
+                case "CARD":
+                  card += leg.amountPaise;
+                  break;
+                case "WALLET":
+                  wallet += leg.amountPaise;
+                  break;
+                case "INVOICE_ACCRUAL":
+                case "OVERAGE_INVOICE_ACCRUAL":
+                  receivable += leg.amountPaise;
+                  break;
+                case "REFERRAL_CREDIT":
+                  promo += leg.amountPaise;
+                  break;
+                case "LICENSE":
+                  break; // 0 — no money moves
+              }
+            }
+            pushDebit({ kind: "CASH" }, card);
+            pushDebit({ kind: "WALLET", organizationId: orgId }, wallet);
+            pushDebit({ kind: "ORG_RECEIVABLE", organizationId: orgId }, receivable);
+            pushDebit({ kind: "PLATFORM_PROMO" }, promo);
+          } else {
+            // Back-compat: legacy single-source payments carry no legs.
+            pushDebit({ kind: "CASH" }, payment.amount);
+          }
+          pushDebit(
+            { kind: "DISCOUNT" },
+            Math.max(
+              0,
+              payment.originalAmount + payment.taxAmount - payment.amount,
+            ),
+          );
+
+          const credits: Posting[] = [];
+          const pushCredit = (account: AccountRef, amountPaise: number) => {
+            if (amountPaise > 0)
+              credits.push({ account, direction: "CREDIT", amountPaise });
+          };
+          pushCredit({ kind: "PLATFORM_FEE" }, platformFeePaise);
+          pushCredit(
+            { kind: "CONSULTANT_PAYABLE", consultantProfileId },
+            totalConsultantPool,
+          );
+          if (orgSplit && orgSplit.orgShare > 0) {
+            pushCredit(
+              { kind: "ORG_PAYABLE", organizationId: orgSplit.organizationId },
+              orgSplit.orgShare,
+            );
+          }
+          pushCredit({ kind: "GST_PAYABLE" }, payment.taxAmount);
+
+          await postLedgerTxn(tx, {
+            idempotencyKey: `booking:${payment.id}`,
+            kind: "BOOKING",
+            paymentId: payment.id,
+            postings: [...debits, ...credits],
+          });
+        } catch (err) {
+          console.warn(
+            `[ledger] booking posting skipped for payment ${payment.id}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      } else {
+        console.log(
+          `[ledger] booking posting deferred (multi-collaborator) for payment ${payment.id}`,
         );
       }
 
