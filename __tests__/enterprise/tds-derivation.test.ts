@@ -12,7 +12,7 @@
 import {
   computeTdsForPayout,
   isValidPan,
-  PAN_FALLBACK_RATE,
+  NO_PAN_RATE_194O,
   TDS_SECTION_DEFAULTS,
   type TdsConsultantInput,
 } from "@/lib/compliance/tds";
@@ -31,15 +31,15 @@ function profile(overrides: Partial<TdsConsultantInput> = {}): TdsConsultantInpu
 }
 
 describe("computeTdsForPayout — section precedence", () => {
-  it("resident with valid PAN defaults to 194-O at 1%", () => {
+  it("resident with valid PAN defaults to 194-O at 0.1%", () => {
     const result = computeTdsForPayout({
       grossAmountPaise: 100_000, // ₹1,000
       consultant: profile(),
     });
     expect(result.tdsSection).toBe("194O");
     expect(result.tdsRate).toBe(TDS_SECTION_DEFAULTS["194O"]);
-    expect(result.tdsRate).toBeCloseTo(0.01);
-    expect(result.tdsAmountPaise).toBe(1_000);
+    expect(result.tdsRate).toBeCloseTo(0.001);
+    expect(result.tdsAmountPaise).toBe(100);
     expect(result.fallbackApplied).toBe(false);
     expect(result.dtaaRateApplied).toBeNull();
     expect(result.reason).toMatch(/194O/);
@@ -58,34 +58,34 @@ describe("computeTdsForPayout — section precedence", () => {
   });
 });
 
-describe("computeTdsForPayout — PAN fallback (Section 206AA)", () => {
-  it("withholds 20% when PAN is null", () => {
+describe("computeTdsForPayout — PAN fallback (Section 194-O no-PAN carve-out)", () => {
+  it("withholds 5% (194-O no-PAN carve-out) when PAN is null", () => {
     const result = computeTdsForPayout({
       grossAmountPaise: 100_000,
       consultant: profile({ panNumber: null }),
     });
-    expect(result.tdsRate).toBe(PAN_FALLBACK_RATE);
-    expect(result.tdsAmountPaise).toBe(20_000);
+    expect(result.tdsRate).toBe(NO_PAN_RATE_194O);
+    expect(result.tdsAmountPaise).toBe(5_000);
     expect(result.fallbackApplied).toBe(true);
-    expect(result.reason).toMatch(/206AA/);
+    expect(result.reason).toMatch(/194-O no-PAN fallback/i);
   });
 
-  it("withholds 20% when PAN is malformed", () => {
+  it("withholds 5% (194-O no-PAN carve-out) when PAN is malformed", () => {
     const result = computeTdsForPayout({
       grossAmountPaise: 100_000,
       consultant: profile({ panNumber: "NOT-A-PAN" }),
     });
-    expect(result.tdsRate).toBe(PAN_FALLBACK_RATE);
-    expect(result.tdsAmountPaise).toBe(20_000);
+    expect(result.tdsRate).toBe(NO_PAN_RATE_194O);
+    expect(result.tdsAmountPaise).toBe(5_000);
     expect(result.fallbackApplied).toBe(true);
-    expect(result.reason).toMatch(/206AA/);
+    expect(result.reason).toMatch(/194-O no-PAN fallback/i);
   });
 });
 
 describe("computeTdsForPayout — DTAA (NON_RESIDENT)", () => {
-  it("US non-resident under 194-O default keeps the 1% section rate (DTAA 10% is higher)", () => {
+  it("US non-resident under 194-O default keeps the 0.1% section rate (DTAA 10% is higher)", () => {
     // Spec: DTAA only overrides if strictly LOWER than the section
-    // default. US treaty rate is 10%, default 194-O is 1% → section
+    // default. US treaty rate is 10%, default 194-O is 0.1% → section
     // wins.
     const result = computeTdsForPayout({
       grossAmountPaise: 100_000,
@@ -95,8 +95,8 @@ describe("computeTdsForPayout — DTAA (NON_RESIDENT)", () => {
       }),
     });
     expect(result.tdsSection).toBe("194O");
-    expect(result.tdsRate).toBeCloseTo(0.01);
-    expect(result.tdsAmountPaise).toBe(1_000);
+    expect(result.tdsRate).toBeCloseTo(0.001);
+    expect(result.tdsAmountPaise).toBe(100);
     expect(result.dtaaRateApplied).toBeNull();
     expect(result.reason).toMatch(/not lower/i);
   });
@@ -125,7 +125,7 @@ describe("computeTdsForPayout — DTAA (NON_RESIDENT)", () => {
       }),
     });
     expect(result.tdsSection).toBe("194O");
-    expect(result.tdsRate).toBeCloseTo(0.01);
+    expect(result.tdsRate).toBeCloseTo(0.001);
     expect(result.dtaaRateApplied).toBeNull();
     expect(result.reason).toMatch(/no dtaa entry/i);
   });
