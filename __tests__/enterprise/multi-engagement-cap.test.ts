@@ -33,6 +33,7 @@ type MockTx = {
   programAssignment: {
     findUniqueOrThrow: jest.Mock;
     update: jest.Mock;
+    updateMany: jest.Mock;
   };
   bookingUtilization: {
     upsert: jest.Mock;
@@ -44,8 +45,9 @@ type MockTx = {
     create: jest.Mock;
     aggregate: jest.Mock;
   };
-  $executeRaw: jest.Mock;
-  $queryRaw: jest.Mock;
+  overageEvent: {
+    updateMany: jest.Mock;
+  };
 };
 
 function makeAssignmentLookup(opts: {
@@ -73,7 +75,13 @@ function makeTx(opts: {
   return {
     programAssignment: {
       findUniqueOrThrow: makeAssignmentLookup(opts),
-      update: jest.fn().mockResolvedValue({}),
+      // CHARGE_* / unlimited record path resolves to the post-increment row;
+      // reverseBookingUtilization also uses this mock but ignores the return.
+      update: jest.fn().mockResolvedValue(opts.chargeReturning?.[0] ?? {}),
+      // BLOCK path: count===0 ⇒ cap exceeded → throws.
+      updateMany: jest
+        .fn()
+        .mockResolvedValue({ count: opts.blockUpdateRows ?? 1 }),
     },
     bookingUtilization: {
       upsert: jest.fn().mockResolvedValue({}),
@@ -87,8 +95,9 @@ function makeTx(opts: {
       // tests override this to simulate cumulative-reversed state.
       aggregate: jest.fn().mockResolvedValue({ _sum: { engagementsConsumed: 0 } }),
     },
-    $executeRaw: jest.fn().mockResolvedValue(opts.blockUpdateRows ?? 1),
-    $queryRaw: jest.fn().mockResolvedValue(opts.chargeReturning ?? []),
+    overageEvent: {
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
   };
 }
 
@@ -231,7 +240,7 @@ describe("recordBookingUtilization — engagement counting (issue #710)", () => 
         appointmentIds: ["a", "b"],
       });
       expect(result.engagementsConsumedDelta).toBe(2);
-      expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+      expect(tx.programAssignment.update).toHaveBeenCalledTimes(1);
       // Upsert was called with appointmentIds in create branch
       expect(tx.bookingUtilization.upsert.mock.calls[0][0].create).toMatchObject({
         engagementsConsumed: 2,
@@ -255,7 +264,8 @@ describe("recordBookingUtilization — engagement counting (issue #710)", () => 
       expect(result.engagementsConsumedDelta).toBe(0);
       expect(result.wasOverage).toBe(false);
       // No DB writes on a zero-delta call
-      expect(tx.$executeRaw).not.toHaveBeenCalled();
+      expect(tx.programAssignment.update).not.toHaveBeenCalled();
+      expect(tx.programAssignment.updateMany).not.toHaveBeenCalled();
       expect(tx.bookingUtilization.upsert).not.toHaveBeenCalled();
       expect(tx.usageLedgerEntry.create).not.toHaveBeenCalled();
     });
