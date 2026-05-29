@@ -1,18 +1,22 @@
 /**
- * #771 / #715 — overage calculator (review §10).
+ * #771 / #715 / #775 — overage calculator (review §10).
  *
  * Pure function: given a program's cap config + current cycle usage + the
  * booking price, compute the covered vs marginal (overage) split, apply the
- * per-cycle circuit breaker, and resolve `overageBehavior`
- * (BLOCK / CHARGE_MEMBER / CHARGE_ORG) into a decision.
+ * optional surcharge markup + per-cycle circuit breaker, and resolve
+ * `overageBehavior` (BLOCK / CHARGE_MEMBER / CHARGE_ORG) into a decision.
  *
- * Money is paise; counts are engagements. No DB access — the caller loads the
- * program config + cycle usage, calls this, and (on PROCEED with marginal > 0)
- * persists an `OverageEvent` + the matching ledger postings; the cycle-close
- * cron later rolls CHARGE_ORG events into an `InvoiceLineItem`.
+ * Pricing model (#775): the marginal is the over-cap portion of the *real*
+ * booking price (consulting rates are heterogeneous, so we pass through rather
+ * than apply a flat per-unit tier), capped by `priceCapPerEngagementPaise`,
+ * then marked up by `overageSurchargeBps`. CREDIT_POOL meters in paise
+ * (`creditBudgetPaise`/`consumedPaise`); LICENSED_SEAT meters by engagement.
  *
- * Today #715 ships this as a no-op: the schema fields exist and `wasOverage`
- * is set, but nothing computes a charge. This function is that missing logic.
+ * Money is paise. No DB access — the caller loads the program config + cycle
+ * usage, calls this, and (on PROCEED with marginal > 0) persists an
+ * `OverageEvent` + the matching ledger postings; CHARGE_ORG events roll into
+ * an `InvoiceLineItem` at the cycle-close invoice rollup, CHARGE_MEMBER events
+ * settle instantly via a parent-linked side-Payment.
  */
 import type { OverageBehavior, ProgramType } from "@prisma/client";
 
@@ -26,6 +30,12 @@ export interface OverageInput {
   maxOveragePerCyclePaise: number | null;
   /** Cumulative overage already charged this cycle (paise). */
   cycleOverageSoFarPaise: number;
+  /**
+   * #775 — bps markup applied to the pass-through marginal, AFTER the
+   * per-engagement price cap. null/0 = no markup. May push the marginal above
+   * the single booking price by the surcharge — intended (overage costs more).
+   */
+  overageSurchargeBps?: number | null;
 
   // LICENSED_SEAT inputs
   /** null = unlimited (LICENSE-funded contract). */
@@ -103,6 +113,15 @@ export function computeOverage(input: OverageInput): OverageResult {
       chargeTo: null,
       reason: "within cap",
     };
+  }
+
+  // --- Step 1b: surcharge markup on the pass-through marginal --------------
+  // Applied AFTER the price cap, so the marginal may exceed the single
+  // booking price by the surcharge. coveredPaise is unchanged (what the
+  // program covered); they no longer sum to `price`.
+  const surchargeBps = input.overageSurchargeBps ?? 0;
+  if (surchargeBps > 0) {
+    marginalPaise += Math.floor((marginalPaise * surchargeBps) / 10000);
   }
 
   // --- Step 2: per-cycle circuit breaker → hard BLOCK regardless of behavior
