@@ -96,6 +96,9 @@ export const NOVU_WORKFLOWS = {
   // Fires once per cycle on the <80% → >=80% transition so operators can
   // upsize before bookings actually start getting refused at 100%.
   ORG_PROGRAM_CAP_NEAR: "org-program-cap-near",
+  // #775 — a CHARGE_MEMBER over-cap booking created a side-charge the member
+  // now owes. In-app to the member only (their personal payment obligation).
+  ORG_PROGRAM_OVERAGE_DUE: "org-program-overage-due",
   ORG_SSO_PROVIDER_DELETED: "org-sso-provider-deleted",
   ORG_SSO_CERT_EXPIRING: "org-sso-cert-expiring",
   // A7: notify the consultant that their EXPERT membership at an org was
@@ -410,6 +413,15 @@ export type OrgProgramCapNearPayload = {
   cap: number;
   usedPct: number;
   dashboardUrl: string;
+};
+
+// #775 — CHARGE_MEMBER overage side-charge owed by the member. `amountPaise`
+// is the marginal (incl. surcharge); `payUrl` deep-links to the pay surface.
+export type OrgProgramOverageDuePayload = {
+  orgName: string;
+  programName: string;
+  amountPaise: number;
+  payUrl: string;
 };
 
 export type OrgSsoProviderDeletedPayload = {

@@ -29,6 +29,7 @@ import {
   type OrgPayoutCompletedPayload,
   type OrgProgramExhaustedPayload,
   type OrgProgramCapNearPayload,
+  type OrgProgramOverageDuePayload,
   type OrgSsoProviderDeletedPayload,
   type OrgSsoCertExpiringPayload,
 } from "./workflows";
@@ -276,6 +277,22 @@ export async function notifyOrgProgramCapNear(
   return triggerMany(
     NOVU_WORKFLOWS.ORG_PROGRAM_CAP_NEAR,
     recipients,
+    payload,
+  );
+}
+
+/**
+ * #775 — a CHARGE_MEMBER over-cap booking created a side-charge the member
+ * now owes. Delivers in-app to the MEMBER ONLY (it's their personal payment
+ * obligation; operators see it on the program ledger, not as an alert).
+ */
+export async function notifyOrgProgramOverageDue(
+  memberUserId: string,
+  payload: OrgProgramOverageDuePayload,
+): Promise<void> {
+  return triggerMany(
+    NOVU_WORKFLOWS.ORG_PROGRAM_OVERAGE_DUE,
+    [memberUserId],
     payload,
   );
 }
