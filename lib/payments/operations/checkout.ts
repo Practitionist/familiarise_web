@@ -57,8 +57,12 @@ import {
   validateDiscountCurrency,
 } from "@/lib/payments/validation/currency-guards";
 import { checkPaymentLegsSumToAmount } from "@/lib/payments/payment-legs";
+import { computeOverage } from "@/lib/payments/billing/overage";
 import { getInvoiceCreditLimitPaise } from "@/lib/enterprise/governance";
-import { notifyOrgProgramExhausted } from "@/lib/novu/org-workflows";
+import {
+  notifyOrgProgramExhausted,
+  notifyOrgProgramCapNear,
+} from "@/lib/novu/org-workflows";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -2178,7 +2182,14 @@ export async function handleCheckout(
             let utilizationResult: {
               wasOverage: boolean;
               engagementsConsumedDelta: number;
-            } = { wasOverage: false, engagementsConsumedDelta: 0 };
+              engagementsUsedAfter: number;
+              cap: number | null;
+            } = {
+              wasOverage: false,
+              engagementsConsumedDelta: 0,
+              engagementsUsedAfter: 0,
+              cap: null,
+            };
             try {
               utilizationResult = await recordBookingUtilization(tx, {
                 programAssignmentId,
@@ -2262,6 +2273,74 @@ export async function handleCheckout(
               },
             });
 
+            // #768 #22 — 80% cap-near early warning. Fire ONCE per cycle on
+            // the <80% → >=80% transition (not on every booking past 80%).
+            // Integer-only threshold cross: before/cap < 0.8 (before*5 <
+            // cap*4) AND after/cap >= 0.8 (after*5 >= cap*4). Skipped when
+            // cap is null (unlimited) or 0. Fire-and-forget on the outer
+            // prisma client + same roster as the 100% event — mirrors the
+            // notifyOrgProgramExhausted call below.
+            {
+              const capAfter = utilizationResult.cap;
+              const after = utilizationResult.engagementsUsedAfter;
+              const before = after - utilizationResult.engagementsConsumedDelta;
+              if (
+                capAfter != null &&
+                capAfter > 0 &&
+                before * 5 < capAfter * 4 &&
+                after * 5 >= capAfter * 4
+              ) {
+                const usedPct = Math.round((after / capAfter) * 100);
+                prisma.programAssignment
+                  .findUnique({
+                    where: { id: programAssignmentId },
+                    select: {
+                      membership: {
+                        select: {
+                          userId: true,
+                          user: { select: { name: true, email: true } },
+                        },
+                      },
+                      program: {
+                        select: {
+                          name: true,
+                          contract: {
+                            select: {
+                              organizationId: true,
+                              organization: { select: { name: true } },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  })
+                  .then((ctx) => {
+                    if (!ctx) return;
+                    const orgId = ctx.program.contract.organizationId;
+                    return notifyOrgProgramCapNear(
+                      orgId,
+                      ctx.membership.userId,
+                      {
+                        orgName: ctx.program.contract.organization.name,
+                        programName: ctx.program.name,
+                        assigneeName:
+                          ctx.membership.user.name ?? ctx.membership.user.email,
+                        engagementsUsed: after,
+                        cap: capAfter,
+                        usedPct,
+                        dashboardUrl: `/dashboard/organization/${orgId}/programs`,
+                      },
+                    );
+                  })
+                  .catch((notifyErr) =>
+                    console.error(
+                      "[notifyOrgProgramCapNear] failed:",
+                      notifyErr,
+                    ),
+                  );
+              }
+            }
+
             // C2: overage charging. recordBookingUtilization above flagged
             // `wasOverage = true` if the increment crossed the cap (only
             // possible when overageBehavior is CHARGE_MEMBER or CHARGE_ORG;
@@ -2282,20 +2361,65 @@ export async function handleCheckout(
                 select: {
                   overageBehavior: true,
                   priceCapPerEngagementPaise: true,
+                  coveredEngagementsPerCycle: true,
+                  // #768 #14/#15 — per-cycle circuit-breaker ceiling.
+                  maxOveragePerCyclePaise: true,
                 },
               });
-              // #771 / #715 — marginal cost of the overage. With a per-engagement
-              // price cap, charge that per overage engagement; otherwise the overage
-              // costs the full booking amount. (Previously this defaulted to 0 when
-              // priceCap was null, so CHARGE_ORG silently charged nothing — the #715
-              // no-op.)
-              const marginalPaise =
-                programCfg?.priceCapPerEngagementPaise != null
-                  ? programCfg.priceCapPerEngagementPaise *
-                    Math.max(1, utilizationResult.engagementsConsumedDelta)
-                  : amount;
 
-              if (programCfg?.overageBehavior === "CHARGE_MEMBER") {
+              // #768 #14/#15 — cycle overage-so-far. A ProgramAssignment is
+              // per-cycle (unique on programId+membershipId+periodStart), so
+              // every OverageEvent on this assignmentId is already scoped to
+              // the current cycle; summing marginalPaise across them is the
+              // running total this breaker compares against. No settledAt
+              // filter: the ceiling is on the cycle's TOTAL accrued overage,
+              // so a mid-cycle invoice run (which stamps settledAt) must not
+              // reset the breaker.
+              const soFarAgg = await tx.overageEvent.aggregate({
+                where: { programAssignmentId },
+                _sum: { marginalPaise: true },
+              });
+              const cycleOverageSoFarPaise = soFarAgg._sum.marginalPaise ?? 0;
+
+              // #768 #14/#15 — drive the decision through the pure
+              // computeOverage() (was previously unused). engagementsUsed must
+              // be the PRE-booking count: recordBookingUtilization already
+              // applied this booking's delta, so subtract it back out.
+              const overage = computeOverage({
+                programType: "LICENSED_SEAT",
+                bookingPricePaise: amount,
+                sessionsConsumed: Math.max(
+                  1,
+                  utilizationResult.engagementsConsumedDelta,
+                ),
+                overageBehavior: programCfg?.overageBehavior ?? "BLOCK",
+                maxOveragePerCyclePaise:
+                  programCfg?.maxOveragePerCyclePaise ?? null,
+                cycleOverageSoFarPaise,
+                coveredEngagementsPerCycle:
+                  programCfg?.coveredEngagementsPerCycle ?? null,
+                engagementsUsed:
+                  utilizationResult.engagementsUsedAfter -
+                  utilizationResult.engagementsConsumedDelta,
+                priceCapPerEngagementPaise:
+                  programCfg?.priceCapPerEngagementPaise ?? null,
+              });
+              const marginalPaise = overage.marginalPaise;
+
+              // #768 #14/#15 — circuit breaker: ceiling exceeded → reject the
+              // booking exactly like the BLOCK behavior path (same 402 shape).
+              // Distinct code so the dashboard can explain it's the cycle cap,
+              // not the per-member allocation.
+              if (overage.decision === "BLOCK" && overage.chargeTo === null) {
+                throw Object.assign(
+                  new Error(
+                    "PROGRAM_CAP_EXHAUSTED: This booking would exceed the program's per-cycle overage ceiling. Contact your organization administrator to raise the ceiling or wait for the next cycle.",
+                  ),
+                  { httpStatus: 402, code: "PROGRAM_CAP_EXHAUSTED" },
+                );
+              }
+
+              if (overage.chargeTo === "MEMBER") {
                 throw Object.assign(
                   new Error(
                     "PROGRAM_CAP_EXHAUSTED: Your program allocation is full. Contact your organization administrator to extend your program, or book using your personal payment method.",
@@ -2304,7 +2428,7 @@ export async function handleCheckout(
                 );
               }
 
-              if (programCfg?.overageBehavior === "CHARGE_ORG" && marginalPaise > 0) {
+              if (overage.chargeTo === "ORG" && marginalPaise > 0) {
                 // Use OVERAGE_INVOICE_ACCRUAL (not INVOICE_ACCRUAL) so the
                 // @@unique([paymentId, source]) constraint on PaymentLeg is not
                 // violated — the base leg already holds the INVOICE_ACCRUAL slot

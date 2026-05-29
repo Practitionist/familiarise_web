@@ -28,6 +28,7 @@ import {
   type OrgWalletTopupConfirmedPayload,
   type OrgPayoutCompletedPayload,
   type OrgProgramExhaustedPayload,
+  type OrgProgramCapNearPayload,
   type OrgSsoProviderDeletedPayload,
   type OrgSsoCertExpiringPayload,
 } from "./workflows";
@@ -253,6 +254,27 @@ export async function notifyOrgProgramExhausted(
   const recipients = Array.from(new Set([assigneeUserId, ...operators]));
   return triggerMany(
     NOVU_WORKFLOWS.ORG_PROGRAM_EXHAUSTED,
+    recipients,
+    payload,
+  );
+}
+
+/**
+ * #768 lockdown #22 — early-warning sibling of notifyOrgProgramExhausted.
+ * Fires once per cycle when an assignment's usage CROSSES into >= 80% of
+ * its cap (not on every booking past 80%). Same roster as the 100% event
+ * (assignee + OWNER + MAINTAINER) so operators can upsize before bookings
+ * start getting refused.
+ */
+export async function notifyOrgProgramCapNear(
+  orgId: string,
+  assigneeUserId: string,
+  payload: OrgProgramCapNearPayload,
+): Promise<void> {
+  const operators = await rosterForOrg(orgId, OPERATOR_ROLES);
+  const recipients = Array.from(new Set([assigneeUserId, ...operators]));
+  return triggerMany(
+    NOVU_WORKFLOWS.ORG_PROGRAM_CAP_NEAR,
     recipients,
     payload,
   );

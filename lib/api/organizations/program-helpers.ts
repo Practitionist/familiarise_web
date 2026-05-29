@@ -159,6 +159,10 @@ export async function recordBookingUtilization(
 ): Promise<{
   wasOverage: boolean;
   engagementsConsumedDelta: number;
+  // #768 #22 — post-increment cap state so the caller can detect the
+  // <80% → >=80% cap-near transition. `cap` null = unlimited (no warning).
+  engagementsUsedAfter: number;
+  cap: number | null;
 }> {
   if (params.engagementsConsumed < 0) {
     throw new Error(
@@ -175,6 +179,10 @@ export async function recordBookingUtilization(
     select: {
       programId: true,
       membershipId: true,
+      // #768 #22 — pre-increment count. The BLOCK / unlimited branches use a
+      // bare conditional UPDATE (no RETURNING) so we derive engagementsUsedAfter
+      // as preCount + delta; the CHARGE_* branch reads the post value directly.
+      engagementsUsed: true,
       program: {
         select: {
           licensedSeatConfig: {
@@ -205,11 +213,21 @@ export async function recordBookingUtilization(
     );
     actualDelta = newAppointmentIds.length;
     if (actualDelta === 0) {
-      return { wasOverage: false, engagementsConsumedDelta: 0 };
+      return {
+        wasOverage: false,
+        engagementsConsumedDelta: 0,
+        engagementsUsedAfter: 0,
+        cap: null,
+      };
     }
   } else if (params.engagementsConsumed === 0) {
     // No appointmentIds + zero delta = nothing to do (legacy callers).
-    return { wasOverage: false, engagementsConsumedDelta: 0 };
+    return {
+      wasOverage: false,
+      engagementsConsumedDelta: 0,
+      engagementsUsedAfter: 0,
+      cap: null,
+    };
   }
 
   const cap =
@@ -224,6 +242,11 @@ export async function recordBookingUtilization(
   //   - Cap with CHARGE_MEMBER / CHARGE_ORG: increment unconditionally,
   //     flag overage when the post-increment count exceeds the cap.
   let wasOverage = false;
+  // #768 #22 — post-increment count so the caller can compute the cap-near
+  // transition. BLOCK / unlimited derive it as preCount + delta (their UPDATEs
+  // have no RETURNING); CHARGE_* read it from the RETURNING below.
+  const preCount = assignment.engagementsUsed ?? 0;
+  let engagementsUsedAfter = preCount + actualDelta;
 
   if (cap === null) {
     await tx.$executeRaw`
@@ -256,7 +279,8 @@ export async function recordBookingUtilization(
       WHERE "id" = ${params.programAssignmentId}
       RETURNING "engagementsUsed"
     `;
-    wasOverage = (rows[0]?.engagementsUsed ?? 0) > cap;
+    engagementsUsedAfter = rows[0]?.engagementsUsed ?? 0;
+    wasOverage = engagementsUsedAfter > cap;
   }
 
   // Upsert the BookingUtilization on paymentId (which is @unique).
@@ -304,7 +328,12 @@ export async function recordBookingUtilization(
     },
   });
 
-  return { wasOverage, engagementsConsumedDelta: actualDelta };
+  return {
+    wasOverage,
+    engagementsConsumedDelta: actualDelta,
+    engagementsUsedAfter,
+    cap,
+  };
 }
 
 /**

@@ -170,14 +170,39 @@ export async function rollupOrgInvoiceAccruals(params: {
     // #771 / #715 — mark CHARGE_ORG overage events for these bookings settled so
     // the next run can't re-bill them. Their marginal is already in the line
     // amounts via the OVERAGE_INVOICE_ACCRUAL legs summed above.
-    await tx.overageEvent.updateMany({
+    //
+    // #768 #14/#15 — also stamp invoiceLineItemId so each event points at the
+    // exact InvoiceLineItem it rolled into (auditability + reversal). updateMany
+    // can't set per-row distinct values, so we map paymentId → lineItemId from
+    // the line items we just created (one line per payment) and update per event.
+    const createdLineItems = await tx.invoiceLineItem.findMany({
+      where: { invoiceId: invoice.id, paymentId: { not: null } },
+      select: { id: true, paymentId: true },
+    });
+    const lineItemByPaymentId = new Map(
+      createdLineItems.map((li) => [li.paymentId!, li.id]),
+    );
+
+    const overageEvents = await tx.overageEvent.findMany({
       where: {
         overageBehavior: "CHARGE_ORG",
         settledAt: null,
         bookingUtilization: { paymentId: { in: accrued.map((p) => p.id) } },
       },
-      data: { settledAt: new Date() },
+      select: { id: true, bookingUtilization: { select: { paymentId: true } } },
     });
+
+    const settledAt = new Date();
+    for (const ev of overageEvents) {
+      await tx.overageEvent.update({
+        where: { id: ev.id },
+        data: {
+          settledAt,
+          invoiceLineItemId:
+            lineItemByPaymentId.get(ev.bookingUtilization.paymentId) ?? null,
+        },
+      });
+    }
 
     return {
       invoiceId: invoice.id,

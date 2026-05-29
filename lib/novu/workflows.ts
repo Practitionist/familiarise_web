@@ -92,6 +92,10 @@ export const NOVU_WORKFLOWS = {
   ORG_PAYOUT_FAILED: "org-payout-failed",
   ORG_PAYOUT_REVERSED: "org-payout-reversed",
   ORG_PROGRAM_EXHAUSTED: "org-program-exhausted",
+  // #768 lockdown #22 — 80% early-warning sibling of ORG_PROGRAM_EXHAUSTED.
+  // Fires once per cycle on the <80% → >=80% transition so operators can
+  // upsize before bookings actually start getting refused at 100%.
+  ORG_PROGRAM_CAP_NEAR: "org-program-cap-near",
   ORG_SSO_PROVIDER_DELETED: "org-sso-provider-deleted",
   ORG_SSO_CERT_EXPIRING: "org-sso-cert-expiring",
   // A7: notify the consultant that their EXPERT membership at an org was
@@ -392,6 +396,19 @@ export type OrgProgramExhaustedPayload = {
   orgName: string;
   programName: string;
   assigneeName: string;
+  dashboardUrl: string;
+};
+
+// #768 lockdown #22 — early-warning payload. `usedPct` is the post-booking
+// utilization ratio (0-100) that crossed the 80% line; `engagementsUsed` /
+// `cap` let the template render "41 of 50 sessions used".
+export type OrgProgramCapNearPayload = {
+  orgName: string;
+  programName: string;
+  assigneeName: string;
+  engagementsUsed: number;
+  cap: number;
+  usedPct: number;
   dashboardUrl: string;
 };
 
