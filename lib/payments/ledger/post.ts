@@ -43,6 +43,11 @@ export interface Posting {
 
 export interface PostLedgerTxnInput {
   idempotencyKey: string;
+  // Free-string txn kind (conventional vocabulary, not a DB enum): BOOKING /
+  // TOPUP / TOPUP_REFUND / INVOICE_ISSUED / INVOICE_PAID / ORG_PAYOUT / REFUND.
+  // Overage rides existing kinds — CHARGE_ORG via INVOICE_*, CHARGE_MEMBER via
+  // its own BOOKING-shaped side-charge posting (#775) — so there is no distinct
+  // OVERAGE kind.
   kind: string;
   description?: string;
   paymentId?: string | null;

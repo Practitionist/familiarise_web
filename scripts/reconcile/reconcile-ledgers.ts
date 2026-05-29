@@ -93,7 +93,9 @@ export type Finding = {
     | "ACTIVE_SEAT_COUNT_DRIFT"
     | "PAYMENT_LEG_SUM_MISMATCH"
     | "ORG_PAYOUT_TOTAL_MISMATCH"
-    | "LEDGER_TXN_IMBALANCE";
+    | "LEDGER_TXN_IMBALANCE"
+    // #775 — CREDIT_POOL money-meter: consumedPaise vs sum(UsageLedgerEntry price).
+    | "CREDIT_POOL_CONSUMED_DRIFT";
   organizationId?: string;
   billingAccountId?: string;
   billingSubscriptionId?: string;
@@ -208,14 +210,18 @@ export async function runReconcileLedgers(
     select: {
       id: true,
       engagementsUsed: true,
-      program: { select: { contract: { select: { organizationId: true } } } },
+      // #775 — CREDIT_POOL money-meter counter (paise).
+      consumedPaise: true,
+      program: {
+        select: { type: true, contract: { select: { organizationId: true } } },
+      },
     },
   });
 
   for (const a of liveAssignments) {
     const ledgerSum = await prisma.usageLedgerEntry.aggregate({
       where: { programAssignmentId: a.id },
-      _sum: { engagementsConsumed: true },
+      _sum: { engagementsConsumed: true, priceAtBookingPaise: true },
     });
     const ledgerTotal = ledgerSum._sum?.engagementsConsumed ?? 0;
     if (ledgerTotal !== a.engagementsUsed) {
@@ -234,6 +240,29 @@ export async function runReconcileLedgers(
           note: "ProgramAssignment.engagementsUsed disagrees with sum(UsageLedgerEntry.engagementsConsumed). Investigate via the assignment's UsageLedgerEntry trail and the recordBookingUtilization() write path.",
         },
       });
+    }
+
+    // #775/#753 — CREDIT_POOL meters in paise; consumedPaise must equal the
+    // (refund-netted) sum of the cycle's UsageLedgerEntry prices. Reversed
+    // rows post a negative price, so the SUM accounts for refunds. Only
+    // CREDIT_POOL assignments carry a money-meter (LICENSED_SEAT leaves
+    // consumedPaise at 0).
+    if (a.program.type === "CREDIT_POOL") {
+      const priceTotal = ledgerSum._sum?.priceAtBookingPaise ?? 0;
+      if (priceTotal !== a.consumedPaise) {
+        findings.push({
+          kind: "CREDIT_POOL_CONSUMED_DRIFT",
+          programAssignmentId: a.id,
+          organizationId: a.program.contract.organizationId,
+          expectedPaise: priceTotal,
+          actualPaise: a.consumedPaise,
+          deltaPaise: a.consumedPaise - priceTotal,
+          details: {
+            unit: "paise",
+            note: "ProgramAssignment.consumedPaise disagrees with sum(UsageLedgerEntry.priceAtBookingPaise). Investigate the CREDIT_POOL money-meter write in recordBookingUtilization()/reverseBookingUtilization().",
+          },
+        });
+      }
     }
   }
 

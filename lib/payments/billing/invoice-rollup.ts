@@ -198,6 +198,9 @@ export async function rollupOrgInvoiceAccruals(params: {
         where: { id: ev.id },
         data: {
           settledAt,
+          // #775 — PENDING → ACCRUED: now on an issued invoice. The
+          // invoice-paid ledger handler flips ACCRUED → CHARGED on payment.
+          chargeStatus: "ACCRUED",
           invoiceLineItemId:
             lineItemByPaymentId.get(ev.bookingUtilization.paymentId) ?? null,
         },

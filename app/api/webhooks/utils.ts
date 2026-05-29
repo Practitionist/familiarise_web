@@ -281,6 +281,16 @@ export async function handleOrgPaymentSuccess(
             });
           }
         }
+        // #775 — CHARGE_ORG overage events on this invoice's lines were ACCRUED
+        // at rollup; the org has now paid, so flip them ACCRUED → CHARGED.
+        await tx.overageEvent.updateMany({
+          where: {
+            overageBehavior: "CHARGE_ORG",
+            chargeStatus: "ACCRUED",
+            invoiceLineItem: { invoiceId },
+          },
+          data: { chargeStatus: "CHARGED" },
+        });
         return { count: claimed.count };
       });
       claimedCount = txResult.count;
