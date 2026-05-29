@@ -45,6 +45,7 @@ import {
   generateEndpointSecret as _unused_re_export,
   SIGNATURE_HEADER,
   signPayload,
+  WEBHOOK_ROTATION_GRACE_MS,
 } from "./signing";
 
 // Re-export silenced — the worker doesn't generate secrets; this keeps
@@ -121,7 +122,14 @@ export async function runDispatchTick(params: {
     take: batchLimit,
     include: {
       endpoint: {
-        select: { id: true, url: true, secret: true, status: true },
+        select: {
+          id: true,
+          url: true,
+          secret: true,
+          status: true,
+          secretRotatedAt: true,
+          previousSecretHash: true,
+        },
       },
     },
   });
@@ -156,7 +164,22 @@ export async function runDispatchTick(params: {
       createdAt: row.createdAt.toISOString(),
       data: row.payload,
     });
-    const signature = signPayload(row.endpoint.secret, body, Math.floor(now() / 1000));
+    // Dual-sign during the 24h rotation grace window: if the operator
+    // rotated recently AND we still hold the prior secret value, emit a
+    // second `v1=` so receivers verifying with EITHER secret stay green
+    // across the cutover. `previousSecretHash` holds the prior secret
+    // VALUE during the window (see schema note #768). After the window
+    // we sign with the current secret only.
+    const inRotationGrace =
+      row.endpoint.secretRotatedAt != null &&
+      row.endpoint.previousSecretHash != null &&
+      now() - row.endpoint.secretRotatedAt.getTime() <= WEBHOOK_ROTATION_GRACE_MS;
+    const signature = signPayload(
+      row.endpoint.secret,
+      body,
+      Math.floor(now() / 1000),
+      inRotationGrace ? row.endpoint.previousSecretHash : null,
+    );
     const attemptNumber = row.attempts + 1;
 
     let httpStatusCode: number | undefined;
