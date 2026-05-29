@@ -7,16 +7,11 @@
 
 import { NextResponse } from "next/server";
 
-export const COMING_SOON_FEATURES = [
-  "overage_charging",
-  "scim",
-  "hris",
-  "dpdp_erasure_self_serve",
-  "refund_v2",
-  "credit_notes",
-  "tds_automation",
-  "form_26q_export",
-] as const;
+// Only not-yet-built surfaces belong here (#775/#715). SCIM, DPDP self-serve
+// erasure, TDS + Form 26Q are shipped; HRIS was dropped; refund/credit-note
+// flows are implicit (journal reversal / invoice VOID). Sole remainder:
+// CHARGE_MEMBER instant overage charge (#775/#715).
+export const COMING_SOON_FEATURES = ["overage_charging"] as const;
 
 export type ComingSoonFeature = (typeof COMING_SOON_FEATURES)[number];
 

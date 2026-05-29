@@ -1,16 +1,22 @@
 "use client";
 
-import { use, useState } from "react";
+import { use, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Briefcase, Loader2, Users } from "lucide-react";
 import type {
   BillingCycle,
+  FundingSource,
   OverageBehavior,
   ProgramStatus,
   ProgramType,
 } from "@prisma/client";
 
 import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
+import {
+  capabilityOf,
+  isReachableOrgFundingPath,
+  type ReachableCapability,
+} from "@/lib/enterprise/reachable-paths";
 import {
   DashboardHeader,
   DashboardContent,
@@ -53,6 +59,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { ComingSoonBadge } from "@/components/enterprise/ComingSoonBadge";
 
 // ---------------------------------------------------------------------------
 // Types — shaped to match GET /api/organizations/[orgId]/programs
@@ -290,11 +297,15 @@ function CreateProgramDialog({
   open,
   onOpenChange,
   contracts,
+  capability,
 }: {
   orgId: string;
   open: boolean;
   onOpenChange: (v: boolean) => void;
   contracts: ContractListItem[];
+  // Derived from canSponsor/canHost (#768) — the program-type picker only
+  // offers types reachable for (capability, selected contract funding).
+  capability: ReachableCapability | null;
 }) {
   const queryClient = useQueryClient();
   const [programType, setProgramType] = useState<"LICENSED_SEAT" | "CREDIT_POOL">(
@@ -312,6 +323,37 @@ function CreateProgramDialog({
   const [creditsPerCycle, setCreditsPerCycle] = useState("1000");
   const [coveredPlanTypes, setCoveredPlanTypes] = useState<CoveredPlanType[]>(["CONSULTATION"]);
   const [error, setError] = useState<string | null>(null);
+
+  // The selected contract's funding source decides which program types are
+  // reachable (#768). Until a contract is picked we offer nothing — the user
+  // must choose the funding context first, mirroring the server gate.
+  const selectedFunding = useMemo<FundingSource | null>(() => {
+    const raw = contracts.find((c) => c.id === contractId)?.billingAccount
+      ?.fundingSource;
+    return raw === "PERSONAL" ||
+      raw === "WALLET" ||
+      raw === "INVOICE" ||
+      raw === "LICENSE"
+      ? raw
+      : null;
+  }, [contracts, contractId]);
+
+  const reachableTypes = useMemo<ProgramType[]>(() => {
+    if (!capability) return [];
+    return (["LICENSED_SEAT", "CREDIT_POOL"] as const).filter((t) =>
+      isReachableOrgFundingPath(capability, selectedFunding, t),
+    );
+  }, [capability, selectedFunding]);
+
+  // Auto-correct an unreachable selection when the funding context changes
+  // (e.g. user switches from an INVOICE to a LICENSE contract while
+  // CREDIT_POOL is selected). Keeps the form submittable without surfacing a
+  // server rejection the UI could have prevented.
+  useEffect(() => {
+    if (reachableTypes.length > 0 && !reachableTypes.includes(programType)) {
+      setProgramType(reachableTypes[0]);
+    }
+  }, [reachableTypes, programType]);
 
   const reset = () => {
     setProgramType("LICENSED_SEAT");
@@ -340,6 +382,14 @@ function CreateProgramDialog({
     setError(null);
     if (!contractId) {
       setError("Pick the contract this program attaches to.");
+      return;
+    }
+    // Mirror the server's UNREACHABLE_FUNDING_PATH gate (#768) so a stale
+    // selection can't slip past into a guaranteed 400.
+    if (!reachableTypes.includes(programType)) {
+      setError(
+        `${PROGRAM_TYPE_META[programType].label} programs aren't available for this contract's funding source.`,
+      );
       return;
     }
     if (name.trim().length < 2) {
@@ -424,15 +474,24 @@ function CreateProgramDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {(["LICENSED_SEAT", "CREDIT_POOL"] as const).map((t) => (
-                  <SelectItem key={t} value={t}>
-                    {PROGRAM_TYPE_META[t].label}
-                  </SelectItem>
-                ))}
+                {(["LICENSED_SEAT", "CREDIT_POOL"] as const).map((t) => {
+                  // Disable rather than omit so the absent option is
+                  // explained in place — e.g. CREDIT_POOL under a LICENSE
+                  // contract reads as unavailable, not missing (#768).
+                  const reachable = reachableTypes.includes(t);
+                  return (
+                    <SelectItem key={t} value={t} disabled={!reachable}>
+                      {PROGRAM_TYPE_META[t].label}
+                      {!reachable && " — not available for this contract"}
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
             <p className="text-xs text-zinc-500">
-              {PROGRAM_TYPE_META[programType].description}
+              {contractId
+                ? PROGRAM_TYPE_META[programType].description
+                : "Pick a contract first — the program types below depend on its funding source."}
             </p>
           </div>
 
@@ -581,7 +640,18 @@ function CreateProgramDialog({
 
               {/* Overage behaviour */}
               <div className="space-y-2">
-                <Label>Overage behaviour</Label>
+                <div className="flex items-center gap-2">
+                  <Label>Overage behaviour</Label>
+                  {/* CHARGE_MEMBER instant charge is the sole not-yet-built
+                      surface (#775/#715): checkout 402s instead of collecting
+                      the member's card. CHARGE_ORG / BLOCK are shipped. */}
+                  {overageBehavior === "CHARGE_MEMBER" && (
+                    <ComingSoonBadge
+                      feature="overage_charging"
+                      message="Member charging coming soon"
+                    />
+                  )}
+                </div>
                 <Select
                   value={overageBehavior}
                   onValueChange={(v) => {
@@ -603,6 +673,7 @@ function CreateProgramDialog({
                     </SelectItem>
                     <SelectItem value="CHARGE_MEMBER">
                       Charge member — learner pays the overage on their own card
+                      (coming soon, #775)
                     </SelectItem>
                     <SelectItem value="CHARGE_ORG">
                       Charge org — added to the next invoice
@@ -943,7 +1014,8 @@ export default function OrgProgramsPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = use(params);
-  const { isAtLeast } = useOrgRole(orgId);
+  const { isAtLeast, canSponsor, canHost } = useOrgRole(orgId);
+  const capability = capabilityOf(canSponsor, canHost);
   const { allowed } = useRequireOrgAccess(orgId, {
     minRole: "MAINTAINER",
     canSponsor: true,
@@ -1123,6 +1195,7 @@ export default function OrgProgramsPage({
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         contracts={contractList}
+        capability={capability}
       />
 
       {managingProgram && (
