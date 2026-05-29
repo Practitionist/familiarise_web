@@ -600,7 +600,10 @@ describe("refundPayment — validation guards", () => {
     state.refunds.push({
       id: "r-existing",
       paymentId: "pay-1",
-      amount: 10000,
+      // #772 renamed Refund.amount → amountPaise; refund.ts sums r.amountPaise.
+      // Seeding the old field left the "already refunded" sum NaN → guard never
+      // tripped. Use the live field name.
+      amountPaise: 10000,
       status: "SUCCEEDED",
     });
     await expect(
