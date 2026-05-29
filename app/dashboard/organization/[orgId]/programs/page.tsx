@@ -59,7 +59,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatCurrencyAmount } from "@/utils/formatting";
-import { ComingSoonBadge } from "@/components/enterprise/ComingSoonBadge";
 
 // ---------------------------------------------------------------------------
 // Types — shaped to match GET /api/organizations/[orgId]/programs
@@ -167,6 +166,7 @@ type CreateProgramBody =
         cycle: BillingCycle;
         coveredEngagementsPerCycle: number | null;
         overageBehavior: OverageBehavior;
+        overageSurchargeBps: number | null;
       };
     }
   | {
@@ -177,6 +177,8 @@ type CreateProgramBody =
       creditPoolConfig: {
         cycle: BillingCycle;
         creditsPerCycle: number;
+        overageBehavior: OverageBehavior;
+        overageSurchargeBps: number | null;
       };
     };
 
@@ -318,6 +320,11 @@ function CreateProgramDialog({
   const [coveredEngagementsPerCycle, setCoveredEngagementsPerCycle] = useState("");
   const [overageBehavior, setOverageBehavior] =
     useState<OverageBehavior>("BLOCK");
+  // #775 — optional markup on over-cap bookings, entered as a percentage and
+  // stored as bps (10% → 1000 bps). Blank = no markup. Shared across both
+  // program types (the selector + this field render for LICENSED_SEAT and
+  // CREDIT_POOL alike).
+  const [overageSurchargePct, setOverageSurchargePct] = useState("");
   // 1 credit = ₹1; per-cycle cap is the user-facing input, paise conversion
   // is implicit (credits map to rupees end-to-end).
   const [creditsPerCycle, setCreditsPerCycle] = useState("1000");
@@ -363,6 +370,7 @@ function CreateProgramDialog({
     setCycle("MONTHLY");
     setCoveredEngagementsPerCycle("");
     setOverageBehavior("BLOCK");
+    setOverageSurchargePct("");
     setCreditsPerCycle("1000");
     setCoveredPlanTypes(["CONSULTATION"]);
     setError(null);
@@ -400,6 +408,19 @@ function CreateProgramDialog({
       setError("Select at least one appointment type this program covers.");
       return;
     }
+    // #775 — percentage → bps (10% → 1000). Blank = no markup. Applies to both
+    // program types; only meaningful when overageBehavior charges (not BLOCK).
+    const surchargeBps =
+      overageSurchargePct.trim() === ""
+        ? null
+        : Math.round(parseFloat(overageSurchargePct) * 100);
+    if (
+      surchargeBps !== null &&
+      (!Number.isFinite(surchargeBps) || surchargeBps < 0)
+    ) {
+      setError("Overage surcharge must be blank or a non-negative percentage.");
+      return;
+    }
     if (programType === "LICENSED_SEAT") {
       const ratePaise = rupeesToPaise(ratePerSeatRupees);
       if (ratePaise === null) {
@@ -424,6 +445,7 @@ function CreateProgramDialog({
           cycle,
           coveredEngagementsPerCycle: cap,
           overageBehavior,
+          overageSurchargeBps: surchargeBps,
         },
       });
     } else {
@@ -440,6 +462,8 @@ function CreateProgramDialog({
         creditPoolConfig: {
           cycle,
           creditsPerCycle: credits,
+          overageBehavior,
+          overageSurchargeBps: surchargeBps,
         },
       });
     }
@@ -638,49 +662,6 @@ function CreateProgramDialog({
                 </p>
               </div>
 
-              {/* Overage behaviour */}
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <Label>Overage behaviour</Label>
-                  {/* CHARGE_MEMBER instant charge is the sole not-yet-built
-                      surface (#775/#715): checkout 402s instead of collecting
-                      the member's card. CHARGE_ORG / BLOCK are shipped. */}
-                  {overageBehavior === "CHARGE_MEMBER" && (
-                    <ComingSoonBadge
-                      feature="overage_charging"
-                      message="Member charging coming soon"
-                    />
-                  )}
-                </div>
-                <Select
-                  value={overageBehavior}
-                  onValueChange={(v) => {
-                    if (
-                      v === "BLOCK" ||
-                      v === "CHARGE_MEMBER" ||
-                      v === "CHARGE_ORG"
-                    ) {
-                      setOverageBehavior(v);
-                    }
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="BLOCK">
-                      Block — reject booking once the cap is hit
-                    </SelectItem>
-                    <SelectItem value="CHARGE_MEMBER">
-                      Charge member — learner pays the overage on their own card
-                      (coming soon, #775)
-                    </SelectItem>
-                    <SelectItem value="CHARGE_ORG">
-                      Charge org — added to the next invoice
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
             </>
           ) : (
             <div className="space-y-2">
@@ -709,12 +690,67 @@ function CreateProgramDialog({
             </div>
           )}
 
-          {/* C2 (shipped): overage charging is now wired in checkout —
-              CHARGE_MEMBER throws 402 ("OVERAGE_REQUIRES_SEPARATE_PAYMENT")
-              so the dashboard can surface a "pay the overage" CTA;
-              CHARGE_ORG writes an extra PaymentLeg(source=INVOICE_ACCRUAL,
-              amountPaise=marginal) that the monthly invoice cron picks
-              up. No banner needed. */}
+          {/* Overage policy — shared across both program types (#775). The
+              org owner's "who bears the over-cap cost" toggle: BLOCK /
+              member-funded / org-billed. All three ship end-to-end. */}
+          <div className="space-y-2">
+            <Label>Overage behaviour</Label>
+            <Select
+              value={overageBehavior}
+              onValueChange={(v) => {
+                if (
+                  v === "BLOCK" ||
+                  v === "CHARGE_MEMBER" ||
+                  v === "CHARGE_ORG"
+                ) {
+                  setOverageBehavior(v);
+                }
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="BLOCK">
+                  Block — reject booking once the cap is hit
+                </SelectItem>
+                <SelectItem value="CHARGE_MEMBER">
+                  Charge member — learner pays the overage on their own card
+                </SelectItem>
+                <SelectItem value="CHARGE_ORG">
+                  Charge org — added to the next invoice
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-zinc-500">
+              Applies to <strong>new</strong> bookings from the moment you
+              save — existing overage charges keep the policy they were booked
+              under. Switching to Block stops further over-cap bookings
+              immediately.
+            </p>
+          </div>
+
+          {/* Overage surcharge — only meaningful when bookings can overage. */}
+          {overageBehavior !== "BLOCK" && (
+            <div className="space-y-2">
+              <Label htmlFor="overage-surcharge">Overage surcharge (%)</Label>
+              <Input
+                id="overage-surcharge"
+                type="number"
+                min={0}
+                step="0.01"
+                value={overageSurchargePct}
+                onChange={(e) => setOverageSurchargePct(e.target.value)}
+                placeholder="e.g. 10 — leave blank for no markup"
+              />
+              <p className="text-xs text-zinc-500">
+                Optional markup on the over-cap amount (the real session price
+                passes through; consulting rates are heterogeneous, so this is
+                a percentage knob rather than a flat per-unit tier). Blank = no
+                markup.
+              </p>
+            </div>
+          )}
 
           {error && <p className="text-sm text-red-600">{error}</p>}
         </div>

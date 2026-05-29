@@ -7,13 +7,16 @@
 
 import { NextResponse } from "next/server";
 
-// Only not-yet-built surfaces belong here (#775/#715). SCIM, DPDP self-serve
-// erasure, TDS + Form 26Q are shipped; HRIS was dropped; refund/credit-note
-// flows are implicit (journal reversal / invoice VOID). Sole remainder:
-// CHARGE_MEMBER instant overage charge (#775/#715).
-export const COMING_SOON_FEATURES = ["overage_charging"] as const;
+// Not-yet-built surfaces belong here. As of #775 the list is EMPTY — the last
+// remaining stub (CHARGE_MEMBER instant overage charge) now ships end-to-end.
+// SCIM, DPDP self-serve erasure, TDS + Form 26Q are shipped; HRIS was dropped;
+// refund/credit-note flows are implicit (journal reversal / invoice VOID). The
+// mechanism stays for future v-next stubs.
+export const COMING_SOON_FEATURES = [] as const;
 
-export type ComingSoonFeature = (typeof COMING_SOON_FEATURES)[number];
+// `string` (not the empty-tuple union, which is `never`) so the helper +
+// ComingSoonBadge stay callable when a future stub is added.
+export type ComingSoonFeature = string;
 
 /**
  * Standard 501 response. Renders consistently across surfaces and

@@ -44,6 +44,10 @@ const LicensedSeatConfigSchema = z.object({
   coveredEngagementsPerCycle: z.coerce.number().int().min(0).nullable().optional(),
   overageBehavior: OverageBehaviorSchema.default("BLOCK"),
   priceCapPerEngagementPaise: z.coerce.number().int().min(0).nullable().optional(),
+  // #775 — bps markup on the pass-through overage marginal (null = no markup).
+  overageSurchargeBps: z.coerce.number().int().min(0).nullable().optional(),
+  // #768 #14/#15 — per-cycle overage ceiling (circuit breaker; null = none).
+  maxOveragePerCyclePaise: z.coerce.number().int().min(0).nullable().optional(),
 });
 
 // 1 credit = ₹1 = 100 paise (fixed; see schema.prisma). The pool resets
@@ -60,6 +64,10 @@ const CreditPoolConfigSchema = z.object({
   cycle: BillingCycleSchema,
   creditsPerCycle: z.coerce.number().int().min(1),
   minimumCreditsPerPeriod: z.coerce.number().int().min(0).nullable().optional(),
+  // #775 — over-budget routing + markup + ceiling (parity with LICENSED_SEAT).
+  overageBehavior: OverageBehaviorSchema.default("BLOCK"),
+  overageSurchargeBps: z.coerce.number().int().min(0).nullable().optional(),
+  maxOveragePerCyclePaise: z.coerce.number().int().min(0).nullable().optional(),
 });
 
 const CreateBodySchema = z.discriminatedUnion("type", [
@@ -207,6 +215,10 @@ export async function POST(
               overageBehavior: body.licensedSeatConfig.overageBehavior,
               priceCapPerEngagementPaise:
                 body.licensedSeatConfig.priceCapPerEngagementPaise ?? null,
+              overageSurchargeBps:
+                body.licensedSeatConfig.overageSurchargeBps ?? null,
+              maxOveragePerCyclePaise:
+                body.licensedSeatConfig.maxOveragePerCyclePaise ?? null,
             },
           },
         }),
@@ -217,6 +229,11 @@ export async function POST(
               creditsPerCycle: body.creditPoolConfig.creditsPerCycle,
               minimumCreditsPerPeriod:
                 body.creditPoolConfig.minimumCreditsPerPeriod ?? null,
+              overageBehavior: body.creditPoolConfig.overageBehavior,
+              overageSurchargeBps:
+                body.creditPoolConfig.overageSurchargeBps ?? null,
+              maxOveragePerCyclePaise:
+                body.creditPoolConfig.maxOveragePerCyclePaise ?? null,
             },
           },
         }),
