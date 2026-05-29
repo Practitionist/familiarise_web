@@ -463,6 +463,15 @@ model Organization {
   canSponsor Boolean @default(true)
   canHost    Boolean @default(false)
 
+  // #771 D3 — group hierarchy for conglomerate buyers (Tata/Reliance/Birla-style
+  // subsidiary groups). Nullable + inert until group-billing/subsidiary-scoping
+  // APIs ship (stubbed 501). Re-adds the parent/root columns dropped in #768 so
+  // a future buyer doesn't force a structural migration. Self-relation.
+  parentOrganizationId String?
+  parentOrganization   Organization?  @relation("OrgHierarchy", fields: [parentOrganizationId], references: [id], onDelete: SetNull)
+  childOrganizations   Organization[] @relation("OrgHierarchy")
+  rootOrganizationId   String? // denormalized group root for fast subsidiary scoping
+
   // India / GCC context (all schema-final; compliance logic stubbed)
   dataResidencyRegion DataRegion        @default(IN)
   isGCC               Boolean           @default(false)
@@ -471,37 +480,13 @@ model Organization {
   contractCurrency    Currency          @default(INR)
   reportingCurrency   Currency          @default(INR)
 
-  // GST registration (stub-derived at compliance layer)
-  gstin        String?      @db.VarChar(15)
-  gstStateCode String?      @db.VarChar(2)
-  gstRegStatus GstRegStatus @default(UNREGISTERED)
-  // #768 lockdown #5 — PAN at rest must be encrypted (compliance posture
-  // parity with ConsultantTaxInfo.panEncrypted). Plaintext column dropped.
-  // Last 4 digits cached separately for "show pan ending XXXX" UI.
-  panEncrypted Bytes?
-  panLast4     String?      @db.VarChar(4)
-  hsnDefault   String       @default("999293") // SAC code for educational/consulting services
-
-  // #769 Comment 4 — tax jurisdiction prep. Today always IN; when first
-  // non-India customer signs we refactor India-specific columns into
-  // IndianTaxBreakdown and add UsSalesTaxBreakdown etc. (Approach E).
-  taxJurisdiction TaxJurisdiction @default(IN)
-
-  // #768 lockdown #16 — Sumsub KYB stub (closes #687 invoice-fraud
-  // threat model). UI blocks INVOICE fundingSource selection when
-  // kybVerifiedAt IS NULL; Sumsub integration ships when self-serve
-  // INVOICE opens publicly.
-  kybVerifiedAt     DateTime?
-  sumsubApplicantId String?
-
-  // MSME 43B(h) classification for HOST orgs receiving payouts.
-  // When MICRO / SMALL, payouts must clear within 15 / 45 days (or 15 days
-  // when no written agreement is on file) per CGST Sec 43B(h) — otherwise
-  // the deduction is disallowed for the deductor's income-tax filing.
-  // MEDIUM and NONE fall back to contract.paymentTermsDays. Mirrors the
-  // same fields on ConsultantProfile.
-  msmeStatus                 MsmeStatus @default(NONE)
-  msmeWrittenAgreementOnFile Boolean    @default(false)
+  // #771 D10 — tax / MSME / KYB carved into 1:1 satellites (mirrors
+  // ConsultantTaxInfo). Keeps the core Organization row focused on identity +
+  // capabilities and isolates encrypted PII. Read via the relation include
+  // (`org.taxInfo?.gstin`, `org.msmeInfo?.msmeStatus`, `org.kybVerification?.kybVerifiedAt`).
+  taxInfo         OrganizationTaxInfo?
+  msmeInfo        OrganizationMsmeInfo?
+  kybVerification OrgKybVerification?
 
   // Procurement
   requiresPO       Boolean @default(false)
@@ -847,6 +832,39 @@ enum PayoutRecipient {
 // WALLET (GLG credit pool), INVOICE (NET-X postpaid), PROJECT (v2 placeholder).
 // Contract links the org to one or more Programs with negotiated terms.
 
+// #771 D10 — Organization tax identity (1:1 satellite; mirrors ConsultantTaxInfo).
+model OrganizationTaxInfo {
+  organizationId  String          @id
+  organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  gstin           String?         @db.VarChar(15)
+  gstStateCode    String?         @db.VarChar(2)
+  gstRegStatus    GstRegStatus    @default(UNREGISTERED)
+  // PAN encrypted at rest; last 4 cached for "ending XXXX" UI.
+  panEncrypted    Bytes?
+  panLast4        String?         @db.VarChar(4)
+  hsnDefault      String          @default("999293") // SAC code; set 998314/998399 for professional/IT consulting
+  // #769 Comment 4 — multi-jurisdiction prep; today always IN.
+  taxJurisdiction TaxJurisdiction @default(IN)
+}
+
+// #771 D10 — MSME 43B(h) classification for HOST orgs receiving payouts (1:1).
+// MICRO/SMALL → 15/45-day clearance; MEDIUM/NONE fall back to contract terms.
+model OrganizationMsmeInfo {
+  organizationId             String       @id
+  organization               Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  msmeStatus                 MsmeStatus   @default(NONE)
+  msmeWrittenAgreementOnFile Boolean      @default(false)
+}
+
+// #771 D10 — Sumsub KYB verification (1:1). UI blocks INVOICE funding selection
+// until kybVerifiedAt is set (closes #687 invoice-fraud threat model).
+model OrgKybVerification {
+  organizationId    String       @id
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  kybVerifiedAt     DateTime?
+  sumsubApplicantId String?
+}
+
 model BillingAccount {
   id           String        @id @default(uuid())
   ownerOrgId   String        @unique
@@ -858,7 +876,7 @@ model BillingAccount {
 
   // WALLET funding (GLG-style)
   walletBalance Int? // paise
-  walletLedger  WalletEntry[]
+  walletTopUps  WalletTopUp[]
 
   // INVOICE funding
   creditLimit Int? // paise; null = unlimited
@@ -963,33 +981,48 @@ enum BillingCycle {
 // Immutable ledger replacing OrgCreditPool + OrgCreditLedger + OrgCreditPurchase trio.
 // Raw-SQL conditional UPDATE on BillingAccount.walletBalance provides atomicity.
 
-model WalletEntry {
-  id               String         @id @default(uuid())
-  billingAccountId String
-  billingAccount   BillingAccount @relation(fields: [billingAccountId], references: [id], onDelete: Cascade)
-
-  deltaPaise   Int // signed: +topup, -debit
-  reason       WalletReason
-  balanceAfter Int
-  paymentId    String? // linked payment (topup or booking)
-  membershipId String? // who consumed
-  notes        String?
-
-  // Gateway refs for top-up flow (idempotency via providerOrderId @unique)
-  providerOrderId   String? @unique
-  providerPaymentId String?
-
-  createdAt DateTime @default(now())
-
-  @@index([billingAccountId, createdAt])
-  @@index([paymentId])
-}
-
+// #772 B3 — WalletEntry removed. The wallet is a credit-normal liability in the
+// double-entry journal (the org's WALLET LedgerAccount); per-movement history is
+// LedgerEntry on that account, top-up lifecycle is WalletTopUp, and
+// BillingAccount.walletBalance is the derived cache. WalletReason is retained as
+// the domain classifier for walletCredit/walletDebit's `reason` argument.
 enum WalletReason {
   TOPUP
   BOOKING
   REFUND
   ADJUSTMENT
+}
+
+// #772 B3 — top-up idempotency + history record. Replaces the WalletEntry
+// "deltaPaise=0 placeholder" pattern: a top-up's lifecycle (PENDING → CONFIRMED
+// / FAILED) lives here, keyed by providerOrderId @unique. The wallet *balance*
+// movement is the double-entry journal (Dr CASH / Cr WALLET, posted on confirm).
+model WalletTopUp {
+  id               String         @id @default(uuid())
+  billingAccountId String
+  billingAccount   BillingAccount @relation(fields: [billingAccountId], references: [id], onDelete: Cascade)
+
+  // Our idempotency key (we_<uuid>) — also the public topUpId used by
+  // GET /top-ups/{topUpId}. @unique guarantees a webhook redelivery or a
+  // double-POST can't double-credit the wallet.
+  providerOrderId   String  @unique
+  providerPaymentId String? // gateway payment id, set on confirm
+  amountPaise       Int
+  status            WalletTopUpStatus @default(PENDING)
+  notes             String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  confirmedAt DateTime?
+
+  @@index([billingAccountId, createdAt])
+  @@index([status, createdAt])
+}
+
+enum WalletTopUpStatus {
+  PENDING
+  CONFIRMED
+  FAILED
 }
 
 //////////////////////////////////////////////////// PROGRAMS ////////////////////////////////////////////////////
@@ -1808,72 +1841,104 @@ model UsageLedgerEntry {
 // the GRANT carve-out + the audience separation justifies the second
 // table. If grants are eventually exposed to users, the merge becomes
 // viable; track that under the "redundancies" follow-up issue.
-model FundingLedgerEntry {
-  id                String        @id @default(uuid())
-  billingAccountId  String
-  deltaPaise        Int // signed
-  /// Currency of `deltaPaise`. Today every BillingAccount is INR and the
-  /// invariant "sum(deltaPaise) == walletBalance" assumes a single currency
-  /// per account. Once multi-currency wallets land (see issue #711 and
-  /// docs/payments/multi-currency/), the reconciler's invariant will need
-  /// a per-currency split. The column ships now so the historical writes
-  /// have the metadata when that day comes.
-  currency          Currency      @default(INR)
-  reason            FundingReason
-  balanceAfterPaise Int
-  paymentId         String?
-  walletEntryId     String?       @unique
-  notes             String?
+// #772 B1 — FundingLedgerEntry removed; the double-entry journal (LedgerEntry)
+// is the accounting source of truth. WalletEntry remains as the wallet history
+// + top-up idempotency record (until B3).
 
-  createdAt DateTime @default(now())
+// #772 B2 — SettlementLedgerEntry + SettlementKind removed; the double-entry
+// journal (LedgerTransaction.kind: INVOICE_ISSUED / INVOICE_PAID / PAYOUT / …)
+// + OrgAuditLog are the settlement audit trail.
 
-  @@index([billingAccountId, createdAt])
+// ───────────────────────────────────────────────────────────────────────────
+// #771 D1/D5 — DOUBLE-ENTRY CASH LEDGER (target money model)
+//
+// The three single-entry logs above (WalletEntry, FundingLedgerEntry,
+// SettlementLedgerEntry) collapse into this one journal: every cash event is a
+// balanced transaction (Σ DEBIT == Σ CREDIT), balances are DERIVED (sum of
+// entries on an account), and the GRANT carve-out + "audience" split that
+// justified the old tables become postings + views. `BillingAccount.walletBalance`
+// is retained only as a denormalized cache for the atomic-debit guard, asserted
+// equal to balance(WALLET account) by the reconcile cron.
+//
+// Writers (Batch 2) go through `postLedgerTxn()`, which asserts the balance
+// invariant; a DB trigger enforces it at COMMIT (added in the reset SQL, since
+// Prisma has no native multi-row CHECK).
+// ───────────────────────────────────────────────────────────────────────────
+enum LedgerAccountKind {
+  CASH // platform gateway/settlement cash
+  WALLET // an org's prepaid balance (a liability we owe the org)
+  PLATFORM_FEE // platform revenue
+  PLATFORM_PROMO // contra-revenue: platform-funded grants/comps + referral credits
+  DISCOUNT // contra-revenue: discount given to the buyer (#771 AF-3 booking posting)
+  CONSULTANT_PAYABLE // owed to a consultant
+  ORG_PAYABLE // owed to a host org
+  ORG_RECEIVABLE // an INVOICE-funded org owes us (accrued, cleared on invoice payment)
+  TDS_PAYABLE // TDS withheld, owed to the government
+  GST_PAYABLE // GST collected, owed to the government
 }
 
-model SettlementLedgerEntry {
-  id             String         @id @default(uuid())
-  organizationId String?
-  paymentId      String?
-  invoiceId      String?
-  payoutId       String?
-  kind           SettlementKind
-  amountPaise    Int // signed: + receive / - outflow
-  currency       Currency
-  notes          String?
+enum LedgerDirection {
+  DEBIT
+  CREDIT
+}
+
+model LedgerAccount {
+  // Deterministic id: "<kind>|<orgId|_>|<membershipId|_>|<currency>" so
+  // resolveAccountId() upserts dedupe per scope without the Postgres
+  // nullable-unique gotcha (a unique index doesn't dedupe NULLs).
+  id String @id
+  // Scope: platform-wide accounts leave both owners null; org / consultant
+  // sub-ledgers set the relevant owner. One account per (owner, kind, currency).
+  organizationId      String?
+  consultantProfileId String?
+  kind                LedgerAccountKind
+  currency            Currency            @default(INR)
+  entries             LedgerEntry[]
 
   createdAt DateTime @default(now())
 
-  @@index([organizationId, createdAt])
-  @@index([kind, createdAt])
-  // Reverse-lookup indexes used by the ledger reconciliation cron
-  // (Phase 4) and by the admin "explain this payment / invoice / payout"
-  // tools. Each FK column is sparse (nullable) so we keep them as
-  // single-column indexes rather than composing them.
+  @@unique([organizationId, consultantProfileId, kind, currency])
+  @@index([kind])
+}
+
+model LedgerTransaction {
+  id String @id @default(cuid())
+  // Idempotency: natural key of the originating event
+  // (e.g. "topup:<walletOrderId>", "booking:<paymentId>", "payout:<payoutId>").
+  // A retried event re-derives the same key and is a no-op.
+  idempotencyKey String  @unique
+  kind           String // BOOKING / TOPUP / INVOICE_ISSUED / INVOICE_PAID / PAYOUT / OVERAGE / GRANT / REFUND / ...
+  description    String?
+  // Sparse soft-links to the originating domain row.
+  paymentId String?
+  invoiceId String?
+  payoutId  String?
+
+  entries LedgerEntry[]
+
+  postedAt DateTime @default(now())
+
+  @@index([postedAt])
   @@index([paymentId])
   @@index([invoiceId])
   @@index([payoutId])
 }
 
-enum FundingReason {
-  TOPUP
-  BOOKING_DEBIT
-  REFUND_CREDIT
-  ADJUSTMENT
-  GRANT
-}
+model LedgerEntry {
+  id            String            @id @default(cuid())
+  transactionId String
+  // Immutable: never cascade-delete a posting (#771 D8). Reversals are
+  // explicit counter-transactions, not row mutations or deletes.
+  transaction LedgerTransaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  accountId   String
+  account     LedgerAccount     @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  direction   LedgerDirection
+  amountPaise BigInt
 
-enum SettlementKind {
-  INVOICE_ISSUED
-  INVOICE_PAID
-  PAYMENT_RECEIVED
-  REFUND_ISSUED
-  PAYOUT_SENT
-  // Counter-entry written when a PAYOUT_SENT is reversed (admin cancel,
-  // gateway failure reclaim). Carries the signed-positive amount that
-  // nets the original -netPayout entry to zero for the cancelled window.
-  PAYOUT_REVERSED
-  CHARGEBACK
-  CREDIT_NOTE
+  createdAt DateTime @default(now())
+
+  @@index([accountId, createdAt])
+  @@index([transactionId])
 }
 
 // Snapshot output of the ledger reconciliation auditor
@@ -3486,8 +3551,10 @@ model ConsultantEarnings {
   refundedShareAmount  Int @default(0) // Cumulative refunded amount in paise
 
   // Collaborator support
-  role            EarningRole @default(OWNER)
-  sharePercentage Float       @default(100)
+  role     EarningRole @default(OWNER)
+  // #772 B5 — basis points (10000 = 100%) for integer money math, replacing the
+  // Float percentage. Derived display field; the authoritative cut is the paise.
+  shareBps Int         @default(10000)
 
   // Status tracking
   status    EarningStatus @default(PENDING)
@@ -3810,7 +3877,8 @@ model WebinarCollaborator {
   canViewAnalytics       Boolean                 @default(false)
   canEditEvent           Boolean                 @default(false)
   canSeeAttendees        Boolean                 @default(false)
-  revenueSharePercentage Float
+  // #772 B5 — basis points (e.g. 3000 = 30%) for integer money math.
+  revenueShareBps        Int
   status                 CollaboratorStatus      @default(PENDING)
   invitedById            String
   respondedAt            DateTime?
@@ -3837,7 +3905,8 @@ model ClassCollaborator {
   canViewAnalytics       Boolean               @default(false)
   canEditEvent           Boolean               @default(false)
   canSeeAttendees        Boolean               @default(false)
-  revenueSharePercentage Float
+  // #772 B5 — basis points (e.g. 3000 = 30%) for integer money math.
+  revenueShareBps        Int
   status                 CollaboratorStatus    @default(PENDING)
   invitedById            String
   respondedAt            DateTime?
