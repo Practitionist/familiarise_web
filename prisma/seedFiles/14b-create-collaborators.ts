@@ -71,8 +71,8 @@ export async function createCollaborators() {
             consultantProfileId: collab.id,
             webinarPlanId: plan.id,
             role: faker.helpers.arrayElement(webinarRoles),
-            revenueSharePercentage: faker.helpers.arrayElement([
-              10, 15, 20, 25, 30,
+            revenueShareBps: faker.helpers.arrayElement([
+              1000, 1500, 2000, 2500, 3000,
             ]),
             status,
             invitedById: plan.consultantProfileId!,
@@ -107,8 +107,8 @@ export async function createCollaborators() {
             consultantProfileId: collab.id,
             classPlanId: plan.id,
             role: faker.helpers.arrayElement(classRoles),
-            revenueSharePercentage: faker.helpers.arrayElement([
-              10, 15, 20, 25, 30,
+            revenueShareBps: faker.helpers.arrayElement([
+              1000, 1500, 2000, 2500, 3000,
             ]),
             status,
             invitedById: plan.consultantProfileId!,

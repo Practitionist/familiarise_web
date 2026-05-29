@@ -1,7 +1,7 @@
 /**
  * Abandoned Organization Wallet Top-Up Cleanup — Core Logic
  *
- * Reaps pending `WalletEntry` placeholder rows that never received a
+ * Reaps pending `WalletTopUp` rows that never received a
  * webhook confirmation within the grace window. These occur when:
  *   - The user closes the Razorpay popup without completing payment.
  *   - The webhook never fires (gateway outage, our webhook endpoint
@@ -9,13 +9,12 @@
  *   - The top-up route created the placeholder but the Razorpay order
  *     failed afterwards and the rollback DELETE didn't commit.
  *
- * Invariant for a pending placeholder:
- *   - `reason = TOPUP`
- *   - `deltaPaise = 0` (the `initiateTopUp` helper sets placeholder deltas)
- *   - `providerPaymentId IS NULL` (never confirmed)
+ * Invariant for a pending top-up:
+ *   - `status = PENDING` (never confirmed by the webhook)
+ *   - `providerPaymentId IS NULL`
  *   - `createdAt < now - GRACE_HOURS`
  *
- * We hard-delete (not soft-delete) because `WalletEntry.providerOrderId`
+ * We hard-delete (not soft-delete) because `WalletTopUp.providerOrderId`
  * is `@unique` — leaving a stale row would block a legitimate retry that
  * reuses the same client idempotency key.
  *
@@ -60,10 +59,9 @@ export async function cleanupAbandonedOrgTopUps(
 
   try {
     // Identify candidates first so we can log per-row context for ops.
-    const candidates = await prisma.walletEntry.findMany({
+    const candidates = await prisma.walletTopUp.findMany({
       where: {
-        reason: "TOPUP",
-        deltaPaise: 0,
+        status: "PENDING",
         providerPaymentId: null,
         createdAt: { lt: cutoff },
       },
@@ -92,13 +90,13 @@ export async function cleanupAbandonedOrgTopUps(
     // Delete in a single statement so the whole batch commits or none.
     // We cannot soft-delete — `providerOrderId @unique` would keep the slot
     // reserved and block a legitimate retry with the same client idempotency key.
-    const deleted = await prisma.walletEntry.deleteMany({
+    const deleted = await prisma.walletTopUp.deleteMany({
       where: { id: { in: candidates.map((c) => c.id) } },
     });
     reaped = deleted.count;
 
     console.log(
-      `   Reaped ${reaped} pending WalletEntry placeholders older than ${graceHours}h`,
+      `   Reaped ${reaped} pending WalletTopUp rows older than ${graceHours}h`,
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

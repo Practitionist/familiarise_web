@@ -42,7 +42,6 @@ import {
   BillingCycle,
   OverageBehavior,
   ContractStatus,
-  WalletReason,
   OrgInvoiceStatus,
   IrpStatus,
   PayoutRecipient,
@@ -54,6 +53,7 @@ import {
 } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { buildConsentArtifact } from "../../lib/compliance/dpdp";
+import { postLedgerTxn } from "../../lib/payments/ledger/post";
 import type { UserWithProfiles } from "./1a-create-users";
 
 // Same source-of-truth as 1a-create-users.ts so the tour-owner credential
@@ -115,9 +115,14 @@ async function createRootOrg(params: {
       canSponsor: params.canSponsor,
       canHost: params.canHost,
       status: params.status ?? OrgStatus.ACTIVE,
-      gstin: params.gstin ?? null,
-      gstStateCode: params.gstStateCode ?? null,
-      ...panFields,
+      // #771 D10 — tax identity on the OrganizationTaxInfo satellite.
+      taxInfo: {
+        create: {
+          gstin: params.gstin ?? null,
+          gstStateCode: params.gstStateCode ?? null,
+          ...panFields,
+        },
+      },
       ...brandingFields,
       billingEmail: params.billingEmail ?? null,
       paymentTermsDays: 60,
@@ -311,13 +316,26 @@ async function seedWipro(learners: UserWithProfiles[], owner: UserWithProfiles) 
         consulteeProfileId: user.consulteeProfile?.id ?? null,
       },
     });
-    await prisma.programAssignment.create({
+    const engagements = idx === 0 ? 3 : 1;
+    const assignment = await prisma.programAssignment.create({
       data: {
         programId: program.id,
         membershipId: membership.id,
         periodStart,
         periodEnd,
-        engagementsUsed: idx === 0 ? 3 : 1,
+        engagementsUsed: engagements,
+      },
+    });
+    // #772 B6 — back the denormalized engagementsUsed counter with the immutable
+    // usage ledger so the reconcile engagements invariant (Σ UsageLedgerEntry ==
+    // engagementsUsed) holds. One row per assignment carrying the full count.
+    await prisma.usageLedgerEntry.create({
+      data: {
+        programAssignmentId: assignment.id,
+        membershipId: membership.id,
+        engagementsConsumed: engagements,
+        priceAtBookingPaise: 200000,
+        notes: "Seed: licensed-seat engagements consumed",
       },
     });
   }
@@ -554,59 +572,68 @@ async function seedIit(params: {
     },
   });
 
-  // Seed WalletEntry ledger: 3 top-ups then 5 booking debits.
+  // #772 B3/B6 — wallet movements are double-entry journal postings; the org's
+  // WALLET LedgerAccount is the source of truth and walletBalance is its derived
+  // cache. Seed 3 confirmed top-ups (Dr CASH / Cr WALLET) + 5 booking debits
+  // (Dr WALLET / Cr PLATFORM_FEE) so reconcile sees a balanced journal whose
+  // WALLET balance equals the cache.
+  const TOPUP_PAISE = 5_00_000 * 100; // ₹5L each
+  const DEBIT_PAISE = 5_000 * 100; // ₹5K each
   const now = new Date();
-  let running = 0;
 
   for (let i = 0; i < 3; i++) {
-    const top = 5_00_000 * 100; // ₹5L
-    running += top;
-    await prisma.walletEntry.create({
+    const orderId = `order_iit_topup_${i + 1}_${faker.string.alphanumeric(8)}`;
+    await prisma.walletTopUp.create({
       data: {
         billingAccountId: billingAccount.id,
-        deltaPaise: top,
-        reason: WalletReason.TOPUP,
-        balanceAfter: running,
-        notes: `Razorpay top-up #${i + 1}`,
-        providerOrderId: `order_iit_topup_${i + 1}_${faker.string.alphanumeric(8)}`,
+        providerOrderId: orderId,
         providerPaymentId: `pay_${faker.string.alphanumeric(14)}`,
+        amountPaise: TOPUP_PAISE,
+        status: "CONFIRMED",
+        confirmedAt: now,
+        notes: `Razorpay top-up #${i + 1}`,
       },
     });
-    await prisma.fundingLedgerEntry.create({
-      data: {
-        billingAccountId: billingAccount.id,
-        deltaPaise: top,
-        reason: "TOPUP",
-        balanceAfterPaise: running,
-      },
+    await postLedgerTxn(prisma, {
+      idempotencyKey: `topup:${orderId}`,
+      kind: "TOPUP",
+      postings: [
+        {
+          account: { kind: "CASH", currency: "INR" },
+          direction: "DEBIT",
+          amountPaise: TOPUP_PAISE,
+        },
+        {
+          account: { kind: "WALLET", organizationId: org.id, currency: "INR" },
+          direction: "CREDIT",
+          amountPaise: TOPUP_PAISE,
+        },
+      ],
     });
   }
 
   for (let i = 0; i < 5; i++) {
-    const debit = 5_000 * 100; // ₹5K
-    running -= debit;
-    await prisma.walletEntry.create({
-      data: {
-        billingAccountId: billingAccount.id,
-        deltaPaise: -debit,
-        reason: WalletReason.BOOKING,
-        balanceAfter: running,
-        notes: `Sample booking debit #${i + 1}`,
-      },
-    });
-    await prisma.fundingLedgerEntry.create({
-      data: {
-        billingAccountId: billingAccount.id,
-        deltaPaise: -debit,
-        reason: "BOOKING_DEBIT",
-        balanceAfterPaise: running,
-      },
+    await postLedgerTxn(prisma, {
+      idempotencyKey: `seed-booking:${billingAccount.id}:${i + 1}`,
+      kind: "BOOKING",
+      postings: [
+        {
+          account: { kind: "WALLET", organizationId: org.id, currency: "INR" },
+          direction: "DEBIT",
+          amountPaise: DEBIT_PAISE,
+        },
+        {
+          account: { kind: "PLATFORM_FEE", currency: "INR" },
+          direction: "CREDIT",
+          amountPaise: DEBIT_PAISE,
+        },
+      ],
     });
   }
 
   await prisma.billingAccount.update({
     where: { id: billingAccount.id },
-    data: { walletBalance: running },
+    data: { walletBalance: TOPUP_PAISE * 3 - DEBIT_PAISE * 5 },
   });
 
   // OWNER membership (dean / org admin; payoutRecipient=ORGANIZATION for internal salaried)
@@ -696,7 +723,7 @@ async function seedIit(params: {
   });
 
   console.log(
-    `[15a]   ✓ IIT Madras (HYBRID, WALLET, CREDIT_POOL): wallet ₹${(running / 100).toLocaleString("en-IN")} remaining`,
+    `[15a]   ✓ IIT Madras (HYBRID, WALLET, CREDIT_POOL): wallet ₹${((TOPUP_PAISE * 3 - DEBIT_PAISE * 5) / 100).toLocaleString("en-IN")} remaining`,
   );
 }
 

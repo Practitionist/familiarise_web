@@ -23,6 +23,12 @@ type PlanType = "webinar" | "class";
 
 const MIN_HOST_SHARE = 10; // Host must keep at least 10%
 
+// #772 B5 — collaborator shares are stored as basis points (bps) for integer
+// money math. The public API/param surface stays in percent (0–90); convert at
+// the DB boundary. 30% -> 3000 bps; the 90% cap -> 9000 bps.
+const pctToBps = (pct: number) => Math.round(pct * 100);
+const MAX_COLLAB_BPS = (100 - MIN_HOST_SHARE) * 100; // 9000
+
 /**
  * Invite a collaborator to a webinar or class plan.
  */
@@ -76,7 +82,7 @@ export async function inviteCollaborator(
               where: { id: existing.id },
               data: {
                 role: role as WebinarCollaboratorRole,
-                revenueSharePercentage,
+                revenueShareBps: pctToBps(revenueSharePercentage),
                 status: "PENDING",
                 invitedById,
                 respondedAt: null,
@@ -92,7 +98,7 @@ export async function inviteCollaborator(
             consultantProfileId,
             webinarPlanId: planId,
             role: role as WebinarCollaboratorRole,
-            revenueSharePercentage,
+            revenueShareBps: pctToBps(revenueSharePercentage),
             status: "PENDING",
             invitedById,
           },
@@ -109,7 +115,7 @@ export async function inviteCollaborator(
               where: { id: existing.id },
               data: {
                 role: role as ClassCollaboratorRole,
-                revenueSharePercentage,
+                revenueShareBps: pctToBps(revenueSharePercentage),
                 status: "PENDING",
                 invitedById,
                 respondedAt: null,
@@ -125,7 +131,7 @@ export async function inviteCollaborator(
             consultantProfileId,
             classPlanId: planId,
             role: role as ClassCollaboratorRole,
-            revenueSharePercentage,
+            revenueShareBps: pctToBps(revenueSharePercentage),
             status: "PENDING",
             invitedById,
           },
@@ -475,7 +481,7 @@ export async function updateCollaborator(
           where: { id: collaborationId },
           data: {
             ...(updates.revenueSharePercentage !== undefined && {
-              revenueSharePercentage: updates.revenueSharePercentage,
+              revenueShareBps: pctToBps(updates.revenueSharePercentage),
             }),
             ...(updates.role && {
               role: updates.role as WebinarCollaboratorRole,
@@ -504,7 +510,7 @@ export async function updateCollaborator(
           where: { id: collaborationId },
           data: {
             ...(updates.revenueSharePercentage !== undefined && {
-              revenueSharePercentage: updates.revenueSharePercentage,
+              revenueShareBps: pctToBps(updates.revenueSharePercentage),
             }),
             ...(updates.role && {
               role: updates.role as ClassCollaboratorRole,
@@ -650,7 +656,7 @@ export async function getMyCollaborations(consultantProfileId: string) {
               select: {
                 id: true,
                 role: true,
-                revenueSharePercentage: true,
+                revenueShareBps: true,
                 status: true,
                 consultantProfile: {
                   select: {
@@ -715,7 +721,7 @@ export async function getMyCollaborations(consultantProfileId: string) {
               select: {
                 id: true,
                 role: true,
-                revenueSharePercentage: true,
+                revenueShareBps: true,
                 status: true,
                 consultantProfile: {
                   select: {
@@ -887,10 +893,10 @@ async function validateRevenueSharesTx(
         status: { in: ["PENDING", "ACCEPTED"] },
         ...(excludeId && { NOT: { id: excludeId } }),
       },
-      select: { revenueSharePercentage: true },
+      select: { revenueShareBps: true },
     });
     currentTotal = collabs.reduce(
-      (sum, c) => sum + c.revenueSharePercentage,
+      (sum, c) => sum + c.revenueShareBps,
       0,
     );
   } else {
@@ -900,15 +906,15 @@ async function validateRevenueSharesTx(
         status: { in: ["PENDING", "ACCEPTED"] },
         ...(excludeId && { NOT: { id: excludeId } }),
       },
-      select: { revenueSharePercentage: true },
+      select: { revenueShareBps: true },
     });
     currentTotal = collabs.reduce(
-      (sum, c) => sum + c.revenueSharePercentage,
+      (sum, c) => sum + c.revenueShareBps,
       0,
     );
   }
 
-  return currentTotal + newShare <= 100 - MIN_HOST_SHARE;
+  return currentTotal + pctToBps(newShare) <= MAX_COLLAB_BPS;
 }
 
 /**
@@ -944,7 +950,7 @@ export async function calculateRevenueSplit(
   let collaboratorTotal = 0;
   for (const collab of acceptedCollabs) {
     const share = Math.round(
-      (totalAmount * collab.revenueSharePercentage) / 100,
+      (totalAmount * collab.revenueShareBps) / 10_000,
     );
     collaboratorTotal += share;
     splits.push({

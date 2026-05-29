@@ -1,37 +1,26 @@
 /**
  * Read-only ledger auditor.
  *
- * Walks the three ledgers and derived balances to flag drift:
+ * Walks the double-entry journal + derived balances to flag drift. #772
+ * collapsed the three single-entry logs (FundingLedgerEntry, WalletEntry,
+ * SettlementLedgerEntry) into the LedgerTransaction/LedgerEntry journal, so
+ * the legacy mirror checks (B/C/D) are gone — their events now live as
+ * balanced journal transactions, guarded by the per-txn imbalance check.
  *
- *   1. FundingLedgerEntry   ← top-ups / refund credits / adjustments
- *   2. WalletEntry          ← the authoritative wallet journal
- *                             (its sum is the wallet invariant)
- *   3. SettlementLedgerEntry ← invoice issued / paid / payout events
- *   4. OrganizationInvoice  ← ISSUED / PAID / REFUNDED status machine
- *   5. ProgramAssignment    ← per-(member, cycle) engagementsUsed counter
+ *   1. LedgerTransaction/Entry  ← the authoritative double-entry journal
+ *   2. BillingAccount.walletBalance ← derived cache of the WALLET account
+ *   3. OrganizationInvoice  ← ISSUED / PAID / REFUNDED status machine
+ *   4. ProgramAssignment    ← per-(member, cycle) engagementsUsed counter
  *
  * Invariants we check:
  *
  *   A. For every BillingAccount:
- *      sum(walletEntry.deltaPaise) === billingAccount.walletBalance
- *      (the "wallet balance drift" check)
+ *      −balance(WALLET LedgerAccount) === billingAccount.walletBalance
+ *      (the "wallet balance drift" check; WALLET is a credit-normal
+ *      liability so amount owed = Σ CREDIT − Σ DEBIT)
  *
- *   B. For every BillingAccount:
- *      sum(walletEntry.deltaPaise WHERE reason in (TOPUP, REFUND, ...))
- *        === sum(fundingLedgerEntry.deltaPaise)
- *      (FundingLedger should mirror the wallet journal's funding rows;
- *      if a top-up webhook forgot to emit FundingLedgerEntry we catch it)
- *
- *   C. For every Organization:
- *      sum(settlementLedgerEntry.amountPaise WHERE kind=INVOICE_ISSUED)
- *        === sum(organizationInvoice.totalPaise WHERE status != VOIDED)
- *      (settlement ledger should carry an INVOICE_ISSUED entry for
- *      every non-voided invoice)
- *
- *   D. For every PAID OrganizationInvoice:
- *      a matching INVOICE_PAID SettlementLedgerEntry exists
- *      (detects invoice-paid webhook that flipped status but failed to
- *      log the settlement row)
+ *   LEDGER_TXN_IMBALANCE. For every LedgerTransaction:
+ *      Σ DEBIT === Σ CREDIT (the double-entry invariant)
  *
  *   E. For every ACTIVE ProgramAssignment (periodEnd >= now):
  *      sum(usageLedgerEntry.engagementsConsumed) === programAssignment.engagementsUsed
@@ -85,6 +74,7 @@
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { checkPaymentLegsSumToAmount } from "@/lib/payments/payment-legs";
+import { ledgerBalancePaise } from "@/lib/payments/ledger/post";
 
 export type ReconcileScope = {
   /** Human-readable scope tag, e.g. "full" or "org:<orgId>". */
@@ -98,13 +88,12 @@ export type ReconcileScope = {
 export type Finding = {
   kind:
     | "WALLET_BALANCE_DRIFT"
-    | "FUNDING_LEDGER_MISSING"
-    | "SETTLEMENT_MISSING_INVOICE_ISSUED"
-    | "SETTLEMENT_MISSING_INVOICE_PAID"
+    | "EARNINGS_LEDGER_DRIFT"
     | "PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT"
     | "ACTIVE_SEAT_COUNT_DRIFT"
     | "PAYMENT_LEG_SUM_MISMATCH"
-    | "ORG_PAYOUT_TOTAL_MISMATCH";
+    | "ORG_PAYOUT_TOTAL_MISMATCH"
+    | "LEDGER_TXN_IMBALANCE";
   organizationId?: string;
   billingAccountId?: string;
   billingSubscriptionId?: string;
@@ -136,6 +125,7 @@ export type ReconcileReport = {
     paymentsChecked: number;
     payoutsChecked: number;
     discrepanciesCount: number;
+    earningsPaymentsWithoutBookingTxn: number;
   };
   findings: Finding[];
 };
@@ -150,20 +140,26 @@ export async function runReconcileLedgers(
     ? { id: opts.organizationId }
     : undefined;
 
-  // --- (A) + (B): per BillingAccount wallet balance + funding mirror ---
+  // --- (A): per BillingAccount wallet balance vs derived WALLET account ---
   const accounts = await prisma.billingAccount.findMany({
-    where: orgFilter
-      ? { ownerOrgId: orgFilter.id }
-      : undefined,
-    select: { id: true, walletBalance: true, ownerOrgId: true },
+    where: orgFilter ? { ownerOrgId: orgFilter.id } : undefined,
+    select: { id: true, walletBalance: true, ownerOrgId: true, currency: true },
   });
 
   for (const acct of accounts) {
-    const walletSum = await prisma.walletEntry.aggregate({
-      where: { billingAccountId: acct.id },
-      _sum: { deltaPaise: true },
-    });
-    const walletTotal = walletSum._sum?.deltaPaise ?? 0;
+    // #772 B3 — WalletEntry removed; the wallet balance derives from the org's
+    // WALLET LedgerAccount. WALLET is a credit-normal liability, so the amount
+    // owed = Σ CREDIT − Σ DEBIT = −(signed Dr−Cr balance). The cached
+    // walletBalance must equal it. (Funding-mirror check B dropped with
+    // FundingLedgerEntry; the journal is the accounting source of truth, guarded
+    // by the LEDGER_TXN_IMBALANCE check below.)
+    const walletTotal = acct.ownerOrgId
+      ? -(await ledgerBalancePaise(prisma, {
+          kind: "WALLET",
+          organizationId: acct.ownerOrgId,
+          currency: acct.currency,
+        }))
+      : 0;
     const bal = acct.walletBalance ?? 0;
 
     if (walletTotal !== bal) {
@@ -176,39 +172,6 @@ export async function runReconcileLedgers(
         deltaPaise: bal - walletTotal,
       });
     }
-
-    // Funding ledger should mirror funding-class wallet entries
-    // (TOPUP, REFUND, ADJUSTMENT). Booking debits live on WalletEntry
-    // only; they are NOT funding events, so we exclude them here.
-    const fundingWalletSum = await prisma.walletEntry.aggregate({
-      where: {
-        billingAccountId: acct.id,
-        reason: { in: ["TOPUP", "REFUND", "ADJUSTMENT"] },
-      },
-      _sum: { deltaPaise: true },
-    });
-    const fundingLedgerSum = await prisma.fundingLedgerEntry.aggregate({
-      where: { billingAccountId: acct.id },
-      _sum: { deltaPaise: true },
-    });
-
-    const fundingWalletTotal = fundingWalletSum._sum?.deltaPaise ?? 0;
-    const fundingLedgerTotal = fundingLedgerSum._sum?.deltaPaise ?? 0;
-
-    if (fundingWalletTotal !== fundingLedgerTotal) {
-      findings.push({
-        kind: "FUNDING_LEDGER_MISSING",
-        billingAccountId: acct.id,
-        organizationId: acct.ownerOrgId ?? undefined,
-        expectedPaise: fundingWalletTotal,
-        actualPaise: fundingLedgerTotal,
-        deltaPaise: fundingLedgerTotal - fundingWalletTotal,
-        details: {
-          note:
-            "FundingLedgerEntry sum differs from funding-class WalletEntry sum. A top-up or refund webhook likely failed to emit the funding ledger row.",
-        },
-      });
-    }
   }
 
   // --- (C) + (D): per-Organization settlement coverage ---
@@ -217,60 +180,11 @@ export async function runReconcileLedgers(
     select: { id: true },
   });
 
-  for (const org of organizations) {
-    // (C) INVOICE_ISSUED coverage
-    const invoicesNonVoided = await prisma.organizationInvoice.aggregate({
-      where: {
-        organizationId: org.id,
-        status: { not: "VOID" },
-      },
-      _sum: { totalPaise: true },
-    });
-    const settlementIssued = await prisma.settlementLedgerEntry.aggregate({
-      where: {
-        organizationId: org.id,
-        kind: "INVOICE_ISSUED",
-      },
-      _sum: { amountPaise: true },
-    });
-    const invoicesTotal = invoicesNonVoided._sum?.totalPaise ?? 0;
-    const settlementIssuedTotal = settlementIssued._sum?.amountPaise ?? 0;
-    if (invoicesTotal !== settlementIssuedTotal) {
-      findings.push({
-        kind: "SETTLEMENT_MISSING_INVOICE_ISSUED",
-        organizationId: org.id,
-        expectedPaise: invoicesTotal,
-        actualPaise: settlementIssuedTotal,
-        deltaPaise: settlementIssuedTotal - invoicesTotal,
-        details: {
-          note:
-            "Sum of non-voided OrganizationInvoice.totalPaise does not match sum of SettlementLedgerEntry(kind=INVOICE_ISSUED). An auto-generated invoice may have skipped its settlement row.",
-        },
-      });
-    }
-
-    // (D) INVOICE_PAID coverage per paid invoice
-    const paidInvoices = await prisma.organizationInvoice.findMany({
-      where: { organizationId: org.id, status: "PAID" },
-      select: { id: true, totalPaise: true },
-    });
-    for (const inv of paidInvoices) {
-      const hasPaidSettlement = await prisma.settlementLedgerEntry.findFirst({
-        where: { invoiceId: inv.id, kind: "INVOICE_PAID" },
-        select: { id: true },
-      });
-      if (!hasPaidSettlement) {
-        findings.push({
-          kind: "SETTLEMENT_MISSING_INVOICE_PAID",
-          organizationId: org.id,
-          invoiceId: inv.id,
-          expectedPaise: inv.totalPaise,
-          actualPaise: 0,
-          deltaPaise: -inv.totalPaise,
-        });
-      }
-    }
-  }
+  // #772 B2 — SettlementLedgerEntry removed; settlement coverage checks (C/D)
+  // dropped. INVOICE_ISSUED / INVOICE_PAID / PAYOUT events now live in the
+  // double-entry journal (LedgerTransaction.kind) + OrgAuditLog. `organizations`
+  // is retained for the summary count.
+  void organizations.length;
 
   // --- (E): per ProgramAssignment engagement-counter drift ---
   // engagementsUsed is denormalized for query performance — checkout
@@ -449,6 +363,114 @@ export async function runReconcileLedgers(
     }
   }
 
+  // --- (H) #771 D1/D5 — double-entry invariant: every LedgerTransaction must
+  // balance (Σ DEBIT === Σ CREDIT). postLedgerTxn enforces this at write time;
+  // this nightly check catches manual SQL edits or a future writer bug. ZERO
+  // findings here across a reseed is the GATE that lets the three single-entry
+  // logs (Wallet/Funding/Settlement) above be safely removed (#771 cutover).
+  // Global integrity check — runs on full scope only.
+  if (!opts.organizationId) {
+    const ledgerSums = await prisma.ledgerEntry.groupBy({
+      by: ["transactionId", "direction"],
+      _sum: { amountPaise: true },
+    });
+    const perTxn = new Map<string, { debit: bigint; credit: bigint }>();
+    for (const row of ledgerSums) {
+      const cur = perTxn.get(row.transactionId) ?? {
+        debit: BigInt(0),
+        credit: BigInt(0),
+      };
+      const amt = row._sum.amountPaise ?? BigInt(0);
+      if (row.direction === "DEBIT") cur.debit += amt;
+      else cur.credit += amt;
+      perTxn.set(row.transactionId, cur);
+    }
+    perTxn.forEach((sums, transactionId) => {
+      if (sums.debit !== sums.credit) {
+        findings.push({
+          kind: "LEDGER_TXN_IMBALANCE",
+          expectedPaise: Number(sums.debit),
+          actualPaise: Number(sums.credit),
+          deltaPaise: Number(sums.debit - sums.credit),
+          details: {
+            transactionId,
+            unit: "paise",
+            note: "Double-entry LedgerTransaction does not balance (Σdebit ≠ Σcredit).",
+          },
+        });
+      }
+    });
+  }
+
+  // --- (E2) booking-ledger drift (covered payments only) — #772 B4 ----------
+  // Earnings amount columns are a reconciled cache; the journal is the source
+  // of truth. For every payment that HAS a booking journal txn, the journal's
+  // earnings-relevant credits (PLATFORM_FEE + CONSULTANT_PAYABLE + ORG_PAYABLE)
+  // must equal the cached Earnings amounts. Payments WITHOUT a booking txn
+  // (multi-collaborator runtime path + seed rows) are a tracked coverage gap
+  // (#773), counted below for visibility but not flagged here.
+  const bookingTxns = await prisma.ledgerTransaction.findMany({
+    where: { kind: "BOOKING", paymentId: { not: null } },
+    select: { id: true, paymentId: true },
+  });
+  const coveredPaymentIds = new Set(
+    bookingTxns.map((t) => t.paymentId).filter((p): p is string => !!p),
+  );
+  for (const txn of bookingTxns) {
+    if (!txn.paymentId) continue;
+    const creditRows = await prisma.ledgerEntry.findMany({
+      where: {
+        transactionId: txn.id,
+        direction: "CREDIT",
+        account: {
+          kind: { in: ["PLATFORM_FEE", "CONSULTANT_PAYABLE", "ORG_PAYABLE"] },
+        },
+      },
+      select: { amountPaise: true },
+    });
+    const journalEarnings = creditRows.reduce(
+      (s, r) => s + Number(r.amountPaise),
+      0,
+    );
+    const [ce, oe] = await Promise.all([
+      prisma.consultantEarnings.aggregate({
+        where: { paymentId: txn.paymentId },
+        _sum: { platformFeePaise: true, consultantSharePaise: true },
+      }),
+      prisma.organizationEarnings.aggregate({
+        where: { paymentId: txn.paymentId },
+        _sum: { orgSharePaise: true },
+      }),
+    ]);
+    const cacheEarnings =
+      (ce._sum.platformFeePaise ?? 0) +
+      (ce._sum.consultantSharePaise ?? 0) +
+      (oe._sum.orgSharePaise ?? 0);
+    if (journalEarnings !== cacheEarnings) {
+      findings.push({
+        kind: "EARNINGS_LEDGER_DRIFT",
+        paymentId: txn.paymentId,
+        expectedPaise: cacheEarnings,
+        actualPaise: journalEarnings,
+        deltaPaise: journalEarnings - cacheEarnings,
+        details: {
+          unit: "paise",
+          note: "Cached Earnings amounts (ConsultantEarnings.platformFee+consultantShare + OrganizationEarnings.orgShare) do not match the booking journal's PLATFORM_FEE+CONSULTANT_PAYABLE+ORG_PAYABLE credits.",
+        },
+      });
+    }
+  }
+
+  // Coverage metric (informational, NOT a finding): earnings-bearing payments
+  // with no booking journal txn yet — the multi-collaborator + seed gap (#773).
+  const earningsPaymentRows = await prisma.consultantEarnings.findMany({
+    select: { paymentId: true },
+    distinct: ["paymentId"],
+  });
+  const earningsPaymentsWithoutBookingTxn = earningsPaymentRows.filter(
+    (e) => e.paymentId && !coveredPaymentIds.has(e.paymentId),
+  ).length;
+
   const durationMs = Date.now() - startedAt;
   const ok = findings.length === 0;
 
@@ -460,6 +482,7 @@ export async function runReconcileLedgers(
     paymentsChecked: paymentsWithOrgLegs.length,
     payoutsChecked: payouts.length,
     discrepanciesCount: findings.length,
+    earningsPaymentsWithoutBookingTxn,
   };
 
   const report = await prisma.ledgerReconciliationReport.create({

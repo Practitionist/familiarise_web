@@ -233,7 +233,7 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
       status: EarningStatus;
       holdUntil: Date;
       role?: EarningRole;
-      sharePercentage?: number;
+      shareBps?: number;
     }> = [];
     const revenueUpdates: Map<string, number> = new Map();
 
@@ -312,8 +312,8 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
         for (const split of splits) {
           const isOwner = split.role === "OWNER";
           const splitBase = calculateEarningsData(payment, split.consultantProfileId);
-          const sharePercentage = totalConsultantPool > 0
-            ? Math.round((split.share / totalConsultantPool) * 10000) / 100
+          const shareBps = totalConsultantPool > 0
+            ? Math.round((split.share / totalConsultantPool) * 10000)
             : 0;
 
           earningsToCreate.push({
@@ -322,7 +322,7 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
             grossAmount: isOwner ? baseEarnings.grossAmount : 0,
             platformFeePaise: isOwner ? baseEarnings.platformFeePaise : 0,
             role: isOwner ? EarningRole.OWNER : EarningRole.COLLABORATOR,
-            sharePercentage,
+            shareBps,
           });
 
           const currentRevenue = revenueUpdates.get(split.consultantProfileId) || 0;
@@ -336,7 +336,7 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
         earningsToCreate.push({
           ...baseEarnings,
           role: EarningRole.OWNER,
-          sharePercentage: 100,
+          shareBps: 10000,
         });
 
         const currentRevenue = revenueUpdates.get(consultantProfileId) || 0;

@@ -39,7 +39,8 @@ interface EarningRecord {
   holdUntil: string | null;
   createdAt: string;
   role: "OWNER" | "COLLABORATOR";
-  sharePercentage: number;
+  // #772 B5 — basis points (10000 = 100%); divide by 100 for display.
+  shareBps: number;
   payment: {
     id: string;
     amount: number;
@@ -340,9 +341,9 @@ export default function EarningsPage({
                             }`}
                           >
                             {earning.role === "COLLABORATOR"
-                              ? `Collab ${earning.sharePercentage}%`
-                              : earning.sharePercentage < 100
-                                ? `Owner ${earning.sharePercentage}%`
+                              ? `Collab ${earning.shareBps / 100}%`
+                              : earning.shareBps < 10000
+                                ? `Owner ${earning.shareBps / 100}%`
                                 : "Owner"}
                           </span>
                         </td>
