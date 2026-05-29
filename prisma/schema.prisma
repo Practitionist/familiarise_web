@@ -1078,6 +1078,11 @@ model LicensedSeatConfig {
   overageBehavior            OverageBehavior @default(BLOCK)
   activeSeatCount            Int             @default(0)
   priceCapPerEngagementPaise Int?
+  /// #775 — bps markup applied to the pass-through overage marginal, after
+  /// `priceCapPerEngagementPaise`. Null = no markup (marginal == price). Our
+  /// model passes through the real engagement price (consulting rates are
+  /// heterogeneous) rather than a flat per-unit tier; this is the only knob.
+  overageSurchargeBps        Int?
   /// #768 lockdown #14/#15 — circuit breaker on CHARGE_ORG runaway. Null =
   /// no ceiling. Non-null = cumulative OverageEvent.marginalPaise within
   /// the current cycle cannot exceed this; subsequent bookings fall back
@@ -1109,6 +1114,12 @@ model CreditPoolConfig {
   cycle                   BillingCycle
   creditsPerCycle         Int
   minimumCreditsPerPeriod Int?
+  /// #775 — over-budget routing for the money-meter (parity with
+  /// LicensedSeatConfig). The cap is `creditsPerCycle × 100` paise; bookings
+  /// past it BLOCK, CHARGE_MEMBER, or CHARGE_ORG per this value.
+  overageBehavior         OverageBehavior @default(BLOCK)
+  /// #775 — bps markup on the over-budget marginal (see LicensedSeatConfig).
+  overageSurchargeBps     Int?
   /// #768 lockdown #14/#15 — circuit breaker (see LicensedSeatConfig).
   maxOveragePerCyclePaise Int?
 }
@@ -1128,6 +1139,11 @@ model ProgramAssignment {
   /// reverseBookingUtilization on refund. Reconcile cron asserts this
   /// equals sum(UsageLedgerEntry.engagementsConsumed) for the period.
   engagementsUsed Int @default(0)
+  /// #775/#753 — CREDIT_POOL money-meter: paise consumed this cycle (1 credit
+  /// = ₹1 = 100 paise). LICENSED_SEAT leaves it 0 (meters by engagement count
+  /// instead). Reconcile asserts this equals sum(UsageLedgerEntry price) for
+  /// the period on CREDIT_POOL assignments.
+  consumedPaise   Int @default(0)
   overageCount    Int @default(0)
 
   utilizations BookingUtilization[]
@@ -1208,6 +1224,21 @@ enum OverageBehavior {
   BLOCK // cap hit → checkout blocked
   CHARGE_MEMBER // cap hit → learner pays overage on own card
   CHARGE_ORG // cap hit → overage added to org invoice
+}
+
+// #775 — explicit OverageEvent lifecycle (was inferred from settledAt +
+// paymentId nullness). Lets reconcile/audit assert a state machine.
+//   CHARGE_ORG:    PENDING → ACCRUED (rolled into issued invoice) → CHARGED (invoice PAID)
+//   CHARGE_MEMBER: PENDING → CHARGED (side-payment SUCCEEDED) | FAILED (abandoned)
+//   either:        → REVERSED (booking refunded)
+//   circuit-breaker veto recorded as BLOCKED (no money moves).
+enum OverageChargeStatus {
+  PENDING
+  ACCRUED
+  CHARGED
+  BLOCKED
+  REVERSED
+  FAILED
 }
 
 // #726 — Plan visibility enum + marketplace leak guard. Org-owned plans
@@ -3346,6 +3377,12 @@ model Payment {
   // off `amount` + `paymentMethod` alone).
   legs PaymentLeg[]
 
+  // #775 — CHARGE_MEMBER overage side-charge links back to the booking
+  // Payment that breached the cap. null on normal bookings.
+  parentPaymentId String?
+  parentPayment   Payment?  @relation("OverageSideCharge", fields: [parentPaymentId], references: [id], onDelete: SetNull)
+  childPayments   Payment[] @relation("OverageSideCharge")
+
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   overageEvents OverageEvent[]
@@ -3361,6 +3398,7 @@ model Payment {
   @@index([paymentStatus, createdAt])
   @@index([organizationId])
   @@index([billableToOrgInvoiceId])
+  @@index([parentPaymentId])
 }
 
 // Stackable funding leg. Each row captures one source contribution to a
@@ -4538,8 +4576,12 @@ model OverageEvent {
   bookingUtilizationId String             @unique
   bookingUtilization   BookingUtilization @relation(fields: [bookingUtilizationId], references: [id], onDelete: Cascade)
   overageBehavior      OverageBehavior
+  /// Pass-through marginal (over-cap portion of the booking price, after
+  /// `priceCapPerEngagementPaise`) plus the `overageSurchargeBps` markup. May
+  /// exceed the single booking price by the surcharge — that's intended.
   marginalPaise        Int
   currency             Currency           @default(INR)
+  chargeStatus         OverageChargeStatus @default(PENDING)
   /// CHARGE_MEMBER: Payment row for the instant overage charge.
   /// CHARGE_ORG: Payment row of the rolled-up cycle invoice.
   paymentId            String?
@@ -4553,6 +4595,7 @@ model OverageEvent {
 
   @@index([programAssignmentId, createdAt])
   @@index([settledAt])
+  @@index([chargeStatus])
 }
 
 /// #769 Comment 4 — multi-jurisdiction tax prep. Today every org is IN;
