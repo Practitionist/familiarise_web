@@ -9,7 +9,7 @@ shell's routing, notification fan-out, and number / date formatting.
 These are **per-operator**, **cross-org** preferences. Per-organization
 settings (branding, SSO, billing config) live on the org itself at
 `/dashboard/organization/[orgId]/settings` — see
-[12-dashboard-pages.md](./12-dashboard-pages.md).
+[23-dashboard-pages.md](./23-dashboard-pages.md).
 
 ## Schema
 

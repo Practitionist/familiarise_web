@@ -1,0 +1,174 @@
+# Wallet & Top-ups
+
+**What this covers:** how an organization's prepaid **wallet** works — the `WalletTopUp` lifecycle (initiate → Razorpay checkout → webhook confirm), how money lands in the wallet via the double-entry journal, and how bookings debit it. The wallet is a *prepaid liability we owe the org*; its balance is **derived from the journal**, with `BillingAccount.walletBalance` kept only as a fast cache.
+
+> **Mental model.** A wallet is not a bank account we hold money in — it is an IOU. When an org tops up, the platform receives real cash (`CASH` rises) and in exchange owes the org spending power (`WALLET`, a liability, rises). When the org books, the IOU shrinks. The single source of truth for "how much do we owe this org" is the org's `WALLET` ledger account, **not** the `walletBalance` integer.
+
+---
+
+## 1. The two records behind a wallet
+
+| Thing | Where | Role |
+| --- | --- | --- |
+| **`WalletTopUp`** | `prisma/schema.prisma` model `WalletTopUp` (~1000) | Lifecycle + idempotency record for one top-up attempt (PENDING → CONFIRMED / FAILED). |
+| **`WALLET` ledger account** | one `LedgerAccount` per org, derived via `ledgerBalancePaise()` | **Source of truth** for the balance (credit-normal liability). |
+| **`BillingAccount.walletBalance`** (`Int?` paise) | `prisma/schema.prisma` model `BillingAccount` | **Derived cache** of the WALLET account, used for the atomic overdraft guard. Reconcile asserts `-balance(WALLET) == walletBalance`. |
+
+> **History note (#772 B3).** The old per-row `WalletEntry` log (and its "deltaPaise = 0 placeholder" trick for pending top-ups) was **removed**. Wallet history is now the `LedgerEntry` rows on the org's `WALLET` account, and top-up lifecycle lives on `WalletTopUp`. If you read "WalletEntry" anywhere, it is stale — see [Ledger & postings](08-ledger-and-postings.md).
+
+The `walletBalance` cache exists for exactly one reason: a conditional SQL `UPDATE … WHERE walletBalance >= amount` is the cheapest correct overdraft guard under concurrency. We can't run that guard against a derived sum, so we keep a cache and let the reconcile cron prove it never drifts. See [Concurrency & idempotency](20-concurrency-and-idempotency.md).
+
+---
+
+## 2. WalletTopUp lifecycle
+
+A top-up moves through three states. Razorpay is the only gateway in v1.
+
+```mermaid
+stateDiagram-v2
+  [*] --> PENDING: initiateTopUp()\n(create row, return order id)
+  PENDING --> CONFIRMED: confirmTopUp()\n(webhook: payment.captured)
+  PENDING --> FAILED: payment.failed webhook\nOR cleanup cron reaps stale PENDING
+  CONFIRMED --> [*]: journal posted\n(Dr CASH / Cr WALLET)
+  FAILED --> [*]
+  note right of CONFIRMED
+    Idempotent claim: only the first
+    PENDING→CONFIRMED updateMany wins.
+    Redeliveries no-op.
+  end note
+```
+
+Key fields (`model WalletTopUp`, `lib/api/organizations/wallet.ts`):
+
+- `providerOrderId @unique` — the Razorpay order id, **also** the public `topUpId`. The unique constraint is the idempotency anchor: a double-POST or webhook redelivery cannot create or confirm twice.
+- `providerPaymentId?` — gateway payment id (`pay_…`), set on confirm.
+- `amountPaise` — stored **up front** so `confirmTopUp` can assert the webhook-captured amount matches what was authorized.
+- `status` — `PENDING | CONFIRMED | FAILED`.
+- `confirmedAt?` — stamped when the claim wins.
+
+> In code the failed top-up is **deleted**, not flipped to `FAILED`: `handleOrgPaymentFailure` (`app/api/webhooks/utils.ts`) runs `walletTopUp.deleteMany({ where: { status: PENDING, providerPaymentId: null } })` so the UI immediately shows "retry". The `FAILED` enum value is reserved for paths that want to keep the tombstone; the stale-reaper cron also GCs orphaned PENDING rows.
+
+---
+
+## 3. The top-up flow end to end
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant C as Client (org admin)
+  participant API as Top-up API
+  participant DB as Postgres
+  participant RZP as Razorpay
+  participant WH as Webhook handler<br/>(handleOrgPaymentSuccess)
+  participant L as Ledger (postLedgerTxn)
+
+  C->>API: POST /top-ups { amountPaise }
+  API->>DB: initiateTopUp() → WalletTopUp(status=PENDING)
+  API-->>C: { providerOrderId } (Razorpay order id)
+  C->>RZP: open checkout, pay
+  RZP-->>C: success
+  RZP->>WH: webhook payment.captured (notes.type=credit_purchase)
+  WH->>WH: verify notes.amountPaise == gatewayAmountPaise
+  WH->>DB: confirmTopUp(orderId, paymentId, amountPaise)
+  Note over DB: atomic updateMany WHERE status=PENDING → CONFIRMED
+  DB->>DB: walletCredit(): bump walletBalance cache
+  DB->>L: postLedgerTxn(topup:<orderId>)
+  L->>DB: Dr CASH / Cr WALLET (balanced)
+  WH-->>RZP: 200 OK
+```
+
+### 3.1 `initiateTopUp` — create the PENDING claim
+
+`initiateTopUp(db, { billingAccountId, amountPaise, providerOrderId, notes? })` writes one `WalletTopUp` row with `status = PENDING`. No money has moved and **no journal entry exists yet** — the row is purely a pending claim keyed by `providerOrderId`. The API returns the Razorpay order id to the client for checkout.
+
+### 3.2 `confirmTopUp` — atomic claim, then post the journal
+
+The webhook (`handleOrgPaymentSuccess`, branch `notes.type === "credit_purchase"`) first does **defence-in-depth**: it compares `notes.amountPaise` to the gateway-captured amount and refuses to credit on mismatch (logs an audit row, returns 200 so Razorpay stops retrying). Then it calls:
+
+```
+confirmTopUp(prisma, { providerOrderId, providerPaymentId, amountPaise })
+```
+
+Inside one `$transaction`:
+
+1. **Atomic idempotent claim** — a single conditional `updateMany`:
+   ```
+   updateMany WHERE providerOrderId = ? AND status = "PENDING"
+              SET status = "CONFIRMED", providerPaymentId, confirmedAt
+   ```
+   Exactly one racing delivery sees `count === 1` and proceeds. A redelivery (or the losing race) sees `count === 0` and falls through to a no-op that just returns the current balance. If the order id is unknown entirely, it throws.
+2. **Credit the wallet** via `walletCredit(tx, { reason: "TOPUP", … })`, which:
+   - bumps the `walletBalance` cache (`COALESCE(walletBalance,0) + amount`), then
+   - posts the journal (only the `TOPUP` reason posts here):
+
+```
+LedgerTransaction kind=TOPUP  idempotencyKey="topup:<providerOrderId>"
+  Dr CASH                 amountPaise   (platform gateway cash rises)
+  Cr WALLET(org)          amountPaise   (we now owe the org this much)
+```
+
+Both legs are positive integer paise and sum equal, so `postLedgerTxn` accepts it (it throws `LedgerImbalanceError` otherwise). The transaction is idempotent twice over: the `WalletTopUp` claim and the `LedgerTransaction.idempotencyKey @unique`.
+
+---
+
+## 4. `walletDebit` — spending the wallet
+
+When an org-WALLET-funded booking is checked out, `walletDebit(tx, { billingAccountId, amountPaise, reason, … })` runs the **overdraft guard**:
+
+```sql
+UPDATE "BillingAccount"
+SET "walletBalance" = "walletBalance" - :amount
+WHERE "id" = :id
+  AND "walletBalance" IS NOT NULL
+  AND "walletBalance" >= :amount
+```
+
+If `rowsAffected === 0`, the balance was insufficient and it throws `WalletInsufficientFundsError`. Because the predicate and the decrement are one atomic statement, two concurrent bookings can never both drain the same last rupee.
+
+> **Important:** `walletDebit` only moves the **cache**. It does **not** post a journal leg. The accounting leg `Dr WALLET` is posted later from the settlement layer (`createEarningsFromPayment`), where the full fee/payable/GST split is known — that single balanced `booking:<paymentId>` transaction is also the authoritative wallet-history record. See [Booking → earnings](10-booking-to-earnings.md) and [Payment legs](13-payment-legs.md).
+
+`walletCredit` is the mirror: it bumps the cache for any reason, but **only posts a journal txn when `reason === "TOPUP"`**. Refund credits post their WALLET leg from the refund layer (next section), not here — this keeps each cash event owning exactly one posting.
+
+---
+
+## 5. Top-up refund
+
+When Razorpay refunds a confirmed top-up, `handleRefundCreated` (`app/api/webhooks/utils.ts`) finds the `WalletTopUp` by `providerPaymentId` (status `CONFIRMED`) and reverses the original posting:
+
+```
+LedgerTransaction kind=TOPUP_REFUND  idempotencyKey="topup-refund:<providerPaymentId>"
+  Dr WALLET(org)   refundAmt   (the IOU we owe the org shrinks)
+  Cr CASH          refundAmt   (platform cash returns to the gateway)
+```
+
+Then it decrements the `walletBalance` cache to match. Notes:
+
+- The refund amount is **clamped** to the original `amountPaise` (`Math.min(amount, topUp.amountPaise)`).
+- `postLedgerTxn` returns `{ created: false }` on a redelivery (idempotent on the key) — the handler short-circuits before touching the cache, so a double webhook is a no-op.
+- The cache decrement can legitimately drive `walletBalance` negative if the org already spent the credited funds. That is a **real reconcile signal** (the org owes back more than it holds), not a bug to swallow.
+- No `Refund` row is written for org-level refunds — `Refund.paymentId` is scoped to the B2C `Payment` table. The `TOPUP_REFUND` journal transaction is the authoritative record.
+
+---
+
+## 6. Why `walletBalance` is "just a cache"
+
+Every wallet movement is a journal posting:
+
+| Event | Journal | Cache effect |
+| --- | --- | --- |
+| Top-up confirmed | `Dr CASH / Cr WALLET` (`topup:<orderId>`) | `walletBalance += amount` |
+| Booking debit | `Dr WALLET …` inside `booking:<paymentId>` | `walletBalance -= amount` (via `walletDebit`) |
+| Top-up refund | `Dr WALLET / Cr CASH` (`topup-refund:<paymentId>`) | `walletBalance -= amount` |
+
+The org's true balance is always `-ledgerBalancePaise({ kind: "WALLET", organizationId })` (WALLET is credit-normal, so the amount we owe is the negative of the signed balance). The reconcile cron's `WALLET_BALANCE_DRIFT` check asserts this equals the cache; any drift is an incident, never a thing to patch by hand. See [Ledger integrity](14-ledger-integrity.md).
+
+---
+
+### Related docs
+- [Money model overview](06-money-model-overview.md) — double-entry principles, integer paise.
+- [Chart of accounts](07-chart-of-accounts.md) — `CASH`, `WALLET`, and the rest.
+- [Ledger & postings](08-ledger-and-postings.md) — `postLedgerTxn`, balanced postings, idempotency.
+- [Booking → earnings](10-booking-to-earnings.md) — where the `Dr WALLET` booking leg actually posts.
+- [Payment legs](13-payment-legs.md) — `WALLET` as one funding leg of a stacked checkout.
+- [Concurrency & idempotency](20-concurrency-and-idempotency.md) — the atomic-debit guard pattern.
+- [Ledger integrity](14-ledger-integrity.md) — the `WALLET_BALANCE_DRIFT` reconcile check.

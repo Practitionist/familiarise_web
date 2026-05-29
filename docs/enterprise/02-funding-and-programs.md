@@ -46,6 +46,17 @@ a separate funding model — it's a `LICENSED_SEAT` Program with
 `coveredEngagementsPerCycle = null`. The old PREPAID_UNLIMITED enum value
 pretended the two were distinct; they are not.
 
+Each funding source determines which ledger account a sponsored booking debits (via its `PaymentLeg.source` → the `BOOKING` posting; see [payment legs](13-payment-legs.md) and [ledger & postings](08-ledger-and-postings.md)):
+
+```mermaid
+flowchart LR
+  PERSONAL["PERSONAL → CARD leg"] --> CASH[(CASH)]
+  WALLET["WALLET → WALLET leg"] --> W[("WALLET(org)")]
+  INVOICE["INVOICE → INVOICE_ACCRUAL leg"] --> AR[("ORG_RECEIVABLE(org)")]
+  LICENSE["LICENSE → LICENSE leg (0)"] --> NONE["no money — Program absorbs"]
+  PROJECT["PROJECT (v2)"] --> V2["reserved"]
+```
+
 ## Programs layer
 
 A `Contract` holds commercial terms. A `Program` sits under the contract
@@ -118,15 +129,30 @@ When a Program sits on a subscription billing cadence, a single
 - `currentCycleStart`, `currentCycleEnd`, `nextInvoiceDate`
 
 The cron that walks active subscriptions and emits invoices is stubbed
-in v1 (see `19-harness-verdict.md`). Hand-rolled
+in v1 (see `51-harness-verdict.md`). Hand-rolled
 `POST /api/organizations/[orgId]/billing-account/invoices` takes the
 slack.
 
+## Capability × funding combinations
+
+The sell-supported matrix — capability (`canSponsor`/`canHost`, see [01](01-organization-types.md)) × funding source. The create call sets the booleans + (for sponsors) `fundingSource`; checkout writes the leg shown (→ which ledger account it debits, see [13-payment-legs](13-payment-legs.md)). Worked end-to-end cases: [50-scenarios-and-examples](50-scenarios-and-examples.md).
+
+| Capability | Funding | Create (key fields) | Checkout leg → ledger | Cron |
+|---|---|---|---|---|
+| SPONSOR | PERSONAL | `canSponsor:true, fundingSource:PERSONAL` | `CARD` → Dr CASH | none |
+| SPONSOR | WALLET | `…WALLET` (`walletBalance=0`) | `WALLET` → Dr WALLET(org); top-up posts `Dr CASH / Cr WALLET` | none (top-up is webhook-driven) |
+| SPONSOR | INVOICE | `…INVOICE, requiresPO?, paymentTermsDays` | `INVOICE_ACCRUAL` → Dr ORG_RECEIVABLE; pay → `Dr CASH / Cr ORG_RECEIVABLE` | invoice roll-up + accrual settle |
+| SPONSOR | LICENSE | `…LICENSE` + `LICENSED_SEAT` program, `coveredEngagementsPerCycle=null` | `LICENSE` (`amountPaise=0`) → no money moves | subscription invoice (flat fee) |
+| HYBRID | any above | `canSponsor:true, canHost:true` | sponsor leg as above **plus** an `OrganizationEarnings` row on the host side | + payout cron |
+| HOST | — | `canHost:true` + `OrganizationPayoutAccount` | no sponsor leg; earns `OrganizationEarnings` on member bookings | payout cron (`orgpayout:` posting) |
+
+`ENABLE_PROVIDER_ORGS` gates only host-side settlement (`lib/payments/payouts/earnings-service.ts`); every route is live regardless of the flag.
+
 ## Related docs
 
-- `09-wallet-and-ledger.md` — wallet top-ups, debits, refunds.
-- `10-invoicing.md` — invoice generation, GST, PO 3-way match.
-- `16-programs.md` — deeper dive into Program / ProgramAssignment /
+- `09-wallet-and-topups.md` — wallet top-ups, debits, refunds.
+- `12-invoicing.md` — invoice generation, GST, PO 3-way match.
+- `21-programs.md` — deeper dive into Program / ProgramAssignment /
   BookingUtilization.
-- `20-payment-legs.md` — the `PaymentLeg` model that carries
+- `13-payment-legs.md` — the `PaymentLeg` model that carries
   per-source breakdown of every payment.

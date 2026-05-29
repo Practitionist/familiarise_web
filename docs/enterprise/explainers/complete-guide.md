@@ -1,5 +1,7 @@
 # Familiarise Enterprise — The Complete Guide
 
+> **Last refreshed post-#772 (double-entry ledger cutover):** the money model is now a double-entry journal (`LedgerAccount` / `LedgerTransaction` / `LedgerEntry`). The legacy `WalletEntry` / `FundingLedgerEntry` / `SettlementLedgerEntry` rows and the "three-ledger" framing were removed; see Part IV.
+
 > **Purpose:** This is the single consolidated doc for the entire Familiarise Enterprise subsystem — past, present, and planned future. It replaces the need to hop between 25+ docs when onboarding, training, or explaining.
 >
 > **Audience:** Anyone who needs to understand enterprise. Product managers, sales reps, junior developers, senior engineers, support leads, founders, auditors, and onboarding customers.
@@ -34,7 +36,7 @@
 13. What users see (role-by-role UX tour)
 
 **Part IV — The Financial Layer**
-14. Payment legs & the three-ledger system
+14. Payment legs & the double-entry ledger
 15. Rate cards & revenue splits
 16. Settlement & payouts
 17. Refunds & reversals
@@ -121,15 +123,15 @@ This doc gives you the holistic mental model. When you need implementation detai
 
 | Need this depth | Go here |
 |---|---|
-| Every API route in detail | `docs/enterprise/21-api-reference.md` |
-| Old → new route migration | `docs/enterprise/22-route-migration-table.md` |
-| Runbook for specific failure modes | `docs/enterprise/23-runbooks.md` |
-| Monitoring dashboards | `docs/enterprise/24-monitoring.md` |
-| Idempotency key design | `docs/enterprise/25-idempotency-keys.md` |
-| Programs deep-dive | `docs/enterprise/16-programs.md` |
-| Hierarchy (parent-child orgs) | `docs/enterprise/17-hierarchy.md` |
-| Ledger discipline | `docs/enterprise/18-three-ledger-discipline.md` |
-| SSO testing | `docs/enterprise/playbooks/sso-testing.md` |
+| Every API route in detail | `docs/enterprise/40-api-reference.md` |
+| Old → new route migration | `docs/enterprise/41-route-migration-table.md` |
+| Runbook for specific failure modes | `docs/enterprise/42-runbooks.md` |
+| Monitoring dashboards | `docs/enterprise/43-monitoring.md` |
+| Idempotency key design | `docs/enterprise/20-concurrency-and-idempotency.md` |
+| Programs deep-dive | `docs/enterprise/21-programs.md` |
+| Hierarchy (parent-child orgs) | `docs/enterprise/05-hierarchy.md` |
+| Ledger discipline | `docs/enterprise/08-ledger-and-postings.md` |
+| SSO testing | `docs/enterprise/15-sso-and-authentication.md` |
 
 ---
 
@@ -235,7 +237,7 @@ This is a mini-glossary for the terms you'll see everywhere. A full A-Z glossary
 |---|---|
 | **Organization** | The tenant — Wipro, LearnPro, IIT Madras. |
 | **Member / Membership** | A person's relationship to an org (distinct from User — a User can have many Memberships in different orgs). |
-| **MemberRole** | The role a Member has inside a specific org: OWNER, MAINTAINER, MANAGER, EXPERT, LEARNER, SUPPORT. |
+| **MemberRole** | The role a Member has inside a specific org: OWNER, MAINTAINER, **BILLING_ADMIN**, MANAGER, EXPERT, LEARNER, SUPPORT. **BILLING_ADMIN** (rank 70, between MAINTAINER and MANAGER) is the finance-team side-gate — manages invoices, POs, payouts, rate cards, wallet top-ups, and outbound webhooks, but **cannot** change org status / funding source / members / SSO. See [03-roles-and-permissions](../03-roles-and-permissions.md). |
 | **canSponsor** | Boolean flag: does this org pay for its members' bookings? |
 | **canHost** | Boolean flag: does this org host EXPERTs who earn revenue through it? |
 | **BillingAccount** | The org's wallet + funding-source record. 1:1 with Organization when `canSponsor=true`. |
@@ -247,8 +249,9 @@ This is a mini-glossary for the terms you'll see everywhere. A full A-Z glossary
 | **PurchaseOrder (PO)** | The org's internal PO number for an invoice. Enables 3-way match: PO + invoice + receipt. |
 | **OrganizationInvoice** | Bill sent to the org (not the learner). For WALLET top-ups, INVOICE accruals, LICENSE renewals. |
 | **PaymentLeg** | One component of a Payment's funding: CARD + REFERRAL_CREDIT + WALLET + INVOICE_ACCRUAL + LICENSE. Legs can stack; sum to Payment.amount. |
-| **WalletEntry** | Immutable ledger row for wallet changes (top-ups, debits, refunds). |
-| **RateCard** | The 3-way revenue split (platform/org/consultant) applicable to this contract. Versioned with `effectiveFrom` / `effectiveTo`. |
+| **LedgerTransaction / LedgerEntry** | The double-entry money journal (post-#772). Each `LedgerTransaction` carries an `idempotencyKey` and posts balanced `LedgerEntry` legs (DEBIT/CREDIT, positive `amountPaise`) against `LedgerAccount`s. Replaced the old `WalletEntry` / `FundingLedgerEntry` / `SettlementLedgerEntry` rows. |
+| **WalletTopUp** | A wallet funding attempt (`providerOrderId` unique; PENDING/CONFIRMED/FAILED). On confirmation it posts a `topup:<orderId>` ledger txn (Dr CASH / Cr WALLET). Replaced the old `WalletEntry`. |
+| **RateCard** | The revenue split (platform/org/consultant) applicable to this contract, in integer basis points (`shareBps` / `revenueShareBps`; 10000 = 100%). Versioned with `effectiveFrom` / `effectiveTo`. |
 | **OrganizationEarnings** | The org's share of settled sessions (applies to canHost orgs). |
 | **OrganizationPayout** | A batch settlement of earnings to the org's bank account. |
 | **OrgAuditLog** | Immutable record of every significant mutation on the org (invite sent, member removed, contract signed, etc.). |
@@ -428,7 +431,7 @@ sequenceDiagram
     Razorpay-->>Owner: Payment popup
     Owner->>Razorpay: Pay via UPI
     Razorpay->>Platform: webhook: payment.captured
-    Platform->>Wallet: Credit +₹1L (WalletEntry: TOPUP)
+    Platform->>Wallet: topup:<orderId> ledger txn — Dr CASH / Cr WALLET +₹1L
     Platform->>Owner: Email + in-app: balance ₹1L
 ```
 
@@ -441,7 +444,7 @@ sequenceDiagram
     participant Wallet
     participant Earnings
     Learner->>Platform: Book ₹999 session
-    Platform->>Wallet: Debit ₹999 (WalletEntry: BOOKING)
+    Platform->>Wallet: booking:<paymentId> ledger txn — Dr WALLET ₹999 (Cr fee/payable/GST legs)
     Platform->>Platform: Write BookingUtilization
     Platform->>Platform: Write PaymentLeg(WALLET, 999, programAssignmentId)
     Platform->>Earnings: Schedule consultant payout
@@ -599,7 +602,7 @@ A Program is a commercial package describing **what the org has bought for its m
 | `creditsPerCycle` | Credits granted per Program cycle (replenished each rollover) |
 | `minimumCreditsPerPeriod` | Minimum commitment per cycle; nullable (no floor when null) |
 
-The pool's running balance is tracked separately on `BillingAccount.walletBalance` (paise). 1 credit = ₹1 by convention; the legacy `pricePerCreditPaise` and `premiumMultiplier` fields were dropped — premium pricing is now expressed via per-plan rate cards instead of a flat multiplier.
+The pool's running balance lives in the double-entry journal as the org's WALLET account (a credit-normal liability); `BillingAccount.walletBalance` (paise) is a **derived cache** of that account, asserted nightly by the reconciler (`WALLET_BALANCE_DRIFT` finding if it diverges). 1 credit = ₹1 = 100 paise by convention; the legacy `creditValuePaise` and `premiumMultiplier` fields were dropped (removed in #772) — premium pricing is now expressed via per-plan rate cards instead of a flat multiplier.
 
 **Use case:** Wipro funds a ₹4L pool. Each 1-hour session deducts ₹1,500 worth of credits at the plan's listed rate. When the wallet balance hits the low-water threshold, OWNER gets a notification to top up.
 
@@ -1131,19 +1134,26 @@ If the user has no Membership, the payer selector hides entirely (no extra UX no
 
 # PART IV — THE FINANCIAL LAYER
 
-## 14. Payment legs & the three-ledger system
+## 14. Payment legs & the double-entry ledger
 
-Every movement of money on the platform is recorded across **three immutable ledgers** plus the **PaymentLeg** composition model. Understanding this is load-bearing for trusting the numbers.
+Every movement of money on the platform is recorded in a **double-entry money journal** alongside the **PaymentLeg** composition model. Understanding this is load-bearing for trusting the numbers. (Detail docs: `06-money-model-overview.md`, `07-chart-of-accounts.md`, `08-ledger-and-postings.md`, `13-payment-legs.md`, `14-ledger-integrity.md`.)
 
-### 14.1 The three ledgers
+### 14.1 The two ledgers
 
-| Ledger | What it records | Immutable? |
+Post-#772 there are exactly **two** ledgers. The legacy three-ledger framing (`FundingLedgerEntry` / `SettlementLedgerEntry` plus a money `WalletEntry`) was removed.
+
+| Ledger | What it records | Model |
 |---|---|---|
-| **UsageLedger** | "This session consumed this much of this entitlement." | Yes |
-| **FundingLedger** | "Money came in / went out of this funding source." | Yes |
-| **SettlementLedger** | "This invoice issued / this payout processed / this refund happened." | Yes |
+| **Money journal** | Every rupee in/out, as balanced double-entry postings. | `LedgerAccount` / `LedgerTransaction` / `LedgerEntry` |
+| **Usage ledger** | Entitlement consumption — "this session consumed this much of this program." NOT money. | `UsageLedgerEntry` |
 
-**Invariant:** Every booking writes to all three ledgers + one or more PaymentLegs, atomically in a transaction.
+The money journal lives in `lib/payments/ledger/post.ts`:
+
+- **`LedgerAccount`** — one per `(kind, org, consultant, currency)`, with deterministic id `<kind>|<orgId|_>|<consultantProfileId|_>|<currency>`. Ten `LedgerAccountKind`s: `CASH`, `WALLET` (credit-normal liability), `PLATFORM_FEE`, `PLATFORM_PROMO`, `DISCOUNT`, `CONSULTANT_PAYABLE`, `ORG_PAYABLE`, `ORG_RECEIVABLE`, `TDS_PAYABLE`, `GST_PAYABLE`.
+- **`LedgerTransaction`** — a posting with a unique `idempotencyKey` and a free-String `kind` (BOOKING / TOPUP / TOPUP_REFUND / PAYOUT / ORG_PAYOUT / INVOICE_PAID / REFUND).
+- **`LedgerEntry`** — one leg: a `direction` (DEBIT / CREDIT) and `amountPaise` (BigInt, **always positive**).
+
+**Invariant:** within every `LedgerTransaction`, Σdebit == Σcredit. Helpers: `postLedgerTxn`, `ledgerAccountId`, `ledgerBalancePaise`.
 
 ### 14.2 PaymentLeg model
 
@@ -1175,23 +1185,39 @@ Wipro employee (LEARNER, on INVOICE mode) books a ₹999 session on April 15.
 3. `BookingUtilization.create({ paymentId, priceAtBookingPaise: 999, bpsSnapshot: 10/20/70 })`
 4. `PaymentLeg.create({ source: 'INVOICE_ACCRUAL', amountPaise: 999, sourceRef: programAssignmentId })`
 5. `UsageLedgerEntry.create({ org, member, consumedCredits: 1, priceAtBooking: 999 })`
-6. `FundingLedgerEntry.create({ source: 'INVOICE_ACCRUAL', amount: 999 })`
-7. `OrganizationEarnings.create({ consultant, amount: 690, currency: INR })` — consultant gets 70% immediately
-8. `OrgAuditLog.create({ action: 'SESSION_BOOKED_INVOICE_ACCRUAL' })`
+6. `postLedgerTxn` with idempotency key `booking:<paymentId>` (kind `BOOKING`) — a single balanced txn whose funding leg is `Dr ORG_RECEIVABLE(org) 999` (INVOICE mode accrues a receivable now) plus any `Dr DISCOUNT`, balanced by `Cr PLATFORM_FEE + CONSULTANT_PAYABLE(consultant) + ORG_PAYABLE(org) + GST_PAYABLE`. Single-consultant bookings post inline; multi-collaborator bookings defer (see #773).
+7. `OrgAuditLog.create({ action: 'SESSION_BOOKED_INVOICE_ACCRUAL' })`
+
+Note there is no `OrganizationEarnings.create` here: the consultant's share lives in the `CONSULTANT_PAYABLE` leg, and the org's share in `ORG_PAYABLE`; the earnings rows are projections derived from the journal.
 
 **Month-end (April 30):**
 
 1. Month-end cron aggregates 40 bookings totaling ₹40K.
-2. `OrganizationInvoice.create({ amount: 40000, gst: 7200, total: 47200 })`
-3. `SettlementLedgerEntry.create({ kind: 'INVOICE_ISSUED', invoiceId })`
+2. `OrganizationInvoice.create({ amount: 40000, gst: 7200, total: 47200 })` — **invoice issuance posts NO money leg**; the receivable was already accrued at booking time.
 
 **May 20 (Wipro pays):**
 
 1. Razorpay webhook captures payment.
 2. `OrganizationInvoice.update({ status: 'PAID', paidAt })`
-3. `SettlementLedgerEntry.create({ kind: 'INVOICE_PAID' })`
+3. `postLedgerTxn` with idempotency key `invoicepaid:<invoiceId>` (kind `INVOICE_PAID`): `Dr CASH / Cr ORG_RECEIVABLE(org)`.
 
-The chain is queryable end-to-end: you can ask "where did this ₹999 come from?" and trace it through the three ledgers back to the original booking.
+The chain is queryable end-to-end: you can ask "where did this ₹999 come from?" and trace it through the journal (idempotency key per event) back to the original booking.
+
+### 14.6 Ledger integrity & reconciliation
+
+`scripts/reconcile/reconcile-ledgers.ts` runs nightly and asserts the journal against its derived projections. Finding codes:
+
+| Code | Asserts |
+|---|---|
+| `WALLET_BALANCE_DRIFT` | `BillingAccount.walletBalance` cache == WALLET account balance |
+| `LEDGER_TXN_IMBALANCE` | Σdebit == Σcredit within every `LedgerTransaction` |
+| `EARNINGS_LEDGER_DRIFT` | `OrganizationEarnings` projection == CONSULTANT/ORG payable legs |
+| `PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT` | Per-assignment engagement counts |
+| `ACTIVE_SEAT_COUNT_DRIFT` | `seatsUsed` == active assignments |
+| `PAYMENT_LEG_SUM_MISMATCH` | PaymentLegs sum to `Payment.amount` |
+| `ORG_PAYOUT_TOTAL_MISMATCH` | Org payout legs sum to claimed earnings |
+
+The #772 cutover validated `ok: true` with **0 findings** on a full reseed.
 
 ---
 
@@ -1307,6 +1333,17 @@ stateDiagram-v2
     CANCELLED --> [*]
 ```
 
+`EarningStatus` (the source rows being settled): `PENDING / HELD / READY / PAID / REFUNDED / PENDING_TRUST`.
+
+### 16.4 Ledger postings on payout
+
+When a payout dispatches, it draws down the payable accrued at booking time:
+
+- **Consultant payout** — `payout:<payoutId>` (kind `PAYOUT`): `Dr CONSULTANT_PAYABLE / Cr CASH + TDS_PAYABLE`.
+- **Org payout** (canHost orgs' revenue share) — `orgpayout:<payoutId>` (kind `ORG_PAYOUT`): `Dr ORG_PAYABLE / Cr CASH + TDS_PAYABLE`.
+
+The TDS leg captures Section 194J withholding; net cash leaves via CASH. Reconcile asserts `ORG_PAYOUT_TOTAL_MISMATCH` if a batch's legs don't sum to the claimed earnings.
+
 ---
 
 ## 17. Refunds & reversals
@@ -1341,8 +1378,8 @@ sequenceDiagram
 
 ### 17.3 Refund flow (WALLET path)
 
-- Same as PERSONAL, but instead of Razorpay refund call, the wallet is credited back.
-- `WalletEntry.create({ reason: 'BOOKING_REFUND', amount: +999 })`.
+- Same as PERSONAL, but instead of a Razorpay refund call, the org's WALLET account is credited back inside the journal.
+- A `refund:<refundId>` ledger txn (kind `REFUND`) reverses the original booking legs proportionally — for a WALLET-funded booking that means `Cr WALLET(org)` against the reversed fee/payable/GST legs, restoring the org's derived `walletBalance`.
 
 ### 17.4 Refund flow (INVOICE path)
 
@@ -1571,10 +1608,10 @@ The enterprise-flavored section of `prisma/schema.prisma` is ~1200 lines coverin
 
 | Model | Purpose |
 |---|---|
-| `BillingAccount` | Per-org (canSponsor=true) wallet + funding |
+| `BillingAccount` | Per-org (canSponsor=true) funding record; `walletBalance` is a derived cache of the org's WALLET ledger account |
 | `Contract` | Legal + commercial agreement |
 | `BillingSubscription` | Recurring subscription (LICENSE mode) |
-| `WalletEntry` | Immutable ledger |
+| `WalletTopUp` | Wallet funding attempt (`providerOrderId` unique; PENDING/CONFIRMED/FAILED); replaced `WalletEntry` in #772 |
 | `PurchaseOrder` | PO tracking |
 | `OrganizationInvoice` | Monthly invoice |
 
@@ -1592,8 +1629,8 @@ The enterprise-flavored section of `prisma/schema.prisma` is ~1200 lines coverin
 
 | Model | Purpose |
 |---|---|
-| `RateCard` | 3-way split with effective dates |
-| `OrganizationEarnings` | Per-session earnings for canHost orgs |
+| `RateCard` | 3-way split (integer `shareBps` / `revenueShareBps`; Float `sharePercentage` / `revenueSharePercentage` removed in #772) with effective dates |
+| `OrganizationEarnings` | Per-session earnings projection for canHost orgs (derived from the journal's ORG_PAYABLE legs) |
 | `OrganizationPayout` | Batch settlement |
 | `OrganizationPayoutAccount` | Bank details + compliance fields |
 
@@ -1620,10 +1657,13 @@ The enterprise-flavored section of `prisma/schema.prisma` is ~1200 lines coverin
 | Model | Purpose |
 |---|---|
 | `OrgAuditLog` | Immutable action log |
-| `UsageLedgerEntry` | Session consumption ledger |
-| `FundingLedgerEntry` | Funding flow ledger |
-| `SettlementLedgerEntry` | Settlement event ledger |
+| `UsageLedgerEntry` | Session consumption (entitlement) ledger — NOT money |
+| `LedgerAccount` | One balance account per `(kind, org, consultant, currency)`; deterministic id |
+| `LedgerTransaction` | A balanced money posting; unique `idempotencyKey`, free-String `kind` |
+| `LedgerEntry` | One leg of a transaction (DEBIT/CREDIT, positive `amountPaise`) |
 | `LedgerReconciliationReport` | Read-only audit output |
+
+> The money journal (`LedgerAccount` / `LedgerTransaction` / `LedgerEntry`) replaced `FundingLedgerEntry` and `SettlementLedgerEntry` in #772.
 
 ### 24.8 Enums quick reference
 
@@ -1834,7 +1874,7 @@ await tx.orgAuditLog.create({
 
 | Cron | Schedule (IST/UTC) | Purpose | Status |
 |---|---|---|---|
-| `cleanup-abandoned-org-top-ups` | Daily 07:30 IST / 02:00 UTC | Reap pending WalletEntry rows | Live |
+| `cleanup-abandoned-org-top-ups` | Daily 07:30 IST / 02:00 UTC | Reap stale PENDING `WalletTopUp` rows | Live |
 | `cleanup-stale-invitations` | Daily 08:00 IST / 02:30 UTC | Expire PENDING invites past expiresAt | Live (new) |
 | `sso-cert-expiry-alert` | Daily 08:30 IST / 03:00 UTC | Parse SAML X.509 notAfter, emit audit | Live (new) |
 | `consolidated-invoice-rollup` | Monthly day-1 09:30 IST / 04:00 UTC | Parent-org invoice aggregation | Live (flag-gated) |
@@ -2191,11 +2231,11 @@ Final: `HrisConfig`, `HrisSyncJob`, `HrisEmployeeMap` models exist. Logic stubbe
 
 ### 39.2 Runbook: Handle a stuck wallet top-up
 
-Symptom: `WalletEntry` in PENDING state > 1 hour.
+Symptom: `WalletTopUp` in PENDING state > 1 hour.
 
-1. Check Razorpay dashboard for the order ID.
-2. If captured: webhook probably missed. Run `/api/cleanup/reconcile-payment-status`.
-3. If failed: mark WalletEntry FAILED manually via admin endpoint.
+1. Check Razorpay dashboard for the `providerOrderId`.
+2. If captured: webhook probably missed. Run `/api/cleanup/reconcile-payment-status`; confirmation posts the `topup:<orderId>` ledger txn (Dr CASH / Cr WALLET).
+3. If failed: mark the `WalletTopUp` FAILED manually via admin endpoint (no ledger txn is posted for a failed top-up).
 4. Notify OWNER of resolution.
 
 ### 39.3 Runbook: Investigate a suspicious audit entry
@@ -2251,7 +2291,7 @@ Common errors + resolutions.
 
 ### 41.2 Dashboards
 
-See `docs/enterprise/24-monitoring.md` for suggested BetterStack / Grafana dashboards.
+See `docs/enterprise/43-monitoring.md` for suggested BetterStack / Grafana dashboards.
 
 ---
 ---
@@ -2375,7 +2415,8 @@ See `prisma/schema.prisma` for canonical source. Quick navigation:
 ```
 Line 421-541: Organization + Membership + Member + Invitation
 Line 543-680: Membership + enums
-Line 733-870: BillingAccount + Contract + BillingSubscription + WalletEntry
+Line 733-870: BillingAccount + Contract + BillingSubscription + WalletTopUp
+              (money journal: LedgerAccount + LedgerTransaction + LedgerEntry)
 Line 882-1010: Program + sub-configs + ProgramAssignment + BookingUtilization
 Line 1012-1080: RateCard + OrganizationPayoutAccount
 Line 1083-1195: OrganizationEarnings + OrganizationPayout + OrganizationInvoice
@@ -2387,7 +2428,7 @@ Line 1420-1500: OrgAuditLog + ConsentArtifact
 
 ## 44. API cheat sheet
 
-See `docs/enterprise/21-api-reference.md` for the full reference. High-level map:
+See `docs/enterprise/40-api-reference.md` for the full reference. High-level map:
 
 ```
 Org CRUD:       /api/organizations[/orgId]
@@ -2427,30 +2468,33 @@ Abandoned top-ups:     /api/cleanup/abandoned-org-top-ups
 | `docs/enterprise/00-overview.md` | High-level intro |
 | `docs/enterprise/01-organization-types.md` | Org-kind deep dive |
 | `docs/enterprise/02-funding-and-programs.md` | Funding + program deep dive |
-| `docs/enterprise/03-earnings-and-revenue.md` | 3-way split mechanics |
-| `docs/enterprise/04-roles-and-permissions.md` | Permission matrix |
-| `docs/enterprise/05-organization-lifecycle.md` | Org status state machine |
-| `docs/enterprise/06-expert-lifecycle.md` | EXPERT joining flow |
-| `docs/enterprise/07-payout-pipeline.md` | Settlement detail |
-| `docs/enterprise/08-sso-and-authentication.md` | SSO implementation |
-| `docs/enterprise/09-wallet-and-ledger.md` | Wallet + ledger |
-| `docs/enterprise/10-invoicing.md` | Invoice lifecycle |
-| `docs/enterprise/11-public-pages-and-discovery.md` | Org marketplace pages |
-| `docs/enterprise/12-dashboard-pages.md` | Dashboard UX |
-| `docs/enterprise/13-feature-flags-and-rollout.md` | Env flags |
-| `docs/enterprise/14-scenarios-and-examples.md` | Worked examples |
-| `docs/enterprise/15-concurrency-and-locking.md` | Race safety |
-| `docs/enterprise/16-programs.md` | Program deep-dive |
-| `docs/enterprise/17-hierarchy.md` | Parent-child orgs |
-| `docs/enterprise/18-three-ledger-discipline.md` | Ledger rules |
-| `docs/enterprise/19-harness-verdict.md` | Evaluation harness |
-| `docs/enterprise/20-payment-legs.md` | PaymentLeg detail |
-| `docs/enterprise/21-api-reference.md` | Every API route |
-| `docs/enterprise/22-route-migration-table.md` | Old → new routes |
-| `docs/enterprise/23-runbooks.md` | Operations runbooks |
-| `docs/enterprise/24-monitoring.md` | Dashboards + alerts |
-| `docs/enterprise/25-idempotency-keys.md` | Idempotency design |
-| `docs/enterprise/playbooks/sso-testing.md` | SSO testing |
+| `docs/enterprise/10-booking-to-earnings.md` | 3-way split mechanics |
+| `docs/enterprise/03-roles-and-permissions.md` | Permission matrix |
+| `docs/enterprise/04-organization-lifecycle.md` | Org status state machine |
+| `docs/enterprise/22-expert-lifecycle.md` | EXPERT joining flow |
+| `docs/enterprise/11-payout-pipeline.md` | Settlement detail |
+| `docs/enterprise/15-sso-and-authentication.md` | SSO implementation |
+| `docs/enterprise/09-wallet-and-topups.md` | Wallet + ledger |
+| `docs/enterprise/12-invoicing.md` | Invoice lifecycle |
+| `docs/enterprise/24-public-pages-and-discovery.md` | Org marketplace pages |
+| `docs/enterprise/23-dashboard-pages.md` | Dashboard UX |
+| `docs/enterprise/25-feature-flags-and-rollout.md` | Env flags |
+| `docs/enterprise/50-scenarios-and-examples.md` | Worked examples |
+| `docs/enterprise/20-concurrency-and-idempotency.md` | Race safety |
+| `docs/enterprise/21-programs.md` | Program deep-dive |
+| `docs/enterprise/05-hierarchy.md` | Parent-child orgs |
+| `docs/enterprise/06-money-model-overview.md` | Money model overview |
+| `docs/enterprise/07-chart-of-accounts.md` | Ledger account kinds |
+| `docs/enterprise/08-ledger-and-postings.md` | Ledger rules + canonical postings |
+| `docs/enterprise/14-ledger-integrity.md` | Reconciliation + finding codes |
+| `docs/enterprise/51-harness-verdict.md` | Evaluation harness |
+| `docs/enterprise/13-payment-legs.md` | PaymentLeg detail |
+| `docs/enterprise/40-api-reference.md` | Every API route |
+| `docs/enterprise/41-route-migration-table.md` | Old → new routes |
+| `docs/enterprise/42-runbooks.md` | Operations runbooks |
+| `docs/enterprise/43-monitoring.md` | Dashboards + alerts |
+| `docs/enterprise/20-concurrency-and-idempotency.md` | Idempotency design |
+| `docs/enterprise/15-sso-and-authentication.md` | SSO testing |
 | `PRICING_STRATEGY.md` (repo root) | Pricing strategy |
 | `HIRING_PLAN.md` (repo root) | Headcount plan |
 | `SALES_MARKETING_PLAYBOOK.md` (repo root) | Sales scripts |
