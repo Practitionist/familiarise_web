@@ -1005,7 +1005,7 @@ model WalletTopUp {
   // Our idempotency key (we_<uuid>) — also the public topUpId used by
   // GET /top-ups/{topUpId}. @unique guarantees a webhook redelivery or a
   // double-POST can't double-credit the wallet.
-  providerOrderId   String  @unique
+  providerOrderId   String            @unique
   providerPaymentId String? // gateway payment id, set on confirm
   amountPaise       Int
   status            WalletTopUpStatus @default(PENDING)
@@ -1109,8 +1109,8 @@ model LicensedSeatConfig {
 // it because cross-table CHECK constraints are awkward in Postgres
 // and the API+UI layer is tight enough.
 model CreditPoolConfig {
-  programId               String       @id
-  program                 Program      @relation(fields: [programId], references: [id], onDelete: Cascade)
+  programId               String          @id
+  program                 Program         @relation(fields: [programId], references: [id], onDelete: Cascade)
   cycle                   BillingCycle
   creditsPerCycle         Int
   minimumCreditsPerPeriod Int?
@@ -1917,13 +1917,13 @@ model LedgerAccount {
   // Deterministic id: "<kind>|<orgId|_>|<membershipId|_>|<currency>" so
   // resolveAccountId() upserts dedupe per scope without the Postgres
   // nullable-unique gotcha (a unique index doesn't dedupe NULLs).
-  id String @id
+  id                  String            @id
   // Scope: platform-wide accounts leave both owners null; org / consultant
   // sub-ledgers set the relevant owner. One account per (owner, kind, currency).
   organizationId      String?
   consultantProfileId String?
   kind                LedgerAccountKind
-  currency            Currency            @default(INR)
+  currency            Currency          @default(INR)
   entries             LedgerEntry[]
 
   createdAt DateTime @default(now())
@@ -1932,18 +1932,35 @@ model LedgerAccount {
   @@index([kind])
 }
 
+// #778 §B — typed txn kind (was free String). A typo ("BOOKNG") silently broke
+// reconcile/groupBy; the enum makes it a compile error. Account-side kind is the
+// separate LedgerAccountKind. CHARGE_ORG overage rides INVOICE_*, CHARGE_MEMBER
+// rides OVERAGE_MEMBER — no distinct OVERAGE kind.
+enum LedgerTransactionKind {
+  BOOKING
+  TOPUP
+  TOPUP_REFUND
+  INVOICE_ISSUED
+  INVOICE_PAID
+  PAYOUT
+  ORG_PAYOUT
+  REFUND
+  OVERAGE_MEMBER
+  GRANT
+}
+
 model LedgerTransaction {
-  id String @id @default(cuid())
+  id             String                @id @default(cuid())
   // Idempotency: natural key of the originating event
   // (e.g. "topup:<walletOrderId>", "booking:<paymentId>", "payout:<payoutId>").
   // A retried event re-derives the same key and is a no-op.
-  idempotencyKey String  @unique
-  kind           String // BOOKING / TOPUP / INVOICE_ISSUED / INVOICE_PAID / PAYOUT / OVERAGE / GRANT / REFUND / ...
+  idempotencyKey String                @unique
+  kind           LedgerTransactionKind
   description    String?
   // Sparse soft-links to the originating domain row.
-  paymentId String?
-  invoiceId String?
-  payoutId  String?
+  paymentId      String?
+  invoiceId      String?
+  payoutId       String?
 
   entries LedgerEntry[]
 
@@ -1960,11 +1977,11 @@ model LedgerEntry {
   transactionId String
   // Immutable: never cascade-delete a posting (#771 D8). Reversals are
   // explicit counter-transactions, not row mutations or deletes.
-  transaction LedgerTransaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
-  accountId   String
-  account     LedgerAccount     @relation(fields: [accountId], references: [id], onDelete: Restrict)
-  direction   LedgerDirection
-  amountPaise BigInt
+  transaction   LedgerTransaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  accountId     String
+  account       LedgerAccount     @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  direction     LedgerDirection
+  amountPaise   BigInt
 
   createdAt DateTime @default(now())
 
@@ -3644,8 +3661,10 @@ model ConsultantPayout {
   approvedAt    DateTime?
   approvedBy    String?
 
-  // Idempotency (required by Razorpay from March 2025)
-  idempotencyKey String? @unique
+  // Idempotency (required by Razorpay from March 2025). #778 §B — NOT NULL:
+  // both payout creators stamp `payout_<profile>_<batch>`; a transfer must never
+  // submit without a dedupe key.
+  idempotencyKey String @unique
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3906,20 +3925,20 @@ enum CreditSource {
 //////////////////////////////////////////////////// COLLABORATOR SYSTEM ////////////////////////////////////////////////////
 
 model WebinarCollaborator {
-  id                     String                  @id @default(cuid())
-  consultantProfileId    String
-  webinarPlanId          String
-  role                   WebinarCollaboratorRole @default(CO_HOST)
+  id                  String                  @id @default(cuid())
+  consultantProfileId String
+  webinarPlanId       String
+  role                WebinarCollaboratorRole @default(CO_HOST)
   // #768 lockdown #12 — replaced permissions Json with typed booleans.
-  canApprovePayment      Boolean                 @default(false)
-  canViewAnalytics       Boolean                 @default(false)
-  canEditEvent           Boolean                 @default(false)
-  canSeeAttendees        Boolean                 @default(false)
+  canApprovePayment   Boolean                 @default(false)
+  canViewAnalytics    Boolean                 @default(false)
+  canEditEvent        Boolean                 @default(false)
+  canSeeAttendees     Boolean                 @default(false)
   // #772 B5 — basis points (e.g. 3000 = 30%) for integer money math.
-  revenueShareBps        Int
-  status                 CollaboratorStatus      @default(PENDING)
-  invitedById            String
-  respondedAt            DateTime?
+  revenueShareBps     Int
+  status              CollaboratorStatus      @default(PENDING)
+  invitedById         String
+  respondedAt         DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3934,20 +3953,20 @@ model WebinarCollaborator {
 }
 
 model ClassCollaborator {
-  id                     String                @id @default(cuid())
-  consultantProfileId    String
-  classPlanId            String
-  role                   ClassCollaboratorRole @default(CO_INSTRUCTOR)
+  id                  String                @id @default(cuid())
+  consultantProfileId String
+  classPlanId         String
+  role                ClassCollaboratorRole @default(CO_INSTRUCTOR)
   // #768 lockdown #12 — replaced permissions Json with typed booleans.
-  canApprovePayment      Boolean               @default(false)
-  canViewAnalytics       Boolean               @default(false)
-  canEditEvent           Boolean               @default(false)
-  canSeeAttendees        Boolean               @default(false)
+  canApprovePayment   Boolean               @default(false)
+  canViewAnalytics    Boolean               @default(false)
+  canEditEvent        Boolean               @default(false)
+  canSeeAttendees     Boolean               @default(false)
   // #772 B5 — basis points (e.g. 3000 = 30%) for integer money math.
-  revenueShareBps        Int
-  status                 CollaboratorStatus    @default(PENDING)
-  invitedById            String
-  respondedAt            DateTime?
+  revenueShareBps     Int
+  status              CollaboratorStatus    @default(PENDING)
+  invitedById         String
+  respondedAt         DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4570,25 +4589,25 @@ model OrgBrandingProfile {
 /// CHARGE_ORG rows accumulate until the cycle-close cron rolls them
 /// into a single InvoiceLineItem on the org's renewal invoice.
 model OverageEvent {
-  id                   String             @id @default(cuid())
+  id                   String              @id @default(cuid())
   programAssignmentId  String
-  programAssignment    ProgramAssignment  @relation(fields: [programAssignmentId], references: [id], onDelete: Cascade)
-  bookingUtilizationId String             @unique
-  bookingUtilization   BookingUtilization @relation(fields: [bookingUtilizationId], references: [id], onDelete: Cascade)
+  programAssignment    ProgramAssignment   @relation(fields: [programAssignmentId], references: [id], onDelete: Cascade)
+  bookingUtilizationId String              @unique
+  bookingUtilization   BookingUtilization  @relation(fields: [bookingUtilizationId], references: [id], onDelete: Cascade)
   overageBehavior      OverageBehavior
   /// Pass-through marginal (over-cap portion of the booking price, after
   /// `priceCapPerEngagementPaise`) plus the `overageSurchargeBps` markup. May
   /// exceed the single booking price by the surcharge — that's intended.
   marginalPaise        Int
-  currency             Currency           @default(INR)
+  currency             Currency            @default(INR)
   chargeStatus         OverageChargeStatus @default(PENDING)
   /// CHARGE_MEMBER: Payment row for the instant overage charge.
   /// CHARGE_ORG: Payment row of the rolled-up cycle invoice.
   paymentId            String?
-  payment              Payment?           @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  payment              Payment?            @relation(fields: [paymentId], references: [id], onDelete: SetNull)
   /// CHARGE_ORG: the InvoiceLineItem the cycle-close cron emitted.
   invoiceLineItemId    String?
-  invoiceLineItem      InvoiceLineItem?   @relation(fields: [invoiceLineItemId], references: [id], onDelete: SetNull)
+  invoiceLineItem      InvoiceLineItem?    @relation(fields: [invoiceLineItemId], references: [id], onDelete: SetNull)
   settledAt            DateTime?
 
   createdAt DateTime @default(now())
