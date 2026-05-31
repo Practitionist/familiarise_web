@@ -34,6 +34,7 @@ import type {
   ProgramAssignment,
   ProgramType,
 } from "@prisma/client";
+import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
 
 /**
  * Narrowed transaction type for the cap-debit helpers. Structurally
@@ -561,18 +562,12 @@ export async function reverseBookingUtilization(
         reversalReason: params.reason ?? "Refund",
       },
     });
-    // #775 — the over-cap charge for this booking is no longer owed. Cancel
-    // the linked OverageEvent only while it's still uncollected (PENDING /
-    // ACCRUED). An already-CHARGED overage (member card captured, or org
-    // invoice paid) needs a real refund / credit note — left to the refund
-    // flow + #716, not a silent status flip.
-    await tx.overageEvent.updateMany({
-      where: {
-        bookingUtilizationId: util.id,
-        chargeStatus: { notIn: ["CHARGED", "REVERSED"] },
-      },
-      data: { chargeStatus: "REVERSED" },
-    });
+    // #775 — the over-cap charge for this booking is no longer owed. Cancel the
+    // linked OverageEvent only while it's still uncollected (the REVERSED guard
+    // in transitionOverage permits PENDING/ACCRUED/FAILED). An already-CHARGED
+    // overage (member card captured, or org invoice paid) needs a real refund /
+    // credit note — left to the refund flow + #716, not a silent status flip.
+    await transitionOverage(tx, { bookingUtilizationId: util.id }, "REVERSED");
   }
 
   return {

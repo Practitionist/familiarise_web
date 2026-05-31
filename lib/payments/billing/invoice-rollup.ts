@@ -17,6 +17,7 @@
 import prisma from "@/lib/prisma";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
 import { generateOrgInvoiceNumber } from "./invoice-numbering";
+import { transitionOverage } from "./overage-transitions";
 
 export interface RollupResult {
   invoiceId: string | null;
@@ -194,16 +195,12 @@ export async function rollupOrgInvoiceAccruals(params: {
 
     const settledAt = new Date();
     for (const ev of overageEvents) {
-      await tx.overageEvent.update({
-        where: { id: ev.id },
-        data: {
-          settledAt,
-          // #775 — PENDING → ACCRUED: now on an issued invoice. The
-          // invoice-paid ledger handler flips ACCRUED → CHARGED on payment.
-          chargeStatus: "ACCRUED",
-          invoiceLineItemId:
-            lineItemByPaymentId.get(ev.bookingUtilization.paymentId) ?? null,
-        },
+      // #775 — PENDING → ACCRUED: now on an issued invoice. The invoice-paid
+      // ledger handler flips ACCRUED → CHARGED on payment.
+      await transitionOverage(tx, { id: ev.id }, "ACCRUED", {
+        settledAt,
+        invoiceLineItemId:
+          lineItemByPaymentId.get(ev.bookingUtilization.paymentId) ?? null,
       });
     }
 

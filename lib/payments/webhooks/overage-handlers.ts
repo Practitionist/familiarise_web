@@ -18,6 +18,7 @@
 import prisma from "@/lib/prisma";
 import { PaymentStatus } from "@prisma/client";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
+import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
 
 /**
  * Gateway capture succeeded for a CHARGE_MEMBER side-charge. Idempotent on the
@@ -80,9 +81,8 @@ export async function handleOverageMemberSuccess(
       });
     }
 
-    await tx.overageEvent.updateMany({
-      where: { paymentId: side.id },
-      data: { chargeStatus: "CHARGED", settledAt: new Date() },
+    await transitionOverage(tx, { paymentId: side.id }, "CHARGED", {
+      settledAt: new Date(),
     });
   });
 }
@@ -107,9 +107,6 @@ export async function handleOverageMemberFailure(
       where: { id: side.id },
       data: { paymentStatus: PaymentStatus.FAILED },
     });
-    await tx.overageEvent.updateMany({
-      where: { paymentId: side.id },
-      data: { chargeStatus: "FAILED" },
-    });
+    await transitionOverage(tx, { paymentId: side.id }, "FAILED");
   });
 }

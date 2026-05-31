@@ -57,12 +57,11 @@ import {
   validateDiscountCurrency,
 } from "@/lib/payments/validation/currency-guards";
 import { checkPaymentLegsSumToAmount } from "@/lib/payments/payment-legs";
-import { computeOverage } from "@/lib/payments/billing/overage";
+import { recordOverageAtCheckout } from "@/lib/payments/billing/overage-settlement";
 import { getInvoiceCreditLimitPaise } from "@/lib/enterprise/governance";
 import {
   notifyOrgProgramExhausted,
   notifyOrgProgramCapNear,
-  notifyOrgProgramOverageDue,
 } from "@/lib/novu/org-workflows";
 
 // Re-export for backward compatibility
@@ -2374,233 +2373,29 @@ export async function handleCheckout(
             //   - BLOCK behavior: never reaches here (helper already threw).
             //     The circuit-breaker veto is the only BLOCK decision here.
             if (utilizationResult.wasOverage) {
-              const isCredit =
-                utilizationResult.programType === "CREDIT_POOL";
-              const programRow = await tx.program.findFirst({
-                where: {
-                  assignments: { some: { id: programAssignmentId } },
+              // #778 elegance — extracted to recordOverageAtCheckout (resolves
+              // the behaviour via computeOverage, enforces the circuit breaker,
+              // persists the OverageEvent + CHARGE_MEMBER side-Payment /
+              // CHARGE_ORG accrual leg). Throws PROGRAM_CAP_EXHAUSTED (402) on
+              // the breaker veto.
+              await recordOverageAtCheckout({
+                tx,
+                programAssignmentId,
+                utilization: {
+                  programType: utilizationResult.programType,
+                  engagementsConsumedDelta:
+                    utilizationResult.engagementsConsumedDelta,
+                  engagementsUsedAfter: utilizationResult.engagementsUsedAfter,
+                  consumedPaiseAfter: utilizationResult.consumedPaiseAfter,
+                  creditBudgetPaise: utilizationResult.creditBudgetPaise,
                 },
-                select: {
-                  licensedSeatConfig: {
-                    select: {
-                      overageBehavior: true,
-                      priceCapPerEngagementPaise: true,
-                      coveredEngagementsPerCycle: true,
-                      overageSurchargeBps: true,
-                      maxOveragePerCyclePaise: true,
-                    },
-                  },
-                  creditPoolConfig: {
-                    select: {
-                      overageBehavior: true,
-                      overageSurchargeBps: true,
-                      maxOveragePerCyclePaise: true,
-                    },
-                  },
-                },
+                bookingPricePaise: amount,
+                currency,
+                paymentId: payment.id,
+                userId,
+                organizationId,
+                paymentGateway: validatedData.paymentGateway,
               });
-              const lsc = programRow?.licensedSeatConfig;
-              const cpc = programRow?.creditPoolConfig;
-
-              // #768 #14/#15 — cycle overage-so-far. A ProgramAssignment is
-              // per-cycle (unique on programId+membershipId+periodStart), so
-              // every OverageEvent on this assignmentId is already scoped to
-              // the current cycle; summing marginalPaise across them is the
-              // running total this breaker compares against. No settledAt
-              // filter: the ceiling is on the cycle's TOTAL accrued overage,
-              // so a mid-cycle invoice run (which stamps settledAt) must not
-              // reset the breaker.
-              //
-              // #778 elegance — exclude REVERSED/BLOCKED/FAILED: a refunded
-              // (REVERSED) or never-collected (FAILED/BLOCKED) overage frees the
-              // ceiling again, matching how usage-billing overlays corrections
-              // on immutable events. Only chargeable events consume the cap.
-              const soFarAgg = await tx.overageEvent.aggregate({
-                where: {
-                  programAssignmentId,
-                  chargeStatus: { notIn: ["REVERSED", "BLOCKED", "FAILED"] },
-                },
-                _sum: { marginalPaise: true },
-              });
-              const cycleOverageSoFarPaise = soFarAgg._sum.marginalPaise ?? 0;
-
-              // #768/#775 — drive the decision through the pure
-              // computeOverage(). For LICENSED_SEAT the PRE-booking engagement
-              // count is needed (helper already applied this booking's delta);
-              // for CREDIT_POOL the PRE-booking consumed paise (subtract the
-              // booking price the helper just added).
-              const overage = computeOverage(
-                isCredit
-                  ? {
-                      programType: "CREDIT_POOL",
-                      bookingPricePaise: amount,
-                      sessionsConsumed: Math.max(
-                        1,
-                        utilizationResult.engagementsConsumedDelta,
-                      ),
-                      overageBehavior: cpc?.overageBehavior ?? "BLOCK",
-                      maxOveragePerCyclePaise:
-                        cpc?.maxOveragePerCyclePaise ?? null,
-                      cycleOverageSoFarPaise,
-                      overageSurchargeBps: cpc?.overageSurchargeBps ?? null,
-                      creditBudgetPaise: utilizationResult.creditBudgetPaise,
-                      consumedPaise:
-                        utilizationResult.consumedPaiseAfter - amount,
-                    }
-                  : {
-                      programType: "LICENSED_SEAT",
-                      bookingPricePaise: amount,
-                      sessionsConsumed: Math.max(
-                        1,
-                        utilizationResult.engagementsConsumedDelta,
-                      ),
-                      overageBehavior: lsc?.overageBehavior ?? "BLOCK",
-                      maxOveragePerCyclePaise:
-                        lsc?.maxOveragePerCyclePaise ?? null,
-                      cycleOverageSoFarPaise,
-                      overageSurchargeBps: lsc?.overageSurchargeBps ?? null,
-                      coveredEngagementsPerCycle:
-                        lsc?.coveredEngagementsPerCycle ?? null,
-                      engagementsUsed:
-                        utilizationResult.engagementsUsedAfter -
-                        utilizationResult.engagementsConsumedDelta,
-                      priceCapPerEngagementPaise:
-                        lsc?.priceCapPerEngagementPaise ?? null,
-                    },
-              );
-              const marginalPaise = overage.marginalPaise;
-
-              // #768 #14/#15 — circuit breaker: ceiling exceeded → reject the
-              // booking exactly like the BLOCK behavior path (same 402 shape).
-              // Distinct code so the dashboard can explain it's the cycle cap,
-              // not the per-member allocation.
-              if (overage.decision === "BLOCK" && overage.chargeTo === null) {
-                throw Object.assign(
-                  new Error(
-                    "PROGRAM_CAP_EXHAUSTED: This booking would exceed the program's per-cycle overage ceiling. Contact your organization administrator to raise the ceiling or wait for the next cycle.",
-                  ),
-                  { httpStatus: 402, code: "PROGRAM_CAP_EXHAUSTED" },
-                );
-              }
-
-              const bu =
-                marginalPaise > 0
-                  ? await tx.bookingUtilization.findUnique({
-                      where: { paymentId: payment.id },
-                      select: { id: true },
-                    })
-                  : null;
-
-              if (overage.chargeTo === "MEMBER" && marginalPaise > 0 && bu) {
-                // #775 — instant member charge. The booking proceeds; create a
-                // parent-linked PENDING side-Payment for the marginal. We do
-                // NOT call the gateway inside this Serializable TX — the order
-                // is created lazily when the member opens the resume-checkout
-                // surface (`/api/.../overage/[overageEventId]/order`); the
-                // gateway webhook then flips this Payment → SUCCEEDED and the
-                // OverageEvent → CHARGED. `appointmentId: null` avoids the
-                // @@unique([userId, appointmentId]) collision with the booking.
-                const sideCharge = await tx.payment.create({
-                  data: {
-                    amount: marginalPaise,
-                    originalAmount: marginalPaise,
-                    taxAmount: 0,
-                    currency,
-                    paymentMethod: "CARD",
-                    paymentIntent: `overage:${payment.id}`,
-                    paymentGateway: validatedData.paymentGateway,
-                    paymentStatus: PaymentStatus.PENDING,
-                    isMockPayment: false,
-                    userId,
-                    appointmentId: null,
-                    organizationId,
-                    parentPaymentId: payment.id,
-                  },
-                });
-                const memberOverageEvent = await tx.overageEvent.create({
-                  data: {
-                    programAssignmentId,
-                    bookingUtilizationId: bu.id,
-                    overageBehavior: "CHARGE_MEMBER",
-                    basePaise: overage.basePaise,
-                    surchargePaise: overage.surchargePaise,
-                    marginalPaise,
-                    currency: "INR",
-                    chargeStatus: "PENDING",
-                    paymentId: sideCharge.id,
-                  },
-                });
-
-                // #775 — tell the member they owe the marginal + deep-link to
-                // the pay surface. Fire-and-forget on the outer prisma client
-                // (committed-state lookup; not part of this rolling-back-able
-                // tx), mirroring the cap-near / exhausted notifications above.
-                prisma.programAssignment
-                  .findUnique({
-                    where: { id: programAssignmentId },
-                    select: {
-                      program: {
-                        select: {
-                          name: true,
-                          contract: {
-                            select: {
-                              organization: { select: { name: true } },
-                            },
-                          },
-                        },
-                      },
-                    },
-                  })
-                  .then((ctx) => {
-                    if (!ctx) return;
-                    return notifyOrgProgramOverageDue(userId, {
-                      orgName: ctx.program.contract.organization.name,
-                      programName: ctx.program.name,
-                      amountPaise: marginalPaise,
-                      payUrl: `/dashboard/overage?charge=${memberOverageEvent.id}`,
-                    });
-                  })
-                  .catch((notifyErr) =>
-                    console.error(
-                      "[notifyOrgProgramOverageDue] failed:",
-                      notifyErr,
-                    ),
-                  );
-              }
-
-              if (overage.chargeTo === "ORG" && marginalPaise > 0 && bu) {
-                // Use OVERAGE_INVOICE_ACCRUAL (not INVOICE_ACCRUAL) so the
-                // @@unique([paymentId, source]) constraint on PaymentLeg is not
-                // violated — the base leg already holds the INVOICE_ACCRUAL slot
-                // for this paymentId. Both sources count against the org's credit
-                // limit (see getInvoiceCreditLimitPaise aggregation below).
-                await tx.paymentLeg.create({
-                  data: {
-                    paymentId: payment.id,
-                    source: "OVERAGE_INVOICE_ACCRUAL",
-                    amountPaise: marginalPaise,
-                    sourceRef: `overage:${programAssignmentId}`,
-                  },
-                });
-
-                // #771 / #715 / #775 — append-only OverageEvent (Stripe-Meter
-                // style): audit record AND the row the cycle-close rollup turns
-                // into an InvoiceLineItem (PENDING → ACCRUED → CHARGED).
-                await tx.overageEvent.create({
-                  data: {
-                    programAssignmentId,
-                    bookingUtilizationId: bu.id,
-                    overageBehavior: "CHARGE_ORG",
-                    basePaise: overage.basePaise,
-                    surchargePaise: overage.surchargePaise,
-                    marginalPaise,
-                    currency: "INR",
-                    chargeStatus: "PENDING",
-                    // paymentId / invoiceLineItemId / settledAt are stamped by
-                    // the cycle-close rollup when it bills this to the org.
-                  },
-                });
-              }
             }
           }
 

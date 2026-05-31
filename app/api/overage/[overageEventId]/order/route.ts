@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { createRazorpayOrder } from "@/lib/payments/core/razorpay";
 import { PaymentStatus } from "@prisma/client";
+import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
 
 /**
  * #775 — resume-checkout for a CHARGE_MEMBER overage side-charge.
@@ -81,10 +82,9 @@ export async function POST(
     where: { id: event.payment.id },
     data: { paymentIntent: order.id, paymentStatus: PaymentStatus.PENDING },
   });
-  await prisma.overageEvent.update({
-    where: { id: event.id },
-    data: { chargeStatus: "PENDING" },
-  });
+  // Guarded FAILED → PENDING only (no-op if already PENDING); CHARGED/REVERSED
+  // were already rejected above.
+  await transitionOverage(prisma, { id: event.id }, "PENDING");
 
   return NextResponse.json({
     orderId: order.id,
