@@ -95,7 +95,10 @@ export type Finding = {
     | "ORG_PAYOUT_TOTAL_MISMATCH"
     | "LEDGER_TXN_IMBALANCE"
     // #775 — CREDIT_POOL money-meter: consumedPaise vs sum(UsageLedgerEntry price).
-    | "CREDIT_POOL_CONSUMED_DRIFT";
+    | "CREDIT_POOL_CONSUMED_DRIFT"
+    // #782 — overage state: overageCount cache vs live events; link/state integrity.
+    | "OVERAGE_COUNT_DRIFT"
+    | "OVERAGE_CHARGESTATUS_INTEGRITY";
   organizationId?: string;
   billingAccountId?: string;
   billingSubscriptionId?: string;
@@ -212,6 +215,8 @@ export async function runReconcileLedgers(
       engagementsUsed: true,
       // #775 — CREDIT_POOL money-meter counter (paise).
       consumedPaise: true,
+      // #782 — over-cap booking cache.
+      overageCount: true,
       program: {
         select: { type: true, contract: { select: { organizationId: true } } },
       },
@@ -264,6 +269,99 @@ export async function runReconcileLedgers(
         });
       }
     }
+
+    // #782 — overageCount cache vs live over-cap bookings. The counter bumps on
+    // each over-cap booking and decrements on full reversal (same gate that
+    // flips the OverageEvent → REVERSED), so it must equal the count of
+    // non-REVERSED events for the assignment. A drift of 1 typically means a
+    // fully-refunded booking whose overage was already CHARGED (awaiting a
+    // credit note, #716) — the counter dropped but the event stays CHARGED.
+    const liveOverage = await prisma.overageEvent.count({
+      where: {
+        programAssignmentId: a.id,
+        chargeStatus: { notIn: ["REVERSED", "BLOCKED"] },
+      },
+    });
+    if (liveOverage !== a.overageCount) {
+      findings.push({
+        kind: "OVERAGE_COUNT_DRIFT",
+        programAssignmentId: a.id,
+        organizationId: a.program.contract.organizationId,
+        expectedPaise: liveOverage,
+        actualPaise: a.overageCount,
+        deltaPaise: a.overageCount - liveOverage,
+        details: {
+          unit: "events",
+          note: "ProgramAssignment.overageCount disagrees with count(OverageEvent where chargeStatus not in REVERSED/BLOCKED). Check the bump in recordBookingUtilization() vs the full-reversal decrement in reverseBookingUtilization(); a charged-then-refunded overage is the expected #716 cause.",
+        },
+      });
+    }
+  }
+
+  // --- (G2) #782: OverageEvent link/state integrity ---
+  // A CHARGE_MEMBER event that is pending/failed/charged must carry its
+  // side-Payment; a CHARGE_ORG event that is accrued/charged must carry its
+  // invoice line item; any CHARGED event must be settled. Violations mean the
+  // transitionOverage state machine was bypassed or a write half-completed.
+  const badOverage = await prisma.overageEvent.findMany({
+    where: {
+      ...(opts.organizationId
+        ? {
+            programAssignment: {
+              program: { contract: { organizationId: opts.organizationId } },
+            },
+          }
+        : {}),
+      OR: [
+        {
+          overageBehavior: "CHARGE_MEMBER",
+          chargeStatus: { in: ["PENDING", "FAILED", "CHARGED"] },
+          paymentId: null,
+        },
+        {
+          overageBehavior: "CHARGE_ORG",
+          chargeStatus: { in: ["ACCRUED", "CHARGED"] },
+          invoiceLineItemId: null,
+        },
+        { chargeStatus: "CHARGED", settledAt: null },
+      ],
+    },
+    select: {
+      id: true,
+      overageBehavior: true,
+      chargeStatus: true,
+      paymentId: true,
+      invoiceLineItemId: true,
+      settledAt: true,
+      marginalPaise: true,
+      programAssignment: {
+        select: {
+          id: true,
+          program: { select: { contract: { select: { organizationId: true } } } },
+        },
+      },
+    },
+    take: 500,
+  });
+  for (const ev of badOverage) {
+    findings.push({
+      kind: "OVERAGE_CHARGESTATUS_INTEGRITY",
+      programAssignmentId: ev.programAssignment.id,
+      organizationId: ev.programAssignment.program.contract.organizationId,
+      expectedPaise: ev.marginalPaise,
+      actualPaise: ev.marginalPaise,
+      deltaPaise: 0,
+      details: {
+        unit: "event",
+        overageEventId: ev.id,
+        overageBehavior: ev.overageBehavior,
+        chargeStatus: ev.chargeStatus,
+        paymentId: ev.paymentId,
+        invoiceLineItemId: ev.invoiceLineItemId,
+        settledAt: ev.settledAt,
+        note: "OverageEvent link/state invariant violated: CHARGE_MEMBER pending/failed/charged without a side-Payment, CHARGE_ORG accrued/charged without an InvoiceLineItem, or CHARGED without settledAt. Trace the transitionOverage() path that produced this state.",
+      },
+    });
   }
 
   // --- (H): per Payment leg-sum invariant ---
