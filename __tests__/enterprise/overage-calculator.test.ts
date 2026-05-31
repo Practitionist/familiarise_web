@@ -63,6 +63,10 @@ describe("computeOverage — LICENSED_SEAT pass-through", () => {
     });
     // 40_000 capped, then +10% = 44_000 (may exceed the cap by the surcharge).
     expect(r.marginalPaise).toBe(44_000);
+    // #778 elegance — base/surcharge split; marginal == base + surcharge.
+    expect(r.basePaise).toBe(40_000);
+    expect(r.surchargePaise).toBe(4_000);
+    expect(r.basePaise + r.surchargePaise).toBe(r.marginalPaise);
   });
 
   it("surcharge with no price cap marks up the full pass-through price", () => {
@@ -73,6 +77,10 @@ describe("computeOverage — LICENSED_SEAT pass-through", () => {
       overageSurchargeBps: 2500, // +25%
     });
     expect(r.marginalPaise).toBe(125_000);
+    expect(r.basePaise).toBe(100_000);
+    expect(r.surchargePaise).toBe(25_000);
+    // covered + base == price (the surcharge rides on top).
+    expect(r.coveredPaise + r.basePaise).toBe(100_000);
   });
 
   it("unlimited cap (LICENSE-funded, null) never overages", () => {
@@ -145,6 +153,8 @@ describe("computeOverage — CREDIT_POOL money-meter", () => {
       overageSurchargeBps: 1000, // +10%
     });
     expect(r.marginalPaise).toBe(55_000);
+    expect(r.basePaise).toBe(50_000);
+    expect(r.surchargePaise).toBe(5_000);
   });
 });
 

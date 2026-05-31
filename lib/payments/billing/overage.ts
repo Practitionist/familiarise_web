@@ -55,6 +55,11 @@ export type OverageChargeTarget = "MEMBER" | "ORG" | null;
 
 export interface OverageResult {
   coveredPaise: number;
+  /** Pass-through over-cap portion (pre-surcharge). `coveredPaise + basePaise == price`. */
+  basePaise: number;
+  /** The `overageSurchargeBps` markup on `basePaise`. 0 when no surcharge. */
+  surchargePaise: number;
+  /** Authoritative charged total: `basePaise + surchargePaise`. */
   marginalPaise: number;
   decision: OverageDecision;
   chargeTo: OverageChargeTarget;
@@ -108,6 +113,8 @@ export function computeOverage(input: OverageInput): OverageResult {
   if (marginalPaise <= 0) {
     return {
       coveredPaise: price,
+      basePaise: 0,
+      surchargePaise: 0,
       marginalPaise: 0,
       decision: "PROCEED",
       chargeTo: null,
@@ -116,13 +123,15 @@ export function computeOverage(input: OverageInput): OverageResult {
   }
 
   // --- Step 1b: surcharge markup on the pass-through marginal --------------
-  // Applied AFTER the price cap, so the marginal may exceed the single
-  // booking price by the surcharge. coveredPaise is unchanged (what the
-  // program covered); they no longer sum to `price`.
+  // `basePaise` is the pass-through over-cap portion (covered + base == price).
+  // The surcharge is itemized separately so the total stays auditable: the
+  // marginal == base + surcharge, and the surcharge is what pushes the marginal
+  // above the single booking price.
+  const basePaise = marginalPaise;
   const surchargeBps = input.overageSurchargeBps ?? 0;
-  if (surchargeBps > 0) {
-    marginalPaise += Math.floor((marginalPaise * surchargeBps) / 10000);
-  }
+  const surchargePaise =
+    surchargeBps > 0 ? Math.floor((basePaise * surchargeBps) / 10000) : 0;
+  marginalPaise = basePaise + surchargePaise;
 
   // --- Step 2: per-cycle circuit breaker → hard BLOCK regardless of behavior
   if (
@@ -131,6 +140,8 @@ export function computeOverage(input: OverageInput): OverageResult {
   ) {
     return {
       coveredPaise,
+      basePaise,
+      surchargePaise,
       marginalPaise,
       decision: "BLOCK",
       chargeTo: null,
@@ -143,6 +154,8 @@ export function computeOverage(input: OverageInput): OverageResult {
     case "BLOCK":
       return {
         coveredPaise,
+        basePaise,
+        surchargePaise,
         marginalPaise,
         decision: "BLOCK",
         chargeTo: null,
@@ -151,6 +164,8 @@ export function computeOverage(input: OverageInput): OverageResult {
     case "CHARGE_MEMBER":
       return {
         coveredPaise,
+        basePaise,
+        surchargePaise,
         marginalPaise,
         decision: "PROCEED",
         chargeTo: "MEMBER",
@@ -159,6 +174,8 @@ export function computeOverage(input: OverageInput): OverageResult {
     case "CHARGE_ORG":
       return {
         coveredPaise,
+        basePaise,
+        surchargePaise,
         marginalPaise,
         decision: "PROCEED",
         chargeTo: "ORG",
@@ -167,6 +184,8 @@ export function computeOverage(input: OverageInput): OverageResult {
     default:
       return {
         coveredPaise,
+        basePaise,
+        surchargePaise,
         marginalPaise,
         decision: "BLOCK",
         chargeTo: null,

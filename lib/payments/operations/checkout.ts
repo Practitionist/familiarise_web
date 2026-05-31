@@ -2410,8 +2410,16 @@ export async function handleCheckout(
               // filter: the ceiling is on the cycle's TOTAL accrued overage,
               // so a mid-cycle invoice run (which stamps settledAt) must not
               // reset the breaker.
+              //
+              // #778 elegance — exclude REVERSED/BLOCKED/FAILED: a refunded
+              // (REVERSED) or never-collected (FAILED/BLOCKED) overage frees the
+              // ceiling again, matching how usage-billing overlays corrections
+              // on immutable events. Only chargeable events consume the cap.
               const soFarAgg = await tx.overageEvent.aggregate({
-                where: { programAssignmentId },
+                where: {
+                  programAssignmentId,
+                  chargeStatus: { notIn: ["REVERSED", "BLOCKED", "FAILED"] },
+                },
                 _sum: { marginalPaise: true },
               });
               const cycleOverageSoFarPaise = soFarAgg._sum.marginalPaise ?? 0;
@@ -2514,6 +2522,8 @@ export async function handleCheckout(
                     programAssignmentId,
                     bookingUtilizationId: bu.id,
                     overageBehavior: "CHARGE_MEMBER",
+                    basePaise: overage.basePaise,
+                    surchargePaise: overage.surchargePaise,
                     marginalPaise,
                     currency: "INR",
                     chargeStatus: "PENDING",
@@ -2581,6 +2591,8 @@ export async function handleCheckout(
                     programAssignmentId,
                     bookingUtilizationId: bu.id,
                     overageBehavior: "CHARGE_ORG",
+                    basePaise: overage.basePaise,
+                    surchargePaise: overage.surchargePaise,
                     marginalPaise,
                     currency: "INR",
                     chargeStatus: "PENDING",

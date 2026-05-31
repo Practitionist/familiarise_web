@@ -4753,9 +4753,14 @@ model OverageEvent {
   bookingUtilizationId String              @unique
   bookingUtilization   BookingUtilization  @relation(fields: [bookingUtilizationId], references: [id], onDelete: Cascade)
   overageBehavior      OverageBehavior
-  /// Pass-through marginal (over-cap portion of the booking price, after
-  /// `priceCapPerEngagementPaise`) plus the `overageSurchargeBps` markup. May
-  /// exceed the single booking price by the surcharge — that's intended.
+  /// #778 elegance — the marginal split into its two components so the money is
+  /// auditable and GST-itemizable. `basePaise` is the pass-through over-cap
+  /// portion of the real booking price (after `priceCapPerEngagementPaise`);
+  /// `surchargePaise` is the `overageSurchargeBps` markup on top. Invariant:
+  /// `marginalPaise == basePaise + surchargePaise`, and (covered) + basePaise ==
+  /// booking price. `marginalPaise` stays the authoritative charged total.
+  basePaise            Int                 @default(0)
+  surchargePaise       Int                 @default(0)
   marginalPaise        Int
   currency             Currency            @default(INR)
   chargeStatus         OverageChargeStatus @default(PENDING)
