@@ -33,6 +33,16 @@ export interface AccountRef {
   organizationId?: string | null;
   /** Consultant-scoped accounts (CONSULTANT_PAYABLE). */
   consultantProfileId?: string | null;
+  /**
+   * #783 — the ledger is **INR-denominated**: Razorpay always settles in INR
+   * (`gateway-router.ts`), `amountPaise` is INR paise, and no FX conversion
+   * happens before posting. `displayCurrencyAtCheckout` is a cosmetic buyer
+   * label, NOT the settlement currency. So leave this unset (→ INR) on every
+   * posting — keying an account by a display currency would put INR-paise
+   * amounts into a foreign-labelled account and break receivable/payable
+   * clearing. Reserved for a future multi-currency ledger (see #783); the
+   * `LEDGER_ACCOUNT_NON_INR` reconcile guard enforces INR-only until then.
+   */
   currency?: Currency;
 }
 

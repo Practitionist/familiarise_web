@@ -98,7 +98,10 @@ export type Finding = {
     | "CREDIT_POOL_CONSUMED_DRIFT"
     // #782 — overage state: overageCount cache vs live events; link/state integrity.
     | "OVERAGE_COUNT_DRIFT"
-    | "OVERAGE_CHARGESTATUS_INTEGRITY";
+    | "OVERAGE_CHARGESTATUS_INTEGRITY"
+    // #783 — ledger is INR-denominated; a non-INR account means a posting keyed
+    // an INR-paise amount by a display currency.
+    | "LEDGER_ACCOUNT_NON_INR";
   organizationId?: string;
   billingAccountId?: string;
   billingSubscriptionId?: string;
@@ -360,6 +363,36 @@ export async function runReconcileLedgers(
         invoiceLineItemId: ev.invoiceLineItemId,
         settledAt: ev.settledAt,
         note: "OverageEvent link/state invariant violated: CHARGE_MEMBER pending/failed/charged without a side-Payment, CHARGE_ORG accrued/charged without an InvoiceLineItem, or CHARGED without settledAt. Trace the transitionOverage() path that produced this state.",
+      },
+    });
+  }
+
+  // --- (G3) #783: ledger is INR-denominated ---
+  // Razorpay settles INR and amounts post as INR paise with no FX conversion,
+  // so every LedgerAccount must be INR. A non-INR account means a posting keyed
+  // an INR-paise amount by a display currency (would break clearing). Holds
+  // until a real multi-currency model is designed (#783).
+  const nonInrAccounts = await prisma.ledgerAccount.findMany({
+    where: {
+      currency: { not: "INR" },
+      ...(opts.organizationId ? { organizationId: opts.organizationId } : {}),
+    },
+    select: { id: true, kind: true, currency: true, organizationId: true },
+    take: 200,
+  });
+  for (const acct of nonInrAccounts) {
+    findings.push({
+      kind: "LEDGER_ACCOUNT_NON_INR",
+      organizationId: acct.organizationId ?? undefined,
+      expectedPaise: 0,
+      actualPaise: 0,
+      deltaPaise: 0,
+      details: {
+        unit: "account",
+        ledgerAccountId: acct.id,
+        accountKind: acct.kind,
+        currency: acct.currency,
+        note: "Non-INR LedgerAccount: the ledger is INR-denominated (#783). A posting keyed an INR-paise amount by a display currency — fix the posting to leave AccountRef.currency unset (INR), or design the multi-currency model first.",
       },
     });
   }
