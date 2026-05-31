@@ -608,6 +608,14 @@ model Organization {
   /// platform-wide.
   maintenanceWindows MaintenanceWindow[]
 
+  // #778 §D — GST credit notes (Sec 34) issued against this org's invoices.
+  creditNotes CreditNote[]
+
+  // #778 §D — annual aggregate turnover ≥ ₹5cr makes IRN/e-invoice mandatory
+  // (CGST e-invoicing threshold). Drives whether OrganizationInvoice must upload
+  // to the IRP. Flag frozen now; enforcement deferred.
+  aatoAboveEinvoiceThreshold Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1559,6 +1567,9 @@ model OrganizationInvoice {
   // INVOICED_MONTHLY: payments rolled up into this invoice
   billedPayments Payment[] @relation("PaymentBillableToOrgInvoice")
 
+  // #778 §D — GST credit notes (Sec 34) adjusting this invoice.
+  creditNotes CreditNote[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -2125,8 +2136,9 @@ model ConsultantProfile {
   payoutAccounts PayoutAccount[]
 
   // Tax & compliance
-  taxInfo    ConsultantTaxInfo?
-  tdsRecords TDSRecord[]
+  taxInfo        ConsultantTaxInfo?
+  tdsRecords     TDSRecord[]
+  tdsAdjustments TdsAdjustment[] // #778 §D — refund-driven TDS reversals
 
   // Profile verification
   verificationRequests ConsultantProfileVerification[]
@@ -2143,6 +2155,10 @@ model ConsultantProfile {
   // India statutory (compliance stubs read these)
   panNumber                       String?           @db.VarChar(10)
   residencyStatus                 ResidencyStatus   @default(RESIDENT)
+  // #778 §D — TDS thresholds/sections differ by payee entity type; without it
+  // non-individuals are mis-withheld. This is the schema half of the deferred
+  // ₹50K/194J threshold path (#778 §E/§F). Threshold logic deferred.
+  taxEntityType                   TaxEntityType     @default(INDIVIDUAL)
   tdsSection                      String? // "194J" | "194O" | "194C"
   // Stored as Float (not Decimal) so the field can safely cross the
   // Server→Client boundary in Next.js. TDS rates are at most 2 decimal
@@ -3352,6 +3368,14 @@ model Payment {
   displayCurrencyAtCheckout String? @db.VarChar(3) // Currency code shown to the buyer at checkout
   exchangeRateAtCheckout    Float? // Snapshot of INR→displayCurrencyAtCheckout for audit
 
+  // #778 §D — GST place-of-supply (Sec 12/13) for B2C: buyer's state code, else
+  // every interstate sale wrongly defaults. Derivation/IGST-vs-CGST split deferred.
+  consumerStateCode    String? @db.VarChar(2)
+  // #778 §D — GST TCS u/s 52 collected on this payment (we're likely an e-commerce
+  // operator owing 1% on registered consultants). paise; #780 widens to BigInt.
+  // Collection + GSTR-8 filing flag-gated/deferred pending CA signoff.
+  gstTcsCollectedPaise Int?
+
   user           User          @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId         String
   appointment    Appointment?  @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
@@ -3603,7 +3627,10 @@ model ConsultantEarnings {
   grossAmount          Int // Total sale price (paise)
   platformFeePaise     Int // Platform cut (20%)
   consultantSharePaise Int // Consultant cut (80%)
-  refundedShareAmount  Int @default(0) // Cumulative refunded amount in paise
+  refundedShareAmount  Int  @default(0) // Cumulative refunded amount in paise
+  // #778 §D — GST TCS u/s 52 accrued against this consultant's supply (owed to
+  // govt, reconciled into GstTcsBatch). paise; #780 widens to BigInt. Impl deferred.
+  gstTcsAccruedPaise   Int?
 
   // Collaborator support
   role     EarningRole @default(OWNER)
@@ -3767,6 +3794,137 @@ model TDSRecord {
   @@index([consultantProfileId, financialYear])
   @@index([financialYear, quarter])
   @@index([reportedInForm26Q])
+}
+
+// #778 §D — payee entity type. TDS thresholds + section differ by type; the
+// ₹50K/194J threshold path (deferred, §F) keys off this.
+enum TaxEntityType {
+  INDIVIDUAL
+  HUF
+  PARTNERSHIP
+  LLP
+  COMPANY
+}
+
+// #778 §D — GST credit note (Sec 34). A refund without a credit note is a GST
+// filing mismatch. Schema + refund-flow stamping land now; GSTR-1 return export
+// deferred (§F). Mirrors OrganizationInvoice's tax breakout + per-org sequence.
+enum CreditNoteStatus {
+  DRAFT
+  ISSUED
+  CANCELLED
+}
+
+model CreditNote {
+  id               String @id @default(cuid())
+  // Sequential per-org per CGST Rule 53; mirrors OrganizationInvoice.invoiceNumber.
+  creditNoteNumber String
+  fiscalYear       Int    @default(0)
+
+  organizationId String
+  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  // Original invoice this CN adjusts (Sec 34 requires the linkage). Nullable for
+  // B2C/unregistered cases where no GST invoice was issued.
+  invoiceId      String?
+  invoice        OrganizationInvoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  // Triggering refund, when the CN arises from one.
+  refundId       String?
+  reason         String?
+
+  // Money (paise; #780 widens to BigInt). Mirror the invoice tax split so the
+  // CN nets cleanly against it.
+  subtotalPaise Int
+  igstPaise     Int @default(0)
+  cgstPaise     Int @default(0)
+  sgstPaise     Int @default(0)
+  totalPaise    Int
+
+  status   CreditNoteStatus @default(DRAFT)
+  issuedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, creditNoteNumber])
+  @@index([organizationId, fiscalYear])
+  @@index([invoiceId])
+}
+
+// #778 §D — refund-driven TDS reversal: a negative line in the revised 26Q/27Q
+// when previously-withheld TDS is reversed on refund. Schema now; FVU export (§F)
+// deferred.
+model TdsAdjustment {
+  id                  String            @id @default(cuid())
+  consultantProfileId String
+  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onDelete: Restrict)
+  // What this adjusts.
+  tdsRecordId         String?
+  payoutId            String?
+  refundId            String? // triggering refund
+
+  financialYear String // "2026-27"
+  quarter       Int // 1-4
+  // Signed paise; negative reverses prior withholding (#780 widens to BigInt).
+  amountPaise   Int
+  reason        String?
+
+  reportedInForm26Q Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([consultantProfileId, financialYear])
+  @@index([payoutId])
+}
+
+// #778 §D — GST TCS u/s 52 monthly aggregation for GSTR-8. We're very likely an
+// e-commerce operator owing 1% TCS on registered consultants. Per-payment
+// collection (Payment.gstTcsCollectedPaise) + per-earning accrual
+// (ConsultantEarnings.gstTcsAccruedPaise) reconcile into one batch per month.
+// Collection + filing flag-gated pending CA signoff (§F).
+enum GstTcsBatchStatus {
+  OPEN
+  FILED
+}
+
+model GstTcsBatch {
+  id            String @id @default(cuid())
+  financialYear String // "2026-27"
+  month         Int // 1-12 (GSTR-8 is monthly)
+
+  // Aggregates for the period (paise; #780 widens to BigInt).
+  netSupplyPaise    Int @default(0)
+  tcsCollectedPaise Int @default(0)
+
+  status         GstTcsBatchStatus @default(OPEN)
+  filedAt        DateTime?
+  gstr8AckNumber String?
+
+  adjustments GstTcsAdjustment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([financialYear, month])
+  @@index([status])
+}
+
+// #778 §D — refund reversal of previously-collected GST TCS, netted into the
+// batch for the period in which the refund occurs.
+model GstTcsAdjustment {
+  id      String       @id @default(cuid())
+  batchId String?
+  batch   GstTcsBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+
+  paymentId   String? // original payment
+  refundId    String? // triggering refund
+  // Signed paise; negative reverses TCS on refund (#780 widens to BigInt).
+  amountPaise Int
+  reason      String?
+
+  createdAt DateTime @default(now())
+
+  @@index([batchId])
+  @@index([paymentId])
 }
 
 model WebhookEvent {
