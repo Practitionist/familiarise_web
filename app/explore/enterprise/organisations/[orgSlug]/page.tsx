@@ -35,16 +35,27 @@ async function fetchOrgBySlug(slug: string) {
           website: true,
         },
       },
-      organizationPlans: {
-        where: { isActive: true },
-        select: {
-          id: true,
-          title: true,
-          description: true,
-          planType: true,
-          price: true,
-          priceCurrency: true,
-        },
+      // #778 elegance — the org "catalog" is its org-owned per-type plans
+      // (organizationId set on the plan) that are publicly visible. The standalone
+      // OrganizationPlan model was collapsed into these (one bookable shape).
+      consultationPlans: {
+        where: { visibility: { in: ["PUBLIC", "ORG_AND_PUBLIC"] } },
+        select: { id: true, title: true, description: true, price: true, priceCurrency: true },
+        take: 6,
+      },
+      subscriptionPlans: {
+        where: { visibility: { in: ["PUBLIC", "ORG_AND_PUBLIC"] } },
+        select: { id: true, title: true, description: true, price: true, priceCurrency: true },
+        take: 6,
+      },
+      webinarPlans: {
+        where: { visibility: { in: ["PUBLIC", "ORG_AND_PUBLIC"] } },
+        select: { id: true, title: true, description: true, price: true, priceCurrency: true },
+        take: 6,
+      },
+      classPlans: {
+        where: { visibility: { in: ["PUBLIC", "ORG_AND_PUBLIC"] } },
+        select: { id: true, title: true, description: true, price: true, priceCurrency: true },
         take: 6,
       },
       memberships: {
@@ -76,10 +87,19 @@ async function fetchOrgBySlug(slug: string) {
     },
   });
   if (!row) return null;
+  // Normalize the four org-owned per-type plan lists into one catalog array,
+  // tagged with planType, so the sidebar render is unchanged.
+  const organizationPlans = [
+    ...row.consultationPlans.map((p) => ({ ...p, planType: "CONSULTATION" as const })),
+    ...row.subscriptionPlans.map((p) => ({ ...p, planType: "SUBSCRIPTION" as const })),
+    ...row.webinarPlans.map((p) => ({ ...p, planType: "WEBINAR" as const })),
+    ...row.classPlans.map((p) => ({ ...p, planType: "CLASS" as const })),
+  ].slice(0, 6);
   // Flatten brandingProfile into the org shape so the rest of the page reads
   // org.logo / org.description / etc. directly (avoids touching ~12 read sites).
   return {
     ...row,
+    organizationPlans,
     logo: row.brandingProfile?.logo ?? null,
     bannerImage: row.brandingProfile?.bannerImage ?? null,
     description: row.brandingProfile?.description ?? null,

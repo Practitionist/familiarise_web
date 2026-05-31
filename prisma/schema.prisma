@@ -521,7 +521,6 @@ model Organization {
   escalationContactEmail String? @db.VarChar(255)
 
   // Policies
-  enforceOrganizationPlans  Boolean @default(false)
   defaultCancellationPolicy String? @db.Text
   defaultRefundPolicy       String? @db.Text
 
@@ -543,12 +542,11 @@ model Organization {
   invitations Invitation[]
 
   // Typed enterprise model
-  memberships       Membership[]
-  contracts         Contract[]
-  purchaseOrders    PurchaseOrder[]
-  invoices          OrganizationInvoice[]
-  organizationPlans OrganizationPlan[]
-  auditLogs         OrgAuditLog[]
+  memberships    Membership[]
+  contracts      Contract[]
+  purchaseOrders PurchaseOrder[]
+  invoices       OrganizationInvoice[]
+  auditLogs      OrgAuditLog[]
 
   // SSO + domain claims
   ssoSettings  OrganizationSSOSettings?
@@ -1753,83 +1751,12 @@ enum OrgAuditCategory {
   WEBHOOK // outbound webhook endpoint CRUD + delivery results
 }
 
-// Org-curated plan catalog. Unchanged semantics; FK renamed to organizationId.
-// #768 lockdown #28 — config Json (a polymorphic discriminator over
-// AppointmentsType) was split into 4 per-type child models. Each row
-// has at most one child (the one matching planType). See
-// OrgConsultationPlanConfig / OrgSubscriptionPlanConfig /
-// OrgWebinarPlanConfig / OrgClassPlanConfig below.
-model OrganizationPlan {
-  id             String       @id @default(uuid())
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-
-  planType      AppointmentsType
-  title         String
-  description   String?          @db.Text
-  price         Int // paise
-  priceCurrency Currency         @default(INR)
-
-  isActive Boolean @default(true)
-
-  // Per-type typed configs (1:1 each; only the one matching planType is
-  // populated). Reads use `include: { consultationConfig: true, ... }`
-  // and branch on planType.
-  consultationConfig OrgConsultationPlanConfig?
-  subscriptionConfig OrgSubscriptionPlanConfig?
-  webinarConfig      OrgWebinarPlanConfig?
-  classConfig        OrgClassPlanConfig?
-
-  assignedConsultantIds String[] @default([])
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([organizationId])
-  @@index([planType])
-}
-
-/// #768 lockdown #28 — typed config for CONSULTATION OrganizationPlans.
-/// Mirrors the public ConsultationPlan fields the org catalog needs.
-model OrgConsultationPlanConfig {
-  planId          String           @id
-  plan            OrganizationPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
-  durationInHours Float
-  /// Free-form notes shown to the booker at checkout.
-  preReadingNotes String?          @db.Text
-}
-
-/// #768 lockdown #28 — typed config for SUBSCRIPTION OrganizationPlans.
-model OrgSubscriptionPlanConfig {
-  planId                 String           @id
-  plan                   OrganizationPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
-  durationInMonths       Int
-  callsPerWeek           Int
-  sessionDurationInHours Float
-  totalSessions          Int
-}
-
-/// #768 lockdown #28 — typed config for WEBINAR OrganizationPlans.
-model OrgWebinarPlanConfig {
-  planId                    String           @id
-  plan                      OrganizationPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
-  durationInHours           Float
-  maxParticipants           Int
-  /// Whether the plan allows org members from OUTSIDE this org to register
-  /// when the org publishes the webinar to the marketplace.
-  publicRegistrationAllowed Boolean          @default(false)
-}
-
-/// #768 lockdown #28 — typed config for CLASS OrganizationPlans.
-model OrgClassPlanConfig {
-  planId                 String           @id
-  plan                   OrganizationPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
-  durationInMonths       Int
-  meetingsPerWeek        Int
-  sessionDurationInHours Float
-  totalSessions          Int
-  maxParticipants        Int
-}
+// #778 elegance — the standalone OrganizationPlan catalog (+ its 4 typed config
+// children) was collapsed into the per-type plans. An org's catalog is now
+// simply its org-owned per-type plans (ConsultationPlan/SubscriptionPlan/
+// WebinarPlan/ClassPlan with organizationId set + visibility), which are the
+// rows that actually get booked — one representation instead of a parallel,
+// never-booked shape. See the per-type plan models below.
 
 //////////////////////////////////////////////////// THREE-LEDGER DISCIPLINE ////////////////////////////////////////////////////
 // Usage / Funding / Settlement ledgers. Immutable rows; reconciliation lives

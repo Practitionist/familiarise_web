@@ -64,7 +64,6 @@ const PatchBodySchema = z
     gstStateCode: z.string().length(2).nullable().optional(),
     defaultCancellationPolicy: z.string().max(5000).nullable().optional(),
     defaultRefundPolicy: z.string().max(5000).nullable().optional(),
-    enforceOrganizationPlans: z.boolean().optional(),
     isPublic: z.boolean().optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
@@ -267,9 +266,6 @@ export async function PATCH(
           }),
           ...(body.defaultRefundPolicy !== undefined && {
             defaultRefundPolicy: body.defaultRefundPolicy,
-          }),
-          ...(body.enforceOrganizationPlans !== undefined && {
-            enforceOrganizationPlans: body.enforceOrganizationPlans,
           }),
           ...(body.isPublic !== undefined && { isPublic: body.isPublic }),
         },
