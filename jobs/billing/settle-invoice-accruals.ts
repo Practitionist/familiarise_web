@@ -13,13 +13,18 @@ export async function settleInvoiceAccruals(): Promise<{
   orgsProcessed: number;
   invoicesCreated: number;
 }> {
-  // Distinct orgs with at least one unbilled INVOICE_ACCRUAL booking.
+  // Distinct orgs with at least one unbilled accrual. Include
+  // OVERAGE_INVOICE_ACCRUAL: an org whose base bookings are all LICENSE-covered
+  // (₹0 legs) but has CHARGE_ORG overage would otherwise be skipped here and
+  // never billed for the overage (the rollup itself already bills both sources).
   const rows = await prisma.payment.findMany({
     where: {
       billableToOrgInvoiceId: null,
       paymentStatus: "SUCCEEDED",
       organizationId: { not: null },
-      legs: { some: { source: "INVOICE_ACCRUAL" } },
+      legs: {
+        some: { source: { in: ["INVOICE_ACCRUAL", "OVERAGE_INVOICE_ACCRUAL"] } },
+      },
     },
     select: { organizationId: true },
     distinct: ["organizationId"],

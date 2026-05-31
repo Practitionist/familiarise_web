@@ -213,17 +213,55 @@ export async function PATCH(
           ...(body.paymentTermsDays !== undefined && {
             paymentTermsDays: body.paymentTermsDays,
           }),
-          ...(body.gstin !== undefined && { gstin: body.gstin }),
-          ...(body.pan !== undefined && body.pan
-            ? (() => {
-                const { encrypted, last4 } = encryptPAN(body.pan);
-                return { panEncrypted: encrypted, panLast4: last4 };
-              })()
-            : body.pan === null
-              ? { panEncrypted: null, panLast4: null }
-              : {}),
-          ...(body.gstRegStatus !== undefined && { gstRegStatus: body.gstRegStatus }),
-          ...(body.gstStateCode !== undefined && { gstStateCode: body.gstStateCode }),
+          // gstin / pan / gstRegStatus / gstStateCode live on the
+          // OrganizationTaxInfo satellite, not Organization — write them via the
+          // taxInfo relation (a direct write here is a Prisma runtime error the
+          // conditional-spread pattern hides from tsc).
+          ...(body.gstin !== undefined ||
+          body.pan !== undefined ||
+          body.gstRegStatus !== undefined ||
+          body.gstStateCode !== undefined
+            ? {
+                taxInfo: {
+                  upsert: {
+                    create: {
+                      ...(body.gstin !== undefined && { gstin: body.gstin }),
+                      ...(body.gstRegStatus !== undefined && {
+                        gstRegStatus: body.gstRegStatus,
+                      }),
+                      ...(body.gstStateCode !== undefined && {
+                        gstStateCode: body.gstStateCode,
+                      }),
+                      ...(body.pan
+                        ? (() => {
+                            const { encrypted, last4 } = encryptPAN(body.pan);
+                            return { panEncrypted: encrypted, panLast4: last4 };
+                          })()
+                        : {}),
+                    },
+                    update: {
+                      ...(body.gstin !== undefined && { gstin: body.gstin }),
+                      ...(body.gstRegStatus !== undefined && {
+                        gstRegStatus: body.gstRegStatus,
+                      }),
+                      ...(body.gstStateCode !== undefined && {
+                        gstStateCode: body.gstStateCode,
+                      }),
+                      ...(body.pan !== undefined &&
+                        (body.pan
+                          ? (() => {
+                              const { encrypted, last4 } = encryptPAN(body.pan);
+                              return {
+                                panEncrypted: encrypted,
+                                panLast4: last4,
+                              };
+                            })()
+                          : { panEncrypted: null, panLast4: null })),
+                    },
+                  },
+                },
+              }
+            : {}),
           ...(body.defaultCancellationPolicy !== undefined && {
             defaultCancellationPolicy: body.defaultCancellationPolicy,
           }),

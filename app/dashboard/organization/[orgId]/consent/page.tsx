@@ -20,7 +20,7 @@
  * intact for auditors.
  */
 
-import { use, useMemo, useState } from "react";
+import { use, useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRequireFinanceSurface } from "../useOrgRole";
 import {
@@ -95,6 +95,17 @@ const LANGUAGES: Array<{ code: string; label: string }> = [
 const NOTICE_VERSION = 1;
 
 type PageProps = { params: Promise<{ orgId: string }> };
+
+// Client-only locale date — toLocaleString() differs between the SSR (server
+// TZ/locale) and client render, which trips React hydration. Render after mount
+// so the formatted value only ever appears client-side.
+function LocalDateTime({ value }: { value: string | Date | null | undefined }) {
+  const [text, setText] = useState("");
+  useEffect(() => {
+    setText(value ? new Date(value).toLocaleString() : "—");
+  }, [value]);
+  return <span suppressHydrationWarning>{text || "—"}</span>;
+}
 
 export default function ConsentPage({ params }: Readonly<PageProps>) {
   const { orgId } = use(params);
@@ -386,7 +397,7 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
                         {row.language}
                       </TableCell>
                       <TableCell className="text-xs text-zinc-600">
-                        {new Date(row.grantedAt).toLocaleString()}
+                        <LocalDateTime value={row.grantedAt} />
                       </TableCell>
                       <TableCell className="text-right">
                         <Button
@@ -470,12 +481,10 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
                         </div>
                       </TableCell>
                       <TableCell className="text-xs text-zinc-500">
-                        {new Date(row.grantedAt).toLocaleString()}
+                        <LocalDateTime value={row.grantedAt} />
                       </TableCell>
                       <TableCell className="text-xs text-zinc-500">
-                        {row.withdrawnAt
-                          ? new Date(row.withdrawnAt).toLocaleString()
-                          : "—"}
+                        <LocalDateTime value={row.withdrawnAt} />
                       </TableCell>
                       <TableCell>
                         <Badge className="bg-rose-50 text-rose-700">
