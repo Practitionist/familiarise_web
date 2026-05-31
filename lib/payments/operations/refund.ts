@@ -619,6 +619,8 @@ export async function applyRefundCascade(
       const platformPlug = fundingTotal - consRev - orgRev - gstRev;
       const debits: Posting[] = [];
       if (platformPlug > 0) {
+        // Funding returned exceeds the reversed shares → platform gives back its
+        // fee portion.
         debits.push({
           account: { kind: "PLATFORM_FEE" },
           direction: "DEBIT",
@@ -654,9 +656,30 @@ export async function applyRefundCascade(
           amountPaise: gstRev,
         });
       }
+      if (platformPlug < 0) {
+        // Reversed shares exceed the funding returned (rounding / discount /
+        // referral-credit-funded portion). #778 §C residual policy: PLATFORM_FEE
+        // absorbs the shortfall so the reversal is ALWAYS balanced. The prior
+        // `platformPlug >= 0` guard silently dropped the posting on this path,
+        // diverging earnings from the ledger irreparably (reconcile flagged
+        // EARNINGS_LEDGER_DRIFT it could not repair).
+        credits.push({
+          account: { kind: "PLATFORM_FEE" },
+          direction: "CREDIT",
+          amountPaise: -platformPlug,
+        });
+      }
       const debitTotal = debits.reduce((s, d) => s + d.amountPaise, 0);
-      // Post only when balanced (the plug keeps Dr sum == fundingTotal).
-      if (platformPlug >= 0 && debitTotal === fundingTotal && debits.length > 0) {
+      const creditTotal = credits.reduce((s, c) => s + c.amountPaise, 0);
+      if (debits.length > 0) {
+        if (debitTotal !== creditTotal) {
+          // Unreachable given the plug — a mismatch is a real logic bug. Surface
+          // it (caught + logged below; reconcile flags it) instead of letting a
+          // fall-through silently skip the reversal.
+          throw new Error(
+            `refund reversal unbalanced: Dr ${debitTotal} Cr ${creditTotal}`,
+          );
+        }
         await postLedgerTxn(tx, {
           idempotencyKey: `refund:${input.refundId}`,
           kind: "REFUND",
@@ -666,8 +689,12 @@ export async function applyRefundCascade(
       }
     }
   } catch (err) {
-    console.warn(
-      `[ledger] refund reversal posting skipped for payment ${payment.id}: ${err instanceof Error ? err.message : String(err)}`,
+    // #778 §C — dual-write safety: never block the customer refund on a ledger
+    // bookkeeping failure (gateway money may already have moved). NOT silent:
+    // logged at error level, and the reconcile cron's EARNINGS_LEDGER_DRIFT /
+    // LEDGER_TXN_IMBALANCE invariants detect any resulting divergence.
+    console.error(
+      `[ledger] refund reversal posting FAILED for payment ${payment.id} (reconcile will flag): ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 
