@@ -79,17 +79,21 @@ export async function recordSystemEvent(
     console.error("[recordSystemEvent] insert failed:", err);
   }
 
-  // Fire-and-forget telemetry sink (#776 §K). The DB row above is the
-  // source of truth; this just gets the event somewhere an on-call human
-  // sees it. No-op unless ENABLE_BETTERSTACK_TELEMETRY is on. Never awaited
-  // into the caller's critical path beyond its own best-effort body.
-  await emitTelemetryLog({
+  // Fire-and-forget telemetry sink (#776 §K). The DB row above is the source
+  // of truth; this just gets the event somewhere an on-call human sees it.
+  // NOT awaited — `recordSystemEvent` runs on the webhook critical path (HMAC
+  // failure), so awaiting an external HTTP POST would let a stalled Better
+  // Stack block/DoS the handler. No-op unless ENABLE_BETTERSTACK_TELEMETRY is
+  // on; the call is internally best-effort, the `.catch` is belt-and-suspenders.
+  void emitTelemetryLog({
     level: severityToTelemetryLevel(severity),
     message: params.message,
     category: params.category,
     organizationId: params.organizationId,
     correlationId: params.correlationId,
     context: params.context,
+  }).catch((err) => {
+    console.error("[recordSystemEvent] telemetry sink failed:", err);
   });
 }
 

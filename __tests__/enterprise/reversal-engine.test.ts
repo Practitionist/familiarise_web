@@ -91,6 +91,29 @@ describe("applyReversal — CLASS_MULTI", () => {
     expect(tx.refund.update).toHaveBeenCalledTimes(2);
   });
 
+  it("never lets a child's share exceed its own amount (remainder distribution)", async () => {
+    // Pathological: three ₹0.01 children, refund 2 paise. A naive
+    // "last absorbs remainder" would push the last child to 2 > its amount 1
+    // and crash applyRefundCascade's refundable guard. The distribution caps
+    // each child at its own amount.
+    const tx = mockTx([
+      { id: "p1", amount: 1 },
+      { id: "p2", amount: 1 },
+      { id: "p3", amount: 1 },
+    ]);
+    await applyReversal(tx as never, {
+      source: { kind: "CLASS_MULTI", paymentIds: ["p1", "p2", "p3"] },
+      amountPaise: 2,
+      reason: "r",
+      refundId: "ref",
+    });
+    const shares = mockedCascade.mock.calls.map((c) => c[1].amountPaise);
+    expect(shares.reduce((a, b) => a + b, 0)).toBe(2);
+    expect(Math.max(...shares)).toBeLessThanOrEqual(1);
+    // Third child's share nets to 0 → skipped.
+    expect(mockedCascade).toHaveBeenCalledTimes(2);
+  });
+
   it("skips zero-share children", async () => {
     const tx = mockTx([
       { id: "p1", amount: 100 },

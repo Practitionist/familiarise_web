@@ -61,14 +61,23 @@ export async function emitTelemetryLog(log: TelemetryLog): Promise<void> {
       ...(log.context ?? {}),
     };
 
-    await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
+    // Hard timeout so a stalled ingest connection can never hang/leak — even
+    // though callers fire-and-forget, an unbounded fetch would pin a socket.
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 3000);
+    try {
+      await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+        signal: ac.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
   } catch (err) {
     // Ingest is best-effort; the DB SystemEvent row is the source of truth.
     console.error("[BetterStack Telemetry] ingest failed:", err);

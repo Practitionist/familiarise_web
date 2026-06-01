@@ -133,13 +133,24 @@ async function reverseClassMulti(
   const totalAmount = payments.reduce((s, p) => s + p.amount, 0);
   if (totalAmount <= 0) return [];
 
-  // Proportional split by payment amount; last payment absorbs remainder.
+  // Proportional split by payment amount. The floor() per child loses up to
+  // <1 paise each, so distribute the rounding remainder one paise at a time to
+  // children that still have headroom (share < amount) — never dump it all on
+  // the last child, which could be tiny/zero and overflow its own amount,
+  // tripping applyRefundCascade's `requested > refundable` guard and crashing
+  // the whole reversal. Total headroom (totalAmount − assigned) always covers
+  // the remainder for any amountPaise <= totalAmount, so one pass suffices.
   const shares = payments.map((p) => ({
     payment: p,
     share: Math.floor((input.amountPaise * p.amount) / totalAmount),
   }));
-  const assigned = shares.reduce((s, x) => s + x.share, 0);
-  if (shares.length > 0) shares[shares.length - 1].share += input.amountPaise - assigned;
+  let remainder = input.amountPaise - shares.reduce((s, x) => s + x.share, 0);
+  for (let i = 0; remainder > 0 && i < shares.length; i++) {
+    const headroom = shares[i].payment.amount - shares[i].share;
+    const add = Math.min(headroom, remainder);
+    shares[i].share += add;
+    remainder -= add;
+  }
 
   const results: ApplyRefundCascadeResult[] = [];
   for (const { payment, share } of shares) {
