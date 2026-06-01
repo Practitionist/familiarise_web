@@ -20,6 +20,7 @@ import {
   isStripeConnectConfigured,
 } from "./stripe-connect";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
+import { computeMsmePaymentDeadline } from "@/lib/compliance/msme";
 import { randomUUID } from "crypto";
 import { acquireLock, releaseLock } from "@/lib/redis";
 import {
@@ -259,6 +260,14 @@ export async function createPayoutBatch(
           method = PayoutMethod.BANK_TRANSFER;
       }
 
+      // MSME 43B(h): the consultant is the supplier on the SELF path, so the
+      // settlement deadline derives from their own status/agreement (not a
+      // buyer org's). #776 — mirrors org-payout-service.
+      const msmeProfile = await prisma.consultantProfile.findUnique({
+        where: { id: consultantProfileId },
+        select: { msmeStatus: true, writtenAgreementWithFamiliarise: true },
+      });
+
       await prisma.$transaction(async (tx) => {
         // Re-query exact READY earnings inside the transaction
         const readyEarnings = await tx.consultantEarnings.findMany({
@@ -300,6 +309,12 @@ export async function createPayoutBatch(
             idempotencyKey: `payout_${consultantProfileId}_${batchId}`,
             approvedAt: shouldAutoApprove ? new Date() : undefined,
             approvedBy: shouldAutoApprove ? "SYSTEM_AUTO_APPROVE" : undefined,
+            mustPayByDate: computeMsmePaymentDeadline({
+              invoiceDate: new Date(),
+              counterpartyMsmeStatus: msmeProfile?.msmeStatus ?? "NONE",
+              writtenAgreement:
+                msmeProfile?.writtenAgreementWithFamiliarise ?? false,
+            }),
           },
         });
 

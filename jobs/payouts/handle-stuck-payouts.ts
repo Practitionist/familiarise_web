@@ -14,6 +14,10 @@ import {
 } from "../../scripts/payouts/handle-stuck-payouts";
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import {
+  recordSystemEvent,
+  recordSystemError,
+} from "../../lib/enterprise/system-events";
 
 /**
  * Output results to GitHub Actions
@@ -80,11 +84,32 @@ async function main(): Promise<void> {
 
     outputToGitHubActions(result);
 
+    // #776 §K — stuck/failed payouts mean a consultant isn't getting paid;
+    // page on it rather than leaving it in CI logs.
+    if (result.failedCount > 0 || !result.success) {
+      await recordSystemEvent({
+        category: "PAYOUT",
+        severity: "ERROR",
+        message: `Stuck-payout handler: ${result.failedCount} permanently failed, success=${result.success}`,
+        context: {
+          totalProcessed: result.totalProcessed,
+          failedCount: result.failedCount,
+          retriedCount: result.retriedCount,
+          errors: result.errors,
+        },
+      });
+    }
+
     if (!result.success) {
       process.exit(1);
     }
   } catch (error) {
     console.error("❌ Fatal error in stuck payouts handler:", error);
+    await recordSystemError({
+      category: "PAYOUT",
+      summary: "Stuck-payout handler crashed",
+      err: error,
+    });
     process.exit(1);
   } finally {
     await disconnectDatabase();

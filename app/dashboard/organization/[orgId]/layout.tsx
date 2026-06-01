@@ -30,6 +30,7 @@ import {
   Webhook,
   KeyRound,
   Download,
+  ShieldAlert,
   type LucideIcon,
 } from "lucide-react";
 
@@ -304,6 +305,14 @@ export default function OrgLayout({
         path: "reimbursements",
         show: canSponsor && fundingSource === "PERSONAL" && isFinance,
       },
+      {
+        // #776 §C — per-org dispute/chargeback surface. Finance-only; the
+        // money-path (org-wallet-first clawback) settles server-side.
+        name: "Disputes",
+        icon: ShieldAlert,
+        path: "disputes",
+        show: isFinance,
+      },
     ];
 
     // Operations — booking-side data feeds. MANAGER + SUPPORT live
@@ -561,6 +570,7 @@ export default function OrgLayout({
     recordings:   "Recordings",
     billing:      "Billing",
     payouts:      "Payouts",
+    disputes:     "Disputes",
     analytics:    "Analytics",
     audit:        "Audit",
     settings:     "Settings",

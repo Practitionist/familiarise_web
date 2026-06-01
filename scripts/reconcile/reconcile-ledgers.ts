@@ -101,7 +101,13 @@ export type Finding = {
     | "OVERAGE_CHARGESTATUS_INTEGRITY"
     // #783 — ledger is INR-denominated; a non-INR account means a posting keyed
     // an INR-paise amount by a display currency.
-    | "LEDGER_ACCOUNT_NON_INR";
+    | "LEDGER_ACCOUNT_NON_INR"
+    // #776 — maintained LedgerAccountBalance snapshot disagrees with the journal
+    // (Σ DEBIT − Σ CREDIT), or an account with entries has no snapshot row.
+    | "LEDGER_BALANCE_SNAPSHOT_DRIFT"
+    // #776 §C — a fully-refunded payment whose BookingUtilization was not
+    // reversed (cap leak), or a reversed utilization with no backing refund.
+    | "REFUND_BOOKING_COHERENCE";
   organizationId?: string;
   billingAccountId?: string;
   billingSubscriptionId?: string;
@@ -560,6 +566,113 @@ export async function runReconcileLedgers(
         });
       }
     });
+
+    // --- (H2) #776 — LedgerAccountBalance snapshot integrity. The maintained
+    // running balance is a derived cache; the journal is the source of truth.
+    // Compare every account's snapshot against Σ(DEBIT) − Σ(CREDIT) from
+    // entries. Catches a snapshot that drifted from a bad writer or a posting
+    // that bypassed postLedgerTxn. Zero findings here on a reseed is the gate
+    // that lets dashboards/credit-limit checks trust the O(1) snapshot read.
+    const entrySums = await prisma.ledgerEntry.groupBy({
+      by: ["accountId", "direction"],
+      _sum: { amountPaise: true },
+    });
+    const journalByAccount = new Map<string, bigint>();
+    for (const row of entrySums) {
+      const amt = row._sum.amountPaise ?? BigInt(0);
+      const cur = journalByAccount.get(row.accountId) ?? BigInt(0);
+      journalByAccount.set(
+        row.accountId,
+        row.direction === "DEBIT" ? cur + amt : cur - amt,
+      );
+    }
+    const snapshots = await prisma.ledgerAccountBalance.findMany({
+      select: { accountId: true, balancePaise: true },
+    });
+    const snapshotByAccount = new Map<string, bigint>(
+      snapshots.map((s) => [s.accountId, s.balancePaise]),
+    );
+    const allAccountIds = new Set<string>(
+      Array.from(journalByAccount.keys()).concat(
+        Array.from(snapshotByAccount.keys()),
+      ),
+    );
+    for (const accountId of Array.from(allAccountIds)) {
+      const journal = journalByAccount.get(accountId) ?? BigInt(0);
+      const snapshot = snapshotByAccount.get(accountId);
+      // A missing snapshot for an account with no entries nets to 0 — fine.
+      const snapshotVal = snapshot ?? BigInt(0);
+      if (snapshotVal !== journal) {
+        findings.push({
+          kind: "LEDGER_BALANCE_SNAPSHOT_DRIFT",
+          expectedPaise: Number(journal),
+          actualPaise: Number(snapshotVal),
+          deltaPaise: Number(snapshotVal - journal),
+          details: {
+            ledgerAccountId: accountId,
+            unit: "paise",
+            snapshotMissing: snapshot === undefined,
+            note: "LedgerAccountBalance snapshot disagrees with the journal-derived balance.",
+          },
+        });
+      }
+    }
+
+    // --- (H3) #776 §C — refund ↔ utilization coherence. A fully-refunded
+    // payment must have its BookingUtilization reversed (else the seat/cap
+    // leaks: the member got their money back but still consumes an
+    // engagement). The inverse — a reversed utilization with no SUCCEEDED
+    // refund — means a seat was released for free. The reversal engine keeps
+    // these in lockstep; this catches a partial-failure or a CLASS multi-
+    // booking refund that skipped a child.
+    const utilizations = await prisma.bookingUtilization.findMany({
+      select: {
+        id: true,
+        paymentId: true,
+        reversedAt: true,
+        payment: {
+          select: {
+            amount: true,
+            refunds: { select: { amountPaise: true, status: true } },
+          },
+        },
+      },
+    });
+    for (const u of utilizations) {
+      const settledRefunds = u.payment.refunds
+        .filter((r) => r.status === "SUCCEEDED")
+        .reduce((s, r) => s + r.amountPaise, 0);
+      const fullyRefunded =
+        u.payment.amount > 0 && settledRefunds >= u.payment.amount;
+      const isReversed = u.reversedAt !== null;
+      if (fullyRefunded && !isReversed) {
+        findings.push({
+          kind: "REFUND_BOOKING_COHERENCE",
+          paymentId: u.paymentId,
+          expectedPaise: u.payment.amount,
+          actualPaise: settledRefunds,
+          deltaPaise: settledRefunds - u.payment.amount,
+          details: {
+            bookingUtilizationId: u.id,
+            unit: "paise",
+            note: "Payment fully refunded but BookingUtilization not reversed (cap leak).",
+          },
+        });
+      } else if (isReversed && settledRefunds === 0) {
+        findings.push({
+          kind: "REFUND_BOOKING_COHERENCE",
+          paymentId: u.paymentId,
+          expectedPaise: 0,
+          actualPaise: u.payment.amount,
+          deltaPaise: u.payment.amount,
+          details: {
+            bookingUtilizationId: u.id,
+            unit: "paise",
+            note: "BookingUtilization reversed with no SUCCEEDED refund (seat released for free).",
+          },
+        });
+      }
+    }
   }
 
   // --- (E2) booking-ledger drift (covered payments only) — #772 B4 ----------

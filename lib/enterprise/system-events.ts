@@ -15,6 +15,16 @@
 
 import prisma from "@/lib/prisma";
 import type { Prisma, SystemEventSeverity } from "@prisma/client";
+import { emitTelemetryLog } from "@/lib/observability/betterstack-telemetry";
+
+// Map the DB severity enum onto the telemetry sink's level.
+function severityToTelemetryLevel(
+  severity: SystemEventSeverity,
+): "info" | "warn" | "error" {
+  if (severity === "ERROR") return "error";
+  if (severity === "WARN") return "warn";
+  return "info";
+}
 
 export interface RecordSystemEventParams {
   /** Optional org scope. Platform-wide events leave this null. */
@@ -48,12 +58,13 @@ export interface RecordSystemEventParams {
 export async function recordSystemEvent(
   params: RecordSystemEventParams,
 ): Promise<void> {
+  const severity = params.severity ?? "INFO";
   try {
     await prisma.systemEvent.create({
       data: {
         organizationId: params.organizationId ?? null,
         category: params.category,
-        severity: params.severity ?? "INFO",
+        severity,
         message: params.message,
         // `Record<string, unknown>` widens to Prisma's
         // `InputJsonValue` at the storage boundary. Cast is local
@@ -67,6 +78,19 @@ export async function recordSystemEvent(
     // outage of this table must not cascade into the calling worker.
     console.error("[recordSystemEvent] insert failed:", err);
   }
+
+  // Fire-and-forget telemetry sink (#776 §K). The DB row above is the
+  // source of truth; this just gets the event somewhere an on-call human
+  // sees it. No-op unless ENABLE_BETTERSTACK_TELEMETRY is on. Never awaited
+  // into the caller's critical path beyond its own best-effort body.
+  await emitTelemetryLog({
+    level: severityToTelemetryLevel(severity),
+    message: params.message,
+    category: params.category,
+    organizationId: params.organizationId,
+    correlationId: params.correlationId,
+    context: params.context,
+  });
 }
 
 /**

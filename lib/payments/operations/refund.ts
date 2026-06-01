@@ -51,6 +51,7 @@ import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpe
 import { assertEarningStatusTransitionLegal } from "@/lib/payments/payouts/earning-status";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
+import { generateOrgCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
 
 // ============================================================================
 // Public types
@@ -342,8 +343,8 @@ export async function applyRefundCascade(
         // at the OrganizationEarnings level below (writing a negative leg
         // here would break the leg-sum invariant on a settled invoice).
         // If still pending, append a negative sibling leg so the monthly
-        // rollup picks up the corrected amount.
-        // TODO #716: dedicated credit-note flow for overage refunds.
+        // rollup picks up the corrected amount. The GST credit-note artifact
+        // for invoiced refunds is minted once, after this loop (#776 / #716).
         const billable = payment.billableToOrgInvoiceId
           ? await tx.organizationInvoice.findUnique({
               where: { id: payment.billableToOrgInvoiceId },
@@ -537,6 +538,78 @@ export async function applyRefundCascade(
       });
 
       clawbackInitiated = true;
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Step 7.5 (#776 / #778 §D): mint a GST credit note for the invoiced
+  // portion. CGST Sec 34 requires a credit note (referencing the original
+  // invoice) whenever an issued invoice is reduced by a refund — otherwise
+  // the org's GSTR-1 and our books disagree. We mint once for the sum of the
+  // reversed INVOICE_ACCRUAL / OVERAGE_INVOICE_ACCRUAL legs, splitting tax in
+  // the same intra/inter-state shape as the original invoice (Rule 53).
+  // -----------------------------------------------------------------------
+  if (payment.billableToOrgInvoiceId && payment.organizationId) {
+    const invoicedReverse = legAmounts
+      .filter(
+        ({ leg }) =>
+          leg.source === "INVOICE_ACCRUAL" ||
+          leg.source === "OVERAGE_INVOICE_ACCRUAL",
+      )
+      .reduce((s, { reverse }) => s + Math.max(reverse, 0), 0);
+
+    if (invoicedReverse > 0) {
+      const invoice = await tx.organizationInvoice.findUnique({
+        where: { id: payment.billableToOrgInvoiceId },
+        select: {
+          id: true,
+          totalPaise: true,
+          igstPaise: true,
+          cgstPaise: true,
+          sgstPaise: true,
+        },
+      });
+      const org = await tx.organization.findUnique({
+        where: { id: payment.organizationId },
+        select: { id: true, slug: true, invoiceNumberPrefix: true },
+      });
+
+      if (invoice && org) {
+        // Proportional tax: keep the CN's tax fraction equal to the invoice's,
+        // then route it to IGST (inter-state) or CGST+SGST (intra-state) by
+        // whichever the invoice used. CGST takes the odd-paise remainder.
+        const invoiceTax =
+          invoice.igstPaise + invoice.cgstPaise + invoice.sgstPaise;
+        const taxFraction =
+          invoice.totalPaise > 0 ? invoiceTax / invoice.totalPaise : 0;
+        const cnTax = Math.round(invoicedReverse * taxFraction);
+        const cnSubtotal = invoicedReverse - cnTax;
+        const interState = invoice.igstPaise > 0;
+        const cnIgst = interState ? cnTax : 0;
+        const cnSgst = interState ? 0 : Math.floor(cnTax / 2);
+        const cnCgst = interState ? 0 : cnTax - cnSgst;
+
+        const { creditNoteNumber, fiscalYear } =
+          await generateOrgCreditNoteNumber(tx, org, new Date());
+
+        await tx.creditNote.create({
+          data: {
+            creditNoteNumber,
+            fiscalYear,
+            organizationId: org.id,
+            invoiceId: invoice.id,
+            refundId: input.refundId,
+            reason: input.reason,
+            subtotalPaise: cnSubtotal,
+            igstPaise: cnIgst,
+            cgstPaise: cnCgst,
+            sgstPaise: cnSgst,
+            totalPaise: invoicedReverse,
+            status: "ISSUED",
+            issuedAt: new Date(),
+          },
+        });
+      }
     }
   }
 

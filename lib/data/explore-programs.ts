@@ -1,5 +1,6 @@
 import { cache } from "react";
 import prisma from "@/lib/prisma";
+import { marketplaceVisibilityWhere } from "@/lib/api/plans/visibility";
 import { generateProgramImageUrl } from "@/app/explore/programs/utils";
 import type {
   Program,
@@ -76,6 +77,7 @@ export const getCuratedPrograms = cache(
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
         const ranked = await prisma.classPlan.findMany({
+          where: marketplaceVisibilityWhere(), // #726 — no ORG_ONLY in curated feed
           select: {
             id: true,
             classes: {
@@ -111,7 +113,7 @@ export const getCuratedPrograms = cache(
           .map((r) => r.id);
 
         classPlans = await prisma.classPlan.findMany({
-          where: { id: { in: sortedIds } },
+          where: { id: { in: sortedIds }, ...marketplaceVisibilityWhere() }, // #726
           include: {
             consultantProfile: planConsultantInclude,
             topics: true,
@@ -127,6 +129,7 @@ export const getCuratedPrograms = cache(
         );
       } else {
         classPlans = await prisma.classPlan.findMany({
+          where: marketplaceVisibilityWhere(), // #726
           include: {
             consultantProfile: planConsultantInclude,
             topics: true,
@@ -164,6 +167,7 @@ export const getCuratedPrograms = cache(
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
         const ranked = await prisma.webinarPlan.findMany({
+          where: marketplaceVisibilityWhere(), // #726 — no ORG_ONLY in curated feed
           select: {
             id: true,
             webinars: {
@@ -195,7 +199,7 @@ export const getCuratedPrograms = cache(
           .map((r) => r.id);
 
         webinarPlans = await prisma.webinarPlan.findMany({
-          where: { id: { in: sortedIds } },
+          where: { id: { in: sortedIds }, ...marketplaceVisibilityWhere() }, // #726
           include: {
             consultantProfile: planConsultantInclude,
             topics: true,
@@ -208,6 +212,7 @@ export const getCuratedPrograms = cache(
         );
       } else {
         webinarPlans = await prisma.webinarPlan.findMany({
+          where: marketplaceVisibilityWhere(), // #726
           include: {
             consultantProfile: planConsultantInclude,
             topics: true,
@@ -256,11 +261,12 @@ export const getTopicsWithCount = cache(
       include: {
         _count: {
           select: {
+            // #726 — category counts must exclude ORG_ONLY plans too
             ...(planType === "all" || planType === "class"
-              ? { classPlans: true }
+              ? { classPlans: { where: marketplaceVisibilityWhere() } }
               : {}),
             ...(planType === "all" || planType === "webinar"
-              ? { webinarPlans: true }
+              ? { webinarPlans: { where: marketplaceVisibilityWhere() } }
               : {}),
           },
         },

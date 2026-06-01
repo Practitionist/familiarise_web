@@ -16,7 +16,12 @@ import {
 } from "@/lib/novu/org-workflows";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { getAppUrl } from "@/lib/url";
-import { confirmTopUp, walletCredit } from "@/lib/api/organizations/wallet";
+import {
+  confirmTopUp,
+  walletCredit,
+  walletDebit,
+  WalletInsufficientFundsError,
+} from "@/lib/api/organizations/wallet";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
@@ -1129,6 +1134,29 @@ export async function handleDisputeUpdated(
 
         console.log(`💸 Earnings ${earning.id} refunded (${remainingRefundable} paise) — dispute ${disputeId} lost`);
       }
+
+      // #776 §C — org-funded chargeback money-path. When the disputed booking
+      // was org-funded, the funder (the org) bears the chargeback, not the
+      // platform: debit the org wallet, falling back to an ORG_RECEIVABLE the
+      // dunning flow pursues if the wallet can't cover it.
+      const disputedPayment = await tx.payment.findUnique({
+        where: { id: dispute.paymentId },
+        select: {
+          id: true,
+          organizationId: true,
+          billingAccountId: true,
+          amount: true,
+        },
+      });
+      if (disputedPayment?.organizationId) {
+        await applyOrgChargeback(tx, {
+          paymentId: disputedPayment.id,
+          organizationId: disputedPayment.organizationId,
+          billingAccountId: disputedPayment.billingAccountId,
+          amountPaise: dispute.amountPaise,
+          disputeId,
+        });
+      }
     }
 
     // --- Novu notification for resolved disputes (fire-and-forget) ---
@@ -1154,6 +1182,79 @@ export async function handleDisputeUpdated(
         });
       }
     }
+  });
+}
+
+/**
+ * #776 §C — settle a lost chargeback on an org-funded booking. The org funded
+ * the booking, so the org bears the chargeback: debit its wallet. If the wallet
+ * can't cover it (or there's no wallet), record the amount as an ORG_RECEIVABLE
+ * the dunning flow pursues. Either way the platform's CASH (pulled by the bank)
+ * is balanced by the org side. Idempotent on `chargeback:<disputeId>`.
+ */
+async function applyOrgChargeback(
+  tx: Prisma.TransactionClient,
+  params: {
+    paymentId: string;
+    organizationId: string;
+    billingAccountId: string | null;
+    amountPaise: number;
+    disputeId: string;
+  },
+): Promise<void> {
+  const { organizationId, billingAccountId, amountPaise, disputeId } = params;
+  if (amountPaise <= 0) return;
+
+  let recoveredFromWallet = false;
+  if (billingAccountId) {
+    try {
+      await walletDebit(tx, {
+        billingAccountId,
+        amountPaise,
+        reason: "ADJUSTMENT",
+        paymentId: params.paymentId,
+        notes: `Chargeback recovery: dispute ${disputeId}`,
+      });
+      recoveredFromWallet = true;
+    } catch (err) {
+      if (!(err instanceof WalletInsufficientFundsError)) throw err;
+      // Insufficient balance — fall through to the receivable path.
+    }
+  }
+
+  // Balanced counter-post: the bank pulled CASH; recover it from the funder.
+  await postLedgerTxn(tx, {
+    idempotencyKey: `chargeback:${disputeId}`,
+    kind: "REFUND",
+    paymentId: params.paymentId,
+    postings: [
+      {
+        account: recoveredFromWallet
+          ? { kind: "WALLET", organizationId }
+          : { kind: "ORG_RECEIVABLE", organizationId },
+        direction: "DEBIT",
+        amountPaise,
+      },
+      { account: { kind: "CASH" }, direction: "CREDIT", amountPaise },
+    ],
+  });
+
+  await tx.orgAuditLog.create({
+    data: {
+      organizationId,
+      actorMembershipId: null,
+      category: "INVOICE",
+      action: AUDIT_ACTIONS.INVOICE.INVOICE_REFUNDED,
+      description: `Chargeback ${disputeId} settled: ${amountPaise} paise ${
+        recoveredFromWallet ? "debited from wallet" : "booked as receivable"
+      }`,
+      details: {
+        disputeId,
+        paymentId: params.paymentId,
+        amountPaise,
+        recoveredFromWallet,
+      } as Prisma.InputJsonValue,
+    },
   });
 }
 

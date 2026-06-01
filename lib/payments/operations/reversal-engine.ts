@@ -1,0 +1,247 @@
+/**
+ * Unified reversal engine (#776 §C / ARCH #4).
+ *
+ * Pre-MVP, "undo money" was a per-path cascade: `refund.ts` reversed a single
+ * booking payment, overage/payout-clawback/invoice-void each had bespoke logic,
+ * and multi-booking (CLASS) refunds — which have no single `paymentId` — were
+ * skipped entirely, drifting cap counts and the ledger. This module is the one
+ * front door every reversal flows through:
+ *
+ *   applyReversal(tx, { source, amountPaise, reason, refundId })
+ *
+ * Each `source` kind resolves to the right domain reversal but shares the same
+ * idempotent ledger counter-posting discipline (keyed off `refundId`), so a
+ * retry is always a no-op and reconcile can assert coherence
+ * (REFUND_BOOKING_COHERENCE).
+ *
+ * The deep booking cascade still lives in `refund.ts` (`applyRefundCascade`) —
+ * it's proven and heavily tested; this engine DISPATCHES to it rather than
+ * re-implementing it. New capability here: CLASS_MULTI (fan a single logical
+ * refund across the child payments of a consolidated CLASS purchase).
+ */
+
+import { Prisma, RefundStatus } from "@prisma/client";
+import {
+  applyRefundCascade,
+  type ApplyRefundCascadeResult,
+} from "./refund";
+import { postLedgerTxn } from "@/lib/payments/ledger/post";
+import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+
+export type ReversalSource =
+  // A single booking payment (the common case).
+  | { kind: "BOOKING"; paymentId: string }
+  // An overage side-charge — itself a Payment (parentPaymentId-linked), so it
+  // reverses through the booking cascade on that payment id.
+  | { kind: "OVERAGE"; overagePaymentId: string }
+  // Gateway-side payout clawback (e.g. a lost dispute on an org-funded booking).
+  | { kind: "PAYOUT_CLAWBACK"; orgPayoutId: string; organizationId: string }
+  // A consolidated CLASS purchase: many child payments, no single paymentId.
+  | { kind: "CLASS_MULTI"; paymentIds: string[] };
+
+export interface ApplyReversalInput {
+  source: ReversalSource;
+  /** Total paise to reverse. For CLASS_MULTI it's split across children. */
+  amountPaise: number;
+  reason: string;
+  /** Existing Refund row id when one drives this reversal; else null. */
+  refundId: string;
+  initiatedByUserId?: string | null;
+}
+
+export interface ApplyReversalResult {
+  kind: ReversalSource["kind"];
+  /** Per-cascade results (one per payment touched). */
+  cascades: ApplyRefundCascadeResult[];
+  /** True if a payout clawback ledger posting was made. */
+  clawbackPosted: boolean;
+}
+
+/**
+ * The single reversal front door. Must be called inside a Serializable tx
+ * (the booking cascade requires it for race-safety).
+ */
+export async function applyReversal(
+  tx: Prisma.TransactionClient,
+  input: ApplyReversalInput,
+): Promise<ApplyReversalResult> {
+  switch (input.source.kind) {
+    case "BOOKING": {
+      const cascade = await applyRefundCascade(tx, {
+        paymentId: input.source.paymentId,
+        refundId: input.refundId,
+        amountPaise: input.amountPaise,
+        reason: input.reason,
+        initiatedByUserId: input.initiatedByUserId ?? null,
+      });
+      return { kind: "BOOKING", cascades: [cascade], clawbackPosted: false };
+    }
+
+    case "OVERAGE": {
+      // The overage charge IS a Payment; reverse it like any booking.
+      const cascade = await applyRefundCascade(tx, {
+        paymentId: input.source.overagePaymentId,
+        refundId: input.refundId,
+        amountPaise: input.amountPaise,
+        reason: input.reason,
+        initiatedByUserId: input.initiatedByUserId ?? null,
+      });
+      return { kind: "OVERAGE", cascades: [cascade], clawbackPosted: false };
+    }
+
+    case "CLASS_MULTI": {
+      const cascades = await reverseClassMulti(tx, input, input.source.paymentIds);
+      return { kind: "CLASS_MULTI", cascades, clawbackPosted: false };
+    }
+
+    case "PAYOUT_CLAWBACK": {
+      const posted = await reversePayoutClawback(
+        tx,
+        input,
+        input.source.orgPayoutId,
+        input.source.organizationId,
+      );
+      return { kind: "PAYOUT_CLAWBACK", cascades: [], clawbackPosted: posted };
+    }
+
+    default: {
+      const _exhaustive: never = input.source;
+      throw new Error(`Unhandled ReversalSource: ${JSON.stringify(_exhaustive)}`);
+    }
+  }
+}
+
+/**
+ * Fan a single logical refund across the child payments of a consolidated
+ * CLASS purchase. The caller resolves the group → `paymentIds`; we distribute
+ * `amountPaise` proportionally by each payment's own amount, create one Refund
+ * row per child (so each carries its own gateway/ledger trail), and run the
+ * proven cascade on each. Last child absorbs the rounding remainder so the
+ * children sum exactly to `amountPaise`.
+ */
+async function reverseClassMulti(
+  tx: Prisma.TransactionClient,
+  input: ApplyReversalInput,
+  paymentIds: string[],
+): Promise<ApplyRefundCascadeResult[]> {
+  if (paymentIds.length === 0) return [];
+
+  const payments = await tx.payment.findMany({
+    where: { id: { in: paymentIds } },
+    select: { id: true, amount: true, currency: true, paymentGateway: true },
+  });
+  const totalAmount = payments.reduce((s, p) => s + p.amount, 0);
+  if (totalAmount <= 0) return [];
+
+  // Proportional split by payment amount; last payment absorbs remainder.
+  const shares = payments.map((p) => ({
+    payment: p,
+    share: Math.floor((input.amountPaise * p.amount) / totalAmount),
+  }));
+  const assigned = shares.reduce((s, x) => s + x.share, 0);
+  if (shares.length > 0) shares[shares.length - 1].share += input.amountPaise - assigned;
+
+  const results: ApplyRefundCascadeResult[] = [];
+  for (const { payment, share } of shares) {
+    if (share <= 0) continue;
+    // One Refund row per child so partial-class refunds reverse cleanly and a
+    // later reconcile can tie each child's reversal to its own row.
+    const childRefund = await tx.refund.create({
+      data: {
+        paymentId: payment.id,
+        amountPaise: share,
+        currency: payment.currency,
+        reason: input.reason,
+        status: RefundStatus.PENDING,
+        refundId: `app_${globalThis.crypto.randomUUID()}`,
+        paymentGateway: payment.paymentGateway,
+        metadata: {
+          initiatedByUserId: input.initiatedByUserId ?? null,
+          source: "class-multi",
+          parentRefundId: input.refundId,
+        } as Prisma.InputJsonValue,
+      },
+    });
+    const cascade = await applyRefundCascade(tx, {
+      paymentId: payment.id,
+      refundId: childRefund.id,
+      amountPaise: share,
+      reason: input.reason,
+      initiatedByUserId: input.initiatedByUserId ?? null,
+    });
+    await tx.refund.update({
+      where: { id: childRefund.id },
+      data: { status: RefundStatus.SUCCEEDED },
+    });
+    results.push(cascade);
+  }
+  return results;
+}
+
+/**
+ * Gateway-side payout clawback. The original payout posted
+ * `Dr ORG_PAYABLE / Cr CASH`; clawback recovers cash:
+ * `Dr CASH / Cr ORG_PAYABLE`. Idempotent on `clawback:<refundId>:<payoutId>`.
+ * Stamps the clawback amount/timestamp on the payout and writes an audit row.
+ */
+async function reversePayoutClawback(
+  tx: Prisma.TransactionClient,
+  input: ApplyReversalInput,
+  orgPayoutId: string,
+  organizationId: string,
+): Promise<boolean> {
+  if (input.amountPaise <= 0) return false;
+
+  const payout = await tx.organizationPayout.findUnique({
+    where: { id: orgPayoutId },
+    select: { id: true, clawbackInitiatedAt: true },
+  });
+  if (!payout) return false;
+
+  await tx.organizationPayout.update({
+    where: { id: orgPayoutId },
+    data: {
+      clawbackAmountPaise: { increment: input.amountPaise },
+      clawbackInitiatedAt: payout.clawbackInitiatedAt ? undefined : new Date(),
+    },
+  });
+
+  await tx.orgAuditLog.create({
+    data: {
+      organizationId,
+      actorMembershipId: null,
+      category: "PAYOUT",
+      action: AUDIT_ACTIONS.PAYOUT.PAYOUT_CLAWBACK,
+      description: `Payout clawback: ${input.amountPaise} paise from payout ${orgPayoutId} (${input.reason})`,
+      details: {
+        refundId: input.refundId,
+        orgPayoutId,
+        amountPaise: input.amountPaise,
+        initiatedByUserId: input.initiatedByUserId ?? null,
+      } as Prisma.InputJsonValue,
+    },
+  });
+
+  // Best-effort ledger counter-post (mirrors refund.ts dual-write safety).
+  try {
+    await postLedgerTxn(tx, {
+      idempotencyKey: `clawback:${input.refundId}:${orgPayoutId}`,
+      kind: "ORG_PAYOUT",
+      payoutId: orgPayoutId,
+      postings: [
+        { account: { kind: "CASH" }, direction: "DEBIT", amountPaise: input.amountPaise },
+        {
+          account: { kind: "ORG_PAYABLE", organizationId },
+          direction: "CREDIT",
+          amountPaise: input.amountPaise,
+        },
+      ],
+    });
+  } catch (err) {
+    console.error(
+      `[ledger] payout clawback posting FAILED for payout ${orgPayoutId} (reconcile will flag): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  return true;
+}

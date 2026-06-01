@@ -38,22 +38,63 @@ export async function runMsmePaymentAlerts(): Promise<{
   const windowEnd = new Date();
   windowEnd.setDate(windowEnd.getDate() + ALERT_WINDOW_DAYS);
 
-  // Arch 4-Modified: OrganizationPayout.mustPayByDate is the field.
-  const atRiskRows = await prisma.organizationPayout.findMany({
-    where: {
-      mustPayByDate: { lte: windowEnd, not: null },
-      status: { notIn: ["COMPLETED"] },
-    },
-    orderBy: { mustPayByDate: "asc" },
-    take: MAX_ROWS_IN_EMAIL + 1, // fetch one extra to detect truncation
-    select: {
-      id: true,
-      mustPayByDate: true,
-      amountPaise: true,
-      status: true,
-      organizationId: true,
-    },
-  });
+  // Both payout paths carry a 43B(h) deadline: OrganizationPayout (HOST/ORG
+  // recipient) and ConsultantPayout (SELF recipient, #776). Sweep both and
+  // merge so the SELF path can't silently miss the statutory window.
+  const [orgRows, selfRows] = await Promise.all([
+    prisma.organizationPayout.findMany({
+      where: {
+        mustPayByDate: { lte: windowEnd, not: null },
+        status: { notIn: ["COMPLETED"] },
+      },
+      orderBy: { mustPayByDate: "asc" },
+      take: MAX_ROWS_IN_EMAIL + 1,
+      select: {
+        id: true,
+        mustPayByDate: true,
+        amountPaise: true,
+        status: true,
+        organizationId: true,
+      },
+    }),
+    prisma.consultantPayout.findMany({
+      where: {
+        mustPayByDate: { lte: windowEnd, not: null },
+        status: { notIn: ["COMPLETED"] },
+      },
+      orderBy: { mustPayByDate: "asc" },
+      take: MAX_ROWS_IN_EMAIL + 1,
+      select: {
+        id: true,
+        mustPayByDate: true,
+        amount: true, // ConsultantPayout stores paise in `amount`
+        status: true,
+        consultantProfileId: true,
+      },
+    }),
+  ]);
+
+  // Normalize to one shape (org id vs consultant id → `ownerId`) so the
+  // email/log treat both uniformly.
+  const atRiskRows = [
+    ...orgRows.map((r) => ({
+      id: r.id,
+      mustPayByDate: r.mustPayByDate,
+      amountPaise: r.amountPaise,
+      status: r.status as string,
+      ownerId: r.organizationId ?? "(none)",
+    })),
+    ...selfRows.map((r) => ({
+      id: r.id,
+      mustPayByDate: r.mustPayByDate,
+      amountPaise: r.amount,
+      status: r.status as string,
+      ownerId: r.consultantProfileId,
+    })),
+  ].sort(
+    (a, b) =>
+      (a.mustPayByDate?.getTime() ?? 0) - (b.mustPayByDate?.getTime() ?? 0),
+  );
 
   const atRisk = atRiskRows.length;
   if (atRisk === 0) {
@@ -88,7 +129,7 @@ export async function runMsmePaymentAlerts(): Promise<{
           (r) =>
             `<tr><td>${new Date(r.mustPayByDate ?? 0).toISOString().slice(0, 10)}</td>` +
             `<td>${r.id}</td>` +
-            `<td>${r.organizationId ?? "(none)"}</td>` +
+            `<td>${r.ownerId}</td>` +
             `<td>₹${((r.amountPaise ?? 0) / 100).toLocaleString("en-IN")}</td>` +
             `<td>${r.status}</td>` +
             `<td><a href="${appUrl}/admin/payouts/${r.id}">open</a></td></tr>`,
@@ -103,7 +144,7 @@ export async function runMsmePaymentAlerts(): Promise<{
           `within ${ALERT_WINDOW_DAYS} days of their Section 43B(h) deadline ` +
           `and still not in COMPLETED status.</p>` +
           `<table border="1" cellpadding="6" cellspacing="0">` +
-          `<thead><tr><th>Deadline</th><th>Payout id</th><th>Org id</th><th>Amount</th><th>Status</th><th></th></tr></thead>` +
+          `<thead><tr><th>Deadline</th><th>Payout id</th><th>Owner id</th><th>Amount</th><th>Status</th><th></th></tr></thead>` +
           `<tbody>${tableHtml}</tbody></table>` +
           (truncated
             ? `<p>…and ${atRisk - MAX_ROWS_IN_EMAIL} more. Open the finance dashboard for the full list.</p>`

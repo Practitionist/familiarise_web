@@ -1,0 +1,60 @@
+/**
+ * Per-org credit-note numbering — CGST Rule 53 sequential rule (#776 / #778 §D).
+ *
+ * Keeps the credit-note series independent of the invoice series, as the GST
+ * rules require. Reuses `indianFiscalYear` so a CN issued in March lands in the
+ * prior FY, matching the invoice it adjusts.
+ *
+ * Gapless allocation uses a Prisma `upsert` whose UPDATE increments `nextSeq`
+ * atomically (the increment is a single DB-level operation, and the create path
+ * is guarded by the compound `@@id`/ON CONFLICT) — no raw SQL needed. We return
+ * the pre-increment value (`nextSeq - 1`) as the allocated sequence.
+ *
+ * Format: `<PREFIX>-CN-<FY>-<SEQ>` — the `CN` segment distinguishes credit
+ * notes from invoices (`<PREFIX>-<FY>-<SEQ>`) at a glance and in exports.
+ */
+
+import type { Prisma } from "@prisma/client";
+import { indianFiscalYear } from "./invoice-numbering";
+
+/**
+ * Atomically reserve the next credit-note sequence for (orgId, fiscalYear).
+ * Caller must be inside a Prisma $transaction.
+ */
+export async function allocateOrgCreditNoteSeq(
+  tx: Prisma.TransactionClient,
+  organizationId: string,
+  fiscalYear: number,
+): Promise<number> {
+  // create seeds nextSeq=2 and allocates seq 1; update increments and allocates
+  // the prior value — equivalent to INSERT…ON CONFLICT…RETURNING (nextSeq-1).
+  const counter = await tx.orgCreditNoteCounter.upsert({
+    where: { organizationId_fiscalYear: { organizationId, fiscalYear } },
+    create: { organizationId, fiscalYear, nextSeq: 2 },
+    update: { nextSeq: { increment: 1 } },
+    select: { nextSeq: true },
+  });
+  return counter.nextSeq - 1;
+}
+
+export interface OrgCreditNoteNumberInput {
+  id: string;
+  slug: string;
+  invoiceNumberPrefix: string | null;
+}
+
+export async function generateOrgCreditNoteNumber(
+  tx: Prisma.TransactionClient,
+  org: OrgCreditNoteNumberInput,
+  issuedAt: Date,
+): Promise<{ creditNoteNumber: string; fiscalYear: number; seq: number }> {
+  const fiscalYear = indianFiscalYear(issuedAt);
+  const seq = await allocateOrgCreditNoteSeq(tx, org.id, fiscalYear);
+  const prefix = (org.invoiceNumberPrefix ?? org.slug).toUpperCase();
+  const padded = seq.toString().padStart(4, "0");
+  return {
+    creditNoteNumber: `${prefix}-CN-${fiscalYear}-${padded}`,
+    fiscalYear,
+    seq,
+  };
+}

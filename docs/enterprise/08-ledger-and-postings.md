@@ -185,6 +185,20 @@ Posted only when the debit side balances to the refunded funding total (a guard 
 
 ---
 
+## Balance reads — maintained snapshot (#776)
+
+`ledgerBalancePaise()` reads an O(1) maintained running balance
+(`LedgerAccountBalance`, keyed 1:1 by the deterministic account id) rather than
+scanning every entry. `postLedgerTxn` folds each posting's signed delta
+(`+DEBIT` / `−CREDIT`) into the snapshot **inside the same transaction** as the
+journal write; the idempotency fast-path returns before any mutation, so a
+retried key never double-applies. The append-only `LedgerEntry` journal stays
+the source of truth — the snapshot is a derived cache the reconcile cron
+validates (`LEDGER_BALANCE_SNAPSHOT_DRIFT`, [14-ledger-integrity](14-ledger-integrity.md)).
+`ledgerBalanceFromJournalPaise()` is the authoritative fallback (and the
+reconcile check's ground truth). No backfill — a fresh seed posts through
+`postLedgerTxn`, so snapshots populate as money moves.
+
 ### Related docs
 - [Money model overview](06-money-model-overview.md) · [Chart of accounts](07-chart-of-accounts.md) — the principles and buckets this doc applies.
 - [Wallet & top-ups](09-wallet-and-topups.md) · [Booking → earnings](10-booking-to-earnings.md) · [Payout pipeline](11-payout-pipeline.md) · [Invoicing](12-invoicing.md) — each flow in narrative.

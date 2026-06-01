@@ -20,6 +20,7 @@ import {
   handleOverageMemberFailure,
 } from "@/lib/payments/webhooks/overage-handlers";
 import { scrubWebhookPayload } from "@/lib/logging/webhook-scrub";
+import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import {
   razorpayWebhookEnvelopeSchema,
   razorpayPaymentCapturedEventSchema,
@@ -120,6 +121,13 @@ export async function POST(req: NextRequest) {
           crypto.timingSafeEqual(sigBuf, expectedBuf);
 
         if (!isRazorpayXValid) {
+          // #776 §K — repeated HMAC failures are a tamper/misconfig signal.
+          await recordSystemEvent({
+            category: "WEBHOOK",
+            severity: "WARN",
+            message: "Razorpay webhook HMAC verification failed (RazorpayX secret)",
+            context: { provider: "razorpayx", event: "payout.*" },
+          });
           return NextResponse.json(
             { error: "Invalid signature" },
             { status: 400 },
@@ -133,6 +141,13 @@ export async function POST(req: NextRequest) {
         );
       }
     } else {
+      // #776 §K — repeated HMAC failures are a tamper/misconfig signal.
+      await recordSystemEvent({
+        category: "WEBHOOK",
+        severity: "WARN",
+        message: "Razorpay webhook HMAC verification failed",
+        context: { provider: "razorpay" },
+      });
       return NextResponse.json(
         { error: "Invalid signature" },
         { status: 400 },
