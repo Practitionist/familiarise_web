@@ -1205,6 +1205,16 @@ async function applyOrgChargeback(
   const { organizationId, billingAccountId, amountPaise, disputeId } = params;
   if (amountPaise <= 0) return;
 
+  // Idempotent on the chargeback key. `walletDebit` is NOT keyed on the dispute,
+  // but the ledger post below is — so a webhook retry would re-debit the wallet
+  // while posting the ledger only once (drift + double-charge). If the
+  // chargeback ledger txn already exists, this is a replay: skip all mutations.
+  const alreadyPosted = await tx.ledgerTransaction.findUnique({
+    where: { idempotencyKey: `chargeback:${disputeId}` },
+    select: { id: true },
+  });
+  if (alreadyPosted) return;
+
   let recoveredFromWallet = false;
   if (billingAccountId) {
     try {

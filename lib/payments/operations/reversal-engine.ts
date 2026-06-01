@@ -133,6 +133,15 @@ async function reverseClassMulti(
   const totalAmount = payments.reduce((s, p) => s + p.amount, 0);
   if (totalAmount <= 0) return [];
 
+  // Fail fast on an over-refund. Without this the per-child floor shares would
+  // exceed their own amounts and crash deep inside a child cascade (after some
+  // children already processed) — a clear upfront error is far easier to debug.
+  if (input.amountPaise > totalAmount) {
+    throw new Error(
+      `CLASS_MULTI reversal amount ${input.amountPaise} exceeds class total ${totalAmount}`,
+    );
+  }
+
   // Proportional split by payment amount. The floor() per child loses up to
   // <1 paise each, so distribute the rounding remainder one paise at a time to
   // children that still have headroom (share < amount) — never dump it all on

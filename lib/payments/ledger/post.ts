@@ -175,7 +175,10 @@ export async function postLedgerTxn(
     cur.count += BigInt(1);
     deltas.set(id, cur);
   });
-  for (const accountId of Array.from(deltas.keys())) {
+  // Sort account ids so every txn acquires LedgerAccountBalance row locks in
+  // the same order — concurrent posts touching shared accounts (CASH,
+  // PLATFORM_FEE) in different posting orders would otherwise deadlock.
+  for (const accountId of Array.from(deltas.keys()).sort()) {
     const { delta, count } = deltas.get(accountId)!;
     await db.ledgerAccountBalance.upsert({
       where: { accountId },

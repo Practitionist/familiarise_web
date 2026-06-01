@@ -114,6 +114,23 @@ describe("applyReversal — CLASS_MULTI", () => {
     expect(mockedCascade).toHaveBeenCalledTimes(2);
   });
 
+  it("throws fast on an over-refund (amount > class total) without touching children", async () => {
+    const tx = mockTx([
+      { id: "p1", amount: 100 },
+      { id: "p2", amount: 100 },
+    ]);
+    await expect(
+      applyReversal(tx as never, {
+        source: { kind: "CLASS_MULTI", paymentIds: ["p1", "p2"] },
+        amountPaise: 250,
+        reason: "r",
+        refundId: "ref",
+      }),
+    ).rejects.toThrow(/exceeds class total/);
+    expect(mockedCascade).not.toHaveBeenCalled();
+    expect(tx.refund.create).not.toHaveBeenCalled();
+  });
+
   it("skips zero-share children", async () => {
     const tx = mockTx([
       { id: "p1", amount: 100 },
