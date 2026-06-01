@@ -83,9 +83,9 @@ export async function createPayoutBatch(
           ? { consultantProfileId: { in: consultantProfileIds } }
           : {}),
       },
-      _sum: { consultantShare: true },
+      _sum: { consultantSharePaise: true },
       having: {
-        consultantShare: {
+        consultantSharePaise: {
           _sum: { gte: MINIMUM_PAYOUT_AMOUNT },
         },
       },
@@ -100,7 +100,7 @@ export async function createPayoutBatch(
     }
 
     // Process each eligible consultant
-    // FIX #617: The groupBy _sum.consultantShare is only used for candidate selection.
+    // FIX #617: The groupBy _sum.consultantSharePaise is only used for candidate selection.
     // The actual payable amount is re-computed inside the transaction to subtract refundedShareAmount.
     for (const consultant of eligibleConsultants) {
       const { consultantProfileId } = consultant;
@@ -145,14 +145,14 @@ export async function createPayoutBatch(
               status: EarningStatus.READY,
               payoutId: null,
             },
-            select: { id: true, consultantShare: true, refundedShareAmount: true },
+            select: { id: true, consultantSharePaise: true, refundedShareAmount: true },
           });
 
           if (readyEarnings.length === 0) return null;
 
           const amount = readyEarnings.reduce(
             (sum, e) =>
-              sum + Math.max(e.consultantShare - e.refundedShareAmount, 0),
+              sum + Math.max(e.consultantSharePaise - e.refundedShareAmount, 0),
             0,
           );
 
@@ -160,7 +160,7 @@ export async function createPayoutBatch(
 
           const shouldAutoApprove = amount < AUTO_APPROVE_THRESHOLD;
 
-          const payout = await tx.payout.create({
+          const payout = await tx.consultantPayout.create({
             data: {
               consultantProfileId,
               provider: account.provider,
@@ -378,22 +378,22 @@ export async function getPayoutStats(): Promise<{
   completed: { count: number; amount: number };
 }> {
   const [pending, approved, processing, completed] = await Promise.all([
-    prisma.payout.aggregate({
+    prisma.consultantPayout.aggregate({
       where: { status: PayoutStatus.PENDING },
       _sum: { amount: true },
       _count: true,
     }),
-    prisma.payout.aggregate({
+    prisma.consultantPayout.aggregate({
       where: { status: PayoutStatus.APPROVED },
       _sum: { amount: true },
       _count: true,
     }),
-    prisma.payout.aggregate({
+    prisma.consultantPayout.aggregate({
       where: { status: PayoutStatus.PROCESSING },
       _sum: { amount: true },
       _count: true,
     }),
-    prisma.payout.aggregate({
+    prisma.consultantPayout.aggregate({
       where: { status: PayoutStatus.COMPLETED },
       _sum: { amount: true },
       _count: true,

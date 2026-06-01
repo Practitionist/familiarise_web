@@ -179,7 +179,7 @@ export async function reconcilePayoutStatus(): Promise<PayoutReconciliationResul
   const maxAge = new Date(Date.now() - MAX_AGE_DAYS * 24 * 60 * 60 * 1000);
 
   // Find stale PENDING or PROCESSING payouts
-  const stalePayouts = await prisma.payout.findMany({
+  const stalePayouts = await prisma.consultantPayout.findMany({
     where: {
       status: { in: [PayoutStatus.PENDING, PayoutStatus.PROCESSING] },
       updatedAt: {
@@ -277,7 +277,7 @@ export async function reconcilePayoutStatus(): Promise<PayoutReconciliationResul
       discrepancies.push(discrepancy);
       console.log(`   ⚠️ DISCREPANCY: ${discrepancy}`);
 
-      await prisma.payout.update({
+      await prisma.consultantPayout.update({
         where: { id: payout.id },
         data: {
           status: mappedStatus,

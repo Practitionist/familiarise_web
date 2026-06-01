@@ -79,11 +79,11 @@ export default function EarningsSection() {
   });
 
   const stats: EarningsStats = statsData?.stats || {
-    pending: { count: 0, consultantShare: 0, platformFee: 0 },
-    ready: { count: 0, consultantShare: 0, platformFee: 0 },
-    paid: { count: 0, consultantShare: 0, platformFee: 0 },
-    held: { count: 0, consultantShare: 0, platformFee: 0 },
-    refunded: { count: 0, consultantShare: 0, platformFee: 0 },
+    pending: { count: 0, consultantSharePaise: 0, platformFeePaise: 0 },
+    ready: { count: 0, consultantSharePaise: 0, platformFeePaise: 0 },
+    paid: { count: 0, consultantSharePaise: 0, platformFeePaise: 0 },
+    held: { count: 0, consultantSharePaise: 0, platformFeePaise: 0 },
+    refunded: { count: 0, consultantSharePaise: 0, platformFeePaise: 0 },
     totalPlatformRevenue: 0,
   };
 
@@ -135,7 +135,7 @@ export default function EarningsSection() {
                       {stats.pending.count}
                     </p>
                     <p className="text-xs text-gray-500">
-                      {formatAmount(stats.pending.consultantShare)}
+                      {formatAmount(stats.pending.consultantSharePaise)}
                     </p>
                   </div>
                   <Clock className="w-8 h-8 text-yellow-500" />
@@ -152,7 +152,7 @@ export default function EarningsSection() {
                       {stats.ready.count}
                     </p>
                     <p className="text-xs text-gray-500">
-                      {formatAmount(stats.ready.consultantShare)}
+                      {formatAmount(stats.ready.consultantSharePaise)}
                     </p>
                   </div>
                   <Wallet className="w-8 h-8 text-blue-500" />
@@ -169,7 +169,7 @@ export default function EarningsSection() {
                       {stats.paid.count}
                     </p>
                     <p className="text-xs text-gray-500">
-                      {formatAmount(stats.paid.consultantShare)}
+                      {formatAmount(stats.paid.consultantSharePaise)}
                     </p>
                   </div>
                   <CheckCircle className="w-8 h-8 text-green-500" />
@@ -186,7 +186,7 @@ export default function EarningsSection() {
                       {stats.held.count}
                     </p>
                     <p className="text-xs text-gray-500">
-                      {formatAmount(stats.held.consultantShare)}
+                      {formatAmount(stats.held.consultantSharePaise)}
                     </p>
                   </div>
                   <AlertTriangle className="w-8 h-8 text-orange-500" />
@@ -289,10 +289,10 @@ export default function EarningsSection() {
                           {formatAmount(earning.grossAmount)}
                         </td>
                         <td className="px-4 py-3 text-sm text-purple-600">
-                          {formatAmount(earning.platformFee)}
+                          {formatAmount(earning.platformFeePaise)}
                         </td>
                         <td className="px-4 py-3 text-sm font-semibold text-green-700">
-                          {formatAmount(earning.consultantShare)}
+                          {formatAmount(earning.consultantSharePaise)}
                         </td>
                         <td className="px-4 py-3">
                           {getStatusBadge(earning.status)}

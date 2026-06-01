@@ -463,6 +463,10 @@ describe("Entity Channel Creation", () => {
           consultantProfile: { user: { id: "consultant-4" } },
         },
         requestedBy: { user: { id: "subscriber-1" } },
+        // Production includes the org-tagged appointments relation (take:1), so
+        // it's always an array; the mock must provide it (else appointments[0]
+        // dereferences undefined). Empty = no org-hosted appointment.
+        appointments: [],
       });
 
       const { createSubscriptionChannel } =

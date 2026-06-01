@@ -101,7 +101,7 @@ export async function getOperatorPayouts(
   const offset = sanitizePagination(filters.offset, 0, 0, Number.MAX_SAFE_INTEGER);
 
   const orgId = filters.orgId ?? null;
-  const where: Prisma.PayoutWhereInput = {};
+  const where: Prisma.ConsultantPayoutWhereInput = {};
   if (status) {
     where.status = status;
   }
@@ -123,7 +123,7 @@ export async function getOperatorPayouts(
   }
 
   const [payouts, total, stats] = await Promise.all([
-    prisma.payout.findMany({
+    prisma.consultantPayout.findMany({
       where,
       include: {
         consultantProfile: {
@@ -139,7 +139,7 @@ export async function getOperatorPayouts(
       take: limit,
       skip: offset,
     }),
-    prisma.payout.count({ where }),
+    prisma.consultantPayout.count({ where }),
     getPayoutStats(),
   ]);
 

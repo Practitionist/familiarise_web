@@ -200,7 +200,6 @@ export async function POST(
         effectiveTo: body.effectiveTo ?? null,
         paymentTermsDays: body.paymentTermsDays,
         autoRenew: body.autoRenew,
-        terms: body.terms === undefined ? null : JSON.parse(JSON.stringify(body.terms)),
       },
     });
 

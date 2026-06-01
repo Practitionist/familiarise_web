@@ -259,7 +259,7 @@ export default async function MyArrangementPage({
                       {formatCurrencyAmount(e.grossAmount, "INR")}
                     </td>
                     <td className="px-4 py-2 text-right">
-                      {formatCurrencyAmount(e.consultantShare, "INR")}
+                      {formatCurrencyAmount(e.consultantSharePaise, "INR")}
                     </td>
                     <td className="px-4 py-2 text-xs">{e.status}</td>
                   </tr>

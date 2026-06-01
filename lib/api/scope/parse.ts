@@ -4,15 +4,16 @@
  * supports the scope toggle calls into this helper.
  *
  * Three values, three roles:
- *   - `personal` (default)     — the caller's own data only
+ *   - `mine` (default)         — the caller's own data only
  *   - `<orgId>`                — data scoped to that org; caller must be
  *                                an active member of the org
  *   - `all`                    — admin-only union across all orgs +
  *                                personal; rejected for non-ADMIN/STAFF
  *
- * The serialized form mirrors `lib/dashboard/org-context-filter.ts` so
- * the URL state stays compatible with the existing `OrgContextFilter`
- * client component (which uses `__personal__` / `__all__` / orgId).
+ * The serialized form mirrors `lib/dashboard/org-context-filter.ts`
+ * (which also uses `"mine"` / `"all"` / orgId). The #768 lockdown
+ * renamed the sentinels from `__personal__` / `"personal"` to a single
+ * `"mine"` vocabulary.
  */
 
 import type { Membership, MemberStatus } from "@prisma/client";
@@ -64,7 +65,9 @@ function isActiveAtOrg(
  */
 export function resolveOrgScope(ctx: ResolveScopeContext): ScopeResolution {
   const raw = ctx.raw?.trim();
-  if (!raw || raw === "personal") {
+  // Accept both "mine" (canonical) and the legacy "personal" sentinel for
+  // a deprecation grace window — drop "personal" in v1.1.
+  if (!raw || raw === "mine" || raw === "personal") {
     return { ok: true, scope: { kind: "personal" } };
   }
   if (raw === "all") {
@@ -119,7 +122,7 @@ export function scopeToWhereOrgId(
  * toggles the dropdown.
  */
 export function serializeScope(scope: Scope): string {
-  if (scope.kind === "personal") return "personal";
+  if (scope.kind === "personal") return "mine";
   if (scope.kind === "all") return "all";
   return scope.orgId;
 }

@@ -141,13 +141,6 @@ export const AUDIT_ACTIONS = {
     SUSPENDED: "SUSPENDED",
     REACTIVATED: "REACTIVATED",
     DEACTIVATED: "DEACTIVATED",
-    HRIS_SYNC_STARTED: "HRIS_SYNC_STARTED",
-    HRIS_SYNC_COMPLETED: "HRIS_SYNC_COMPLETED",
-    // Logged from the HRIS sync pipeline when a provider call throws or
-    // returns a non-success response. Keeps the failure visible on the
-    // org audit log so MANAGERs can see "we tried, here's why it didn't
-    // land" without having to SSH into worker logs.
-    HRIS_SYNC_FAILED: "HRIS_SYNC_FAILED",
     // Emitted by DELETE /api/organizations/[orgId] when an OWNER tears
     // an org down. Kept inside SYSTEM so the audit row outlives the
     // org itself (soft-deleted targetMembershipId) and is still

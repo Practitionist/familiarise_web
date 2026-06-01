@@ -17,6 +17,11 @@
 
 import prisma from "@/lib/prisma";
 import {
+  postLedgerTxn,
+  type AccountRef,
+  type Posting,
+} from "@/lib/payments/ledger/post";
+import {
   EarningRole,
   EarningStatus,
   Payment,
@@ -48,9 +53,9 @@ export interface OrgEarningsSplit {
   platformBps: number;
   orgBps: number;
   consultantBps: number;
-  platformFee: number; // in paise
+  platformFeePaise: number; // in paise
   orgShare: number; // in paise (org retains this)
-  consultantShare: number; // in paise (goes to consultant, or 0 if internal)
+  consultantSharePaise: number; // in paise (goes to consultant, or 0 if internal)
   payoutRecipient: "SELF" | "ORGANIZATION";
 }
 
@@ -153,9 +158,9 @@ async function resolveOrgSplit(
   });
 
   // Integer paise × basis-point math, no float drift.
-  const platformFee = Math.floor((grossAmount * resolved.platformBps) / 10_000);
-  const consultantShare = Math.floor((grossAmount * resolved.consultantBps) / 10_000);
-  const orgShare = grossAmount - platformFee - consultantShare;
+  const platformFeePaise = Math.floor((grossAmount * resolved.platformBps) / 10_000);
+  const consultantSharePaise = Math.floor((grossAmount * resolved.consultantBps) / 10_000);
+  const orgShare = grossAmount - platformFeePaise - consultantSharePaise;
 
   const base = {
     organizationId: orgId,
@@ -170,9 +175,9 @@ async function resolveOrgSplit(
     // Internal/salaried consultant: org absorbs the consultant slice.
     return {
       ...base,
-      platformFee,
-      orgShare: grossAmount - platformFee,
-      consultantShare: 0,
+      platformFeePaise,
+      orgShare: grossAmount - platformFeePaise,
+      consultantSharePaise: 0,
     };
   }
 
@@ -183,17 +188,17 @@ async function resolveOrgSplit(
     );
     return {
       ...base,
-      platformFee,
+      platformFeePaise,
       orgShare: 0,
-      consultantShare: grossAmount - platformFee,
+      consultantSharePaise: grossAmount - platformFeePaise,
     };
   }
 
   return {
     ...base,
-    platformFee,
+    platformFeePaise,
     orgShare,
-    consultantShare,
+    consultantSharePaise,
   };
 }
 
@@ -270,14 +275,14 @@ export async function createEarningsFromPayment({
       );
 
       // Determine platform fee and consultant pool based on whether org split applies
-      const platformFee = orgSplit
-        ? orgSplit.platformFee
+      const platformFeePaise = orgSplit
+        ? orgSplit.platformFeePaise
         : Math.round(
             (grossAmount * PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE) / 100,
           );
       const totalConsultantPool = orgSplit
-        ? orgSplit.consultantShare
-        : grossAmount - platformFee;
+        ? orgSplit.consultantSharePaise
+        : grossAmount - platformFeePaise;
 
       // Calculate collaborator splits if applicable
       let splits: RevenueSplit[] = [];
@@ -295,9 +300,9 @@ export async function createEarningsFromPayment({
         // Multi-party payment: create earnings for owner and each collaborator
         for (const split of splits) {
           const isOwner = split.role === "OWNER";
-          const sharePercentage =
+          const shareBps =
             totalConsultantPool > 0
-              ? (split.share / totalConsultantPool) * 100
+              ? Math.round((split.share / totalConsultantPool) * 10_000)
               : 0;
 
           const earnings = await tx.consultantEarnings.create({
@@ -305,24 +310,15 @@ export async function createEarningsFromPayment({
               consultantProfileId: split.consultantProfileId,
               paymentId: payment.id,
               grossAmount: isOwner ? grossAmount : 0,
-              platformFee: isOwner ? platformFee : 0,
-              consultantShare: split.share,
+              platformFeePaise: isOwner ? platformFeePaise : 0,
+              consultantSharePaise: split.share,
               role: isOwner ? EarningRole.OWNER : EarningRole.COLLABORATOR,
-              sharePercentage: Math.round(sharePercentage * 100) / 100,
+              shareBps,
               status: EarningStatus.PENDING,
               holdUntil,
               currency: "INR",
             },
           });
-
-          if (split.share > 0) {
-            await tx.consultantProfile.update({
-              where: { id: split.consultantProfileId },
-              data: {
-                pendingRevenue: { increment: split.share },
-              },
-            });
-          }
 
           if (split.role === "OWNER") {
             ownerId = earnings.id;
@@ -339,22 +335,13 @@ export async function createEarningsFromPayment({
             consultantProfileId,
             paymentId: payment.id,
             grossAmount,
-            platformFee,
-            consultantShare: totalConsultantPool,
+            platformFeePaise,
+            consultantSharePaise: totalConsultantPool,
             status: EarningStatus.PENDING,
             holdUntil,
             currency: "INR",
           },
         });
-
-        if (totalConsultantPool > 0) {
-          await tx.consultantProfile.update({
-            where: { id: consultantProfileId },
-            data: {
-              pendingRevenue: { increment: totalConsultantPool },
-            },
-          });
-        }
 
         ownerId = earnings.id;
       }
@@ -390,9 +377,9 @@ export async function createEarningsFromPayment({
             organizationId: orgSplit.organizationId,
             paymentId: payment.id,
             grossAmountPaise: grossAmount,
-            platformFeePaise: orgSplit.platformFee,
+            platformFeePaise: orgSplit.platformFeePaise,
             orgSharePaise: orgSplit.orgShare,
-            consultantSharePaise: orgSplit.consultantShare,
+            consultantSharePaise: orgSplit.consultantSharePaise,
             refundedAmountPaise: 0,
             status: initialStatus,
             holdUntil,
@@ -407,11 +394,106 @@ export async function createEarningsFromPayment({
         });
 
         console.log(
-          `Org earnings created for ${orgSplit.organizationId}: org=${orgSplit.orgShare / 100} consultant=${orgSplit.consultantShare / 100} (recipient=${orgSplit.payoutRecipient}) from payment ${payment.id}`,
+          `Org earnings created for ${orgSplit.organizationId}: org=${orgSplit.orgShare / 100} consultant=${orgSplit.consultantSharePaise / 100} (recipient=${orgSplit.payoutRecipient}) from payment ${payment.id}`,
         );
       } else if (orgSplit && orgSplit.orgShare === 0) {
         console.log(
           `Platform-only mode for ${orgSplit.organizationId}: skipping 0-value org earnings for payment ${payment.id}`,
+        );
+      }
+
+      // #771 D1/D5 / AF-3 — double-entry booking posting (full accrual, dual-write).
+      //   Dr funding legs (CASH/WALLET/ORG_RECEIVABLE) + PLATFORM_PROMO (referral
+      //   credits) + DISCOUNT  ==  Cr PLATFORM_FEE + CONSULTANT_PAYABLE +
+      //   ORG_PAYABLE + GST_PAYABLE.  discount = originalAmount + tax − amount.
+      // Posted for the single-consultant case; multi-collaborator webinars/classes
+      // are deferred (logged). Wrapped so a ledger imbalance can never break the
+      // real booking during the dual-write phase.
+      if (splits.length === 0) {
+        try {
+          const legs = await tx.paymentLeg.findMany({
+            where: { paymentId: payment.id },
+            select: { source: true, amountPaise: true },
+          });
+          const orgId = payment.organizationId ?? null;
+          const debits: Posting[] = [];
+          const pushDebit = (account: AccountRef, amountPaise: number) => {
+            if (amountPaise > 0)
+              debits.push({ account, direction: "DEBIT", amountPaise });
+          };
+          if (legs.length > 0) {
+            let card = 0;
+            let wallet = 0;
+            let receivable = 0;
+            let promo = 0;
+            for (const leg of legs) {
+              if (leg.amountPaise <= 0) continue;
+              switch (leg.source) {
+                case "CARD":
+                  card += leg.amountPaise;
+                  break;
+                case "WALLET":
+                  wallet += leg.amountPaise;
+                  break;
+                case "INVOICE_ACCRUAL":
+                case "OVERAGE_INVOICE_ACCRUAL":
+                  receivable += leg.amountPaise;
+                  break;
+                case "REFERRAL_CREDIT":
+                  promo += leg.amountPaise;
+                  break;
+                case "LICENSE":
+                  break; // 0 — no money moves
+              }
+            }
+            pushDebit({ kind: "CASH" }, card);
+            pushDebit({ kind: "WALLET", organizationId: orgId }, wallet);
+            pushDebit({ kind: "ORG_RECEIVABLE", organizationId: orgId }, receivable);
+            pushDebit({ kind: "PLATFORM_PROMO" }, promo);
+          } else {
+            // Back-compat: legacy single-source payments carry no legs.
+            pushDebit({ kind: "CASH" }, payment.amount);
+          }
+          pushDebit(
+            { kind: "DISCOUNT" },
+            Math.max(
+              0,
+              payment.originalAmount + payment.taxAmount - payment.amount,
+            ),
+          );
+
+          const credits: Posting[] = [];
+          const pushCredit = (account: AccountRef, amountPaise: number) => {
+            if (amountPaise > 0)
+              credits.push({ account, direction: "CREDIT", amountPaise });
+          };
+          pushCredit({ kind: "PLATFORM_FEE" }, platformFeePaise);
+          pushCredit(
+            { kind: "CONSULTANT_PAYABLE", consultantProfileId },
+            totalConsultantPool,
+          );
+          if (orgSplit && orgSplit.orgShare > 0) {
+            pushCredit(
+              { kind: "ORG_PAYABLE", organizationId: orgSplit.organizationId },
+              orgSplit.orgShare,
+            );
+          }
+          pushCredit({ kind: "GST_PAYABLE" }, payment.taxAmount);
+
+          await postLedgerTxn(tx, {
+            idempotencyKey: `booking:${payment.id}`,
+            kind: "BOOKING",
+            paymentId: payment.id,
+            postings: [...debits, ...credits],
+          });
+        } catch (err) {
+          console.warn(
+            `[ledger] booking posting skipped for payment ${payment.id}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      } else {
+        console.log(
+          `[ledger] booking posting deferred (multi-collaborator) for payment ${payment.id}`,
         );
       }
 
@@ -485,9 +567,9 @@ export async function createEarningsFromPayment({
               // is splitting — NOT the booking's full gross. Persist it
               // verbatim so reconciliation sees a consistent picture.
               grossAmountPaise: collab.share,
-              platformFeePaise: collabOrgSplit.platformFee,
+              platformFeePaise: collabOrgSplit.platformFeePaise,
               orgSharePaise: collabOrgSplit.orgShare,
-              consultantSharePaise: collabOrgSplit.consultantShare,
+              consultantSharePaise: collabOrgSplit.consultantSharePaise,
               refundedAmountPaise: 0,
               status: collabInitialStatus,
               holdUntil,
@@ -499,7 +581,7 @@ export async function createEarningsFromPayment({
             },
           });
           console.log(
-            `Collaborator org earnings created for ${collabOrgSplit.organizationId} (collab ${collab.consultantProfileId}): org=${collabOrgSplit.orgShare / 100} consultant=${collabOrgSplit.consultantShare / 100} from payment ${payment.id}`,
+            `Collaborator org earnings created for ${collabOrgSplit.organizationId} (collab ${collab.consultantProfileId}): org=${collabOrgSplit.orgShare / 100} consultant=${collabOrgSplit.consultantSharePaise / 100} from payment ${payment.id}`,
           );
         } catch (err) {
           if (
@@ -583,26 +665,26 @@ export async function getConsultantEarningsSummary(
   const [pending, ready, paid, held] = await Promise.all([
     prisma.consultantEarnings.aggregate({
       where: { consultantProfileId, status: EarningStatus.PENDING },
-      _sum: { consultantShare: true },
+      _sum: { consultantSharePaise: true },
     }),
     prisma.consultantEarnings.aggregate({
       where: { consultantProfileId, status: EarningStatus.READY },
-      _sum: { consultantShare: true },
+      _sum: { consultantSharePaise: true },
     }),
     prisma.consultantEarnings.aggregate({
       where: { consultantProfileId, status: EarningStatus.PAID },
-      _sum: { consultantShare: true },
+      _sum: { consultantSharePaise: true },
     }),
     prisma.consultantEarnings.aggregate({
       where: { consultantProfileId, status: EarningStatus.HELD },
-      _sum: { consultantShare: true },
+      _sum: { consultantSharePaise: true },
     }),
   ]);
 
-  const pendingEarnings = pending._sum.consultantShare || 0;
-  const readyEarnings = ready._sum.consultantShare || 0;
-  const paidEarnings = paid._sum.consultantShare || 0;
-  const heldEarnings = held._sum.consultantShare || 0;
+  const pendingEarnings = pending._sum.consultantSharePaise || 0;
+  const readyEarnings = ready._sum.consultantSharePaise || 0;
+  const paidEarnings = paid._sum.consultantSharePaise || 0;
+  const heldEarnings = held._sum.consultantSharePaise || 0;
 
   return {
     consultantProfileId,
@@ -780,19 +862,19 @@ export async function refundEarnings(
     // Cap shareToReverse against remaining reversible balance to prevent
     // over-refunding on duplicate webhooks or sequential partial refunds.
     const alreadyRefunded = earnings.refundedShareAmount ?? 0;
-    const maxReversible = Math.max(0, earnings.consultantShare - alreadyRefunded);
-    const rawShare = Math.round(earnings.consultantShare * refundRatio);
+    const maxReversible = Math.max(0, earnings.consultantSharePaise - alreadyRefunded);
+    const rawShare = Math.round(earnings.consultantSharePaise * refundRatio);
     const shareToReverse = Math.min(rawShare, maxReversible);
 
     if (shareToReverse <= 0) {
       console.warn(
-        `Earnings ${earnings.id} already fully refunded (${alreadyRefunded}/${earnings.consultantShare}). Skipping.`,
+        `Earnings ${earnings.id} already fully refunded (${alreadyRefunded}/${earnings.consultantSharePaise}). Skipping.`,
       );
       continue;
     }
 
     // Determine if this reversal fully exhausts the earning
-    const isFullyRefunded = alreadyRefunded + shareToReverse >= earnings.consultantShare;
+    const isFullyRefunded = alreadyRefunded + shareToReverse >= earnings.consultantSharePaise;
 
     // Handle already-paid earnings (payout completed)
     if (earnings.status === EarningStatus.PAID) {
@@ -854,12 +936,6 @@ export async function refundEarnings(
         },
       });
 
-      // For PAID earnings, decrement totalRevenue (not pendingRevenue — already paid)
-      await db.consultantProfile.update({
-        where: { id: earnings.consultantProfileId },
-        data: { totalRevenue: { decrement: shareToReverse } },
-      });
-
       continue;
     }
 
@@ -870,14 +946,6 @@ export async function refundEarnings(
       data: {
         refundedShareAmount: { increment: shareToReverse },
         ...(isFullyRefunded && { status: EarningStatus.REFUNDED }),
-      },
-    });
-
-    // Decrease consultant's pending revenue by the capped share
-    await db.consultantProfile.update({
-      where: { id: earnings.consultantProfileId },
-      data: {
-        pendingRevenue: { decrement: shareToReverse },
       },
     });
   }
@@ -956,27 +1024,27 @@ export async function getEarningsStats() {
   const [pending, ready, paid, held, refunded] = await Promise.all([
     prisma.consultantEarnings.aggregate({
       where: { status: EarningStatus.PENDING },
-      _sum: { consultantShare: true, platformFee: true },
+      _sum: { consultantSharePaise: true, platformFeePaise: true },
       _count: true,
     }),
     prisma.consultantEarnings.aggregate({
       where: { status: EarningStatus.READY },
-      _sum: { consultantShare: true, platformFee: true },
+      _sum: { consultantSharePaise: true, platformFeePaise: true },
       _count: true,
     }),
     prisma.consultantEarnings.aggregate({
       where: { status: EarningStatus.PAID },
-      _sum: { consultantShare: true, platformFee: true },
+      _sum: { consultantSharePaise: true, platformFeePaise: true },
       _count: true,
     }),
     prisma.consultantEarnings.aggregate({
       where: { status: EarningStatus.HELD },
-      _sum: { consultantShare: true, platformFee: true },
+      _sum: { consultantSharePaise: true, platformFeePaise: true },
       _count: true,
     }),
     prisma.consultantEarnings.aggregate({
       where: { status: EarningStatus.REFUNDED },
-      _sum: { consultantShare: true, platformFee: true },
+      _sum: { consultantSharePaise: true, platformFeePaise: true },
       _count: true,
     }),
   ]);
@@ -984,31 +1052,31 @@ export async function getEarningsStats() {
   return {
     pending: {
       count: pending._count,
-      consultantShare: pending._sum.consultantShare || 0,
-      platformFee: pending._sum.platformFee || 0,
+      consultantSharePaise: pending._sum.consultantSharePaise || 0,
+      platformFeePaise: pending._sum.platformFeePaise || 0,
     },
     ready: {
       count: ready._count,
-      consultantShare: ready._sum.consultantShare || 0,
-      platformFee: ready._sum.platformFee || 0,
+      consultantSharePaise: ready._sum.consultantSharePaise || 0,
+      platformFeePaise: ready._sum.platformFeePaise || 0,
     },
     paid: {
       count: paid._count,
-      consultantShare: paid._sum.consultantShare || 0,
-      platformFee: paid._sum.platformFee || 0,
+      consultantSharePaise: paid._sum.consultantSharePaise || 0,
+      platformFeePaise: paid._sum.platformFeePaise || 0,
     },
     held: {
       count: held._count,
-      consultantShare: held._sum.consultantShare || 0,
-      platformFee: held._sum.platformFee || 0,
+      consultantSharePaise: held._sum.consultantSharePaise || 0,
+      platformFeePaise: held._sum.platformFeePaise || 0,
     },
     refunded: {
       count: refunded._count,
-      consultantShare: refunded._sum.consultantShare || 0,
-      platformFee: refunded._sum.platformFee || 0,
+      consultantSharePaise: refunded._sum.consultantSharePaise || 0,
+      platformFeePaise: refunded._sum.platformFeePaise || 0,
     },
     totalPlatformRevenue:
-      (paid._sum.platformFee || 0) + (ready._sum.platformFee || 0),
+      (paid._sum.platformFeePaise || 0) + (ready._sum.platformFeePaise || 0),
   };
 }
 

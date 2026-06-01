@@ -79,10 +79,10 @@ function calculateEarningsData(
   // Use original plan price (before platform-funded discounts/credits/tax) for earnings
   // Payment.originalAmount is stored in paise (smallest unit) — same as earnings
   const grossAmount = payment.originalAmount;
-  const platformFee = Math.round(
+  const platformFeePaise = Math.round(
     (grossAmount * PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE) / 100,
   );
-  const consultantShare = grossAmount - platformFee;
+  const consultantSharePaise = grossAmount - platformFeePaise;
 
   // Get appointment type for hold period
   const appointmentType = payment.appointment?.appointmentType
@@ -114,8 +114,8 @@ function calculateEarningsData(
     consultantProfileId,
     paymentId: payment.id,
     grossAmount,
-    platformFee,
-    consultantShare,
+    platformFeePaise,
+    consultantSharePaise,
     status,
     holdUntil,
   };
@@ -228,14 +228,13 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
       consultantProfileId: string;
       paymentId: string;
       grossAmount: number;
-      platformFee: number;
-      consultantShare: number;
+      platformFeePaise: number;
+      consultantSharePaise: number;
       status: EarningStatus;
       holdUntil: Date;
       role?: EarningRole;
-      sharePercentage?: number;
+      shareBps?: number;
     }> = [];
-    const revenueUpdates: Map<string, number> = new Map();
 
     for (const payment of payments) {
       // Skip if earnings already exist
@@ -270,7 +269,7 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
       const classPlanId = appointment?.class?.classPlan?.id;
 
       const baseEarnings = calculateEarningsData(payment, consultantProfileId);
-      const totalConsultantPool = baseEarnings.consultantShare;
+      const totalConsultantPool = baseEarnings.consultantSharePaise;
 
       let splits: Array<{
         consultantProfileId: string;
@@ -308,42 +307,30 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
 
       if (splits.length > 0) {
         // Multi-party earnings (collaborator splits)
-        // Owner gets full grossAmount/platformFee; collaborators get 0 for those fields.
+        // Owner gets full grossAmount/platformFeePaise; collaborators get 0 for those fields.
         for (const split of splits) {
           const isOwner = split.role === "OWNER";
           const splitBase = calculateEarningsData(payment, split.consultantProfileId);
-          const sharePercentage = totalConsultantPool > 0
-            ? Math.round((split.share / totalConsultantPool) * 10000) / 100
+          const shareBps = totalConsultantPool > 0
+            ? Math.round((split.share / totalConsultantPool) * 10000)
             : 0;
 
           earningsToCreate.push({
             ...splitBase,
-            consultantShare: split.share,
+            consultantSharePaise: split.share,
             grossAmount: isOwner ? baseEarnings.grossAmount : 0,
-            platformFee: isOwner ? baseEarnings.platformFee : 0,
+            platformFeePaise: isOwner ? baseEarnings.platformFeePaise : 0,
             role: isOwner ? EarningRole.OWNER : EarningRole.COLLABORATOR,
-            sharePercentage,
+            shareBps,
           });
-
-          const currentRevenue = revenueUpdates.get(split.consultantProfileId) || 0;
-          revenueUpdates.set(
-            split.consultantProfileId,
-            currentRevenue + split.share,
-          );
         }
       } else {
         // Single-party earnings (owner only, or no collaborators)
         earningsToCreate.push({
           ...baseEarnings,
           role: EarningRole.OWNER,
-          sharePercentage: 100,
+          shareBps: 10000,
         });
-
-        const currentRevenue = revenueUpdates.get(consultantProfileId) || 0;
-        revenueUpdates.set(
-          consultantProfileId,
-          currentRevenue + baseEarnings.consultantShare,
-        );
       }
     }
 
@@ -358,32 +345,6 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
         createdCount += result.count;
         console.log(`✅ Created ${result.count} earnings records in batch`);
 
-        // Update consultant revenue balances
-        const consultantIds = Array.from(revenueUpdates.keys());
-        for (const consultantProfileId of consultantIds) {
-          const amount = revenueUpdates.get(consultantProfileId)!;
-          try {
-            await prisma.consultantProfile.update({
-              where: { id: consultantProfileId },
-              data: {
-                pendingRevenue: { increment: amount },
-              },
-            });
-          } catch (updateError) {
-            const errorMessage =
-              updateError instanceof Error
-                ? updateError.message
-                : String(updateError);
-            errors.push(
-              `Revenue update for consultant ${consultantProfileId}: ${errorMessage}`,
-            );
-            console.error(
-              `❌ Error updating revenue for consultant ${consultantProfileId}:`,
-              errorMessage,
-            );
-            errorCount++;
-          }
-        }
       } catch (createError) {
         const errorMessage =
           createError instanceof Error

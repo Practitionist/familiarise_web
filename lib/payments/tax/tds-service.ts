@@ -24,6 +24,33 @@
  * - Applies to professional/technical services
  * - Must be deposited by 7th of next month
  * - Quarterly filing: Form 26Q
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * #778 §E — DEPRECATION PLAN (v1; do NOT execute without CA signoff)
+ *
+ * Decision: consolidate to a SINGLE TDS engine — `lib/compliance/tds.ts`
+ * (Section 194-O) — and deprecate this 194J/₹50K consultant pipeline. 194-O
+ * (0.1%, 5% no-PAN, 206AA, DTAA) is the correct default for an e-commerce
+ * operator post-Oct-2024; running two engines with different defaults on
+ * consultant vs org payouts is the divergence v3 flagged.
+ *
+ * Blocked on: written CA confirmation that 194-O governs consultant payouts
+ * (ECO-precedence) rather than the 194J threshold path. Until then, KEEP both
+ * and default conservative (higher withholding).
+ *
+ * When unblocked:
+ *   1. Route consultant payouts through `deriveTds()` in compliance/tds.ts.
+ *   2. Use the now-frozen schema: `ConsultantProfile.taxEntityType` (#778 §D)
+ *      + `tdsSection` override drive the residual 194J/194C threshold cases
+ *      this engine handled; the ₹50K/entity-type threshold logic moves there.
+ *   3. Keep `TDSRecord` + this file's FY/quarter arithmetic as the shared
+ *      audit-trail writer; delete only the rate/section DECISION logic here.
+ *   4. Rate fields move Float→integer bps (#781 §C) as part of the cutover so
+ *      both engines share one exact rate representation.
+ *   5. Verify TDS posts to the TDS_PAYABLE ledger account on both paths.
+ *
+ * Do not delete this file before steps 1–5 land + CA signoff.
+ * ───────────────────────────────────────────────────────────────────────────
  */
 
 import prisma from "@/lib/prisma";
@@ -100,7 +127,7 @@ export async function getCurrentFYCumulativePayments(
   const fy = financialYear || getIndianFinancialYear();
   const { start, end } = getFYDateRange(fy);
 
-  const result = await prisma.payout.aggregate({
+  const result = await prisma.consultantPayout.aggregate({
     where: {
       consultantProfileId,
       status: "COMPLETED",

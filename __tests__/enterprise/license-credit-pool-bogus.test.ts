@@ -87,7 +87,7 @@ beforeEach(() => {
 });
 
 describe("POST /api/organizations/[orgId]/programs — LICENSE × CREDIT_POOL guard", () => {
-  it("rejects a CREDIT_POOL program under a LICENSE-funded contract (400 BOGUS_LICENSE_CREDIT_POOL)", async () => {
+  it("rejects a CREDIT_POOL program under a LICENSE-funded contract (400 UNREACHABLE_FUNDING_PATH)", async () => {
     mockedPrisma.contract.findUnique.mockResolvedValueOnce({
       organizationId: "org-1",
       status: "ACTIVE",
@@ -113,9 +113,9 @@ describe("POST /api/organizations/[orgId]/programs — LICENSE × CREDIT_POOL gu
 
     expect(res.status).toBe(400);
     const body = await res.json();
-    expect(body.code).toBe("BOGUS_LICENSE_CREDIT_POOL");
+    expect(body.code).toBe("UNREACHABLE_FUNDING_PATH");
     expect(body.error).toMatch(/LICENSE/);
-    expect(body.error).toMatch(/LICENSED_SEAT/);
+    expect(body.error).toMatch(/CREDIT_POOL/);
     // Critical: program.create must NOT have fired
     expect(mockedPrisma.program.create).not.toHaveBeenCalled();
   });

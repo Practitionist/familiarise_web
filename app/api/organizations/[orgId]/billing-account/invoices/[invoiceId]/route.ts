@@ -193,17 +193,6 @@ export async function PATCH(
           },
         });
 
-        if (body.status === "ISSUED") {
-          await tx.settlementLedgerEntry.create({
-            data: {
-              organizationId: orgId,
-              invoiceId: next.id,
-              kind: "INVOICE_ISSUED",
-              amountPaise: next.totalPaise,
-              currency: next.displayCurrency,
-            },
-          });
-        }
       }
 
       return next;

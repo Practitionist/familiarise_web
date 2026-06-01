@@ -49,7 +49,7 @@ function groupEarningsByConsultant(
   earnings: Array<{
     id: string;
     consultantProfileId: string;
-    consultantShare: number;
+    consultantSharePaise: number;
   }>,
 ): Map<string, typeof earnings> {
   const grouped = new Map<string, typeof earnings>();
@@ -75,7 +75,7 @@ export async function createPayouts(): Promise<void> {
     select: {
       id: true,
       consultantProfileId: true,
-      consultantShare: true,
+      consultantSharePaise: true,
     },
   });
 
@@ -110,7 +110,7 @@ export async function createPayouts(): Promise<void> {
     try {
       // Calculate total amount for this payout
       const totalAmount = earnings.reduce(
-        (sum, e) => sum + e.consultantShare,
+        (sum, e) => sum + e.consultantSharePaise,
         0,
       );
 
@@ -166,7 +166,7 @@ export async function createPayouts(): Promise<void> {
       }
 
       // Create the payout
-      const payout = await prisma.payout.create({
+      const payout = await prisma.consultantPayout.create({
         data: {
           consultantProfileId,
           provider,
@@ -224,7 +224,7 @@ export async function createPayouts(): Promise<void> {
   console.log(`  Total payouts created: ${payoutsCreated}`);
   console.log(`  Total earnings linked: ${earningsLinked}`);
 
-  const statusSummary = await prisma.payout.groupBy({
+  const statusSummary = await prisma.consultantPayout.groupBy({
     by: ["status"],
     _count: true,
     _sum: {
@@ -240,7 +240,7 @@ export async function createPayouts(): Promise<void> {
     );
   }
 
-  const providerSummary = await prisma.payout.groupBy({
+  const providerSummary = await prisma.consultantPayout.groupBy({
     by: ["provider"],
     _count: true,
   });

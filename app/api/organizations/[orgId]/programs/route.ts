@@ -13,6 +13,10 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import {
+  capabilityOf,
+  isReachableOrgFundingPath,
+} from "@/lib/enterprise/reachable-paths";
 
 const CoveredPlanTypeSchema = z.enum([
   "CONSULTATION",
@@ -40,6 +44,10 @@ const LicensedSeatConfigSchema = z.object({
   coveredEngagementsPerCycle: z.coerce.number().int().min(0).nullable().optional(),
   overageBehavior: OverageBehaviorSchema.default("BLOCK"),
   priceCapPerEngagementPaise: z.coerce.number().int().min(0).nullable().optional(),
+  // #775 — bps markup on the pass-through overage marginal (null = no markup).
+  overageSurchargeBps: z.coerce.number().int().min(0).nullable().optional(),
+  // #768 #14/#15 — per-cycle overage ceiling (circuit breaker; null = none).
+  maxOveragePerCyclePaise: z.coerce.number().int().min(0).nullable().optional(),
 });
 
 // 1 credit = ₹1 = 100 paise (fixed; see schema.prisma). The pool resets
@@ -56,6 +64,10 @@ const CreditPoolConfigSchema = z.object({
   cycle: BillingCycleSchema,
   creditsPerCycle: z.coerce.number().int().min(1),
   minimumCreditsPerPeriod: z.coerce.number().int().min(0).nullable().optional(),
+  // #775 — over-budget routing + markup + ceiling (parity with LICENSED_SEAT).
+  overageBehavior: OverageBehaviorSchema.default("BLOCK"),
+  overageSurchargeBps: z.coerce.number().int().min(0).nullable().optional(),
+  maxOveragePerCyclePaise: z.coerce.number().int().min(0).nullable().optional(),
 });
 
 const CreateBodySchema = z.discriminatedUnion("type", [
@@ -76,15 +88,6 @@ const CreateBodySchema = z.discriminatedUnion("type", [
     creditPoolConfig: CreditPoolConfigSchema,
   }),
 ]);
-
-// Programs v2 (PROJECT, RETAINER) is enum-reserved in `ProgramType` but
-// not yet implemented. The `CreateBodySchema` discriminated union would
-// otherwise reject these with a generic "Invalid body" — match the
-// reserved values first so ops can distinguish a v2 attempt from a
-// garbage payload. See #703 for v2 readiness.
-const ProgramsV2AttemptSchema = z
-  .object({ type: z.enum(["PROJECT", "RETAINER"]) })
-  .passthrough();
 
 export async function GET(
   req: NextRequest,
@@ -138,17 +141,6 @@ export async function POST(
 
   const raw = await req.json().catch(() => null);
 
-  const v2Attempt = ProgramsV2AttemptSchema.safeParse(raw);
-  if (v2Attempt.success) {
-    return NextResponse.json(
-      {
-        error: `Programs v2 (${v2Attempt.data.type}) is not yet available; track readiness in #703.`,
-        code: "PROGRAM_TYPE_NOT_AVAILABLE",
-      },
-      { status: 400 },
-    );
-  }
-
   const parsed = CreateBodySchema.safeParse(raw);
   if (!parsed.success) {
     return NextResponse.json(
@@ -161,8 +153,9 @@ export async function POST(
   // Contract ownership check — same pattern as BillingAccount in
   // /contracts: reject a stolen id from another tenant before we hit
   // the FK layer with a 500. We also pull the parent's billingAccount
-  // fundingSource so we can reject the LICENSE + CREDIT_POOL combo
-  // before it ever hits the DB (see the bogus-combo guard below).
+  // fundingSource so the reachable-path gate below can reject any
+  // (capability x fundingSource x programType) combo the v0 matrix
+  // (#768) doesn't sanction before it ever hits the DB.
   const contract = await prisma.contract.findUnique({
     where: { id: body.contractId },
     select: {
@@ -184,21 +177,21 @@ export async function POST(
     );
   }
 
-  // LICENSE + CREDIT_POOL is bogus: a flat-fee license has already paid
-  // for unmetered usage, so a per-cycle credit cap on top of it doesn't
-  // express a real customer arrangement. The wizard already hides this
-  // option; this server-side guard closes the API loophole so a curious
-  // client can't construct it directly. See `prompts/a.txt` rows 68 +
-  // 73 + 120 for the original analysis.
+  // Single gate for every illegal (capability x fundingSource x
+  // programType) combo — subsumes the old BOGUS_LICENSE_CREDIT_POOL
+  // special-case (the v0 matrix #768 already excludes SPONSOR + LICENSE +
+  // CREDIT_POOL). The wizard hides unreachable options; this closes the
+  // API loophole so a curious client can't construct one directly.
+  const capability = capabilityOf(access.org.canSponsor, access.org.canHost);
+  const fundingSource = contract.billingAccount?.fundingSource ?? null;
   if (
-    body.type === "CREDIT_POOL" &&
-    contract.billingAccount?.fundingSource === "LICENSE"
+    !capability ||
+    !isReachableOrgFundingPath(capability, fundingSource, body.type)
   ) {
     return NextResponse.json(
       {
-        error:
-          "CREDIT_POOL programs are not allowed under a LICENSE-funded contract. License is a flat fee for unmetered usage; pair it with a LICENSED_SEAT program (coveredEngagementsPerCycle=null) instead.",
-        code: "BOGUS_LICENSE_CREDIT_POOL",
+        error: `${body.type} programs are not allowed for a ${capability ?? "non-sponsoring"} organization on a ${fundingSource ?? "unknown"}-funded contract. This combination isn't part of the supported funding matrix.`,
+        code: "UNREACHABLE_FUNDING_PATH",
       },
       { status: 400 },
     );
@@ -222,6 +215,10 @@ export async function POST(
               overageBehavior: body.licensedSeatConfig.overageBehavior,
               priceCapPerEngagementPaise:
                 body.licensedSeatConfig.priceCapPerEngagementPaise ?? null,
+              overageSurchargeBps:
+                body.licensedSeatConfig.overageSurchargeBps ?? null,
+              maxOveragePerCyclePaise:
+                body.licensedSeatConfig.maxOveragePerCyclePaise ?? null,
             },
           },
         }),
@@ -232,6 +229,11 @@ export async function POST(
               creditsPerCycle: body.creditPoolConfig.creditsPerCycle,
               minimumCreditsPerPeriod:
                 body.creditPoolConfig.minimumCreditsPerPeriod ?? null,
+              overageBehavior: body.creditPoolConfig.overageBehavior,
+              overageSurchargeBps:
+                body.creditPoolConfig.overageSurchargeBps ?? null,
+              maxOveragePerCyclePaise:
+                body.creditPoolConfig.maxOveragePerCyclePaise ?? null,
             },
           },
         }),

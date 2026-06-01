@@ -64,7 +64,7 @@ interface PlanOwner {
 interface PlanCollaboratorInfo {
   id: string;
   role: string;
-  revenueSharePercentage: number;
+  revenueShareBps: number;
   status: "PENDING" | "ACCEPTED";
   consultantProfile: {
     id: string;
@@ -75,7 +75,7 @@ interface PlanCollaboratorInfo {
 interface Collaboration {
   id: string;
   role: string;
-  revenueSharePercentage: number;
+  revenueShareBps: number;
   status: "PENDING" | "ACCEPTED";
   createdAt: string;
   webinarPlan?: {
@@ -113,7 +113,7 @@ interface Collaboration {
 interface CollaboratorInfo {
   id: string;
   role: string;
-  revenueSharePercentage: number;
+  revenueShareBps: number;
   status: "PENDING" | "ACCEPTED";
   consultantProfile: {
     id: string;
@@ -586,7 +586,7 @@ function ActiveCollaborationCard({
   collab: {
     id: string;
     role: string;
-    revenueSharePercentage: number;
+    revenueShareBps: number;
     planType: "webinar" | "class";
     planTitle: string;
     invitedBy: { user: { name: string | null } };
@@ -677,11 +677,11 @@ function ActiveCollaborationCard({
               </Avatar>
             )}
             <span className="font-medium">
-              You {collab.revenueSharePercentage}%
+              You {collab.revenueShareBps / 100}%
             </span>
             {owner && (
               <span>
-                &middot; {owner.user.name} {100 - collab.revenueSharePercentage}
+                &middot; {owner.user.name} {100 - collab.revenueShareBps / 100}
                 %
               </span>
             )}
@@ -712,9 +712,10 @@ function ActiveCollaborationCard({
                       Host &middot;{" "}
                       {100 -
                         allCollaboratorsOnPlan.reduce(
-                          (sum, c) => sum + c.revenueSharePercentage,
+                          (sum, c) => sum + c.revenueShareBps,
                           0,
-                        )}
+                        ) /
+                          100}
                       % share
                     </p>
                   </div>
@@ -744,7 +745,7 @@ function ActiveCollaborationCard({
                       {c.consultantProfile.user.name ?? "Unknown"}
                     </p>
                     <p className="text-[11px] text-zinc-500">
-                      {formatRole(c.role)} &middot; {c.revenueSharePercentage}%
+                      {formatRole(c.role)} &middot; {c.revenueShareBps / 100}%
                       share
                     </p>
                   </div>
@@ -829,9 +830,10 @@ function HostedPlanCard({
 }) {
   const [eventsExpanded, setEventsExpanded] = useState(false);
 
-  const totalCollabShare = plan.collaborators
-    .filter((c) => c.status === "PENDING" || c.status === "ACCEPTED")
-    .reduce((sum, c) => sum + c.revenueSharePercentage, 0);
+  const totalCollabShare =
+    plan.collaborators
+      .filter((c) => c.status === "PENDING" || c.status === "ACCEPTED")
+      .reduce((sum, c) => sum + c.revenueShareBps, 0) / 100;
   const hostShare = 100 - totalCollabShare;
 
   const pendingCollabs = plan.collaborators.filter(
@@ -921,7 +923,7 @@ function HostedPlanCard({
                     </p>
                     <p className="text-[11px] text-zinc-500">
                       {formatRole(collab.role)} &middot;{" "}
-                      {collab.revenueSharePercentage}% share
+                      {collab.revenueShareBps / 100}% share
                     </p>
                   </div>
                 </div>
@@ -953,7 +955,7 @@ function HostedPlanCard({
                     </p>
                     <p className="text-[11px] text-zinc-500">
                       {formatRole(collab.role)} &middot;{" "}
-                      {collab.revenueSharePercentage}% share
+                      {collab.revenueShareBps / 100}% share
                     </p>
                   </div>
                 </div>
@@ -1200,7 +1202,7 @@ export function InvitationsPanel() {
                           </TooltipContent>
                         </Tooltip>
                         <span className="text-xs text-zinc-500">
-                          {collab.revenueSharePercentage}% revenue share
+                          {collab.revenueShareBps / 100}% revenue share
                         </span>
                         {collab.planPrice > 0 && (
                           <span className="text-xs text-zinc-500">

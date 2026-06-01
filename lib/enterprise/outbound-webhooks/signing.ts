@@ -48,8 +48,25 @@ export const SIGNATURE_HEADER = "X-Familiarise-Signature";
 export const DEFAULT_REPLAY_WINDOW_SECONDS = 60 * 60 * 9; // 9h
 
 /**
+ * Secret-rotation grace window. After /rotate-secret stamps
+ * `secretRotatedAt`, the worker dual-signs every delivery (current +
+ * previous secret) for this long so receivers stay green across the
+ * cutover. Mirrors Stripe/Svix, which list multiple `v1=` signatures
+ * during their own rotation grace. After the window the worker drops
+ * back to single-signing with the current secret. #768
+ */
+export const WEBHOOK_ROTATION_GRACE_MS = 24 * 60 * 60 * 1000; // 24h
+
+/**
  * Sign a JSON body with the endpoint's shared secret. Returns the
  * fully-formed header value ready to put on the outbound request.
+ *
+ * During the rotation grace window the caller passes `previousSecret`;
+ * we then emit BOTH signatures as repeated `v1=` entries —
+ * `t=<unix>,v1=<current>,v1=<previous>` — so a receiver running the
+ * body through either secret matches one of them. This is exactly how
+ * Stripe/Svix list multiple signatures, so a standard verifier that
+ * scans every `v1=` value Just Works.
  *
  * The caller is responsible for ensuring `body` is the *exact* bytes
  * that will go on the wire — any pretty-printing / re-serialization
@@ -59,12 +76,14 @@ export function signPayload(
   secret: string,
   body: string,
   timestampSeconds: number = Math.floor(Date.now() / 1000),
+  previousSecret?: string | null,
 ): string {
   const signed = `${timestampSeconds}.${body}`;
-  const hmac = createHmac("sha256", secret);
-  hmac.update(signed);
-  const hex = hmac.digest("hex");
-  return `t=${timestampSeconds},v1=${hex}`;
+  const sign = (key: string) =>
+    createHmac("sha256", key).update(signed).digest("hex");
+  const parts = [`t=${timestampSeconds}`, `v1=${sign(secret)}`];
+  if (previousSecret) parts.push(`v1=${sign(previousSecret)}`);
+  return parts.join(",");
 }
 
 /**
@@ -90,8 +109,11 @@ export function verifySignature(
 
   const parts = headerValue.split(",");
   const t = parts.find((p) => p.startsWith("t="))?.slice(2);
-  const v1 = parts.find((p) => p.startsWith("v1="))?.slice(3);
-  if (!t || !v1) return { valid: false, reason: "MALFORMED_HEADER" };
+  // During the rotation grace window we emit repeated `v1=` entries —
+  // collect ALL of them and accept the body if it matches any one,
+  // mirroring how Stripe/Svix verifiers iterate every listed signature.
+  const v1s = parts.filter((p) => p.startsWith("v1=")).map((p) => p.slice(3));
+  if (!t || v1s.length === 0) return { valid: false, reason: "MALFORMED_HEADER" };
 
   const ts = Number(t);
   if (!Number.isFinite(ts)) return { valid: false, reason: "MALFORMED_TIMESTAMP" };
@@ -107,21 +129,19 @@ export function verifySignature(
   const expected = createHmac("sha256", secret)
     .update(`${t}.${body}`)
     .digest();
-  let received: Buffer;
-  try {
-    received = Buffer.from(v1, "hex");
-  } catch {
-    return { valid: false, reason: "MALFORMED_SIGNATURE" };
+  for (const v1 of v1s) {
+    let received: Buffer;
+    try {
+      received = Buffer.from(v1, "hex");
+    } catch {
+      continue;
+    }
+    // timingSafeEqual throws on length mismatch — short-circuit ourselves
+    // so we move on to the next candidate instead of throwing.
+    if (received.length !== expected.length) continue;
+    if (timingSafeEqual(received, expected)) return { valid: true };
   }
-  // timingSafeEqual throws on length mismatch — short-circuit ourselves
-  // so the verifier returns a clean { valid: false } instead.
-  if (received.length !== expected.length) {
-    return { valid: false, reason: "SIGNATURE_LENGTH_MISMATCH" };
-  }
-  if (!timingSafeEqual(received, expected)) {
-    return { valid: false, reason: "SIGNATURE_MISMATCH" };
-  }
-  return { valid: true };
+  return { valid: false, reason: "SIGNATURE_MISMATCH" };
 }
 
 /**

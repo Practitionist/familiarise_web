@@ -60,7 +60,7 @@ import { WalletTab } from "./WalletTab";
 
 const billingSummarySchema = z.object({
   fundingSource: z
-    .enum(["PERSONAL", "WALLET", "INVOICE", "LICENSE", "PROJECT"])
+    .enum(["PERSONAL", "WALLET", "INVOICE", "LICENSE"])
     .nullable(),
   monthToDate: z.object({
     gross: z.number(),

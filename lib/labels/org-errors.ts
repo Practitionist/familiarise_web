@@ -28,13 +28,7 @@ export const ORG_ERROR_COPY: Record<string, string> = {
     "No user account found with that email. They need to sign up at Familiarise first, or use the Invitations page to send them an invite.",
   EXPERT_REQUIRES_CANHOST:
     "Expert can only be assigned on host-capable organizations. Enable hosting under Settings → Capabilities first.",
-  // Why: surface the "Project / Retainer programs are gated to v2"
-  // rejection as a forward-looking message instead of a confusing
-  // "Invalid body" Zod failure. The server emits this code from the
-  // POST /programs route; matching copy lives here.
-  PROGRAM_TYPE_NOT_AVAILABLE:
-    "Project and Retainer programs ship in Programs v2. For now, only Licensed-Seat and Credit-Pool programs are supported.",
-  // Why: PO balance enforcement (see docs/enterprise/10-invoicing.md
+// Why: PO balance enforcement (see docs/enterprise/10-invoicing.md
   // "PO balance enforcement" section). The server emits EXCEEDED; the
   // INSUFFICIENT alias exists so route renames don't break the UI copy.
   PO_BALANCE_EXCEEDED:

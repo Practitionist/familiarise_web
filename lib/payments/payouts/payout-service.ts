@@ -19,6 +19,7 @@ import {
   getStripeConnectService,
   isStripeConnectConfigured,
 } from "./stripe-connect";
+import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { randomUUID } from "crypto";
 import { acquireLock, releaseLock } from "@/lib/redis";
 import {
@@ -81,7 +82,7 @@ export interface ConsultantPayoutEligibility {
  * Get all pending payouts awaiting admin approval
  */
 export async function getPendingPayouts(): Promise<PayoutSummary[]> {
-  const payouts = await prisma.payout.findMany({
+  const payouts = await prisma.consultantPayout.findMany({
     where: { status: PayoutStatus.PENDING },
     include: {
       consultantProfile: {
@@ -113,7 +114,7 @@ export async function getPendingPayouts(): Promise<PayoutSummary[]> {
  * Get payout details by ID
  */
 export async function getPayoutById(payoutId: string) {
-  return prisma.payout.findUnique({
+  return prisma.consultantPayout.findUnique({
     where: { id: payoutId },
     include: {
       consultantProfile: {
@@ -139,7 +140,7 @@ export async function checkPayoutEligibility(
 ): Promise<ConsultantPayoutEligibility> {
   // FIX #617: Subtract refundedShareAmount from payout eligibility.
   // Use aggregate _sum of both fields (efficient DB-side) then subtract in JS.
-  // refundedShareAmount is capped at consultantShare by refundEarnings(), so the
+  // refundedShareAmount is capped at consultantSharePaise by refundEarnings(), so the
   // difference is always >= 0.
   const readyEarningsAgg = await prisma.consultantEarnings.aggregate({
     where: {
@@ -147,11 +148,11 @@ export async function checkPayoutEligibility(
       status: EarningStatus.READY,
       payoutId: null,
     },
-    _sum: { consultantShare: true, refundedShareAmount: true },
+    _sum: { consultantSharePaise: true, refundedShareAmount: true },
   });
 
   const readyAmount =
-    (readyEarningsAgg._sum.consultantShare || 0) -
+    (readyEarningsAgg._sum.consultantSharePaise || 0) -
     (readyEarningsAgg._sum.refundedShareAmount || 0);
 
   // Get default payout account
@@ -214,9 +215,9 @@ export async function createPayoutBatch(
           : {}),
       },
       orderBy: { consultantProfileId: "asc" },
-      _sum: { consultantShare: true },
+      _sum: { consultantSharePaise: true },
       having: {
-        consultantShare: {
+        consultantSharePaise: {
           _sum: { gte: PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT },
         },
       },
@@ -266,7 +267,7 @@ export async function createPayoutBatch(
             status: EarningStatus.READY,
             payoutId: null,
           },
-          select: { id: true, consultantShare: true, refundedShareAmount: true },
+          select: { id: true, consultantSharePaise: true, refundedShareAmount: true },
         });
 
         if (readyEarnings.length === 0) return;
@@ -275,7 +276,7 @@ export async function createPayoutBatch(
         // are paid at the correct (reduced) amount, not the original full share.
         const amount = readyEarnings.reduce(
           (sum, e) =>
-            sum + Math.max(e.consultantShare - e.refundedShareAmount, 0),
+            sum + Math.max(e.consultantSharePaise - e.refundedShareAmount, 0),
           0,
         );
 
@@ -285,7 +286,7 @@ export async function createPayoutBatch(
           amount < PAYOUT_CONSTANTS.AUTO_APPROVE_THRESHOLD;
 
         // Create payout with the exact amount
-        const payout = await tx.payout.create({
+        const payout = await tx.consultantPayout.create({
           data: {
             consultantProfileId,
             provider: account.provider,
@@ -340,7 +341,7 @@ export async function approvePayout(
   payoutId: string,
   adminUserId: string,
 ): Promise<void> {
-  const payout = await prisma.payout.findUnique({
+  const payout = await prisma.consultantPayout.findUnique({
     where: { id: payoutId },
   });
 
@@ -354,7 +355,7 @@ export async function approvePayout(
     );
   }
 
-  await prisma.payout.update({
+  await prisma.consultantPayout.update({
     where: { id: payoutId },
     data: {
       status: PayoutStatus.APPROVED,
@@ -375,7 +376,7 @@ export async function rejectPayout(
   payoutId: string,
   reason: string,
 ): Promise<void> {
-  const payout = await prisma.payout.findUnique({
+  const payout = await prisma.consultantPayout.findUnique({
     where: { id: payoutId },
     include: { earnings: true },
   });
@@ -399,7 +400,7 @@ export async function rejectPayout(
   });
 
   // Cancel the payout
-  await prisma.payout.update({
+  await prisma.consultantPayout.update({
     where: { id: payoutId },
     data: {
       status: PayoutStatus.CANCELLED,
@@ -433,7 +434,7 @@ export async function processApprovedPayouts(): Promise<PayoutResult[]> {
   }
 
   try {
-    const approvedPayouts = await prisma.payout.findMany({
+    const approvedPayouts = await prisma.consultantPayout.findMany({
       where: {
         status: PayoutStatus.APPROVED,
         retryCount: { lt: PAYOUT_CONSTANTS.MAX_RETRY_ATTEMPTS },
@@ -488,7 +489,7 @@ async function processSinglePayout(payout: {
 }): Promise<PayoutResult> {
   try {
     // Mark as processing
-    await prisma.payout.update({
+    await prisma.consultantPayout.update({
       where: { id: payout.id },
       data: { status: PayoutStatus.PROCESSING },
     });
@@ -548,7 +549,7 @@ async function processSinglePayout(payout: {
     }
 
     // Update payout with provider ID and TDS info
-    await prisma.payout.update({
+    await prisma.consultantPayout.update({
       where: { id: payout.id },
       data: {
         providerPayoutId,
@@ -570,7 +571,7 @@ async function processSinglePayout(payout: {
       error instanceof Error ? error.message : "Unknown error";
 
     // Mark as failed
-    await prisma.payout.update({
+    await prisma.consultantPayout.update({
       where: { id: payout.id },
       data: {
         status: PayoutStatus.FAILED,
@@ -648,8 +649,10 @@ async function processRazorpayPayout(
     purpose: "payout",
     queueIfLowBalance: true,
     referenceId: payout.id,
+    // #771 P1-6 — use the deterministic key helper (not Date.now(), which
+    // defeats RazorpayX idempotency on retry when payout.idempotencyKey is null).
     idempotencyKey:
-      payout.idempotencyKey || `payout_${payout.id}_${Date.now()}`,
+      payout.idempotencyKey || razorpayPayouts.generateIdempotencyKey(payout.id),
     notes: {
       payoutId: payout.id,
       source: "familiarise_platform",
@@ -710,7 +713,7 @@ export async function handlePayoutWebhook(
   status: "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED" | "CANCELLED",
   failureReason?: string,
 ): Promise<void> {
-  const payout = await prisma.payout.findFirst({
+  const payout = await prisma.consultantPayout.findFirst({
     where: { providerPayoutId },
     include: { earnings: true },
   });
@@ -742,7 +745,7 @@ export async function handlePayoutWebhook(
   await prisma.$transaction(async (tx) => {
     // Atomic conditional update: only transition if payout is NOT already terminal.
     // Uses updateMany with status filter so concurrent duplicates cannot both succeed.
-    const { count } = await tx.payout.updateMany({
+    const { count } = await tx.consultantPayout.updateMany({
       where: {
         id: payout.id,
         status: { notIn: [PayoutStatus.COMPLETED, PayoutStatus.CANCELLED] },
@@ -766,7 +769,7 @@ export async function handlePayoutWebhook(
     if (payoutStatus === PayoutStatus.COMPLETED) {
       const financialYear = payout.tdsFinancialYear || getIndianFinancialYear();
       const { start, end } = getFYDateRange(financialYear);
-      const previousCompletedPayouts = await tx.payout.aggregate({
+      const previousCompletedPayouts = await tx.consultantPayout.aggregate({
         where: {
           consultantProfileId: payout.consultantProfileId,
           status: PayoutStatus.COMPLETED,
@@ -787,14 +790,37 @@ export async function handlePayoutWebhook(
         },
       });
 
-      // Update consultant stats
-      await tx.consultantProfile.update({
-        where: { id: payout.consultantProfileId },
-        data: {
-          totalRevenue: { increment: payout.amount },
-          pendingRevenue: { decrement: payout.amount },
-        },
-      });
+      // #771 D1/D5 — double-entry (dual-write): clear what we owed the
+      // consultant. payout.amount is the cash that left; tdsDeducted was
+      // withheld and is owed to the government.
+      //   Dr CONSULTANT_PAYABLE (gross)   Cr CASH (paid)   Cr TDS_PAYABLE (withheld)
+      if (payout.amount > 0) {
+        const tdsPaise = payout.tdsDeducted ?? 0;
+        const payoutPostings: Posting[] = [
+          {
+            account: {
+              kind: "CONSULTANT_PAYABLE",
+              consultantProfileId: payout.consultantProfileId,
+            },
+            direction: "DEBIT",
+            amountPaise: payout.amount + tdsPaise,
+          },
+          { account: { kind: "CASH" }, direction: "CREDIT", amountPaise: payout.amount },
+        ];
+        if (tdsPaise > 0) {
+          payoutPostings.push({
+            account: { kind: "TDS_PAYABLE" },
+            direction: "CREDIT",
+            amountPaise: tdsPaise,
+          });
+        }
+        await postLedgerTxn(tx, {
+          idempotencyKey: `payout:${payout.id}`,
+          kind: "PAYOUT",
+          payoutId: payout.id,
+          postings: payoutPostings,
+        });
+      }
 
       if (payout.tdsDeducted > 0 && payout.tdsRateApplied) {
         await tx.tDSRecord.deleteMany({
@@ -831,7 +857,7 @@ export async function handlePayoutWebhook(
       });
 
       // Reset TDS fields on the payout record
-      await tx.payout.update({
+      await tx.consultantPayout.update({
         where: { id: payout.id },
         data: {
           tdsDeducted: 0,
@@ -867,22 +893,22 @@ export async function handlePayoutWebhook(
  */
 export async function getPayoutStats() {
   const [pending, processing, completed, failed] = await Promise.all([
-    prisma.payout.aggregate({
+    prisma.consultantPayout.aggregate({
       where: { status: PayoutStatus.PENDING },
       _sum: { amount: true },
       _count: true,
     }),
-    prisma.payout.aggregate({
+    prisma.consultantPayout.aggregate({
       where: { status: PayoutStatus.PROCESSING },
       _sum: { amount: true },
       _count: true,
     }),
-    prisma.payout.aggregate({
+    prisma.consultantPayout.aggregate({
       where: { status: PayoutStatus.COMPLETED },
       _sum: { amount: true },
       _count: true,
     }),
-    prisma.payout.aggregate({
+    prisma.consultantPayout.aggregate({
       where: { status: PayoutStatus.FAILED },
       _sum: { amount: true },
       _count: true,

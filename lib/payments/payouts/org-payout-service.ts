@@ -54,6 +54,7 @@ import type { PaymentGateway, PayoutStatus } from "@prisma/client";
 import { acquireLock, releaseLock } from "@/lib/redis";
 import { computeMsmePaymentDeadline } from "@/lib/compliance/msme";
 import { computeTdsForPayout } from "@/lib/compliance/tds";
+import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { notifyOrgPayoutCompleted } from "@/lib/novu/org-workflows";
 import { getAppUrl } from "@/lib/url";
@@ -321,12 +322,12 @@ export async function createOrgPayoutBatch(
         const totals = readyEarnings.reduce(
           (acc, e) => {
             acc.gross += e.grossAmountPaise;
-            acc.platformFee += e.platformFeePaise;
+            acc.platformFeePaise += e.platformFeePaise;
             acc.orgShare += e.orgSharePaise;
             acc.refunds += e.refundedAmountPaise;
             return acc;
           },
-          { gross: 0, platformFee: 0, orgShare: 0, refunds: 0 },
+          { gross: 0, platformFeePaise: 0, orgShare: 0, refunds: 0 },
         );
         const netPayout = totals.orgShare - totals.refunds;
         if (netPayout <= 0) {
@@ -357,15 +358,18 @@ export async function createOrgPayoutBatch(
         const orgForCompliance = await tx.organization.findUnique({
           where: { id: orgId },
           select: {
-            pan: true,
-            msmeStatus: true,
-            msmeWrittenAgreementOnFile: true,
+            taxInfo: { select: { panEncrypted: true } },
+            msmeInfo: { select: { msmeStatus: true, msmeWrittenAgreementOnFile: true } },
           },
         });
         const tds = computeTdsForPayout({
           grossAmountPaise: netPayout,
           consultant: {
-            panNumber: orgForCompliance?.pan ?? null,
+            // #768 — PAN at rest is encrypted. TDS rate derivation only
+            // needs to know whether a PAN is on file (treats null as
+            // higher-rate). Plaintext decrypt is deferred to Form 26Q
+            // filing (admin-only flow).
+            panNumber: orgForCompliance?.taxInfo?.panEncrypted ? "ENCRYPTED" : null,
             residencyStatus: "RESIDENT",
             tdsSection: null,
             tdsRate: null,
@@ -376,9 +380,9 @@ export async function createOrgPayoutBatch(
         const amountAfterTds = netPayout - tds.tdsAmountPaise;
         const mustPayByDate = computeMsmePaymentDeadline({
           invoiceDate: new Date(),
-          counterpartyMsmeStatus: orgForCompliance?.msmeStatus ?? "NONE",
+          counterpartyMsmeStatus: orgForCompliance?.msmeInfo?.msmeStatus ?? "NONE",
           writtenAgreement:
-            orgForCompliance?.msmeWrittenAgreementOnFile ?? false,
+            orgForCompliance?.msmeInfo?.msmeWrittenAgreementOnFile ?? false,
         });
 
         await tx.organizationPayout.update({
@@ -387,7 +391,7 @@ export async function createOrgPayoutBatch(
             amountPaise: amountAfterTds,
             currency: first.currency,
             grossRevenuePaise: totals.gross,
-            platformFeePaise: totals.platformFee,
+            platformFeePaise: totals.platformFeePaise,
             refundsPaise: totals.refunds,
             netPayoutPaise: netPayout,
             tdsSectionApplied: tds.tdsSection,
@@ -405,19 +409,6 @@ export async function createOrgPayoutBatch(
           data: { status: "PAID" },
         });
 
-        await tx.settlementLedgerEntry.create({
-          data: {
-            organizationId: orgId,
-            payoutId: created.id,
-            kind: "PAYOUT_SENT",
-            amountPaise: -amountAfterTds,
-            currency: first.currency,
-            notes:
-              opts.notes ??
-              `Payout batch created — ${readyEarnings.length} earnings rolled up (TDS ${tds.tdsSection}: ${tds.tdsAmountPaise} paise withheld)`,
-          },
-        });
-
         await tx.orgAuditLog.create({
           data: {
             organizationId: orgId,
@@ -431,7 +422,7 @@ export async function createOrgPayoutBatch(
               netPayoutPaise: netPayout,
               amountAfterTdsPaise: amountAfterTds,
               grossPaise: totals.gross,
-              platformFeePaise: totals.platformFee,
+              platformFeePaise: totals.platformFeePaise,
               refundsPaise: totals.refunds,
               tdsSection: tds.tdsSection,
               tdsRate: tds.tdsRate,
@@ -803,6 +794,7 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
         id: true,
         organizationId: true,
         netPayoutPaise: true,
+        tdsAmountPaise: true,
         currency: true,
         organization: { select: { name: true } },
       },
@@ -822,6 +814,41 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
         },
       },
     });
+
+    // #771 D1/D5 — double-entry (dual-write): settle the host org's payable.
+    //   Dr ORG_PAYABLE (gross)   Cr CASH (paid)   Cr TDS_PAYABLE (withheld)
+    const orgTds = payout.tdsAmountPaise ?? 0;
+    if (payout.netPayoutPaise > 0) {
+      const orgPostings: Posting[] = [
+        {
+          account: {
+            kind: "ORG_PAYABLE",
+            organizationId: payout.organizationId,
+            currency: payout.currency,
+          },
+          direction: "DEBIT",
+          amountPaise: payout.netPayoutPaise + orgTds,
+        },
+        {
+          account: { kind: "CASH", currency: payout.currency },
+          direction: "CREDIT",
+          amountPaise: payout.netPayoutPaise,
+        },
+      ];
+      if (orgTds > 0) {
+        orgPostings.push({
+          account: { kind: "TDS_PAYABLE", currency: payout.currency },
+          direction: "CREDIT",
+          amountPaise: orgTds,
+        });
+      }
+      await postLedgerTxn(tx, {
+        idempotencyKey: `orgpayout:${payoutId}`,
+        kind: "ORG_PAYOUT",
+        payoutId,
+        postings: orgPostings,
+      });
+    }
 
     return {
       wasNoOp: false,

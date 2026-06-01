@@ -66,10 +66,11 @@ export async function GET(
       organization: {
         select: {
           name: true,
-          gstin: true,
           billingEmail: true,
+          taxInfo: { select: { gstin: true } },
         },
       },
+      lineItems: { orderBy: { position: "asc" } },
     },
   });
   if (!invoice) {
@@ -108,7 +109,13 @@ export async function GET(
     }
 
     // Render path — assemble data, render, upload, cache, redirect.
-    const items = parseLineItems(invoice.items);
+    const items: OrgInvoiceLineItem[] = invoice.lineItems.map((row) => ({
+      description: row.description,
+      quantity: row.quantity,
+      unitPrice: row.unitPricePaise,
+      paymentId: row.paymentId,
+      hsnCode: row.hsnCode,
+    }));
     const data: OrgInvoicePdfData = {
       invoiceNumber: invoice.invoiceNumber,
       status: invoice.status,
@@ -130,7 +137,7 @@ export async function GET(
       items,
       org: {
         name: invoice.organization.name,
-        gstin: invoice.organization.gstin,
+        gstin: invoice.organization.taxInfo?.gstin ?? null,
         billingEmail: invoice.organization.billingEmail,
       },
       supplier: SUPPLIER,
@@ -175,21 +182,3 @@ export async function GET(
   }
 }
 
-// Parse the loosely-typed Json column into our renderer's typed shape.
-// The existing invoice POST route enforces { description, quantity,
-// unitPrice } at creation, so these fields are reliably present.
-function parseLineItems(raw: unknown): OrgInvoiceLineItem[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .filter((row): row is Record<string, unknown> =>
-      typeof row === "object" && row !== null,
-    )
-    .map((row) => ({
-      description: String(row.description ?? ""),
-      quantity: Number(row.quantity ?? 1),
-      unitPrice: Number(row.unitPrice ?? 0),
-      paymentId:
-        typeof row.paymentId === "string" ? row.paymentId : null,
-      hsnCode: typeof row.hsnCode === "string" ? row.hsnCode : null,
-    }));
-}

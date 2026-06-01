@@ -71,7 +71,13 @@ export const orgMembershipInclude = {
     },
     orderBy: { createdAt: "asc" },
     select: {
-      organization: { select: { name: true, slug: true, logo: true } },
+      organization: {
+        select: {
+          name: true,
+          slug: true,
+          brandingProfile: { select: { logo: true } },
+        },
+      },
     },
     take: 1,
   },
@@ -256,7 +262,11 @@ export const getCuratedExperts = cache(
         reviews: c.reviews,
         subscriptionPlans: c.subscriptionPlans,
         organizationBadge: firstOrg
-          ? { name: firstOrg.name, slug: firstOrg.slug, logo: firstOrg.logo }
+          ? {
+              name: firstOrg.name,
+              slug: firstOrg.slug,
+              logo: firstOrg.brandingProfile?.logo ?? null,
+            }
           : null,
       };
     });

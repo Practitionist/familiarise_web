@@ -40,6 +40,7 @@
 import prisma from "@/lib/prisma";
 import {
   EarningStatus,
+  type LedgerAccountKind,
   PaymentStatus,
   Prisma,
   RefundStatus,
@@ -49,6 +50,7 @@ import { walletCredit } from "@/lib/api/organizations/wallet";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { assertEarningStatusTransitionLegal } from "@/lib/payments/payouts/earning-status";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 
 // ============================================================================
 // Public types
@@ -106,7 +108,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       paymentGateway: true,
       displayCurrencyAtCheckout: true,
       exchangeRateAtCheckout: true,
-      refunds: { select: { amount: true, status: true } },
+      refunds: { select: { amountPaise: true, status: true } },
     },
   });
 
@@ -132,7 +134,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
         r.status === RefundStatus.SUCCEEDED ||
         r.status === RefundStatus.PENDING,
     )
-    .reduce((acc, r) => acc + r.amount, 0);
+    .reduce((acc, r) => acc + r.amountPaise, 0);
 
   const refundable = payment.amount - alreadyRefunded;
   if (refundable <= 0) {
@@ -165,9 +167,9 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
           paymentId: input.paymentId,
           status: { in: [RefundStatus.SUCCEEDED, RefundStatus.PENDING] },
         },
-        select: { amount: true },
+        select: { amountPaise: true },
       });
-      const refundedNow = refundsLocked.reduce((a, r) => a + r.amount, 0);
+      const refundedNow = refundsLocked.reduce((a, r) => a + r.amountPaise, 0);
       const remainingNow = payment.amount - refundedNow;
       if (requested > remainingNow) {
         throw new RefundValidationError(
@@ -186,7 +188,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       const created = await tx.refund.create({
         data: {
           paymentId: input.paymentId,
-          amount: requested,
+          amountPaise: requested,
           currency: payment.currency,
           reason: input.reason,
           status: RefundStatus.PENDING,
@@ -417,10 +419,10 @@ export async function applyRefundCascade(
   // -----------------------------------------------------------------------
   let consultantEarningsReversed = 0;
   for (const earnings of payment.earnings) {
-    const shareReversal = proportion(earnings.consultantShare);
+    const shareReversal = proportion(earnings.consultantSharePaise);
     if (shareReversal <= 0) continue;
     const newRefundedShare = earnings.refundedShareAmount + shareReversal;
-    const fully = newRefundedShare >= earnings.consultantShare;
+    const fully = newRefundedShare >= earnings.consultantSharePaise;
 
     let nextStatus = earnings.status;
     if (fully && earnings.status !== EarningStatus.REFUNDED) {
@@ -455,7 +457,7 @@ export async function applyRefundCascade(
 
   for (const orgEarn of payment.organizationEarnings) {
     // Reverse the gross share owed back: org share + consultant share
-    // proportions. (We do NOT include platformFee here — the platform
+    // proportions. (We do NOT include platformFeePaise here — the platform
     // pockets nothing on a fully-refunded transaction; that side of the
     // ledger is accounted for at settlement / TDS.)
     const orgShareRev = proportion(orgEarn.orgSharePaise);
@@ -470,7 +472,7 @@ export async function applyRefundCascade(
     // the consumer (the platform absorbs the gateway fee + own cut).
     // Keying the status flip off `grossAmountPaise` would leave fully-
     // settled earnings stuck in PENDING because totalRev maxes out at
-    // (orgShare + consultantShare).
+    // (orgShare + consultantSharePaise).
     const refundableCeiling =
       orgEarn.orgSharePaise + orgEarn.consultantSharePaise;
     const fully = newRefunded >= refundableCeiling;
@@ -561,6 +563,139 @@ export async function applyRefundCascade(
         } as Prisma.InputJsonValue,
       },
     });
+  }
+
+  // -----------------------------------------------------------------------
+  // Step 9 (#771 P0-5): double-entry reversal (dual-write). A refund reverses
+  // recognized revenue / payable / GST and returns the funding to its source.
+  // Balanced by construction — PLATFORM_FEE absorbs the rounding/discount plug.
+  // Wrapped so a ledger imbalance can never block the refund during dual-write.
+  // -----------------------------------------------------------------------
+  try {
+    const orgId = payment.organizationId ?? null;
+    const credits: Posting[] = [];
+    for (const { leg, reverse } of legAmounts) {
+      if (reverse <= 0) continue;
+      let kind: LedgerAccountKind | null = null;
+      let organizationId: string | null = null;
+      switch (leg.source) {
+        case "CARD":
+          kind = "CASH";
+          break;
+        case "WALLET":
+          kind = "WALLET";
+          organizationId = orgId;
+          break;
+        case "INVOICE_ACCRUAL":
+        case "OVERAGE_INVOICE_ACCRUAL":
+          kind = "ORG_RECEIVABLE";
+          organizationId = orgId;
+          break;
+        case "REFERRAL_CREDIT":
+          kind = "PLATFORM_PROMO";
+          break;
+        case "LICENSE":
+          break;
+      }
+      if (kind) {
+        credits.push({
+          account: { kind, organizationId },
+          direction: "CREDIT",
+          amountPaise: reverse,
+        });
+      }
+    }
+    const fundingTotal = credits.reduce((s, c) => s + c.amountPaise, 0);
+    if (fundingTotal > 0) {
+      const consRev = payment.earnings.reduce(
+        (s, e) => s + proportion(e.consultantSharePaise),
+        0,
+      );
+      const orgRev = payment.organizationEarnings.reduce(
+        (s, o) => s + proportion(o.orgSharePaise),
+        0,
+      );
+      const gstRev = proportion(payment.taxAmount);
+      const platformPlug = fundingTotal - consRev - orgRev - gstRev;
+      const debits: Posting[] = [];
+      if (platformPlug > 0) {
+        // Funding returned exceeds the reversed shares → platform gives back its
+        // fee portion.
+        debits.push({
+          account: { kind: "PLATFORM_FEE" },
+          direction: "DEBIT",
+          amountPaise: platformPlug,
+        });
+      }
+      if (consRev > 0) {
+        const owner =
+          payment.earnings.find((e) => e.role === "OWNER") ??
+          payment.earnings[0];
+        if (owner) {
+          debits.push({
+            account: {
+              kind: "CONSULTANT_PAYABLE",
+              consultantProfileId: owner.consultantProfileId,
+            },
+            direction: "DEBIT",
+            amountPaise: consRev,
+          });
+        }
+      }
+      if (orgRev > 0 && orgId) {
+        debits.push({
+          account: { kind: "ORG_PAYABLE", organizationId: orgId },
+          direction: "DEBIT",
+          amountPaise: orgRev,
+        });
+      }
+      if (gstRev > 0) {
+        debits.push({
+          account: { kind: "GST_PAYABLE" },
+          direction: "DEBIT",
+          amountPaise: gstRev,
+        });
+      }
+      if (platformPlug < 0) {
+        // Reversed shares exceed the funding returned (rounding / discount /
+        // referral-credit-funded portion). #778 §C residual policy: PLATFORM_FEE
+        // absorbs the shortfall so the reversal is ALWAYS balanced. The prior
+        // `platformPlug >= 0` guard silently dropped the posting on this path,
+        // diverging earnings from the ledger irreparably (reconcile flagged
+        // EARNINGS_LEDGER_DRIFT it could not repair).
+        credits.push({
+          account: { kind: "PLATFORM_FEE" },
+          direction: "CREDIT",
+          amountPaise: -platformPlug,
+        });
+      }
+      const debitTotal = debits.reduce((s, d) => s + d.amountPaise, 0);
+      const creditTotal = credits.reduce((s, c) => s + c.amountPaise, 0);
+      if (debits.length > 0) {
+        if (debitTotal !== creditTotal) {
+          // Unreachable given the plug — a mismatch is a real logic bug. Surface
+          // it (caught + logged below; reconcile flags it) instead of letting a
+          // fall-through silently skip the reversal.
+          throw new Error(
+            `refund reversal unbalanced: Dr ${debitTotal} Cr ${creditTotal}`,
+          );
+        }
+        await postLedgerTxn(tx, {
+          idempotencyKey: `refund:${input.refundId}`,
+          kind: "REFUND",
+          paymentId: payment.id,
+          postings: [...debits, ...credits],
+        });
+      }
+    }
+  } catch (err) {
+    // #778 §C — dual-write safety: never block the customer refund on a ledger
+    // bookkeeping failure (gateway money may already have moved). NOT silent:
+    // logged at error level, and the reconcile cron's EARNINGS_LEDGER_DRIFT /
+    // LEDGER_TXN_IMBALANCE invariants detect any resulting divergence.
+    console.error(
+      `[ledger] refund reversal posting FAILED for payment ${payment.id} (reconcile will flag): ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   return {

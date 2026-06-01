@@ -26,7 +26,12 @@ export async function GET(
     const [organization, billingAccount] = await Promise.all([
       prisma.organization.findUnique({
         where: { id: orgId },
-        select: { id: true, name: true, slug: true, logo: true },
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          brandingProfile: { select: { logo: true } },
+        },
       }),
       prisma.billingAccount.findFirst({
         where: { ownerOrgId: orgId },
@@ -35,7 +40,14 @@ export async function GET(
     ]);
 
     return NextResponse.json({
-      organization,
+      organization: organization
+        ? {
+            id: organization.id,
+            name: organization.name,
+            slug: organization.slug,
+            logo: organization.brandingProfile?.logo ?? null,
+          }
+        : null,
       profile: {
         ...access.org,
         billingAccount,

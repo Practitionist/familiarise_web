@@ -1,4 +1,5 @@
 import prisma from "../../../lib/prisma";
+import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { Prisma, PaymentGateway } from "@prisma/client";
 import crypto from "crypto";
 import { stripeClient } from "@/lib/payments/core/stripe";
@@ -257,16 +258,39 @@ export async function handleOrgPaymentSuccess(
           return { count: 0 as const };
         }
         if (resolvedOrgId) {
-          await tx.settlementLedgerEntry.create({
-            data: {
-              organizationId: resolvedOrgId,
-              invoiceId,
+          // #771 D1/D5 — double-entry (dual-write): org pays the invoice; clear
+          // the receivable accrued at booking time (INR underlying).
+          //   Dr CASH   Cr ORG_RECEIVABLE(org)
+          if (invoiceRow.totalPaise > 0) {
+            await postLedgerTxn(tx, {
+              idempotencyKey: `invoicepaid:${invoiceId}`,
               kind: "INVOICE_PAID",
-              amountPaise: invoiceRow.totalPaise,
-              currency: invoiceRow.displayCurrency,
-            },
-          });
+              invoiceId,
+              postings: [
+                {
+                  account: { kind: "CASH" },
+                  direction: "DEBIT",
+                  amountPaise: invoiceRow.totalPaise,
+                },
+                {
+                  account: { kind: "ORG_RECEIVABLE", organizationId: resolvedOrgId },
+                  direction: "CREDIT",
+                  amountPaise: invoiceRow.totalPaise,
+                },
+              ],
+            });
+          }
         }
+        // #775 — CHARGE_ORG overage events on this invoice's lines were ACCRUED
+        // at rollup; the org has now paid, so flip them ACCRUED → CHARGED.
+        await tx.overageEvent.updateMany({
+          where: {
+            overageBehavior: "CHARGE_ORG",
+            chargeStatus: "ACCRUED",
+            invoiceLineItem: { invoiceId },
+          },
+          data: { chargeStatus: "CHARGED" },
+        });
         return { count: claimed.count };
       });
       claimedCount = txResult.count;
@@ -366,13 +390,12 @@ export async function handleOrgPaymentFailure(
       return;
     }
     // Only delete placeholders that were never confirmed. A confirmed
-    // top-up has deltaPaise > 0 and a providerPaymentId set; a
-    // placeholder has deltaPaise === 0.
-    const deleted = await prisma.walletEntry.deleteMany({
+    // top-up has status=CONFIRMED + providerPaymentId set; a pending
+    // placeholder has status=PENDING.
+    const deleted = await prisma.walletTopUp.deleteMany({
       where: {
         providerOrderId: walletEntryOrderId,
-        reason: "TOPUP",
-        deltaPaise: 0,
+        status: "PENDING",
         providerPaymentId: null,
       },
     });
@@ -564,99 +587,73 @@ export async function handleRefundCreated(
       }
 
       // --- Enterprise wallet top-up refund ---
-      const topUpEntry = await tx.walletEntry.findFirst({
-        where: {
-          providerPaymentId,
-          reason: "TOPUP",
-          deltaPaise: { gt: 0 }, // only confirmed top-ups have positive delta
-        },
+      const topUp = await tx.walletTopUp.findFirst({
+        where: { providerPaymentId, status: "CONFIRMED" },
         select: {
           id: true,
           billingAccountId: true,
-          deltaPaise: true,
+          amountPaise: true,
           providerOrderId: true,
         },
       });
-      if (topUpEntry) {
+      if (topUp) {
         const mapped = mapRefundStatus(status);
-        // Idempotency: if we already booked a REFUND WalletEntry that
-        // references this providerPaymentId, skip.
-        const already = await tx.walletEntry.findFirst({
-          where: {
-            billingAccountId: topUpEntry.billingAccountId,
-            reason: "REFUND",
-            providerPaymentId,
-          },
-          select: { id: true },
-        });
-        if (already) {
-          console.log(
-            `💸 Top-up refund already booked for payment ${providerPaymentId}, skipping`,
-          );
-          return;
-        }
         if (mapped === "SUCCEEDED") {
           // Clamp: cannot refund more than was credited to this wallet.
-          const refundAmt = Math.min(amount, topUpEntry.deltaPaise);
+          const refundAmt = Math.min(amount, topUp.amountPaise);
           const acct = await tx.billingAccount.findUniqueOrThrow({
-            where: { id: topUpEntry.billingAccountId },
-            select: { walletBalance: true, currency: true },
+            where: { id: topUp.billingAccountId },
+            select: { currency: true, ownerOrgId: true },
           });
-          const newBalance = (acct.walletBalance ?? 0) - refundAmt;
+          // Reverse the top-up's double-entry: Dr WALLET / Cr CASH. The
+          // wallet liability we owe the org shrinks; platform cash returns
+          // to the gateway. postLedgerTxn is idempotent on idempotencyKey,
+          // so a webhook redelivery (or two racing workers) is a no-op —
+          // this replaces the old "already booked?" WalletEntry probe.
+          const posted = await postLedgerTxn(tx, {
+            idempotencyKey: `topup-refund:${providerPaymentId}`,
+            kind: "TOPUP_REFUND",
+            description: `Refund for top-up ${topUp.providerOrderId} (gateway refund ${refundId})`,
+            postings: [
+              {
+                account: {
+                  kind: "WALLET",
+                  organizationId: acct.ownerOrgId,
+                  currency: acct.currency,
+                },
+                direction: "DEBIT",
+                amountPaise: refundAmt,
+              },
+              {
+                account: { kind: "CASH", currency: acct.currency },
+                direction: "CREDIT",
+                amountPaise: refundAmt,
+              },
+            ],
+          });
+          if (!posted.created) {
+            console.log(
+              `💸 Top-up refund already booked for payment ${providerPaymentId}, skipping`,
+            );
+            return;
+          }
+          // Decrement the cached wallet balance to match the journal. This
+          // can drive the balance negative if the org already spent the
+          // credited funds — that is a real reconcile signal (the org owes
+          // back more than it holds), not an error to swallow here.
+          //
+          // Intentionally NOT inserting a `Refund` row for org-level
+          // refunds: Refund.paymentId is NOT NULL and is scoped to the B2C
+          // `Payment` table. The TOPUP_REFUND journal transaction
+          // (idempotencyKey topup-refund:<rzp payment id>) is the
+          // authoritative record; reconcile jobs index on it.
           await tx.$executeRaw`
             UPDATE "BillingAccount"
             SET "walletBalance" = COALESCE("walletBalance", 0) - ${refundAmt}
-            WHERE "id" = ${topUpEntry.billingAccountId}
+            WHERE "id" = ${topUp.billingAccountId}
           `;
-          // The `already` guard above handles the common case, but two
-          // webhook workers racing can still both pass the guard under
-          // READ COMMITTED isolation. We intentionally don't bump the
-          // outer tx to Serializable (this function is shared with the
-          // B2C refund path which has its own lock footprint). Instead,
-          // we re-read inside a P2002 catch — if a unique constraint on
-          // WalletEntry is ever added for REFUND rows, the catch
-          // converts the duplicate into a no-op. Today the catch is
-          // belt-and-suspenders; tomorrow it becomes the real enforcer.
-          try {
-            await tx.walletEntry.create({
-              data: {
-                billingAccountId: topUpEntry.billingAccountId,
-                deltaPaise: -refundAmt,
-                reason: "REFUND",
-                balanceAfter: newBalance,
-                providerPaymentId,
-                notes: `Refund for top-up ${topUpEntry.providerOrderId ?? ""} (gateway refund ${refundId})`,
-              },
-            });
-          } catch (e) {
-            if (
-              e instanceof Prisma.PrismaClientKnownRequestError &&
-              e.code === "P2002"
-            ) {
-              console.log(
-                `💸 Top-up refund for payment ${providerPaymentId} already booked by concurrent worker, skipping`,
-              );
-              return;
-            }
-            throw e;
-          }
-          await tx.fundingLedgerEntry.create({
-            data: {
-              billingAccountId: topUpEntry.billingAccountId,
-              deltaPaise: -refundAmt,
-              currency: acct.currency,
-              reason: "REFUND_CREDIT",
-              balanceAfterPaise: newBalance,
-              notes: `Top-up refund ${refundId} via ${gateway}`,
-            },
-          });
-          // Intentionally NOT inserting a `Refund` row for org-level
-          // refunds: Refund.paymentId is NOT NULL and is scoped to the
-          // B2C `Payment` table. The compensating WalletEntry (reason
-          // REFUND, providerPaymentId=<rzp payment id>) is the
-          // authoritative record; reconcile jobs index on it.
           console.log(
-            `💸 Top-up refund ${refundId} booked: -${refundAmt} paise on billingAccount ${topUpEntry.billingAccountId}`,
+            `💸 Top-up refund ${refundId} booked: -${refundAmt} paise on billingAccount ${topUp.billingAccountId}`,
           );
         }
         return;
@@ -903,7 +900,7 @@ export async function handleRefundCreated(
     // Create new refund record
     await tx.refund.create({
       data: {
-        amount,
+        amountPaise: amount,
         currency,
         status: mapRefundStatus(status),
         refundId,
@@ -1021,7 +1018,7 @@ export async function handleDisputeCreated(
     // Create dispute record
     await tx.dispute.create({
       data: {
-        amount,
+        amountPaise: amount,
         currency,
         reason,
         status: mapDisputeStatus(status),
@@ -1108,7 +1105,7 @@ export async function handleDisputeUpdated(
         where: { paymentId: dispute.paymentId, status: "HELD" },
         select: {
           id: true,
-          consultantShare: true,
+          consultantSharePaise: true,
           refundedShareAmount: true,
           consultantProfileId: true,
         },
@@ -1116,7 +1113,7 @@ export async function handleDisputeUpdated(
       for (const earning of heldEarnings) {
         const alreadyRefunded = earning.refundedShareAmount ?? 0;
         const remainingRefundable = Math.max(
-          earning.consultantShare - alreadyRefunded,
+          earning.consultantSharePaise - alreadyRefunded,
           0,
         );
 
@@ -1130,12 +1127,6 @@ export async function handleDisputeUpdated(
           },
         });
 
-        if (remainingRefundable > 0) {
-          await tx.consultantProfile.update({
-            where: { id: earning.consultantProfileId },
-            data: { pendingRevenue: { decrement: remainingRefundable } },
-          });
-        }
         console.log(`💸 Earnings ${earning.id} refunded (${remainingRefundable} paise) — dispute ${disputeId} lost`);
       }
     }
@@ -1155,7 +1146,7 @@ export async function handleDisputeUpdated(
       if (disputePayment) {
         void notifyDisputeResolved([disputePayment.userId], {
           disputeId,
-          amount: dispute.amount,
+          amount: dispute.amountPaise,
           currency: dispute.currency,
           reason: dispute.reason || undefined,
           status: mappedStatus,

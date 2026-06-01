@@ -113,25 +113,12 @@ export async function GET(
         orderBy: { createdAt: "desc" },
       }),
 
-      // Invoices for this user's payments — flow org scope through the
-      // payment join so an Acme-context view doesn't surface a Zeta
-      // invoice the user paid through a different membership.
-      prisma.invoice.findMany({
-        where: {
-          payment: { userId, ...orgFilter },
-        },
-        include: {
-          payment: {
-            select: {
-              id: true,
-              amount: true,
-              currency: true,
-              paymentStatus: true,
-            },
-          },
-        },
-        orderBy: { createdAt: "desc" },
-      }),
+      // Personal-consultee per-Payment invoice surface removed in v0
+      // lockdown (#768). UI now shows OrganizationInvoice rows for
+      // org-funded paths only; PERSONAL consultees can request a
+      // receipt from support until v1.1 re-introduces a per-Payment
+      // invoice flow. Empty array keeps the response shape stable.
+      Promise.resolve([] as const),
 
       // Referral credits
       prisma.referralCredit.findMany({

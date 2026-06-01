@@ -179,7 +179,7 @@ export async function handleStuckPayouts(): Promise<StuckPayoutsResult> {
   );
 
   // Find payouts stuck in PROCESSING for too long
-  const stuckPayouts = await prisma.payout.findMany({
+  const stuckPayouts = await prisma.consultantPayout.findMany({
     where: {
       status: PayoutStatus.PROCESSING,
       updatedAt: { lt: stuckThreshold },
@@ -219,7 +219,7 @@ export async function handleStuckPayouts(): Promise<StuckPayoutsResult> {
       console.log(`   No provider payout ID - marking as FAILED`);
 
       if (payout.retryCount >= MAX_RETRIES) {
-        await prisma.payout.update({
+        await prisma.consultantPayout.update({
           where: { id: payout.id },
           data: {
             status: PayoutStatus.FAILED,
@@ -231,7 +231,7 @@ export async function handleStuckPayouts(): Promise<StuckPayoutsResult> {
         console.log(`   Marked as permanently FAILED (max retries reached)`);
       } else {
         // Reset to APPROVED for retry
-        await prisma.payout.update({
+        await prisma.consultantPayout.update({
           where: { id: payout.id },
           data: {
             status: PayoutStatus.APPROVED,
@@ -290,7 +290,7 @@ export async function handleStuckPayouts(): Promise<StuckPayoutsResult> {
 
     // Update if status changed
     if (mappedStatus !== payout.status) {
-      await prisma.payout.update({
+      await prisma.consultantPayout.update({
         where: { id: payout.id },
         data: {
           status: mappedStatus,

@@ -102,7 +102,7 @@ export async function GET(req: NextRequest) {
         disputes: disputes.map((d) => ({
           id: d.id,
           disputeId: d.disputeId,
-          amount: d.amount,
+          amount: d.amountPaise,
           currency: d.currency,
           status: d.status,
           reason: d.reason,

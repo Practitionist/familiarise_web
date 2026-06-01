@@ -196,7 +196,11 @@ export async function GET(request: NextRequest) {
       return {
         ...rest,
         organizationBadge: firstOrg
-          ? { name: firstOrg.name, slug: firstOrg.slug, logo: firstOrg.logo }
+          ? {
+              name: firstOrg.name,
+              slug: firstOrg.slug,
+              logo: firstOrg.brandingProfile?.logo ?? null,
+            }
           : null,
       };
     });

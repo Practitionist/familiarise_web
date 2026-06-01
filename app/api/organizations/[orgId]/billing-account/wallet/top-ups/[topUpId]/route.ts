@@ -1,12 +1,12 @@
 /**
  * GET /api/organizations/[orgId]/billing-account/wallet/top-ups/[topUpId]
  *
- * `topUpId` is the wallet-entry idempotency key (`we_<uuid>`) returned
- * by `POST /top-ups` as `topUpId` and persisted as
- * `WalletEntry.providerOrderId @unique` — NOT the Razorpay order id
+ * `topUpId` is the top-up idempotency key (`we_<uuid>`) returned by
+ * `POST /top-ups` as `topUpId` and persisted as
+ * `WalletTopUp.providerOrderId @unique` — NOT the Razorpay order id
  * (`order_<…>`). The two ids are minted in the same POST and share
- * `notes.walletEntryOrderId` on the gateway side, but only the wallet-
- * entry id is safe to expose in URLs (the Razorpay id is gateway state).
+ * `notes.walletEntryOrderId` on the gateway side, but only the top-up
+ * id is safe to expose in URLs (the Razorpay id is gateway state).
  *
  * Used by the client post-checkout to poll for "did the webhook
  * confirm my top-up yet?" without exposing the whole ledger.
@@ -28,31 +28,34 @@ export async function GET(
   const access = await requireOrgAccess(orgId, { minimumRole: "MANAGER", canSponsor: true });
   if (access.error) return access.error;
 
-  // `topUpId` is stored as WalletEntry.providerOrderId (see the file
+  // `topUpId` is stored as WalletTopUp.providerOrderId (see the file
   // header). Scope the lookup by billing-account ownership so a stolen
   // id from another tenant can't leak state.
-  const entry = await prisma.walletEntry.findFirst({
+  const topUp = await prisma.walletTopUp.findFirst({
     where: {
       providerOrderId: topUpId,
       billingAccount: { ownerOrgId: orgId },
     },
   });
-  if (!entry) {
+  if (!topUp) {
     return NextResponse.json({ error: "Top-up not found" }, { status: 404 });
   }
 
-  // deltaPaise=0 means the webhook hasn't confirmed yet (pending
-  // placeholder from initiateTopUp). A non-zero delta means the
-  // balance was credited — callers use this to flip UI state.
-  const status = entry.deltaPaise === 0 ? "pending" : "confirmed";
+  // WalletTopUp.status carries the lifecycle directly: PENDING until the
+  // webhook confirms, then CONFIRMED; FAILED if the gateway rejected.
+  const status =
+    topUp.status === "CONFIRMED"
+      ? "confirmed"
+      : topUp.status === "FAILED"
+        ? "failed"
+        : "pending";
   return NextResponse.json({
     topUp: {
-      topUpId: entry.providerOrderId,
-      providerPaymentId: entry.providerPaymentId,
+      topUpId: topUp.providerOrderId,
+      providerPaymentId: topUp.providerPaymentId,
       status,
-      amountPaise: entry.deltaPaise,
-      balanceAfter: entry.balanceAfter,
-      createdAt: entry.createdAt,
+      amountPaise: topUp.amountPaise,
+      createdAt: topUp.createdAt,
     },
   });
 }

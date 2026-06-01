@@ -93,7 +93,7 @@ export async function releaseEarningsFromHold(): Promise<ReleaseResult> {
     // Log details for each released earning
     for (const earning of earningsToRelease) {
       console.log(
-        `✅ Released earning ${earning.id}: ₹${(earning.consultantShare / 100).toFixed(2)} for ${earning.consultantProfile.user.name || "Unknown"}`,
+        `✅ Released earning ${earning.id}: ₹${(earning.consultantSharePaise / 100).toFixed(2)} for ${earning.consultantProfile.user.name || "Unknown"}`,
       );
     }
 
@@ -103,7 +103,7 @@ export async function releaseEarningsFromHold(): Promise<ReleaseResult> {
     console.log(`\n📈 Release Summary:`);
     console.log(`   ✅ Released: ${result.releasedCount} earnings`);
     console.log(
-      `   💰 Total amount: ₹${(earningsToRelease.reduce((sum, e) => sum + e.consultantShare, 0) / 100).toFixed(2)}`,
+      `   💰 Total amount: ₹${(earningsToRelease.reduce((sum, e) => sum + e.consultantSharePaise, 0) / 100).toFixed(2)}`,
     );
   } catch (error) {
     const errorMessage =
@@ -129,21 +129,21 @@ export async function getPendingEarningsStats(): Promise<{
   const [pending, ready] = await Promise.all([
     prisma.consultantEarnings.aggregate({
       where: { status: EarningStatus.PENDING },
-      _sum: { consultantShare: true },
+      _sum: { consultantSharePaise: true },
       _count: true,
     }),
     prisma.consultantEarnings.aggregate({
       where: { status: EarningStatus.READY },
-      _sum: { consultantShare: true },
+      _sum: { consultantSharePaise: true },
       _count: true,
     }),
   ]);
 
   return {
     pendingCount: pending._count,
-    pendingAmount: pending._sum.consultantShare || 0,
+    pendingAmount: pending._sum.consultantSharePaise || 0,
     readyCount: ready._count,
-    readyAmount: ready._sum.consultantShare || 0,
+    readyAmount: ready._sum.consultantSharePaise || 0,
   };
 }
 

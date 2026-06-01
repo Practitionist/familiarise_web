@@ -142,13 +142,6 @@ function renderSubtitle(m: {
       return (
         <span className="text-zinc-500">You pay — org receives the report</span>
       );
-    case "PROJECT":
-      // v2 — not reachable through self-service yet.
-      return (
-        <span className="text-zinc-500">
-          {FUNDING_SOURCE_LABEL.PROJECT} billing
-        </span>
-      );
     case null:
       // No billing account attached — org was set up without one, or it
       // was deleted. Default to a neutral label; server-side will reject

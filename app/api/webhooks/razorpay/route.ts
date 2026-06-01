@@ -15,6 +15,10 @@ import {
   handleRazorpayPayoutWebhook,
   isDbHealthy,
 } from "../utils";
+import {
+  handleOverageMemberSuccess,
+  handleOverageMemberFailure,
+} from "@/lib/payments/webhooks/overage-handlers";
 import { scrubWebhookPayload } from "@/lib/logging/webhook-scrub";
 import {
   razorpayWebhookEnvelopeSchema,
@@ -238,6 +242,12 @@ async function processWebhookEvent(
             capturedEvent.payload.payment.entity.id,
             capturedEvent.payload.payment.entity.amount,
           );
+        } else if (capturedNotes.type === "overage_member") {
+          // #775 — CHARGE_MEMBER overage side-charge (no appointment; routes
+          // on the order id stamped at resume-checkout time).
+          await handleOverageMemberSuccess(
+            capturedEvent.payload.payment.entity.order_id,
+          );
         } else {
           await handlePaymentSuccess(
             capturedEvent.payload.payment.entity.order_id,
@@ -255,6 +265,8 @@ async function processWebhookEvent(
           paidNotes.type === "invoice_payment"
         ) {
           await handleOrgPaymentSuccess(paidNotes);
+        } else if (paidNotes.type === "overage_member") {
+          await handleOverageMemberSuccess(paidEvent.payload.order.entity.id);
         } else {
           await handlePaymentSuccess(
             paidEvent.payload.order.entity.id,
@@ -277,6 +289,8 @@ async function processWebhookEvent(
           failedNotes.type === "invoice_payment"
         ) {
           await handleOrgPaymentFailure(failedNotes, failedEntity.id);
+        } else if (failedNotes.type === "overage_member") {
+          await handleOverageMemberFailure(failedEntity.order_id);
         } else {
           await handlePaymentFailure(failedEntity.order_id);
         }

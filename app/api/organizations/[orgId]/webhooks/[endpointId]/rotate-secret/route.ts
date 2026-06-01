@@ -2,14 +2,16 @@
  * POST /api/organizations/[orgId]/webhooks/[endpointId]/rotate-secret
  *
  * Mints a fresh 32-byte secret for the endpoint and returns it ONCE.
- * The previous secret is overwritten immediately — any in-flight
- * delivery still using the old signature will be rejected by the
- * receiver. Use case: a leaked secret, or rotation hygiene on a
- * compliance schedule.
+ * The prior secret is stashed and `secretRotatedAt` is stamped so the
+ * worker dual-signs deliveries with BOTH secrets for a 24h grace
+ * window (see signing.ts / worker.ts) — receivers stay green while they
+ * roll their env var. Use case: a leaked secret, or rotation hygiene on
+ * a compliance schedule.
  *
- * OWNER-only on purpose — rotating the secret is destructive from the
- * integrator's perspective (their verification code stops working
- * until they update the env var), so we want the gate to be the
+ * OWNER-only on purpose — rotating the secret is sensitive from the
+ * integrator's perspective (the 24h dual-sign window softens the
+ * cutover, but their verification code still must adopt the new secret
+ * before the window closes), so we want the gate to be the
  * highest-trust role. BILLING_ADMIN can pause/disable but not rotate.
  */
 
@@ -49,7 +51,14 @@ export async function POST(
       }
       const next = await tx.webhookEndpoint.update({
         where: { id: endpointId },
-        data: { secret: newSecret },
+        data: {
+          secret: newSecret,
+          // NOTE: holds the previous secret VALUE (not a hash) during the
+          // rotation grace window so the worker can dual-sign; field name
+          // is legacy — rename at the next schema reset. #768
+          previousSecretHash: current.secret,
+          secretRotatedAt: new Date(),
+        },
       });
       await tx.orgAuditLog.create({
         data: {
@@ -58,7 +67,7 @@ export async function POST(
           category: "WEBHOOK",
           action: AUDIT_ACTIONS.WEBHOOK.WEBHOOK_SECRET_ROTATED,
           description: `Rotated secret for webhook endpoint ${current.url}`,
-          details: { endpointId, url: current.url },
+          details: { endpointId, url: current.url, graceWindowHours: 24 },
         },
       });
       return next;

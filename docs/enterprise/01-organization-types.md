@@ -22,6 +22,17 @@ model Organization {
 | `true`     | `true`  | `HYBRID`     | Both flows run independently. Has both records. |
 | `false`    | `false` | `INERT`      | Transitional — rejected at create time (`app/api/organizations/route.ts` validates `canSponsor || canHost`). |
 
+```mermaid
+flowchart TD
+  A[Organization] --> B{canSponsor?}
+  B -- true --> C{canHost?}
+  B -- false --> D{canHost?}
+  C -- true --> HY["HYBRID<br/>BillingAccount + OrganizationPayoutAccount"]
+  C -- false --> SP["SPONSOR<br/>BillingAccount"]
+  D -- true --> HO["HOST<br/>OrganizationPayoutAccount"]
+  D -- false --> IN["INERT — rejected at create"]
+```
+
 `capabilitiesExtra` is a JSON blob reserved for one-off capabilities
 (e.g. an org that also resells third-party content) so future additions
 don't need a migration. The 90% path is covered by the two typed
@@ -105,7 +116,7 @@ uses its own `RateCard`.
 ## Related docs
 
 - `02-funding-and-programs.md` — funding sources on the sponsor side.
-- `04-roles-and-permissions.md` — roles are the same regardless of
+- `03-roles-and-permissions.md` — roles are the same regardless of
   capability; seat of expert vs learner is controlled via Membership.
-- `12-dashboard-pages.md` — which pages render for which capability.
-- `14-scenarios-and-examples.md` — four end-to-end worked cases.
+- `23-dashboard-pages.md` — which pages render for which capability.
+- `50-scenarios-and-examples.md` — four end-to-end worked cases.

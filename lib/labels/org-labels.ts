@@ -68,7 +68,6 @@ export const FUNDING_SOURCE_LABEL: Record<FundingSource, string> = {
   WALLET: "Wallet",
   INVOICE: "Invoice",
   LICENSE: "License",
-  PROJECT: "Project",
 };
 
 export const FUNDING_SOURCE_TAGLINE: Record<FundingSource, string> = {
@@ -80,8 +79,6 @@ export const FUNDING_SOURCE_TAGLINE: Record<FundingSource, string> = {
     "Members book freely. One consolidated invoice at month-end; pay within NET terms.",
   LICENSE:
     "Flat-fee enterprise license. Sessions are unmetered for the contract period.",
-  PROJECT:
-    "Per-engagement fixed-fee or hourly billing. Reserved for v2.",
 };
 
 export const FUNDING_SOURCE_BADGE_CLASS: Record<FundingSource, string> = {
@@ -89,7 +86,6 @@ export const FUNDING_SOURCE_BADGE_CLASS: Record<FundingSource, string> = {
   WALLET: "bg-amber-100 text-amber-900 border-amber-200",
   INVOICE: "bg-orange-100 text-orange-900 border-orange-200",
   LICENSE: "bg-green-100 text-green-900 border-green-200",
-  PROJECT: "bg-slate-100 text-slate-600 border-slate-200",
 };
 
 // ───────────────────────────── MemberRole ─────────────────────────────

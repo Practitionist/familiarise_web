@@ -17,7 +17,6 @@ import { ZodError } from "zod";
 import { sendPaymentSuccessEmail, sendPaymentFailedEmail } from "@/lib/email";
 import {
   createEarningsFromPayment,
-  createInvoiceFromPayment,
   type AppointmentType,
 } from "@/lib/payments/payouts";
 import { markWaitlistAsBooked } from "@/lib/waitlist/slot-handler";
@@ -421,18 +420,11 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     );
   }
 
-  // --- Invoice creation ---
-  try {
-    const invoiceId = await createInvoiceFromPayment(paymentId);
-    if (invoiceId) {
-      console.log(`📄 Invoice created for payment ${paymentId}`);
-    }
-  } catch (invoiceError) {
-    console.error(
-      `⚠️ Failed to create invoice for payment ${paymentId}:`,
-      invoiceError,
-    );
-  }
+  // Personal-consultee per-Payment invoice generation was removed in
+  // the v0 lockdown (#768). Org-funded checkouts continue to roll up
+  // into OrganizationInvoice via the INVOICE cycle cron; personal-card
+  // consultees request a receipt via support@familiarise.work until v1.1
+  // re-introduces a per-Payment surface.
 
   // --- Waitlist update ---
   if (metadata.fromWaitlist) {

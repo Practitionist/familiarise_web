@@ -16,6 +16,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { encryptPAN } from "@/lib/payments/tax/pan-crypto";
 
 const SizeBucketSchema = z.enum([
   "SMALL_1_50",
@@ -63,7 +64,6 @@ const PatchBodySchema = z
     gstStateCode: z.string().length(2).nullable().optional(),
     defaultCancellationPolicy: z.string().max(5000).nullable().optional(),
     defaultRefundPolicy: z.string().max(5000).nullable().optional(),
-    enforceOrganizationPlans: z.boolean().optional(),
     isPublic: z.boolean().optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
@@ -212,18 +212,60 @@ export async function PATCH(
           ...(body.paymentTermsDays !== undefined && {
             paymentTermsDays: body.paymentTermsDays,
           }),
-          ...(body.gstin !== undefined && { gstin: body.gstin }),
-          ...(body.pan !== undefined && { pan: body.pan }),
-          ...(body.gstRegStatus !== undefined && { gstRegStatus: body.gstRegStatus }),
-          ...(body.gstStateCode !== undefined && { gstStateCode: body.gstStateCode }),
+          // gstin / pan / gstRegStatus / gstStateCode live on the
+          // OrganizationTaxInfo satellite, not Organization — write them via the
+          // taxInfo relation (a direct write here is a Prisma runtime error the
+          // conditional-spread pattern hides from tsc).
+          ...(body.gstin !== undefined ||
+          body.pan !== undefined ||
+          body.gstRegStatus !== undefined ||
+          body.gstStateCode !== undefined
+            ? {
+                taxInfo: {
+                  upsert: {
+                    create: {
+                      ...(body.gstin !== undefined && { gstin: body.gstin }),
+                      ...(body.gstRegStatus !== undefined && {
+                        gstRegStatus: body.gstRegStatus,
+                      }),
+                      ...(body.gstStateCode !== undefined && {
+                        gstStateCode: body.gstStateCode,
+                      }),
+                      ...(body.pan
+                        ? (() => {
+                            const { encrypted, last4 } = encryptPAN(body.pan);
+                            return { panEncrypted: encrypted, panLast4: last4 };
+                          })()
+                        : {}),
+                    },
+                    update: {
+                      ...(body.gstin !== undefined && { gstin: body.gstin }),
+                      ...(body.gstRegStatus !== undefined && {
+                        gstRegStatus: body.gstRegStatus,
+                      }),
+                      ...(body.gstStateCode !== undefined && {
+                        gstStateCode: body.gstStateCode,
+                      }),
+                      ...(body.pan !== undefined &&
+                        (body.pan
+                          ? (() => {
+                              const { encrypted, last4 } = encryptPAN(body.pan);
+                              return {
+                                panEncrypted: encrypted,
+                                panLast4: last4,
+                              };
+                            })()
+                          : { panEncrypted: null, panLast4: null })),
+                    },
+                  },
+                },
+              }
+            : {}),
           ...(body.defaultCancellationPolicy !== undefined && {
             defaultCancellationPolicy: body.defaultCancellationPolicy,
           }),
           ...(body.defaultRefundPolicy !== undefined && {
             defaultRefundPolicy: body.defaultRefundPolicy,
-          }),
-          ...(body.enforceOrganizationPlans !== undefined && {
-            enforceOrganizationPlans: body.enforceOrganizationPlans,
           }),
           ...(body.isPublic !== undefined && { isPublic: body.isPublic }),
         },

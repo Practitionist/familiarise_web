@@ -8,24 +8,30 @@ import prisma from "@/lib/prisma";
 export const revalidate = 60;
 
 async function fetchPublicOrgs(industry?: string) {
-  return prisma.organization.findMany({
+  const rows = await prisma.organization.findMany({
     where: {
       isPublic: true,
       canHost: true,
       status: "ACTIVE",
-      ...(industry ? { industry: { equals: industry, mode: "insensitive" } } : {}),
+      ...(industry
+        ? { brandingProfile: { industry: { equals: industry, mode: "insensitive" } } }
+        : {}),
     },
     select: {
       id: true,
       name: true,
       slug: true,
-      logo: true,
-      bannerImage: true,
-      description: true,
-      industry: true,
-      website: true,
       canSponsor: true,
       canHost: true,
+      brandingProfile: {
+        select: {
+          logo: true,
+          bannerImage: true,
+          description: true,
+          industry: true,
+          website: true,
+        },
+      },
       _count: {
         select: {
           memberships: { where: { role: "EXPERT", status: "ACTIVE" } },
@@ -35,11 +41,24 @@ async function fetchPublicOrgs(industry?: string) {
     orderBy: { name: "asc" },
     take: 48,
   });
+  // Flatten brandingProfile so the card renderer reads org.logo / .industry
+  // directly without touching every render site.
+  return rows.map((row) => ({
+    ...row,
+    logo: row.brandingProfile?.logo ?? null,
+    bannerImage: row.brandingProfile?.bannerImage ?? null,
+    description: row.brandingProfile?.description ?? null,
+    industry: row.brandingProfile?.industry ?? null,
+    website: row.brandingProfile?.website ?? null,
+  }));
 }
 
 async function fetchIndustryList() {
-  const rows = await prisma.organization.findMany({
-    where: { isPublic: true, canHost: true, status: "ACTIVE", industry: { not: null } },
+  const rows = await prisma.orgBrandingProfile.findMany({
+    where: {
+      organization: { isPublic: true, canHost: true, status: "ACTIVE" },
+      industry: { not: null },
+    },
     select: { industry: true },
     distinct: ["industry"],
     orderBy: { industry: "asc" },

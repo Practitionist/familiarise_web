@@ -140,17 +140,6 @@ export async function PATCH(
           where: { orgPayoutId: payoutId },
           data: { status: "READY", orgPayoutId: null },
         });
-        await tx.settlementLedgerEntry.create({
-          data: {
-            organizationId: orgId,
-            payoutId: payoutId,
-            kind: "PAYOUT_REVERSED",
-            amountPaise: current.netPayoutPaise,
-            currency: current.currency,
-            notes:
-              body.notes ?? `Payout ${payoutId} cancelled — earnings released`,
-          },
-        });
       }
 
       if (body.status && body.status !== current.status) {

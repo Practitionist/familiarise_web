@@ -477,9 +477,9 @@ export async function reverseCreditsForPayment(
   if (isPartialRefund) {
     const aggregate = await tx.refund.aggregate({
       where: { paymentId, status: "SUCCEEDED" },
-      _sum: { amount: true },
+      _sum: { amountPaise: true },
     });
-    cumulativeRefunded = aggregate._sum.amount ?? refundAmount ?? 0;
+    cumulativeRefunded = aggregate._sum?.amountPaise ?? refundAmount ?? 0;
   }
 
   let totalRestored = 0;

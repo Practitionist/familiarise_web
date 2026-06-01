@@ -29,6 +29,7 @@ type MockTx = {
   programAssignment: {
     findUniqueOrThrow: jest.Mock;
     update: jest.Mock;
+    updateMany: jest.Mock;
   };
   bookingUtilization: {
     upsert: jest.Mock;
@@ -38,8 +39,6 @@ type MockTx = {
     create: jest.Mock;
     aggregate: jest.Mock;
   };
-  $executeRaw: jest.Mock;
-  $queryRaw: jest.Mock;
 };
 
 function makeTx(opts: {
@@ -60,7 +59,14 @@ function makeTx(opts: {
           },
         },
       }),
-      update: jest.fn().mockResolvedValue({}),
+      // CHARGE_* / unlimited path: resolves to the post-increment row.
+      update: jest
+        .fn()
+        .mockResolvedValue(opts.chargeReturning?.[0] ?? {}),
+      // BLOCK path: count===0 ⇒ cap exceeded → throws.
+      updateMany: jest
+        .fn()
+        .mockResolvedValue({ count: opts.blockUpdateRows ?? 1 }),
     },
     bookingUtilization: {
       upsert: jest.fn().mockResolvedValue({}),
@@ -70,8 +76,6 @@ function makeTx(opts: {
       create: jest.fn().mockResolvedValue({}),
       aggregate: jest.fn().mockResolvedValue({ _sum: { engagementsConsumed: 0 } }),
     },
-    $executeRaw: jest.fn().mockResolvedValue(opts.blockUpdateRows ?? 1),
-    $queryRaw: jest.fn().mockResolvedValue(opts.chargeReturning ?? []),
   };
 }
 
@@ -119,7 +123,7 @@ describe("cap edge cases — cap=null (unlimited)", () => {
       priceAtBookingPaise: 50_000_000,
     });
     expect(result.wasOverage).toBe(false);
-    expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(tx.programAssignment.update).toHaveBeenCalledTimes(1);
   });
 
   it("CHARGE_MEMBER + cap=null: wasOverage stays false (the cap path is bypassed)", async () => {
@@ -144,7 +148,8 @@ describe("cap edge cases — degenerate inputs", () => {
       priceAtBookingPaise: 0,
     });
     expect(result.engagementsConsumedDelta).toBe(0);
-    expect(tx.$executeRaw).not.toHaveBeenCalled();
+    expect(tx.programAssignment.update).not.toHaveBeenCalled();
+    expect(tx.programAssignment.updateMany).not.toHaveBeenCalled();
     expect(tx.bookingUtilization.upsert).not.toHaveBeenCalled();
     expect(tx.usageLedgerEntry.create).not.toHaveBeenCalled();
   });
@@ -174,6 +179,7 @@ describe("cap edge cases — degenerate inputs", () => {
       appointmentIds: [],
     });
     expect(result.engagementsConsumedDelta).toBe(0);
-    expect(tx.$executeRaw).not.toHaveBeenCalled();
+    expect(tx.programAssignment.update).not.toHaveBeenCalled();
+    expect(tx.programAssignment.updateMany).not.toHaveBeenCalled();
   });
 });

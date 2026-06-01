@@ -28,7 +28,7 @@ An organization is described by two axes:
 The third primitive — **Program** — is where the commercial terms live.
 Every booking that an org sponsors is attributed to a Program, and every
 Program subtype (`LICENSED_SEAT`, `CREDIT_POOL`) is a row in its own
-config table. See `16-programs.md`.
+config table. See `21-programs.md`.
 
 ### `OrgWorkspaceProfile`
 
@@ -51,7 +51,7 @@ The ER diagram below covers the enterprise-specific models in
 `prisma/schema.prisma`. Fields shown are the load-bearing ones (id,
 key FKs, status enums, settlement-relevant amounts); see the model
 definitions for the full list. For a flowchart-style view that clusters
-models by subsystem, see [`reference/schema-diagram.md`](reference/schema-diagram.md).
+models by subsystem, see [Schema by cluster](#schema-by-cluster) below.
 
 ```mermaid
 erDiagram
@@ -82,8 +82,7 @@ erDiagram
 
     BillingAccount ||--o{ Contract          : "funded by"
     BillingAccount ||--o| BillingSubscription : "recurring billing"
-    BillingAccount ||--o{ WalletEntry       : "wallet ledger"
-    BillingAccount ||--o{ FundingLedgerEntry: "funding ledger"
+    BillingAccount ||--o{ WalletTopUp       : "top-ups"
     BillingAccount ||--o{ OrganizationInvoice : "billed"
 
     Contract ||--o{ Program                 : "subtypes"
@@ -98,9 +97,11 @@ erDiagram
     ProgramAssignment ||--o{ BookingUtilization : "cap accounting"
     BookingUtilization ||--|| Payment       : "1:1 lock"
 
-    OrganizationInvoice ||--o{ SettlementLedgerEntry : "issued / paid"
-    OrganizationPayout  ||--o{ SettlementLedgerEntry : "sent / reversed"
     OrganizationPayout  ||--o{ OrganizationEarnings  : "rolled up"
+
+    LedgerAccount     ||--o{ LedgerEntry       : "balance derived from"
+    LedgerTransaction ||--o{ LedgerEntry       : "balanced posting (2+ legs)"
+    Organization      ||--o{ LedgerAccount     : "WALLET / ORG_PAYABLE / ORG_RECEIVABLE"
 
     Organization {
         string  id              PK
@@ -226,64 +227,152 @@ erDiagram
         string hash                "SHA-256 tamper-evident"
         date   auditRetainedUntil  "+ 7y"
     }
+    WalletTopUp {
+        string id PK
+        string billingAccountId FK
+        string providerOrderId UK "= public topUpId"
+        WalletTopUpStatus status "PENDING|CONFIRMED|FAILED"
+        int amountPaise
+    }
+    LedgerAccount {
+        string id PK "kind|org|consultant|currency"
+        LedgerAccountKind kind
+        string organizationId FK "nullable"
+        string consultantProfileId FK "nullable"
+        Currency currency
+    }
+    LedgerTransaction {
+        string id PK
+        string idempotencyKey UK "e.g. booking:<paymentId>"
+        string kind "BOOKING|TOPUP|PAYOUT|..."
+        string paymentId FK "nullable soft-link"
+    }
+    LedgerEntry {
+        string id PK
+        string transactionId FK
+        string accountId FK
+        LedgerDirection direction "DEBIT|CREDIT"
+        bigint amountPaise "always positive"
+    }
+```
+
+> **Money model:** the three single-entry logs (`WalletEntry`, `FundingLedgerEntry`, `SettlementLedgerEntry`) were replaced by the double-entry journal (`LedgerTransaction`/`LedgerEntry`/`LedgerAccount`) + `WalletTopUp` in #772. `BillingAccount.walletBalance` is now a **derived cache** of the org's `WALLET` account, asserted by the reconciler. See the [money & ledger band](06-money-model-overview.md) (`06`–`14`).
+
+## System architecture
+
+```mermaid
+flowchart TB
+  subgraph Client["Dashboard / API clients"]
+    UI["app/dashboard/organization/[orgId]/**"]
+  end
+  subgraph API["app/api/organizations/** + webhooks"]
+    R["route handlers<br/>(role-gated via lib/auth-helpers)"]
+  end
+  subgraph Lib["lib/**"]
+    ORG["lib/api/organizations<br/>(wallet, programs, rate-card, hierarchy)"]
+    PAY["lib/payments<br/>(ledger, payouts, billing, operations)"]
+    ENT["lib/enterprise<br/>(audit, governance, webhooks)"]
+    CMP["lib/compliance<br/>(gst, tds, msme, irp, dpdp)"]
+  end
+  subgraph Data["Persistence"]
+    PG[("Postgres / Supabase<br/>Prisma")]
+  end
+  subgraph Ext["External"]
+    RZP["Razorpay / RazorpayX"]
+    STREAM["Stream (video/chat)"]
+    NOVU["Novu (notify)"]
+  end
+  subgraph Crons["jobs/** (scheduled)"]
+    CR["invoices · payouts · earnings<br/>reconcile-ledgers · compliance"]
+  end
+  UI --> R --> ORG & ENT & CMP
+  ORG --> PAY --> PG
+  ENT --> PG
+  CMP --> PG
+  RZP -. webhooks .-> R
+  PAY --> RZP
+  R --> STREAM & NOVU
+  CR --> PAY & PG
 ```
 
 ## Index
 
-| # | Doc | Focus |
-|---|-----|-------|
-| 00 | `00-overview.md` | This file. |
-| 01 | `01-organization-types.md` | Capability booleans, the INERT guard, HYBRID semantics. |
-| 02 | `02-funding-and-programs.md` | `FundingSource` enum and Program subtypes; old-name mapping. |
-| 03 | `03-earnings-and-revenue.md` | `RateCard` resolution, bps math, snapshot fields. |
-| 04 | `04-roles-and-permissions.md` | Unified `MemberRole` rank ladder + every API gate. |
-| 05 | `05-organization-lifecycle.md` | `OrgStatus` state machine; contract and program lifecycles. |
-| 06 | `06-expert-lifecycle.md` | Expert apply/approve; `PayoutRecipient`. |
-| 07 | `07-payout-pipeline.md` | Earnings roll-up, `OrganizationPayout` cron, India statutory fields. |
-| 08 | `08-sso-and-authentication.md` | `OrganizationSSOSettings`, `SsoProvider`, `OrgDomainClaim`. |
-| 09 | `09-wallet-and-ledger.md` | `WalletEntry`, `FundingLedgerEntry`, atomic debit. |
-| 10 | `10-invoicing.md` | `OrganizationInvoice`, GST breakdown, IRN, PO 3-way match. |
-| 11 | `11-public-pages-and-discovery.md` | Org catalog, ILIKE search, and how org identity surfaces on the marketplace explore page. |
-| 12 | `12-dashboard-pages.md` | Every page under `app/dashboard/organization/[orgId]/**`. |
-| 13 | `13-feature-flags-and-rollout.md` | `ENABLE_PROVIDER_ORGS` + capability-gated UI. |
-| 14 | `14-scenarios-and-examples.md` | Four worked end-to-end scenarios. |
-| 15 | `15-concurrency-and-locking.md` | Atomic patterns in `lib/api/organizations/**`. |
-| 16 | `16-programs.md` | Program / assignment / `BookingUtilization` internals. |
-| 17 | `17-hierarchy.md` | `parentId` / `rootId` / `depth` columns; UI deferred. |
-| 18 | `18-three-ledger-discipline.md` | Usage / Funding / Settlement ledger invariants. |
-| 19 | `19-harness-verdict.md` | Scenario-by-scenario verdict table. |
-| 20 | `20-payment-legs.md` | `PaymentLeg` model and stackable funding. |
-| 21 | `21-api-reference.md` | Exhaustive route table with roles and audit actions. |
-| 22 | `22-route-migration-table.md` | Old-route → new-route map. |
-| 23 | `23-runbooks.md` | Incident-response procedures + scheduled operational tasks. |
-| 24 | `24-monitoring.md` | Log event taxonomy, alert thresholds, dashboards. |
-| 25 | `25-idempotency-keys.md` | Every side-effect endpoint's idempotency key + anti-patterns. |
-| 28 | `28-jit-and-session-refresh.md` | JIT auto-join, `sessionGeneration` marker, role-change refresh without forced logout. |
-| 30 | `30-rate-limiting.md` | Coverage matrix for auth + SSO + wallet endpoints; why BetterAuth's built-in limiter is disabled. |
-| 36 | `36-cross-cutting-integrations.md` | Per-subsystem map of which areas are enterprise-wired vs deliberately skipped, with code paths and rationale. |
+> The full, current doc index — section map, reading paths, and the `NN-slug → purpose` table for every doc — lives in **[README.md](README.md)**. It is intentionally not duplicated here to avoid drift. The money & ledger band is `06`–`14`; start at [06-money-model-overview](06-money-model-overview.md).
 
-### `explainers/` — narrative high-level docs
+## Schema by cluster
+
+The ER above relates entities; this view groups the same models by **subsystem**, the lens you'll navigate the band by (Identity & Access, Commercial/Billing, Programs, Supply/Payouts, the double-entry Ledger, Compliance).
+
+```mermaid
+flowchart TD
+    subgraph ORG["Organization (anchor)"]
+        Org["Organization\nstatus · canSponsor · canHost · GST · hierarchy"]
+        OrgWorkspace["OrgWorkspaceProfile"]
+        OrgPlan["OrganizationPlan"]
+    end
+    subgraph IAM["Identity & Access"]
+        Membership["Membership\nrole · status"]
+        Member["Member (BetterAuth)"]
+        Invitation["Invitation"]
+        SSOSettings["OrganizationSSOSettings"]
+        DomainClaim["OrgDomainClaim"]
+        SsoProvider["SsoProvider"]
+    end
+    subgraph BILLING["Commercial / Sponsor Side"]
+        BA["BillingAccount\nfundingSource · walletBalance (cache)"]
+        Contract["Contract"]
+        BillSub["BillingSubscription\nactiveSeatCount"]
+        PO["PurchaseOrder"]
+        TopUp["WalletTopUp\nproviderOrderId"]
+        Invoice["OrganizationInvoice\nGST · IRN · lineItems[]"]
+        InvCounter["OrgInvoiceCounter"]
+        RateCard["RateCard\nplatformBps · orgBps · consultantBps"]
+    end
+    subgraph PROGRAMS["Programs & Entitlements"]
+        Program["Program\nLICENSED_SEAT / CREDIT_POOL"]
+        LicSeat["LicensedSeatConfig"]
+        CreditPool["CreditPoolConfig\ncreditsPerCycle (1 credit = ₹1)"]
+        Assignment["ProgramAssignment\nengagementsUsed"]
+        BookUtil["BookingUtilization\nbps snapshot"]
+    end
+    subgraph SUPPLY["Supply / Host Side"]
+        PayoutAcct["OrganizationPayoutAccount"]
+        OrgEarn["OrganizationEarnings\nbps snapshot · status"]
+        OrgPayout["OrganizationPayout\ntds · mustPayByDate"]
+    end
+    subgraph LEDGER["Ledger (double-entry, immutable)"]
+        UsageLedger["UsageLedgerEntry\n(entitlement consumption)"]
+        Account["LedgerAccount\n10 kinds · deterministic id"]
+        Txn["LedgerTransaction\nidempotencyKey · kind"]
+        Entry["LedgerEntry\nDEBIT/CREDIT · amountPaise"]
+        ReconReport["LedgerReconciliationReport"]
+    end
+    subgraph COMPLIANCE["Compliance / DPDP"]
+        Consent["ConsentArtifact"]
+        DataBreach["DataBreach"]
+        AuditLog["OrgAuditLog"]
+    end
+    Org --> Membership & SSOSettings & BA & PayoutAcct & AuditLog
+    BA --> Contract & TopUp & Invoice
+    Contract --> Program
+    Program --> Assignment --> BookUtil
+    Org --> OrgEarn --> OrgPayout
+    Txn --> Entry --> Account
+    Org -.-> Account
+    TopUp -.->|TOPUP| Txn
+    Invoice -.->|INVOICE_PAID| Txn
+    OrgPayout -.->|ORG_PAYOUT| Txn
+    ReconReport -.->|audits| Txn
+    BookUtil -.-> UsageLedger
+```
+
+## The complete guide
 
 | File | Purpose |
 |------|---------|
-| `explainers/complete-guide.md` | End-to-end walkthrough across all enterprise concepts. |
-| `explainers/billing-architecture.md` | Billing-account / funding-source / contract / program architecture. |
+| [`explainers/complete-guide.md`](explainers/complete-guide.md) | the single end-to-end narrative — read the numbered band `00`→`52` as the story, the guide as the connective walkthrough |
 
-### `reference/` — lookup-style docs
-
-| File | Purpose |
-|------|---------|
-| `reference/money-glossary.md` | Plain-English definitions of Refund / Reimbursement / Payout / Referral / Credits + all ~45 money-related models and enums. **Start here if a money term is confusing.** |
-| `reference/schema-diagram.md` | Visual map of the enterprise Prisma schema. |
-| `reference/sso-error-codes.md` | Every typed HTTP error code emitted by the SSO + auth routes, paired with the humanized copy + operator fix. |
-
-### `playbooks/` — actionable how-tos
-
-| File | Purpose |
-|------|---------|
-| `playbooks/billing-sales.md` | Non-technical pitch framed around capability pairs + funding. |
-| `playbooks/billing-technical.md` | Technical playbook for every capability × funding combo. |
-| `playbooks/sso-testing.md` | Mock IdP recipes for local + CI SSO tests. |
+> **Where the old auxiliary docs went.** The former `playbooks/` and `reference/` were folded into the band: SSO testing recipes + typed error codes → [15-sso-and-authentication](15-sso-and-authentication.md); the money vocabulary (Refund/Reimbursement/Payout/Referral/Credits) → [06-money-model-overview](06-money-model-overview.md); the capability × funding matrix → [02-funding-and-programs](02-funding-and-programs.md); the clustered schema view → above.
 
 ## Ground-truth files
 
@@ -368,5 +457,5 @@ across `prisma migrate reset`). Source: `prisma/seedFiles/15a-create-organizatio
 the operator portfolio (`/dashboard/org-workspace/<id>/home`) renders
 populated on first sign-in.
 
-`19-harness-verdict.md` cross-references this grid for the harness
+`51-harness-verdict.md` cross-references this grid for the harness
 table; if a row here changes, update both files together.

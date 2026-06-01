@@ -451,11 +451,9 @@ model Verification {
 ////////////////////////////////////////////////////
 
 model Organization {
-  id       String  @id @default(cuid())
-  name     String
-  slug     String  @unique
-  logo     String?
-  metadata Json?
+  id   String @id @default(cuid())
+  name String
+  slug String @unique
 
   status OrgStatus @default(PENDING_VERIFICATION)
 
@@ -465,23 +463,14 @@ model Organization {
   canSponsor Boolean @default(true)
   canHost    Boolean @default(false)
 
-  // Escape hatch for future capabilities without a migration. The two
-  // columns above (canSponsor, canHost) cover the 90% path; this blob
-  // is for a long-tail capability that we haven't designed a typed
-  // boolean for yet. The UI derives capability labels via
-  // lib/labels/org-labels.ts which consumes both the typed booleans and
-  // this blob, so a new capability can ship without altering every
-  // session-reader. Only add keys here when there's an active customer
-  // ask — speculative slots accumulate into schema noise.
-  capabilitiesExtra Json?
-
-  // Hierarchy — schema-only in v1. No subtree UI/walks; columns kept so future
-  // multi-BU (Wipro-style) support lands without a migration.
-  parentId String?
-  parent   Organization?  @relation("OrgTree", fields: [parentId], references: [id])
-  children Organization[] @relation("OrgTree")
-  depth    Int            @default(0)
-  rootId   String
+  // #771 D3 — group hierarchy for conglomerate buyers (Tata/Reliance/Birla-style
+  // subsidiary groups). Nullable + inert until group-billing/subsidiary-scoping
+  // APIs ship (stubbed 501). Re-adds the parent/root columns dropped in #768 so
+  // a future buyer doesn't force a structural migration. Self-relation.
+  parentOrganizationId String?
+  parentOrganization   Organization?  @relation("OrgHierarchy", fields: [parentOrganizationId], references: [id], onDelete: SetNull)
+  childOrganizations   Organization[] @relation("OrgHierarchy")
+  rootOrganizationId   String? // denormalized group root for fast subsidiary scoping
 
   // India / GCC context (all schema-final; compliance logic stubbed)
   dataResidencyRegion DataRegion        @default(IN)
@@ -491,21 +480,13 @@ model Organization {
   contractCurrency    Currency          @default(INR)
   reportingCurrency   Currency          @default(INR)
 
-  // GST registration (stub-derived at compliance layer)
-  gstin        String?      @db.VarChar(15)
-  gstStateCode String?      @db.VarChar(2)
-  gstRegStatus GstRegStatus @default(UNREGISTERED)
-  pan          String?      @db.VarChar(10)
-  hsnDefault   String       @default("999293") // SAC code for educational/consulting services
-
-  // MSME 43B(h) classification for HOST orgs receiving payouts.
-  // When MICRO / SMALL, payouts must clear within 15 / 45 days (or 15 days
-  // when no written agreement is on file) per CGST Sec 43B(h) — otherwise
-  // the deduction is disallowed for the deductor's income-tax filing.
-  // MEDIUM and NONE fall back to contract.paymentTermsDays. Mirrors the
-  // same fields on ConsultantProfile.
-  msmeStatus                 MsmeStatus @default(NONE)
-  msmeWrittenAgreementOnFile Boolean    @default(false)
+  // #771 D10 — tax / MSME / KYB carved into 1:1 satellites (mirrors
+  // ConsultantTaxInfo). Keeps the core Organization row focused on identity +
+  // capabilities and isolates encrypted PII. Read via the relation include
+  // (`org.taxInfo?.gstin`, `org.msmeInfo?.msmeStatus`, `org.kybVerification?.kybVerifiedAt`).
+  taxInfo         OrganizationTaxInfo?
+  msmeInfo        OrganizationMsmeInfo?
+  kybVerification OrgKybVerification?
 
   // Procurement
   requiresPO       Boolean @default(false)
@@ -519,15 +500,13 @@ model Organization {
   // future generation. Null prefix → slug-derived fallback at issue time.
   invoiceNumberPrefix String?
 
-  // Branding (merged from old OrganizationProfile)
-  bannerImage    String?
-  primaryColor   String?
-  secondaryColor String?
-  description    String?        @db.Text
-  industry       String?
-  website        String?
-  sizeBucket     OrgSizeBucket?
-  billingEmail   String?
+  // #768 lockdown #6 — branding fields carved out into OrgBrandingProfile.
+  // Optional 1:1 sibling pattern (mirrors ConsultantProfile and
+  // OrgWorkspaceProfile). Org-render code reads via the relation include.
+  brandingProfile OrgBrandingProfile?
+
+  // Legacy single-contact billing email — see contact directory below.
+  billingEmail String?
 
   // Contact directory (added 2026-05-15 per enterprise-procurement ask).
   // `billingEmail` above remains the legacy single-contact field; the
@@ -542,7 +521,6 @@ model Organization {
   escalationContactEmail String? @db.VarChar(255)
 
   // Policies
-  enforceOrganizationPlans  Boolean @default(false)
   defaultCancellationPolicy String? @db.Text
   defaultRefundPolicy       String? @db.Text
 
@@ -564,19 +542,15 @@ model Organization {
   invitations Invitation[]
 
   // Typed enterprise model
-  memberships       Membership[]
-  contracts         Contract[]
-  purchaseOrders    PurchaseOrder[]
-  invoices          OrganizationInvoice[]
-  organizationPlans OrganizationPlan[]
-  auditLogs         OrgAuditLog[]
+  memberships    Membership[]
+  contracts      Contract[]
+  purchaseOrders PurchaseOrder[]
+  invoices       OrganizationInvoice[]
+  auditLogs      OrgAuditLog[]
 
   // SSO + domain claims
   ssoSettings  OrganizationSSOSettings?
   domainClaims OrgDomainClaim[]
-
-  // HRIS (stubbed in v1)
-  hrisConfig HrisConfig?
 
   // Plan catalog back-relations
   consultationPlans ConsultationPlan[]
@@ -632,11 +606,17 @@ model Organization {
   /// platform-wide.
   maintenanceWindows MaintenanceWindow[]
 
+  // #778 §D — GST credit notes (Sec 34) issued against this org's invoices.
+  creditNotes CreditNote[]
+
+  // #778 §D — annual aggregate turnover ≥ ₹5cr makes IRN/e-invoice mandatory
+  // (CGST e-invoicing threshold). Drives whether OrganizationInvoice must upload
+  // to the IRP. Flag frozen now; enforcement deferred.
+  aatoAboveEinvoiceThreshold Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([parentId])
-  @@index([rootId])
   @@index([status])
   @@index([canSponsor, canHost])
   @@index([canHost, isPublic, status])
@@ -858,6 +838,39 @@ enum PayoutRecipient {
 // WALLET (GLG credit pool), INVOICE (NET-X postpaid), PROJECT (v2 placeholder).
 // Contract links the org to one or more Programs with negotiated terms.
 
+// #771 D10 — Organization tax identity (1:1 satellite; mirrors ConsultantTaxInfo).
+model OrganizationTaxInfo {
+  organizationId  String          @id
+  organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  gstin           String?         @db.VarChar(15)
+  gstStateCode    String?         @db.VarChar(2)
+  gstRegStatus    GstRegStatus    @default(UNREGISTERED)
+  // PAN encrypted at rest; last 4 cached for "ending XXXX" UI.
+  panEncrypted    Bytes?
+  panLast4        String?         @db.VarChar(4)
+  hsnDefault      String          @default("999293") // SAC code; set 998314/998399 for professional/IT consulting
+  // #769 Comment 4 — multi-jurisdiction prep; today always IN.
+  taxJurisdiction TaxJurisdiction @default(IN)
+}
+
+// #771 D10 — MSME 43B(h) classification for HOST orgs receiving payouts (1:1).
+// MICRO/SMALL → 15/45-day clearance; MEDIUM/NONE fall back to contract terms.
+model OrganizationMsmeInfo {
+  organizationId             String       @id
+  organization               Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  msmeStatus                 MsmeStatus   @default(NONE)
+  msmeWrittenAgreementOnFile Boolean      @default(false)
+}
+
+// #771 D10 — Sumsub KYB verification (1:1). UI blocks INVOICE funding selection
+// until kybVerifiedAt is set (closes #687 invoice-fraud threat model).
+model OrgKybVerification {
+  organizationId    String       @id
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  kybVerifiedAt     DateTime?
+  sumsubApplicantId String?
+}
+
 model BillingAccount {
   id           String        @id @default(uuid())
   ownerOrgId   String        @unique
@@ -869,7 +882,7 @@ model BillingAccount {
 
   // WALLET funding (GLG-style)
   walletBalance Int? // paise
-  walletLedger  WalletEntry[]
+  walletTopUps  WalletTopUp[]
 
   // INVOICE funding
   creditLimit Int? // paise; null = unlimited
@@ -890,7 +903,6 @@ enum FundingSource {
   LICENSE // flat enterprise license (was PREPAID_UNLIMITED)
   WALLET // credit pool (was SEAT_PACK)
   INVOICE // NET-X postpaid (was INVOICED_MONTHLY)
-  PROJECT // v2 reserved
 }
 
 model Contract {
@@ -915,7 +927,6 @@ model Contract {
   // contract (negotiated, contract-specific splits).
   ownedRateCards RateCard[] @relation("RateCardOwnerContract")
 
-  terms        Json? // NET-X, caps, custom clauses
   programs     Program[]
   subscription BillingSubscription?
   // Back-relation for OrganizationInvoice.contract — optional linkage so
@@ -976,33 +987,48 @@ enum BillingCycle {
 // Immutable ledger replacing OrgCreditPool + OrgCreditLedger + OrgCreditPurchase trio.
 // Raw-SQL conditional UPDATE on BillingAccount.walletBalance provides atomicity.
 
-model WalletEntry {
-  id               String         @id @default(uuid())
-  billingAccountId String
-  billingAccount   BillingAccount @relation(fields: [billingAccountId], references: [id], onDelete: Cascade)
-
-  deltaPaise   Int // signed: +topup, -debit
-  reason       WalletReason
-  balanceAfter Int
-  paymentId    String? // linked payment (topup or booking)
-  membershipId String? // who consumed
-  notes        String?
-
-  // Gateway refs for top-up flow (idempotency via providerOrderId @unique)
-  providerOrderId   String? @unique
-  providerPaymentId String?
-
-  createdAt DateTime @default(now())
-
-  @@index([billingAccountId, createdAt])
-  @@index([paymentId])
-}
-
+// #772 B3 — WalletEntry removed. The wallet is a credit-normal liability in the
+// double-entry journal (the org's WALLET LedgerAccount); per-movement history is
+// LedgerEntry on that account, top-up lifecycle is WalletTopUp, and
+// BillingAccount.walletBalance is the derived cache. WalletReason is retained as
+// the domain classifier for walletCredit/walletDebit's `reason` argument.
 enum WalletReason {
   TOPUP
   BOOKING
   REFUND
   ADJUSTMENT
+}
+
+// #772 B3 — top-up idempotency + history record. Replaces the WalletEntry
+// "deltaPaise=0 placeholder" pattern: a top-up's lifecycle (PENDING → CONFIRMED
+// / FAILED) lives here, keyed by providerOrderId @unique. The wallet *balance*
+// movement is the double-entry journal (Dr CASH / Cr WALLET, posted on confirm).
+model WalletTopUp {
+  id               String         @id @default(uuid())
+  billingAccountId String
+  billingAccount   BillingAccount @relation(fields: [billingAccountId], references: [id], onDelete: Cascade)
+
+  // Our idempotency key (we_<uuid>) — also the public topUpId used by
+  // GET /top-ups/{topUpId}. @unique guarantees a webhook redelivery or a
+  // double-POST can't double-credit the wallet.
+  providerOrderId   String            @unique
+  providerPaymentId String? // gateway payment id, set on confirm
+  amountPaise       Int
+  status            WalletTopUpStatus @default(PENDING)
+  notes             String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  confirmedAt DateTime?
+
+  @@index([billingAccountId, createdAt])
+  @@index([status, createdAt])
+}
+
+enum WalletTopUpStatus {
+  PENDING
+  CONFIRMED
+  FAILED
 }
 
 //////////////////////////////////////////////////// PROGRAMS ////////////////////////////////////////////////////
@@ -1058,6 +1084,16 @@ model LicensedSeatConfig {
   overageBehavior            OverageBehavior @default(BLOCK)
   activeSeatCount            Int             @default(0)
   priceCapPerEngagementPaise Int?
+  /// #775 — bps markup applied to the pass-through overage marginal, after
+  /// `priceCapPerEngagementPaise`. Null = no markup (marginal == price). Our
+  /// model passes through the real engagement price (consulting rates are
+  /// heterogeneous) rather than a flat per-unit tier; this is the only knob.
+  overageSurchargeBps        Int?
+  /// #768 lockdown #14/#15 — circuit breaker on CHARGE_ORG runaway. Null =
+  /// no ceiling. Non-null = cumulative OverageEvent.marginalPaise within
+  /// the current cycle cannot exceed this; subsequent bookings fall back
+  /// to BLOCK regardless of overageBehavior.
+  maxOveragePerCyclePaise    Int?
 }
 
 // 1 credit = ₹1 = 100 paise. Fixed; no per-pool override. Per-tier
@@ -1079,11 +1115,19 @@ model LicensedSeatConfig {
 // it because cross-table CHECK constraints are awkward in Postgres
 // and the API+UI layer is tight enough.
 model CreditPoolConfig {
-  programId               String       @id
-  program                 Program      @relation(fields: [programId], references: [id], onDelete: Cascade)
+  programId               String          @id
+  program                 Program         @relation(fields: [programId], references: [id], onDelete: Cascade)
   cycle                   BillingCycle
   creditsPerCycle         Int
   minimumCreditsPerPeriod Int?
+  /// #775 — over-budget routing for the money-meter (parity with
+  /// LicensedSeatConfig). The cap is `creditsPerCycle × 100` paise; bookings
+  /// past it BLOCK, CHARGE_MEMBER, or CHARGE_ORG per this value.
+  overageBehavior         OverageBehavior @default(BLOCK)
+  /// #775 — bps markup on the over-budget marginal (see LicensedSeatConfig).
+  overageSurchargeBps     Int?
+  /// #768 lockdown #14/#15 — circuit breaker (see LicensedSeatConfig).
+  maxOveragePerCyclePaise Int?
 }
 
 model ProgramAssignment {
@@ -1101,12 +1145,18 @@ model ProgramAssignment {
   /// reverseBookingUtilization on refund. Reconcile cron asserts this
   /// equals sum(UsageLedgerEntry.engagementsConsumed) for the period.
   engagementsUsed Int @default(0)
+  /// #775/#753 — CREDIT_POOL money-meter: paise consumed this cycle (1 credit
+  /// = ₹1 = 100 paise). LICENSED_SEAT leaves it 0 (meters by engagement count
+  /// instead). Reconcile asserts this equals sum(UsageLedgerEntry price) for
+  /// the period on CREDIT_POOL assignments.
+  consumedPaise   Int @default(0)
   overageCount    Int @default(0)
 
   utilizations BookingUtilization[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  overageEvents OverageEvent[]
 
   @@unique([programId, membershipId, periodStart])
   @@index([membershipId, periodEnd])
@@ -1158,7 +1208,8 @@ model BookingUtilization {
   /// call, so the set diff returns the full count).
   appointmentIds String[] @default([])
 
-  createdAt DateTime @default(now())
+  createdAt    DateTime      @default(now())
+  overageEvent OverageEvent?
 
   @@index([programAssignmentId])
 }
@@ -1166,8 +1217,6 @@ model BookingUtilization {
 enum ProgramType {
   LICENSED_SEAT
   CREDIT_POOL
-  PROJECT // v2 reserved
-  RETAINER // v2 reserved
 }
 
 enum ProgramStatus {
@@ -1181,6 +1230,21 @@ enum OverageBehavior {
   BLOCK // cap hit → checkout blocked
   CHARGE_MEMBER // cap hit → learner pays overage on own card
   CHARGE_ORG // cap hit → overage added to org invoice
+}
+
+// #775 — explicit OverageEvent lifecycle (was inferred from settledAt +
+// paymentId nullness). Lets reconcile/audit assert a state machine.
+//   CHARGE_ORG:    PENDING → ACCRUED (rolled into issued invoice) → CHARGED (invoice PAID)
+//   CHARGE_MEMBER: PENDING → CHARGED (side-payment SUCCEEDED) | FAILED (abandoned)
+//   either:        → REVERSED (booking refunded)
+//   circuit-breaker veto recorded as BLOCKED (no money moves).
+enum OverageChargeStatus {
+  PENDING
+  ACCRUED
+  CHARGED
+  BLOCKED
+  REVERSED
+  FAILED
 }
 
 // #726 — Plan visibility enum + marketplace leak guard. Org-owned plans
@@ -1388,12 +1452,6 @@ model OrganizationPayout {
   @@index([periodStart, periodEnd])
 }
 
-enum PayoutArrangement {
-  DIRECT // contractor; consultant invoices; TDS 194J/194O; v1 default
-  AOR // Agent of Record; v2 reserved
-  EOR // Employer of Record; v2 reserved
-}
-
 enum ResidencyStatus {
   RESIDENT
   NON_RESIDENT
@@ -1444,8 +1502,10 @@ model OrganizationInvoice {
   totalPaise         Int
   taxRate            Decimal?
 
-  // Line items as JSON: [{ description, quantity, unitPrice, paymentId? }, ...]
-  items Json
+  // Typed line items (was Json `items`). One row per line; HSN code,
+  // tax-per-line, and Payment FK are queryable directly (no JSON
+  // extraction). Cascades on invoice delete.
+  lineItems InvoiceLineItem[]
 
   // GST
   hsnCode       String  @default("999293")
@@ -1501,6 +1561,9 @@ model OrganizationInvoice {
   // INVOICED_MONTHLY: payments rolled up into this invoice
   billedPayments Payment[] @relation("PaymentBillableToOrgInvoice")
 
+  // #778 §D — GST credit notes (Sec 34) adjusting this invoice.
+  creditNotes CreditNote[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1508,6 +1571,39 @@ model OrganizationInvoice {
   @@index([organizationId, status, dueDate])
   @@index([organizationId, fiscalYear, issuedAt])
   @@index([billingCycleStart, billingCycleEnd])
+}
+
+// Typed line items for OrganizationInvoice — replaces the `items` Json
+// column (#768 Comment 1.B.2). Storing one row per line lets the GST
+// audit queries ("sum by HSN", "tax by item", "lines rolling up Payment
+// X") run as flat SQL, not as JSON extraction. Cascades on invoice
+// delete; SetNull on Payment delete so historical lines keep their copy
+// of description / quantity / unitPrice even after the booking is gone.
+model InvoiceLineItem {
+  id             String              @id @default(cuid())
+  invoiceId      String
+  invoice        OrganizationInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  position       Int                 @default(0)
+  description    String              @db.VarChar(500)
+  quantity       Int
+  unitPricePaise Int
+  // Per-line tax. Null when GST is computed only at invoice level
+  // (current state); cron migration will distribute totalTaxPaise across
+  // lines once per-line rates ship.
+  taxPaise       Int?
+  // Per-line HSN. Falls back to invoice.hsnCode at render time.
+  hsnCode        String?
+  // Optional Payment link for INVOICE rollups (one Payment per line on
+  // monthly NET-X cycles).
+  paymentId      String?
+  payment        Payment?            @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  createdAt     DateTime       @default(now())
+  overageEvents OverageEvent[]
+
+  @@index([invoiceId, position])
+  @@index([hsnCode])
+  @@index([paymentId])
 }
 
 // Per-org, per-fiscal-year invoice sequence counter. Allocation pattern
@@ -1651,34 +1747,18 @@ enum OrgAuditCategory {
   WEBHOOK // outbound webhook endpoint CRUD + delivery results
 }
 
-// Org-curated plan catalog. Unchanged semantics; FK renamed to organizationId.
-model OrganizationPlan {
-  id             String       @id @default(uuid())
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+// #778 elegance — the standalone OrganizationPlan catalog (+ its 4 typed config
+// children) was collapsed into the per-type plans. An org's catalog is now
+// simply its org-owned per-type plans (ConsultationPlan/SubscriptionPlan/
+// WebinarPlan/ClassPlan with organizationId set + visibility), which are the
+// rows that actually get booked — one representation instead of a parallel,
+// never-booked shape. See the per-type plan models below.
 
-  planType      AppointmentsType
-  title         String
-  description   String?          @db.Text
-  price         Int // paise
-  priceCurrency Currency         @default(INR)
-
-  isActive Boolean @default(true)
-  config   Json
-
-  assignedConsultantIds String[] @default([])
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([organizationId])
-  @@index([planType])
-}
-
-//////////////////////////////////////////////////// THREE-LEDGER DISCIPLINE ////////////////////////////////////////////////////
-// Usage / Funding / Settlement ledgers. Immutable rows; reconciliation lives
-// in cron jobs not shipped in v1 — see docs/enterprise/18-three-ledger-
-// discipline.md for the invariants.
+//////////////////////////////////////////////////// USAGE LEDGER + DOUBLE-ENTRY JOURNAL ////////////////////////////////////////////////////
+// #772 — the old Funding/Settlement single-entry logs collapsed into the
+// double-entry LedgerTransaction/LedgerEntry journal (below). What remains here
+// is the immutable UsageLedgerEntry (engagement/credit consumption), reconciled
+// nightly against the ProgramAssignment counters.
 
 model UsageLedgerEntry {
   id                  String  @id @default(uuid())
@@ -1700,99 +1780,113 @@ model UsageLedgerEntry {
   @@index([programAssignmentId, createdAt])
 }
 
-// FundingLedgerEntry is deliberately distinct from WalletEntry even
-// though most rows are 1:1 paired (joined via `walletEntryId @unique`).
-// They have different audiences and retention rules:
+// ───────────────────────────────────────────────────────────────────────────
+// #771 D1/D5 — DOUBLE-ENTRY CASH LEDGER (target money model)
 //
-//   WalletEntry           — user-facing dashboard history. Carries
-//                           gateway idempotency keys (`providerOrderId`,
-//                           `providerPaymentId`) and is what the org's
-//                           billing tab queries. Mutable enum
-//                           `WalletReason` is product-friendly.
-//   FundingLedgerEntry    — formal accounting twin. Carries
-//                           `balanceAfterPaise` for point-in-time audit
-//                           and the GRANT-only row type — platform-side
-//                           awards (promotional credits, support
-//                           comps, migration backfill) that have NO
-//                           corresponding WalletEntry. Finance reads
-//                           this; product never does.
+// The three single-entry logs above (WalletEntry, FundingLedgerEntry,
+// SettlementLedgerEntry) collapse into this one journal: every cash event is a
+// balanced transaction (Σ DEBIT == Σ CREDIT), balances are DERIVED (sum of
+// entries on an account), and the GRANT carve-out + "audience" split that
+// justified the old tables become postings + views. `BillingAccount.walletBalance`
+// is retained only as a denormalized cache for the atomic-debit guard, asserted
+// equal to balance(WALLET account) by the reconcile cron.
 //
-// The reconciliation cron asserts:
-//   sum(WalletEntry.deltaPaise where billingAccountId=X)
-//     == BillingAccount.walletBalance (X)
-//   sum(FundingLedgerEntry.deltaPaise where billingAccountId=X)
-//     == BillingAccount.walletBalance (X)
-//
-// Don't merge into one table on the assumption "they're duplicates" —
-// the GRANT carve-out + the audience separation justifies the second
-// table. If grants are eventually exposed to users, the merge becomes
-// viable; track that under the "redundancies" follow-up issue.
-model FundingLedgerEntry {
-  id                String        @id @default(uuid())
-  billingAccountId  String
-  deltaPaise        Int // signed
-  /// Currency of `deltaPaise`. Today every BillingAccount is INR and the
-  /// invariant "sum(deltaPaise) == walletBalance" assumes a single currency
-  /// per account. Once multi-currency wallets land (see issue #711 and
-  /// docs/payments/multi-currency/), the reconciler's invariant will need
-  /// a per-currency split. The column ships now so the historical writes
-  /// have the metadata when that day comes.
-  currency          Currency      @default(INR)
-  reason            FundingReason
-  balanceAfterPaise Int
-  paymentId         String?
-  walletEntryId     String?       @unique
-  notes             String?
+// Writers (Batch 2) go through `postLedgerTxn()`, which asserts the balance
+// invariant; a DB trigger enforces it at COMMIT (added in the reset SQL, since
+// Prisma has no native multi-row CHECK).
+// ───────────────────────────────────────────────────────────────────────────
+enum LedgerAccountKind {
+  CASH // platform gateway/settlement cash
+  WALLET // an org's prepaid balance (a liability we owe the org)
+  PLATFORM_FEE // platform revenue
+  PLATFORM_PROMO // contra-revenue: platform-funded grants/comps + referral credits
+  DISCOUNT // contra-revenue: discount given to the buyer (#771 AF-3 booking posting)
+  CONSULTANT_PAYABLE // owed to a consultant
+  ORG_PAYABLE // owed to a host org
+  ORG_RECEIVABLE // an INVOICE-funded org owes us (accrued, cleared on invoice payment)
+  TDS_PAYABLE // TDS withheld, owed to the government
+  GST_PAYABLE // GST collected, owed to the government
+}
+
+enum LedgerDirection {
+  DEBIT
+  CREDIT
+}
+
+model LedgerAccount {
+  // Deterministic id: "<kind>|<orgId|_>|<membershipId|_>|<currency>" so
+  // resolveAccountId() upserts dedupe per scope without the Postgres
+  // nullable-unique gotcha (a unique index doesn't dedupe NULLs).
+  id                  String            @id
+  // Scope: platform-wide accounts leave both owners null; org / consultant
+  // sub-ledgers set the relevant owner. One account per (owner, kind, currency).
+  organizationId      String?
+  consultantProfileId String?
+  kind                LedgerAccountKind
+  currency            Currency          @default(INR)
+  entries             LedgerEntry[]
 
   createdAt DateTime @default(now())
 
-  @@index([billingAccountId, createdAt])
+  @@unique([organizationId, consultantProfileId, kind, currency])
+  @@index([kind])
 }
 
-model SettlementLedgerEntry {
-  id             String         @id @default(uuid())
-  organizationId String?
+// #778 §B — typed txn kind (was free String). A typo ("BOOKNG") silently broke
+// reconcile/groupBy; the enum makes it a compile error. Account-side kind is the
+// separate LedgerAccountKind. CHARGE_ORG overage rides INVOICE_*, CHARGE_MEMBER
+// rides OVERAGE_MEMBER — no distinct OVERAGE kind.
+enum LedgerTransactionKind {
+  BOOKING
+  TOPUP
+  TOPUP_REFUND
+  INVOICE_ISSUED
+  INVOICE_PAID
+  PAYOUT
+  ORG_PAYOUT
+  REFUND
+  OVERAGE_MEMBER
+  GRANT
+}
+
+model LedgerTransaction {
+  id             String                @id @default(cuid())
+  // Idempotency: natural key of the originating event
+  // (e.g. "topup:<walletOrderId>", "booking:<paymentId>", "payout:<payoutId>").
+  // A retried event re-derives the same key and is a no-op.
+  idempotencyKey String                @unique
+  kind           LedgerTransactionKind
+  description    String?
+  // Sparse soft-links to the originating domain row.
   paymentId      String?
   invoiceId      String?
   payoutId       String?
-  kind           SettlementKind
-  amountPaise    Int // signed: + receive / - outflow
-  currency       Currency
-  notes          String?
 
-  createdAt DateTime @default(now())
+  entries LedgerEntry[]
 
-  @@index([organizationId, createdAt])
-  @@index([kind, createdAt])
-  // Reverse-lookup indexes used by the ledger reconciliation cron
-  // (Phase 4) and by the admin "explain this payment / invoice / payout"
-  // tools. Each FK column is sparse (nullable) so we keep them as
-  // single-column indexes rather than composing them.
+  postedAt DateTime @default(now())
+
+  @@index([postedAt])
   @@index([paymentId])
   @@index([invoiceId])
   @@index([payoutId])
 }
 
-enum FundingReason {
-  TOPUP
-  BOOKING_DEBIT
-  REFUND_CREDIT
-  ADJUSTMENT
-  GRANT
-}
+model LedgerEntry {
+  id            String            @id @default(cuid())
+  transactionId String
+  // Immutable: never cascade-delete a posting (#771 D8). Reversals are
+  // explicit counter-transactions, not row mutations or deletes.
+  transaction   LedgerTransaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  accountId     String
+  account       LedgerAccount     @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  direction     LedgerDirection
+  amountPaise   BigInt
 
-enum SettlementKind {
-  INVOICE_ISSUED
-  INVOICE_PAID
-  PAYMENT_RECEIVED
-  REFUND_ISSUED
-  PAYOUT_SENT
-  // Counter-entry written when a PAYOUT_SENT is reversed (admin cancel,
-  // gateway failure reclaim). Carries the signed-positive amount that
-  // nets the original -netPayout entry to zero for the cancelled window.
-  PAYOUT_REVERSED
-  CHARGEBACK
-  CREDIT_NOTE
+  createdAt DateTime @default(now())
+
+  @@index([accountId, createdAt])
+  @@index([transactionId])
 }
 
 // Snapshot output of the ledger reconciliation auditor
@@ -1867,78 +1961,6 @@ model DataBreach {
   @@index([detectedAt])
 }
 
-model HrisConfig {
-  id             String       @id @default(uuid())
-  organizationId String       @unique
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-
-  provider     HrisProvider
-  tenantKey    String
-  lastSyncedAt DateTime?
-  active       Boolean      @default(false)
-
-  syncJobs    HrisSyncJob[]
-  employeeMap HrisEmployeeMap[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-model HrisSyncJob {
-  id               String         @id @default(uuid())
-  hrisConfigId     String
-  hrisConfig       HrisConfig     @relation(fields: [hrisConfigId], references: [id], onDelete: Cascade)
-  startedAt        DateTime
-  completedAt      DateTime?
-  status           HrisSyncStatus
-  recordsProcessed Int            @default(0)
-  errorLog         String?        @db.Text
-
-  // "Latest sync per config" is the most common read (admin UI shows
-  // last-sync timestamp + status; cron picks up configs whose latest
-  // sync is older than the schedule cadence). Composite ordered by
-  // startedAt DESC effectively serves both `findFirst({ orderBy:
-  // startedAt desc })` and the per-config history view.
-  @@index([hrisConfigId, startedAt])
-  // Powers the failed-sync alerting cron (Phase 5) — `findMany({
-  // where: { status: "FAILED", startedAt: { gte: cutoff } } })`.
-  @@index([status, startedAt])
-}
-
-model HrisEmployeeMap {
-  id                 String     @id @default(uuid())
-  hrisConfigId       String
-  hrisConfig         HrisConfig @relation(fields: [hrisConfigId], references: [id], onDelete: Cascade)
-  organizationId     String
-  membershipId       String?
-  externalEmployeeId String
-  externalDepartment String?
-  externalLocation   String?
-  externalEmail      String?
-  externalManagerId  String?
-  syncedAt           DateTime
-
-  @@unique([hrisConfigId, externalEmployeeId])
-  @@index([organizationId])
-}
-
-enum HrisProvider {
-  WORKDAY
-  BAMBOOHR
-  SAP
-  ORACLE
-  CERIDIAN
-  DARWINBOX
-  CSV
-}
-
-enum HrisSyncStatus {
-  PENDING
-  RUNNING
-  COMPLETED
-  FAILED
-}
-
 //////////////////////////////////////////////////// USER PROFILES and SLOTTING MECHANISM ////////////////////////////////////////////////////
 
 model ConsultantProfile {
@@ -1999,19 +2021,16 @@ model ConsultantProfile {
 
   // Payout relations
   earnings       ConsultantEarnings[]
-  payouts        Payout[]
+  payouts        ConsultantPayout[]
   payoutAccounts PayoutAccount[]
 
   // Tax & compliance
-  taxInfo    ConsultantTaxInfo?
-  tdsRecords TDSRecord[]
+  taxInfo        ConsultantTaxInfo?
+  tdsRecords     TDSRecord[]
+  tdsAdjustments TdsAdjustment[] // #778 §D — refund-driven TDS reversals
 
   // Profile verification
   verificationRequests ConsultantProfileVerification[]
-
-  // Cached balances (in smallest currency unit, e.g., paise)
-  totalRevenue   Int @default(0)
-  pendingRevenue Int @default(0)
 
   // Enterprise: optional org memberships. A consultant can belong to zero or
   // more HOST/HYBRID orgs via typed Membership rows.
@@ -2019,23 +2038,26 @@ model ConsultantProfile {
   isIndependent Boolean      @default(true)
 
   // India statutory (compliance stubs read these)
-  panNumber                       String?           @db.VarChar(10)
-  residencyStatus                 ResidencyStatus   @default(RESIDENT)
+  panNumber                       String?         @db.VarChar(10)
+  residencyStatus                 ResidencyStatus @default(RESIDENT)
+  // #778 §D — TDS thresholds/sections differ by payee entity type; without it
+  // non-individuals are mis-withheld. This is the schema half of the deferred
+  // ₹50K/194J threshold path (#778 §E/§F). Threshold logic deferred.
+  taxEntityType                   TaxEntityType   @default(INDIVIDUAL)
   tdsSection                      String? // "194J" | "194O" | "194C"
   // Stored as Float (not Decimal) so the field can safely cross the
   // Server→Client boundary in Next.js. TDS rates are at most 2 decimal
   // places (10.00, 7.50, 0.10), well within Float precision.
   tdsRate                         Float?
   tdsLowerRateCert                String? // Section 197 cert reference
-  msmeStatus                      MsmeStatus        @default(NONE)
-  udyamNumber                     String?           @db.VarChar(19)
-  writtenAgreementWithFamiliarise Boolean           @default(false)
-  providerCountry                 String            @default("IN")
+  msmeStatus                      MsmeStatus      @default(NONE)
+  udyamNumber                     String?         @db.VarChar(19)
+  writtenAgreementWithFamiliarise Boolean         @default(false)
+  providerCountry                 String          @default("IN")
   rbiPurposeCode                  String? // P0802 | P0807
-  bankCurrency                    Currency          @default(INR)
+  bankCurrency                    Currency        @default(INR)
   swiftBic                        String?
   ibanOrAccount                   String?
-  payoutArrangement               PayoutArrangement @default(DIRECT)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3230,6 +3252,14 @@ model Payment {
   displayCurrencyAtCheckout String? @db.VarChar(3) // Currency code shown to the buyer at checkout
   exchangeRateAtCheckout    Float? // Snapshot of INR→displayCurrencyAtCheckout for audit
 
+  // #778 §D — GST place-of-supply (Sec 12/13) for B2C: buyer's state code, else
+  // every interstate sale wrongly defaults. Derivation/IGST-vs-CGST split deferred.
+  consumerStateCode    String? @db.VarChar(2)
+  // #778 §D — GST TCS u/s 52 collected on this payment (we're likely an e-commerce
+  // operator owing 1% on registered consultants). paise; #780 widens to BigInt.
+  // Collection + GSTR-8 filing flag-gated/deferred pending CA signoff.
+  gstTcsCollectedPaise Int?
+
   user           User          @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId         String
   appointment    Appointment?  @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
@@ -3243,7 +3273,6 @@ model Payment {
   // Payout relations
   earnings     ConsultantEarnings[]
   creditUsages ReferralCreditUsage[]
-  invoice      Invoice?
 
   // Enterprise: optional org tagging.
   // Set on payments made by an org member (fundingSource: PERSONAL/WALLET/INVOICE/LICENSE).
@@ -3264,6 +3293,7 @@ model Payment {
   organizationEarnings       OrganizationEarnings[] // PROVIDER/HYBRID 3-way split (one per org)
   organizationInvoiceSettled OrganizationInvoice?   @relation("OrgInvoicePayment") // back-relation for OrganizationInvoice.payment
   bookingUtilization         BookingUtilization?    @relation("PaymentBookingUtilization") // Program entitlement usage
+  invoiceLineItems           InvoiceLineItem[] // back-relation for InvoiceLineItem.payment
 
   // Stackable funding. A Payment may be split across multiple sources
   // — e.g. ₹500 referral credit + ₹1,500 card. When `legs.length > 0`,
@@ -3272,8 +3302,15 @@ model Payment {
   // off `amount` + `paymentMethod` alone).
   legs PaymentLeg[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // #775 — CHARGE_MEMBER overage side-charge links back to the booking
+  // Payment that breached the cap. null on normal bookings.
+  parentPaymentId String?
+  parentPayment   Payment?  @relation("OverageSideCharge", fields: [parentPaymentId], references: [id], onDelete: SetNull)
+  childPayments   Payment[] @relation("OverageSideCharge")
+
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  overageEvents OverageEvent[]
 
   // Allow multiple users to pay for same appointment (webinars/classes)
   @@unique([userId, appointmentId])
@@ -3286,6 +3323,8 @@ model Payment {
   @@index([paymentStatus, createdAt])
   @@index([organizationId])
   @@index([billableToOrgInvoiceId])
+  @@index([parentPaymentId])
+  @@index([discountCodeId])
 }
 
 // Stackable funding leg. Each row captures one source contribution to a
@@ -3360,7 +3399,7 @@ enum PaymentStatus {
 
 model Refund {
   id                   String         @id @default(uuid())
-  amount               Int // Amount refunded in smallest currency unit (e.g., cents for USD)
+  amountPaise          Int // Amount refunded in paise
   currency             String
   reason               String? // Reason for refund
   status               RefundStatus
@@ -3391,7 +3430,7 @@ enum RefundStatus {
 
 model Dispute {
   id                 String         @id @default(uuid())
-  amount             Int // Disputed amount in smallest currency unit
+  amountPaise        Int // Disputed amount in paise
   currency           String
   reason             String // Dispute reason from gateway
   status             DisputeStatus
@@ -3469,15 +3508,20 @@ model ConsultantEarnings {
   paymentId           String
   payoutId            String?
 
-  // Revenue breakdown
-  grossAmount         Int // Total sale price
-  platformFee         Int // Platform cut (20%)
-  consultantShare     Int // Consultant cut (80%)
-  refundedShareAmount Int @default(0) // Cumulative refunded amount (for partial refunds, in smallest currency unit)
+  // Revenue breakdown (paise)
+  grossAmount          Int // Total sale price (paise)
+  platformFeePaise     Int // Platform cut (20%)
+  consultantSharePaise Int // Consultant cut (80%)
+  refundedShareAmount  Int  @default(0) // Cumulative refunded amount in paise
+  // #778 §D — GST TCS u/s 52 accrued against this consultant's supply (owed to
+  // govt, reconciled into GstTcsBatch). paise; #780 widens to BigInt. Impl deferred.
+  gstTcsAccruedPaise   Int?
 
   // Collaborator support
-  role            EarningRole @default(OWNER)
-  sharePercentage Float       @default(100)
+  role     EarningRole @default(OWNER)
+  // #772 B5 — basis points (10000 = 100%) for integer money math, replacing the
+  // Float percentage. Derived display field; the authoritative cut is the paise.
+  shareBps Int         @default(10000)
 
   // Status tracking
   status    EarningStatus @default(PENDING)
@@ -3492,7 +3536,7 @@ model ConsultantEarnings {
 
   consultantProfile ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   payment           Payment           @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  payout            Payout?           @relation(fields: [payoutId], references: [id])
+  payout            ConsultantPayout? @relation(fields: [payoutId], references: [id])
 
   @@unique([paymentId, consultantProfileId, role])
   @@index([consultantProfileId, status])
@@ -3501,7 +3545,11 @@ model ConsultantEarnings {
   @@index([paymentId])
 }
 
-model Payout {
+/// Payouts to individual consultants (1099-style). The parallel
+/// OrganizationPayout serves HOST/HYBRID orgs receiving the org-share
+/// portion of a 3-way split. Renamed from `Payout` in the v0 lockdown
+/// (#768 Lockdown #8) to make the split explicit.
+model ConsultantPayout {
   id                  String         @id @default(cuid())
   consultantProfileId String
   provider            PaymentGateway
@@ -3525,8 +3573,10 @@ model Payout {
   approvedAt    DateTime?
   approvedBy    String?
 
-  // Idempotency (required by Razorpay from March 2025)
-  idempotencyKey String? @unique
+  // Idempotency (required by Razorpay from March 2025). #778 §B — NOT NULL:
+  // both payout creators stamp `payout_<profile>_<batch>`; a transfer must never
+  // submit without a dedupe key.
+  idempotencyKey String @unique
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3621,7 +3671,7 @@ model TDSRecord {
   form26QFilingDate DateTime?
 
   consultantProfile ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  payout            Payout?           @relation(fields: [payoutId], references: [id])
+  payout            ConsultantPayout? @relation(fields: [payoutId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3631,30 +3681,134 @@ model TDSRecord {
   @@index([reportedInForm26Q])
 }
 
-model Invoice {
-  id            String        @id @default(cuid())
-  paymentId     String?       @unique
-  invoiceNumber String        @unique // INV-YYYYMM-XXXXX
-  amount        Int
-  currency      String        @default("INR")
-  status        PaymentStatus @default(PENDING)
-  items         Json // Line items with HSN codes
-  pdfUrl        String?
-  dueDate       DateTime?
-  paidAt        DateTime?
+// #778 §D — payee entity type. TDS thresholds + section differ by type; the
+// ₹50K/194J threshold path (deferred, §F) keys off this.
+enum TaxEntityType {
+  INDIVIDUAL
+  HUF
+  PARTNERSHIP
+  LLP
+  COMPANY
+}
 
-  // Tax breakdown
-  taxAmount Int? // in paise — GST amount
-  taxRate   Float? // 18% for services
-  hsnCode   String? // SAC code (999293 for consulting)
+// #778 §D — GST credit note (Sec 34). A refund without a credit note is a GST
+// filing mismatch. Schema + refund-flow stamping land now; GSTR-1 return export
+// deferred (§F). Mirrors OrganizationInvoice's tax breakout + per-org sequence.
+enum CreditNoteStatus {
+  DRAFT
+  ISSUED
+  CANCELLED
+}
+
+model CreditNote {
+  id               String @id @default(cuid())
+  // Sequential per-org per CGST Rule 53; mirrors OrganizationInvoice.invoiceNumber.
+  creditNoteNumber String
+  fiscalYear       Int    @default(0)
+
+  organizationId String
+  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  // Original invoice this CN adjusts (Sec 34 requires the linkage). Nullable for
+  // B2C/unregistered cases where no GST invoice was issued.
+  invoiceId      String?
+  invoice        OrganizationInvoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  // Triggering refund, when the CN arises from one.
+  refundId       String?
+  reason         String?
+
+  // Money (paise; #780 widens to BigInt). Mirror the invoice tax split so the
+  // CN nets cleanly against it.
+  subtotalPaise Int
+  igstPaise     Int @default(0)
+  cgstPaise     Int @default(0)
+  sgstPaise     Int @default(0)
+  totalPaise    Int
+
+  status   CreditNoteStatus @default(DRAFT)
+  issuedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  payment Payment? @relation(fields: [paymentId], references: [id])
+  @@unique([organizationId, creditNoteNumber])
+  @@index([organizationId, fiscalYear])
+  @@index([invoiceId])
+}
 
-  @@index([invoiceNumber])
+// #778 §D — refund-driven TDS reversal: a negative line in the revised 26Q/27Q
+// when previously-withheld TDS is reversed on refund. Schema now; FVU export (§F)
+// deferred.
+model TdsAdjustment {
+  id                  String            @id @default(cuid())
+  consultantProfileId String
+  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onDelete: Restrict)
+  // What this adjusts.
+  tdsRecordId         String?
+  payoutId            String?
+  refundId            String? // triggering refund
+
+  financialYear String // "2026-27"
+  quarter       Int // 1-4
+  // Signed paise; negative reverses prior withholding (#780 widens to BigInt).
+  amountPaise   Int
+  reason        String?
+
+  reportedInForm26Q Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([consultantProfileId, financialYear])
+  @@index([payoutId])
+}
+
+// #778 §D — GST TCS u/s 52 monthly aggregation for GSTR-8. We're very likely an
+// e-commerce operator owing 1% TCS on registered consultants. Per-payment
+// collection (Payment.gstTcsCollectedPaise) + per-earning accrual
+// (ConsultantEarnings.gstTcsAccruedPaise) reconcile into one batch per month.
+// Collection + filing flag-gated pending CA signoff (§F).
+enum GstTcsBatchStatus {
+  OPEN
+  FILED
+}
+
+model GstTcsBatch {
+  id            String @id @default(cuid())
+  financialYear String // "2026-27"
+  month         Int // 1-12 (GSTR-8 is monthly)
+
+  // Aggregates for the period (paise; #780 widens to BigInt).
+  netSupplyPaise    Int @default(0)
+  tcsCollectedPaise Int @default(0)
+
+  status         GstTcsBatchStatus @default(OPEN)
+  filedAt        DateTime?
+  gstr8AckNumber String?
+
+  adjustments GstTcsAdjustment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([financialYear, month])
   @@index([status])
+}
+
+// #778 §D — refund reversal of previously-collected GST TCS, netted into the
+// batch for the period in which the refund occurs.
+model GstTcsAdjustment {
+  id      String       @id @default(cuid())
+  batchId String?
+  batch   GstTcsBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+
+  paymentId   String? // original payment
+  refundId    String? // triggering refund
+  // Signed paise; negative reverses TCS on refund (#780 widens to BigInt).
+  amountPaise Int
+  reason      String?
+
+  createdAt DateTime @default(now())
+
+  @@index([batchId])
   @@index([paymentId])
 }
 
@@ -3814,15 +3968,20 @@ enum CreditSource {
 //////////////////////////////////////////////////// COLLABORATOR SYSTEM ////////////////////////////////////////////////////
 
 model WebinarCollaborator {
-  id                     String                  @id @default(cuid())
-  consultantProfileId    String
-  webinarPlanId          String
-  role                   WebinarCollaboratorRole @default(CO_HOST)
-  permissions            Json?
-  revenueSharePercentage Float
-  status                 CollaboratorStatus      @default(PENDING)
-  invitedById            String
-  respondedAt            DateTime?
+  id                  String                  @id @default(cuid())
+  consultantProfileId String
+  webinarPlanId       String
+  role                WebinarCollaboratorRole @default(CO_HOST)
+  // #768 lockdown #12 — replaced permissions Json with typed booleans.
+  canApprovePayment   Boolean                 @default(false)
+  canViewAnalytics    Boolean                 @default(false)
+  canEditEvent        Boolean                 @default(false)
+  canSeeAttendees     Boolean                 @default(false)
+  // #772 B5 — basis points (e.g. 3000 = 30%) for integer money math.
+  revenueShareBps     Int
+  status              CollaboratorStatus      @default(PENDING)
+  invitedById         String
+  respondedAt         DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3837,15 +3996,20 @@ model WebinarCollaborator {
 }
 
 model ClassCollaborator {
-  id                     String                @id @default(cuid())
-  consultantProfileId    String
-  classPlanId            String
-  role                   ClassCollaboratorRole @default(CO_INSTRUCTOR)
-  permissions            Json?
-  revenueSharePercentage Float
-  status                 CollaboratorStatus    @default(PENDING)
-  invitedById            String
-  respondedAt            DateTime?
+  id                  String                @id @default(cuid())
+  consultantProfileId String
+  classPlanId         String
+  role                ClassCollaboratorRole @default(CO_INSTRUCTOR)
+  // #768 lockdown #12 — replaced permissions Json with typed booleans.
+  canApprovePayment   Boolean               @default(false)
+  canViewAnalytics    Boolean               @default(false)
+  canEditEvent        Boolean               @default(false)
+  canSeeAttendees     Boolean               @default(false)
+  // #772 B5 — basis points (e.g. 3000 = 30%) for integer money math.
+  revenueShareBps     Int
+  status              CollaboratorStatus    @default(PENDING)
+  invitedById         String
+  respondedAt         DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4196,7 +4360,6 @@ model MaintenanceWindow {
   startedBy    String?
   endedBy      String?
   bypassSecret String?
-  metadata     Json?
 
   /// PR #655 Tier 1 multi-tenant column. NULL = platform-wide window
   /// (every legacy row + the default for ops-triggered downtime).
@@ -4439,4 +4602,77 @@ enum OrgDataExportStatus {
   READY
   FAILED
   EXPIRED
+}
+
+//////////////////////////////////////////////////// V0 LOCKDOWN ADDITIONS (#768) ////////////////////////////////////////////////////
+
+/// #768 lockdown #6 — branding carve-out from Organization (was God-Model
+/// resident; mirrors ConsultantProfile + OrgWorkspaceProfile pattern).
+/// 1:1 with Organization; row created lazily on first branding edit.
+model OrgBrandingProfile {
+  organizationId String       @id
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  logo           String?
+  bannerImage    String?
+  primaryColor   String?
+  secondaryColor String?
+  description    String?        @db.Text
+  industry       String?
+  website        String?
+  sizeBucket     OrgSizeBucket?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// #768 lockdown #14 — append-only OverageEvent table (Stripe Meter
+/// inspired). One row per booking that exceeded its program cap.
+/// CHARGE_MEMBER rows settle instantly (paymentId stamped at checkout);
+/// CHARGE_ORG rows accumulate until the cycle-close cron rolls them
+/// into a single InvoiceLineItem on the org's renewal invoice.
+model OverageEvent {
+  id                   String              @id @default(cuid())
+  programAssignmentId  String
+  programAssignment    ProgramAssignment   @relation(fields: [programAssignmentId], references: [id], onDelete: Cascade)
+  bookingUtilizationId String              @unique
+  bookingUtilization   BookingUtilization  @relation(fields: [bookingUtilizationId], references: [id], onDelete: Cascade)
+  overageBehavior      OverageBehavior
+  /// #778 elegance — the marginal split into its two components so the money is
+  /// auditable and GST-itemizable. `basePaise` is the pass-through over-cap
+  /// portion of the real booking price (after `priceCapPerEngagementPaise`);
+  /// `surchargePaise` is the `overageSurchargeBps` markup on top. Invariant:
+  /// `marginalPaise == basePaise + surchargePaise`, and (covered) + basePaise ==
+  /// booking price. `marginalPaise` stays the authoritative charged total.
+  basePaise            Int                 @default(0)
+  surchargePaise       Int                 @default(0)
+  marginalPaise        Int
+  currency             Currency            @default(INR)
+  chargeStatus         OverageChargeStatus @default(PENDING)
+  /// CHARGE_MEMBER: Payment row for the instant overage charge.
+  /// CHARGE_ORG: Payment row of the rolled-up cycle invoice.
+  paymentId            String?
+  payment              Payment?            @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  /// CHARGE_ORG: the InvoiceLineItem the cycle-close cron emitted.
+  invoiceLineItemId    String?
+  invoiceLineItem      InvoiceLineItem?    @relation(fields: [invoiceLineItemId], references: [id], onDelete: SetNull)
+  settledAt            DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([programAssignmentId, createdAt])
+  @@index([settledAt])
+  @@index([chargeStatus])
+}
+
+/// #769 Comment 4 — multi-jurisdiction tax prep. Today every org is IN;
+/// when the first non-India customer signs we refactor India-specific
+/// invoice columns into IndianTaxBreakdown and add UsSalesTaxBreakdown
+/// etc. The enum lives now so the eventual migration is a single shot.
+enum TaxJurisdiction {
+  IN
+  US
+  JP
+  GB
+  EU
 }

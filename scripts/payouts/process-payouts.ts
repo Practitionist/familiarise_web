@@ -157,7 +157,7 @@ async function processSinglePayout(payout: {
 
   try {
     // Mark as processing
-    await prisma.payout.update({
+    await prisma.consultantPayout.update({
       where: { id: payout.id },
       data: { status: PayoutStatus.PROCESSING },
     });
@@ -198,7 +198,7 @@ async function processSinglePayout(payout: {
     }
 
     // Update payout with provider ID
-    await prisma.payout.update({
+    await prisma.consultantPayout.update({
       where: { id: payout.id },
       data: {
         providerPayoutId,
@@ -214,7 +214,7 @@ async function processSinglePayout(payout: {
       error instanceof Error ? error.message : "Unknown error";
 
     // Mark as failed
-    await prisma.payout.update({
+    await prisma.consultantPayout.update({
       where: { id: payout.id },
       data: {
         status: PayoutStatus.FAILED,
@@ -255,7 +255,7 @@ export async function processApprovedPayouts(): Promise<ProcessingResult> {
 
   try {
     // Get all approved payouts
-    const approvedPayouts = await prisma.payout.findMany({
+    const approvedPayouts = await prisma.consultantPayout.findMany({
       where: { status: PayoutStatus.APPROVED },
       include: {
         consultantProfile: {
@@ -379,12 +379,12 @@ export async function getProcessingStats(): Promise<{
   processingAmount: number;
 }> {
   const [approved, processing] = await Promise.all([
-    prisma.payout.aggregate({
+    prisma.consultantPayout.aggregate({
       where: { status: PayoutStatus.APPROVED },
       _sum: { amount: true },
       _count: true,
     }),
-    prisma.payout.aggregate({
+    prisma.consultantPayout.aggregate({
       where: { status: PayoutStatus.PROCESSING },
       _sum: { amount: true },
       _count: true,

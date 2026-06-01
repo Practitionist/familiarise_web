@@ -44,7 +44,10 @@ export async function GET(req: NextRequest) {
       expiresAt: true,
       role: true,
       organization: {
-        select: { name: true, logo: true },
+        select: {
+          name: true,
+          brandingProfile: { select: { logo: true } },
+        },
       },
     },
   });
@@ -62,7 +65,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(
     {
       orgName: invitation.organization.name,
-      orgLogo: invitation.organization.logo ?? null,
+      orgLogo: invitation.organization.brandingProfile?.logo ?? null,
       role: invitation.role,
       expiresAt: invitation.expiresAt.toISOString(),
     },
