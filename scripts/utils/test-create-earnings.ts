@@ -257,14 +257,6 @@ async function createEarningsForPayment(
     },
   });
 
-  // Update consultant's pending revenue
-  await prisma.consultantProfile.update({
-    where: { id: consultantProfile.id },
-    data: {
-      pendingRevenue: { increment: consultantSharePaise },
-    },
-  });
-
   return {
     success: true,
     earningsId: earnings.id,

@@ -1452,10 +1452,6 @@ model OrganizationPayout {
   @@index([periodStart, periodEnd])
 }
 
-enum PayoutArrangement {
-  DIRECT // contractor; consultant invoices; TDS 194J/194O; v1 default
-}
-
 enum ResidencyStatus {
   RESIDENT
   NON_RESIDENT
@@ -1758,10 +1754,11 @@ enum OrgAuditCategory {
 // rows that actually get booked — one representation instead of a parallel,
 // never-booked shape. See the per-type plan models below.
 
-//////////////////////////////////////////////////// THREE-LEDGER DISCIPLINE ////////////////////////////////////////////////////
-// Usage / Funding / Settlement ledgers. Immutable rows; reconciliation lives
-// in cron jobs not shipped in v1 — see docs/enterprise/18-three-ledger-
-// discipline.md for the invariants.
+//////////////////////////////////////////////////// USAGE LEDGER + DOUBLE-ENTRY JOURNAL ////////////////////////////////////////////////////
+// #772 — the old Funding/Settlement single-entry logs collapsed into the
+// double-entry LedgerTransaction/LedgerEntry journal (below). What remains here
+// is the immutable UsageLedgerEntry (engagement/credit consumption), reconciled
+// nightly against the ProgramAssignment counters.
 
 model UsageLedgerEntry {
   id                  String  @id @default(uuid())
@@ -1782,41 +1779,6 @@ model UsageLedgerEntry {
   @@index([membershipId, createdAt])
   @@index([programAssignmentId, createdAt])
 }
-
-// FundingLedgerEntry is deliberately distinct from WalletEntry even
-// though most rows are 1:1 paired (joined via `walletEntryId @unique`).
-// They have different audiences and retention rules:
-//
-//   WalletEntry           — user-facing dashboard history. Carries
-//                           gateway idempotency keys (`providerOrderId`,
-//                           `providerPaymentId`) and is what the org's
-//                           billing tab queries. Mutable enum
-//                           `WalletReason` is product-friendly.
-//   FundingLedgerEntry    — formal accounting twin. Carries
-//                           `balanceAfterPaise` for point-in-time audit
-//                           and the GRANT-only row type — platform-side
-//                           awards (promotional credits, support
-//                           comps, migration backfill) that have NO
-//                           corresponding WalletEntry. Finance reads
-//                           this; product never does.
-//
-// The reconciliation cron asserts:
-//   sum(WalletEntry.deltaPaise where billingAccountId=X)
-//     == BillingAccount.walletBalance (X)
-//   sum(FundingLedgerEntry.deltaPaise where billingAccountId=X)
-//     == BillingAccount.walletBalance (X)
-//
-// Don't merge into one table on the assumption "they're duplicates" —
-// the GRANT carve-out + the audience separation justifies the second
-// table. If grants are eventually exposed to users, the merge becomes
-// viable; track that under the "redundancies" follow-up issue.
-// #772 B1 — FundingLedgerEntry removed; the double-entry journal (LedgerEntry)
-// is the accounting source of truth. WalletEntry remains as the wallet history
-// + top-up idempotency record (until B3).
-
-// #772 B2 — SettlementLedgerEntry + SettlementKind removed; the double-entry
-// journal (LedgerTransaction.kind: INVOICE_ISSUED / INVOICE_PAID / PAYOUT / …)
-// + OrgAuditLog are the settlement audit trail.
 
 // ───────────────────────────────────────────────────────────────────────────
 // #771 D1/D5 — DOUBLE-ENTRY CASH LEDGER (target money model)
@@ -2070,37 +2032,32 @@ model ConsultantProfile {
   // Profile verification
   verificationRequests ConsultantProfileVerification[]
 
-  // Cached balances (in smallest currency unit, e.g., paise)
-  totalRevenue   Int @default(0)
-  pendingRevenue Int @default(0)
-
   // Enterprise: optional org memberships. A consultant can belong to zero or
   // more HOST/HYBRID orgs via typed Membership rows.
   memberships   Membership[] @relation("ConsultantMembership")
   isIndependent Boolean      @default(true)
 
   // India statutory (compliance stubs read these)
-  panNumber                       String?           @db.VarChar(10)
-  residencyStatus                 ResidencyStatus   @default(RESIDENT)
+  panNumber                       String?         @db.VarChar(10)
+  residencyStatus                 ResidencyStatus @default(RESIDENT)
   // #778 §D — TDS thresholds/sections differ by payee entity type; without it
   // non-individuals are mis-withheld. This is the schema half of the deferred
   // ₹50K/194J threshold path (#778 §E/§F). Threshold logic deferred.
-  taxEntityType                   TaxEntityType     @default(INDIVIDUAL)
+  taxEntityType                   TaxEntityType   @default(INDIVIDUAL)
   tdsSection                      String? // "194J" | "194O" | "194C"
   // Stored as Float (not Decimal) so the field can safely cross the
   // Server→Client boundary in Next.js. TDS rates are at most 2 decimal
   // places (10.00, 7.50, 0.10), well within Float precision.
   tdsRate                         Float?
   tdsLowerRateCert                String? // Section 197 cert reference
-  msmeStatus                      MsmeStatus        @default(NONE)
-  udyamNumber                     String?           @db.VarChar(19)
-  writtenAgreementWithFamiliarise Boolean           @default(false)
-  providerCountry                 String            @default("IN")
+  msmeStatus                      MsmeStatus      @default(NONE)
+  udyamNumber                     String?         @db.VarChar(19)
+  writtenAgreementWithFamiliarise Boolean         @default(false)
+  providerCountry                 String          @default("IN")
   rbiPurposeCode                  String? // P0802 | P0807
-  bankCurrency                    Currency          @default(INR)
+  bankCurrency                    Currency        @default(INR)
   swiftBic                        String?
   ibanOrAccount                   String?
-  payoutArrangement               PayoutArrangement @default(DIRECT)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3367,6 +3324,7 @@ model Payment {
   @@index([organizationId])
   @@index([billableToOrgInvoiceId])
   @@index([parentPaymentId])
+  @@index([discountCodeId])
 }
 
 // Stackable funding leg. Each row captures one source contribution to a

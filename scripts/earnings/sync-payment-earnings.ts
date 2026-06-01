@@ -235,7 +235,6 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
       role?: EarningRole;
       shareBps?: number;
     }> = [];
-    const revenueUpdates: Map<string, number> = new Map();
 
     for (const payment of payments) {
       // Skip if earnings already exist
@@ -324,12 +323,6 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
             role: isOwner ? EarningRole.OWNER : EarningRole.COLLABORATOR,
             shareBps,
           });
-
-          const currentRevenue = revenueUpdates.get(split.consultantProfileId) || 0;
-          revenueUpdates.set(
-            split.consultantProfileId,
-            currentRevenue + split.share,
-          );
         }
       } else {
         // Single-party earnings (owner only, or no collaborators)
@@ -338,12 +331,6 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
           role: EarningRole.OWNER,
           shareBps: 10000,
         });
-
-        const currentRevenue = revenueUpdates.get(consultantProfileId) || 0;
-        revenueUpdates.set(
-          consultantProfileId,
-          currentRevenue + baseEarnings.consultantSharePaise,
-        );
       }
     }
 
@@ -358,32 +345,6 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
         createdCount += result.count;
         console.log(`✅ Created ${result.count} earnings records in batch`);
 
-        // Update consultant revenue balances
-        const consultantIds = Array.from(revenueUpdates.keys());
-        for (const consultantProfileId of consultantIds) {
-          const amount = revenueUpdates.get(consultantProfileId)!;
-          try {
-            await prisma.consultantProfile.update({
-              where: { id: consultantProfileId },
-              data: {
-                pendingRevenue: { increment: amount },
-              },
-            });
-          } catch (updateError) {
-            const errorMessage =
-              updateError instanceof Error
-                ? updateError.message
-                : String(updateError);
-            errors.push(
-              `Revenue update for consultant ${consultantProfileId}: ${errorMessage}`,
-            );
-            console.error(
-              `❌ Error updating revenue for consultant ${consultantProfileId}:`,
-              errorMessage,
-            );
-            errorCount++;
-          }
-        }
       } catch (createError) {
         const errorMessage =
           createError instanceof Error

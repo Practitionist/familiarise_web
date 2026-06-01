@@ -1127,12 +1127,6 @@ export async function handleDisputeUpdated(
           },
         });
 
-        if (remainingRefundable > 0) {
-          await tx.consultantProfile.update({
-            where: { id: earning.consultantProfileId },
-            data: { pendingRevenue: { decrement: remainingRefundable } },
-          });
-        }
         console.log(`💸 Earnings ${earning.id} refunded (${remainingRefundable} paise) — dispute ${disputeId} lost`);
       }
     }

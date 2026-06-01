@@ -790,15 +790,6 @@ export async function handlePayoutWebhook(
         },
       });
 
-      // Update consultant stats
-      await tx.consultantProfile.update({
-        where: { id: payout.consultantProfileId },
-        data: {
-          totalRevenue: { increment: payout.amount },
-          pendingRevenue: { decrement: payout.amount },
-        },
-      });
-
       // #771 D1/D5 — double-entry (dual-write): clear what we owed the
       // consultant. payout.amount is the cash that left; tdsDeducted was
       // withheld and is owed to the government.

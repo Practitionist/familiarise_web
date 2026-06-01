@@ -320,15 +320,6 @@ export async function createEarningsFromPayment({
             },
           });
 
-          if (split.share > 0) {
-            await tx.consultantProfile.update({
-              where: { id: split.consultantProfileId },
-              data: {
-                pendingRevenue: { increment: split.share },
-              },
-            });
-          }
-
           if (split.role === "OWNER") {
             ownerId = earnings.id;
           }
@@ -351,15 +342,6 @@ export async function createEarningsFromPayment({
             currency: "INR",
           },
         });
-
-        if (totalConsultantPool > 0) {
-          await tx.consultantProfile.update({
-            where: { id: consultantProfileId },
-            data: {
-              pendingRevenue: { increment: totalConsultantPool },
-            },
-          });
-        }
 
         ownerId = earnings.id;
       }
@@ -954,12 +936,6 @@ export async function refundEarnings(
         },
       });
 
-      // For PAID earnings, decrement totalRevenue (not pendingRevenue — already paid)
-      await db.consultantProfile.update({
-        where: { id: earnings.consultantProfileId },
-        data: { totalRevenue: { decrement: shareToReverse } },
-      });
-
       continue;
     }
 
@@ -970,14 +946,6 @@ export async function refundEarnings(
       data: {
         refundedShareAmount: { increment: shareToReverse },
         ...(isFullyRefunded && { status: EarningStatus.REFUNDED }),
-      },
-    });
-
-    // Decrease consultant's pending revenue by the capped share
-    await db.consultantProfile.update({
-      where: { id: earnings.consultantProfileId },
-      data: {
-        pendingRevenue: { decrement: shareToReverse },
       },
     });
   }

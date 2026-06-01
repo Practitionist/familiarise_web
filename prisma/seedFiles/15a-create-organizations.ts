@@ -45,7 +45,6 @@ import {
   OrgInvoiceStatus,
   IrpStatus,
   PayoutRecipient,
-  PayoutArrangement,
   ResidencyStatus,
   MsmeStatus,
   PoStatus,
@@ -470,7 +469,6 @@ async function seedLearnPro(owner: UserWithProfiles, agencyConsultants: UserWith
           idx < 2 ? `UDYAM-KA-01-000000${idx + 1}` : null,
         writtenAgreementWithFamiliarise: true,
         providerCountry: "IN",
-        payoutArrangement: PayoutArrangement.DIRECT,
       },
     });
     await prisma.membership.create({
