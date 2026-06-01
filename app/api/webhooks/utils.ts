@@ -23,6 +23,7 @@ import {
   WalletInsufficientFundsError,
 } from "@/lib/api/organizations/wallet";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
+import { mintRefundCreditNote } from "@/lib/payments/operations/refund";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
 // Re-export payment handlers from lib (architectural fix)
@@ -765,6 +766,7 @@ export async function handleRefundCreated(
     const runRefundSideEffects = async (
       paymentId: string,
       refundStatus: string,
+      refundRowId: string,
       refundAmt?: number,
       originalPaymentAmt?: number,
     ) => {
@@ -872,6 +874,30 @@ export async function handleRefundCreated(
           creditError,
         );
       }
+
+      // #776 — gateway refunds bypass applyRefundCascade, so mint the GST
+      // credit note here too (idempotent on refundId; no-op for non-invoiced
+      // payments). The deeper cascade pieces (leg/wallet/ledger reversal) are
+      // intentionally NOT reproduced here — they'd risk WALLET_BALANCE_DRIFT;
+      // the credit note is the self-contained, safe-to-share artifact.
+      try {
+        const minted = await mintRefundCreditNote(tx, {
+          paymentId,
+          refundId: refundRowId,
+          amountPaise: refundAmt ?? originalPaymentAmt ?? 0,
+          reason: "Gateway refund",
+        });
+        if (minted.creditNoteId) {
+          console.log(
+            `🧾 Credit note ${minted.creditNoteId} minted for refunded payment ${paymentId}`,
+          );
+        }
+      } catch (cnError) {
+        console.error(
+          `⚠️ Failed to mint credit note for payment ${paymentId}:`,
+          cnError,
+        );
+      }
     };
 
     if (existingRefund) {
@@ -894,6 +920,7 @@ export async function handleRefundCreated(
           await runRefundSideEffects(
             payment.id,
             status,
+            existingRefund.id,
             amount,
             payment.amount,
           );
@@ -903,7 +930,7 @@ export async function handleRefundCreated(
     }
 
     // Create new refund record
-    await tx.refund.create({
+    const createdRefund = await tx.refund.create({
       data: {
         amountPaise: amount,
         currency,
@@ -912,12 +939,19 @@ export async function handleRefundCreated(
         paymentGateway: gateway,
         paymentId: payment.id,
       },
+      select: { id: true },
     });
 
     console.log(`✅ Refund ${refundId} created for payment ${payment.id}`);
 
     // Run side effects for new refunds that are already SUCCEEDED
-    await runRefundSideEffects(payment.id, status, amount, payment.amount);
+    await runRefundSideEffects(
+      payment.id,
+      status,
+      createdRefund.id,
+      amount,
+      payment.amount,
+    );
 
     // --- Novu notification (fire-and-forget) ---
     void notifyRefundProcessed(payment.userId, {

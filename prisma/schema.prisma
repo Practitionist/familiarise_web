@@ -3751,8 +3751,11 @@ model CreditNote {
   // B2C/unregistered cases where no GST invoice was issued.
   invoiceId      String?
   invoice        OrganizationInvoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
-  // Triggering refund, when the CN arises from one.
-  refundId       String?
+  // Triggering refund, when the CN arises from one. @unique (#776) makes
+  // refund-driven minting idempotent: one credit note per refund, so a webhook
+  // redelivery / cron retry / app re-run can't mint a duplicate or burn a
+  // gapless sequence number. Postgres allows many NULLs, so manual CNs are fine.
+  refundId       String? @unique
   reason         String?
 
   // Money (paise; #780 widens to BigInt). Mirror the invoice tax split so the

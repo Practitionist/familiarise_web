@@ -542,76 +542,19 @@ export async function applyRefundCascade(
   }
 
   // -----------------------------------------------------------------------
-  // Step 7.5 (#776 / #778 §D): mint a GST credit note for the invoiced
-  // portion. CGST Sec 34 requires a credit note (referencing the original
-  // invoice) whenever an issued invoice is reduced by a refund — otherwise
-  // the org's GSTR-1 and our books disagree. We mint once for the sum of the
-  // reversed INVOICE_ACCRUAL / OVERAGE_INVOICE_ACCRUAL legs, splitting tax in
-  // the same intra/inter-state shape as the original invoice (Rule 53).
+  // Step 7.5 (#776 / #778 §D): mint a GST credit note for the invoiced portion.
+  // Extracted to `mintRefundCreditNote` so the gateway-refund webhook path
+  // (which bypasses this cascade) can mint the same artifact — credit-note
+  // issuance is a self-contained, idempotent piece, unlike earnings/TDS/leg
+  // reversal. Idempotent on refundId, so calling it from both paths (or a cron
+  // retry) is safe.
   // -----------------------------------------------------------------------
-  if (payment.billableToOrgInvoiceId && payment.organizationId) {
-    const invoicedReverse = legAmounts
-      .filter(
-        ({ leg }) =>
-          leg.source === "INVOICE_ACCRUAL" ||
-          leg.source === "OVERAGE_INVOICE_ACCRUAL",
-      )
-      .reduce((s, { reverse }) => s + Math.max(reverse, 0), 0);
-
-    if (invoicedReverse > 0) {
-      const invoice = await tx.organizationInvoice.findUnique({
-        where: { id: payment.billableToOrgInvoiceId },
-        select: {
-          id: true,
-          totalPaise: true,
-          igstPaise: true,
-          cgstPaise: true,
-          sgstPaise: true,
-        },
-      });
-      const org = await tx.organization.findUnique({
-        where: { id: payment.organizationId },
-        select: { id: true, slug: true, invoiceNumberPrefix: true },
-      });
-
-      if (invoice && org) {
-        // Proportional tax: keep the CN's tax fraction equal to the invoice's,
-        // then route it to IGST (inter-state) or CGST+SGST (intra-state) by
-        // whichever the invoice used. CGST takes the odd-paise remainder.
-        const invoiceTax =
-          invoice.igstPaise + invoice.cgstPaise + invoice.sgstPaise;
-        const taxFraction =
-          invoice.totalPaise > 0 ? invoiceTax / invoice.totalPaise : 0;
-        const cnTax = Math.round(invoicedReverse * taxFraction);
-        const cnSubtotal = invoicedReverse - cnTax;
-        const interState = invoice.igstPaise > 0;
-        const cnIgst = interState ? cnTax : 0;
-        const cnSgst = interState ? 0 : Math.floor(cnTax / 2);
-        const cnCgst = interState ? 0 : cnTax - cnSgst;
-
-        const { creditNoteNumber, fiscalYear } =
-          await generateOrgCreditNoteNumber(tx, org, new Date());
-
-        await tx.creditNote.create({
-          data: {
-            creditNoteNumber,
-            fiscalYear,
-            organizationId: org.id,
-            invoiceId: invoice.id,
-            refundId: input.refundId,
-            reason: input.reason,
-            subtotalPaise: cnSubtotal,
-            igstPaise: cnIgst,
-            cgstPaise: cnCgst,
-            sgstPaise: cnSgst,
-            totalPaise: invoicedReverse,
-            status: "ISSUED",
-            issuedAt: new Date(),
-          },
-        });
-      }
-    }
-  }
+  await mintRefundCreditNote(tx, {
+    paymentId: payment.id,
+    refundId: input.refundId,
+    amountPaise: input.amountPaise,
+    reason: input.reason,
+  });
 
   // -----------------------------------------------------------------------
   // Step 8: General audit row (only when we did NOT already write a
@@ -777,4 +720,128 @@ export async function applyRefundCascade(
     organizationEarningsReversed,
     clawbackInitiated,
   };
+}
+
+// ============================================================================
+// Credit-note minting (#776 / #778 §D) — shared by the cascade + webhook
+// ============================================================================
+
+/**
+ * Mint a GST credit note (CGST Sec 34 / Rule 53) for the invoiced portion of a
+ * refund. Self-contained (loads its own data) and **idempotent on refundId**,
+ * so it's safe to call from BOTH `applyRefundCascade` (app/cron-initiated) and
+ * the gateway-refund webhook (which bypasses the cascade) — exactly once per
+ * refund regardless of webhook redelivery or cron retry.
+ *
+ * Only the credit note is shared this way: it's a standalone artifact that
+ * doesn't depend on funding-source reversal having happened. The double-entry
+ * refund ledger posting and leg/wallet reversal are NOT shared here — those are
+ * coupled to actual money movement the legacy webhook path doesn't perform, and
+ * reproducing them there would risk WALLET_BALANCE_DRIFT (tracked separately).
+ *
+ * No-op (returns null) for non-invoiced payments. Must run inside a tx.
+ */
+export async function mintRefundCreditNote(
+  tx: Prisma.TransactionClient,
+  params: {
+    paymentId: string;
+    refundId: string;
+    amountPaise: number;
+    reason: string;
+  },
+): Promise<{ creditNoteId: string | null }> {
+  const payment = await tx.payment.findUnique({
+    where: { id: params.paymentId },
+    select: {
+      id: true,
+      amount: true,
+      organizationId: true,
+      billableToOrgInvoiceId: true,
+      legs: { select: { source: true, amountPaise: true } },
+    },
+  });
+  if (
+    !payment ||
+    !payment.billableToOrgInvoiceId ||
+    !payment.organizationId ||
+    payment.amount <= 0
+  ) {
+    return { creditNoteId: null };
+  }
+
+  // Idempotency: one credit note per refund (refundId is @unique). Probe first
+  // so a replay returns the existing note instead of throwing on the constraint
+  // (and never burns a gapless sequence number).
+  const existing = await tx.creditNote.findUnique({
+    where: { refundId: params.refundId },
+    select: { id: true },
+  });
+  if (existing) return { creditNoteId: existing.id };
+
+  // Proportional reversal of the invoice-accrual legs (no remainder-absorb —
+  // a credit note is a tax document; strict proportion is correct).
+  const proportion = (original: number): number =>
+    Math.floor((original * params.amountPaise) / payment.amount);
+  const invoicedReverse = payment.legs
+    .filter(
+      (l) =>
+        l.source === "INVOICE_ACCRUAL" || l.source === "OVERAGE_INVOICE_ACCRUAL",
+    )
+    .reduce((s, l) => s + Math.max(proportion(l.amountPaise), 0), 0);
+  if (invoicedReverse <= 0) return { creditNoteId: null };
+
+  const invoice = await tx.organizationInvoice.findUnique({
+    where: { id: payment.billableToOrgInvoiceId },
+    select: {
+      id: true,
+      totalPaise: true,
+      igstPaise: true,
+      cgstPaise: true,
+      sgstPaise: true,
+    },
+  });
+  const org = await tx.organization.findUnique({
+    where: { id: payment.organizationId },
+    select: { id: true, slug: true, invoiceNumberPrefix: true },
+  });
+  if (!invoice || !org) return { creditNoteId: null };
+
+  // Proportional tax: keep the CN's tax fraction equal to the invoice's, then
+  // route it to IGST (inter-state) or CGST+SGST (intra-state) by whichever the
+  // invoice used. CGST takes the odd-paise remainder.
+  const invoiceTax = invoice.igstPaise + invoice.cgstPaise + invoice.sgstPaise;
+  const taxFraction =
+    invoice.totalPaise > 0 ? invoiceTax / invoice.totalPaise : 0;
+  const cnTax = Math.round(invoicedReverse * taxFraction);
+  const cnSubtotal = invoicedReverse - cnTax;
+  const interState = invoice.igstPaise > 0;
+  const cnIgst = interState ? cnTax : 0;
+  const cnSgst = interState ? 0 : Math.floor(cnTax / 2);
+  const cnCgst = interState ? 0 : cnTax - cnSgst;
+
+  const { creditNoteNumber, fiscalYear } = await generateOrgCreditNoteNumber(
+    tx,
+    org,
+    new Date(),
+  );
+
+  const cn = await tx.creditNote.create({
+    data: {
+      creditNoteNumber,
+      fiscalYear,
+      organizationId: org.id,
+      invoiceId: invoice.id,
+      refundId: params.refundId,
+      reason: params.reason,
+      subtotalPaise: cnSubtotal,
+      igstPaise: cnIgst,
+      cgstPaise: cnCgst,
+      sgstPaise: cnSgst,
+      totalPaise: invoicedReverse,
+      status: "ISSUED",
+      issuedAt: new Date(),
+    },
+    select: { id: true },
+  });
+  return { creditNoteId: cn.id };
 }
