@@ -33,6 +33,7 @@ type Store = {
   payments: Map<string, Row>;
   paymentLegs: Row[];
   refunds: Row[];
+  disputes: Row[];
   consultantEarnings: Map<string, Row>;
   organizationEarnings: Map<string, Row>;
   organizationPayouts: Map<string, Row>;
@@ -53,6 +54,7 @@ function newStore(): Store {
     payments: new Map(),
     paymentLegs: [],
     refunds: [],
+    disputes: [],
     consultantEarnings: new Map(),
     organizationEarnings: new Map(),
     organizationPayouts: new Map(),
@@ -124,6 +126,19 @@ function txStub() {
           count++;
         }
         return { count };
+      }),
+    },
+    // #785 — refundPayment now nets refundable against prior lost chargebacks.
+    dispute: {
+      aggregate: jest.fn(async ({ where }: any) => {
+        const sum = state.disputes
+          .filter(
+            (d) =>
+              d.paymentId === where.paymentId &&
+              where.status?.in?.includes(d.status),
+          )
+          .reduce((acc, d) => acc + (d.amountPaise as number), 0);
+        return { _sum: { amountPaise: sum } };
       }),
     },
     paymentLeg: {
@@ -628,6 +643,27 @@ describe("refundPayment — validation guards", () => {
     await expect(
       refundPayment({ paymentId: "pay-1", amountPaise: 99999, reason: "x" }),
     ).rejects.toBeInstanceOf(RefundValidationError);
+  });
+
+  it("#785 rejects a refund after a lost chargeback already pulled the full amount", async () => {
+    seedSinglePartyWalletPayment({ amount: 10000 });
+    // a lost chargeback already reversed the whole payment via the dispute path
+    state.disputes.push({ paymentId: "pay-1", amountPaise: 10000, status: "LOST" });
+    await expect(
+      refundPayment({ paymentId: "pay-1", amountPaise: 10000, reason: "double" }),
+    ).rejects.toBeInstanceOf(RefundValidationError);
+  });
+
+  it("#785 allows a refund up to the un-charged-back remainder", async () => {
+    seedSinglePartyWalletPayment({ amount: 10000 });
+    state.disputes.push({ paymentId: "pay-1", amountPaise: 6000, status: "LOST" });
+    // refundable = 10000 − 6000 chargeback = 4000
+    const result = await refundPayment({
+      paymentId: "pay-1",
+      amountPaise: 4000,
+      reason: "remainder",
+    });
+    expect(result.amountRefundedPaise).toBe(4000);
   });
 
   it("rejects refund on non-SUCCEEDED payment", async () => {

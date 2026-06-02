@@ -1203,12 +1203,35 @@ async function applyOrgChargeback(
   });
   if (alreadyPosted) return;
 
+  // #785 — net against money already reversed by an app refund on this payment.
+  // A refund and a lost chargeback are two routes to the same "customer got the
+  // money back"; without this the org is debited twice (refund:<id> reverses the
+  // funding AND chargeback:<disputeId> debits again). Settle only the un-reversed
+  // remainder so the disputed amount hits the org's books exactly once.
+  const priorRefundAgg = await tx.refund.aggregate({
+    where: {
+      paymentId: params.paymentId,
+      status: { in: ["SUCCEEDED", "PENDING"] },
+    },
+    _sum: { amountPaise: true },
+  });
+  const settlePaise = Math.max(
+    0,
+    amountPaise - (priorRefundAgg._sum.amountPaise ?? 0),
+  );
+  if (settlePaise <= 0) {
+    console.log(
+      `[Webhook] Chargeback ${disputeId} fully covered by prior refund(s) — no additional org debit`,
+    );
+    return;
+  }
+
   let recoveredFromWallet = false;
   if (billingAccountId) {
     try {
       await walletDebit(tx, {
         billingAccountId,
-        amountPaise,
+        amountPaise: settlePaise,
         reason: "ADJUSTMENT",
         paymentId: params.paymentId,
         notes: `Chargeback recovery: dispute ${disputeId}`,
@@ -1231,9 +1254,9 @@ async function applyOrgChargeback(
           ? { kind: "WALLET", organizationId }
           : { kind: "ORG_RECEIVABLE", organizationId },
         direction: "DEBIT",
-        amountPaise,
+        amountPaise: settlePaise,
       },
-      { account: { kind: "CASH" }, direction: "CREDIT", amountPaise },
+      { account: { kind: "CASH" }, direction: "CREDIT", amountPaise: settlePaise },
     ],
   });
 

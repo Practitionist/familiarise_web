@@ -130,13 +130,26 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   // Sum already-refunded across non-FAILED, non-CANCELLED refunds. A
   // FAILED gateway refund did not move money so it doesn't reduce the
   // refundable balance.
-  const alreadyRefunded = payment.refunds
+  const refundedSoFar = payment.refunds
     .filter(
       (r) =>
         r.status === RefundStatus.SUCCEEDED ||
         r.status === RefundStatus.PENDING,
     )
     .reduce((acc, r) => acc + r.amountPaise, 0);
+
+  // #785 — also count money already pulled via a lost chargeback on this
+  // payment, so an app refund after a lost dispute can't double-reverse the org
+  // (the net-against-the-first guard, paired with applyOrgChargeback's).
+  const chargedBackAgg = await prisma.dispute.aggregate({
+    where: {
+      paymentId: input.paymentId,
+      status: { in: ["LOST", "CHARGE_REFUNDED"] },
+    },
+    _sum: { amountPaise: true },
+  });
+  const alreadyRefunded =
+    refundedSoFar + (chargedBackAgg._sum.amountPaise ?? 0);
 
   const refundable = payment.amount - alreadyRefunded;
   if (refundable <= 0) {
