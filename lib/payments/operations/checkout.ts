@@ -1764,6 +1764,9 @@ export async function handleCheckout(
     | null = null;
   let programAssignmentId: string | null = null;
   let callerMembershipId: string | null = null;
+  // #785 B6 — effective INVOICE credit limit; threaded to the Serializable
+  // booking tx for a race-safe re-check (the pre-lock check below is fast-fail only).
+  let creditEffectiveLimit: number | null = null;
 
   if (validatedData.organizationId) {
     const org = await prisma.organization.findUnique({
@@ -1839,6 +1842,7 @@ export async function handleCheckout(
           : governanceLimit === null
             ? explicitLimit
             : Math.min(explicitLimit, governanceLimit);
+      creditEffectiveLimit = effectiveLimit;
 
       if (effectiveLimit !== null) {
         const [accrualAgg, outstandingAgg] = await Promise.all([
@@ -2032,6 +2036,52 @@ export async function handleCheckout(
     try {
       const result = await prisma.$transaction(
         async (tx) => {
+          // #785 B6 — re-check the INVOICE credit limit INSIDE the Serializable
+          // tx. The pre-lock check ran on the global client before this tx, so
+          // two concurrent disjoint-slot bookings (which take different per-slot
+          // locks) could both pass it. Reading the accrual set here — the same
+          // rows this tx is about to add to — makes SSI abort one of a racing
+          // pair; the retry then sees the sibling's committed accrual.
+          if (
+            isOrgInvoicedPayment &&
+            creditEffectiveLimit !== null &&
+            organizationId
+          ) {
+            const [accrualAgg, outstandingAgg] = await Promise.all([
+              tx.paymentLeg.aggregate({
+                where: {
+                  source: {
+                    in: ["INVOICE_ACCRUAL", "OVERAGE_INVOICE_ACCRUAL"],
+                  },
+                  payment: {
+                    organizationId,
+                    paymentStatus: "SUCCEEDED",
+                    billableToOrgInvoiceId: null,
+                  },
+                },
+                _sum: { amountPaise: true },
+              }),
+              tx.organizationInvoice.aggregate({
+                where: {
+                  organizationId,
+                  status: { in: ["ISSUED", "OVERDUE"] },
+                },
+                _sum: { totalPaise: true },
+              }),
+            ]);
+            const exposure =
+              (accrualAgg._sum.amountPaise ?? 0) +
+              (outstandingAgg._sum.totalPaise ?? 0);
+            // Same gate as the pre-lock check (>= limit), re-run inside the tx so
+            // a concurrent sibling's just-committed accrual is visible — SSI then
+            // aborts the loser of a racing pair instead of both straddling the cap.
+            if (exposure >= creditEffectiveLimit) {
+              throw new Error(
+                `Organization has reached its invoice credit limit (${creditEffectiveLimit} paise). Outstanding invoices must be paid before new bookings.`,
+              );
+            }
+          }
+
           let createdAppointment;
           // Engagement count for enterprise cap (issue #710). One
           // engagement = one Appointment row = one calendar occurrence.
