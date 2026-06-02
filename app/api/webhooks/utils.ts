@@ -488,7 +488,8 @@ export async function handleOrgPaymentFailure(
  */
 export async function isDbHealthy(): Promise<boolean> {
   try {
-    await prisma.$queryRaw`SELECT 1`;
+    // ORM connectivity probe (no raw SQL): a LIMIT 1 read proves the connection.
+    await prisma.user.findFirst({ select: { id: true } });
     return true;
   } catch {
     return false;

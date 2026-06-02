@@ -89,31 +89,47 @@ export async function GET(
         periodEnd: { gte: new Date() },
       },
     }),
-    // #772 B3 — wallet activity now derives from the double-entry journal:
-    // group the org's WALLET-account entries by originating txn kind and sum
-    // the signed delta (CREDIT = +, DEBIT = −) to preserve the old
-    // {reason, count, deltaPaise} shape.
-    // Unavoidable raw SQL: Prisma `groupBy` cannot JOIN (entry → transaction.kind)
-    // nor express the conditional signed SUM. Read-only analytics aggregation.
+    // #772 B3 — wallet activity derives from the double-entry journal: group the
+    // org's WALLET-account entries (last 30d) by originating txn kind and sum the
+    // signed delta (CREDIT = +, DEBIT = −), preserving the {reason,count,deltaPaise}
+    // shape. ORM read + JS aggregation (no raw SQL): the 30-day window per org is
+    // bounded, so pulling the entries and folding them in app code is fine.
     org.billingAccount?.fundingSource === "WALLET" &&
     baId &&
     org.billingAccount.currency
-      ? prisma.$queryRaw<
+      ? (async (): Promise<
           Array<{ reason: string; count: bigint; deltaPaise: bigint | null }>
-        >`
-          SELECT t."kind" AS reason,
-                 COUNT(*) AS count,
-                 SUM(CASE e."direction" WHEN 'CREDIT' THEN e."amountPaise" ELSE -e."amountPaise" END) AS "deltaPaise"
-          FROM "LedgerEntry" e
-          JOIN "LedgerTransaction" t ON t."id" = e."transactionId"
-          WHERE e."accountId" = ${ledgerAccountId({
-            kind: "WALLET",
-            organizationId: orgId,
-            currency: org.billingAccount.currency,
-          })}
-            AND e."createdAt" >= ${thirtyDaysAgo}
-          GROUP BY t."kind"
-        `
+        > => {
+          const entries = await prisma.ledgerEntry.findMany({
+            where: {
+              accountId: ledgerAccountId({
+                kind: "WALLET",
+                organizationId: orgId,
+                currency: org.billingAccount!.currency,
+              }),
+              createdAt: { gte: thirtyDaysAgo },
+            },
+            select: {
+              direction: true,
+              amountPaise: true,
+              transaction: { select: { kind: true } },
+            },
+          });
+          const byKind = new Map<string, { count: number; delta: bigint }>();
+          for (const e of entries) {
+            const kind = e.transaction.kind;
+            const cur = byKind.get(kind) ?? { count: 0, delta: BigInt(0) };
+            cur.count += 1;
+            cur.delta +=
+              e.direction === "CREDIT" ? e.amountPaise : -e.amountPaise;
+            byKind.set(kind, cur);
+          }
+          return Array.from(byKind.entries()).map(([reason, v]) => ({
+            reason,
+            count: BigInt(v.count),
+            deltaPaise: v.delta as bigint | null,
+          }));
+        })()
       : Promise.resolve(
           [] as Array<{
             reason: string;
