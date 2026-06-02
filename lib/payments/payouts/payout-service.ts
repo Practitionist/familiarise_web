@@ -24,9 +24,11 @@ import { computeMsmePaymentDeadline } from "@/lib/compliance/msme";
 import { randomUUID } from "crypto";
 import { acquireLock, releaseLock } from "@/lib/redis";
 import {
+  getCurrentFYCumulativePayments,
   getFYDateRange,
   getIndianFinancialYear,
   recordTDSDeduction,
+  TDS_THRESHOLD_PAISE,
 } from "@/lib/payments/tax/tds-service";
 import { computeTdsForPayout } from "@/lib/compliance/tds";
 import { notifyPayoutProcessed } from "@/lib/novu/service";
@@ -502,6 +504,9 @@ async function processSinglePayout(payout: {
   };
   [key: string]: unknown;
 }): Promise<PayoutResult> {
+  // Declared outside the try so the catch can tell a gateway-accepted payout
+  // (providerPayoutId set) from a pre-gateway failure (#785 task #24).
+  let providerPayoutId: string | undefined;
   try {
     // Mark as processing
     await prisma.consultantPayout.update({
@@ -533,20 +538,50 @@ async function processSinglePayout(payout: {
     // the 194-O 5% no-PAN rate. The non-resident guard above already rejects
     // Section-195 cases, so RESIDENT is safe here.
     const financialYear = getIndianFinancialYear();
-    const tds = computeTdsForPayout({
-      grossAmountPaise: payout.amount,
-      consultant: {
-        // #785 — PAN at rest is encrypted; signal presence via panOnFile
-        // (passing the ciphertext as panNumber fails isValidPan → wrong 5%).
-        panNumber: null,
-        panOnFile: !!consultantTaxInfo?.panEncrypted,
-        residencyStatus: "RESIDENT",
-        tdsSection: null,
-        tdsRate: null,
-        tdsLowerRateCert: null,
-        providerCountry: null,
-      },
-    });
+
+    // #785 — restore the ₹50K FY cumulative threshold dropped when this path
+    // moved 194J→194-O. No withholding until cumulative FY payouts cross
+    // TDS_THRESHOLD_PAISE; the crossing payout is taxed only on the excess.
+    // Without this, sub-threshold consultants who legally owe ₹0 are withheld
+    // from the first rupee. The rate engine (computeTdsForPayout) then applies
+    // the section/PAN/DTAA rate to the taxable portion.
+    const cumulativeBeforePayout = await getCurrentFYCumulativePayments(
+      payout.consultantProfileId,
+      financialYear,
+    );
+    const cumulativeAfterPayout = cumulativeBeforePayout + payout.amount;
+    let taxablePaise = 0;
+    if (cumulativeAfterPayout > TDS_THRESHOLD_PAISE) {
+      taxablePaise =
+        cumulativeBeforePayout >= TDS_THRESHOLD_PAISE
+          ? payout.amount // already over threshold — whole payout is taxable
+          : cumulativeAfterPayout - TDS_THRESHOLD_PAISE; // crossing — excess only
+    }
+
+    const tds =
+      taxablePaise > 0
+        ? computeTdsForPayout({
+            grossAmountPaise: taxablePaise,
+            consultant: {
+              // #785 — PAN at rest is encrypted; signal presence via panOnFile
+              // (passing the ciphertext as panNumber fails isValidPan → wrong 5%).
+              panNumber: null,
+              panOnFile: !!consultantTaxInfo?.panEncrypted,
+              residencyStatus: "RESIDENT",
+              tdsSection: null,
+              tdsRate: null,
+              tdsLowerRateCert: null,
+              providerCountry: null,
+            },
+          })
+        : {
+            tdsSection: "194O",
+            tdsRate: 0,
+            tdsAmountPaise: 0,
+            dtaaRateApplied: null,
+            fallbackApplied: false,
+            reason: `below ₹50K FY threshold (cumulative=${cumulativeAfterPayout} paise) — no TDS`,
+          };
 
     const payoutAmountAfterTDS = payout.amount - tds.tdsAmountPaise;
 
@@ -557,6 +592,9 @@ async function processSinglePayout(payout: {
           payoutId: payout.id,
           consultantProfileId: payout.consultantProfileId,
           grossAmount: payout.amount,
+          taxableAmount: taxablePaise,
+          cumulativeBeforePayout,
+          cumulativeAfterPayout,
           tdsAmount: tds.tdsAmountPaise,
           tdsRate: tds.tdsRate,
           tdsSection: tds.tdsSection,
@@ -570,8 +608,6 @@ async function processSinglePayout(payout: {
 
     // Use the payout object but with reduced amount for gateway call
     const payoutForGateway = { ...payout, amount: payoutAmountAfterTDS };
-
-    let providerPayoutId: string | undefined;
 
     if (payout.provider === PaymentGateway.RAZORPAY) {
       providerPayoutId = await processRazorpayPayout(payoutForGateway, account);
@@ -603,7 +639,44 @@ async function processSinglePayout(payout: {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
 
-    // Mark as failed
+    // #785 — if the gateway ALREADY accepted (providerPayoutId set) but the
+    // post-submit DB write (L585) threw, the money was SENT. FAILing + unlinking
+    // earnings here would re-batch them under a fresh idempotencyKey the gateway
+    // won't dedupe → DOUBLE disbursement. Quarantine PROCESSING with earnings
+    // LINKED instead; the reconcile/stuck-payout job settles it against the
+    // gateway. Mirrors the scripts/payouts/process-payouts.ts guard (task #24).
+    if (providerPayoutId) {
+      try {
+        await prisma.consultantPayout.update({
+          where: { id: payout.id },
+          data: {
+            providerPayoutId,
+            status: PayoutStatus.PROCESSING,
+            failureReason:
+              `Gateway accepted (${providerPayoutId}); post-submit DB write failed, awaiting reconcile: ${errorMessage}`.slice(
+                0,
+                500,
+              ),
+          },
+        });
+      } catch (persistErr) {
+        console.error(
+          `[payout-service] CRITICAL: gateway accepted ${providerPayoutId} but DB persist failed twice for payout ${payout.id}; manual reconcile required`,
+          persistErr,
+        );
+      }
+      console.error(
+        `⚠️ Payout ${payout.id}: gateway accepted ${providerPayoutId} but DB write failed — quarantined PROCESSING (NOT failed) to avoid double-pay`,
+      );
+      return {
+        payoutId: payout.id,
+        success: false,
+        providerPayoutId,
+        error: `gateway-accepted-db-write-failed: ${errorMessage}`,
+      };
+    }
+
+    // Genuine pre-gateway failure (rejected / never submitted) — safe to FAIL.
     await prisma.consultantPayout.update({
       where: { id: payout.id },
       data: {

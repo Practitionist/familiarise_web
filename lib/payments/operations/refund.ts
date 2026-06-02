@@ -139,8 +139,13 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     .reduce((acc, r) => acc + r.amountPaise, 0);
 
   // #785 — also count money already pulled via a lost chargeback on this
-  // payment, so an app refund after a lost dispute can't double-reverse the org
-  // (the net-against-the-first guard, paired with applyOrgChargeback's).
+  // payment. Two reasons, both correct for ALL payments (org AND B2C), so this
+  // is deliberately NOT scoped to organizationId like applyOrgChargeback is:
+  //   - org-funded: pairs with applyOrgChargeback so the org isn't debited twice
+  //     (refund reversal + chargeback debit) for one reversal.
+  //   - B2C: a LOST dispute means the bank already returned the money to the
+  //     customer; an app refund on top would return it twice (platform loss).
+  // A partial dispute still leaves the un-disputed remainder refundable.
   const chargedBackAgg = await prisma.dispute.aggregate({
     where: {
       paymentId: input.paymentId,
@@ -148,13 +153,15 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     },
     _sum: { amountPaise: true },
   });
-  const alreadyRefunded =
-    refundedSoFar + (chargedBackAgg._sum.amountPaise ?? 0);
+  const chargedBack = chargedBackAgg._sum.amountPaise ?? 0;
+  const alreadyRefunded = refundedSoFar + chargedBack;
 
   const refundable = payment.amount - alreadyRefunded;
   if (refundable <= 0) {
     throw new RefundValidationError(
-      `Payment ${input.paymentId} already fully refunded (amount=${payment.amount}, alreadyRefunded=${alreadyRefunded})`,
+      `Payment ${input.paymentId} has no refundable balance (amount=${payment.amount}, ` +
+        `refunded=${refundedSoFar}, chargeback-reversed=${chargedBack}); the customer was ` +
+        `already made whole — a chargeback returns money via the bank, not an app refund`,
       "ALREADY_FULLY_REFUNDED",
     );
   }
@@ -176,7 +183,13 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   return prisma.$transaction(
     async (tx) => {
       // Re-derive `refundable` inside the Serializable tx — defends
-      // against two refunds racing through the outer read.
+      // against two refunds racing through the outer read. Must mirror the
+      // outer computation EXACTLY (refunds + lost chargebacks): the outer
+      // read also nets disputes, and a chargeback can commit between the
+      // outer read and here. Reading the dispute table inside this
+      // Serializable tx makes SSI abort the loser when a lost-chargeback tx
+      // (also Serializable, see handleDisputeUpdated) interleaves — closing
+      // the refund×chargeback double-reversal the netting was added to fix.
       const refundsLocked = await tx.refund.findMany({
         where: {
           paymentId: input.paymentId,
@@ -185,7 +198,17 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
         select: { amountPaise: true },
       });
       const refundedNow = refundsLocked.reduce((a, r) => a + r.amountPaise, 0);
-      const remainingNow = payment.amount - refundedNow;
+      const chargedBackNow = await tx.dispute.aggregate({
+        where: {
+          paymentId: input.paymentId,
+          status: { in: ["LOST", "CHARGE_REFUNDED"] },
+        },
+        _sum: { amountPaise: true },
+      });
+      const remainingNow =
+        payment.amount -
+        refundedNow -
+        (chargedBackNow._sum.amountPaise ?? 0);
       if (requested > remainingNow) {
         throw new RefundValidationError(
           `Race-loss: refund amount ${requested} exceeds refundable ${remainingNow} on payment ${input.paymentId}`,

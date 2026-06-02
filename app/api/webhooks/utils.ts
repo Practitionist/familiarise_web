@@ -1043,7 +1043,14 @@ export async function handleDisputeUpdated(
   status: string,
   evidence: Record<string, unknown> | null,
 ) {
-  return await prisma.$transaction(async (tx) => {
+  // #785 — Serializable so SSI detects a refund racing this lost-chargeback on
+  // the same payment: refundPayment (also Serializable) reads disputes + writes
+  // a Refund row while applyOrgChargeback below reads refunds + writes the
+  // dispute, so an interleaving forms a dangerous rw-structure and one tx aborts
+  // (retried by the gateway webhook redelivery) instead of both reversing the
+  // org for the same money.
+  return await prisma.$transaction(
+    async (tx) => {
     const dispute = await tx.dispute.findUnique({
       where: { disputeId },
     });
@@ -1170,7 +1177,9 @@ export async function handleDisputeUpdated(
         });
       }
     }
-  });
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+  );
 }
 
 /**
@@ -1208,10 +1217,16 @@ async function applyOrgChargeback(
   // money back"; without this the org is debited twice (refund:<id> reverses the
   // funding AND chargeback:<disputeId> debits again). Settle only the un-reversed
   // remainder so the disputed amount hits the org's books exactly once.
+  // Net only against SUCCEEDED refunds: a PENDING refund hasn't moved money and
+  // may yet FAIL — netting against it would leave the org permanently
+  // under-debited (the idempotent chargeback post never recomputes). App refunds
+  // commit straight to SUCCEEDED, so this loses nothing for them; the concurrent
+  // mid-flight refund case is handled by the Serializable guard in
+  // handleDisputeUpdated.
   const priorRefundAgg = await tx.refund.aggregate({
     where: {
       paymentId: params.paymentId,
-      status: { in: ["SUCCEEDED", "PENDING"] },
+      status: { in: ["SUCCEEDED"] },
     },
     _sum: { amountPaise: true },
   });

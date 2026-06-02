@@ -94,8 +94,26 @@ export async function claimProgramAssignment(
     periodStart: Date;
     periodEnd: Date;
   },
-): Promise<ProgramAssignment> {
-  return tx.programAssignment.upsert({
+): Promise<{ assignment: ProgramAssignment; created: boolean }> {
+  // #785 — report whether THIS call created the row so the caller can
+  // increment activeSeatCount exactly once. `createMany({ skipDuplicates })`
+  // is INSERT … ON CONFLICT DO NOTHING: it returns count===1 for the single
+  // racer that wins the unique (programId, membershipId, periodStart) and
+  // count===0 for a re-claim/concurrent duplicate — and, unlike a caught
+  // P2002, does NOT poison the surrounding transaction. Replaces the route's
+  // racy preexisting-probe that let two concurrent POSTs both seat-count.
+  const ins = await tx.programAssignment.createMany({
+    data: [
+      {
+        programId: params.programId,
+        membershipId: params.membershipId,
+        periodStart: params.periodStart,
+        periodEnd: params.periodEnd,
+      },
+    ],
+    skipDuplicates: true,
+  });
+  const assignment = await tx.programAssignment.findUniqueOrThrow({
     where: {
       programId_membershipId_periodStart: {
         programId: params.programId,
@@ -103,14 +121,8 @@ export async function claimProgramAssignment(
         periodStart: params.periodStart,
       },
     },
-    create: {
-      programId: params.programId,
-      membershipId: params.membershipId,
-      periodStart: params.periodStart,
-      periodEnd: params.periodEnd,
-    },
-    update: {},
   });
+  return { assignment, created: ins.count === 1 };
 }
 
 /**

@@ -203,16 +203,27 @@ export async function recordOverageAtCheckout(
         where: { paymentId_source: { paymentId, source: "INVOICE_ACCRUAL" } },
         select: { amountPaise: true },
       });
-      if (parentBase && parentBase.amountPaise >= basePaise) {
-        await tx.paymentLeg.update({
-          where: { paymentId_source: { paymentId, source: "INVOICE_ACCRUAL" } },
-          data: { amountPaise: { decrement: basePaise } },
-        });
-        await tx.payment.update({
-          where: { id: paymentId },
-          data: { amount: { decrement: basePaise } },
-        });
+      // Fail closed: if there's no INVOICE_ACCRUAL leg ≥ basePaise to carve from
+      // (e.g. a WALLET/LICENSE-funded parent), basePaise was already collected via
+      // that funding source and the member side-charge above bills it AGAIN. The
+      // credit-back path for non-invoice parents isn't built (#715), so abort the
+      // tx rather than silently double-collect basePaise. Reachable today because
+      // isReachableOrgFundingPath doesn't constrain overageBehavior by funding.
+      if (!parentBase || parentBase.amountPaise < basePaise) {
+        throw new Error(
+          `CHARGE_MEMBER overage on payment ${paymentId}: cannot carve basePaise=${basePaise} ` +
+            `from parent INVOICE_ACCRUAL leg (${parentBase ? parentBase.amountPaise : "absent"}); ` +
+            `non-invoice-funded member-overage credit-back not implemented (#715) — refusing to double-collect`,
+        );
       }
+      await tx.paymentLeg.update({
+        where: { paymentId_source: { paymentId, source: "INVOICE_ACCRUAL" } },
+        data: { amountPaise: { decrement: basePaise } },
+      });
+      await tx.payment.update({
+        where: { id: paymentId },
+        data: { amount: { decrement: basePaise } },
+      });
     }
 
     // Tell the member they owe the marginal + deep-link to the pay surface.

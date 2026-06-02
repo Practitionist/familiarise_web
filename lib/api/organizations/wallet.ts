@@ -240,11 +240,22 @@ export async function confirmTopUp(
 
     const topUp = await tx.walletTopUp.findUniqueOrThrow({
       where: { providerOrderId: params.providerOrderId },
-      select: { billingAccountId: true },
+      select: { billingAccountId: true, amountPaise: true },
     });
+    // #785 — credit the AUTHORIZED amount stored at initiation, and reject a
+    // webhook/sweeper whose amount disagrees. The ledger idempotency key is the
+    // order id, so it dedupes the posting but NOT the amount; without this a
+    // mismatched-amount delivery (or a future caller that skips the gateway
+    // amount check) would credit the wallet for the wrong figure undetected.
+    if (params.amountPaise !== topUp.amountPaise) {
+      throw new Error(
+        `Top-up amount mismatch for order ${params.providerOrderId}: ` +
+          `confirm=${params.amountPaise} paise vs authorized=${topUp.amountPaise} paise`,
+      );
+    }
     const result = await walletCredit(tx, {
       billingAccountId: topUp.billingAccountId,
-      amountPaise: params.amountPaise,
+      amountPaise: topUp.amountPaise,
       reason: "TOPUP",
       providerOrderId: params.providerOrderId,
       providerPaymentId: params.providerPaymentId,

@@ -5,9 +5,9 @@
  * `ENABLE_LIVE_PAYOUTS` production flag, so it's safe to run anywhere. It
  * proves the single most important launch invariant:
  *
- *   With ENABLE_LIVE_PAYOUTS unset, `processOrgPayout` advances a payout to
- *   PROCESSING but makes NO gateway submission (money never leaves) — exactly
- *   the gated behaviour the runbook flips on at go-live.
+ *   With ENABLE_LIVE_PAYOUTS unset, `processOrgPayout` makes NO gateway
+ *   submission (money never leaves) and leaves the payout PENDING (not claimed)
+ *   — exactly the gated behaviour the runbook flips on at go-live.
  *
  * When real RazorpayX sandbox creds are present (RAZORPAYX_SANDBOX_KEY +
  * RAZORPAYX_SANDBOX_SECRET), it additionally asserts the gateway client
@@ -79,9 +79,14 @@ async function main(): Promise<void> {
     result.submittedToGateway === false,
     `submittedToGateway=${result.submittedToGateway}`,
   );
+  // #785 — with the flag OFF the row is intentionally NOT claimed (stays
+  // PENDING). Claiming PENDING→PROCESSING with no gateway submission and no
+  // webhook would zombie it in PROCESSING forever; the cron re-attempts once
+  // the flag flips. (This assertion previously expected PROCESSING and broke
+  // the gate after that fix landed.)
   check(
-    "payout advanced to PROCESSING (awaiting go-live)",
-    result.status === "PROCESSING",
+    "payout stays PENDING (not claimed until go-live)",
+    result.status === "PENDING",
     `status=${result.status}`,
   );
 

@@ -39,11 +39,22 @@ describe("sweepAbandonedOverageCharges (#785)", () => {
     expect(where.chargeStatus).toBe("PENDING");
     expect(where.overageBehavior).toBe("CHARGE_MEMBER");
     expect(where.createdAt).toHaveProperty("lt");
-    // only never-paid side-charges (null or non-SUCCEEDED side-Payment)
+    // Only never-STARTED side-charges: no payment, or a non-SUCCEEDED payment
+    // whose paymentIntent is still the synthetic `overage:<parentId>` (the order
+    // route overwrites it with the real gateway id once the member opens
+    // checkout). #785 — a charge whose intent was replaced may be captured-but-
+    // webhook-stuck, so it must NOT be swept (FAILing it would strand money).
     expect(where.OR).toEqual(
       expect.arrayContaining([
         { paymentId: null },
-        { payment: { is: { paymentStatus: { not: "SUCCEEDED" } } } },
+        {
+          payment: {
+            is: {
+              paymentStatus: { not: "SUCCEEDED" },
+              paymentIntent: { startsWith: "overage:" },
+            },
+          },
+        },
       ]),
     );
     // PENDING→FAILED by id (transitionOverage appends the legal-from guard)
