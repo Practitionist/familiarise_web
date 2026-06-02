@@ -190,6 +190,20 @@ export async function confirmTopUp(
     amountPaise: number;
   },
 ): Promise<{ confirmed: boolean; balanceAfter?: number }> {
+  // #785 — record the gateway capture OUTSIDE the tx below so it survives a
+  // ledger-post rollback. The whole confirm body is one $transaction, so a
+  // walletCredit/postLedgerTxn failure reverts the CONFIRMED claim back to
+  // PENDING; without this the abandoned-cleanup cron reaps the row and the
+  // captured money's only trace is lost. capturedAt + providerPaymentId persist
+  // so the cleanup skips it and sweep-orphaned-topup-captures can re-credit it.
+  await prisma.walletTopUp.updateMany({
+    where: { providerOrderId: params.providerOrderId, capturedAt: null },
+    data: {
+      capturedAt: new Date(),
+      providerPaymentId: params.providerPaymentId,
+    },
+  });
+
   return prisma.$transaction(async (tx) => {
     // Atomic idempotent claim: flip PENDING → CONFIRMED in a single
     // conditional updateMany. Exactly one racing webhook delivery sees

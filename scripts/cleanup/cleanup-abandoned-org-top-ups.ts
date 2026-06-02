@@ -63,6 +63,10 @@ export async function cleanupAbandonedOrgTopUps(
       where: {
         status: "PENDING",
         providerPaymentId: null,
+        // #785 — never reap a gateway-captured top-up whose confirm/ledger post
+        // rolled back (capturedAt set, still PENDING); the
+        // sweep-orphaned-topup-captures reconciler re-credits those.
+        capturedAt: null,
         createdAt: { lt: cutoff },
       },
       select: {
@@ -101,6 +105,7 @@ export async function cleanupAbandonedOrgTopUps(
         id: { in: candidates.map((c) => c.id) },
         status: "PENDING",
         providerPaymentId: null,
+        capturedAt: null,
       },
     });
     reaped = deleted.count;

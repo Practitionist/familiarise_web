@@ -1022,6 +1022,10 @@ model WalletTopUp {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   confirmedAt DateTime?
+  // #785 — stamped OUTSIDE confirmTopUp's tx on gateway capture so it survives a
+  // ledger-post rollback; the cleanup cron skips capturedAt-set rows and the
+  // sweep-orphaned-topup-captures reconciler re-credits them.
+  capturedAt  DateTime?
 
   @@index([billingAccountId, createdAt])
   @@index([status, createdAt])
