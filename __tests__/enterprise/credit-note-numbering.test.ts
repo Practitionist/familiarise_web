@@ -72,7 +72,8 @@ describe("generateOrgCreditNoteNumber", () => {
     const result = await generateOrgCreditNoteNumber(
       tx as never,
       { id: "org-1", slug: "acme", invoiceNumberPrefix: "ACME" },
-      new Date("2026-03-31T23:59:59.000Z"),
+      // 17:30 IST on 31 Mar — unambiguously March in IST (#776: FY reckoned in IST).
+      new Date("2026-03-31T12:00:00.000Z"),
     );
     expect(result.creditNoteNumber).toBe("ACME-CN-2025-0005");
     expect(result.fiscalYear).toBe(2025);

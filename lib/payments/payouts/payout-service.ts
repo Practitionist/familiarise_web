@@ -24,11 +24,11 @@ import { computeMsmePaymentDeadline } from "@/lib/compliance/msme";
 import { randomUUID } from "crypto";
 import { acquireLock, releaseLock } from "@/lib/redis";
 import {
-  calculateTDS,
   getFYDateRange,
   getIndianFinancialYear,
   recordTDSDeduction,
 } from "@/lib/payments/tax/tds-service";
+import { computeTdsForPayout } from "@/lib/compliance/tds";
 import { notifyPayoutProcessed } from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
 
@@ -525,26 +525,41 @@ async function processSinglePayout(payout: {
       );
     }
 
-    // Calculate TDS (Section 194J) — deduct before sending to gateway
-    const tdsResult = await calculateTDS({
-      consultantProfileId: payout.consultantProfileId,
-      payoutAmountPaise: payout.amount,
+    // #776 — Section 194-O (e-commerce operator) for consultant payouts via the
+    // single canonical engine (compliance/tds.ts), replacing the deprecated 194J
+    // path (#778 §E). 194J at 10% over-withheld ~100× vs 194-O's 0.1%. Mirrors
+    // org-payout-service: PAN-at-rest is encrypted (plaintext decrypt deferred to
+    // Form 26Q filing), so we signal only PAN-on-file presence; a missing PAN takes
+    // the 194-O 5% no-PAN rate. The non-resident guard above already rejects
+    // Section-195 cases, so RESIDENT is safe here.
+    const financialYear = getIndianFinancialYear();
+    const tds = computeTdsForPayout({
+      grossAmountPaise: payout.amount,
+      consultant: {
+        panNumber: consultantTaxInfo?.panEncrypted ? "ENCRYPTED" : null,
+        residencyStatus: "RESIDENT",
+        tdsSection: null,
+        tdsRate: null,
+        tdsLowerRateCert: null,
+        providerCountry: null,
+      },
     });
 
-    const payoutAmountAfterTDS = payout.amount - tdsResult.tdsAmount;
+    const payoutAmountAfterTDS = payout.amount - tds.tdsAmountPaise;
 
-    if (tdsResult.tdsAmount > 0) {
+    if (tds.tdsAmountPaise > 0) {
       console.log(
         JSON.stringify({
           event: "tds_deduction",
           payoutId: payout.id,
           consultantProfileId: payout.consultantProfileId,
           grossAmount: payout.amount,
-          tdsAmount: tdsResult.tdsAmount,
-          tdsRate: tdsResult.tdsRate,
+          tdsAmount: tds.tdsAmountPaise,
+          tdsRate: tds.tdsRate,
+          tdsSection: tds.tdsSection,
           netAmount: payoutAmountAfterTDS,
-          financialYear: tdsResult.financialYear,
-          cumulativeBeforePayout: tdsResult.cumulativeBeforePayout,
+          financialYear,
+          reason: tds.reason,
           timestamp: new Date().toISOString(),
         }),
       );
@@ -568,10 +583,10 @@ async function processSinglePayout(payout: {
       where: { id: payout.id },
       data: {
         providerPayoutId,
-        tdsDeducted: tdsResult.tdsAmount,
+        tdsDeducted: tds.tdsAmountPaise,
         netAmount: payoutAmountAfterTDS,
-        tdsRateApplied: tdsResult.tdsRate || null,
-        tdsFinancialYear: tdsResult.financialYear,
+        tdsRateApplied: tds.tdsRate || null,
+        tdsFinancialYear: financialYear,
         status: PayoutStatus.PROCESSING, // Will be updated via webhook
       },
     });
@@ -849,6 +864,8 @@ export async function handlePayoutWebhook(
           tdsRate: payout.tdsRateApplied,
           cumulativeAmountCredited: cumulativeCreditedPayments,
           payoutId: payout.id,
+          // #776 — consultant payouts withhold under Section 194-O (ECO).
+          tdsSection: "194O",
           db: tx,
         });
       }

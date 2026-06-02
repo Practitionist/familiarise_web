@@ -19,8 +19,15 @@ describe("indianFiscalYear", () => {
     expect(indianFiscalYear(new Date("2026-04-01T00:00:00.000Z"))).toBe(2026);
   });
 
-  it("March → previous FY", () => {
-    expect(indianFiscalYear(new Date("2026-03-31T23:59:59.000Z"))).toBe(2025);
+  it("March → previous FY (IST)", () => {
+    // 17:30 IST on 31 Mar — unambiguously March in IST.
+    expect(indianFiscalYear(new Date("2026-03-31T12:00:00.000Z"))).toBe(2025);
+  });
+
+  it("#776 — early-April-IST boundary reckoned in IST, not UTC", () => {
+    // 2026-03-31T23:59:59Z is 01-Apr 05:29 IST → FY 2026. Computing in UTC would
+    // wrongly file it under FY 2025 (the boundary bug F3 fixes).
+    expect(indianFiscalYear(new Date("2026-03-31T23:59:59.000Z"))).toBe(2026);
   });
 
   it("December (mid-year) → current FY", () => {
@@ -36,12 +43,16 @@ describe("generateOrgInvoiceNumber", () => {
   function mockTx(allocations: number[]) {
     let i = 0;
     return {
-      $queryRaw: jest.fn().mockImplementation(async () => {
-        if (i >= allocations.length) {
-          throw new Error("ran out of mock allocations");
-        }
-        return [{ allocated: allocations[i++] }];
-      }),
+      // #776 — allocateOrgInvoiceSeq now uses the ORM upsert (no raw SQL) and
+      // returns `nextSeq - 1`, so a mocked allocation N maps to nextSeq = N + 1.
+      orgInvoiceCounter: {
+        upsert: jest.fn().mockImplementation(async () => {
+          if (i >= allocations.length) {
+            throw new Error("ran out of mock allocations");
+          }
+          return { nextSeq: allocations[i++] + 1 };
+        }),
+      },
     };
   }
 

@@ -107,7 +107,10 @@ export type Finding = {
     | "LEDGER_BALANCE_SNAPSHOT_DRIFT"
     // #776 §C — a fully-refunded payment whose BookingUtilization was not
     // reversed (cap leak), or a reversed utilization with no backing refund.
-    | "REFUND_BOOKING_COHERENCE";
+    | "REFUND_BOOKING_COHERENCE"
+    // #776 — an OrganizationInvoice whose totalPaise != subtotalPaise + CGST +
+    // SGST + IGST (a mis-totaled GST invoice is a filing defect).
+    | "INVOICE_TOTAL_MISMATCH";
   organizationId?: string;
   billingAccountId?: string;
   billingSubscriptionId?: string;
@@ -441,6 +444,42 @@ export async function runReconcileLedgers(
     }
   }
 
+  // --- (F2 / #776): OrganizationInvoice total integrity ---
+  // totalPaise must equal subtotalPaise + CGST + SGST + IGST. The issue-time
+  // assertion in invoice-rollup.ts prevents new drift; this is the retroactive
+  // sweep for legacy / manually-edited rows.
+  const invoicesToCheck = await prisma.organizationInvoice.findMany({
+    where: opts.organizationId
+      ? { organizationId: opts.organizationId }
+      : {},
+    select: {
+      id: true,
+      organizationId: true,
+      subtotalPaise: true,
+      igstPaise: true,
+      cgstPaise: true,
+      sgstPaise: true,
+      totalPaise: true,
+    },
+  });
+  for (const inv of invoicesToCheck) {
+    const expected =
+      inv.subtotalPaise + inv.igstPaise + inv.cgstPaise + inv.sgstPaise;
+    if (inv.totalPaise !== expected) {
+      findings.push({
+        kind: "INVOICE_TOTAL_MISMATCH",
+        organizationId: inv.organizationId,
+        expectedPaise: expected,
+        actualPaise: inv.totalPaise,
+        deltaPaise: inv.totalPaise - expected,
+        details: {
+          invoiceId: inv.id,
+          note: "OrganizationInvoice.totalPaise != subtotalPaise + CGST + SGST + IGST. Check the GST split (lib/compliance/gst.ts) and the issue-time invariant in invoice-rollup.ts.",
+        },
+      });
+    }
+  }
+
   // --- (G): per OrganizationPayout total vs claimed earnings ---
   // The createOrgPayoutBatch tx claims READY earnings, computes totals,
   // and writes them to the payout in one go. If anything ever diverges
@@ -679,9 +718,10 @@ export async function runReconcileLedgers(
   // Earnings amount columns are a reconciled cache; the journal is the source
   // of truth. For every payment that HAS a booking journal txn, the journal's
   // earnings-relevant credits (PLATFORM_FEE + CONSULTANT_PAYABLE + ORG_PAYABLE)
-  // must equal the cached Earnings amounts. Payments WITHOUT a booking txn
-  // (multi-collaborator runtime path + seed rows) are a tracked coverage gap
-  // (#773), counted below for visibility but not flagged here.
+  // must equal the cached Earnings amounts. #776 — multi-collaborator bookings
+  // now post per-collaborator CONSULTANT_PAYABLE credits (no longer deferred), so
+  // they carry a BOOKING txn and are covered here; the only payments without a txn
+  // are pre-#776 seed rows (counted below for visibility, not flagged).
   const bookingTxns = await prisma.ledgerTransaction.findMany({
     where: { kind: "BOOKING", paymentId: { not: null } },
     select: { id: true, paymentId: true },

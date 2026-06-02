@@ -102,13 +102,19 @@ export function deriveGstBreakdown(params: {
     params.supplierStateCode &&
     params.buyerStateCode === params.supplierStateCode
   ) {
-    const half = Math.round(taxPaise / 2);
+    // #776 — deterministic split: floor CGST, SGST absorbs the odd-paise
+    // remainder so cgst+sgst === taxPaise exactly. The prior `Math.round(taxPaise/2)`
+    // on both legs over-stated the total by 1 paise for odd taxPaise (~50% of
+    // non-round subtotals), inflating OrganizationInvoice.totalPaise and
+    // desyncing the accrual vs INVOICE_PAID ledger postings.
+    const cgstPaise = Math.floor(taxPaise / 2);
+    const sgstPaise = taxPaise - cgstPaise;
     return {
       subtotalPaise: params.subtotalPaise,
       igstPaise: 0,
-      cgstPaise: half,
-      sgstPaise: half,
-      totalPaise: params.subtotalPaise + half + half,
+      cgstPaise,
+      sgstPaise,
+      totalPaise: params.subtotalPaise + taxPaise,
       hsnCode,
       placeOfSupply,
       reverseCharge: false,
