@@ -26,6 +26,8 @@ export interface PayoutProcessResult {
   success: boolean;
   providerPayoutId?: string;
   error?: string;
+  /** #776 — true when another concurrent run already claimed this payout. */
+  skipped?: boolean;
 }
 
 /**
@@ -156,11 +158,23 @@ async function processSinglePayout(payout: {
   };
 
   try {
-    // Mark as processing
-    await prisma.consultantPayout.update({
-      where: { id: payout.id },
+    // #776 — atomically claim APPROVED→PROCESSING. Two overlapping cron runs both
+    // load the same APPROVED set; without this guard both submit to the gateway.
+    // The gateway dedupes on the @unique idempotencyKey, but the loser's
+    // duplicate-submit error would be caught below and mark the payout FAILED — a
+    // false failure plus retry churn. count===0 means another run already claimed
+    // it, so we skip submission entirely.
+    const claim = await prisma.consultantPayout.updateMany({
+      where: { id: payout.id, status: PayoutStatus.APPROVED },
       data: { status: PayoutStatus.PROCESSING },
     });
+    if (claim.count === 0) {
+      console.log(
+        `⏭️  Payout ${payout.id} already claimed by another run — skipping`,
+      );
+      result.skipped = true;
+      return result;
+    }
 
     const account = payout.consultantProfile.payoutAccounts[0];
     if (!account) {
@@ -281,13 +295,20 @@ export async function processApprovedPayouts(): Promise<ProcessingResult> {
 
     // Process each payout
     for (const payout of approvedPayouts) {
-      result.processed++;
-
       console.log(
         `\n📤 Processing payout for ${payout.consultantProfile.user.name || "Unknown"}: ₹${(payout.amount / 100).toFixed(2)}`,
       );
 
       const payoutResult = await processSinglePayout(payout);
+
+      // #776 — a payout claimed by a concurrent run is neither processed, succeeded
+      // nor failed by this run; don't count it (it would inflate metrics / fail the
+      // run). The run that claimed it owns the outcome.
+      if (payoutResult.skipped) {
+        continue;
+      }
+
+      result.processed++;
       result.results.push(payoutResult);
 
       if (payoutResult.success) {
