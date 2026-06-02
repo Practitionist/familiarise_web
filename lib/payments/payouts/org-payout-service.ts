@@ -369,7 +369,10 @@ export async function createOrgPayoutBatch(
             // needs to know whether a PAN is on file (treats null as
             // higher-rate). Plaintext decrypt is deferred to Form 26Q
             // filing (admin-only flow).
-            panNumber: orgForCompliance?.taxInfo?.panEncrypted ? "ENCRYPTED" : null,
+            // #785 — PAN at rest is encrypted; signal presence via panOnFile
+            // (passing the ciphertext as panNumber fails isValidPan → wrong 5%).
+            panNumber: null,
+            panOnFile: !!orgForCompliance?.taxInfo?.panEncrypted,
             residencyStatus: "RESIDENT",
             tdsSection: null,
             tdsRate: null,

@@ -191,6 +191,30 @@ export async function recordOverageAtCheckout(
       },
     });
 
+    // #785 — carve the over-cap pass-through (basePaise) out of the org-funded
+    // parent so the org pays only coveredPaise; the member side-charge above
+    // (marginalPaise) covers the over-cap portion. Without this, basePaise is
+    // collected TWICE — once in the parent's base leg, once in the member charge
+    // (coveredPaise + basePaise == price). INVOICE accrual carves cleanly; a
+    // WALLET-funded parent would also need a balance credit-back (not reachable
+    // with current configs — no WALLET program charges overage).
+    if (basePaise > 0) {
+      const parentBase = await tx.paymentLeg.findUnique({
+        where: { paymentId_source: { paymentId, source: "INVOICE_ACCRUAL" } },
+        select: { amountPaise: true },
+      });
+      if (parentBase && parentBase.amountPaise >= basePaise) {
+        await tx.paymentLeg.update({
+          where: { paymentId_source: { paymentId, source: "INVOICE_ACCRUAL" } },
+          data: { amountPaise: { decrement: basePaise } },
+        });
+        await tx.payment.update({
+          where: { id: paymentId },
+          data: { amount: { decrement: basePaise } },
+        });
+      }
+    }
+
     // Tell the member they owe the marginal + deep-link to the pay surface.
     // Fire-and-forget on the outer prisma (committed-state lookup; not part of
     // this rolling-back-able tx).
@@ -224,10 +248,29 @@ export async function recordOverageAtCheckout(
   }
 
   if (overage.chargeTo === "ORG") {
-    // OVERAGE_INVOICE_ACCRUAL (not INVOICE_ACCRUAL) so the
-    // @@unique([paymentId, source]) constraint is not violated — the base leg
-    // already holds the INVOICE_ACCRUAL slot. Both count against the org's
-    // credit limit. The cycle-close rollup turns the event into an
+    // #785 — the over-cap pass-through (basePaise) is ALREADY inside the base
+    // INVOICE_ACCRUAL leg (coveredPaise + basePaise == price), and the rollup
+    // sums BOTH leg sources into the invoice — so adding the overage leg on top
+    // double-bills the org by basePaise (and breaks Σlegs == amount). Carve
+    // basePaise OUT of the base leg into the explicit OVERAGE_INVOICE_ACCRUAL
+    // leg; only the surcharge is genuinely-additional money (marginal == base +
+    // surcharge). When no base INVOICE_ACCRUAL leg exists (wallet/license-funded)
+    // nothing is carved and the overage is fully additive — `marginal − carved`
+    // yields the right `amount` bump either way.
+    const baseLeg = await tx.paymentLeg.findUnique({
+      where: { paymentId_source: { paymentId, source: "INVOICE_ACCRUAL" } },
+      select: { amountPaise: true },
+    });
+    const carved =
+      baseLeg && baseLeg.amountPaise >= basePaise ? basePaise : 0;
+    if (carved > 0) {
+      await tx.paymentLeg.update({
+        where: { paymentId_source: { paymentId, source: "INVOICE_ACCRUAL" } },
+        data: { amountPaise: { decrement: carved } },
+      });
+    }
+    // OVERAGE_INVOICE_ACCRUAL (distinct source) avoids the @@unique([paymentId,
+    // source]) clash with the base leg; the rollup turns the event into an
     // InvoiceLineItem (PENDING → ACCRUED → CHARGED).
     await tx.paymentLeg.create({
       data: {
@@ -237,6 +280,13 @@ export async function recordOverageAtCheckout(
         sourceRef: `overage:${programAssignmentId}`,
       },
     });
+    const amountDelta = marginalPaise - carved;
+    if (amountDelta > 0) {
+      await tx.payment.update({
+        where: { id: paymentId },
+        data: { amount: { increment: amountDelta } },
+      });
+    }
     await tx.overageEvent.create({
       data: {
         programAssignmentId,

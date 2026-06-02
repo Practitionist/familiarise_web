@@ -536,7 +536,10 @@ async function processSinglePayout(payout: {
     const tds = computeTdsForPayout({
       grossAmountPaise: payout.amount,
       consultant: {
-        panNumber: consultantTaxInfo?.panEncrypted ? "ENCRYPTED" : null,
+        // #785 — PAN at rest is encrypted; signal presence via panOnFile
+        // (passing the ciphertext as panNumber fails isValidPan → wrong 5%).
+        panNumber: null,
+        panOnFile: !!consultantTaxInfo?.panEncrypted,
         residencyStatus: "RESIDENT",
         tdsSection: null,
         tdsRate: null,
