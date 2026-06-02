@@ -139,27 +139,20 @@ export async function POST(
   }
 
   const assignment = await prisma.$transaction(async (tx) => {
-    // claimProgramAssignment is an upsert keyed on (programId, membershipId,
-    // periodStart). If the row already existed, the assignment was already
-    // counted on a prior call — we must not double-count seats. Cheaper to
-    // probe before the upsert than diff timestamps after.
-    const preexisting = await tx.programAssignment.findUnique({
-      where: {
-        programId_membershipId_periodStart: {
-          programId,
-          membershipId: body.membershipId,
-          periodStart: body.periodStart,
-        },
+    // claimProgramAssignment reports whether THIS call created the row (atomic
+    // INSERT … ON CONFLICT DO NOTHING). Seat-count only on a genuine create, so
+    // a re-claim or two concurrent identical POSTs increment activeSeatCount
+    // exactly once (the old preexisting-probe was a check-then-act race).
+    const { assignment: created, created: isNew } = await claimProgramAssignment(
+      tx,
+      {
+        programId,
+        membershipId: body.membershipId,
+        periodStart: body.periodStart,
+        periodEnd: body.periodEnd,
       },
-      select: { id: true },
-    });
-    const created = await claimProgramAssignment(tx, {
-      programId,
-      membershipId: body.membershipId,
-      periodStart: body.periodStart,
-      periodEnd: body.periodEnd,
-    });
-    if (!preexisting) {
+    );
+    if (isNew) {
       await adjustActiveSeatCount(tx, { programId, delta: +1 });
     }
     await tx.orgAuditLog.create({

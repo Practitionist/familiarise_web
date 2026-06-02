@@ -1,10 +1,11 @@
 import prisma from "../../../lib/prisma";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
+import { isLegalDisputeTransition } from "@/lib/payments/dispute-status";
 import { Prisma, PaymentGateway } from "@prisma/client";
 import crypto from "crypto";
 import { stripeClient } from "@/lib/payments/core/stripe";
 import { razorpayClient } from "@/lib/payments/core/razorpay";
-import { handlePayoutWebhook, refundEarnings } from "@/lib/payments/payouts";
+import { handlePayoutWebhook } from "@/lib/payments/payouts";
 import {
   notifyRefundProcessed,
   notifyDisputeCreated,
@@ -16,8 +17,16 @@ import {
 } from "@/lib/novu/org-workflows";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { getAppUrl } from "@/lib/url";
-import { confirmTopUp, walletCredit } from "@/lib/api/organizations/wallet";
-import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
+import {
+  confirmTopUp,
+  walletCredit,
+  walletDebit,
+  WalletInsufficientFundsError,
+} from "@/lib/api/organizations/wallet";
+import {
+  applyRefundCascade,
+  mintInvoiceRefundCreditNote,
+} from "@/lib/payments/operations/refund";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
 // Re-export payment handlers from lib (architectural fix)
@@ -479,7 +488,8 @@ export async function handleOrgPaymentFailure(
  */
 export async function isDbHealthy(): Promise<boolean> {
   try {
-    await prisma.$queryRaw`SELECT 1`;
+    // ORM connectivity probe (no raw SQL): a LIMIT 1 read proves the connection.
+    await prisma.user.findFirst({ select: { id: true } });
     return true;
   } catch {
     return false;
@@ -647,11 +657,13 @@ export async function handleRefundCreated(
           // `Payment` table. The TOPUP_REFUND journal transaction
           // (idempotencyKey topup-refund:<rzp payment id>) is the
           // authoritative record; reconcile jobs index on it.
-          await tx.$executeRaw`
-            UPDATE "BillingAccount"
-            SET "walletBalance" = COALESCE("walletBalance", 0) - ${refundAmt}
-            WHERE "id" = ${topUp.billingAccountId}
-          `;
+          // ORM decrement (no raw SQL); WALLET accounts carry a non-null balance.
+          // May go negative by design (org already spent the credited funds) — a
+          // real reconcile signal, handled above, not an error.
+          await tx.billingAccount.update({
+            where: { id: topUp.billingAccountId },
+            data: { walletBalance: { decrement: refundAmt } },
+          });
           console.log(
             `💸 Top-up refund ${refundId} booked: -${refundAmt} paise on billingAccount ${topUp.billingAccountId}`,
           );
@@ -682,6 +694,15 @@ export async function handleRefundCreated(
           await tx.organizationInvoice.update({
             where: { id: invoice.id },
             data: { status: "REFUNDED" },
+          });
+          // #776 / PR#785 review — mint the GST credit note (Sec 34) for the
+          // refunded invoice. Idempotent on refundId; the invoice.status===REFUNDED
+          // short-circuit above also guards against a duplicate webhook.
+          await mintInvoiceRefundCreditNote(tx, {
+            invoiceId: invoice.id,
+            refundId,
+            amountPaise: amount,
+            reason: `Invoice ${invoice.invoiceNumber} refund`,
           });
           // NOTE: Booking-level utilization reversal is keyed on
           // individual Payment ids (BookingUtilization.paymentId @unique),
@@ -760,95 +781,43 @@ export async function handleRefundCreated(
     const runRefundSideEffects = async (
       paymentId: string,
       refundStatus: string,
+      refundRowId: string,
       refundAmt?: number,
       originalPaymentAmt?: number,
     ) => {
       if (mapRefundStatus(refundStatus) !== "SUCCEEDED") return;
 
+      // #776 — route gateway refunds through the canonical cascade so card/app/cron
+      // refunds share ONE engine: earnings + funding-leg + wallet + ledger +
+      // booking-utilization + GST credit-note reversal, idempotent on
+      // `Refund.cascadedAt`. This replaces the old earnings-only `refundEarnings`
+      // path, which left the refund ledger posting + leg/wallet reversal undone on
+      // gateway refunds (a divergence from the app/cron paths). The cascade allows
+      // PAID→REFUNDED, so the legacy `forceRefund` override is no longer needed.
       try {
-        // Check if any refund for this payment has forceRefund in metadata
-        // (read is done on `tx` so we see Refund rows inserted earlier in
-        // this same transaction — otherwise the hasForceRefund check
-        // would race with new refunds created moments before.)
-        const refunds = await tx.refund.findMany({
-          where: { paymentId },
-          select: { metadata: true },
-        });
-        const hasForceRefund = refunds.some(
-          (r) =>
-            r.metadata &&
-            typeof r.metadata === "object" &&
-            (r.metadata as Record<string, unknown>).forceRefund === true,
-        );
-
-        // FIX #618: Pass refund amount context so partial refunds only
-        // reverse a proportional share of earnings, not the full amount.
-        // `tx` plumbed through so earnings reversal, TDS reversal, and
-        // the Refund insert above all commit atomically.
-        await refundEarnings(paymentId, {
-          forceRefund: hasForceRefund,
-          refundAmount: refundAmt,
-          paymentAmount: originalPaymentAmt,
-          tx,
-        });
-        console.log(`💰 Earnings refunded for payment ${paymentId}`);
-      } catch (earningsError) {
-        // Log but don't fail - earnings can be manually updated
-        // refundEarnings already guards against double-refund (checks REFUNDED status)
-        console.error(
-          `⚠️ Failed to refund earnings for payment ${paymentId}:`,
-          earningsError,
-        );
-      }
-
-      // PR-1e Phase A: cap reversal for org-funded bookings. The
-      // `BookingUtilization` row (if any) is keyed by paymentId and
-      // exists only when the booking consumed engagements from a
-      // program. Reversal is proportional to the refund ratio so a
-      // partial refund returns a partial slice of the cap. Idempotent
-      // via the ledger-derived "already reversed" check inside the
-      // helper. Same try/catch posture as refundEarnings — log and
-      // continue; the operator runbook flags any stuck rows that the
-      // reconcile cron surfaces.
-      try {
-        const isPartial =
-          refundAmt !== undefined &&
-          originalPaymentAmt !== undefined &&
-          originalPaymentAmt > 0 &&
-          refundAmt < originalPaymentAmt;
-        let engagementsToReverse: number | undefined;
-        if (isPartial) {
-          const util = await tx.bookingUtilization.findUnique({
-            where: { paymentId },
-            select: { engagementsConsumed: true },
-          });
-          if (util) {
-            const ratio = refundAmt! / originalPaymentAmt!;
-            engagementsToReverse = Math.max(
-              0,
-              Math.round(util.engagementsConsumed * ratio),
-            );
-          }
-        }
-        const result = await reverseBookingUtilization(tx, {
+        await applyRefundCascade(tx, {
           paymentId,
-          reason: isPartial
-            ? `Partial refund (${refundAmt}/${originalPaymentAmt})`
-            : "Refund",
-          engagementsToReverse,
+          refundId: refundRowId,
+          amountPaise: refundAmt ?? originalPaymentAmt ?? 0,
+          reason: "Gateway refund",
+          initiatedByUserId: null,
         });
-        if (result.reversed) {
-          console.log(
-            `🪙 Cap reversal for payment ${paymentId}: -${result.engagementsReversed} engagements (fullyReversed=${result.fullyReversed})`,
-          );
-        }
-      } catch (capError) {
+        console.log(`💰 Refund cascade applied for payment ${paymentId}`);
+      } catch (cascadeError) {
+        // #776 / PR#785 review — do NOT swallow. The cascade is idempotent
+        // (Refund.cascadedAt, claimed at its start) and atomic, so rethrowing rolls
+        // the tx back (the claim reverts) and the gateway redelivery / cascadedAt
+        // backstop cron retry it — instead of committing a partial refund (e.g.
+        // earnings reversed but the GST credit note un-minted, with no durable retry).
         console.error(
-          `⚠️ Failed to reverse cap utilization for payment ${paymentId}:`,
-          capError,
+          `⚠️ Refund cascade failed for payment ${paymentId}:`,
+          cascadeError,
         );
+        throw cascadeError;
       }
 
+      // Referral-credit restoration is NOT part of the cascade (v2 referral
+      // ledger) — keep it here so refunded credit-funded bookings still restore.
       try {
         const restored = await reverseCreditsForPayment(
           paymentId,
@@ -889,6 +858,7 @@ export async function handleRefundCreated(
           await runRefundSideEffects(
             payment.id,
             status,
+            existingRefund.id,
             amount,
             payment.amount,
           );
@@ -898,7 +868,7 @@ export async function handleRefundCreated(
     }
 
     // Create new refund record
-    await tx.refund.create({
+    const createdRefund = await tx.refund.create({
       data: {
         amountPaise: amount,
         currency,
@@ -907,12 +877,19 @@ export async function handleRefundCreated(
         paymentGateway: gateway,
         paymentId: payment.id,
       },
+      select: { id: true },
     });
 
     console.log(`✅ Refund ${refundId} created for payment ${payment.id}`);
 
     // Run side effects for new refunds that are already SUCCEEDED
-    await runRefundSideEffects(payment.id, status, amount, payment.amount);
+    await runRefundSideEffects(
+      payment.id,
+      status,
+      createdRefund.id,
+      amount,
+      payment.amount,
+    );
 
     // --- Novu notification (fire-and-forget) ---
     void notifyRefundProcessed(payment.userId, {
@@ -1066,7 +1043,14 @@ export async function handleDisputeUpdated(
   status: string,
   evidence: Record<string, unknown> | null,
 ) {
-  return await prisma.$transaction(async (tx) => {
+  // #785 — Serializable so SSI detects a refund racing this lost-chargeback on
+  // the same payment: refundPayment (also Serializable) reads disputes + writes
+  // a Refund row while applyOrgChargeback below reads refunds + writes the
+  // dispute, so an interleaving forms a dangerous rw-structure and one tx aborts
+  // (retried by the gateway webhook redelivery) instead of both reversing the
+  // org for the same money.
+  return await prisma.$transaction(
+    async (tx) => {
     const dispute = await tx.dispute.findUnique({
       where: { disputeId },
     });
@@ -1077,6 +1061,22 @@ export async function handleDisputeUpdated(
     }
 
     const mappedStatus = mapDisputeStatus(status);
+
+    // #776 — skip a redelivered no-op so the resolution side effects below (earnings
+    // flips, applyOrgChargeback) don't re-run on a webhook retry.
+    if (dispute.status === mappedStatus) {
+      console.log(`Dispute ${disputeId} already ${mappedStatus} — no-op`);
+      return;
+    }
+    // #776 — reject illegal transitions, most importantly re-driving a TERMINAL
+    // verdict (WON/LOST/CHARGE_REFUNDED). Log + skip rather than corrupt the state
+    // machine on a delayed/out-of-order gateway delivery.
+    if (!isLegalDisputeTransition(dispute.status, mappedStatus)) {
+      console.warn(
+        `Illegal dispute transition ${dispute.status} → ${mappedStatus} for ${disputeId} — skipping`,
+      );
+      return;
+    }
 
     await tx.dispute.update({
       where: { disputeId },
@@ -1129,6 +1129,29 @@ export async function handleDisputeUpdated(
 
         console.log(`💸 Earnings ${earning.id} refunded (${remainingRefundable} paise) — dispute ${disputeId} lost`);
       }
+
+      // #776 §C — org-funded chargeback money-path. When the disputed booking
+      // was org-funded, the funder (the org) bears the chargeback, not the
+      // platform: debit the org wallet, falling back to an ORG_RECEIVABLE the
+      // dunning flow pursues if the wallet can't cover it.
+      const disputedPayment = await tx.payment.findUnique({
+        where: { id: dispute.paymentId },
+        select: {
+          id: true,
+          organizationId: true,
+          billingAccountId: true,
+          amount: true,
+        },
+      });
+      if (disputedPayment?.organizationId) {
+        await applyOrgChargeback(tx, {
+          paymentId: disputedPayment.id,
+          organizationId: disputedPayment.organizationId,
+          billingAccountId: disputedPayment.billingAccountId,
+          amountPaise: dispute.amountPaise,
+          disputeId,
+        });
+      }
     }
 
     // --- Novu notification for resolved disputes (fire-and-forget) ---
@@ -1154,6 +1177,120 @@ export async function handleDisputeUpdated(
         });
       }
     }
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+  );
+}
+
+/**
+ * #776 §C — settle a lost chargeback on an org-funded booking. The org funded
+ * the booking, so the org bears the chargeback: debit its wallet. If the wallet
+ * can't cover it (or there's no wallet), record the amount as an ORG_RECEIVABLE
+ * the dunning flow pursues. Either way the platform's CASH (pulled by the bank)
+ * is balanced by the org side. Idempotent on `chargeback:<disputeId>`.
+ */
+async function applyOrgChargeback(
+  tx: Prisma.TransactionClient,
+  params: {
+    paymentId: string;
+    organizationId: string;
+    billingAccountId: string | null;
+    amountPaise: number;
+    disputeId: string;
+  },
+): Promise<void> {
+  const { organizationId, billingAccountId, amountPaise, disputeId } = params;
+  if (amountPaise <= 0) return;
+
+  // Idempotent on the chargeback key. `walletDebit` is NOT keyed on the dispute,
+  // but the ledger post below is — so a webhook retry would re-debit the wallet
+  // while posting the ledger only once (drift + double-charge). If the
+  // chargeback ledger txn already exists, this is a replay: skip all mutations.
+  const alreadyPosted = await tx.ledgerTransaction.findUnique({
+    where: { idempotencyKey: `chargeback:${disputeId}` },
+    select: { id: true },
+  });
+  if (alreadyPosted) return;
+
+  // #785 — net against money already reversed by an app refund on this payment.
+  // A refund and a lost chargeback are two routes to the same "customer got the
+  // money back"; without this the org is debited twice (refund:<id> reverses the
+  // funding AND chargeback:<disputeId> debits again). Settle only the un-reversed
+  // remainder so the disputed amount hits the org's books exactly once.
+  // Net only against SUCCEEDED refunds: a PENDING refund hasn't moved money and
+  // may yet FAIL — netting against it would leave the org permanently
+  // under-debited (the idempotent chargeback post never recomputes). App refunds
+  // commit straight to SUCCEEDED, so this loses nothing for them; the concurrent
+  // mid-flight refund case is handled by the Serializable guard in
+  // handleDisputeUpdated.
+  const priorRefundAgg = await tx.refund.aggregate({
+    where: {
+      paymentId: params.paymentId,
+      status: { in: ["SUCCEEDED"] },
+    },
+    _sum: { amountPaise: true },
+  });
+  const settlePaise = Math.max(
+    0,
+    amountPaise - (priorRefundAgg._sum.amountPaise ?? 0),
+  );
+  if (settlePaise <= 0) {
+    console.log(
+      `[Webhook] Chargeback ${disputeId} fully covered by prior refund(s) — no additional org debit`,
+    );
+    return;
+  }
+
+  let recoveredFromWallet = false;
+  if (billingAccountId) {
+    try {
+      await walletDebit(tx, {
+        billingAccountId,
+        amountPaise: settlePaise,
+        reason: "ADJUSTMENT",
+        paymentId: params.paymentId,
+        notes: `Chargeback recovery: dispute ${disputeId}`,
+      });
+      recoveredFromWallet = true;
+    } catch (err) {
+      if (!(err instanceof WalletInsufficientFundsError)) throw err;
+      // Insufficient balance — fall through to the receivable path.
+    }
+  }
+
+  // Balanced counter-post: the bank pulled CASH; recover it from the funder.
+  await postLedgerTxn(tx, {
+    idempotencyKey: `chargeback:${disputeId}`,
+    kind: "REFUND",
+    paymentId: params.paymentId,
+    postings: [
+      {
+        account: recoveredFromWallet
+          ? { kind: "WALLET", organizationId }
+          : { kind: "ORG_RECEIVABLE", organizationId },
+        direction: "DEBIT",
+        amountPaise: settlePaise,
+      },
+      { account: { kind: "CASH" }, direction: "CREDIT", amountPaise: settlePaise },
+    ],
+  });
+
+  await tx.orgAuditLog.create({
+    data: {
+      organizationId,
+      actorMembershipId: null,
+      category: "INVOICE",
+      action: AUDIT_ACTIONS.INVOICE.INVOICE_REFUNDED,
+      description: `Chargeback ${disputeId} settled: ${amountPaise} paise ${
+        recoveredFromWallet ? "debited from wallet" : "booked as receivable"
+      }`,
+      details: {
+        disputeId,
+        paymentId: params.paymentId,
+        amountPaise,
+        recoveredFromWallet,
+      } as Prisma.InputJsonValue,
+    },
   });
 }
 

@@ -1,0 +1,42 @@
+name: Sweep Orphaned Top-up Captures
+
+# #785 (task #23) — re-credits gateway-captured wallet top-ups whose confirm/ledger
+# post rolled back (capturedAt set, still PENDING). Runs every 30 minutes.
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+jobs:
+  sweep-orphaned-topup-captures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Sweep orphaned top-up captures
+        run: npx tsx jobs/cleanup/sweep-orphaned-topup-captures.ts
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "Captured-top-up sweep job failed"

@@ -265,6 +265,8 @@ export async function recordTDSDeduction(params: {
   cumulativeAmountCredited: number;
   payoutId?: string;
   earningsId?: string;
+  /** #776 — statutory section ("194O" for ECO consultant payouts) for 26Q audit. */
+  tdsSection?: string;
   db?: Prisma.TransactionClient | typeof prisma;
 }) {
   const quarter = getIndianFYQuarter();
@@ -279,6 +281,7 @@ export async function recordTDSDeduction(params: {
       cumulativeAmountCredited: params.cumulativeAmountCredited,
       tdsDeducted: params.tdsDeducted,
       tdsRate: params.tdsRate,
+      tdsSection: params.tdsSection ?? null,
       payoutId: params.payoutId,
       earningsId: params.earningsId,
     },

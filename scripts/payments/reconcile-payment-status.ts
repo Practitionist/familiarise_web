@@ -277,12 +277,25 @@ export async function reconcilePaymentStatus(): Promise<PaymentReconciliationRes
 
     // Update if status changed
     if (mappedStatus !== payment.paymentStatus) {
-      await prisma.payment.update({
-        where: { id: payment.id },
+      // #776 — guard on the status we read. A webhook can transition this
+      // payment (e.g. PENDING→SUCCEEDED) between the findMany and here; without
+      // the predicate the reconcile would clobber that real transition back to
+      // EXPIRED/FAILED. updateMany lets us add the guard; count===0 means another
+      // writer already moved it — skip rather than overwrite.
+      const claimed = await prisma.payment.updateMany({
+        where: { id: payment.id, paymentStatus: payment.paymentStatus },
         data: {
           paymentStatus: mappedStatus,
         },
       });
+
+      if (claimed.count === 0) {
+        console.log(
+          `   Skipped: payment ${payment.id} already transitioned by another writer`,
+        );
+        skippedCount++;
+        continue;
+      }
 
       console.log(
         `   Updated status: ${payment.paymentStatus} → ${mappedStatus}`,

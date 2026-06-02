@@ -11,6 +11,8 @@
  *            ├─▶ CHARGED                     (CHARGE_MEMBER: gateway webhook)
  *            ├─▶ FAILED ──▶ PENDING          (CHARGE_MEMBER: abandon → retry)
  *            └─▶ REVERSED                     (booking refunded)
+ *   FAILED ──▶ CHARGED                       (late capture webhook recovers a
+ *                                             sweep-FAILed charge that was paid)
  *   ACCRUED / FAILED ──▶ REVERSED            (refund of an un-charged overage)
  *   CHARGED ──▶ (terminal)                   reversal needs a credit note (#716)
  *   BLOCKED ──▶ (terminal)                   set at creation only
@@ -23,7 +25,7 @@ import type { OverageChargeStatus, Prisma } from "@prisma/client";
 const ALLOWED_FROM: Record<OverageChargeStatus, OverageChargeStatus[]> = {
   PENDING: ["FAILED"], // member retry after an abandoned side-charge
   ACCRUED: ["PENDING"], // CHARGE_ORG rolled onto an issued invoice
-  CHARGED: ["PENDING", "ACCRUED"], // money collected (member webhook / invoice paid)
+  CHARGED: ["PENDING", "ACCRUED", "FAILED"], // money collected (member webhook / invoice paid); FAILED→CHARGED recovers a charge the abandoned-sweep wrongly FAILed while its capture webhook was stuck (#785)
   FAILED: ["PENDING"], // member side-charge abandoned
   REVERSED: ["PENDING", "ACCRUED", "FAILED"], // booking refunded before collection
   BLOCKED: [], // set at creation only

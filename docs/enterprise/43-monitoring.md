@@ -165,3 +165,21 @@ for CI.
 This list grows over time. When in doubt, add the metric to the info
 dashboard first; promote to warning/critical once you've seen the
 baseline.
+
+## Alerting sink — Better Stack Telemetry (#776 §K)
+
+`recordSystemEvent` / `recordSystemError` (`lib/enterprise/system-events.ts`)
+write the `SystemEvent` table (source of truth) and, when
+`ENABLE_BETTERSTACK_TELEMETRY=true` with `BETTERSTACK_SOURCE_TOKEN` +
+`BETTERSTACK_INGEST_URL` set, **also** ship a JSON event to the Better Stack
+Telemetry logs HTTP ingest (`lib/observability/betterstack-telemetry.ts`,
+Bearer source token). The sink is best-effort and off the critical path — an
+ingest outage never blocks the caller.
+
+Wired page-worthy callsites: failed/crashed ledger reconcile
+(`jobs/reconcile/reconcile-ledgers.ts`), permanently-failed payouts
+(`jobs/payouts/handle-stuck-payouts.ts`), outbound webhook queue backlog
+(`jobs/cleanup/dispatch-outbound-webhooks.ts`), and inbound HMAC verification
+failures (`app/api/webhooks/razorpay/route.ts`). This is distinct from
+`lib/betterstack.ts`, which drives the Uptime/Incident-Management API for
+maintenance windows.

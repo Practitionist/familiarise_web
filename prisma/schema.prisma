@@ -561,6 +561,8 @@ model Organization {
   // Per-org invoice number counters — one row per (org, fiscal year).
   // See `OrgInvoiceCounter` for the atomic increment semantics.
   invoiceCounters OrgInvoiceCounter[]
+  // Per-org credit-note counters (#776) — independent CN sequence (Rule 53).
+  creditNoteCounters OrgCreditNoteCounter[]
 
   // Trial attribution — TrialSession.organizationId is optional. Set
   // only when the trial booker is a LEARNER of an active org. Used for
@@ -1020,6 +1022,10 @@ model WalletTopUp {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   confirmedAt DateTime?
+  // #785 — stamped OUTSIDE confirmTopUp's tx on gateway capture so it survives a
+  // ledger-post rollback; the cleanup cron skips capturedAt-set rows and the
+  // sweep-orphaned-topup-captures reconciler re-credits them.
+  capturedAt  DateTime?
 
   @@index([billingAccountId, createdAt])
   @@index([status, createdAt])
@@ -1621,6 +1627,20 @@ model OrgInvoiceCounter {
   @@map("org_invoice_counters")
 }
 
+// #776 / #778 §D — gapless per-org credit-note sequence (CGST Rule 53), atomic
+// UPSERT…RETURNING just like OrgInvoiceCounter. A separate counter keeps the CN
+// series independent of the invoice series, as the GST rules require.
+model OrgCreditNoteCounter {
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  fiscalYear     Int
+  nextSeq        Int          @default(1)
+  updatedAt      DateTime     @updatedAt
+
+  @@id([organizationId, fiscalYear])
+  @@map("org_credit_note_counters")
+}
+
 model PurchaseOrder {
   id             String       @id @default(uuid())
   organizationId String
@@ -1792,8 +1812,10 @@ model UsageLedgerEntry {
 // equal to balance(WALLET account) by the reconcile cron.
 //
 // Writers (Batch 2) go through `postLedgerTxn()`, which asserts the balance
-// invariant; a DB trigger enforces it at COMMIT (added in the reset SQL, since
-// Prisma has no native multi-row CHECK).
+// invariant. #776 — a deferred CONSTRAINT TRIGGER enforces it again at COMMIT
+// (Prisma has no native multi-row CHECK): see `prisma/sql/ledger-triggers.sql`,
+// applied by `npm run db:triggers` after every `db push`/reset (Prisma does not
+// manage triggers).
 // ───────────────────────────────────────────────────────────────────────────
 enum LedgerAccountKind {
   CASH // platform gateway/settlement cash
@@ -1825,11 +1847,29 @@ model LedgerAccount {
   kind                LedgerAccountKind
   currency            Currency          @default(INR)
   entries             LedgerEntry[]
+  balance             LedgerAccountBalance?
 
   createdAt DateTime @default(now())
 
   @@unique([organizationId, consultantProfileId, kind, currency])
   @@index([kind])
+}
+
+// #776 — maintained running balance per account, folded inside postLedgerTxn's
+// transaction. Replaces the O(n) groupBy scan in ledgerBalancePaise() (hot in
+// reconcile/dashboards/credit-limit checks). The append-only LedgerEntry
+// journal stays the source-of-truth audit trail; this is a derived cache the
+// reconcile cron validates (LEDGER_BALANCE_SNAPSHOT_DRIFT). No backfill — a
+// fresh seed populates it as postings land.
+model LedgerAccountBalance {
+  // 1:1 with LedgerAccount; shares its deterministic id.
+  accountId    String        @id
+  account      LedgerAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  // Signed Σ(DEBIT) − Σ(CREDIT) in paise; callers interpret sign per kind.
+  balancePaise BigInt        @default(0)
+  // Monotonic count of entries folded in — a cheap double-apply guard.
+  entrySeq     BigInt        @default(0)
+  updatedAt    DateTime      @updatedAt
 }
 
 // #778 §B — typed txn kind (was free String). A typo ("BOOKNG") silently broke
@@ -3412,6 +3452,12 @@ model Refund {
   payment   Payment @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   paymentId String
 
+  // #776 — idempotency stamp for applyRefundCascade. Set once the canonical
+  // cascade (legs/wallet/earnings/ledger/utilization/credit-note) has run, so the
+  // app, gateway-webhook and backstop-cron paths each apply it exactly once. The
+  // cron selects SUCCEEDED refunds where this is null.
+  cascadedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -3419,6 +3465,7 @@ model Refund {
   @@index([status])
   @@index([refundId])
   @@index([paymentId, status])
+  @@index([status, cascadedAt])
 }
 
 enum RefundStatus {
@@ -3566,6 +3613,11 @@ model ConsultantPayout {
   tdsRateApplied   Float? // TDS rate reserved for this payout, used when creating the final audit record
   tdsFinancialYear String? // FY when TDS was calculated (e.g. "2026-27"). Persisted to avoid FY-boundary drift.
 
+  // MSME 43B(h) settlement deadline; mirrors OrganizationPayout. #776 — the
+  // consultant is the supplier here, so the deadline derives from the
+  // consultant's own msmeStatus/writtenAgreement, not the buyer org's.
+  mustPayByDate DateTime?
+
   // Processing
   failureReason String?
   retryCount    Int       @default(0)
@@ -3657,7 +3709,11 @@ model TDSRecord {
   // Amounts in paise
   cumulativeAmountCredited Int // FY cumulative of amounts credited/paid to consultant (sum of completed payouts)
   tdsDeducted              Int // TDS amount deducted this record
-  tdsRate                  Float // Rate at time of deduction (10 or 20)
+  tdsRate                  Float // Rate at time of deduction
+  // #776 — statutory section applied ("194O" | "194J" | "195" | …) for forensic
+  // audit + Form 26Q/27Q line classification. Consultant payouts are 194-O (ECO)
+  // post-consolidation; org payouts already stamp the section on OrganizationPayout.
+  tdsSection               String?
 
   // Link to the payout that triggered this deduction
   payoutId   String?
@@ -3712,8 +3768,11 @@ model CreditNote {
   // B2C/unregistered cases where no GST invoice was issued.
   invoiceId      String?
   invoice        OrganizationInvoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
-  // Triggering refund, when the CN arises from one.
-  refundId       String?
+  // Triggering refund, when the CN arises from one. @unique (#776) makes
+  // refund-driven minting idempotent: one credit note per refund, so a webhook
+  // redelivery / cron retry / app re-run can't mint a duplicate or burn a
+  // gapless sequence number. Postgres allows many NULLs, so manual CNs are fine.
+  refundId       String? @unique
   reason         String?
 
   // Money (paise; #780 widens to BigInt). Mirror the invoice tax split so the

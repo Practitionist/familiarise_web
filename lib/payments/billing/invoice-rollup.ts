@@ -107,6 +107,20 @@ export async function rollupOrgInvoiceAccruals(params: {
     hsnCode: org.taxInfo?.hsnDefault,
   });
 
+  // #776 — defensive invariant at issue time: the subtotal must equal the
+  // line-item sum and the GST breakdown must net exactly (total == subtotal +
+  // CGST + SGST + IGST). A mis-totaled GST invoice is a filing defect, so hard-throw
+  // here rather than persist it (catches any future rounding regression upstream).
+  const taxParts = gst.igstPaise + gst.cgstPaise + gst.sgstPaise;
+  if (
+    gst.subtotalPaise !== subtotal ||
+    gst.totalPaise !== gst.subtotalPaise + taxParts
+  ) {
+    throw new Error(
+      `Invoice total mismatch for org ${organizationId}: subtotal=${gst.subtotalPaise} (lineItems=${subtotal}) tax=${taxParts} total=${gst.totalPaise}`,
+    );
+  }
+
   const issuedAt = new Date();
   const issueImmediately = params.issueImmediately ?? true;
   const dueDate = new Date(issuedAt);

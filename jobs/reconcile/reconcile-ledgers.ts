@@ -19,6 +19,10 @@ import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { runReconcileLedgers } from "../../scripts/reconcile/reconcile-ledgers";
 import prisma from "../../lib/prisma";
+import {
+  recordSystemEvent,
+  recordSystemError,
+} from "../../lib/enterprise/system-events";
 
 async function main(): Promise<void> {
   await abortIfMaintenance("reconcile-ledgers");
@@ -60,10 +64,28 @@ async function main(): Promise<void> {
       console.log(
         `::error::Ledger reconciliation found ${report.summary.discrepanciesCount} discrepancies. Report id: ${report.id}`,
       );
+      // #776 §K — surface drift to the telemetry sink, not just CI logs.
+      await recordSystemEvent({
+        category: "RECONCILE",
+        severity: "ERROR",
+        message: `Ledger reconciliation found ${report.summary.discrepanciesCount} discrepancies`,
+        correlationId: report.id,
+        context: {
+          reportId: report.id,
+          findingsCount: report.summary.discrepanciesCount,
+          kinds: Array.from(new Set(report.findings.map((f) => f.kind))),
+        },
+      });
       process.exit(2);
     }
   } catch (error) {
     console.error("❌ Fatal error in ledger reconciliation:", error);
+    // #776 §K — a crashed auditor means we're flying blind on money integrity.
+    await recordSystemError({
+      category: "RECONCILE",
+      summary: "Ledger reconciliation crashed",
+      err: error,
+    });
     process.exit(1);
   } finally {
     await prisma.$disconnect();

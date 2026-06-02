@@ -94,8 +94,26 @@ export async function claimProgramAssignment(
     periodStart: Date;
     periodEnd: Date;
   },
-): Promise<ProgramAssignment> {
-  return tx.programAssignment.upsert({
+): Promise<{ assignment: ProgramAssignment; created: boolean }> {
+  // #785 — report whether THIS call created the row so the caller can
+  // increment activeSeatCount exactly once. `createMany({ skipDuplicates })`
+  // is INSERT … ON CONFLICT DO NOTHING: it returns count===1 for the single
+  // racer that wins the unique (programId, membershipId, periodStart) and
+  // count===0 for a re-claim/concurrent duplicate — and, unlike a caught
+  // P2002, does NOT poison the surrounding transaction. Replaces the route's
+  // racy preexisting-probe that let two concurrent POSTs both seat-count.
+  const ins = await tx.programAssignment.createMany({
+    data: [
+      {
+        programId: params.programId,
+        membershipId: params.membershipId,
+        periodStart: params.periodStart,
+        periodEnd: params.periodEnd,
+      },
+    ],
+    skipDuplicates: true,
+  });
+  const assignment = await tx.programAssignment.findUniqueOrThrow({
     where: {
       programId_membershipId_periodStart: {
         programId: params.programId,
@@ -103,14 +121,8 @@ export async function claimProgramAssignment(
         periodStart: params.periodStart,
       },
     },
-    create: {
-      programId: params.programId,
-      membershipId: params.membershipId,
-      periodStart: params.periodStart,
-      periodEnd: params.periodEnd,
-    },
-    update: {},
   });
+  return { assignment, created: ins.count === 1 };
 }
 
 /**
@@ -451,6 +463,16 @@ export async function reverseBookingUtilization(
      * Negative or zero → no-op.
      */
     engagementsToReverse?: number;
+    /**
+     * #776 — refund ratio for the MONEY meter. The engagement count above is
+     * `ceil`'d so a partial refund still releases ≥1 whole seat; deriving the
+     * reversed *price* from that ceil'd count overstates `consumedPaise` and the
+     * `UsageLedgerEntry` price (breaks REFUND_BOOKING_COHERENCE). When refunding,
+     * pass the actual paise so the money-meter reverses in proportion to the
+     * booking price, independent of the engagement rounding. Clamped to the
+     * unreversed price remainder.
+     */
+    refundRatio?: { refundAmountPaise: number; paymentAmountPaise: number };
   },
 ): Promise<{
   reversed: boolean;
@@ -512,13 +534,37 @@ export async function reverseBookingUtilization(
   // Prorate the price refund so the ledger sum stays consistent with
   // the partial reversal. Round to the nearest paise; the integer
   // round-off lands within ±1 paise of the proportional amount.
-  const priceReversal =
+  const engagementDerivedPrice =
     util.engagementsConsumed > 0
       ? Math.round(
           (util.priceAtBookingPaise * actualReversal) /
             util.engagementsConsumed,
         )
       : 0;
+
+  // #776 — when a refund ratio is supplied, reverse the price in proportion to
+  // the actual money refunded (booking price × refundAmount/paymentAmount) rather
+  // than the ceil'd engagement count, clamped to the unreversed price remainder.
+  // Keeps consumedPaise + the usage ledger coherent with the refund (a 75k refund
+  // of a 2×100k booking reverses 75k of price even though it releases 1 seat).
+  let priceReversal = engagementDerivedPrice;
+  if (params.refundRatio && params.refundRatio.paymentAmountPaise > 0) {
+    const priceLedger = await tx.usageLedgerEntry.aggregate({
+      where: { paymentId: params.paymentId, priceAtBookingPaise: { lt: 0 } },
+      _sum: { priceAtBookingPaise: true },
+    });
+    const alreadyReversedPrice =
+      -1 * (priceLedger._sum.priceAtBookingPaise ?? 0);
+    const remainingPrice = Math.max(
+      0,
+      util.priceAtBookingPaise - alreadyReversedPrice,
+    );
+    const proportional = Math.floor(
+      (util.priceAtBookingPaise * params.refundRatio.refundAmountPaise) /
+        params.refundRatio.paymentAmountPaise,
+    );
+    priceReversal = Math.min(Math.max(0, proportional), remainingPrice);
+  }
 
   await tx.programAssignment.update({
     where: { id: util.programAssignmentId },

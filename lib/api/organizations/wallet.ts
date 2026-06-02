@@ -60,15 +60,17 @@ export async function walletDebit(
   if (params.amountPaise <= 0) {
     throw new Error(`walletDebit requires positive amountPaise, got ${params.amountPaise}`);
   }
-  // Conditional UPDATE: only succeeds when balance is sufficient.
-  const updated = await tx.$executeRaw`
-    UPDATE "BillingAccount"
-    SET "walletBalance" = "walletBalance" - ${params.amountPaise}
-    WHERE "id" = ${params.billingAccountId}
-      AND "walletBalance" IS NOT NULL
-      AND "walletBalance" >= ${params.amountPaise}
-  `;
-  if (updated === 0) {
+  // Atomic conditional decrement via the ORM (no raw SQL): updateMany only matches
+  // a row whose balance is already sufficient (gte excludes NULL too), so two
+  // concurrent debits can't overdraw — Postgres row-locks the matched row.
+  const updated = await tx.billingAccount.updateMany({
+    where: {
+      id: params.billingAccountId,
+      walletBalance: { gte: params.amountPaise },
+    },
+    data: { walletBalance: { decrement: params.amountPaise } },
+  });
+  if (updated.count === 0) {
     throw new WalletInsufficientFundsError(params.billingAccountId, params.amountPaise);
   }
   const acct = await tx.billingAccount.findUniqueOrThrow({
@@ -103,16 +105,13 @@ export async function walletCredit(
   if (params.amountPaise <= 0) {
     throw new Error(`walletCredit requires positive amountPaise, got ${params.amountPaise}`);
   }
-  const updated = await tx.$executeRaw`
-    UPDATE "BillingAccount"
-    SET "walletBalance" = COALESCE("walletBalance", 0) + ${params.amountPaise}
-    WHERE "id" = ${params.billingAccountId}
-  `;
-  if (updated === 0) {
-    throw new Error(`BillingAccount ${params.billingAccountId} not found`);
-  }
-  const acct = await tx.billingAccount.findUniqueOrThrow({
+  // Atomic increment via the ORM (no raw SQL). WALLET-funded accounts are created
+  // with walletBalance=0 (never null), and every mutation is increment/decrement,
+  // so the value stays non-null — increment is exact without a COALESCE. `update`
+  // throws P2025 if the account is missing (a real error, like the old guard).
+  const acct = await tx.billingAccount.update({
     where: { id: params.billingAccountId },
+    data: { walletBalance: { increment: params.amountPaise } },
     select: { walletBalance: true, currency: true, ownerOrgId: true },
   });
   const balanceAfter = acct.walletBalance ?? 0;
@@ -191,6 +190,20 @@ export async function confirmTopUp(
     amountPaise: number;
   },
 ): Promise<{ confirmed: boolean; balanceAfter?: number }> {
+  // #785 — record the gateway capture OUTSIDE the tx below so it survives a
+  // ledger-post rollback. The whole confirm body is one $transaction, so a
+  // walletCredit/postLedgerTxn failure reverts the CONFIRMED claim back to
+  // PENDING; without this the abandoned-cleanup cron reaps the row and the
+  // captured money's only trace is lost. capturedAt + providerPaymentId persist
+  // so the cleanup skips it and sweep-orphaned-topup-captures can re-credit it.
+  await prisma.walletTopUp.updateMany({
+    where: { providerOrderId: params.providerOrderId, capturedAt: null },
+    data: {
+      capturedAt: new Date(),
+      providerPaymentId: params.providerPaymentId,
+    },
+  });
+
   return prisma.$transaction(async (tx) => {
     // Atomic idempotent claim: flip PENDING → CONFIRMED in a single
     // conditional updateMany. Exactly one racing webhook delivery sees
@@ -227,11 +240,22 @@ export async function confirmTopUp(
 
     const topUp = await tx.walletTopUp.findUniqueOrThrow({
       where: { providerOrderId: params.providerOrderId },
-      select: { billingAccountId: true },
+      select: { billingAccountId: true, amountPaise: true },
     });
+    // #785 — credit the AUTHORIZED amount stored at initiation, and reject a
+    // webhook/sweeper whose amount disagrees. The ledger idempotency key is the
+    // order id, so it dedupes the posting but NOT the amount; without this a
+    // mismatched-amount delivery (or a future caller that skips the gateway
+    // amount check) would credit the wallet for the wrong figure undetected.
+    if (params.amountPaise !== topUp.amountPaise) {
+      throw new Error(
+        `Top-up amount mismatch for order ${params.providerOrderId}: ` +
+          `confirm=${params.amountPaise} paise vs authorized=${topUp.amountPaise} paise`,
+      );
+    }
     const result = await walletCredit(tx, {
       billingAccountId: topUp.billingAccountId,
-      amountPaise: params.amountPaise,
+      amountPaise: topUp.amountPaise,
       reason: "TOPUP",
       providerOrderId: params.providerOrderId,
       providerPaymentId: params.providerPaymentId,

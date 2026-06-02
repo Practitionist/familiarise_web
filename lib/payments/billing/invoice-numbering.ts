@@ -19,8 +19,14 @@
 import type { Prisma } from "@prisma/client";
 
 export function indianFiscalYear(d: Date): number {
-  const y = d.getUTCFullYear();
-  const m = d.getUTCMonth(); // Jan=0, Apr=3
+  // #776 — the Indian FY (Apr–Mar) is reckoned in IST, not UTC. An invoice issued
+  // just after midnight IST on Apr 1 (before 05:30 IST) is still Mar 31 in UTC;
+  // computing the FY in UTC would file it under the previous FY and desync the
+  // invoice number's FY from its IST issue date (CGST Rule 46 sequential breach).
+  // Shift into IST (UTC+5:30) before extracting year/month.
+  const ist = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
+  const y = ist.getUTCFullYear();
+  const m = ist.getUTCMonth(); // Jan=0, Apr=3
   return m >= 3 ? y : y - 1;
 }
 
@@ -33,19 +39,17 @@ export async function allocateOrgInvoiceSeq(
   organizationId: string,
   fiscalYear: number,
 ): Promise<number> {
-  const rows = await tx.$queryRaw<Array<{ allocated: number }>>`
-    INSERT INTO "org_invoice_counters" ("organizationId", "fiscalYear", "nextSeq", "updatedAt")
-    VALUES (${organizationId}, ${fiscalYear}, 2, NOW())
-    ON CONFLICT ("organizationId", "fiscalYear")
-    DO UPDATE SET "nextSeq" = "org_invoice_counters"."nextSeq" + 1,
-                  "updatedAt" = NOW()
-    RETURNING ("nextSeq" - 1)::int AS "allocated"
-  `;
-  const row = rows[0];
-  if (!row || typeof row.allocated !== "number") {
-    throw new Error("allocateOrgInvoiceSeq: empty RETURNING — DB state inconsistent");
-  }
-  return row.allocated;
+  // ORM upsert (no raw SQL), same atomic pattern as allocateOrgCreditNoteSeq:
+  // create seeds nextSeq=2 and allocates seq 1; the update path increments and we
+  // return the pre-increment value (nextSeq-1). The increment is a single DB-level
+  // op and the compound @@id/ON CONFLICT serialises concurrent allocations.
+  const counter = await tx.orgInvoiceCounter.upsert({
+    where: { organizationId_fiscalYear: { organizationId, fiscalYear } },
+    create: { organizationId, fiscalYear, nextSeq: 2 },
+    update: { nextSeq: { increment: 1 } },
+    select: { nextSeq: true },
+  });
+  return counter.nextSeq - 1;
 }
 
 export interface OrgInvoiceNumberInput {

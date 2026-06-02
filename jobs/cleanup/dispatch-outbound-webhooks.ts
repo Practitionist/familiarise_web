@@ -18,6 +18,31 @@ import {
   type DispatchOutboundWebhooksResult,
 } from "../../scripts/cleanup/dispatch-outbound-webhooks";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import prisma from "../../lib/prisma";
+import { recordSystemEvent } from "../../lib/enterprise/system-events";
+
+// The delivery table IS the queue (see worker.ts). If overdue rows pile up
+// past this, the worker isn't keeping pace — page someone (#776 §K).
+const QUEUE_BACKLOG_THRESHOLD = 200;
+
+async function checkQueueBacklog(): Promise<void> {
+  const backlog = await prisma.outboundWebhookDelivery.count({
+    where: {
+      OR: [
+        { status: "PENDING" },
+        { status: "RETRY", nextRetryAt: { lte: new Date() } },
+      ],
+    },
+  });
+  if (backlog > QUEUE_BACKLOG_THRESHOLD) {
+    await recordSystemEvent({
+      category: "WEBHOOK",
+      severity: "WARN",
+      message: `Outbound webhook queue backlog: ${backlog} deliveries due`,
+      context: { backlog, threshold: QUEUE_BACKLOG_THRESHOLD },
+    });
+  }
+}
 
 function outputToGitHubActions(result: DispatchOutboundWebhooksResult): void {
   if (!process.env.GITHUB_ACTIONS) return;
@@ -46,6 +71,7 @@ if (require.main === module) {
       const result = await dispatchOutboundWebhooks();
       console.log(JSON.stringify(result, null, 2));
       outputToGitHubActions(result);
+      await checkQueueBacklog();
       if (!result.success) process.exit(1);
     } catch (err) {
       console.error("Fatal error:", err);

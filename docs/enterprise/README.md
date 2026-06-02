@@ -98,6 +98,7 @@ flowchart LR
 | 42 | [runbooks](42-runbooks.md) | incident response + scheduled tasks |
 | 43 | [monitoring](43-monitoring.md) | log taxonomy, alerts, dashboards |
 | 44 | [system-events](44-system-events.md) | system-event / audit-action taxonomy |
+| 45 | [live-payout-go-live-runbook](45-live-payout-go-live-runbook.md) | flip `ENABLE_LIVE_PAYOUTS` safely (sandbox proof + rollback) |
 
 ### Scenarios / verdict / partners
 | # | Doc | Focus |

@@ -16,6 +16,9 @@
  *   - If `panNumber` is null OR doesn't match /^[A-Z]{5}[0-9]{4}[A-Z]$/,
  *     withhold at the 20% punitive rate. This wins over both DTAA and
  *     section default (it's the higher-of rule).
+ *   - #785: callers whose PAN is encrypted at rest pass `panOnFile: true`
+ *     (validated at collection) instead of the ciphertext — passing the
+ *     ciphertext as `panNumber` fails the regex and wrongly hits the fallback.
  *
  * Lower-rate certificate (Section 197):
  *   - If `tdsLowerRateCert` is non-empty AND `tdsRate` is populated,
@@ -102,6 +105,14 @@ export interface TdsComputation {
  */
 export type TdsConsultantInput = {
   panNumber: string | null;
+  /**
+   * #785 — PAN is on file but stored ENCRYPTED at rest, so its plaintext format
+   * can't be validated here. true ⟹ treat as a valid PAN for the rate decision
+   * (validated at collection time). Payout callers MUST use this instead of
+   * passing the ciphertext as `panNumber` — the ciphertext fails `isValidPan`
+   * and wrongly triggers the higher no-PAN rate (5% vs 0.1% under 194-O).
+   */
+  panOnFile?: boolean;
   residencyStatus: ConsultantProfile["residencyStatus"];
   tdsSection: string | null;
   tdsRate: number | null;
@@ -146,8 +157,12 @@ export function computeTdsForPayout(params: {
   }
 
   // --- 2. PAN fallback — wins over everything else. #771 P0-1: 194-O has its
-  // own 5% no-PAN rate; 206AA's 20% applies to 194J/194C.
-  if (!isValidPan(consultant.panNumber)) {
+  // own 5% no-PAN rate; 206AA's 20% applies to 194J/194C. #785: a PAN counts as
+  // present when a valid plaintext PAN is supplied OR panOnFile asserts an
+  // encrypted-at-rest PAN — the ciphertext can't be format-checked here.
+  const hasValidPan =
+    consultant.panOnFile === true || isValidPan(consultant.panNumber);
+  if (!hasValidPan) {
     const fallbackRate =
       tdsSection === "194O" ? NO_PAN_RATE_194O : PAN_FALLBACK_RATE;
     const amt = Math.floor(grossAmountPaise * fallbackRate);

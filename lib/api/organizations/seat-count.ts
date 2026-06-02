@@ -74,24 +74,23 @@ export async function adjustActiveSeatCount(
     return { applied: false, balanceAfter: null };
   }
 
-  // Conditional UPDATE: only succeeds when the post-update value would
-  // be non-negative. Same pattern as walletDebit's overdraft guard.
+  // Atomic conditional update via the ORM (no raw SQL): same overdraft-guard
+  // pattern as walletDebit. For a decrement, updateMany only matches when the
+  // current count is large enough to stay non-negative (count >= -delta), so
+  // concurrent releases can't underflow.
   if (params.delta < 0) {
-    const updated = await tx.$executeRaw`
-      UPDATE "BillingSubscription"
-      SET "activeSeatCount" = "activeSeatCount" + ${params.delta}
-      WHERE "id" = ${sub.id}
-        AND "activeSeatCount" + ${params.delta} >= 0
-    `;
-    if (updated === 0) {
+    const updated = await tx.billingSubscription.updateMany({
+      where: { id: sub.id, activeSeatCount: { gte: -params.delta } },
+      data: { activeSeatCount: { increment: params.delta } },
+    });
+    if (updated.count === 0) {
       throw new SeatCountUnderflowError(sub.id);
     }
   } else {
-    await tx.$executeRaw`
-      UPDATE "BillingSubscription"
-      SET "activeSeatCount" = "activeSeatCount" + ${params.delta}
-      WHERE "id" = ${sub.id}
-    `;
+    await tx.billingSubscription.update({
+      where: { id: sub.id },
+      data: { activeSeatCount: { increment: params.delta } },
+    });
   }
 
   const after = await tx.billingSubscription.findUniqueOrThrow({

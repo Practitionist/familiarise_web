@@ -63,6 +63,10 @@ export async function cleanupAbandonedOrgTopUps(
       where: {
         status: "PENDING",
         providerPaymentId: null,
+        // #785 — never reap a gateway-captured top-up whose confirm/ledger post
+        // rolled back (capturedAt set, still PENDING); the
+        // sweep-orphaned-topup-captures reconciler re-credits those.
+        capturedAt: null,
         createdAt: { lt: cutoff },
       },
       select: {
@@ -90,8 +94,19 @@ export async function cleanupAbandonedOrgTopUps(
     // Delete in a single statement so the whole batch commits or none.
     // We cannot soft-delete — `providerOrderId @unique` would keep the slot
     // reserved and block a legitimate retry with the same client idempotency key.
+    // #776 — re-assert the PENDING/unpaid predicate in the DELETE itself: a
+    // webhook can confirm a candidate (PENDING→CONFIRMED, providerPaymentId set,
+    // wallet credited + ledger posted) between the findMany and here. Filtering
+    // by id alone would then hard-delete a CONFIRMED, paid top-up — losing the
+    // org's money with no audit trail (deletion-policy: a confirmed top-up is
+    // never reaped).
     const deleted = await prisma.walletTopUp.deleteMany({
-      where: { id: { in: candidates.map((c) => c.id) } },
+      where: {
+        id: { in: candidates.map((c) => c.id) },
+        status: "PENDING",
+        providerPaymentId: null,
+        capturedAt: null,
+      },
     });
     reaped = deleted.count;
 

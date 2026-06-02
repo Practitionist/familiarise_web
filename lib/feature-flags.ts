@@ -83,3 +83,24 @@ export const ENABLE_IRP_UPLOADER = process.env.ENABLE_IRP_UPLOADER === "true";
  */
 export const ENABLE_TDS_ADMIN_VIEW = process.env.ENABLE_TDS_ADMIN_VIEW === "true";
 
+/**
+ * Better Stack Telemetry (logs) sink for operational events (#776 §K).
+ *
+ * `recordSystemEvent`/`recordSystemError` always write the `SystemEvent`
+ * table (source of truth). When this flag is on AND `BETTERSTACK_SOURCE_TOKEN`
+ * + `BETTERSTACK_INGEST_URL` are set, those recorders ALSO ship the event to
+ * Better Stack Telemetry so a failed reconcile / stuck payout / webhook-queue
+ * backlog / HMAC failure can actually page someone instead of rotting in a
+ * table nobody queries.
+ *
+ * Off by default: the sink is a fire-and-forget side channel, never on the
+ * critical path. To enable:
+ *   1. Create a Telemetry source in Better Stack; copy its source token +
+ *      ingesting host.
+ *   2. Set `ENABLE_BETTERSTACK_TELEMETRY=true`, `BETTERSTACK_SOURCE_TOKEN`,
+ *      and `BETTERSTACK_INGEST_URL` in the deployment environment.
+ *   3. Redeploy and confirm events land on the source's live tail.
+ */
+export const ENABLE_BETTERSTACK_TELEMETRY =
+  process.env.ENABLE_BETTERSTACK_TELEMETRY === "true";
+

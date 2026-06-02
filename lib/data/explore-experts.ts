@@ -144,13 +144,18 @@ export async function fetchExpertsMetadata() {
         averageRating: averageRating._avg.rating || 0,
       };
     })(),
-    // Available languages via raw SQL
-    prisma.$queryRaw<{ lang: string }[]>`
-        SELECT DISTINCT unnest(languages) as lang
-        FROM "ConsultantProfile"
-        WHERE "verificationStatus" = 'VERIFIED'
-        ORDER BY lang
-      `.then((result) => result.map((r) => r.lang)),
+    // Available languages — distinct across verified consultants. ORM read + JS
+    // dedupe (no raw SQL): pull the verified profiles' `languages` arrays and
+    // flatten/unique/sort in app code. The verified-consultant set is small enough
+    // that this is cheaper than it looks and avoids a Postgres `unnest`.
+    prisma.consultantProfile
+      .findMany({
+        where: { verificationStatus: "VERIFIED" },
+        select: { languages: true },
+      })
+      .then((rows) =>
+        Array.from(new Set(rows.flatMap((r) => r.languages))).sort(),
+      ),
     // Available companies (from verified consultants' work experiences)
     prisma.workExperience.findMany({
       where: {

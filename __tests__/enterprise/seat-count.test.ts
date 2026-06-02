@@ -24,14 +24,17 @@ type SubLookup = { id: string; activeSeatCount: number };
 
 type MockTx = {
   program: { findUnique: jest.Mock };
-  billingSubscription: { findUniqueOrThrow: jest.Mock };
-  $executeRaw: jest.Mock;
+  billingSubscription: {
+    findUniqueOrThrow: jest.Mock;
+    update: jest.Mock;
+    updateMany: jest.Mock;
+  };
 };
 
 function makeTx(opts: {
   programType: "LICENSED_SEAT" | "CREDIT_POOL" | "PROJECT" | "RETAINER";
   subscription: SubLookup | null;
-  /** Rows touched by the conditional UPDATE; 0 simulates underflow. */
+  /** Rows touched by the conditional updateMany; 0 simulates underflow. */
   updateRows?: number;
   /** Post-update activeSeatCount returned to the caller. */
   postValue?: number;
@@ -45,12 +48,17 @@ function makeTx(opts: {
         },
       }),
     },
+    // #776 — seat-count writer now uses the ORM (atomic update / conditional
+    // updateMany) instead of raw SQL.
     billingSubscription: {
       findUniqueOrThrow: jest.fn().mockResolvedValue({
         activeSeatCount: opts.postValue ?? 0,
       }),
+      update: jest.fn().mockResolvedValue({
+        activeSeatCount: opts.postValue ?? 0,
+      }),
+      updateMany: jest.fn().mockResolvedValue({ count: opts.updateRows ?? 1 }),
     },
-    $executeRaw: jest.fn().mockResolvedValue(opts.updateRows ?? 1),
   };
 }
 
@@ -67,7 +75,7 @@ describe("adjustActiveSeatCount — BillingSubscription.activeSeatCount writer",
     });
     expect(result.applied).toBe(true);
     expect(result.balanceAfter).toBe(4);
-    expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(tx.billingSubscription.update).toHaveBeenCalledTimes(1);
   });
 
   it("-1 with sufficient balance decrements", async () => {
@@ -110,7 +118,8 @@ describe("adjustActiveSeatCount — BillingSubscription.activeSeatCount writer",
     });
     expect(result.applied).toBe(false);
     expect(result.balanceAfter).toBeNull();
-    expect(tx.$executeRaw).not.toHaveBeenCalled();
+    expect(tx.billingSubscription.update).not.toHaveBeenCalled();
+    expect(tx.billingSubscription.updateMany).not.toHaveBeenCalled();
   });
 
   it("LICENSED_SEAT with no subscription on the contract no-ops", async () => {
@@ -123,7 +132,7 @@ describe("adjustActiveSeatCount — BillingSubscription.activeSeatCount writer",
       delta: +1,
     });
     expect(result.applied).toBe(false);
-    expect(tx.$executeRaw).not.toHaveBeenCalled();
+    expect(tx.billingSubscription.update).not.toHaveBeenCalled();
   });
 
   it("delta=0 short-circuits without any DB lookup", async () => {
@@ -142,14 +151,17 @@ describe("adjustActiveSeatCount — BillingSubscription.activeSeatCount writer",
   it("missing program no-ops (caller passed a stale id)", async () => {
     const tx: MockTx = {
       program: { findUnique: jest.fn().mockResolvedValue(null) },
-      billingSubscription: { findUniqueOrThrow: jest.fn() },
-      $executeRaw: jest.fn(),
+      billingSubscription: {
+        findUniqueOrThrow: jest.fn(),
+        update: jest.fn(),
+        updateMany: jest.fn(),
+      },
     };
     const result = await adjustActiveSeatCount(tx as never, {
       programId: "prog-missing",
       delta: +1,
     });
     expect(result.applied).toBe(false);
-    expect(tx.$executeRaw).not.toHaveBeenCalled();
+    expect(tx.billingSubscription.update).not.toHaveBeenCalled();
   });
 });

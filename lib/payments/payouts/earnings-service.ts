@@ -31,6 +31,7 @@ import { PAYOUT_CONSTANTS, AppointmentType } from "./constants";
 import { calculateRevenueSplit } from "@/lib/collaborators/service";
 import { getIndianFYQuarter } from "@/lib/payments/tax/tds-service";
 import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
+import { recordSystemError } from "@/lib/enterprise/system-events";
 import type { RevenueSplit } from "@/types/collaborators";
 
 // ============================================
@@ -404,12 +405,15 @@ export async function createEarningsFromPayment({
 
       // #771 D1/D5 / AF-3 — double-entry booking posting (full accrual, dual-write).
       //   Dr funding legs (CASH/WALLET/ORG_RECEIVABLE) + PLATFORM_PROMO (referral
-      //   credits) + DISCOUNT  ==  Cr PLATFORM_FEE + CONSULTANT_PAYABLE +
-      //   ORG_PAYABLE + GST_PAYABLE.  discount = originalAmount + tax − amount.
-      // Posted for the single-consultant case; multi-collaborator webinars/classes
-      // are deferred (logged). Wrapped so a ledger imbalance can never break the
-      // real booking during the dual-write phase.
-      if (splits.length === 0) {
+      //   credits) + DISCOUNT  ==  Cr PLATFORM_FEE + CONSULTANT_PAYABLE(per party) +
+      //   ORG_PAYABLE + GST_PAYABLE.
+      // #776 — posted for BOTH the single-consultant AND multi-collaborator cases.
+      // Multi-collaborator webinars/classes used to be deferred (logged), so the
+      // journal silently omitted an entire booking class and reconcile's
+      // EARNINGS_LEDGER_DRIFT couldn't cover them. Now each collaborator gets its
+      // own CONSULTANT_PAYABLE credit (shares sum to totalConsultantPool). Wrapped
+      // so a ledger imbalance can never break the real booking during dual-write.
+      {
         try {
           const legs = await tx.paymentLeg.findMany({
             where: { paymentId: payment.id },
@@ -454,11 +458,19 @@ export async function createEarningsFromPayment({
             // Back-compat: legacy single-source payments carry no legs.
             pushDebit({ kind: "CASH" }, payment.amount);
           }
+          // #776 — DISCOUNT is the platform-absorbed gap between gross
+          // (originalAmount + tax) and the funding actually applied. Base it on the
+          // sum of the funding-leg debits, NOT payment.amount: a referral-credit leg
+          // funds the booking (debited as PLATFORM_PROMO) yet is excluded from
+          // payment.amount (post-credit). Using `amount` double-counted the credit
+          // (PROMO + DISCOUNT), imbalancing the posting so it was silently dropped —
+          // every fully-credit-funded booking went un-journaled.
+          const fundingDebitTotal = debits.reduce((s, d) => s + d.amountPaise, 0);
           pushDebit(
             { kind: "DISCOUNT" },
             Math.max(
               0,
-              payment.originalAmount + payment.taxAmount - payment.amount,
+              payment.originalAmount + payment.taxAmount - fundingDebitTotal,
             ),
           );
 
@@ -468,10 +480,24 @@ export async function createEarningsFromPayment({
               credits.push({ account, direction: "CREDIT", amountPaise });
           };
           pushCredit({ kind: "PLATFORM_FEE" }, platformFeePaise);
-          pushCredit(
-            { kind: "CONSULTANT_PAYABLE", consultantProfileId },
-            totalConsultantPool,
-          );
+          if (splits.length > 0) {
+            // Multi-party: one payable per collaborator (Σ split.share ===
+            // totalConsultantPool), so the journal mirrors the ConsultantEarnings rows.
+            for (const split of splits) {
+              pushCredit(
+                {
+                  kind: "CONSULTANT_PAYABLE",
+                  consultantProfileId: split.consultantProfileId,
+                },
+                split.share,
+              );
+            }
+          } else {
+            pushCredit(
+              { kind: "CONSULTANT_PAYABLE", consultantProfileId },
+              totalConsultantPool,
+            );
+          }
           if (orgSplit && orgSplit.orgShare > 0) {
             pushCredit(
               { kind: "ORG_PAYABLE", organizationId: orgSplit.organizationId },
@@ -490,11 +516,17 @@ export async function createEarningsFromPayment({
           console.warn(
             `[ledger] booking posting skipped for payment ${payment.id}: ${err instanceof Error ? err.message : String(err)}`,
           );
+          // #776 — surface the dual-write drift immediately instead of waiting for
+          // the nightly reconcile. Fire-and-forget on its own connection; never
+          // block or fail the booking on a telemetry write.
+          void recordSystemError({
+            organizationId: payment.organizationId ?? null,
+            category: "LEDGER",
+            summary: `Booking ledger posting failed for payment ${payment.id}`,
+            err,
+            context: { paymentId: payment.id },
+          }).catch(() => {});
         }
-      } else {
-        console.log(
-          `[ledger] booking posting deferred (multi-collaborator) for payment ${payment.id}`,
-        );
       }
 
       // ============================================

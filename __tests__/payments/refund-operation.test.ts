@@ -33,6 +33,7 @@ type Store = {
   payments: Map<string, Row>;
   paymentLegs: Row[];
   refunds: Row[];
+  disputes: Row[];
   consultantEarnings: Map<string, Row>;
   organizationEarnings: Map<string, Row>;
   organizationPayouts: Map<string, Row>;
@@ -53,6 +54,7 @@ function newStore(): Store {
     payments: new Map(),
     paymentLegs: [],
     refunds: [],
+    disputes: [],
     consultantEarnings: new Map(),
     organizationEarnings: new Map(),
     organizationPayouts: new Map(),
@@ -112,6 +114,31 @@ function txStub() {
         if (!r) throw new Error(`Refund ${where.id} not found`);
         Object.assign(r, data);
         return r;
+      }),
+      // #776 — applyRefundCascade's atomic idempotency claim (cascadedAt null→now).
+      updateMany: jest.fn(async ({ where, data }: any) => {
+        let count = 0;
+        for (const r of state.refunds) {
+          if (where.id && r.id !== where.id) continue;
+          // cascadedAt: null matches an unset (undefined/null) stamp.
+          if (where.cascadedAt === null && r.cascadedAt != null) continue;
+          Object.assign(r, data);
+          count++;
+        }
+        return { count };
+      }),
+    },
+    // #785 — refundPayment now nets refundable against prior lost chargebacks.
+    dispute: {
+      aggregate: jest.fn(async ({ where }: any) => {
+        const sum = state.disputes
+          .filter(
+            (d) =>
+              d.paymentId === where.paymentId &&
+              where.status?.in?.includes(d.status),
+          )
+          .reduce((acc, d) => acc + (d.amountPaise as number), 0);
+        return { _sum: { amountPaise: sum } };
       }),
     },
     paymentLeg: {
@@ -239,6 +266,40 @@ function txStub() {
         if (!a) throw new Error("billingAccount not found");
         if (select) return projectSelect(a, select);
         return a;
+      }),
+      // #776 — walletCredit now uses the ORM (atomic increment) instead of raw SQL.
+      update: jest.fn(async ({ where, data, select }: any) => {
+        const a = state.billingAccounts.get(where.id);
+        if (!a) throw new Error("billingAccount not found");
+        if (data.walletBalance?.increment !== undefined) {
+          a.walletBalance =
+            ((a.walletBalance as number) ?? 0) + data.walletBalance.increment;
+        }
+        if (data.walletBalance?.decrement !== undefined) {
+          a.walletBalance =
+            ((a.walletBalance as number) ?? 0) - data.walletBalance.decrement;
+        }
+        return select ? projectSelect(a, select) : a;
+      }),
+      // #776 — walletDebit now uses the ORM (atomic conditional decrement).
+      updateMany: jest.fn(async ({ where, data }: any) => {
+        const a = state.billingAccounts.get(where.id);
+        if (!a) return { count: 0 };
+        if (
+          where.walletBalance?.gte !== undefined &&
+          ((a.walletBalance as number) ?? -1) < where.walletBalance.gte
+        ) {
+          return { count: 0 };
+        }
+        if (data.walletBalance?.decrement !== undefined) {
+          a.walletBalance =
+            ((a.walletBalance as number) ?? 0) - data.walletBalance.decrement;
+        }
+        if (data.walletBalance?.increment !== undefined) {
+          a.walletBalance =
+            ((a.walletBalance as number) ?? 0) + data.walletBalance.increment;
+        }
+        return { count: 1 };
       }),
     },
     $executeRaw: jest.fn(async (..._parts: any[]) => {
@@ -436,7 +497,9 @@ describe("refundPayment — full single-leg WALLET refund", () => {
     expect(ce?.status).toBe("REFUNDED");
     // OrganizationEarnings fully refunded.
     const oe = state.organizationEarnings.get("oe-1");
-    expect(oe?.refundedAmountPaise).toBe(9000); // org + consultant share
+    // #776 — refundedAmountPaise tracks the ORG share only (org-payout nets it
+    // against orgSharePaise; the consultant slice lives on ConsultantEarnings).
+    expect(oe?.refundedAmountPaise).toBe(1000); // org share only
     expect(oe?.status).toBe("REFUNDED");
     // Refund row flipped to SUCCEEDED.
     expect(state.refunds[0]?.status).toBe("SUCCEEDED");
@@ -461,7 +524,8 @@ describe("refundPayment — partial 50% refund proportional split", () => {
     expect(ce?.status).toBe("PENDING"); // not fully refunded
 
     const oe = state.organizationEarnings.get("oe-1");
-    expect(oe?.refundedAmountPaise).toBe(4500); // 50% of (orgShare + consShare)
+    // #776 — org share only: floor(1000 × 5000/10000) = 500.
+    expect(oe?.refundedAmountPaise).toBe(500);
     expect(oe?.status).toBe("PENDING");
   });
 });
@@ -579,6 +643,27 @@ describe("refundPayment — validation guards", () => {
     await expect(
       refundPayment({ paymentId: "pay-1", amountPaise: 99999, reason: "x" }),
     ).rejects.toBeInstanceOf(RefundValidationError);
+  });
+
+  it("#785 rejects a refund after a lost chargeback already pulled the full amount", async () => {
+    seedSinglePartyWalletPayment({ amount: 10000 });
+    // a lost chargeback already reversed the whole payment via the dispute path
+    state.disputes.push({ paymentId: "pay-1", amountPaise: 10000, status: "LOST" });
+    await expect(
+      refundPayment({ paymentId: "pay-1", amountPaise: 10000, reason: "double" }),
+    ).rejects.toBeInstanceOf(RefundValidationError);
+  });
+
+  it("#785 allows a refund up to the un-charged-back remainder", async () => {
+    seedSinglePartyWalletPayment({ amount: 10000 });
+    state.disputes.push({ paymentId: "pay-1", amountPaise: 6000, status: "LOST" });
+    // refundable = 10000 − 6000 chargeback = 4000
+    const result = await refundPayment({
+      paymentId: "pay-1",
+      amountPaise: 4000,
+      reason: "remainder",
+    });
+    expect(result.amountRefundedPaise).toBe(4000);
   });
 
   it("rejects refund on non-SUCCEEDED payment", async () => {

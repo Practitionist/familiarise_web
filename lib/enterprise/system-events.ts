@@ -15,6 +15,16 @@
 
 import prisma from "@/lib/prisma";
 import type { Prisma, SystemEventSeverity } from "@prisma/client";
+import { emitTelemetryLog } from "@/lib/observability/betterstack-telemetry";
+
+// Map the DB severity enum onto the telemetry sink's level.
+function severityToTelemetryLevel(
+  severity: SystemEventSeverity,
+): "info" | "warn" | "error" {
+  if (severity === "ERROR") return "error";
+  if (severity === "WARN") return "warn";
+  return "info";
+}
 
 export interface RecordSystemEventParams {
   /** Optional org scope. Platform-wide events leave this null. */
@@ -48,12 +58,13 @@ export interface RecordSystemEventParams {
 export async function recordSystemEvent(
   params: RecordSystemEventParams,
 ): Promise<void> {
+  const severity = params.severity ?? "INFO";
   try {
     await prisma.systemEvent.create({
       data: {
         organizationId: params.organizationId ?? null,
         category: params.category,
-        severity: params.severity ?? "INFO",
+        severity,
         message: params.message,
         // `Record<string, unknown>` widens to Prisma's
         // `InputJsonValue` at the storage boundary. Cast is local
@@ -67,6 +78,23 @@ export async function recordSystemEvent(
     // outage of this table must not cascade into the calling worker.
     console.error("[recordSystemEvent] insert failed:", err);
   }
+
+  // Fire-and-forget telemetry sink (#776 §K). The DB row above is the source
+  // of truth; this just gets the event somewhere an on-call human sees it.
+  // NOT awaited — `recordSystemEvent` runs on the webhook critical path (HMAC
+  // failure), so awaiting an external HTTP POST would let a stalled Better
+  // Stack block/DoS the handler. No-op unless ENABLE_BETTERSTACK_TELEMETRY is
+  // on; the call is internally best-effort, the `.catch` is belt-and-suspenders.
+  void emitTelemetryLog({
+    level: severityToTelemetryLevel(severity),
+    message: params.message,
+    category: params.category,
+    organizationId: params.organizationId,
+    correlationId: params.correlationId,
+    context: params.context,
+  }).catch((err) => {
+    console.error("[recordSystemEvent] telemetry sink failed:", err);
+  });
 }
 
 /**
