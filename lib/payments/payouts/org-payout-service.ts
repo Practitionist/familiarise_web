@@ -502,6 +502,26 @@ export async function processOrgPayout(
   const liveEnabled = process.env.ENABLE_LIVE_PAYOUTS === "true";
 
   return prisma.$transaction(async (tx) => {
+    // #785 — when live payouts are gated OFF there is no gateway submission and
+    // no webhook to advance or roll back the row, so claiming PENDING→PROCESSING
+    // here would zombie it in PROCESSING forever (handle-stuck-payouts only
+    // queries ConsultantPayout). Leave it PENDING until the flag flips on; the
+    // cron re-attempts then.
+    if (!liveEnabled) {
+      const current = await tx.organizationPayout.findUnique({
+        where: { id: payoutId },
+        select: { status: true },
+      });
+      if (!current) {
+        throw new PayoutValidationError(`Payout ${payoutId} not found`, 404);
+      }
+      return {
+        status: current.status,
+        submittedToGateway: false,
+        claimed: false,
+      };
+    }
+
     const claim = await tx.organizationPayout.updateMany({
       where: { id: payoutId, status: "PENDING" },
       data: { status: "PROCESSING" },

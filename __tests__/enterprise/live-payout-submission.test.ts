@@ -7,8 +7,9 @@
  * the actual gateway call after flipping the row PENDING → PROCESSING.
  *
  * What we cover:
- *   - ENABLE_LIVE_PAYOUTS=false → state flip only, no gateway call
- *     (regression guard).
+ *   - ENABLE_LIVE_PAYOUTS=false → does NOT advance (stays PENDING), no gateway
+ *     call. #785: claiming PENDING→PROCESSING with no live submission would
+ *     zombie the row in PROCESSING (no webhook to advance/rollback it).
  *   - ENABLE_LIVE_PAYOUTS=true + 200 OK → gateway response persisted on
  *     the row (gatewayPayoutId, gatewayResponseRaw); status stays
  *     PROCESSING (UTR + COMPLETED come from the webhook later).
@@ -134,17 +135,23 @@ describe("processOrgPayout — live submission gating", () => {
     wireTxAsPassthrough();
   });
 
-  it("ENABLE_LIVE_PAYOUTS=false → flips to PROCESSING, returns submittedToGateway=false, no gateway call", async () => {
-    setupHappyClaim();
+  it("ENABLE_LIVE_PAYOUTS=false → does NOT advance (stays PENDING), no claim, no gateway call (#785)", async () => {
+    // #785 — flag off must NOT claim PENDING→PROCESSING: with no gateway
+    // submission and no webhook to advance/rollback, a PROCESSING row would
+    // zombie forever. It stays PENDING for a later live run.
+    mockedPrisma.organizationPayout.findUnique.mockResolvedValue({
+      status: "PENDING",
+    });
     const createPayout = jest.fn();
     setupGatewayService({ createPayout });
 
     const result = await processOrgPayout(PAYOUT_ID);
 
-    expect(result).toEqual({ status: "PROCESSING", submittedToGateway: false });
+    expect(result).toEqual({ status: "PENDING", submittedToGateway: false });
+    // The row was NOT advanced — no PENDING→PROCESSING claim happened.
+    expect(mockedPrisma.organizationPayout.updateMany).not.toHaveBeenCalled();
     expect(createPayout).not.toHaveBeenCalled();
     expect(mockedGetService).not.toHaveBeenCalled();
-    // Also: no gateway response was persisted on the row.
     expect(mockedPrisma.organizationPayout.update).not.toHaveBeenCalled();
   });
 

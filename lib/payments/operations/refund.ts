@@ -448,7 +448,14 @@ export async function applyRefundCascade(
   for (const earnings of payment.earnings) {
     const shareReversal = proportion(earnings.consultantSharePaise);
     if (shareReversal <= 0) continue;
-    const newRefundedShare = earnings.refundedShareAmount + shareReversal;
+    // #785 — cap at the share (mirrors the credit-note Math.min + earnings-service):
+    // a second reversal (e.g. app refund THEN a lost-dispute chargeback creates a
+    // new Refund → new cascadedAt → Step 6 re-runs) would otherwise inflate
+    // refundedShareAmount past consultantSharePaise and corrupt readyAmount/over-refund math.
+    const newRefundedShare = Math.min(
+      earnings.consultantSharePaise,
+      earnings.refundedShareAmount + shareReversal,
+    );
     const fully = newRefundedShare >= earnings.consultantSharePaise;
 
     let nextStatus = earnings.status;
