@@ -157,6 +157,11 @@ async function processSinglePayout(payout: {
     success: false,
   };
 
+  // #785 — declared OUTSIDE the try so the catch can read it: undefined until the
+  // gateway accepts, letting the catch tell a pre-gateway failure (safe to FAIL +
+  // release earnings) from a post-gateway DB-write failure (money already sent).
+  let providerPayoutId: string | undefined;
+
   try {
     // #776 — atomically claim APPROVED→PROCESSING. Two overlapping cron runs both
     // load the same APPROVED set; without this guard both submit to the gateway.
@@ -180,8 +185,6 @@ async function processSinglePayout(payout: {
     if (!account) {
       throw new Error("No payout account found");
     }
-
-    let providerPayoutId: string;
 
     if (payout.provider === PaymentGateway.RAZORPAY) {
       if (!account.razorpayFundAccId) {
@@ -227,7 +230,44 @@ async function processSinglePayout(payout: {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
 
-    // Mark as failed
+    // #785 — if the gateway ALREADY accepted (providerPayoutId set) but a later
+    // DB write threw, the money was SENT. Marking FAILED + unlinking earnings
+    // here would re-batch them under a fresh idempotencyKey the gateway won't
+    // dedupe → DOUBLE disbursement. Instead persist the gateway id and leave the
+    // row PROCESSING with earnings LINKED; handle-stuck-payouts then reconciles
+    // it against the gateway. Only a pre-gateway failure FAILs + releases.
+    if (providerPayoutId) {
+      try {
+        await prisma.consultantPayout.update({
+          where: { id: payout.id },
+          data: {
+            providerPayoutId,
+            status: PayoutStatus.PROCESSING,
+            failureReason:
+              `Gateway accepted (${providerPayoutId}); post-submit DB write failed, awaiting reconcile: ${errorMessage}`.slice(
+                0,
+                500,
+              ),
+          },
+        });
+      } catch (persistErr) {
+        // Double DB failure — the row stays PROCESSING (from the claim) with
+        // earnings still linked (no re-batch). Page for manual reconcile.
+        console.error(
+          `[process-payouts] CRITICAL: gateway accepted ${providerPayoutId} but DB persist failed twice for payout ${payout.id}; manual reconcile required`,
+          persistErr,
+        );
+      }
+      result.providerPayoutId = providerPayoutId;
+      result.error = `gateway-accepted-db-write-failed: ${errorMessage}`;
+      console.error(
+        `⚠️ Payout ${payout.id}: gateway accepted ${providerPayoutId} but DB write failed — quarantined PROCESSING (NOT failed) to avoid double-pay`,
+      );
+      return result;
+    }
+
+    // Genuine pre-gateway failure (rejected / never submitted) — safe to FAIL
+    // and release the earnings for a fresh batch.
     await prisma.consultantPayout.update({
       where: { id: payout.id },
       data: {
