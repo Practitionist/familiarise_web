@@ -10,49 +10,19 @@
 
 import { NextRequest } from "next/server";
 
-// Redis key constants.
+// Redis key constants. Platform-scoped: the middleware reads the single
+// platform maintenance phase/config on every request (30s-cached below).
 //
-// The default keys are PLATFORM-SCOPED ("maintenance:phase" /
-// "maintenance:config") — that's the legacy behaviour and the middleware
-// still reads from them on every request. The per-org variants
-// ("maintenance:phase:org:<orgId>") are introduced in PR #655 as a
-// Tier 1 placeholder so org-aware admin routes can write to them in a
-// post-MVP follow-up without touching middleware again. Today nothing
-// writes to the per-org keys; the helpers below are scaffolding.
+// NOTE for future devs: per-org maintenance windows
+// ("maintenance:phase:org:<orgId>") are NOT implemented. There was previously
+// `orgMaintenanceKeys()` / `platformMaintenanceKeys()` scaffolding here with no
+// consumers — it was removed (#776) as dead code. If/when per-org windows ship,
+// add the org-scoped read here (org key first, fall back to platform) and a
+// matching writer in the admin maintenance route.
 const REDIS_KEYS = {
   PHASE: "maintenance:phase",
   CONFIG: "maintenance:config",
 } as const;
-
-export function platformMaintenanceKeys(): {
-  phase: string;
-  config: string;
-} {
-  return { phase: REDIS_KEYS.PHASE, config: REDIS_KEYS.CONFIG };
-}
-
-/**
- * Per-org maintenance Redis key scaffolding. Returns the org-scoped
- * `maintenance:phase:org:<orgId>` + `maintenance:config:org:<orgId>`
- * pair. Lookup order at read time will be: org-scoped first, fall back
- * to platform if the org has no active window.
- *
- * The middleware does NOT consume these yet — that's the post-MVP
- * Tier 2 work tracked in the enterprise post-MVP issue. Exporting the
- * key shape now lets any admin tooling (e.g. a `setOrgMaintenance`
- * helper added later) write under the canonical namespace from day
- * one, so the eventual middleware-read changes are a one-line lookup
- * swap.
- */
-export function orgMaintenanceKeys(organizationId: string): {
-  phase: string;
-  config: string;
-} {
-  return {
-    phase: `maintenance:phase:org:${organizationId}`,
-    config: `maintenance:config:org:${organizationId}`,
-  };
-}
 
 // Routes exempt from maintenance mode
 const EXEMPT_PREFIXES = [
@@ -152,9 +122,11 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
   }
 }
 
-// Matches paths ending with a file extension (e.g. .js, .css, .png, .woff2)
-// More precise than pathname.includes(".") which false-positives on /api/v2.0/foo
-const HAS_FILE_EXTENSION = /\.\w{2,10}$/;
+// Matches paths ending with a file extension (e.g. .js, .css, .png, .woff2).
+// More precise than pathname.includes(".") which false-positives on /api/v2.0/foo.
+// Exported so middleware.ts reuses the exact same rule for its static-asset skip
+// (single source of truth — #776).
+export const HAS_FILE_EXTENSION = /\.\w{2,10}$/;
 
 /**
  * Check if a route is exempt from maintenance mode.
