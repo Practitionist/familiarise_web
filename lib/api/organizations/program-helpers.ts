@@ -451,6 +451,16 @@ export async function reverseBookingUtilization(
      * Negative or zero → no-op.
      */
     engagementsToReverse?: number;
+    /**
+     * #776 — refund ratio for the MONEY meter. The engagement count above is
+     * `ceil`'d so a partial refund still releases ≥1 whole seat; deriving the
+     * reversed *price* from that ceil'd count overstates `consumedPaise` and the
+     * `UsageLedgerEntry` price (breaks REFUND_BOOKING_COHERENCE). When refunding,
+     * pass the actual paise so the money-meter reverses in proportion to the
+     * booking price, independent of the engagement rounding. Clamped to the
+     * unreversed price remainder.
+     */
+    refundRatio?: { refundAmountPaise: number; paymentAmountPaise: number };
   },
 ): Promise<{
   reversed: boolean;
@@ -512,13 +522,37 @@ export async function reverseBookingUtilization(
   // Prorate the price refund so the ledger sum stays consistent with
   // the partial reversal. Round to the nearest paise; the integer
   // round-off lands within ±1 paise of the proportional amount.
-  const priceReversal =
+  const engagementDerivedPrice =
     util.engagementsConsumed > 0
       ? Math.round(
           (util.priceAtBookingPaise * actualReversal) /
             util.engagementsConsumed,
         )
       : 0;
+
+  // #776 — when a refund ratio is supplied, reverse the price in proportion to
+  // the actual money refunded (booking price × refundAmount/paymentAmount) rather
+  // than the ceil'd engagement count, clamped to the unreversed price remainder.
+  // Keeps consumedPaise + the usage ledger coherent with the refund (a 75k refund
+  // of a 2×100k booking reverses 75k of price even though it releases 1 seat).
+  let priceReversal = engagementDerivedPrice;
+  if (params.refundRatio && params.refundRatio.paymentAmountPaise > 0) {
+    const priceLedger = await tx.usageLedgerEntry.aggregate({
+      where: { paymentId: params.paymentId, priceAtBookingPaise: { lt: 0 } },
+      _sum: { priceAtBookingPaise: true },
+    });
+    const alreadyReversedPrice =
+      -1 * (priceLedger._sum.priceAtBookingPaise ?? 0);
+    const remainingPrice = Math.max(
+      0,
+      util.priceAtBookingPaise - alreadyReversedPrice,
+    );
+    const proportional = Math.floor(
+      (util.priceAtBookingPaise * params.refundRatio.refundAmountPaise) /
+        params.refundRatio.paymentAmountPaise,
+    );
+    priceReversal = Math.min(Math.max(0, proportional), remainingPrice);
+  }
 
   await tx.programAssignment.update({
     where: { id: util.programAssignmentId },

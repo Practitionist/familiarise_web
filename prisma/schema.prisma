@@ -1808,8 +1808,10 @@ model UsageLedgerEntry {
 // equal to balance(WALLET account) by the reconcile cron.
 //
 // Writers (Batch 2) go through `postLedgerTxn()`, which asserts the balance
-// invariant; a DB trigger enforces it at COMMIT (added in the reset SQL, since
-// Prisma has no native multi-row CHECK).
+// invariant. #776 — a deferred CONSTRAINT TRIGGER enforces it again at COMMIT
+// (Prisma has no native multi-row CHECK): see `prisma/sql/ledger-triggers.sql`,
+// applied by `npm run db:triggers` after every `db push`/reset (Prisma does not
+// manage triggers).
 // ───────────────────────────────────────────────────────────────────────────
 enum LedgerAccountKind {
   CASH // platform gateway/settlement cash
@@ -3446,6 +3448,12 @@ model Refund {
   payment   Payment @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   paymentId String
 
+  // #776 — idempotency stamp for applyRefundCascade. Set once the canonical
+  // cascade (legs/wallet/earnings/ledger/utilization/credit-note) has run, so the
+  // app, gateway-webhook and backstop-cron paths each apply it exactly once. The
+  // cron selects SUCCEEDED refunds where this is null.
+  cascadedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -3453,6 +3461,7 @@ model Refund {
   @@index([status])
   @@index([refundId])
   @@index([paymentId, status])
+  @@index([status, cascadedAt])
 }
 
 enum RefundStatus {
@@ -3696,7 +3705,11 @@ model TDSRecord {
   // Amounts in paise
   cumulativeAmountCredited Int // FY cumulative of amounts credited/paid to consultant (sum of completed payouts)
   tdsDeducted              Int // TDS amount deducted this record
-  tdsRate                  Float // Rate at time of deduction (10 or 20)
+  tdsRate                  Float // Rate at time of deduction
+  // #776 — statutory section applied ("194O" | "194J" | "195" | …) for forensic
+  // audit + Form 26Q/27Q line classification. Consultant payouts are 194-O (ECO)
+  // post-consolidation; org payouts already stamp the section on OrganizationPayout.
+  tdsSection               String?
 
   // Link to the payout that triggered this deduction
   payoutId   String?

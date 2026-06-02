@@ -20,7 +20,7 @@
  * Schedule: Every 15 minutes
  */
 
-import { EarningStatus, Prisma, RefundStatus } from "@prisma/client";
+import { Prisma, RefundStatus } from "@prisma/client";
 
 import prisma from "../../lib/prisma";
 import { applyRefundCascade } from "../../lib/payments/operations/refund";
@@ -36,16 +36,15 @@ export interface RefundEarningCascadeResult {
 }
 
 /**
- * Find SUCCEEDED refunds whose downstream earnings are still in a
- * non-REFUNDED state and run the canonical cascade against each.
+ * Find SUCCEEDED refunds that have not yet been cascaded and run the canonical
+ * cascade against each.
  *
- * Filter rationale: we trigger when at least one ConsultantEarnings
- * row on the payment has `refundedShareAmount = 0` AND a non-terminal
- * status. The canonical cascade always increments
- * `refundedShareAmount`, so this filter is a safe "not yet cascaded"
- * signal. Earnings created before C1 may carry a non-zero
- * `refundedShareAmount` AND a non-REFUNDED status (legacy partial
- * refund); we deliberately skip those rather than double-count.
+ * #776 — filter on `cascadedAt IS NULL` (the cascade's idempotency stamp) rather
+ * than the old `refundedShareAmount = 0` earnings heuristic. The heuristic raced
+ * the gateway webhook (which also reverses earnings) and mis-handled zero-
+ * consultant-share earnings; `cascadedAt` is the authoritative "not yet cascaded"
+ * signal, and `applyRefundCascade` claims it atomically so this cron, the webhook
+ * and the app path can never double-process the same refund.
  */
 export async function cascadeRefundToEarnings(): Promise<RefundEarningCascadeResult> {
   const errors: string[] = [];
@@ -55,21 +54,7 @@ export async function cascadeRefundToEarnings(): Promise<RefundEarningCascadeRes
   const refundsToProcess = await prisma.refund.findMany({
     where: {
       status: RefundStatus.SUCCEEDED,
-      payment: {
-        earnings: {
-          some: {
-            refundedShareAmount: 0,
-            status: {
-              in: [
-                EarningStatus.PENDING,
-                EarningStatus.HELD,
-                EarningStatus.READY,
-                EarningStatus.PENDING_TRUST,
-              ],
-            },
-          },
-        },
-      },
+      cascadedAt: null,
     },
     select: {
       id: true,

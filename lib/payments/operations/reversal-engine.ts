@@ -27,6 +27,7 @@ import {
 } from "./refund";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { recordSystemError } from "@/lib/enterprise/system-events";
 
 export type ReversalSource =
   // A single booking payment (the common case).
@@ -261,6 +262,14 @@ async function reversePayoutClawback(
     console.error(
       `[ledger] payout clawback posting FAILED for payout ${orgPayoutId} (reconcile will flag): ${err instanceof Error ? err.message : String(err)}`,
     );
+    // #776 — page immediately on dual-write drift; fire-and-forget.
+    void recordSystemError({
+      organizationId,
+      category: "LEDGER",
+      summary: `Payout clawback ledger posting failed for payout ${orgPayoutId}`,
+      err,
+      context: { orgPayoutId, refundId: input.refundId },
+    }).catch(() => {});
   }
 
   return true;

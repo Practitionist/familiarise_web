@@ -52,6 +52,7 @@ import { assertEarningStatusTransitionLegal } from "@/lib/payments/payouts/earni
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { generateOrgCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
+import { recordSystemError } from "@/lib/enterprise/system-events";
 
 // ============================================================================
 // Public types
@@ -257,6 +258,25 @@ export async function applyRefundCascade(
   tx: Prisma.TransactionClient,
   input: ApplyRefundCascadeInput,
 ): Promise<ApplyRefundCascadeResult> {
+  // #776 — atomic idempotency claim. Exactly one caller flips `cascadedAt`
+  // null→now; an overlapping gateway-webhook + backstop-cron (or a redelivery)
+  // sees count===0 and no-ops. The row lock on this conditional update serializes
+  // concurrent claimers under any isolation, so the cascade — wallet credit, leg
+  // reversal, earnings increments, clawback — never double-applies. If the cascade
+  // throws below, the whole tx rolls back and the claim reverts for a clean retry.
+  const claim = await tx.refund.updateMany({
+    where: { id: input.refundId, cascadedAt: null },
+    data: { cascadedAt: new Date() },
+  });
+  if (claim.count === 0) {
+    return {
+      legsReversed: 0,
+      consultantEarningsReversed: 0,
+      organizationEarningsReversed: 0,
+      clawbackInitiated: false,
+    };
+  }
+
   const payment = await tx.payment.findUniqueOrThrow({
     where: { id: input.paymentId },
     include: {
@@ -295,6 +315,8 @@ export async function applyRefundCascade(
   // Step 4: Reverse PaymentLegs proportionally with last-leg-absorbs-remainder.
   // -----------------------------------------------------------------------
   let legsReversed = 0;
+  // legAmounts holds only positive legs — LICENSE/zero-value legs are excluded
+  // here so they never skew the proportional split.
   const legAmounts: Array<{ leg: (typeof payment.legs)[number]; reverse: number }> =
     payment.legs
       .filter((l) => l.amountPaise > 0) // negative refund legs already in place
@@ -303,13 +325,9 @@ export async function applyRefundCascade(
   if (legAmounts.length > 0) {
     const totalAssigned = legAmounts.reduce((a, l) => a + l.reverse, 0);
     const remainder = input.amountPaise - totalAssigned;
-    // Scope the remainder pickup to the legs we actually reversed (the
-    // CARD/WALLET/INVOICE_ACCRUAL legs). LICENSE legs are zero-value and
-    // don't participate in the proportional split.
-    const positiveLegs = legAmounts.filter((l) => l.leg.amountPaise > 0);
-    if (positiveLegs.length > 0) {
-      positiveLegs[positiveLegs.length - 1].reverse += remainder;
-    }
+    // Last reversed leg absorbs the floor remainder so the legs sum to exactly
+    // input.amountPaise (#776).
+    legAmounts[legAmounts.length - 1].reverse += remainder;
   }
 
   for (const { leg, reverse } of legAmounts) {
@@ -340,11 +358,15 @@ export async function applyRefundCascade(
       case "OVERAGE_INVOICE_ACCRUAL": {
         // Both base and overage accrual legs share the same reversal
         // semantics: if the invoice is already PAID, clawback is handled
-        // at the OrganizationEarnings level below (writing a negative leg
-        // here would break the leg-sum invariant on a settled invoice).
-        // If still pending, append a negative sibling leg so the monthly
-        // rollup picks up the corrected amount. The GST credit-note artifact
-        // for invoiced refunds is minted once, after this loop (#776 / #716).
+        // at the OrganizationEarnings level below (mutating the leg of a
+        // settled invoice would diverge from the issued document).
+        // If still unbilled, NET DOWN the existing accrual leg so the
+        // monthly rollup picks up the corrected amount.
+        //
+        // #776 / PR#785 review — must NOT create a second leg of the same
+        // source: PaymentLeg has @@unique([paymentId, source]), so a negative
+        // sibling INVOICE_ACCRUAL/OVERAGE_INVOICE_ACCRUAL leg throws P2002 and
+        // crashes the refund. Decrement the original leg in place instead.
         const billable = payment.billableToOrgInvoiceId
           ? await tx.organizationInvoice.findUnique({
               where: { id: payment.billableToOrgInvoiceId },
@@ -353,13 +375,11 @@ export async function applyRefundCascade(
           : null;
         const alreadyBilled = billable?.status === "PAID";
         if (!alreadyBilled) {
-          await tx.paymentLeg.create({
-            data: {
-              paymentId: payment.id,
-              source: leg.source,
-              amountPaise: -reverse,
-              sourceRef: leg.sourceRef,
+          await tx.paymentLeg.update({
+            where: {
+              paymentId_source: { paymentId: payment.id, source: leg.source },
             },
+            data: { amountPaise: { decrement: reverse } },
           });
         }
         // else: clawback handled below in OrganizationEarnings step.
@@ -412,6 +432,12 @@ export async function applyRefundCascade(
       paymentId: payment.id,
       reason: input.reason,
       engagementsToReverse,
+      // #776 — reverse the money-meter in proportion to the refund, not the
+      // ceil'd engagement count (REFUND_BOOKING_COHERENCE).
+      refundRatio: {
+        refundAmountPaise: input.amountPaise,
+        paymentAmountPaise: payment.amount,
+      },
     });
   }
 
@@ -457,26 +483,21 @@ export async function applyRefundCascade(
   let clawbackInitiated = false;
 
   for (const orgEarn of payment.organizationEarnings) {
-    // Reverse the gross share owed back: org share + consultant share
-    // proportions. (We do NOT include platformFeePaise here — the platform
-    // pockets nothing on a fully-refunded transaction; that side of the
-    // ledger is accounted for at settlement / TDS.)
+    // #776 — `refundedAmountPaise` tracks the ORG-SHARE portion only. The
+    // org-payout readyAmount nets it against `orgSharePaise`
+    // (org-payout-service.ts), and the consultant slice is tracked separately on
+    // `ConsultantEarnings.refundedShareAmount`. Incrementing by org+consultant
+    // here double-counts the consultant slice and under-pays the org (or drives
+    // readyAmount negative, blocking the whole batch) — and it diverged from the
+    // gateway-refund path (`refundEarnings`), which already reverses org-share
+    // only. `floor` proportion matches the leg/consultant reversals to the paise.
     const orgShareRev = proportion(orgEarn.orgSharePaise);
-    const consShareRev = proportion(orgEarn.consultantSharePaise);
-    const totalRev = orgShareRev + consShareRev;
-    if (totalRev <= 0) continue;
+    if (orgShareRev <= 0) continue;
 
-    const newRefunded = orgEarn.refundedAmountPaise + totalRev;
-    // "Fully refunded" compares against the refundable portion of the
-    // earnings — the org + consultant shares — NOT the gross. The
-    // platform fee is the platform's revenue and is never returned to
-    // the consumer (the platform absorbs the gateway fee + own cut).
-    // Keying the status flip off `grossAmountPaise` would leave fully-
-    // settled earnings stuck in PENDING because totalRev maxes out at
-    // (orgShare + consultantSharePaise).
-    const refundableCeiling =
-      orgEarn.orgSharePaise + orgEarn.consultantSharePaise;
-    const fully = newRefunded >= refundableCeiling;
+    const newRefunded = orgEarn.refundedAmountPaise + orgShareRev;
+    // Fully refunded when the org share is exhausted — its sole refundable
+    // portion (platform fee + consultant share are not org receivables).
+    const fully = newRefunded >= orgEarn.orgSharePaise;
 
     let nextStatus = orgEarn.status;
     if (fully && orgEarn.status !== EarningStatus.REFUNDED) {
@@ -632,6 +653,12 @@ export async function applyRefundCascade(
         0,
       );
       const gstRev = proportion(payment.taxAmount);
+      // #776 — PLATFORM_FEE is the residual: on a full refund it equals the
+      // booking's fee exactly; on a partial refund it absorbs the ≤3-paise
+      // floor remainder of the other shares (the platform absorbs rounding).
+      // Invariant-safe — EARNINGS_LEDGER_DRIFT reconciles BOOKING postings, not
+      // REFUND ones — so this never drifts the audited fee. Keep as a single
+      // plug: no separately-signed account is a correct home for the remainder.
       const platformPlug = fundingTotal - consRev - orgRev - gstRev;
       const debits: Posting[] = [];
       if (platformPlug > 0) {
@@ -712,6 +739,15 @@ export async function applyRefundCascade(
     console.error(
       `[ledger] refund reversal posting FAILED for payment ${payment.id} (reconcile will flag): ${err instanceof Error ? err.message : String(err)}`,
     );
+    // #776 — page immediately on dual-write drift; fire-and-forget, never block
+    // the customer refund on a telemetry write.
+    void recordSystemError({
+      organizationId: payment.organizationId ?? null,
+      category: "LEDGER",
+      summary: `Refund reversal ledger posting failed for payment ${payment.id}`,
+      err,
+      context: { paymentId: payment.id, refundId: input.refundId },
+    }).catch(() => {});
   }
 
   return {
@@ -794,6 +830,8 @@ export async function mintRefundCreditNote(
     where: { id: payment.billableToOrgInvoiceId },
     select: {
       id: true,
+      status: true,
+      issuedAt: true,
       totalPaise: true,
       igstPaise: true,
       cgstPaise: true,
@@ -805,6 +843,15 @@ export async function mintRefundCreditNote(
     select: { id: true, slug: true, invoiceNumberPrefix: true },
   });
   if (!invoice || !org) return { creditNoteId: null };
+
+  // #776 / PR#785 review — only credit-note an invoice that was actually issued
+  // to the buyer. `rollupOrgInvoiceAccruals({ issueImmediately:false })` stamps
+  // Payment.billableToOrgInvoiceId on a DRAFT invoice; minting a CGST Sec 34 credit
+  // note against an unissued document is a filing defect. DRAFT accruals are netted
+  // down on the leg instead (see the INVOICE_ACCRUAL refund branch above).
+  if (invoice.status === "DRAFT" || !invoice.issuedAt) {
+    return { creditNoteId: null };
+  }
 
   // Proportional tax: keep the CN's tax fraction equal to the invoice's, then
   // route it to IGST (inter-state) or CGST+SGST (intra-state) by whichever the
@@ -838,6 +885,94 @@ export async function mintRefundCreditNote(
       cgstPaise: cnCgst,
       sgstPaise: cnSgst,
       totalPaise: invoicedReverse,
+      status: "ISSUED",
+      issuedAt: new Date(),
+    },
+    select: { id: true },
+  });
+  return { creditNoteId: cn.id };
+}
+
+/**
+ * #776 / PR#785 review — mint a GST credit note (CGST Sec 34) for a refunded
+ * ORG INVOICE payment (the org paid an OrganizationInvoice via the gateway and
+ * that payment was refunded). The booking-centric `mintRefundCreditNote` keys off
+ * a Payment's invoice-accrual legs and doesn't cover this path. Idempotent on
+ * `refundId` (CreditNote.refundId @unique); only issues against an ISSUED/PAID
+ * invoice — never a DRAFT. Must run inside a tx.
+ */
+export async function mintInvoiceRefundCreditNote(
+  tx: Prisma.TransactionClient,
+  params: {
+    invoiceId: string;
+    refundId: string;
+    amountPaise: number;
+    reason: string;
+  },
+): Promise<{ creditNoteId: string | null }> {
+  const existing = await tx.creditNote.findUnique({
+    where: { refundId: params.refundId },
+    select: { id: true },
+  });
+  if (existing) return { creditNoteId: existing.id };
+
+  const invoice = await tx.organizationInvoice.findUnique({
+    where: { id: params.invoiceId },
+    select: {
+      id: true,
+      organizationId: true,
+      status: true,
+      issuedAt: true,
+      totalPaise: true,
+      igstPaise: true,
+      cgstPaise: true,
+      sgstPaise: true,
+    },
+  });
+  if (!invoice || invoice.totalPaise <= 0) return { creditNoteId: null };
+  if (invoice.status === "DRAFT" || !invoice.issuedAt) {
+    return { creditNoteId: null };
+  }
+
+  const org = await tx.organization.findUnique({
+    where: { id: invoice.organizationId },
+    select: { id: true, slug: true, invoiceNumberPrefix: true },
+  });
+  if (!org) return { creditNoteId: null };
+
+  const cnTotal = Math.min(params.amountPaise, invoice.totalPaise);
+  if (cnTotal <= 0) return { creditNoteId: null };
+
+  // Same proportional-tax shape as mintRefundCreditNote.
+  const invoiceTax = invoice.igstPaise + invoice.cgstPaise + invoice.sgstPaise;
+  const taxFraction =
+    invoice.totalPaise > 0 ? invoiceTax / invoice.totalPaise : 0;
+  const cnTax = Math.round(cnTotal * taxFraction);
+  const cnSubtotal = cnTotal - cnTax;
+  const interState = invoice.igstPaise > 0;
+  const cnIgst = interState ? cnTax : 0;
+  const cnSgst = interState ? 0 : Math.floor(cnTax / 2);
+  const cnCgst = interState ? 0 : cnTax - cnSgst;
+
+  const { creditNoteNumber, fiscalYear } = await generateOrgCreditNoteNumber(
+    tx,
+    org,
+    new Date(),
+  );
+
+  const cn = await tx.creditNote.create({
+    data: {
+      creditNoteNumber,
+      fiscalYear,
+      organizationId: org.id,
+      invoiceId: invoice.id,
+      refundId: params.refundId,
+      reason: params.reason,
+      subtotalPaise: cnSubtotal,
+      igstPaise: cnIgst,
+      cgstPaise: cnCgst,
+      sgstPaise: cnSgst,
+      totalPaise: cnTotal,
       status: "ISSUED",
       issuedAt: new Date(),
     },

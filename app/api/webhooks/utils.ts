@@ -1,10 +1,11 @@
 import prisma from "../../../lib/prisma";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
+import { isLegalDisputeTransition } from "@/lib/payments/dispute-status";
 import { Prisma, PaymentGateway } from "@prisma/client";
 import crypto from "crypto";
 import { stripeClient } from "@/lib/payments/core/stripe";
 import { razorpayClient } from "@/lib/payments/core/razorpay";
-import { handlePayoutWebhook, refundEarnings } from "@/lib/payments/payouts";
+import { handlePayoutWebhook } from "@/lib/payments/payouts";
 import {
   notifyRefundProcessed,
   notifyDisputeCreated,
@@ -22,8 +23,10 @@ import {
   walletDebit,
   WalletInsufficientFundsError,
 } from "@/lib/api/organizations/wallet";
-import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
-import { mintRefundCreditNote } from "@/lib/payments/operations/refund";
+import {
+  applyRefundCascade,
+  mintInvoiceRefundCreditNote,
+} from "@/lib/payments/operations/refund";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
 // Re-export payment handlers from lib (architectural fix)
@@ -653,11 +656,13 @@ export async function handleRefundCreated(
           // `Payment` table. The TOPUP_REFUND journal transaction
           // (idempotencyKey topup-refund:<rzp payment id>) is the
           // authoritative record; reconcile jobs index on it.
-          await tx.$executeRaw`
-            UPDATE "BillingAccount"
-            SET "walletBalance" = COALESCE("walletBalance", 0) - ${refundAmt}
-            WHERE "id" = ${topUp.billingAccountId}
-          `;
+          // ORM decrement (no raw SQL); WALLET accounts carry a non-null balance.
+          // May go negative by design (org already spent the credited funds) — a
+          // real reconcile signal, handled above, not an error.
+          await tx.billingAccount.update({
+            where: { id: topUp.billingAccountId },
+            data: { walletBalance: { decrement: refundAmt } },
+          });
           console.log(
             `💸 Top-up refund ${refundId} booked: -${refundAmt} paise on billingAccount ${topUp.billingAccountId}`,
           );
@@ -688,6 +693,15 @@ export async function handleRefundCreated(
           await tx.organizationInvoice.update({
             where: { id: invoice.id },
             data: { status: "REFUNDED" },
+          });
+          // #776 / PR#785 review — mint the GST credit note (Sec 34) for the
+          // refunded invoice. Idempotent on refundId; the invoice.status===REFUNDED
+          // short-circuit above also guards against a duplicate webhook.
+          await mintInvoiceRefundCreditNote(tx, {
+            invoiceId: invoice.id,
+            refundId,
+            amountPaise: amount,
+            reason: `Invoice ${invoice.invoiceNumber} refund`,
           });
           // NOTE: Booking-level utilization reversal is keyed on
           // individual Payment ids (BookingUtilization.paymentId @unique),
@@ -772,90 +786,37 @@ export async function handleRefundCreated(
     ) => {
       if (mapRefundStatus(refundStatus) !== "SUCCEEDED") return;
 
+      // #776 — route gateway refunds through the canonical cascade so card/app/cron
+      // refunds share ONE engine: earnings + funding-leg + wallet + ledger +
+      // booking-utilization + GST credit-note reversal, idempotent on
+      // `Refund.cascadedAt`. This replaces the old earnings-only `refundEarnings`
+      // path, which left the refund ledger posting + leg/wallet reversal undone on
+      // gateway refunds (a divergence from the app/cron paths). The cascade allows
+      // PAID→REFUNDED, so the legacy `forceRefund` override is no longer needed.
       try {
-        // Check if any refund for this payment has forceRefund in metadata
-        // (read is done on `tx` so we see Refund rows inserted earlier in
-        // this same transaction — otherwise the hasForceRefund check
-        // would race with new refunds created moments before.)
-        const refunds = await tx.refund.findMany({
-          where: { paymentId },
-          select: { metadata: true },
-        });
-        const hasForceRefund = refunds.some(
-          (r) =>
-            r.metadata &&
-            typeof r.metadata === "object" &&
-            (r.metadata as Record<string, unknown>).forceRefund === true,
-        );
-
-        // FIX #618: Pass refund amount context so partial refunds only
-        // reverse a proportional share of earnings, not the full amount.
-        // `tx` plumbed through so earnings reversal, TDS reversal, and
-        // the Refund insert above all commit atomically.
-        await refundEarnings(paymentId, {
-          forceRefund: hasForceRefund,
-          refundAmount: refundAmt,
-          paymentAmount: originalPaymentAmt,
-          tx,
-        });
-        console.log(`💰 Earnings refunded for payment ${paymentId}`);
-      } catch (earningsError) {
-        // Log but don't fail - earnings can be manually updated
-        // refundEarnings already guards against double-refund (checks REFUNDED status)
-        console.error(
-          `⚠️ Failed to refund earnings for payment ${paymentId}:`,
-          earningsError,
-        );
-      }
-
-      // PR-1e Phase A: cap reversal for org-funded bookings. The
-      // `BookingUtilization` row (if any) is keyed by paymentId and
-      // exists only when the booking consumed engagements from a
-      // program. Reversal is proportional to the refund ratio so a
-      // partial refund returns a partial slice of the cap. Idempotent
-      // via the ledger-derived "already reversed" check inside the
-      // helper. Same try/catch posture as refundEarnings — log and
-      // continue; the operator runbook flags any stuck rows that the
-      // reconcile cron surfaces.
-      try {
-        const isPartial =
-          refundAmt !== undefined &&
-          originalPaymentAmt !== undefined &&
-          originalPaymentAmt > 0 &&
-          refundAmt < originalPaymentAmt;
-        let engagementsToReverse: number | undefined;
-        if (isPartial) {
-          const util = await tx.bookingUtilization.findUnique({
-            where: { paymentId },
-            select: { engagementsConsumed: true },
-          });
-          if (util) {
-            const ratio = refundAmt! / originalPaymentAmt!;
-            engagementsToReverse = Math.max(
-              0,
-              Math.round(util.engagementsConsumed * ratio),
-            );
-          }
-        }
-        const result = await reverseBookingUtilization(tx, {
+        await applyRefundCascade(tx, {
           paymentId,
-          reason: isPartial
-            ? `Partial refund (${refundAmt}/${originalPaymentAmt})`
-            : "Refund",
-          engagementsToReverse,
+          refundId: refundRowId,
+          amountPaise: refundAmt ?? originalPaymentAmt ?? 0,
+          reason: "Gateway refund",
+          initiatedByUserId: null,
         });
-        if (result.reversed) {
-          console.log(
-            `🪙 Cap reversal for payment ${paymentId}: -${result.engagementsReversed} engagements (fullyReversed=${result.fullyReversed})`,
-          );
-        }
-      } catch (capError) {
+        console.log(`💰 Refund cascade applied for payment ${paymentId}`);
+      } catch (cascadeError) {
+        // #776 / PR#785 review — do NOT swallow. The cascade is idempotent
+        // (Refund.cascadedAt, claimed at its start) and atomic, so rethrowing rolls
+        // the tx back (the claim reverts) and the gateway redelivery / cascadedAt
+        // backstop cron retry it — instead of committing a partial refund (e.g.
+        // earnings reversed but the GST credit note un-minted, with no durable retry).
         console.error(
-          `⚠️ Failed to reverse cap utilization for payment ${paymentId}:`,
-          capError,
+          `⚠️ Refund cascade failed for payment ${paymentId}:`,
+          cascadeError,
         );
+        throw cascadeError;
       }
 
+      // Referral-credit restoration is NOT part of the cascade (v2 referral
+      // ledger) — keep it here so refunded credit-funded bookings still restore.
       try {
         const restored = await reverseCreditsForPayment(
           paymentId,
@@ -872,30 +833,6 @@ export async function handleRefundCreated(
         console.error(
           `⚠️ Failed to reverse referral credits for payment ${paymentId}:`,
           creditError,
-        );
-      }
-
-      // #776 — gateway refunds bypass applyRefundCascade, so mint the GST
-      // credit note here too (idempotent on refundId; no-op for non-invoiced
-      // payments). The deeper cascade pieces (leg/wallet/ledger reversal) are
-      // intentionally NOT reproduced here — they'd risk WALLET_BALANCE_DRIFT;
-      // the credit note is the self-contained, safe-to-share artifact.
-      try {
-        const minted = await mintRefundCreditNote(tx, {
-          paymentId,
-          refundId: refundRowId,
-          amountPaise: refundAmt ?? originalPaymentAmt ?? 0,
-          reason: "Gateway refund",
-        });
-        if (minted.creditNoteId) {
-          console.log(
-            `🧾 Credit note ${minted.creditNoteId} minted for refunded payment ${paymentId}`,
-          );
-        }
-      } catch (cnError) {
-        console.error(
-          `⚠️ Failed to mint credit note for payment ${paymentId}:`,
-          cnError,
         );
       }
     };
@@ -1116,6 +1053,22 @@ export async function handleDisputeUpdated(
     }
 
     const mappedStatus = mapDisputeStatus(status);
+
+    // #776 — skip a redelivered no-op so the resolution side effects below (earnings
+    // flips, applyOrgChargeback) don't re-run on a webhook retry.
+    if (dispute.status === mappedStatus) {
+      console.log(`Dispute ${disputeId} already ${mappedStatus} — no-op`);
+      return;
+    }
+    // #776 — reject illegal transitions, most importantly re-driving a TERMINAL
+    // verdict (WON/LOST/CHARGE_REFUNDED). Log + skip rather than corrupt the state
+    // machine on a delayed/out-of-order gateway delivery.
+    if (!isLegalDisputeTransition(dispute.status, mappedStatus)) {
+      console.warn(
+        `Illegal dispute transition ${dispute.status} → ${mappedStatus} for ${disputeId} — skipping`,
+      );
+      return;
+    }
 
     await tx.dispute.update({
       where: { disputeId },

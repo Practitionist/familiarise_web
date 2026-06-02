@@ -113,6 +113,18 @@ function txStub() {
         Object.assign(r, data);
         return r;
       }),
+      // #776 — applyRefundCascade's atomic idempotency claim (cascadedAt null→now).
+      updateMany: jest.fn(async ({ where, data }: any) => {
+        let count = 0;
+        for (const r of state.refunds) {
+          if (where.id && r.id !== where.id) continue;
+          // cascadedAt: null matches an unset (undefined/null) stamp.
+          if (where.cascadedAt === null && r.cascadedAt != null) continue;
+          Object.assign(r, data);
+          count++;
+        }
+        return { count };
+      }),
     },
     paymentLeg: {
       create: jest.fn(async ({ data }: any) => {
@@ -239,6 +251,40 @@ function txStub() {
         if (!a) throw new Error("billingAccount not found");
         if (select) return projectSelect(a, select);
         return a;
+      }),
+      // #776 — walletCredit now uses the ORM (atomic increment) instead of raw SQL.
+      update: jest.fn(async ({ where, data, select }: any) => {
+        const a = state.billingAccounts.get(where.id);
+        if (!a) throw new Error("billingAccount not found");
+        if (data.walletBalance?.increment !== undefined) {
+          a.walletBalance =
+            ((a.walletBalance as number) ?? 0) + data.walletBalance.increment;
+        }
+        if (data.walletBalance?.decrement !== undefined) {
+          a.walletBalance =
+            ((a.walletBalance as number) ?? 0) - data.walletBalance.decrement;
+        }
+        return select ? projectSelect(a, select) : a;
+      }),
+      // #776 — walletDebit now uses the ORM (atomic conditional decrement).
+      updateMany: jest.fn(async ({ where, data }: any) => {
+        const a = state.billingAccounts.get(where.id);
+        if (!a) return { count: 0 };
+        if (
+          where.walletBalance?.gte !== undefined &&
+          ((a.walletBalance as number) ?? -1) < where.walletBalance.gte
+        ) {
+          return { count: 0 };
+        }
+        if (data.walletBalance?.decrement !== undefined) {
+          a.walletBalance =
+            ((a.walletBalance as number) ?? 0) - data.walletBalance.decrement;
+        }
+        if (data.walletBalance?.increment !== undefined) {
+          a.walletBalance =
+            ((a.walletBalance as number) ?? 0) + data.walletBalance.increment;
+        }
+        return { count: 1 };
       }),
     },
     $executeRaw: jest.fn(async (..._parts: any[]) => {
@@ -436,7 +482,9 @@ describe("refundPayment — full single-leg WALLET refund", () => {
     expect(ce?.status).toBe("REFUNDED");
     // OrganizationEarnings fully refunded.
     const oe = state.organizationEarnings.get("oe-1");
-    expect(oe?.refundedAmountPaise).toBe(9000); // org + consultant share
+    // #776 — refundedAmountPaise tracks the ORG share only (org-payout nets it
+    // against orgSharePaise; the consultant slice lives on ConsultantEarnings).
+    expect(oe?.refundedAmountPaise).toBe(1000); // org share only
     expect(oe?.status).toBe("REFUNDED");
     // Refund row flipped to SUCCEEDED.
     expect(state.refunds[0]?.status).toBe("SUCCEEDED");
@@ -461,7 +509,8 @@ describe("refundPayment — partial 50% refund proportional split", () => {
     expect(ce?.status).toBe("PENDING"); // not fully refunded
 
     const oe = state.organizationEarnings.get("oe-1");
-    expect(oe?.refundedAmountPaise).toBe(4500); // 50% of (orgShare + consShare)
+    // #776 — org share only: floor(1000 × 5000/10000) = 500.
+    expect(oe?.refundedAmountPaise).toBe(500);
     expect(oe?.status).toBe("PENDING");
   });
 });

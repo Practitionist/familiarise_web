@@ -20,6 +20,7 @@ function mockTx(opts: {
     legs: Array<{ source: string; amountPaise: number }>;
   } | null;
   existingCreditNote?: { id: string } | null;
+  invoice?: Record<string, unknown> | null;
 }) {
   const creditNoteCreate = jest
     .fn()
@@ -32,13 +33,18 @@ function mockTx(opts: {
       create: creditNoteCreate,
     },
     organizationInvoice: {
-      findUnique: jest.fn().mockResolvedValue({
-        id: "inv1",
-        totalPaise: 1180,
-        igstPaise: 0,
-        cgstPaise: 90,
-        sgstPaise: 90,
-      }),
+      findUnique: jest.fn().mockResolvedValue(
+        opts.invoice ?? {
+          id: "inv1",
+          // #776 — credit notes only mint against an issued invoice.
+          status: "ISSUED",
+          issuedAt: new Date("2026-05-01T00:00:00.000Z"),
+          totalPaise: 1180,
+          igstPaise: 0,
+          cgstPaise: 90,
+          sgstPaise: 90,
+        },
+      ),
     },
     organization: {
       findUnique: jest.fn().mockResolvedValue({
@@ -77,6 +83,29 @@ describe("mintRefundCreditNote", () => {
     expect(data.invoiceId).toBe("inv1");
     expect(data.totalPaise).toBe(1000);
     expect(data.creditNoteNumber).toBe("ACME-CN-2026-0001");
+  });
+
+  it("#776 — does NOT mint a credit note against a DRAFT invoice", async () => {
+    const tx = mockTx({
+      payment: INVOICED_PAYMENT,
+      invoice: {
+        id: "inv1",
+        status: "DRAFT",
+        issuedAt: null,
+        totalPaise: 1180,
+        igstPaise: 0,
+        cgstPaise: 90,
+        sgstPaise: 90,
+      },
+    });
+    const res = await mintRefundCreditNote(tx as never, {
+      paymentId: "p1",
+      refundId: "ref1",
+      amountPaise: 1000,
+      reason: "test",
+    });
+    expect(res.creditNoteId).toBeNull();
+    expect(tx._creditNoteCreate).not.toHaveBeenCalled();
   });
 
   it("is idempotent — returns the existing note and does NOT create a second", async () => {
