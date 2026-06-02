@@ -93,6 +93,8 @@ export async function GET(
     // group the org's WALLET-account entries by originating txn kind and sum
     // the signed delta (CREDIT = +, DEBIT = −) to preserve the old
     // {reason, count, deltaPaise} shape.
+    // Unavoidable raw SQL: Prisma `groupBy` cannot JOIN (entry → transaction.kind)
+    // nor express the conditional signed SUM. Read-only analytics aggregation.
     org.billingAccount?.fundingSource === "WALLET" &&
     baId &&
     org.billingAccount.currency

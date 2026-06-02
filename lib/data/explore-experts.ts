@@ -144,7 +144,10 @@ export async function fetchExpertsMetadata() {
         averageRating: averageRating._avg.rating || 0,
       };
     })(),
-    // Available languages via raw SQL
+    // Available languages. Unavoidable raw SQL: Prisma's ORM cannot `unnest` a
+    // Postgres array column to DISTINCT its elements (the alternative — pulling
+    // every verified consultant's `languages` array and deduping in JS — is far
+    // more expensive). Read-only.
     prisma.$queryRaw<{ lang: string }[]>`
         SELECT DISTINCT unnest(languages) as lang
         FROM "ConsultantProfile"

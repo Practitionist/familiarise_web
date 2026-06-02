@@ -60,15 +60,17 @@ export async function walletDebit(
   if (params.amountPaise <= 0) {
     throw new Error(`walletDebit requires positive amountPaise, got ${params.amountPaise}`);
   }
-  // Conditional UPDATE: only succeeds when balance is sufficient.
-  const updated = await tx.$executeRaw`
-    UPDATE "BillingAccount"
-    SET "walletBalance" = "walletBalance" - ${params.amountPaise}
-    WHERE "id" = ${params.billingAccountId}
-      AND "walletBalance" IS NOT NULL
-      AND "walletBalance" >= ${params.amountPaise}
-  `;
-  if (updated === 0) {
+  // Atomic conditional decrement via the ORM (no raw SQL): updateMany only matches
+  // a row whose balance is already sufficient (gte excludes NULL too), so two
+  // concurrent debits can't overdraw — Postgres row-locks the matched row.
+  const updated = await tx.billingAccount.updateMany({
+    where: {
+      id: params.billingAccountId,
+      walletBalance: { gte: params.amountPaise },
+    },
+    data: { walletBalance: { decrement: params.amountPaise } },
+  });
+  if (updated.count === 0) {
     throw new WalletInsufficientFundsError(params.billingAccountId, params.amountPaise);
   }
   const acct = await tx.billingAccount.findUniqueOrThrow({
@@ -103,16 +105,13 @@ export async function walletCredit(
   if (params.amountPaise <= 0) {
     throw new Error(`walletCredit requires positive amountPaise, got ${params.amountPaise}`);
   }
-  const updated = await tx.$executeRaw`
-    UPDATE "BillingAccount"
-    SET "walletBalance" = COALESCE("walletBalance", 0) + ${params.amountPaise}
-    WHERE "id" = ${params.billingAccountId}
-  `;
-  if (updated === 0) {
-    throw new Error(`BillingAccount ${params.billingAccountId} not found`);
-  }
-  const acct = await tx.billingAccount.findUniqueOrThrow({
+  // Atomic increment via the ORM (no raw SQL). WALLET-funded accounts are created
+  // with walletBalance=0 (never null), and every mutation is increment/decrement,
+  // so the value stays non-null — increment is exact without a COALESCE. `update`
+  // throws P2025 if the account is missing (a real error, like the old guard).
+  const acct = await tx.billingAccount.update({
     where: { id: params.billingAccountId },
+    data: { walletBalance: { increment: params.amountPaise } },
     select: { walletBalance: true, currency: true, ownerOrgId: true },
   });
   const balanceAfter = acct.walletBalance ?? 0;
