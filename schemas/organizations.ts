@@ -127,6 +127,9 @@ export const MemberRowSchema = z.object({
   memberId: z.string().optional(),
   role: MemberRoleSchema,
   status: MemberStatusSchema,
+  // #729 — payout routing for EXPERT members (SELF / ORGANIZATION). Defaulted
+  // for non-host rows; the edit dialog only surfaces the control for EXPERTs.
+  payoutRecipient: z.enum(["SELF", "ORGANIZATION"]).default("SELF"),
   createdAt: z.string(),
   user: z.object({
     id: z.string(),
@@ -171,10 +174,18 @@ export const UpdateMemberPayloadSchema = z
   .object({
     role: MemberRoleSchema.optional(),
     status: MemberStatusSchema.optional(),
+    // #729 — payout routing for an EXPERT (SELF → personal account,
+    // ORGANIZATION → org absorbs + distributes). Server only honours it on
+    // EXPERT members.
+    payoutRecipient: z.enum(["SELF", "ORGANIZATION"]).optional(),
   })
-  .refine((v) => v.role !== undefined || v.status !== undefined, {
-    message: "Provide at least one of role or status to update",
-  });
+  .refine(
+    (v) =>
+      v.role !== undefined ||
+      v.status !== undefined ||
+      v.payoutRecipient !== undefined,
+    { message: "Provide at least one of role, status, or payout recipient" },
+  );
 export type UpdateMemberPayload = z.infer<typeof UpdateMemberPayloadSchema>;
 
 // ───────────────────────────── Invitations ─────────────────────────────

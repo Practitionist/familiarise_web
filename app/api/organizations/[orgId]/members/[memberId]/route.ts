@@ -42,13 +42,20 @@ const PatchBodySchema = z
     role: MemberRoleSchema.optional(),
     status: MemberStatusSchema.optional(),
     departmentLabel: z.string().max(100).nullable().optional(),
+    // #729 — explicit EXPERT payout routing. Only applied when the effective
+    // role is EXPERT (otherwise ignored); overrides the role-change default.
+    payoutRecipient: z.enum(["SELF", "ORGANIZATION"]).optional(),
   })
   .refine(
     (v) =>
       v.role !== undefined ||
       v.status !== undefined ||
-      v.departmentLabel !== undefined,
-    { message: "PATCH body must contain at least one of role/status/departmentLabel" },
+      v.departmentLabel !== undefined ||
+      v.payoutRecipient !== undefined,
+    {
+      message:
+        "PATCH body must contain at least one of role/status/departmentLabel/payoutRecipient",
+    },
   );
 
 export async function GET(
@@ -194,6 +201,15 @@ export async function PATCH(
             })
           : null;
 
+      // #729 — explicit payout-recipient choice, honoured only when the
+      // resulting role is EXPERT. Applied AFTER the role-effect default so an
+      // operator's choice wins over the reset on a role change.
+      const effectiveRole = patch.role ?? current.role;
+      const explicitPayoutRecipient =
+        patch.payoutRecipient !== undefined && effectiveRole === "EXPERT"
+          ? patch.payoutRecipient
+          : undefined;
+
       const updated = await tx.membership.update({
         where: { id: memberId },
         data: {
@@ -206,6 +222,9 @@ export async function PATCH(
             consulteeProfileId: roleEffects.consulteeProfileId,
             consultantProfileId: roleEffects.consultantProfileId,
             payoutRecipient: roleEffects.payoutRecipient,
+          }),
+          ...(explicitPayoutRecipient !== undefined && {
+            payoutRecipient: explicitPayoutRecipient,
           }),
         },
       });

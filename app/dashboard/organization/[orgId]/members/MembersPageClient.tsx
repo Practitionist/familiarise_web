@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { UserPlus, Trash2, Pencil } from "lucide-react";
+import { UserPlus, Trash2, Pencil, Search } from "lucide-react";
 
 import type { MemberRole, MemberStatus } from "@prisma/client";
-import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
+import { useOrgRole, useRequireOperatorSurface } from "../useOrgRole";
 import {
   MEMBER_ROLE_LABEL,
   MEMBER_STATUS_LABEL,
@@ -74,14 +74,24 @@ function selectableRoles(canHost: boolean): Array<{ value: MemberRole; label: st
   }));
 }
 
-async function fetchMembers(orgId: string): Promise<{ members: MemberRow[] }> {
-  const res = await fetch(`/api/organizations/${orgId}/members`);
+// #777 §B — q + pagination are passed through to the existing members
+// API (it already supports `q` contains-search on name/email and returns
+// meta {total,page,perPage}).
+async function fetchMembers(
+  orgId: string,
+  opts: { q?: string; page: number; perPage: number },
+): Promise<{ members: MemberRow[]; total: number }> {
+  const sp = new URLSearchParams();
+  if (opts.q) sp.set("q", opts.q);
+  sp.set("page", String(opts.page));
+  sp.set("perPage", String(opts.perPage));
+  const res = await fetch(`/api/organizations/${orgId}/members?${sp.toString()}`);
   const parsed = await parseJsonResponse(
     res,
     MembersListResponseSchema,
     "Failed to load members",
   );
-  return { members: parsed.data };
+  return { members: parsed.data, total: parsed.meta?.total ?? parsed.data.length };
 }
 
 async function addMember(
@@ -108,7 +118,11 @@ async function addMember(
 async function updateMember(
   orgId: string,
   memberId: string,
-  payload: { role?: MemberRole; status?: MemberStatus },
+  payload: {
+    role?: MemberRole;
+    status?: MemberStatus;
+    payoutRecipient?: "SELF" | "ORGANIZATION";
+  },
 ) {
   // Schema enforces "at least one of role or status" so an empty PATCH
   // never leaves the client (would 400 on the server anyway).
@@ -146,15 +160,44 @@ async function removeMember(orgId: string, memberId: string) {
 
 export function MembersPageClient({ orgId }: { orgId: string }) {
   const { isAtLeast, canHost } = useOrgRole(orgId);
-  const { allowed } = useRequireOrgAccess(orgId, { minRole: "MANAGER" });
+  // #777 FDE Group B P1 — operator read floor (OWNER/MAINTAINER/MANAGER/
+  // SUPPORT). SUPPORT gets the roster READ-ONLY for ticket investigation,
+  // so the sidebar Members entry isn't a dead redirect. Mutation controls
+  // below stay MAINTAINER-gated (isAtLeast("MAINTAINER")).
+  const { allowed } = useRequireOperatorSurface(orgId);
   const queryClient = useQueryClient();
   const roleOptions = selectableRoles(canHost);
 
+  // #777 §B — roster search + server pagination. `search` is the live
+  // input; `debouncedSearch` is what actually hits the API (250ms) so a
+  // fast typist doesn't fire a request per keystroke. Page resets to 1
+  // whenever the search term changes.
+  const PER_PAGE = 20;
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setPage(1);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [search]);
+
   const { data, isLoading } = useQuery({
-    queryKey: ["org-members", orgId],
-    queryFn: () => fetchMembers(orgId),
+    queryKey: ["org-members", orgId, debouncedSearch, page],
+    queryFn: () =>
+      fetchMembers(orgId, {
+        q: debouncedSearch || undefined,
+        page,
+        perPage: PER_PAGE,
+      }),
     enabled: allowed,
   });
+
+  const total = data?.total ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / PER_PAGE));
 
   const [showInvite, setShowInvite] = useState(false);
   const [email, setEmail] = useState("");
@@ -194,12 +237,16 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
   const [editMember, setEditMember] = useState<MemberRow | null>(null);
   const [editRole, setEditRole] = useState<MemberRole>("LEARNER");
   const [editStatus, setEditStatus] = useState<MemberStatus>("ACTIVE");
+  const [editPayoutRecipient, setEditPayoutRecipient] = useState<
+    "SELF" | "ORGANIZATION"
+  >("SELF");
   const [editError, setEditError] = useState<string | null>(null);
 
   const openEdit = (m: MemberRow) => {
     setEditMember(m);
     setEditRole(m.role);
     setEditStatus(m.status as MemberStatus);
+    setEditPayoutRecipient(m.payoutRecipient);
     setEditError(null);
   };
 
@@ -208,6 +255,11 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
       updateMember(orgId, editMember!.id, {
         role: editRole,
         status: editStatus,
+        // #729 — only an EXPERT's payout routing is meaningful; the server
+        // ignores it for other roles anyway.
+        ...(editRole === "EXPERT" && {
+          payoutRecipient: editPayoutRecipient,
+        }),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["org-members", orgId] });
@@ -234,12 +286,20 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
       />
       <DashboardContent>
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0">
             <CardTitle className="text-base">
-              {isLoading
-                ? "Loading…"
-                : `${data?.members.length ?? 0} members`}
+              {isLoading ? "Loading…" : `${total} members`}
             </CardTitle>
+            <div className="relative w-full max-w-xs">
+              <Search className="h-4 w-4 absolute left-3 top-2.5 text-zinc-400" />
+              <Input
+                placeholder="Search name or email…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-9"
+                aria-label="Search members"
+              />
+            </div>
           </CardHeader>
           <CardContent>
             {isLoading ? (
@@ -315,12 +375,42 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
                         colSpan={4}
                         className="text-center text-sm text-zinc-500 py-6"
                       >
-                        No members yet.
+                        {debouncedSearch
+                          ? "No members match your search."
+                          : "No members yet."}
                       </TableCell>
                     </TableRow>
                   )}
                 </TableBody>
               </Table>
+            )}
+
+            {/* Server pagination — meta.total drives the page count. Hidden
+                when everything fits on one page. */}
+            {!isLoading && pageCount > 1 && (
+              <div className="flex items-center justify-between pt-4 text-sm text-zinc-500">
+                <span>
+                  Page {page} of {pageCount}
+                </span>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={page <= 1}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  >
+                    Previous
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={page >= pageCount}
+                    onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
             )}
           </CardContent>
         </Card>
@@ -438,6 +528,33 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
                 </SelectContent>
               </Select>
             </div>
+            {/* #729 — payout routing, only meaningful for an EXPERT. */}
+            {editRole === "EXPERT" && (
+              <div className="space-y-2">
+                <Label htmlFor="edit-payout">Payout recipient</Label>
+                <Select
+                  value={editPayoutRecipient}
+                  onValueChange={(v) =>
+                    setEditPayoutRecipient(v as "SELF" | "ORGANIZATION")
+                  }
+                >
+                  <SelectTrigger id="edit-payout">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="SELF">
+                      Expert — paid to their own account
+                    </SelectItem>
+                    <SelectItem value="ORGANIZATION">
+                      Organisation — absorbed &amp; distributed internally
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Where this expert&apos;s share of org-hosted sessions is routed.
+                </p>
+              </div>
+            )}
             {editError && <p className="text-sm text-red-600">{editError}</p>}
           </div>
           <DialogFooter>

@@ -1,10 +1,12 @@
 "use client";
 
-import { use, useMemo, useState } from "react";
+import { use, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Download, Filter, Search } from "lucide-react";
 import type { OrgAuditCategory } from "@prisma/client";
-import { useRequireOrgRole } from "../useOrgRole";
+import { useOrgRole } from "../useOrgRole";
+import { useRouter } from "next/navigation";
+import { isAtLeastRole } from "@/lib/auth/role-ranks";
 import {
   DashboardHeader,
   DashboardContent,
@@ -102,10 +104,24 @@ type AuditResponse = {
 
 export default function AuditLogPage({ params }: Readonly<PageProps>) {
   const { orgId } = use(params);
-  const { allowed, isLoading: isGateLoading } = useRequireOrgRole(
-    orgId,
-    "MAINTAINER",
-  );
+  // #777 FDE Group B P1 — page gate aligned with the sidebar
+  // (`isAtLeast("MAINTAINER") || isSupport`) so SUPPORT can open Audit
+  // read-only for ticket investigation and the nav entry isn't a dead
+  // redirect. Mirrors useRequireOrgAccess's redirect-on-fail so an
+  // EXPERT/LEARNER/BILLING_ADMIN direct-URL bypass still bounces to /home.
+  // NOTE: the audit GET API (route.ts) is still requireOrgAccess
+  // "MAINTAINER", so SUPPORT's data fetch 403s until that floor is
+  // lowered — not broadening API auth in this PR.
+  const router = useRouter();
+  const { role, isLoading: isGateLoading } = useOrgRole(orgId);
+  const passes = role === "SUPPORT" || isAtLeastRole(role, "MAINTAINER");
+  const allowed = !isGateLoading && passes;
+
+  useEffect(() => {
+    if (!isGateLoading && !passes) {
+      router.replace(`/dashboard/organization/${orgId}/home`);
+    }
+  }, [isGateLoading, passes, orgId, router]);
 
   const [category, setCategory] = useState<OrgAuditCategory | "ALL">("ALL");
   const [search, setSearch] = useState("");
@@ -145,15 +161,16 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
   }
 
   if (!allowed) {
-    // useRequireOrgAccess already dispatches a router.replace to /home on
-    // gate failure; this branch is a defensive fallback that renders
-    // briefly during the redirect.
+    // The effect above dispatches a router.replace to /home on gate
+    // failure; this branch is a defensive fallback that renders briefly
+    // during the redirect.
     return (
       <DashboardContent>
         <Card>
           <CardContent className="p-6">
             <p className="text-sm text-zinc-700">
-              Audit-log access requires MAINTAINER role or higher.
+              Audit-log access requires MAINTAINER role or higher (or
+              SUPPORT for read-only investigation).
             </p>
           </CardContent>
         </Card>
