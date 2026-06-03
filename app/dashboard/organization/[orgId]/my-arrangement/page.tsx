@@ -18,13 +18,26 @@
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 
-import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { getMyArrangementData } from "@/lib/data/org-member-arrangement";
 
 const PAYOUT_RECIPIENT_LABEL: Record<string, string> = {
   SELF: "You — paid directly",
   ORGANIZATION: "The organisation — they distribute internally",
+};
+
+// #777 §D.5 — humanise the raw EarningStatus enum. Payout disbursement is
+// gated by ENABLE_LIVE_PAYOUTS, so even a READY earning is "earned, not yet
+// paid out" — the note below the table says so honestly.
+const EARNING_STATUS_LABEL: Record<string, string> = {
+  READY: "Ready to settle",
+  HELD: "On hold",
+  PENDING: "Pending (hold window)",
+  PENDING_TRUST: "Pending (trust window)",
+  PAID: "Paid",
+  REFUNDED: "Refunded",
 };
 
 const PAYOUT_RECIPIENT_DESCRIPTION: Record<string, string> = {
@@ -51,70 +64,14 @@ export default async function MyArrangementPage({
     notFound();
   }
 
-  const now = new Date();
   const member = access.member;
 
-  // Active org-default RateCard (no contract, no plan-type filter — the
-  // catch-all card). Future: surface consultant-category overrides if
-  // the schema grows that scope.
-  const orgDefaultCard = await prisma.rateCard.findFirst({
-    where: {
-      ownerOrgId: orgId,
-      planType: null,
-      planId: null,
-      effectiveFrom: { lte: now },
-      OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
-    },
-    orderBy: { effectiveFrom: "desc" },
-  });
-
-  const payoutAccount =
-    member.payoutRecipient === "ORGANIZATION"
-      ? await prisma.organizationPayoutAccount.findUnique({
-          where: { organizationId: orgId },
-          select: { bankName: true, accountNumberLast4: true, status: true },
-        })
-      : null;
-
-  // Recent earnings for this consultant on this org's hosted payments.
-  // For HOST orgs the payment itself has organizationId=null (the learner
-  // pays personally); the org relationship lives on OrganizationEarnings.
-  // We join via paymentId: find OrgEarnings rows for this org, then fetch
-  // the matching ConsultantEarnings rows for this consultant.
-  const orgEarningPaymentIds = member.consultantProfileId
-    ? (
-        await prisma.organizationEarnings.findMany({
-          where: { organizationId: orgId },
-          select: { paymentId: true },
-          orderBy: { createdAt: "desc" },
-          take: 20,
-        })
-      ).map((r) => r.paymentId)
-    : [];
-
-  const earnings =
-    orgEarningPaymentIds.length > 0
-      ? await prisma.consultantEarnings.findMany({
-          where: {
-            consultantProfileId: member.consultantProfileId!,
-            paymentId: { in: orgEarningPaymentIds },
-          },
-          orderBy: { id: "desc" },
-          take: 20,
-          include: {
-            payment: {
-              select: {
-                id: true,
-                createdAt: true,
-                currency: true,
-                appointment: {
-                  select: { id: true, appointmentType: true },
-                },
-              },
-            },
-          },
-        })
-      : [];
+  const { orgDefaultCard, payoutAccount, earnings, upcomingSessions } =
+    await getMyArrangementData({
+      orgId,
+      payoutRecipient: member.payoutRecipient,
+      consultantProfileId: member.consultantProfileId,
+    });
 
   return (
     <div className="space-y-6">
@@ -125,6 +82,79 @@ export default async function MyArrangementPage({
           brand.
         </p>
       </header>
+
+      {/* #754 — upcoming org-hosted sessions */}
+      {member.consultantProfileId && upcomingSessions.length > 0 && (
+        <section>
+          <h2 className="text-lg font-medium mb-3">Upcoming sessions</h2>
+          <div className="overflow-hidden rounded-lg border bg-card">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-2 font-medium">When</th>
+                  <th className="px-4 py-2 font-medium">Learner</th>
+                  <th className="px-4 py-2 font-medium">Type</th>
+                  <th className="px-4 py-2 font-medium">Status</th>
+                  <th className="px-4 py-2 font-medium text-right">Your share</th>
+                  <th className="px-4 py-2 font-medium text-right">Join</th>
+                </tr>
+              </thead>
+              <tbody>
+                {upcomingSessions.map((s) => (
+                  <tr key={s.id} className="border-t">
+                    <td className="px-4 py-2">
+                      {s.startsAt.toLocaleString("en-IN", {
+                        day: "2-digit",
+                        month: "short",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </td>
+                    <td className="px-4 py-2">{s.learner}</td>
+                    <td className="px-4 py-2 lowercase">{s.type}</td>
+                    <td className="px-4 py-2 text-xs">
+                      {s.status.toLowerCase().replace(/_/g, " ")}
+                    </td>
+                    <td className="px-4 py-2 text-right text-xs">
+                      {/* Maps the earning to its session when one exists (#754).
+                          Pre-payment sessions show "—". */}
+                      {s.earning
+                        ? formatCurrencyAmount(s.earning.consultantSharePaise, "INR")
+                        : "—"}
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      {/* Real join needs the Stream client (consultant
+                          dashboard). Gate the link to the 10-min window. */}
+                      {s.joinable ? (
+                        <Link
+                          href={`/dashboard/consultant/${member.consultantProfileId}/home`}
+                          className="inline-flex rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground"
+                        >
+                          Join now
+                        </Link>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">
+                          Not yet
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Sessions you host under {access.org.name}. Join from your{" "}
+            <Link
+              href={`/dashboard/consultant/${member.consultantProfileId}/home`}
+              className="underline text-primary"
+            >
+              consultant dashboard
+            </Link>{" "}
+            when the room opens.
+          </p>
+        </section>
+      )}
 
       {/* Payout arrangement */}
       <section className="rounded-lg border bg-card p-5">
@@ -168,14 +198,21 @@ export default async function MyArrangementPage({
         )}
       </section>
 
-      {/* RateCard split */}
+      {/* RateCard split — read-only view of the ACTIVE split (#777 §D.16). */}
       <section className="rounded-lg border bg-card p-5">
-        <h2 className="font-medium">Revenue split</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="font-medium">Revenue split</h2>
+          {orgDefaultCard && (
+            <span className="rounded-full border border-primary px-2.5 py-0.5 text-xs text-primary">
+              Active split
+            </span>
+          )}
+        </div>
         {orgDefaultCard ? (
           <>
             <p className="mt-1 text-sm text-muted-foreground">
-              The default split for sessions hosted via {access.org.name}.
-              In effect since{" "}
+              The active default split for sessions hosted via{" "}
+              {access.org.name}. In effect since{" "}
               {orgDefaultCard.effectiveFrom.toLocaleDateString("en-IN", {
                 day: "2-digit",
                 month: "short",
@@ -261,12 +298,23 @@ export default async function MyArrangementPage({
                     <td className="px-4 py-2 text-right">
                       {formatCurrencyAmount(e.consultantSharePaise, "INR")}
                     </td>
-                    <td className="px-4 py-2 text-xs">{e.status}</td>
+                    <td className="px-4 py-2 text-xs">
+                      {EARNING_STATUS_LABEL[e.status] ?? e.status}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          {/* #777 §D.5 — honest "earned, not yet paid out" note while the
+              disbursement pipeline is gated. */}
+          {!ENABLE_LIVE_PAYOUTS && (
+            <p className="mt-2 text-xs text-amber-700">
+              Earned — payout pending platform enablement. Your share is
+              accrued and reconcilable above; cash disbursement switches on
+              once live payouts are enabled for the platform.
+            </p>
+          )}
           {member.payoutRecipient === "ORGANIZATION" && (
             <p className="mt-2 text-xs text-muted-foreground">
               Your share figures above show the consultant cut per the rate
