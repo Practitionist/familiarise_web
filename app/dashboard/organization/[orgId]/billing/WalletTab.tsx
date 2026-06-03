@@ -168,7 +168,17 @@ function isWalletResponse(r: WalletFetchResult): r is WalletResponse {
   return "billingAccount" in r;
 }
 
-export function WalletTab({ orgId }: { orgId: string }) {
+export function WalletTab({
+  orgId,
+  // #779 §B: when the org isn't ACTIVE the server rejects top-ups; these
+  // props let the tab disable the affordance instead of a dead click.
+  moneyMoveBlocked = false,
+  moneyMoveReason,
+}: {
+  orgId: string;
+  moneyMoveBlocked?: boolean;
+  moneyMoveReason?: string;
+}) {
   const { isAtLeast } = useOrgRole(orgId);
   const { data: session } = useSession();
   const queryClient = useQueryClient();
@@ -288,9 +298,21 @@ export function WalletTab({ orgId }: { orgId: string }) {
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-medium text-zinc-700">Wallet balance</h3>
             {isAtLeast("OWNER") && (
-              <Button size="sm" onClick={() => setShowBuy(true)}>
-                <Plus className="h-4 w-4 mr-1" /> Top up
-              </Button>
+              <div className="flex flex-col items-end gap-1">
+                <Button
+                  size="sm"
+                  onClick={() => setShowBuy(true)}
+                  disabled={moneyMoveBlocked}
+                  title={moneyMoveBlocked ? moneyMoveReason : undefined}
+                >
+                  <Plus className="h-4 w-4 mr-1" /> Top up
+                </Button>
+                {moneyMoveBlocked && moneyMoveReason && (
+                  <span className="text-xs text-amber-600">
+                    {moneyMoveReason}
+                  </span>
+                )}
+              </div>
             )}
           </div>
 

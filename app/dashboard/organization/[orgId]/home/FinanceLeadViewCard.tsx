@@ -19,12 +19,14 @@
  */
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   CreditCard,
   Wallet,
   FileText,
   Receipt,
   ArrowRight,
+  AlertCircle,
 } from "lucide-react";
 import {
   Card,
@@ -64,7 +66,11 @@ interface FinanceLeadViewProps {
 }
 
 export function FinanceLeadViewCard({ orgId, data }: FinanceLeadViewProps) {
+  const router = useRouter();
   const currency = data.capabilities.currency ?? "INR";
+
+  const billingHref = `/dashboard/organization/${orgId}/billing`;
+  const pastDueCount = data.invoices?.pastDueCount ?? 0;
 
   const stats: Array<{
     label: string;
@@ -131,18 +137,45 @@ export function FinanceLeadViewCard({ orgId, data }: FinanceLeadViewProps) {
       </Card>
 
       <DashboardGrid className="mt-4">
-        {stats.map((stat) => (
-          <StatCard
-            key={stat.label}
-            // StatCard names its primary text `title` (not `label`);
-            // we keep the local stat object's `.label` for symmetry
-            // with the CTA buttons below and just remap at render.
-            title={stat.label}
-            value={stat.value}
-            subtitle={stat.subtitle}
-            icon={stat.icon}
-          />
-        ))}
+        {stats.map((stat) => {
+          // Outstanding + wallet deep-link into /billing; the other two
+          // already carry CTA buttons below, so leave them non-clickable
+          // to avoid two competing affordances on the same card.
+          const deepLinks =
+            stat.label === "Outstanding invoices" ||
+            stat.label === "Wallet balance";
+          const isOutstanding = stat.label === "Outstanding invoices";
+          return (
+            <div key={stat.label}>
+              <StatCard
+                // StatCard names its primary text `title` (not `label`);
+                // we keep the local stat object's `.label` for symmetry
+                // with the CTA buttons below and just remap at render.
+                title={stat.label}
+                value={stat.value}
+                subtitle={stat.subtitle}
+                icon={stat.icon}
+                variant={
+                  isOutstanding && pastDueCount > 0 ? "danger" : "default"
+                }
+                onClick={
+                  deepLinks ? () => router.push(stat.href) : undefined
+                }
+              />
+              {/* Past-due needs more than a number — give the finance lead a
+                  one-click jump to the invoices they have to chase. */}
+              {isOutstanding && pastDueCount > 0 && (
+                <Link
+                  href={billingHref}
+                  className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-red-600 hover:underline"
+                >
+                  <AlertCircle className="h-3.5 w-3.5" />
+                  {pastDueCount} past due — pay now
+                </Link>
+              )}
+            </div>
+          );
+        })}
       </DashboardGrid>
 
       <Card className="mt-4">

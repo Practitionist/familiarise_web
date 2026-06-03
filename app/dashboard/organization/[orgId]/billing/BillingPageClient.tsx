@@ -3,10 +3,14 @@
 import { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CreditCard, AlertCircle, Sparkles, Plus, Trash2 } from "lucide-react";
+import { CreditCard, AlertCircle, Sparkles, Plus, Trash2, Lock } from "lucide-react";
 import { z } from "zod";
 
 import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
+import {
+  fetchOrgDetails,
+  orgDetailsQueryKey,
+} from "@/lib/api/organizations/org-details";
 import { useToast } from "@/hooks/use-toast";
 import { loadScript } from "@/app/checkout/plans/utils";
 import {
@@ -70,6 +74,10 @@ const billingSummarySchema = z.object({
     amount: z.number(),
     invoiceCount: z.number(),
   }),
+  // #777 §B: INVOICE-funded credit ceiling (paise; null/absent = unlimited).
+  // Optional so the client tolerates the API until it ships the field —
+  // when absent we treat the org as unlimited rather than inventing a cap.
+  creditLimitPaise: z.number().nullable().optional(),
   pendingCharges: z
     .object({ amount: z.number(), paymentCount: z.number() })
     .nullable(),
@@ -244,6 +252,15 @@ async function pollInvoiceUntilPaid(
   return false;
 }
 
+// FDE: whole days an OVERDUE invoice is past its dueDate (falling back to
+// createdAt when dueDate is null). Floored, min 0 — a freshly-flipped row
+// reads "1 day late", never a negative.
+function daysLate(dueDate: string | null, createdAt: string): number {
+  const ref = new Date(dueDate ?? createdAt).getTime();
+  const diffMs = Date.now() - ref;
+  return Math.max(0, Math.floor(diffMs / (24 * 60 * 60 * 1000)));
+}
+
 export function BillingPageClient({ orgId }: { orgId: string }) {
   const { isAtLeast } = useOrgRole(orgId);
   const { allowed } = useRequireOrgAccess(orgId, {
@@ -267,6 +284,23 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
     queryFn: () => fetchInvoices(orgId),
     enabled: allowed,
   });
+
+  // #779 §B: read org status off the shared org-details cache (the layout
+  // already fetched it) to drive the money-move affordance below. The
+  // server still rejects top-up/pay when status !== ACTIVE; this just
+  // stops the button being a dead click.
+  const orgDetails = useQuery({
+    queryKey: orgDetailsQueryKey(orgId),
+    queryFn: () => fetchOrgDetails(orgId),
+    staleTime: 60_000,
+  });
+  const orgStatus = orgDetails.data?.organization.status;
+  const moneyMoveBlocked =
+    orgStatus === "PENDING_VERIFICATION" || orgStatus === "SUSPENDED";
+  const moneyMoveReason =
+    orgStatus === "SUSPENDED"
+      ? "Organization suspended"
+      : "Verify your organization to move money";
 
   const generateMutation = useMutation({
     mutationFn: () => generateInvoice(orgId),
@@ -476,11 +510,26 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
                       <div>
                         <dt className="text-zinc-500">Fee</dt>
                         <dd className="font-medium">
-                          {formatCurrencyAmount(
-                            summary.data.licenseContract.subscription.flatFeePaise ?? 0,
-                            "INR",
-                          )}{" "}
-                          / {summary.data.licenseContract.subscription.cycle.toLowerCase()}
+                          {/* FDE: a fee-less LICENSE contract is incomplete,
+                              not free — say so rather than rendering ₹0.00
+                              which reads as "no charge". Required by renewal. */}
+                          {summary.data.licenseContract.subscription.flatFeePaise ==
+                          null ? (
+                            <span className="text-amber-600">
+                              (fee not recorded){" "}
+                              <span className="text-xs font-normal text-zinc-400">
+                                — required before renewal
+                              </span>
+                            </span>
+                          ) : (
+                            <>
+                              {formatCurrencyAmount(
+                                summary.data.licenseContract.subscription.flatFeePaise,
+                                "INR",
+                              )}{" "}
+                              / {summary.data.licenseContract.subscription.cycle.toLowerCase()}
+                            </>
+                          )}
                         </dd>
                       </div>
                       <div>
@@ -587,6 +636,50 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
               </DashboardGrid>
             )}
 
+            {/* #777 §B: INVOICE-funded credit ceiling vs. live outstanding
+                (issued+overdue). `creditLimitPaise` null/absent = unlimited;
+                we say so rather than fabricating a cap. "Used" reuses the
+                outstanding total already aggregated by the billing query. */}
+            {summary.data?.fundingSource === "INVOICE" && (
+              <p className="text-sm text-zinc-500">
+                {summary.data.creditLimitPaise == null ? (
+                  <>
+                    {formatCurrencyAmount(
+                      summary.data.outstanding.amount,
+                      "INR",
+                    )}{" "}
+                    outstanding · no credit limit set (unlimited)
+                  </>
+                ) : (
+                  <>
+                    {formatCurrencyAmount(
+                      summary.data.outstanding.amount,
+                      "INR",
+                    )}{" "}
+                    of{" "}
+                    {formatCurrencyAmount(summary.data.creditLimitPaise, "INR")}{" "}
+                    credit limit used
+                    {summary.data.outstanding.amount >=
+                      summary.data.creditLimitPaise && (
+                      <span className="ml-1 font-medium text-amber-600">
+                        — limit reached
+                      </span>
+                    )}
+                  </>
+                )}
+              </p>
+            )}
+
+            {/* #779 §B: org can't move money until ACTIVE; surface the reason
+                inline so the disabled Pay/Top-up affordances aren't silent. */}
+            {moneyMoveBlocked && (
+              <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                <Lock className="mt-0.5 h-4 w-4 shrink-0" />
+                <p>{moneyMoveReason}. Paying invoices and wallet top-ups are
+                  disabled until then.</p>
+              </div>
+            )}
+
         <Card className="mt-6">
           <CardHeader>
             <CardTitle className="text-base">Invoices</CardTitle>
@@ -627,7 +720,11 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
                                 : "outline"
                           }
                         >
-                          {inv.status}
+                          {/* FDE: quantify the lateness so OVERDUE isn't an
+                              undated alarm — "OVERDUE · 5 days late". */}
+                          {inv.status === "OVERDUE"
+                            ? `OVERDUE · ${daysLate(inv.dueDate, inv.createdAt)} days late`
+                            : inv.status}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-xs text-zinc-500">
@@ -645,11 +742,17 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
                           isAtLeast("OWNER") && (
                             <Button
                               size="sm"
-                              variant="outline"
+                              variant={
+                                inv.status === "OVERDUE" ? "default" : "outline"
+                              }
                               onClick={() => payMutation.mutate(inv.id)}
-                              disabled={payMutation.isPending}
+                              // #779 §B: disable when the org can't move money;
+                              // the server rejects anyway, this kills the dead
+                              // click. `title` carries the reason on hover.
+                              disabled={payMutation.isPending || moneyMoveBlocked}
+                              title={moneyMoveBlocked ? moneyMoveReason : undefined}
                             >
-                              Pay
+                              Pay now
                             </Button>
                           )}
                       </TableCell>
@@ -677,7 +780,11 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
           </TabsContent>
 
           <TabsContent value="wallet">
-            <WalletTab orgId={orgId} />
+            <WalletTab
+              orgId={orgId}
+              moneyMoveBlocked={moneyMoveBlocked}
+              moneyMoveReason={moneyMoveReason}
+            />
           </TabsContent>
         </Tabs>
       </DashboardContent>
