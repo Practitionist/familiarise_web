@@ -575,6 +575,8 @@ export default function ClassCheckoutPage({
         <Separator className="bg-zinc-200" />
         <OrgPayerSelector
           selectedOrganizationId={selectedOrganizationId}
+          planType="CLASS"
+          planId={resolvedParams.planId}
           onSelect={(id) => {
             setSelectedOrganizationId(id);
             if (id) setUseReferralCredits(false);

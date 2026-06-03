@@ -1,13 +1,90 @@
 "use client";
 
 import { useSession } from "@/lib/auth-client";
+import { useQuery } from "@tanstack/react-query";
 import Image from "next/image";
-import { Building2, CreditCard } from "lucide-react";
-import { FUNDING_SOURCE_LABEL } from "@/lib/labels/org-labels";
+import { Building2, CreditCard, AlertTriangle, Ban } from "lucide-react";
+import type { CoveredPlanType } from "@prisma/client";
+
+interface OveragePreview {
+  applicable: boolean;
+  programName: string | null;
+  marginalPaise: number;
+  willExceedCap: boolean;
+  willBlock: boolean;
+  chargeTo: "MEMBER" | "ORG" | null;
+}
 
 interface OrgPayerSelectorProps {
   selectedOrganizationId: string | null;
   onSelect: (organizationId: string | null) => void;
+  /**
+   * #777 §C — when provided, the selector previews whether billing this plan to
+   * the selected org will breach its cap and warns BEFORE pay. Optional so
+   * existing callers without plan context keep working unchanged.
+   */
+  planType?: CoveredPlanType;
+  planId?: string;
+}
+
+const inr = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN")}`;
+
+/** #777 §C — pre-checkout overage warning for the selected sponsoring org. */
+function OverageWarning({
+  organizationId,
+  organizationName,
+  planType,
+  planId,
+}: {
+  organizationId: string;
+  organizationName: string;
+  planType: CoveredPlanType;
+  planId: string;
+}) {
+  const { data } = useQuery<OveragePreview>({
+    queryKey: ["overage-preview", organizationId, planType, planId],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/organizations/${organizationId}/checkout/overage-preview?planType=${planType}&planId=${planId}`,
+      );
+      if (!res.ok) throw new Error("preview failed");
+      return res.json();
+    },
+    staleTime: 30_000,
+    retry: false,
+  });
+
+  if (!data?.applicable) return null;
+
+  if (data.willBlock) {
+    return (
+      <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm">
+        <Ban className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" />
+        <span className="text-rose-900">
+          This booking exceeds {organizationName}&apos;s covered allocation and
+          can&apos;t be billed to the organization. Pay with your card, or ask
+          your admin to raise the program cap.
+        </span>
+      </div>
+    );
+  }
+
+  if (data.willExceedCap && data.marginalPaise > 0) {
+    const who =
+      data.chargeTo === "MEMBER"
+        ? `you'll be charged ${inr(data.marginalPaise)}`
+        : `${inr(data.marginalPaise)} will be billed to ${organizationName}`;
+    return (
+      <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+        <span className="text-amber-900">
+          This exceeds your covered allocation — {who} as an overage charge.
+        </span>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 /**
@@ -29,6 +106,8 @@ interface OrgPayerSelectorProps {
 export function OrgPayerSelector({
   selectedOrganizationId,
   onSelect,
+  planType,
+  planId,
 }: OrgPayerSelectorProps) {
   const { data: session } = useSession();
   const memberships = session?.user?.organizationMemberships ?? [];
@@ -39,6 +118,10 @@ export function OrgPayerSelector({
   // would be misleading.
   const sponsoringMemberships = memberships.filter((m) => m.canSponsor);
   if (sponsoringMemberships.length === 0) return null;
+
+  const selectedMembership = sponsoringMemberships.find(
+    (m) => m.organizationId === selectedOrganizationId,
+  );
 
   return (
     <div className="space-y-3">
@@ -100,6 +183,19 @@ export function OrgPayerSelector({
           </button>
         );
       })}
+
+      {/* #777 §C — pre-checkout overage warning for the selected org. */}
+      {selectedOrganizationId &&
+        selectedMembership &&
+        planType &&
+        planId && (
+          <OverageWarning
+            organizationId={selectedOrganizationId}
+            organizationName={selectedMembership.organizationName}
+            planType={planType}
+            planId={planId}
+          />
+        )}
 
       {selectedOrganizationId && (
         <p className="text-xs text-amber-600">

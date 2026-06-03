@@ -587,6 +587,8 @@ export default function SubscriptionCheckoutPage({
         <Separator className="bg-zinc-200" />
         <OrgPayerSelector
           selectedOrganizationId={selectedOrganizationId}
+          planType="SUBSCRIPTION"
+          planId={resolvedParams.planId}
           onSelect={(id) => {
             setSelectedOrganizationId(id);
             if (id) setUseReferralCredits(false);
