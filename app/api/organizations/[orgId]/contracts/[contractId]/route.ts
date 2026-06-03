@@ -14,6 +14,15 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { getContractLockState } from "@/lib/enterprise/config-lock";
+
+// Term fields that lock once the contract leaves DRAFT or starts billing
+// (#777 §B). `autoRenew` is a safe forward-looking toggle — editable always.
+const TERM_FIELDS = [
+  "effectiveFrom",
+  "effectiveTo",
+  "paymentTermsDays",
+] as const;
 
 const ContractStatusSchema = z.enum([
   "DRAFT",
@@ -70,9 +79,17 @@ export async function GET(
   if (!contract) {
     return NextResponse.json({ error: "Contract not found" }, { status: 404 });
   }
-  return NextResponse.json({ contract });
+  // Surface the in-use lock so the detail/edit drawer can disable term
+  // fields (effective dates, payment terms) without a second round-trip
+  // (#777 §B). autoRenew stays editable regardless.
+  const { locked } = await getContractLockState(contractId, contract.status);
+  return NextResponse.json({ contract: { ...contract, locked } });
 }
 
+// TODO(#777 server-actions): kept as a Route Handler + useMutation to match the
+// rest of the dashboard. New first-party form mutations should prefer a Server
+// Action (co-located write + revalidate, progressive enhancement) per the
+// agreed direction — migrate this when the dashboard converges on that pattern.
 export async function PATCH(
   req: NextRequest,
   {
@@ -107,6 +124,25 @@ export async function PATCH(
         throw Object.assign(new Error("Contract not found"), {
           httpStatus: 404,
         });
+      }
+
+      // Reject term edits (effective dates, payment terms) once the
+      // contract is in use — those terms are committed the moment it's
+      // signed or starts billing (#777 §B). autoRenew/status stay open.
+      const touchesTerms = TERM_FIELDS.some((f) => body[f] !== undefined);
+      if (touchesTerms) {
+        const { locked } = await getContractLockState(
+          contractId,
+          current.status,
+        );
+        if (locked) {
+          throw Object.assign(
+            new Error(
+              "Contract terms are locked once it's signed or billing has started. Only auto-renew can be changed.",
+            ),
+            { httpStatus: 409, code: "CONTRACT_TERMS_LOCKED" },
+          );
+        }
       }
 
       if (body.purchaseOrderId) {
@@ -208,7 +244,12 @@ export async function PATCH(
     if (err instanceof Error && "httpStatus" in err) {
       const status =
         typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      return NextResponse.json({ error: err.message }, { status });
+      const code =
+        "code" in err && typeof err.code === "string" ? err.code : undefined;
+      return NextResponse.json(
+        { error: err.message, ...(code && { code }) },
+        { status },
+      );
     }
     throw err;
   }

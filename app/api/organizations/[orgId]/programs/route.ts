@@ -125,7 +125,35 @@ export async function GET(
     orderBy: { createdAt: "desc" },
   });
 
-  return NextResponse.json({ data: programs });
+  // #777 §H — per-program usage across current-cycle assignments, so the list
+  // can show a utilization column without a per-row round-trip. Aggregated.
+  const now = new Date();
+  const usage = programs.length
+    ? await prisma.programAssignment.groupBy({
+        by: ["programId"],
+        where: {
+          programId: { in: programs.map((p) => p.id) },
+          periodEnd: { gte: now },
+        },
+        _sum: { engagementsUsed: true, consumedPaise: true },
+        _count: { _all: true },
+      })
+    : [];
+  const usageByProgram = new Map(usage.map((u) => [u.programId, u]));
+
+  const data = programs.map((p) => {
+    const u = usageByProgram.get(p.id);
+    return {
+      ...p,
+      utilization: {
+        activeAssignments: u?._count._all ?? 0,
+        engagementsUsed: u?._sum.engagementsUsed ?? 0,
+        consumedPaise: u?._sum.consumedPaise ?? 0,
+      },
+    };
+  });
+
+  return NextResponse.json({ data });
 }
 
 export async function POST(
