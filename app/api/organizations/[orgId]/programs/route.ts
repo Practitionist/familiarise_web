@@ -111,11 +111,15 @@ export async function GET(
 
   const url = new URL(req.url);
   const contractId = url.searchParams.get("contractId") ?? undefined;
+  // #777 §B — archived programs are hidden from the active list by default;
+  // ?includeArchived=true surfaces them (history view).
+  const includeArchived = url.searchParams.get("includeArchived") === "true";
 
   const programs = await prisma.program.findMany({
     where: {
       contract: { organizationId: orgId },
       ...(contractId && { contractId }),
+      ...(!includeArchived && { archivedAt: null }),
     },
     include: {
       licensedSeatConfig: true,

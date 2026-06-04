@@ -177,16 +177,22 @@ export default function OrgSettingsPage({
   }, [data]);
 
   const mutation = useMutation({
+    // #779 §A — the API enforces field-level RBAC: descriptive fields are
+    // MAINTAINER+, slug/isPublic OWNER-only, billingEmail/paymentTermsDays
+    // BILLING_ADMIN-or-OWNER. Send only what this role may touch so a
+    // maintainer's rename doesn't 403 on fields they never edited.
     mutationFn: (overrides?: PatchPayload) =>
       patchSettings(orgId, {
         name: name.trim(),
-        slug: slug.trim() || undefined,
-        billingEmail: billingEmail.trim() || null,
         description: description.trim() || null,
         industry: industry.trim() || null,
         website: website.trim() || null,
-        paymentTermsDays: parseInt(paymentTermsDays, 10),
-        isPublic,
+        ...(isAtLeast("OWNER") && {
+          slug: slug.trim() || undefined,
+          billingEmail: billingEmail.trim() || null,
+          paymentTermsDays: parseInt(paymentTermsDays, 10),
+          isPublic,
+        }),
         ...overrides,
       }),
     onSuccess: () => {
@@ -390,7 +396,9 @@ export default function OrgSettingsPage({
                     type="email"
                     value={billingEmail}
                     onChange={(e) => setBillingEmail(e.target.value)}
-                    disabled={!isAtLeast("MAINTAINER")}
+                    // #779 §A — finance remit: BILLING_ADMIN edits this via the
+                    // billing page; on THIS page only OWNER may change it.
+                    disabled={!isAtLeast("OWNER")}
                   />
                 </div>
               </div>
@@ -468,7 +476,9 @@ export default function OrgSettingsPage({
                     max="120"
                     value={paymentTermsDays}
                     onChange={(e) => setPaymentTermsDays(e.target.value)}
-                    disabled={!isAtLeast("MAINTAINER")}
+                    // #779 §A — finance remit (BILLING_ADMIN edits via billing;
+                    // OWNER here).
+                    disabled={!isAtLeast("OWNER")}
                   />
                   <p className="text-xs text-zinc-500">
                     India default is NET-60. Only applies when funding

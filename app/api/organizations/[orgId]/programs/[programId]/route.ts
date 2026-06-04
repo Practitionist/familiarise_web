@@ -35,6 +35,8 @@ const PatchBodySchema = z
   .object({
     name: z.string().min(2).max(120).optional(),
     status: ProgramStatusSchema.optional(),
+    // #777 §B — archive/unarchive (soft-hide; never hard-delete once in use).
+    archived: z.boolean().optional(),
     coveredPlanTypes: z.array(CoveredPlanTypeSchema).optional(),
     allowedCategories: z.array(z.string()).optional(),
     // Money config — locked once the program is in use (#777 §B). Type isn't
@@ -171,11 +173,39 @@ export async function PATCH(
       if (!current) {
         throw Object.assign(new Error("Program not found"), { httpStatus: 404 });
       }
+
+      // #777 §B — archiving guard: an archived program is skipped by the cycle
+      // engine, so live allocations under it would zombie (never roll, never
+      // close). Force the operator to cancel them (or let the cycle end) first.
+      if (body.archived === true) {
+        const activeAssignments = await tx.programAssignment.count({
+          where: {
+            programId,
+            status: "ACTIVE",
+            periodEnd: { gte: new Date() },
+          },
+        });
+        if (activeAssignments > 0) {
+          throw Object.assign(
+            new Error(
+              `Cannot archive a program with ${activeAssignments} active assignment(s). Cancel them or let the cycle end first.`,
+            ),
+            {
+              httpStatus: 409,
+              code: "PROGRAM_HAS_ACTIVE_ASSIGNMENTS",
+            },
+          );
+        }
+      }
+
       const next = await tx.program.update({
         where: { id: programId },
         data: {
           ...(body.name !== undefined && { name: body.name }),
           ...(body.status !== undefined && { status: body.status }),
+          ...(body.archived !== undefined && {
+            archivedAt: body.archived ? new Date() : null,
+          }),
           ...(body.coveredPlanTypes !== undefined && {
             coveredPlanTypes: body.coveredPlanTypes,
           }),
@@ -237,6 +267,23 @@ export async function PATCH(
             data: poolData,
           });
         }
+      }
+
+      // Archive/unarchive gets its own audit action (#777 §B).
+      if (
+        body.archived !== undefined &&
+        body.archived !== (current.archivedAt != null)
+      ) {
+        await tx.orgAuditLog.create({
+          data: {
+            organizationId: orgId,
+            actorMembershipId: access.member.id,
+            category: "PROGRAM",
+            action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ARCHIVED,
+            description: `Program ${programId} ${body.archived ? "archived" : "unarchived"}`,
+            details: { programId, archived: body.archived },
+          },
+        });
       }
 
       // Status transitions get the dedicated PROGRAM_PAUSED action so
