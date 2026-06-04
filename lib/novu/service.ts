@@ -241,6 +241,15 @@ export async function notifyRefundProcessed(
   return triggerWorkflow(NOVU_WORKFLOWS.REFUND_PROCESSED, userId, payload);
 }
 
+// #779 §A — the gateway rejected a refund (Refund.status = FAILED). Notifies
+// the payer; `reason` on the payload carries the gateway failure reason.
+export async function notifyRefundFailed(
+  userId: string,
+  payload: RefundPayload,
+) {
+  return triggerWorkflow(NOVU_WORKFLOWS.REFUND_FAILED, userId, payload);
+}
+
 export async function notifyRefundRequested(
   adminUserIds: string[],
   payload: RefundPayload,

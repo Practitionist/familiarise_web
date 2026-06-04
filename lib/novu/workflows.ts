@@ -21,6 +21,9 @@ export const NOVU_WORKFLOWS = {
   PAYMENT_FAILED: "payment-failed",
   REFUND_PROCESSED: "refund-processed",
   REFUND_REQUESTED: "refund-requested",
+  // #779 §A — a refund the gateway rejected. In-app to the payer so they
+  // know the money isn't coming back via this attempt + can chase support.
+  REFUND_FAILED: "refund-failed",
 
   // Support
   SUPPORT_TICKET_CREATED: "support-ticket-created",
@@ -85,9 +88,18 @@ export const NOVU_WORKFLOWS = {
   ORG_INVITE_ACCEPTED: "org-invite-accepted",
   ORG_INVOICE_ISSUED: "org-invoice-issued",
   ORG_INVOICE_PAID: "org-invoice-paid",
+  // #779 §A — dunning. ISSUED→OVERDUE first-notice + the escalating
+  // 7-day reminders share one workflow; `reminderStage` drives the copy.
+  ORG_INVOICE_OVERDUE: "org-invoice-overdue",
+  // #779 §A — a CHARGE_MEMBER overage side-charge hit its 14-day timeout
+  // (PENDING→FAILED). In-app to the member only (their obligation lapsed).
+  ORG_MEMBER_OVERAGE_TIMED_OUT: "org-member-overage-timed-out",
   ORG_LICENSE_RENEWAL_UPCOMING: "org-license-renewal-upcoming",
   ORG_DATA_EXPORT_READY: "org-data-export-ready",
   ORG_WALLET_TOPUP_CONFIRMED: "org-wallet-topup-confirmed",
+  // #777 §C — wallet dipped below its configured minimum. NOTIFY-ONLY floor:
+  // tells finance to top up; the auto-charge lands with payment mandates.
+  ORG_WALLET_LOW: "org-wallet-low",
   ORG_PAYOUT_COMPLETED: "org-payout-completed",
   ORG_PAYOUT_FAILED: "org-payout-failed",
   ORG_PAYOUT_REVERSED: "org-payout-reversed",
@@ -360,6 +372,31 @@ export type OrgInvoicePaidPayload = {
   dashboardUrl: string;
 };
 
+// #779 §A — dunning notice. `reminderStage` is 0 for the first OVERDUE
+// notice and 1..3 for the escalating 7-day reminders so the template can
+// ramp the urgency copy. `daysLate` is days since dueDate; `payUrl` deep-
+// links to the invoice pay surface.
+export type OrgInvoiceOverduePayload = {
+  invoiceNumber: string;
+  orgName: string;
+  totalPaise: number;
+  currency: string;
+  daysLate: number;
+  reminderStage: number;
+  payUrl: string;
+};
+
+// #779 §A — a member-owed overage side-charge timed out (PENDING→FAILED)
+// after 14 days unpaid. `payUrl` still points at the settle surface (the
+// member can retry via FAILED→PENDING resume-checkout).
+export type OrgMemberOverageTimedOutPayload = {
+  orgName: string;
+  programName: string;
+  amountPaise: number;
+  currency: string;
+  payUrl: string;
+};
+
 export type OrgLicenseRenewalUpcomingPayload = {
   orgName: string;
   cycle: "MONTHLY" | "QUARTERLY" | "ANNUAL";
@@ -385,6 +422,17 @@ export type OrgWalletTopupConfirmedPayload = {
   currency: string;
   newBalancePaise: number;
   dashboardUrl: string;
+};
+
+// #777 §C — wallet low-balance alert. `balancePaise` is the live balance that
+// tripped the floor; `minimumPaise` is the configured threshold. NOTIFY-ONLY —
+// no money moves until mandates land. `topUpUrl` deep-links to the wallet tab.
+export type OrgWalletLowPayload = {
+  orgName: string;
+  balancePaise: number;
+  minimumPaise: number;
+  currency: string;
+  topUpUrl: string;
 };
 
 export type OrgPayoutCompletedPayload = {

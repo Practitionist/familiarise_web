@@ -23,9 +23,12 @@ import {
   type OrgInviteAcceptedPayload,
   type OrgInvoiceIssuedPayload,
   type OrgInvoicePaidPayload,
+  type OrgInvoiceOverduePayload,
+  type OrgMemberOverageTimedOutPayload,
   type OrgLicenseRenewalUpcomingPayload,
   type OrgDataExportReadyPayload,
   type OrgWalletTopupConfirmedPayload,
+  type OrgWalletLowPayload,
   type OrgPayoutCompletedPayload,
   type OrgProgramExhaustedPayload,
   type OrgProgramCapNearPayload,
@@ -158,6 +161,37 @@ export async function notifyOrgInvoicePaid(
 }
 
 /**
+ * #779 §A — dunning. Fires from the daily dunning cron both when an invoice
+ * flips ISSUED→OVERDUE (reminderStage 0) and on each escalating 7-day
+ * reminder (reminderStage 1..3). Delivers in-app to the finance roster
+ * (OWNER + MAINTAINER + MANAGER) — the same roster that can see bills.
+ */
+export async function notifyOrgInvoiceOverdue(
+  orgId: string,
+  payload: OrgInvoiceOverduePayload,
+): Promise<void> {
+  const recipients = await rosterForOrg(orgId, VISIBILITY_ROLES);
+  return triggerMany(NOVU_WORKFLOWS.ORG_INVOICE_OVERDUE, recipients, payload);
+}
+
+/**
+ * #779 §A — a CHARGE_MEMBER overage side-charge timed out unpaid (the
+ * timeout cron flipped PENDING→FAILED at 14 days). Delivers in-app to the
+ * MEMBER only (mirrors notifyOrgProgramOverageDue — it's their personal
+ * obligation, not an operator alert).
+ */
+export async function notifyMemberOverageTimedOut(
+  memberUserId: string,
+  payload: OrgMemberOverageTimedOutPayload,
+): Promise<void> {
+  return triggerMany(
+    NOVU_WORKFLOWS.ORG_MEMBER_OVERAGE_TIMED_OUT,
+    [memberUserId],
+    payload,
+  );
+}
+
+/**
  * Fires N days before a LICENSE BillingSubscription's nextInvoiceDate.
  * Owners can wire the cycle renewal into their procurement calendar
  * before the invoice lands. Drives off renewalReminderSentAt on
@@ -206,6 +240,20 @@ export async function notifyOrgWalletTopupConfirmed(
     owners,
     payload,
   );
+}
+
+/**
+ * #777 §C — fires from the daily wallet-low-balance cron when a WALLET
+ * account dips below its configured minBalancePaise. Delivers in-app to the
+ * finance roster (OWNER + MAINTAINER + MANAGER) — the same roster that can
+ * see + act on the wallet (mirrors notifyOrgInvoiceOverdue).
+ */
+export async function notifyOrgWalletLow(
+  orgId: string,
+  payload: OrgWalletLowPayload,
+): Promise<void> {
+  const recipients = await rosterForOrg(orgId, VISIBILITY_ROLES);
+  return triggerMany(NOVU_WORKFLOWS.ORG_WALLET_LOW, recipients, payload);
 }
 
 /**

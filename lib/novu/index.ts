@@ -17,6 +17,7 @@ export {
   notifyPaymentSuccess,
   notifyPaymentFailed,
   notifyRefundProcessed,
+  notifyRefundFailed,
   notifyRefundRequested,
   // Support
   notifySupportTicketCreated,

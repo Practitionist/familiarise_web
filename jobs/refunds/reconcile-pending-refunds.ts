@@ -9,6 +9,7 @@
 
 import {
   reconcilePendingRefunds,
+  notifyFailedRefunds,
   disconnectDatabase,
   type RefundReconciliationResult,
 } from "../../scripts/refunds/reconcile-pending-refunds";
@@ -65,6 +66,14 @@ async function main(): Promise<void> {
     }
 
     outputToGitHubActions(result);
+
+    // #779 §A — page payers of FAILED refunds that haven't been notified yet.
+    // Runs after reconciliation (which can itself FLIP a stale PENDING refund
+    // to FAILED) so a just-failed refund is caught in the same pass.
+    const failedNotify = await notifyFailedRefunds();
+    console.log(
+      `\n📨 Failed-refund notifications: scanned=${failedNotify.scanned} notified=${failedNotify.notified}`,
+    );
 
     if (!result.success) {
       process.exit(1);
