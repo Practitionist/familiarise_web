@@ -31,6 +31,22 @@
 import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { generateIrn } from "@/lib/compliance/irp";
+import { buildIrpPayload } from "@/lib/compliance/irp-payload";
+
+// #703 — platform-side seller constants. GSTIN mirrors the invoice-PDF
+// route (PLATFORM_GSTIN); the rest are env-overridable for a future
+// per-region supplier. Seller state code is derived from the GSTIN prefix
+// inside the mapper, SUPPLIER_STATE_CODE is the fallback.
+const SELLER = {
+  gstin: process.env.PLATFORM_GSTIN ?? "29AAFCF1234Q1ZN",
+  legalName:
+    process.env.SUPPLIER_LEGAL_NAME ??
+    "Familiarise Technologies Private Limited",
+  address1: process.env.SUPPLIER_ADDR1 ?? "Koramangala 1st Block",
+  location: process.env.SUPPLIER_LOCATION ?? "Bangalore",
+  pincode: process.env.SUPPLIER_PINCODE ?? "560034",
+  stateCode: process.env.SUPPLIER_STATE_CODE ?? "KA",
+};
 
 export async function runIrpUploader(): Promise<{
   processed: number;
@@ -47,7 +63,42 @@ export async function runIrpUploader(): Promise<{
       irpStatus: "PENDING",
       issuedAt: { gte: thirtyDaysAgo, not: null },
     },
-    select: { id: true, invoiceNumber: true },
+    // #703 — widen to everything the payload mapper needs (split paise,
+    // place-of-supply, line items, buyer tax info). The mapper is pure;
+    // the cron does the fetch.
+    select: {
+      id: true,
+      invoiceNumber: true,
+      issuedAt: true,
+      reverseCharge: true,
+      lutNumber: true,
+      subtotalPaise: true,
+      cgstPaise: true,
+      sgstPaise: true,
+      igstPaise: true,
+      totalPaise: true,
+      hsnCode: true,
+      placeOfSupply: true,
+      irpRetryCount: true,
+      organization: {
+        select: {
+          name: true,
+          taxInfo: {
+            select: { gstin: true, gstStateCode: true, hsnDefault: true },
+          },
+        },
+      },
+      lineItems: {
+        orderBy: { position: "asc" },
+        select: {
+          position: true,
+          description: true,
+          quantity: true,
+          unitPricePaise: true,
+          hsnCode: true,
+        },
+      },
+    },
     take: 50, // batch size
   });
 
@@ -56,7 +107,52 @@ export async function runIrpUploader(): Promise<{
   let skipped = 0;
 
   for (const candidate of candidates) {
-    const result = await generateIrn({ invoiceId: candidate.id, payload: {} });
+    // #703 — build the NIC e-invoice payload from the fetched row. A
+    // mapping failure is PERMANENT (missing GSTIN / no line items / bad
+    // seller env): stamp the reason and flip straight to FAILED — retrying
+    // can't fix structurally-unmappable data, and the 30-day IRN window
+    // shouldn't be burned looping on it.
+    const mapped = buildIrpPayload({
+      invoice: {
+        invoiceNumber: candidate.invoiceNumber,
+        issuedAt: candidate.issuedAt,
+        reverseCharge: candidate.reverseCharge,
+        lutNumber: candidate.lutNumber,
+        subtotalPaise: candidate.subtotalPaise,
+        cgstPaise: candidate.cgstPaise,
+        sgstPaise: candidate.sgstPaise,
+        igstPaise: candidate.igstPaise,
+        totalPaise: candidate.totalPaise,
+        hsnCode: candidate.hsnCode,
+        placeOfSupply: candidate.placeOfSupply,
+      },
+      lineItems: candidate.lineItems,
+      buyer: {
+        name: candidate.organization.name,
+        gstin: candidate.organization.taxInfo?.gstin ?? null,
+        stateCode: candidate.organization.taxInfo?.gstStateCode ?? null,
+        hsnDefault: candidate.organization.taxInfo?.hsnDefault ?? "999293",
+      },
+      seller: SELLER,
+    });
+
+    if (!mapped.ok) {
+      await prisma.organizationInvoice.update({
+        where: { id: candidate.id },
+        data: {
+          irpStatus: "FAILED", // permanent — do not loop
+          irpLastError: `MAP: ${mapped.reason}`.slice(0, 500),
+          irpLastAttemptAt: new Date(),
+        },
+      });
+      failed++;
+      continue;
+    }
+
+    const result = await generateIrn({
+      invoiceId: candidate.id,
+      payload: mapped.payload,
+    });
 
     if (result.status === "GENERATED" && result.irn) {
       await prisma.organizationInvoice.update({
@@ -85,11 +181,7 @@ export async function runIrpUploader(): Promise<{
     // for manual review — IRN generation has a 30-day hard cut-off.
     if (result.status === "FAILED") {
       const MAX_RETRIES = 12; // ≈ 12 days of daily retries before giving up
-      const invoice = await prisma.organizationInvoice.findUnique({
-        where: { id: candidate.id },
-        select: { irpRetryCount: true },
-      });
-      const nextRetryCount = (invoice?.irpRetryCount ?? 0) + 1;
+      const nextRetryCount = (candidate.irpRetryCount ?? 0) + 1;
       const exhausted = nextRetryCount >= MAX_RETRIES;
 
       await prisma.organizationInvoice.update({

@@ -15,9 +15,9 @@
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 
-import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { getMyProgramData } from "@/lib/data/org-member-program";
 
 const PROGRAM_TYPE_LABEL: Record<string, string> = {
   LICENSED_SEAT: "Licensed seat",
@@ -48,57 +48,19 @@ export default async function MyProgramPage({
     notFound();
   }
 
-  const now = new Date();
-
-  // Active assignments for this membership in the current cycle. Latest
-  // first so the most recent allocation is on top.
-  const assignments = await prisma.programAssignment.findMany({
-    where: {
-      membershipId: access.member.id,
-      periodStart: { lte: now },
-      periodEnd: { gte: now },
-    },
-    orderBy: { periodStart: "desc" },
-    include: {
-      program: {
-        include: {
-          licensedSeatConfig: true,
-          creditPoolConfig: true,
-          contract: { select: { id: true, status: true } },
-        },
-      },
-    },
+  const {
+    assignments,
+    utilizations,
+    upcomingSessions,
+    outstandingOveragePaise,
+    overagePaiseByAssignment,
+    eligiblePrograms,
+  } = await getMyProgramData({
+    orgId,
+    membershipId: access.member.id,
+    userId: access.member.userId,
+    consulteeProfileId: access.member.consulteeProfileId,
   });
-
-  // Latest 20 utilizations across this membership's assignments. We
-  // pull the assignmentId set first so the WHERE clause stays index-
-  // friendly (BookingUtilization is indexed on programAssignmentId).
-  const allAssignmentIds = await prisma.programAssignment.findMany({
-    where: { membershipId: access.member.id },
-    select: { id: true },
-  });
-  const utilizations = allAssignmentIds.length
-    ? await prisma.bookingUtilization.findMany({
-        where: {
-          programAssignmentId: { in: allAssignmentIds.map((a) => a.id) },
-        },
-        orderBy: { createdAt: "desc" },
-        take: 20,
-        include: {
-          payment: {
-            select: {
-              id: true,
-              appointment: {
-                select: {
-                  id: true,
-                  appointmentType: true,
-                },
-              },
-            },
-          },
-        },
-      })
-    : [];
 
   return (
     <div className="space-y-6">
@@ -108,6 +70,87 @@ export default async function MyProgramPage({
           {access.org.name} sponsors your bookings through the programs below.
         </p>
       </header>
+
+      {/* #777 §C.5/§F — outstanding overage deep-link banner. */}
+      {outstandingOveragePaise > 0 && (
+        <div className="flex items-center justify-between gap-4 rounded-lg border border-amber-300 bg-amber-50 p-4">
+          <div>
+            <p className="font-medium text-amber-900">
+              You have {formatCurrencyAmount(outstandingOveragePaise, "INR")} in
+              outstanding overage charges
+            </p>
+            <p className="mt-1 text-xs text-amber-800">
+              These are over-cap bookings billed to you. Settle them to keep
+              your program access active.
+            </p>
+          </div>
+          <Link
+            href="/dashboard/overage"
+            className="shrink-0 rounded-md bg-amber-600 px-3 py-1.5 text-sm font-medium text-white"
+          >
+            Settle now
+          </Link>
+        </div>
+      )}
+
+      {/* #748 — upcoming org-funded sessions for this learner */}
+      {upcomingSessions.length > 0 && (
+        <section>
+          <h2 className="text-lg font-medium mb-3">Upcoming sessions</h2>
+          <div className="overflow-hidden rounded-lg border bg-card">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-2 font-medium">When</th>
+                  <th className="px-4 py-2 font-medium">Session</th>
+                  <th className="px-4 py-2 font-medium">Type</th>
+                  <th className="px-4 py-2 font-medium text-right">Join</th>
+                </tr>
+              </thead>
+              <tbody>
+                {upcomingSessions.map((s) => (
+                  <tr key={s.id} className="border-t">
+                    <td className="px-4 py-2">
+                      {s.startsAt.toLocaleString("en-IN", {
+                        timeZone: "Asia/Kolkata", // RSC renders in UTC otherwise
+                        day: "2-digit",
+                        month: "short",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </td>
+                    <td className="px-4 py-2">{s.title}</td>
+                    <td className="px-4 py-2 lowercase">{s.type}</td>
+                    <td className="px-4 py-2 text-right">
+                      {/* Real join needs the Stream client (consultee
+                          dashboard). Gate the link to the 10-min window. */}
+                      {s.joinable ? (
+                        <Link
+                          href="/dashboard"
+                          className="inline-flex rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground"
+                        >
+                          Join now
+                        </Link>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">
+                          Not yet
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Join from your{" "}
+            <Link href="/dashboard" className="underline text-primary">
+              dashboard
+            </Link>{" "}
+            when the room opens (within 10 minutes of the start time).
+          </p>
+        </section>
+      )}
 
       {assignments.length === 0 ? (
         <EmptyState orgId={orgId} />
@@ -125,8 +168,10 @@ export default async function MyProgramPage({
             const used = a.engagementsUsed;
             const pct =
               cap === null ? null : Math.min(100, Math.round((used / cap) * 100));
+            const remaining = cap === null ? null : Math.max(0, cap - used);
             const unitLabel =
               a.program.type === "CREDIT_POOL" ? "credits" : "sessions";
+            const overagePaise = overagePaiseByAssignment[a.id] ?? 0;
 
             return (
               <div key={a.id} className="rounded-lg border bg-card p-5">
@@ -135,13 +180,36 @@ export default async function MyProgramPage({
                     <h2 className="font-medium">{a.program.name}</h2>
                     <p className="text-xs text-muted-foreground mt-1">
                       {PROGRAM_TYPE_LABEL[a.program.type] ?? a.program.type} ·
-                      cycle {a.periodStart.toLocaleDateString("en-IN")} →{" "}
-                      {a.periodEnd.toLocaleDateString("en-IN")}
+                      cycle{" "}
+                      {a.periodStart.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" })}{" "}
+                      →{" "}
+                      {a.periodEnd.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" })}
                     </p>
                   </div>
                   <span className="rounded-full border px-2.5 py-0.5 text-xs">
                     {PROGRAM_TYPE_LABEL[a.program.type] ?? a.program.type}
                   </span>
+                </div>
+
+                {/* #777 §C.4 — promote remaining to a prominent banner. */}
+                <div
+                  className={
+                    "mt-4 rounded-md border px-4 py-3 " +
+                    (cap !== null && remaining === 0
+                      ? "border-amber-300 bg-amber-50"
+                      : "border-primary/30 bg-primary/5")
+                  }
+                >
+                  <p className="text-2xl font-semibold leading-none">
+                    {cap === null
+                      ? "Unlimited"
+                      : `${remaining!.toLocaleString("en-IN")} of ${cap.toLocaleString("en-IN")}`}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {cap === null
+                      ? `${unitLabel} available — no cap this cycle`
+                      : `${unitLabel} ${a.program.type === "CREDIT_POOL" ? "remaining" : "engagements left"} this cycle`}
+                  </p>
                 </div>
 
                 <div className="mt-4 space-y-2">
@@ -190,7 +258,24 @@ export default async function MyProgramPage({
                   <p className="mt-2 text-xs text-amber-700">
                     {a.overageCount.toLocaleString("en-IN")} overage{" "}
                     {a.overageCount === 1 ? "booking" : "bookings"} so far this
-                    cycle.
+                    cycle
+                    {overagePaise > 0 && (
+                      <>
+                        {" "}
+                        ·{" "}
+                        <span className="font-medium">
+                          {formatCurrencyAmount(overagePaise, "INR")} to settle
+                        </span>{" "}
+                        ·{" "}
+                        <Link
+                          href="/dashboard/overage"
+                          className="underline"
+                        >
+                          pay now
+                        </Link>
+                      </>
+                    )}
+                    .
                   </p>
                 )}
               </div>
@@ -218,6 +303,7 @@ export default async function MyProgramPage({
                   <tr key={u.id} className="border-t">
                     <td className="px-4 py-2">
                       {u.createdAt.toLocaleDateString("en-IN", {
+                        timeZone: "Asia/Kolkata",
                         day: "2-digit",
                         month: "short",
                         year: "numeric",
@@ -244,6 +330,38 @@ export default async function MyProgramPage({
               </tbody>
             </table>
           </div>
+        </section>
+      )}
+
+      {/* #777 §C.2 (SCHEMA-FREE) — discovery of programs the learner isn't on
+          yet but the org actively runs. Read-only; assignment is a MAINTAINER
+          action, so we hint rather than wire a new request workflow. */}
+      {eligiblePrograms.length > 0 && (
+        <section>
+          <h2 className="text-lg font-medium mb-3">Other programs at this org</h2>
+          <div className="space-y-2">
+            {eligiblePrograms.map((p) => (
+              <div
+                key={p.id}
+                className="flex items-center justify-between gap-4 rounded-lg border bg-card p-4"
+              >
+                <div>
+                  <p className="font-medium">{p.name}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {PROGRAM_TYPE_LABEL[p.type] ?? p.type} · you're not assigned
+                    to this yet
+                  </p>
+                </div>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  Ask your admin to assign you
+                </span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            These programs are active under {access.org.name}, but only an org
+            administrator can add you. Reach out to them to request access.
+          </p>
         </section>
       )}
     </div>

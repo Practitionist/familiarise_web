@@ -21,6 +21,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { ledgerAccountId } from "@/lib/payments/ledger/post";
+import { resolveActivationSignals } from "@/lib/enterprise/org-activation";
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -35,6 +36,7 @@ export async function GET(
   const org = await prisma.organization.findUnique({
     where: { id: orgId },
     select: {
+      status: true,
       canSponsor: true,
       canHost: true,
       billingAccount: {
@@ -67,6 +69,7 @@ export async function GET(
     earningsAggregate,
     licenseSubscription,
     reimbursementAgg,
+    activationSignals,
   ] = await Promise.all([
     prisma.membership.groupBy({
       by: ["status"],
@@ -198,6 +201,10 @@ export async function GET(
           _count: { _all: true },
         })
       : Promise.resolve(null),
+    // #777 §A / #779 §F — the extra signals (contract / KYB / contract-expiring /
+    // pending-overage / stuck-payout / credit cap-near) the home action-center
+    // needs but the tiles above don't already carry.
+    resolveActivationSignals(orgId),
   ]);
 
   const memberTotal = memberAggregate.reduce(
@@ -215,6 +222,7 @@ export async function GET(
   );
 
   return NextResponse.json({
+    status: org.status,
     capabilities: {
       canSponsor: org.canSponsor,
       canHost: org.canHost,
@@ -222,6 +230,7 @@ export async function GET(
       walletBalance: org.billingAccount?.walletBalance ?? null,
       currency: org.billingAccount?.currency ?? null,
     },
+    activation: activationSignals,
     members: {
       total: memberTotal,
       active: memberActive,

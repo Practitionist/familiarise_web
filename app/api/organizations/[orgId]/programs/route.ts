@@ -111,11 +111,15 @@ export async function GET(
 
   const url = new URL(req.url);
   const contractId = url.searchParams.get("contractId") ?? undefined;
+  // #777 §B — archived programs are hidden from the active list by default;
+  // ?includeArchived=true surfaces them (history view).
+  const includeArchived = url.searchParams.get("includeArchived") === "true";
 
   const programs = await prisma.program.findMany({
     where: {
       contract: { organizationId: orgId },
       ...(contractId && { contractId }),
+      ...(!includeArchived && { archivedAt: null }),
     },
     include: {
       licensedSeatConfig: true,
@@ -125,7 +129,40 @@ export async function GET(
     orderBy: { createdAt: "desc" },
   });
 
-  return NextResponse.json({ data: programs });
+  // #777 §H — per-program usage across current-cycle assignments, so the list
+  // can show a utilization column without a per-row round-trip. Aggregated.
+  const now = new Date();
+  const usage = programs.length
+    ? await prisma.programAssignment.groupBy({
+        by: ["programId"],
+        // ACTIVE + in-window only: a future (not-yet-started) or
+        // cancelled/rolled row would inflate the capacity multiplier the
+        // utilization column derives from _count.
+        where: {
+          programId: { in: programs.map((p) => p.id) },
+          status: "ACTIVE",
+          periodStart: { lte: now },
+          periodEnd: { gte: now },
+        },
+        _sum: { engagementsUsed: true, consumedPaise: true },
+        _count: { _all: true },
+      })
+    : [];
+  const usageByProgram = new Map(usage.map((u) => [u.programId, u]));
+
+  const data = programs.map((p) => {
+    const u = usageByProgram.get(p.id);
+    return {
+      ...p,
+      utilization: {
+        activeAssignments: u?._count._all ?? 0,
+        engagementsUsed: u?._sum.engagementsUsed ?? 0,
+        consumedPaise: u?._sum.consumedPaise ?? 0,
+      },
+    };
+  });
+
+  return NextResponse.json({ data });
 }
 
 export async function POST(

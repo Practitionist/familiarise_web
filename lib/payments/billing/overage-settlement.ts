@@ -12,7 +12,7 @@ import {
   type PaymentGateway,
   type ProgramType,
 } from "@prisma/client";
-import { computeOverage } from "@/lib/payments/billing/overage";
+import { computeOverageForBooking } from "@/lib/payments/billing/overage";
 import { notifyOrgProgramOverageDue } from "@/lib/novu/org-workflows";
 
 type Tx = Prisma.TransactionClient;
@@ -101,16 +101,16 @@ export async function recordOverageAtCheckout(
   });
   const cycleOverageSoFarPaise = soFarAgg._sum.marginalPaise ?? 0;
 
-  // Drive the decision through the pure computeOverage(). For LICENSED_SEAT the
-  // PRE-booking engagement count is needed (the meter already applied this
-  // booking's delta); for CREDIT_POOL the PRE-booking consumed paise.
+  // Drive the decision through the shared computeOverageForBooking() mapper.
+  // For LICENSED_SEAT the PRE-booking engagement count is needed (the meter
+  // already applied this booking's delta); for CREDIT_POOL the PRE-booking
+  // consumed paise. The preview surface (#777 §C) builds the same context from
+  // the assignment's current state, so the two can't drift.
   const sessionsConsumed = Math.max(1, utilization.engagementsConsumedDelta);
-  const overage = computeOverage(
+  const overage = computeOverageForBooking(
     isCredit
       ? {
           programType: "CREDIT_POOL",
-          bookingPricePaise: amount,
-          sessionsConsumed,
           overageBehavior: cpc?.overageBehavior ?? "BLOCK",
           maxOveragePerCyclePaise: cpc?.maxOveragePerCyclePaise ?? null,
           cycleOverageSoFarPaise,
@@ -120,8 +120,6 @@ export async function recordOverageAtCheckout(
         }
       : {
           programType: "LICENSED_SEAT",
-          bookingPricePaise: amount,
-          sessionsConsumed,
           overageBehavior: lsc?.overageBehavior ?? "BLOCK",
           maxOveragePerCyclePaise: lsc?.maxOveragePerCyclePaise ?? null,
           cycleOverageSoFarPaise,
@@ -132,6 +130,7 @@ export async function recordOverageAtCheckout(
             utilization.engagementsConsumedDelta,
           priceCapPerEngagementPaise: lsc?.priceCapPerEngagementPaise ?? null,
         },
+    { bookingPricePaise: amount, sessionsConsumed },
   );
   const { marginalPaise, basePaise, surchargePaise } = overage;
 

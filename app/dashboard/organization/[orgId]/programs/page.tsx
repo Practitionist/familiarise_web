@@ -2,7 +2,7 @@
 
 import { use, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Briefcase, Loader2, Users } from "lucide-react";
+import { Plus, Briefcase, Loader2, Users, Pencil, Lock } from "lucide-react";
 import type {
   BillingCycle,
   FundingSource,
@@ -78,15 +78,69 @@ interface ProgramListItem {
     cycle: BillingCycle;
     coveredEngagementsPerCycle: number | null;
     overageBehavior: OverageBehavior;
+    overageSurchargeBps: number | null;
+    priceCapPerEngagementPaise: number | null;
+    maxOveragePerCyclePaise: number | null;
     activeSeatCount: number;
   } | null;
   creditPoolConfig: {
     cycle: BillingCycle;
     creditsPerCycle: number;
     minimumCreditsPerPeriod: number | null;
+    overageBehavior: OverageBehavior;
+    overageSurchargeBps: number | null;
+    maxOveragePerCyclePaise: number | null;
   } | null;
   _count: { assignments: number };
+  // #777 §H — current-cycle usage aggregate across this program's assignments.
+  utilization: {
+    activeAssignments: number;
+    engagementsUsed: number;
+    consumedPaise: number;
+  };
 }
+
+// #777 §H — program-level utilization across current-cycle assignments. Capacity
+// is the per-assignment cap × active assignments (engagements for LICENSED_SEAT,
+// ₹ budget for CREDIT_POOL). Null = nothing to show (no assignments / unlimited).
+function programUtilization(
+  p: ProgramListItem,
+): { used: string; total: string; pct: number | null } | null {
+  const { activeAssignments, engagementsUsed, consumedPaise } = p.utilization;
+  if (activeAssignments === 0) return null;
+  if (p.type === "LICENSED_SEAT") {
+    const cap = p.licensedSeatConfig?.coveredEngagementsPerCycle ?? null;
+    if (cap === null)
+      return { used: String(engagementsUsed), total: "∞", pct: null };
+    const total = cap * activeAssignments;
+    return {
+      used: String(engagementsUsed),
+      total: String(total),
+      pct: total > 0 ? Math.min(100, Math.round((engagementsUsed / total) * 100)) : null,
+    };
+  }
+  if (p.type === "CREDIT_POOL") {
+    const budgetPaise =
+      (p.creditPoolConfig?.creditsPerCycle ?? 0) * 100 * activeAssignments;
+    return {
+      used: formatCurrencyAmount(consumedPaise, "INR"),
+      total: budgetPaise > 0 ? formatCurrencyAmount(budgetPaise, "INR") : "∞",
+      pct:
+        budgetPaise > 0
+          ? Math.min(100, Math.round((consumedPaise / budgetPaise) * 100))
+          : null,
+    };
+  }
+  return null;
+}
+
+// Human labels for the OverageBehavior enum (#777 §H) — the raw enum leaks
+// into the list/detail UI otherwise.
+const OVERAGE_BEHAVIOR_LABEL: Record<OverageBehavior, string> = {
+  BLOCK: "Block",
+  CHARGE_MEMBER: "Charge member",
+  CHARGE_ORG: "Charge org",
+};
 
 interface ContractListItem {
   id: string;
@@ -195,6 +249,51 @@ async function createProgram(orgId: string, body: CreateProgramBody) {
     );
   }
   return json;
+}
+
+// PATCH accepts `name` always; money fields only when the program isn't
+// locked (#777 §B). The server is the authority — it re-checks the lock and
+// 409s PROGRAM_CONFIG_LOCKED if a money field slips through.
+type PatchProgramBody = {
+  name?: string;
+  coveredPlanTypes?: CoveredPlanType[];
+  ratePerSeatPaise?: number;
+  coveredEngagementsPerCycle?: number | null;
+  creditsPerCycle?: number;
+  overageBehavior?: OverageBehavior;
+  overageSurchargeBps?: number | null;
+};
+
+async function patchProgram(
+  orgId: string,
+  programId: string,
+  body: PatchProgramBody,
+) {
+  const res = await fetch(`/api/organizations/${orgId}/programs/${programId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(
+      (json as { error?: string }).error ?? "Failed to update program",
+    );
+  }
+  return json;
+}
+
+// Single-program shape from GET .../programs/[programId] — carries the
+// derived `locked` flag the edit dialog uses to disable money fields.
+type ProgramDetail = ProgramListItem & { locked: boolean };
+
+async function fetchProgram(
+  orgId: string,
+  programId: string,
+): Promise<{ program: ProgramDetail }> {
+  const res = await fetch(`/api/organizations/${orgId}/programs/${programId}`);
+  if (!res.ok) throw new Error("Failed to load program");
+  return res.json();
 }
 
 // ---------------------------------------------------------------------------
@@ -345,7 +444,7 @@ function CreateProgramDialog({
       : null;
   }, [contracts, contractId]);
 
-  const reachableTypes = useMemo<ProgramType[]>(() => {
+  const reachableTypes = useMemo<Array<"LICENSED_SEAT" | "CREDIT_POOL">>(() => {
     if (!capability) return [];
     return (["LICENSED_SEAT", "CREDIT_POOL"] as const).filter((t) =>
       isReachableOrgFundingPath(capability, selectedFunding, t),
@@ -781,6 +880,375 @@ function CreateProgramDialog({
 }
 
 // ---------------------------------------------------------------------------
+// Edit-program dialog (#777 §B) — name editable always; money config goes
+// read-only once the program is in use. The lock is server-derived (returned
+// on the single-program GET) so the disabled state can't drift from the gate.
+// ---------------------------------------------------------------------------
+
+function LockedHint() {
+  return (
+    <span className="ml-2 inline-flex items-center gap-1 text-xs text-amber-600">
+      <Lock className="h-3 w-3" /> Locked — in use
+    </span>
+  );
+}
+
+function EditProgramDialog({
+  orgId,
+  programId,
+  open,
+  onOpenChange,
+}: {
+  orgId: string;
+  programId: string;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+  const detail = useQuery({
+    queryKey: ["org-program", orgId, programId],
+    queryFn: () => fetchProgram(orgId, programId),
+    enabled: open,
+  });
+  const program = detail.data?.program;
+  const locked = program?.locked ?? true; // fail-safe: lock until we know
+
+  const [name, setName] = useState("");
+  const [coveredPlanTypes, setCoveredPlanTypes] = useState<CoveredPlanType[]>(
+    [],
+  );
+  const [ratePerSeatRupees, setRatePerSeatRupees] = useState("");
+  const [coveredEngagementsPerCycle, setCoveredEngagementsPerCycle] =
+    useState("");
+  const [creditsPerCycle, setCreditsPerCycle] = useState("");
+  const [overageBehavior, setOverageBehavior] =
+    useState<OverageBehavior>("BLOCK");
+  const [overageSurchargePct, setOverageSurchargePct] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  // Seed the form from the fetched program once it lands (and on re-open).
+  useEffect(() => {
+    if (!program) return;
+    setName(program.name);
+    setCoveredPlanTypes(program.coveredPlanTypes as CoveredPlanType[]);
+    setOverageBehavior(
+      program.licensedSeatConfig?.overageBehavior ??
+        program.creditPoolConfig?.overageBehavior ??
+        "BLOCK",
+    );
+    const bps =
+      program.licensedSeatConfig?.overageSurchargeBps ??
+      program.creditPoolConfig?.overageSurchargeBps ??
+      null;
+    setOverageSurchargePct(bps === null ? "" : String(bps / 100));
+    if (program.licensedSeatConfig) {
+      setRatePerSeatRupees(
+        String(program.licensedSeatConfig.ratePerSeatPaise / 100),
+      );
+      setCoveredEngagementsPerCycle(
+        program.licensedSeatConfig.coveredEngagementsPerCycle === null
+          ? ""
+          : String(program.licensedSeatConfig.coveredEngagementsPerCycle),
+      );
+    }
+    if (program.creditPoolConfig) {
+      setCreditsPerCycle(String(program.creditPoolConfig.creditsPerCycle));
+    }
+    setError(null);
+  }, [program]);
+
+  const patchMutation = useMutation({
+    mutationFn: (body: PatchProgramBody) =>
+      patchProgram(orgId, programId, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["org-programs", orgId] });
+      queryClient.invalidateQueries({
+        queryKey: ["org-program", orgId, programId],
+      });
+      onOpenChange(false);
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  const handleSubmit = () => {
+    setError(null);
+    if (name.trim().length < 2) {
+      setError("Program name must be at least 2 characters.");
+      return;
+    }
+    // name is the only field that's always safe to send. When the program is
+    // locked we send name alone; the server rejects any money field anyway.
+    const body: PatchProgramBody = { name: name.trim() };
+    if (!locked && program) {
+      if (coveredPlanTypes.length === 0) {
+        setError("Select at least one appointment type this program covers.");
+        return;
+      }
+      body.coveredPlanTypes = coveredPlanTypes;
+      const surchargeBps =
+        overageSurchargePct.trim() === ""
+          ? null
+          : Math.round(parseFloat(overageSurchargePct) * 100);
+      if (
+        surchargeBps !== null &&
+        (!Number.isFinite(surchargeBps) || surchargeBps < 0)
+      ) {
+        setError("Overage surcharge must be blank or a non-negative percentage.");
+        return;
+      }
+      body.overageBehavior = overageBehavior;
+      body.overageSurchargeBps = surchargeBps;
+      if (program.type === "LICENSED_SEAT") {
+        const ratePaise = rupeesToPaise(ratePerSeatRupees);
+        if (ratePaise === null) {
+          setError("Rate per seat must be a non-negative number (in rupees).");
+          return;
+        }
+        const cap =
+          coveredEngagementsPerCycle.trim() === ""
+            ? null
+            : parseInt(coveredEngagementsPerCycle, 10);
+        if (cap !== null && (!Number.isFinite(cap) || cap < 1)) {
+          setError(
+            "Covered engagements per cycle must be blank or a positive integer.",
+          );
+          return;
+        }
+        body.ratePerSeatPaise = ratePaise;
+        body.coveredEngagementsPerCycle = cap;
+      } else {
+        const credits = Number(creditsPerCycle.trim());
+        if (
+          !Number.isFinite(credits) ||
+          credits < 1 ||
+          !Number.isInteger(credits)
+        ) {
+          setError("Credits per cycle must be a positive integer.");
+          return;
+        }
+        body.creditsPerCycle = credits;
+      }
+    }
+    patchMutation.mutate(body);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Edit Program</DialogTitle>
+        </DialogHeader>
+
+        {detail.isLoading || !program ? (
+          <div className="flex items-center gap-2 py-8 text-sm text-zinc-500">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+          </div>
+        ) : (
+          <div className="space-y-5">
+            {locked && (
+              <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                This program is in use (assignments or bookings exist). Its
+                money config is locked — only the name can be changed. Rate
+                changes that apply from the next cycle are tracked in #779.
+              </p>
+            )}
+
+            {/* Name — always editable */}
+            <div className="space-y-2">
+              <Label htmlFor="edit-program-name">Name</Label>
+              <Input
+                id="edit-program-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+
+            {/* Type is immutable post-create — shown read-only for context. */}
+            <div className="space-y-2">
+              <Label>
+                Program type
+                {locked && <LockedHint />}
+              </Label>
+              <p className="text-sm">{PROGRAM_TYPE_META[program.type].label}</p>
+            </div>
+
+            {/* Covered plan types (#740) — money config */}
+            <div className="space-y-2">
+              <Label>
+                Covered appointment types
+                {locked && <LockedHint />}
+              </Label>
+              <div className="grid grid-cols-2 gap-2">
+                {COVERED_PLAN_TYPE_OPTIONS.map((opt) => {
+                  const checked = coveredPlanTypes.includes(opt.value);
+                  return (
+                    <label
+                      key={opt.value}
+                      className={`flex items-start gap-2 rounded-md border p-2.5 transition-colors ${
+                        locked
+                          ? "opacity-60"
+                          : "cursor-pointer hover:bg-zinc-50"
+                      }`}
+                    >
+                      <Checkbox
+                        checked={checked}
+                        disabled={locked}
+                        onCheckedChange={(v) => {
+                          setCoveredPlanTypes((prev) =>
+                            v
+                              ? [...prev, opt.value]
+                              : prev.filter((t) => t !== opt.value),
+                          );
+                        }}
+                        className="mt-0.5"
+                      />
+                      <div>
+                        <span className="text-sm font-medium">{opt.label}</span>
+                        <p className="text-xs text-zinc-500">
+                          {opt.description}
+                        </p>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            {program.type === "LICENSED_SEAT" ? (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-rate-per-seat">
+                    Rate per seat (₹)
+                    {locked && <LockedHint />}
+                  </Label>
+                  <Input
+                    id="edit-rate-per-seat"
+                    type="number"
+                    min={0}
+                    step={1}
+                    disabled={locked}
+                    value={ratePerSeatRupees}
+                    onChange={(e) => setRatePerSeatRupees(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-covered-engagements">
+                    Engagements per cycle
+                    {locked && <LockedHint />}
+                  </Label>
+                  <Input
+                    id="edit-covered-engagements"
+                    type="number"
+                    min={1}
+                    disabled={locked}
+                    value={coveredEngagementsPerCycle}
+                    onChange={(e) =>
+                      setCoveredEngagementsPerCycle(e.target.value)
+                    }
+                    placeholder="leave blank for unlimited"
+                  />
+                </div>
+              </>
+            ) : (
+              <div className="space-y-2">
+                <Label htmlFor="edit-credits-per-cycle">
+                  Credits per cycle (1 credit = ₹1)
+                  {locked && <LockedHint />}
+                </Label>
+                <Input
+                  id="edit-credits-per-cycle"
+                  type="number"
+                  min={1}
+                  step={1}
+                  disabled={locked}
+                  value={creditsPerCycle}
+                  onChange={(e) => setCreditsPerCycle(e.target.value)}
+                />
+              </div>
+            )}
+
+            {/* Overage policy — money config */}
+            <div className="space-y-2">
+              <Label>
+                Overage behaviour
+                {locked && <LockedHint />}
+              </Label>
+              <Select
+                value={overageBehavior}
+                disabled={locked}
+                onValueChange={(v) => {
+                  if (
+                    v === "BLOCK" ||
+                    v === "CHARGE_MEMBER" ||
+                    v === "CHARGE_ORG"
+                  ) {
+                    setOverageBehavior(v);
+                  }
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="BLOCK">
+                    Block — reject booking once the cap is hit
+                  </SelectItem>
+                  <SelectItem value="CHARGE_MEMBER">
+                    Charge member — learner pays the overage on their own card
+                  </SelectItem>
+                  <SelectItem value="CHARGE_ORG">
+                    Charge org — added to the next invoice
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {overageBehavior !== "BLOCK" && (
+              <div className="space-y-2">
+                <Label htmlFor="edit-overage-surcharge">
+                  Overage surcharge (%)
+                  {locked && <LockedHint />}
+                </Label>
+                <Input
+                  id="edit-overage-surcharge"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  disabled={locked}
+                  value={overageSurchargePct}
+                  onChange={(e) => setOverageSurchargePct(e.target.value)}
+                  placeholder="leave blank for no markup"
+                />
+              </div>
+            )}
+
+            {error && <p className="text-sm text-red-600">{error}</p>}
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSubmit}
+            disabled={patchMutation.isPending || detail.isLoading || !program}
+          >
+            {patchMutation.isPending ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin mr-1" /> Saving…
+              </>
+            ) : (
+              "Save"
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Manage-program dialog with assign learner (#741)
 // ---------------------------------------------------------------------------
 
@@ -1060,6 +1528,9 @@ export default function OrgProgramsPage({
   const [managingProgram, setManagingProgram] = useState<ProgramListItem | null>(
     null,
   );
+  const [editingProgram, setEditingProgram] = useState<ProgramListItem | null>(
+    null,
+  );
 
   const programs = useQuery({
     queryKey: ["org-programs", orgId],
@@ -1145,6 +1616,7 @@ export default function OrgProgramsPage({
                     <TableHead>Covers</TableHead>
                     <TableHead>Config</TableHead>
                     <TableHead>Assignments</TableHead>
+                    <TableHead>Utilization</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead></TableHead>
                   </TableRow>
@@ -1180,20 +1652,57 @@ export default function OrgProgramsPage({
                             {p.licensedSeatConfig.coveredEngagementsPerCycle ??
                               "unlimited"}{" "}
                             engagements ·{" "}
-                            {p.licensedSeatConfig.overageBehavior}
+                            {
+                              OVERAGE_BEHAVIOR_LABEL[
+                                p.licensedSeatConfig.overageBehavior
+                              ]
+                            }
                           </>
                         ) : p.type === "CREDIT_POOL" && p.creditPoolConfig ? (
                           <>
                             {p.creditPoolConfig.creditsPerCycle.toLocaleString(
                               "en-IN",
                             )}{" "}
-                            credits / {p.creditPoolConfig.cycle.toLowerCase()}
+                            credits (
+                            {formatCurrencyAmount(
+                              p.creditPoolConfig.creditsPerCycle * 100,
+                              "INR",
+                            )}{" "}
+                            cap) /{" "}
+                            {p.creditPoolConfig.cycle.toLowerCase()} ·{" "}
+                            {
+                              OVERAGE_BEHAVIOR_LABEL[
+                                p.creditPoolConfig.overageBehavior
+                              ]
+                            }
+                            <span className="block text-[10px] text-zinc-400">
+                              1 credit = ₹1 = 100 paise
+                            </span>
                           </>
                         ) : (
                           "—"
                         )}
                       </TableCell>
                       <TableCell>{p._count.assignments}</TableCell>
+                      <TableCell className="text-xs">
+                        {(() => {
+                          const u = programUtilization(p);
+                          if (!u)
+                            return <span className="text-zinc-400">—</span>;
+                          return (
+                            <span
+                              className={
+                                u.pct !== null && u.pct >= 80
+                                  ? "font-medium text-amber-700"
+                                  : "text-zinc-600"
+                              }
+                            >
+                              {u.used} / {u.total}
+                              {u.pct !== null ? ` (${u.pct}%)` : ""}
+                            </span>
+                          );
+                        })()}
+                      </TableCell>
                       <TableCell>
                         <Badge
                           variant="outline"
@@ -1209,13 +1718,24 @@ export default function OrgProgramsPage({
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setManagingProgram(p)}
-                        >
-                          <Users className="h-3.5 w-3.5 mr-1" /> Manage
-                        </Button>
+                        <div className="flex items-center gap-1">
+                          {isAtLeast("MAINTAINER") && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setEditingProgram(p)}
+                            >
+                              <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
+                            </Button>
+                          )}
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setManagingProgram(p)}
+                          >
+                            <Users className="h-3.5 w-3.5 mr-1" /> Manage
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -1233,6 +1753,17 @@ export default function OrgProgramsPage({
         contracts={contractList}
         capability={capability}
       />
+
+      {editingProgram && (
+        <EditProgramDialog
+          orgId={orgId}
+          programId={editingProgram.id}
+          open={!!editingProgram}
+          onOpenChange={(v) => {
+            if (!v) setEditingProgram(null);
+          }}
+        />
+      )}
 
       {managingProgram && (
         <ManageProgramDialog

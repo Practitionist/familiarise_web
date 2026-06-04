@@ -16,12 +16,32 @@ import prisma from "@/lib/prisma";
 import { requireAdminAuth } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
-const ActionSchema = z.enum(["VERIFY", "SUSPEND", "REACTIVATE", "DEACTIVATE"]);
+// #779 §A — `REJECT` added (admin bounces a PENDING org back with a reason;
+// stays PENDING_VERIFICATION). Action is upper-cased + defaults to VERIFY so
+// the legacy `{}`/missing-action callers keep their verify behavior.
+const ActionSchema = z.enum([
+  "VERIFY",
+  "REJECT",
+  "SUSPEND",
+  "REACTIVATE",
+  "DEACTIVATE",
+]);
 
-const BodySchema = z.object({
-  action: ActionSchema,
-  reason: z.string().max(2000).optional(),
-});
+const BodySchema = z
+  .object({
+    action: z
+      .preprocess(
+        (v) => (typeof v === "string" ? v.toUpperCase() : v),
+        ActionSchema,
+      )
+      .default("VERIFY"),
+    reason: z.string().max(2000).optional(),
+  })
+  // Reject requires a reason — it's what the OWNER sees to fix + resubmit.
+  .refine((b) => b.action !== "REJECT" || (b.reason && b.reason.length > 0), {
+    message: "reason is required when rejecting",
+    path: ["reason"],
+  });
 
 export async function POST(
   req: NextRequest,
@@ -54,7 +74,8 @@ export async function POST(
       }
 
       const allowedFrom: Record<string, string[]> = {
-        PENDING_VERIFICATION: ["VERIFY", "DEACTIVATE"],
+        // #779 §A — REJECT keeps the org PENDING (a sub-state, not a status move).
+        PENDING_VERIFICATION: ["VERIFY", "REJECT", "DEACTIVATE"],
         ACTIVE: ["SUSPEND", "DEACTIVATE"],
         SUSPENDED: ["REACTIVATE", "DEACTIVATE"],
         DEACTIVATED: [],
@@ -69,26 +90,43 @@ export async function POST(
         );
       }
 
+      // #779 §A — REJECT doesn't transition status; it stamps the sub-state.
       const nextStatus =
-        body.action === "VERIFY" || body.action === "REACTIVATE"
-          ? "ACTIVE"
-          : body.action === "SUSPEND"
-            ? "SUSPENDED"
-            : "DEACTIVATED";
+        body.action === "REJECT"
+          ? "PENDING_VERIFICATION"
+          : body.action === "VERIFY" || body.action === "REACTIVATE"
+            ? "ACTIVE"
+            : body.action === "SUSPEND"
+              ? "SUSPENDED"
+              : "DEACTIVATED";
 
       const next = await tx.organization.update({
         where: { id: orgId },
-        data: { status: nextStatus },
+        data: {
+          status: nextStatus,
+          // #779 §A — VERIFY clears the resubmit-loop sub-state; REJECT sets it.
+          ...(body.action === "VERIFY" && {
+            verificationReason: null,
+            verificationSubmittedAt: null,
+            verificationRejectedAt: null,
+          }),
+          ...(body.action === "REJECT" && {
+            verificationReason: body.reason,
+            verificationRejectedAt: new Date(),
+          }),
+        },
       });
 
       const actionKey =
         body.action === "VERIFY"
           ? AUDIT_ACTIONS.SYSTEM.VERIFIED
-          : body.action === "SUSPEND"
-            ? AUDIT_ACTIONS.SYSTEM.SUSPENDED
-            : body.action === "REACTIVATE"
-              ? AUDIT_ACTIONS.SYSTEM.REACTIVATED
-              : AUDIT_ACTIONS.SYSTEM.DEACTIVATED;
+          : body.action === "REJECT"
+            ? AUDIT_ACTIONS.SYSTEM.VERIFICATION_REJECTED
+            : body.action === "SUSPEND"
+              ? AUDIT_ACTIONS.SYSTEM.SUSPENDED
+              : body.action === "REACTIVATE"
+                ? AUDIT_ACTIONS.SYSTEM.REACTIVATED
+                : AUDIT_ACTIONS.SYSTEM.DEACTIVATED;
 
       await tx.orgAuditLog.create({
         data: {
@@ -96,7 +134,10 @@ export async function POST(
           actorMembershipId: null,
           category: "SYSTEM",
           action: actionKey,
-          description: `Admin ${body.action.toLowerCase()}: ${current.status} → ${nextStatus}`,
+          description:
+            body.action === "REJECT"
+              ? `Admin reject: stays ${current.status}`
+              : `Admin ${body.action.toLowerCase()}: ${current.status} → ${nextStatus}`,
           details: {
             adminUserId: auth.session.user.id,
             from: current.status,

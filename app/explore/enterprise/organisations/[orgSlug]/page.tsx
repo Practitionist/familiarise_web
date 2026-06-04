@@ -7,6 +7,7 @@ import {
   Users,
   BadgeCheck,
   ArrowLeft,
+  ArrowRight,
   ExternalLink,
   Star,
 } from "lucide-react";
@@ -109,6 +110,15 @@ async function fetchOrgBySlug(slug: string) {
 }
 
 type OrgData = NonNullable<Awaited<ReturnType<typeof fetchOrgBySlug>>>;
+
+// #777 §E — plan family → checkout route segment (lowercase). Booking a plan
+// from the public org page deep-links into the shared checkout flow.
+const CHECKOUT_FAMILY: Record<OrgData["organizationPlans"][number]["planType"], string> = {
+  CONSULTATION: "consultation",
+  SUBSCRIPTION: "subscription",
+  WEBINAR: "webinar",
+  CLASS: "class",
+};
 
 export async function generateMetadata({
   params,
@@ -315,9 +325,10 @@ export default async function OrgProfilePage({
                 </h2>
                 <div className="space-y-3">
                   {org.organizationPlans.map((plan) => (
-                    <div
+                    <Link
                       key={plan.id}
-                      className="p-3 rounded-xl bg-zinc-50 border border-zinc-100"
+                      href={`/checkout/plans/${CHECKOUT_FAMILY[plan.planType]}/${plan.id}`}
+                      className="block p-3 rounded-xl bg-zinc-50 border border-zinc-100 hover:border-zinc-300 hover:bg-white hover:shadow-sm transition-all group"
                     >
                       <p className="text-sm font-semibold text-zinc-900 mb-0.5">
                         {plan.title}
@@ -340,7 +351,11 @@ export default async function OrgProfilePage({
                           </span>
                         )}
                       </div>
-                    </div>
+                      <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 group-hover:text-blue-800">
+                        Book
+                        <ArrowRight className="w-3 h-3" />
+                      </span>
+                    </Link>
                   ))}
                 </div>
               </div>

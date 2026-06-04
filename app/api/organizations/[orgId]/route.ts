@@ -15,6 +15,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
+import { isAtLeastRole } from "@/lib/auth/role-ranks";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { encryptPAN } from "@/lib/payments/tax/pan-crypto";
 
@@ -122,12 +123,29 @@ export async function GET(
   });
 }
 
+// #779 §A — field-level RBAC instead of a blanket OWNER gate. Descriptive /
+// branding fields are operational (MAINTAINER+); billing contact + NET-X terms
+// are the finance remit (BILLING_ADMIN or OWNER); everything else — slug,
+// capabilities, tax identity, policies, isPublic — stays OWNER-only.
+const MAINTAINER_FIELDS = new Set([
+  "name",
+  "description",
+  "industry",
+  "website",
+  "sizeBucket",
+  "logo",
+  "bannerImage",
+  "primaryColor",
+  "secondaryColor",
+]);
+const BILLING_ADMIN_FIELDS = new Set(["billingEmail", "paymentTermsDays"]);
+
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgOwner(orgId);
+  const access = await requireOrgAccess(orgId);
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);
@@ -139,6 +157,31 @@ export async function PATCH(
     );
   }
   const body = parsed.data;
+
+  // Field-level gate: OWNER passes everything; otherwise every touched field
+  // must be inside the caller's remit. 403 names the offending fields so the
+  // dashboard can explain instead of a silent failure.
+  const role = access.member.role;
+  if (!isAtLeastRole(role, "OWNER")) {
+    const allowed = new Set<string>();
+    if (isAtLeastRole(role, "MAINTAINER")) {
+      MAINTAINER_FIELDS.forEach((f) => allowed.add(f));
+    }
+    if (role === "BILLING_ADMIN") {
+      BILLING_ADMIN_FIELDS.forEach((f) => allowed.add(f));
+    }
+    const forbidden = Object.keys(body).filter((k) => !allowed.has(k));
+    if (allowed.size === 0 || forbidden.length > 0) {
+      return NextResponse.json(
+        {
+          error: "Insufficient role for these fields",
+          code: "FIELD_RBAC_FORBIDDEN",
+          fields: forbidden.length > 0 ? forbidden : Object.keys(body),
+        },
+        { status: 403 },
+      );
+    }
+  }
 
   try {
     const updated = await prisma.$transaction(async (tx) => {
@@ -175,6 +218,78 @@ export async function PATCH(
           ),
           { httpStatus: 409 },
         );
+      }
+
+      // #779 §A — canSponsor wind-down: beyond the wallet, the org must
+      // settle outstanding invoices and let live sponsorships lapse before
+      // it can stop sponsoring. ISSUED/OVERDUE = billed-but-unpaid;
+      // ACTIVE assignments still in-cycle (periodEnd>=now) draw real spend.
+      if (body.canSponsor === false) {
+        const now = new Date();
+        const [outstandingInvoices, liveAssignments] = await Promise.all([
+          tx.organizationInvoice.count({
+            where: {
+              organizationId: orgId,
+              status: { in: ["ISSUED", "OVERDUE"] },
+            },
+          }),
+          tx.programAssignment.count({
+            where: {
+              status: "ACTIVE",
+              periodEnd: { gte: now },
+              program: { contract: { organizationId: orgId } },
+            },
+          }),
+        ]);
+        if (outstandingInvoices > 0 || liveAssignments > 0) {
+          throw Object.assign(
+            new Error("CANSPONSOR_WINDDOWN_REQUIRED"),
+            {
+              httpStatus: 409,
+              code: "CANSPONSOR_WINDDOWN_REQUIRED",
+              counts: { outstandingInvoices, liveAssignments },
+            },
+          );
+        }
+      }
+
+      // #779 §A — canHost wind-down: the org can't stop hosting while it
+      // still has experts on the roster or payout money in flight.
+      // unsettledEarnings = org-share rows not yet attached to a payout
+      // (orgPayoutId null) OR attached but not PAID — either way the money
+      // hasn't reached the org's bank.
+      if (body.canHost === false) {
+        const [experts, pendingPayouts, unsettledEarnings] = await Promise.all([
+          tx.membership.count({
+            where: {
+              organizationId: orgId,
+              role: "EXPERT",
+              status: { in: ["ACTIVE", "PENDING"] },
+            },
+          }),
+          tx.organizationPayout.count({
+            where: {
+              organizationId: orgId,
+              status: { in: ["PENDING", "APPROVED", "PROCESSING"] },
+            },
+          }),
+          tx.organizationEarnings.count({
+            where: {
+              organizationId: orgId,
+              OR: [{ orgPayoutId: null }, { status: { not: "PAID" } }],
+            },
+          }),
+        ]);
+        if (experts > 0 || pendingPayouts > 0 || unsettledEarnings > 0) {
+          throw Object.assign(
+            new Error("CANHOST_WINDDOWN_REQUIRED"),
+            {
+              httpStatus: 409,
+              code: "CANHOST_WINDDOWN_REQUIRED",
+              counts: { experts, pendingPayouts, unsettledEarnings },
+            },
+          );
+        }
       }
 
       // Slug uniqueness — only check on actual change so a no-op PATCH
@@ -347,7 +462,18 @@ export async function PATCH(
     if (err instanceof Error && "httpStatus" in err) {
       const status =
         typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      return NextResponse.json({ error: err.message }, { status });
+      // #779 §A — forward the structured wind-down code + counts so the UI
+      // can render the per-blocker message instead of a bare 409.
+      const code =
+        "code" in err && typeof err.code === "string" ? err.code : undefined;
+      const counts =
+        "counts" in err && err.counts && typeof err.counts === "object"
+          ? err.counts
+          : undefined;
+      return NextResponse.json(
+        { error: err.message, ...(code && { code }), ...(counts && { counts }) },
+        { status },
+      );
     }
     throw err;
   }

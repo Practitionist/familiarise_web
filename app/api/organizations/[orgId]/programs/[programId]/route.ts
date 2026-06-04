@@ -13,6 +13,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { getProgramLockState } from "@/lib/enterprise/config-lock";
 
 const ProgramStatusSchema = z.enum([
   "ACTIVE",
@@ -28,16 +29,53 @@ const CoveredPlanTypeSchema = z.enum([
   "SUBSCRIPTION",
 ]);
 
+const OverageBehaviorSchema = z.enum(["BLOCK", "CHARGE_MEMBER", "CHARGE_ORG"]);
+
 const PatchBodySchema = z
   .object({
     name: z.string().min(2).max(120).optional(),
     status: ProgramStatusSchema.optional(),
+    // #777 §B — archive/unarchive (soft-hide; never hard-delete once in use).
+    archived: z.boolean().optional(),
     coveredPlanTypes: z.array(CoveredPlanTypeSchema).optional(),
     allowedCategories: z.array(z.string()).optional(),
+    // Money config — locked once the program is in use (#777 §B). Type isn't
+    // editable post-create (it picks which config table exists); the per-type
+    // money fields below route to licensedSeatConfig / creditPoolConfig.
+    ratePerSeatPaise: z.coerce.number().int().min(0).optional(),
+    coveredEngagementsPerCycle: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .nullable()
+      .optional(),
+    creditsPerCycle: z.coerce.number().int().min(1).optional(),
+    overageBehavior: OverageBehaviorSchema.optional(),
+    overageSurchargeBps: z.coerce.number().int().min(0).nullable().optional(),
+    priceCapPerEngagementPaise: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .nullable()
+      .optional(),
+    maxOveragePerCyclePaise: z.coerce.number().int().min(0).nullable().optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
     message: "PATCH body must contain at least one field",
   });
+
+// Fields whose edit rewrites already-settled money — gated by the in-use
+// lock (#777 §B). `coveredPlanTypes` counts: it decides what a seat covers.
+const MONEY_FIELDS = [
+  "coveredPlanTypes",
+  "ratePerSeatPaise",
+  "coveredEngagementsPerCycle",
+  "creditsPerCycle",
+  "overageBehavior",
+  "overageSurchargeBps",
+  "priceCapPerEngagementPaise",
+  "maxOveragePerCyclePaise",
+] as const;
 
 export async function GET(
   _req: NextRequest,
@@ -74,9 +112,16 @@ export async function GET(
   if (!program) {
     return NextResponse.json({ error: "Program not found" }, { status: 404 });
   }
-  return NextResponse.json({ program });
+  // Surface the in-use lock so the edit dialog can disable money fields
+  // without a second round-trip (#777 §B).
+  const { locked } = await getProgramLockState(programId);
+  return NextResponse.json({ program: { ...program, locked } });
 }
 
+// TODO(#777 server-actions): kept as a Route Handler + useMutation to match the
+// rest of the dashboard. New first-party form mutations should prefer a Server
+// Action (co-located write + revalidate, progressive enhancement) per the
+// agreed direction — migrate this when the dashboard converges on that pattern.
 export async function PATCH(
   req: NextRequest,
   {
@@ -102,6 +147,24 @@ export async function PATCH(
   }
   const body = parsed.data;
 
+  // Reject any money-field edit on a program that's already in use — a
+  // retroactive change would rewrite bookings settled at the old terms.
+  // `name`/`status`/`allowedCategories` stay editable always (#777 §B).
+  const touchesMoney = MONEY_FIELDS.some((f) => body[f] !== undefined);
+  if (touchesMoney) {
+    const { locked } = await getProgramLockState(programId);
+    if (locked) {
+      return NextResponse.json(
+        {
+          error:
+            "Program is in use — money config is locked. Only the name can be changed.",
+          code: "PROGRAM_CONFIG_LOCKED",
+        },
+        { status: 409 },
+      );
+    }
+  }
+
   try {
     const updated = await prisma.$transaction(async (tx) => {
       const current = await tx.program.findFirst({
@@ -110,11 +173,39 @@ export async function PATCH(
       if (!current) {
         throw Object.assign(new Error("Program not found"), { httpStatus: 404 });
       }
+
+      // #777 §B — archiving guard: an archived program is skipped by the cycle
+      // engine, so live allocations under it would zombie (never roll, never
+      // close). Force the operator to cancel them (or let the cycle end) first.
+      if (body.archived === true) {
+        const activeAssignments = await tx.programAssignment.count({
+          where: {
+            programId,
+            status: "ACTIVE",
+            periodEnd: { gte: new Date() },
+          },
+        });
+        if (activeAssignments > 0) {
+          throw Object.assign(
+            new Error(
+              `Cannot archive a program with ${activeAssignments} active assignment(s). Cancel them or let the cycle end first.`,
+            ),
+            {
+              httpStatus: 409,
+              code: "PROGRAM_HAS_ACTIVE_ASSIGNMENTS",
+            },
+          );
+        }
+      }
+
       const next = await tx.program.update({
         where: { id: programId },
         data: {
           ...(body.name !== undefined && { name: body.name }),
           ...(body.status !== undefined && { status: body.status }),
+          ...(body.archived !== undefined && {
+            archivedAt: body.archived ? new Date() : null,
+          }),
           ...(body.coveredPlanTypes !== undefined && {
             coveredPlanTypes: body.coveredPlanTypes,
           }),
@@ -123,6 +214,77 @@ export async function PATCH(
           }),
         },
       });
+
+      // Per-type money fields route to the live config table. `type` is
+      // immutable post-create, so the existing config row is the target —
+      // unreachable fields (e.g. ratePerSeatPaise on a CREDIT_POOL) are
+      // simply absent from the body and skipped.
+      if (current.type === "LICENSED_SEAT") {
+        const seatData = {
+          ...(body.ratePerSeatPaise !== undefined && {
+            ratePerSeatPaise: body.ratePerSeatPaise,
+          }),
+          ...(body.coveredEngagementsPerCycle !== undefined && {
+            coveredEngagementsPerCycle: body.coveredEngagementsPerCycle,
+          }),
+          ...(body.overageBehavior !== undefined && {
+            overageBehavior: body.overageBehavior,
+          }),
+          ...(body.overageSurchargeBps !== undefined && {
+            overageSurchargeBps: body.overageSurchargeBps,
+          }),
+          ...(body.priceCapPerEngagementPaise !== undefined && {
+            priceCapPerEngagementPaise: body.priceCapPerEngagementPaise,
+          }),
+          ...(body.maxOveragePerCyclePaise !== undefined && {
+            maxOveragePerCyclePaise: body.maxOveragePerCyclePaise,
+          }),
+        };
+        if (Object.keys(seatData).length > 0) {
+          await tx.licensedSeatConfig.update({
+            where: { programId },
+            data: seatData,
+          });
+        }
+      } else if (current.type === "CREDIT_POOL") {
+        const poolData = {
+          ...(body.creditsPerCycle !== undefined && {
+            creditsPerCycle: body.creditsPerCycle,
+          }),
+          ...(body.overageBehavior !== undefined && {
+            overageBehavior: body.overageBehavior,
+          }),
+          ...(body.overageSurchargeBps !== undefined && {
+            overageSurchargeBps: body.overageSurchargeBps,
+          }),
+          ...(body.maxOveragePerCyclePaise !== undefined && {
+            maxOveragePerCyclePaise: body.maxOveragePerCyclePaise,
+          }),
+        };
+        if (Object.keys(poolData).length > 0) {
+          await tx.creditPoolConfig.update({
+            where: { programId },
+            data: poolData,
+          });
+        }
+      }
+
+      // Archive/unarchive gets its own audit action (#777 §B).
+      if (
+        body.archived !== undefined &&
+        body.archived !== (current.archivedAt != null)
+      ) {
+        await tx.orgAuditLog.create({
+          data: {
+            organizationId: orgId,
+            actorMembershipId: access.member.id,
+            category: "PROGRAM",
+            action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ARCHIVED,
+            description: `Program ${programId} ${body.archived ? "archived" : "unarchived"}`,
+            details: { programId, archived: body.archived },
+          },
+        });
+      }
 
       // Status transitions get the dedicated PROGRAM_PAUSED action so
       // the audit timeline shows the lifecycle event separately from a

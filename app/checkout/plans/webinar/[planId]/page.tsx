@@ -596,6 +596,8 @@ export default function WebinarCheckoutPage({
         <Separator className="bg-zinc-200" />
         <OrgPayerSelector
           selectedOrganizationId={selectedOrganizationId}
+          planType="WEBINAR"
+          planId={resolvedParams.planId}
           onSelect={(id) => {
             setSelectedOrganizationId(id);
             if (id) setUseReferralCredits(false);

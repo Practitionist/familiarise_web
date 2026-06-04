@@ -37,7 +37,8 @@ export async function GET(
 
   const billingAccount = await prisma.billingAccount.findFirst({
     where: { ownerOrgId: orgId },
-    select: { id: true, fundingSource: true },
+    // #777 §B — creditLimit drives the INVOICE credit-limit visibility line.
+    select: { id: true, fundingSource: true, creditLimit: true },
   });
 
   const startOfMonth = new Date();
@@ -117,6 +118,8 @@ export async function GET(
 
   return NextResponse.json({
     fundingSource: billingAccount?.fundingSource ?? null,
+    // null = unlimited (#777 §B credit-limit visibility).
+    creditLimitPaise: billingAccount?.creditLimit ?? null,
     monthToDate: {
       gross: monthAgg._sum.amount ?? 0,
       paymentCount: monthAgg._count._all,

@@ -14,6 +14,15 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { getContractLockState } from "@/lib/enterprise/config-lock";
+
+// Term fields that lock once the contract leaves DRAFT or starts billing
+// (#777 §B). `autoRenew` is a safe forward-looking toggle — editable always.
+const TERM_FIELDS = [
+  "effectiveFrom",
+  "effectiveTo",
+  "paymentTermsDays",
+] as const;
 
 const ContractStatusSchema = z.enum([
   "DRAFT",
@@ -70,9 +79,17 @@ export async function GET(
   if (!contract) {
     return NextResponse.json({ error: "Contract not found" }, { status: 404 });
   }
-  return NextResponse.json({ contract });
+  // Surface the in-use lock so the detail/edit drawer can disable term
+  // fields (effective dates, payment terms) without a second round-trip
+  // (#777 §B). autoRenew stays editable regardless.
+  const { locked } = await getContractLockState(contractId, contract.status);
+  return NextResponse.json({ contract: { ...contract, locked } });
 }
 
+// TODO(#777 server-actions): kept as a Route Handler + useMutation to match the
+// rest of the dashboard. New first-party form mutations should prefer a Server
+// Action (co-located write + revalidate, progressive enhancement) per the
+// agreed direction — migrate this when the dashboard converges on that pattern.
 export async function PATCH(
   req: NextRequest,
   {
@@ -107,6 +124,25 @@ export async function PATCH(
         throw Object.assign(new Error("Contract not found"), {
           httpStatus: 404,
         });
+      }
+
+      // Reject term edits (effective dates, payment terms) once the
+      // contract is in use — those terms are committed the moment it's
+      // signed or starts billing (#777 §B). autoRenew/status stay open.
+      const touchesTerms = TERM_FIELDS.some((f) => body[f] !== undefined);
+      if (touchesTerms) {
+        const { locked } = await getContractLockState(
+          contractId,
+          current.status,
+        );
+        if (locked) {
+          throw Object.assign(
+            new Error(
+              "Contract terms are locked once it's signed or billing has started. Only auto-renew can be changed.",
+            ),
+            { httpStatus: 409, code: "CONTRACT_TERMS_LOCKED" },
+          );
+        }
       }
 
       if (body.purchaseOrderId) {
@@ -147,6 +183,26 @@ export async function PATCH(
             { httpStatus: 409 },
           );
         }
+
+        // #779 §A — terminating a contract while invoices billed under it are
+        // still owed (ISSUED/OVERDUE) would sever the money trail. DRAFT
+        // invoices haven't billed yet, so they don't block.
+        const outstandingInvoices = await tx.organizationInvoice.count({
+          where: {
+            contractId,
+            status: { in: ["ISSUED", "OVERDUE"] },
+          },
+        });
+        if (outstandingInvoices > 0) {
+          throw Object.assign(
+            new Error("CONTRACT_HAS_OUTSTANDING_INVOICES"),
+            {
+              httpStatus: 409,
+              code: "CONTRACT_HAS_OUTSTANDING_INVOICES",
+              counts: { outstandingInvoices },
+            },
+          );
+        }
       }
 
       const next = await tx.contract.update({
@@ -172,6 +228,21 @@ export async function PATCH(
           }),
         },
       });
+
+      // #779 §A — TERMINATED cascade: a terminated contract takes its
+      // programs (ACTIVE → EXPIRED) and their still-ACTIVE assignments
+      // (→ CLOSED) down with it, in this same tx, so nothing is left
+      // drawing against a dead contract.
+      if (body.status === "TERMINATED" && current.status !== "TERMINATED") {
+        await tx.program.updateMany({
+          where: { contractId, status: "ACTIVE" },
+          data: { status: "EXPIRED" },
+        });
+        await tx.programAssignment.updateMany({
+          where: { program: { contractId }, status: "ACTIVE" },
+          data: { status: "CLOSED" },
+        });
+      }
 
       // Status transitions get dedicated audit actions so the timeline
       // reads cleanly; a plain "updated" line loses the lifecycle signal.
@@ -208,7 +279,18 @@ export async function PATCH(
     if (err instanceof Error && "httpStatus" in err) {
       const status =
         typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      return NextResponse.json({ error: err.message }, { status });
+      const code =
+        "code" in err && typeof err.code === "string" ? err.code : undefined;
+      // #779 §A — forward counts so the UI can render the outstanding-invoice
+      // wind-down message alongside the existing terms-lock code.
+      const counts =
+        "counts" in err && err.counts && typeof err.counts === "object"
+          ? err.counts
+          : undefined;
+      return NextResponse.json(
+        { error: err.message, ...(code && { code }), ...(counts && { counts }) },
+        { status },
+      );
     }
     throw err;
   }

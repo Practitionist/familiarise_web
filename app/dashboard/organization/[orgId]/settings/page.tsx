@@ -3,10 +3,21 @@
 import { use, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { Globe, Shield } from "lucide-react";
+import { Globe, Shield, FileText } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
-import type { FundingSource, OrgStatus } from "@prisma/client";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import type {
+  FundingSource,
+  GstRegStatus,
+  OrgStatus,
+} from "@prisma/client";
 
 import { useOrgRole, useRequireOrgRole } from "../useOrgRole";
 import { orgDetailsQueryKey } from "@/lib/api/organizations/org-details";
@@ -68,6 +79,14 @@ interface SettingsResponse {
     paymentTermsDays: number;
     isPublic: boolean;
     billingAccount?: { fundingSource: FundingSource } | null;
+    // #777 §B — OrganizationTaxInfo satellite, non-secret fields only.
+    // null when the org has no taxInfo row yet.
+    taxInfo?: {
+      gstin: string | null;
+      gstStateCode: string | null;
+      gstRegStatus: GstRegStatus;
+      panLast4: string | null;
+    } | null;
   };
 }
 
@@ -88,6 +107,11 @@ interface PatchPayload {
   isPublic?: boolean;
   canSponsor?: boolean;
   canHost?: boolean;
+  // #777 §B — tax identity lives on the OrganizationTaxInfo satellite;
+  // the org PATCH route upserts it. OWNER-gated server-side.
+  gstin?: string | null;
+  gstStateCode?: string | null;
+  gstRegStatus?: GstRegStatus;
 }
 
 async function patchSettings(orgId: string, payload: PatchPayload) {
@@ -125,6 +149,12 @@ export default function OrgSettingsPage({
   const [website, setWebsite] = useState("");
   const [paymentTermsDays, setPaymentTermsDays] = useState("60");
   const [isPublic, setIsPublic] = useState(false);
+  // #777 §B — Tax & compliance (OrganizationTaxInfo). UNREGISTERED is the
+  // schema default, so an org with no taxInfo row reads as UNREGISTERED.
+  const [gstin, setGstin] = useState("");
+  const [gstStateCode, setGstStateCode] = useState("");
+  const [gstRegStatus, setGstRegStatus] =
+    useState<GstRegStatus>("UNREGISTERED");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [pendingDisable, setPendingDisable] = useState<
@@ -141,19 +171,28 @@ export default function OrgSettingsPage({
     setWebsite(data.profile.website ?? "");
     setPaymentTermsDays(String(data.profile.paymentTermsDays));
     setIsPublic(data.profile.isPublic ?? false);
+    setGstin(data.profile.taxInfo?.gstin ?? "");
+    setGstStateCode(data.profile.taxInfo?.gstStateCode ?? "");
+    setGstRegStatus(data.profile.taxInfo?.gstRegStatus ?? "UNREGISTERED");
   }, [data]);
 
   const mutation = useMutation({
+    // #779 §A — the API enforces field-level RBAC: descriptive fields are
+    // MAINTAINER+, slug/isPublic OWNER-only, billingEmail/paymentTermsDays
+    // BILLING_ADMIN-or-OWNER. Send only what this role may touch so a
+    // maintainer's rename doesn't 403 on fields they never edited.
     mutationFn: (overrides?: PatchPayload) =>
       patchSettings(orgId, {
         name: name.trim(),
-        slug: slug.trim() || undefined,
-        billingEmail: billingEmail.trim() || null,
         description: description.trim() || null,
         industry: industry.trim() || null,
         website: website.trim() || null,
-        paymentTermsDays: parseInt(paymentTermsDays, 10),
-        isPublic,
+        ...(isAtLeast("OWNER") && {
+          slug: slug.trim() || undefined,
+          billingEmail: billingEmail.trim() || null,
+          paymentTermsDays: parseInt(paymentTermsDays, 10),
+          isPublic,
+        }),
         ...overrides,
       }),
     onSuccess: () => {
@@ -192,6 +231,32 @@ export default function OrgSettingsPage({
     if (!pendingDisable) return;
     mutation.mutate({ [pendingDisable]: false });
     setPendingDisable(null);
+  };
+
+  // #777 §B — narrow tax-only PATCH so saving GSTIN doesn't drag every
+  // Profile field along. GSTIN is exactly 15 chars (API rejects partials
+  // with a 400); empty → null clears the satellite field. The API gates
+  // the whole taxInfo upsert OWNER-only, matching the UI gate below.
+  const trimmedGstin = gstin.trim().toUpperCase();
+  const gstinValid = trimmedGstin.length === 0 || trimmedGstin.length === 15;
+  // GST state code is exactly 2 digits (e.g. "29"); empty clears it. An
+  // invalid value blocks the save with an error instead of silently saving
+  // null while the input still shows the bad value.
+  const trimmedStateCode = gstStateCode.trim();
+  const stateCodeValid =
+    trimmedStateCode.length === 0 || /^\d{2}$/.test(trimmedStateCode);
+  const saveTaxInfo = () => {
+    if (!gstinValid) return;
+    if (!stateCodeValid) {
+      setError("GST state code must be exactly 2 digits (e.g. 29).");
+      return;
+    }
+    setError(null);
+    mutation.mutate({
+      gstin: trimmedGstin.length === 15 ? trimmedGstin : null,
+      gstStateCode: trimmedStateCode.length === 2 ? trimmedStateCode : null,
+      gstRegStatus,
+    });
   };
 
   if (!allowed) return null;
@@ -311,6 +376,12 @@ export default function OrgSettingsPage({
             </CardDescription>
           </CardHeader>
           <CardContent>
+            {/* #779 TODO: these fields are MAINTAINER-enabled in the UI but
+                the org PATCH route is requireOrgOwner — a MAINTAINER save
+                gets a silent 403. RBAC redistribution (widen the API to
+                MAINTAINER for the profile subset, or disable here for
+                non-OWNER) is deferred to v4; not broadening API auth in
+                this PR. */}
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -335,7 +406,9 @@ export default function OrgSettingsPage({
                     type="email"
                     value={billingEmail}
                     onChange={(e) => setBillingEmail(e.target.value)}
-                    disabled={!isAtLeast("MAINTAINER")}
+                    // #779 §A — finance remit: BILLING_ADMIN edits this via the
+                    // billing page; on THIS page only OWNER may change it.
+                    disabled={!isAtLeast("OWNER")}
                   />
                 </div>
               </div>
@@ -413,7 +486,9 @@ export default function OrgSettingsPage({
                     max="120"
                     value={paymentTermsDays}
                     onChange={(e) => setPaymentTermsDays(e.target.value)}
-                    disabled={!isAtLeast("MAINTAINER")}
+                    // #779 §A — finance remit (BILLING_ADMIN edits via billing;
+                    // OWNER here).
+                    disabled={!isAtLeast("OWNER")}
                   />
                   <p className="text-xs text-zinc-500">
                     India default is NET-60. Only applies when funding
@@ -437,6 +512,95 @@ export default function OrgSettingsPage({
             </form>
           </CardContent>
         </Card>
+
+        {/* #777 §B — Tax & compliance (GSTIN / GST state / reg status).
+            Writes to the OrganizationTaxInfo satellite via the org PATCH
+            upsert, which gates the whole tax block OWNER-only — so the
+            section is hidden for non-owners (read or edit) to avoid a
+            silent 403. PAN capture is intentionally out of scope here
+            (encrypted-at-rest; managed via the dedicated tax surface). */}
+        {isAtLeast("OWNER") && (
+          <Card className="mt-6">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FileText className="w-4 h-4" /> Tax &amp; compliance
+              </CardTitle>
+              <CardDescription>
+                India GST identity used on invoices and for 3-way-match
+                reconciliation. Only owners can edit these.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="gstin">GSTIN</Label>
+                  <Input
+                    id="gstin"
+                    value={gstin}
+                    onChange={(e) =>
+                      setGstin(e.target.value.toUpperCase().slice(0, 15))
+                    }
+                    placeholder="22AAAAA0000A1Z5"
+                    maxLength={15}
+                  />
+                  {!gstinValid && (
+                    <p className="text-xs text-red-600">
+                      GSTIN must be exactly 15 characters.
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="gst-state-code">GST state code</Label>
+                  <Input
+                    id="gst-state-code"
+                    value={gstStateCode}
+                    onChange={(e) =>
+                      setGstStateCode(
+                        e.target.value.replace(/[^0-9]/g, "").slice(0, 2),
+                      )
+                    }
+                    placeholder="e.g. 22"
+                    maxLength={2}
+                  />
+                  <p className="text-xs text-zinc-500">
+                    First two digits of the GSTIN — the state of registration.
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-2 md:w-1/2">
+                <Label htmlFor="gst-reg-status">GST registration status</Label>
+                <Select
+                  value={gstRegStatus}
+                  onValueChange={(v) => setGstRegStatus(v as GstRegStatus)}
+                >
+                  <SelectTrigger id="gst-reg-status">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="REGULAR">Regular</SelectItem>
+                    <SelectItem value="COMPOSITION">Composition</SelectItem>
+                    <SelectItem value="UNREGISTERED">Unregistered</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {data.profile.taxInfo?.panLast4 && (
+                <p className="text-xs text-zinc-500">
+                  PAN on file ending in {data.profile.taxInfo.panLast4}.
+                </p>
+              )}
+            </CardContent>
+            <CardFooter>
+              <Button
+                onClick={saveTaxInfo}
+                disabled={mutation.isPending || !gstinValid}
+              >
+                {mutation.isPending ? "Saving…" : "Save tax details"}
+              </Button>
+            </CardFooter>
+          </Card>
+        )}
 
         {/* Marketplace Visibility — only HOST/HYBRID orgs can opt in */}
         {data.profile.canHost && (

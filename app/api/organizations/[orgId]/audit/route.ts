@@ -20,6 +20,7 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { isAtLeastRole } from "@/lib/auth/role-ranks";
 import {
   sanitizeAuditDescription,
   sanitizeAuditDetails,
@@ -78,8 +79,16 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, "MAINTAINER");
+  // #777 — SUPPORT (rank 30) gets read-only audit access for L1/L2 ticket
+  // investigation, alongside MAINTAINER+. Mirrors the sidebar + page gate.
+  const access = await requireOrgAccess(orgId);
   if (access.error) return access.error;
+  if (
+    access.member.role !== "SUPPORT" &&
+    !isAtLeastRole(access.member.role, "MAINTAINER")
+  ) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const url = new URL(req.url);
   const parsed = QuerySchema.safeParse(

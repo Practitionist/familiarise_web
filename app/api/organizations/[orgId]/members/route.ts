@@ -15,6 +15,10 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import {
+  canSeeOperatorSurface,
+  canSeeFinanceSurface,
+} from "@/lib/auth/role-ranks";
 import type { MemberRole, MemberStatus } from "@prisma/client";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
@@ -81,6 +85,16 @@ export async function GET(
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId);
   if (access.error) return access.error;
+
+  // #777 FDE Group B P2 — the roster is an operational/finance read
+  // surface, not member-facing. Bare membership let any LEARNER/EXPERT
+  // pull the full directory. Floor it to the operator set (OWNER/
+  // MAINTAINER/MANAGER/SUPPORT) plus finance (BILLING_ADMIN reconciles +
+  // builds the consent member-picker). Only LEARNER/EXPERT are excluded.
+  const role = access.member.role;
+  if (!canSeeOperatorSurface(role) && !canSeeFinanceSurface(role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const url = new URL(req.url);
   const roles = parseRoleFilter(url.searchParams.get("role"));

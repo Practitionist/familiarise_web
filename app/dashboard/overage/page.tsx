@@ -72,7 +72,12 @@ export default function OveragePage() {
   const { toast } = useToast();
   const highlightRef = useRef<HTMLDivElement | null>(null);
 
-  const { data: charges, isLoading } = useQuery({
+  const {
+    data: charges,
+    isLoading,
+    isFetching,
+    dataUpdatedAt,
+  } = useQuery({
     queryKey: ["member-overages"],
     queryFn: fetchCharges,
   });
@@ -153,10 +158,21 @@ export default function OveragePage() {
       <h1 className="text-xl font-semibold text-zinc-900 mb-1">
         Outstanding charges
       </h1>
-      <p className="text-sm text-zinc-500 mb-6">
+      <p className="text-sm text-zinc-500 mb-2">
         Program bookings that exceeded their sponsor&apos;s cap. Settle them to
         keep your access active.
       </p>
+
+      {/* #777 §F — settlement is webhook-driven and we poll after pay; surface
+          a freshness affordance so a charge clearing isn't mistaken for a stale
+          list. `dataUpdatedAt` bumps on every successful (re)fetch. */}
+      {!isLoading && dataUpdatedAt > 0 && (
+        <p className="text-xs text-zinc-400 mb-6" aria-live="polite">
+          {isFetching
+            ? "Checking for settlement…"
+            : `Last updated ${new Date(dataUpdatedAt).toLocaleTimeString("en-IN")}`}
+        </p>
+      )}
 
       {isLoading ? (
         <p className="text-sm text-zinc-500">Loading…</p>

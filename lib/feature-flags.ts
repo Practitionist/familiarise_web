@@ -43,6 +43,16 @@
 export const ENABLE_HOST_ORGS = process.env.ENABLE_HOST_ORGS === "true";
 
 /**
+ * Live payout *disbursement* gate (#776 §B). The whole payout pipeline runs
+ * (batches, ledger, TDS, status machine) but gateway submission is held until a
+ * post-MVP sandbox proof + go-live (`docs/enterprise/45-live-payout-go-live-runbook.md`).
+ * While false, org/consultant payouts sit PROCESSING — surfaced honestly in the
+ * UI as "pending platform enablement", never as a failure. Server-only; the home
+ * action-center + payout surfaces read it on the server and pass the boolean down.
+ */
+export const ENABLE_LIVE_PAYOUTS = process.env.ENABLE_LIVE_PAYOUTS === "true";
+
+/**
  * IRP (Invoice Registration Portal) live e-invoice integration.
  *
  * ClearTax GSP connector is wired (`lib/compliance/irp.ts`,

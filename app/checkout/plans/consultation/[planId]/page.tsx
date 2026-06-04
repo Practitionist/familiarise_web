@@ -667,6 +667,8 @@ export default function ConsultationCheckoutPage({
         <Separator className="bg-zinc-200" />
         <OrgPayerSelector
           selectedOrganizationId={selectedOrganizationId}
+          planType="CONSULTATION"
+          planId={resolvedParams.planId}
           onSelect={(id) => {
             setSelectedOrganizationId(id);
             // Disable referral credits when org is selected

@@ -1,8 +1,8 @@
 "use client";
 
-import { use, useState } from "react";
+import { use, useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, FileText, Loader2, Check, X } from "lucide-react";
+import { Plus, FileText, Loader2, Check, X, Eye, Pencil, Lock } from "lucide-react";
 import type { ContractStatus } from "@prisma/client";
 
 import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
@@ -153,6 +153,45 @@ async function deleteContract(orgId: string, contractId: string) {
     const json = await res.json().catch(() => ({}));
     throw new Error((json as { error?: string }).error ?? "Failed to delete contract");
   }
+}
+
+// Single-contract GET carries the server-derived `locked` flag so the
+// detail/edit drawer can disable term fields without re-deriving the rule
+// client-side (#777 §B).
+type ContractDetail = ContractItem & { locked: boolean };
+
+async function fetchContract(
+  orgId: string,
+  contractId: string,
+): Promise<{ contract: ContractDetail }> {
+  const res = await fetch(`/api/organizations/${orgId}/contracts/${contractId}`);
+  if (!res.ok) throw new Error("Failed to load contract");
+  return res.json();
+}
+
+// Edit PATCH — autoRenew always allowed; the term fields only go through
+// when the contract isn't locked. The server re-checks and 409s
+// CONTRACT_TERMS_LOCKED if a locked term field slips past.
+async function editContract(
+  orgId: string,
+  contractId: string,
+  body: {
+    autoRenew?: boolean;
+    effectiveFrom?: string;
+    effectiveTo?: string | null;
+    paymentTermsDays?: number;
+  },
+) {
+  const res = await fetch(`/api/organizations/${orgId}/contracts/${contractId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((json as { error?: string }).error ?? "Failed to update contract");
+  }
+  return json;
 }
 
 // ---------------------------------------------------------------------------
@@ -424,6 +463,330 @@ function CreateContractDialog({
 }
 
 // ---------------------------------------------------------------------------
+// Detail drawer (#777 §B) — read-only view of a single contract: status,
+// effective window, payment terms (Prepaid for LICENSE), auto-renew, and the
+// programs / subscription riding on it.
+// ---------------------------------------------------------------------------
+
+// LICENSE contracts pay the flat fee upfront, so net-X payment terms don't
+// apply — render "Prepaid" rather than a misleading NET-0 or em-dash.
+function fmtPaymentTerms(c: Pick<ContractItem, "paymentTermsDays" | "billingAccount">): string {
+  if (c.billingAccount?.fundingSource === "LICENSE") return "Prepaid";
+  return `NET-${c.paymentTermsDays}`;
+}
+
+function DetailRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex justify-between gap-4 py-1.5 text-sm">
+      <span className="text-zinc-500">{label}</span>
+      <span className="text-right font-medium text-zinc-800">{children}</span>
+    </div>
+  );
+}
+
+function ContractDetailDialog({
+  orgId,
+  contractId,
+  open,
+  onOpenChange,
+}: {
+  orgId: string;
+  contractId: string;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const detail = useQuery({
+    queryKey: ["org-contract", orgId, contractId],
+    queryFn: () => fetchContract(orgId, contractId),
+    enabled: open,
+  });
+  const c = detail.data?.contract;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
+        <DialogHeader>
+          <DialogTitle>Contract detail</DialogTitle>
+        </DialogHeader>
+
+        {detail.isLoading || !c ? (
+          <div className="flex items-center gap-2 py-8 text-sm text-zinc-500">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="divide-y rounded-md border px-3">
+              <DetailRow label="Status">
+                <Badge variant="outline" className={STATUS_BADGE[c.status]}>
+                  {c.status}
+                </Badge>
+              </DetailRow>
+              <DetailRow label="Funding">
+                {c.billingAccount?.fundingSource ?? "—"}
+              </DetailRow>
+              <DetailRow label="Effective from">
+                {fmtDate(c.effectiveFrom)}
+              </DetailRow>
+              <DetailRow label="Effective to">
+                {c.effectiveTo ? fmtDate(c.effectiveTo) : "open-ended"}
+              </DetailRow>
+              <DetailRow label="Payment terms">{fmtPaymentTerms(c)}</DetailRow>
+              <DetailRow label="Auto-renew">{c.autoRenew ? "Yes" : "No"}</DetailRow>
+              {c.subscription && (
+                <DetailRow label="Subscription">
+                  {c.subscription.model === "FLAT_FEE" &&
+                  c.subscription.flatFeePaise != null
+                    ? `₹${(c.subscription.flatFeePaise / 100).toLocaleString("en-IN")} / ${c.subscription.cycle.toLowerCase()}`
+                    : `${c.subscription.model} / ${c.subscription.cycle.toLowerCase()}`}
+                </DetailRow>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <h4 className="text-sm font-semibold">
+                Programs ({c.programs.length})
+              </h4>
+              {c.programs.length === 0 ? (
+                <p className="text-sm text-zinc-500">
+                  No programs attached to this contract.
+                </p>
+              ) : (
+                <ul className="space-y-1">
+                  {c.programs.map((p) => (
+                    <li
+                      key={p.id}
+                      className="flex items-center justify-between rounded-md border px-3 py-1.5 text-sm"
+                    >
+                      <span>{p.name}</span>
+                      <Badge variant="secondary" className="text-xs">
+                        {p.type}
+                      </Badge>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Edit dialog (#777 §B) — autoRenew editable always; effective dates and
+// payment terms only while the contract isn't locked (still DRAFT, unsigned,
+// no invoices / live assignments). The lock is server-derived.
+// ---------------------------------------------------------------------------
+
+function ContractLockedHint() {
+  return (
+    <span className="ml-2 inline-flex items-center gap-1 text-xs text-amber-600">
+      <Lock className="h-3 w-3" /> Locked — in use
+    </span>
+  );
+}
+
+function EditContractDialog({
+  orgId,
+  contractId,
+  open,
+  onOpenChange,
+}: {
+  orgId: string;
+  contractId: string;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+  const detail = useQuery({
+    queryKey: ["org-contract", orgId, contractId],
+    queryFn: () => fetchContract(orgId, contractId),
+    enabled: open,
+  });
+  const c = detail.data?.contract;
+  const locked = c?.locked ?? true; // fail-safe: lock until we know
+  const isLicense = c?.billingAccount?.fundingSource === "LICENSE";
+
+  const [autoRenew, setAutoRenew] = useState(false);
+  const [effectiveFrom, setEffectiveFrom] = useState("");
+  const [effectiveTo, setEffectiveTo] = useState("");
+  const [paymentTermsDays, setPaymentTermsDays] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!c) return;
+    setAutoRenew(c.autoRenew);
+    setEffectiveFrom(c.effectiveFrom.slice(0, 10));
+    setEffectiveTo(c.effectiveTo ? c.effectiveTo.slice(0, 10) : "");
+    setPaymentTermsDays(String(c.paymentTermsDays));
+    setError(null);
+  }, [c]);
+
+  const editMutation = useMutation({
+    mutationFn: (body: Parameters<typeof editContract>[2]) =>
+      editContract(orgId, contractId, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["org-contracts", orgId] });
+      queryClient.invalidateQueries({ queryKey: ["org-contracts-active", orgId] });
+      queryClient.invalidateQueries({
+        queryKey: ["org-contract", orgId, contractId],
+      });
+      onOpenChange(false);
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  const handleSubmit = () => {
+    setError(null);
+    if (!c) return;
+    // autoRenew is the only always-safe field. Term fields ride along only
+    // when unlocked — the server is the final authority either way.
+    const body: Parameters<typeof editContract>[2] = { autoRenew };
+    if (!locked) {
+      // A cleared/garbled date input is an empty string — new Date("") is an
+      // Invalid Date and .toISOString() on it throws. Validate before use.
+      const fromDate = new Date(effectiveFrom);
+      if (!effectiveFrom || Number.isNaN(fromDate.getTime())) {
+        setError("Start date is required.");
+        return;
+      }
+      const toDate = effectiveTo ? new Date(effectiveTo) : null;
+      if (toDate && Number.isNaN(toDate.getTime())) {
+        setError("End date is invalid.");
+        return;
+      }
+      if (toDate && toDate <= fromDate) {
+        setError("End date must be after the start date.");
+        return;
+      }
+      body.effectiveFrom = fromDate.toISOString();
+      body.effectiveTo = toDate ? toDate.toISOString() : null;
+      // LICENSE terms are prepaid — don't send paymentTermsDays for them.
+      if (!isLicense) {
+        const parsed = parseInt(paymentTermsDays, 10);
+        if (!Number.isFinite(parsed) || parsed < 1 || parsed > 120) {
+          setError("Payment terms must be between 1 and 120 days.");
+          return;
+        }
+        body.paymentTermsDays = parsed;
+      }
+    }
+    editMutation.mutate(body);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
+        <DialogHeader>
+          <DialogTitle>Edit contract</DialogTitle>
+        </DialogHeader>
+
+        {detail.isLoading || !c ? (
+          <div className="flex items-center gap-2 py-8 text-sm text-zinc-500">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {locked && (
+              <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                This contract is in use (signed, invoiced, or with live
+                assignments). Effective dates and payment terms are locked —
+                only auto-renew can be changed.
+              </p>
+            )}
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-effective-from">
+                  Effective from
+                  {locked && <ContractLockedHint />}
+                </Label>
+                <Input
+                  id="edit-effective-from"
+                  type="date"
+                  disabled={locked}
+                  value={effectiveFrom}
+                  onChange={(e) => setEffectiveFrom(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-effective-to">
+                  Effective to
+                  {locked && <ContractLockedHint />}
+                </Label>
+                <Input
+                  id="edit-effective-to"
+                  type="date"
+                  disabled={locked}
+                  value={effectiveTo}
+                  onChange={(e) => setEffectiveTo(e.target.value)}
+                  placeholder="Open-ended"
+                />
+              </div>
+            </div>
+
+            {!isLicense && (
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-payment-terms">
+                  Payment terms (days)
+                  {locked && <ContractLockedHint />}
+                </Label>
+                <Input
+                  id="edit-payment-terms"
+                  type="number"
+                  min={1}
+                  max={120}
+                  disabled={locked}
+                  value={paymentTermsDays}
+                  onChange={(e) => setPaymentTermsDays(e.target.value)}
+                />
+              </div>
+            )}
+
+            <label className="flex items-center gap-2 cursor-pointer">
+              <Checkbox
+                checked={autoRenew}
+                onCheckedChange={(v) => setAutoRenew(v === true)}
+              />
+              <span className="text-sm">
+                Auto-renew when effective-to date passes
+              </span>
+            </label>
+
+            {error && <p className="text-sm text-red-600">{error}</p>}
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSubmit}
+            disabled={editMutation.isPending || detail.isLoading || !c}
+          >
+            {editMutation.isPending ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin mr-1" /> Saving…
+              </>
+            ) : (
+              "Save"
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
@@ -440,6 +803,8 @@ export default function OrgContractsPage({
   });
 
   const [createOpen, setCreateOpen] = useState(false);
+  const [detailTarget, setDetailTarget] = useState<ContractItem | null>(null);
+  const [editTarget, setEditTarget] = useState<ContractItem | null>(null);
   const [activateTarget, setActivateTarget] = useState<ContractItem | null>(null);
   const [terminateTarget, setTerminateTarget] = useState<ContractItem | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ContractItem | null>(null);
@@ -589,6 +954,24 @@ export default function OrgContractsPage({
                       {isAtLeast("OWNER") && (
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-1">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setDetailTarget(c)}
+                              title="View detail"
+                            >
+                              <Eye className="h-3.5 w-3.5 mr-1" /> View
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setActionError(null);
+                                setEditTarget(c);
+                              }}
+                            >
+                              <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
+                            </Button>
                             {c.status === "DRAFT" && (
                               <>
                                 <Button
@@ -653,6 +1036,30 @@ export default function OrgContractsPage({
           fundingSource={billingAccount.data?.billingAccount.fundingSource}
           open={createOpen}
           onOpenChange={setCreateOpen}
+        />
+      )}
+
+      {/* Detail drawer */}
+      {detailTarget && (
+        <ContractDetailDialog
+          orgId={orgId}
+          contractId={detailTarget.id}
+          open={!!detailTarget}
+          onOpenChange={(v) => {
+            if (!v) setDetailTarget(null);
+          }}
+        />
+      )}
+
+      {/* Edit dialog */}
+      {editTarget && (
+        <EditContractDialog
+          orgId={orgId}
+          contractId={editTarget.id}
+          open={!!editTarget}
+          onOpenChange={(v) => {
+            if (!v) setEditTarget(null);
+          }}
         />
       )}
 

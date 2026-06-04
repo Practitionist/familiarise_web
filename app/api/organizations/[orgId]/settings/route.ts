@@ -22,8 +22,10 @@ export async function GET(
     // `profile` mirrors the Organization row — callers need the
     // capability booleans + paymentTermsDays + description/website/etc.
     // BillingAccount is included so the settings page can show the
-    // funding source without a second round-trip.
-    const [organization, billingAccount] = await Promise.all([
+    // funding source without a second round-trip. taxInfo (#777 §B)
+    // hydrates the Tax & compliance section — non-secret fields only;
+    // panEncrypted never leaves the server.
+    const [organization, billingAccount, taxInfo] = await Promise.all([
       prisma.organization.findUnique({
         where: { id: orgId },
         select: {
@@ -36,6 +38,15 @@ export async function GET(
       prisma.billingAccount.findFirst({
         where: { ownerOrgId: orgId },
         select: { fundingSource: true, currency: true, creditLimit: true },
+      }),
+      prisma.organizationTaxInfo.findUnique({
+        where: { organizationId: orgId },
+        select: {
+          gstin: true,
+          gstStateCode: true,
+          gstRegStatus: true,
+          panLast4: true,
+        },
       }),
     ]);
 
@@ -51,6 +62,7 @@ export async function GET(
       profile: {
         ...access.org,
         billingAccount,
+        taxInfo,
       },
     });
   } catch (error) {

@@ -66,6 +66,70 @@ export interface OverageResult {
   reason: string;
 }
 
+/**
+ * #777 §C — pre-booking overage *context*: the program config + the cycle usage
+ * BEFORE this booking is metered. Lets two callers share one mapping into
+ * `OverageInput` so the pre-checkout preview and the at-checkout recorder can
+ * never drift:
+ *   - the recorder (`recordOverageAtCheckout`) reconstructs the pre-booking
+ *     state from the post-meter values (used-after − delta, consumed-after − price);
+ *   - the preview (`previewOverageForBooking`) reads the assignment's current
+ *     (still pre-booking) state directly.
+ * Both then call `computeOverageForBooking` and get the identical decision.
+ */
+export interface OverageContext {
+  programType: ProgramType;
+  overageBehavior: OverageBehavior;
+  overageSurchargeBps?: number | null;
+  maxOveragePerCyclePaise: number | null;
+  cycleOverageSoFarPaise: number;
+  // LICENSED_SEAT
+  coveredEngagementsPerCycle?: number | null;
+  priceCapPerEngagementPaise?: number | null;
+  /** Pre-booking engagements used this cycle. */
+  engagementsUsed?: number;
+  // CREDIT_POOL
+  creditBudgetPaise?: number | null;
+  /** Pre-booking paise consumed this cycle. */
+  consumedPaise?: number;
+}
+
+/**
+ * Map a pre-booking `OverageContext` + the prospective booking into the pure
+ * `computeOverage`. Single source of truth for the `OverageInput` shape so the
+ * preview and the recorder stay in lock-step (asserted in
+ * `__tests__/enterprise/overage-preview.test.ts`).
+ */
+export function computeOverageForBooking(
+  ctx: OverageContext,
+  booking: { bookingPricePaise: number; sessionsConsumed: number },
+): OverageResult {
+  const base = {
+    bookingPricePaise: booking.bookingPricePaise,
+    sessionsConsumed: booking.sessionsConsumed,
+    overageBehavior: ctx.overageBehavior,
+    maxOveragePerCyclePaise: ctx.maxOveragePerCyclePaise,
+    cycleOverageSoFarPaise: ctx.cycleOverageSoFarPaise,
+    overageSurchargeBps: ctx.overageSurchargeBps ?? null,
+  };
+  return computeOverage(
+    ctx.programType === "CREDIT_POOL"
+      ? {
+          ...base,
+          programType: "CREDIT_POOL",
+          creditBudgetPaise: ctx.creditBudgetPaise ?? null,
+          consumedPaise: ctx.consumedPaise ?? 0,
+        }
+      : {
+          ...base,
+          programType: "LICENSED_SEAT",
+          coveredEngagementsPerCycle: ctx.coveredEngagementsPerCycle ?? null,
+          engagementsUsed: ctx.engagementsUsed ?? 0,
+          priceCapPerEngagementPaise: ctx.priceCapPerEngagementPaise ?? null,
+        },
+  );
+}
+
 /** Compute the overage outcome for one booking. Pure; no side effects. */
 export function computeOverage(input: OverageInput): OverageResult {
   const price = Math.max(0, Math.floor(input.bookingPricePaise));
