@@ -225,6 +225,20 @@ export async function POST(
     );
   }
 
+  // LEARNER mirrors EXPERT: requires the org to actually sponsor sessions.
+  // Host-only orgs have no Contract / Program / Wallet / BillingAccount
+  // path, so a LEARNER membership would be a hollow shell with no funded
+  // bookings and a blank /my-program. Reject at the boundary.
+  if (role === "LEARNER" && !access.org.canSponsor) {
+    return NextResponse.json(
+      {
+        error: "LEARNER can only be assigned on sponsor-capable organizations",
+        code: "LEARNER_REQUIRES_CANSPONSOR",
+      },
+      { status: 400 },
+    );
+  }
+
   // The dashboard sends email; SSO / admin tooling sends userId. Profile
   // FK hydration is handled inside the transaction below by
   // applyMembershipRoleEffects (lazy-creates ConsulteeProfile /

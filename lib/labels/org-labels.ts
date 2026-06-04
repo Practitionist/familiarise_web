@@ -251,16 +251,29 @@ export const HOST_INVITABLE_MEMBER_ROLES =
 
 /**
  * Returns the role list a self-service inviter can pick on the given
- * org. canHost orgs include EXPERT; sponsor-only orgs do not.
+ * org, gated by capability:
+ *   - operator roles (OWNER / MAINTAINER / BILLING_ADMIN / MANAGER) always render
+ *   - LEARNER only when canSponsor=true (sponsor-side; needs Contract/Program/Wallet
+ *     to actually fund sessions — host-only orgs have no settlement path)
+ *   - EXPERT only when canHost=true (host-side; needs payout account / RateCard)
  *
  * Single source of truth for both the dropdown population (UI) and the
- * server-side canHost gate (`InvitableRoleSchema` selection in
- * `app/api/organizations/[orgId]/invitations/route.ts`).
+ * server-side capability gates (`LEARNER_REQUIRES_CANSPONSOR` +
+ * `EXPERT_REQUIRES_CANHOST` in the members + invitations routes).
  */
-export function getInvitableRoles(canHost: boolean): MemberRole[] {
-  return canHost
-    ? [...HOST_INVITABLE_MEMBER_ROLES]
-    : [...SELF_SERVICE_MEMBER_ROLES];
+export function getInvitableRoles(
+  canSponsor: boolean,
+  canHost: boolean,
+): MemberRole[] {
+  const roles: MemberRole[] = [
+    "OWNER",
+    "MAINTAINER",
+    "BILLING_ADMIN",
+    "MANAGER",
+  ];
+  if (canSponsor) roles.push("LEARNER");
+  if (canHost) roles.push("EXPERT");
+  return roles;
 }
 
 /**

@@ -105,10 +105,14 @@ const MultiStepForm: React.FC = () => {
         signOut();
         return;
       }
+      // Controlled inputs surface blanks as "" — coerce to undefined so the
+      // action's Zod validator (which rejects "" to avoid colliding on the
+      // `User.phone @unique` index) sees the field as truly omitted.
+      const trimmedPhone = merged.phone?.trim();
       const result = await setOnboardingRoleAction(userId, "ORG_WORKSPACE", {
-        name: merged.name,
-        phone: merged.phone,
-        timezone: merged.timezone,
+        name: merged.name?.trim() || undefined,
+        phone: trimmedPhone || undefined,
+        timezone: merged.timezone?.trim() || undefined,
       });
       if (!result.success) {
         toast({

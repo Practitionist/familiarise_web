@@ -28,6 +28,8 @@ export const ORG_ERROR_COPY: Record<string, string> = {
     "No user account found with that email. They need to sign up at Familiarise first, or use the Invitations page to send them an invite.",
   EXPERT_REQUIRES_CANHOST:
     "Expert can only be assigned on host-capable organizations. Enable hosting under Settings → Capabilities first.",
+  LEARNER_REQUIRES_CANSPONSOR:
+    "Learner can only be assigned on sponsor-capable organizations. Enable sponsorship under Settings → Capabilities first.",
 // Why: PO balance enforcement (see docs/enterprise/10-invoicing.md
   // "PO balance enforcement" section). The server emits EXCEEDED; the
   // INSUFFICIENT alias exists so route renames don't break the UI copy.

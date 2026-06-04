@@ -28,11 +28,14 @@ type SelfServiceRole = z.infer<
   typeof CreateInvitationPayloadSchema
 >["role"];
 
-// canHost-aware role list. EXPERT only renders for host-capable orgs;
-// sponsor-only orgs see the four self-service roles. Mirrors the
-// server's EXPERT_REQUIRES_CANHOST guard in the invitations route.
-function selectableRoles(canHost: boolean): Array<{ value: SelfServiceRole; label: string }> {
-  return getInvitableRoles(canHost).map((value) => ({
+// Capability-aware role list. EXPERT only renders for canHost orgs;
+// LEARNER only for canSponsor. Mirrors the server's EXPERT_REQUIRES_CANHOST
+// + LEARNER_REQUIRES_CANSPONSOR guards in the invitations route.
+function selectableRoles(
+  canSponsor: boolean,
+  canHost: boolean,
+): Array<{ value: SelfServiceRole; label: string }> {
+  return getInvitableRoles(canSponsor, canHost).map((value) => ({
     value: value as SelfServiceRole,
     label: MEMBER_ROLE_LABEL[value],
   }));
@@ -146,8 +149,14 @@ export default function OrgInvitationsPage({
 }) {
   const { orgId } = use(params);
   const { allowed } = useRequireOrgRole(orgId, "MAINTAINER");
-  const { canHost } = useOrgRole(orgId);
-  const roleOptions = selectableRoles(canHost);
+  const { canSponsor, canHost } = useOrgRole(orgId);
+  const roleOptions = selectableRoles(canSponsor, canHost);
+  // Same default-role logic as MembersPageClient: LEARNER if sponsor-capable,
+  // EXPERT on host-only, MANAGER otherwise. Prevents an empty Select trigger
+  // when LEARNER is filtered out of roleOptions on host-only orgs.
+  const defaultRole: SelfServiceRole = (
+    canSponsor ? "LEARNER" : canHost ? "EXPERT" : "MANAGER"
+  ) as SelfServiceRole;
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
@@ -177,7 +186,7 @@ export default function OrgInvitationsPage({
 
   const [showCreate, setShowCreate] = useState(false);
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState<SelfServiceRole>("LEARNER");
+  const [role, setRole] = useState<SelfServiceRole>(defaultRole);
   const [error, setError] = useState<string | null>(null);
   // Confirm-before-revoke so a mis-click doesn't nuke a pending invite
   // and force the user to re-send it. Using the same dialog primitives

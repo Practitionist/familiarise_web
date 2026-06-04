@@ -312,14 +312,6 @@ export async function PATCH(
         data: {
           ...(body.name !== undefined && { name: body.name }),
           ...(body.slug !== undefined && { slug: body.slug }),
-          ...(body.description !== undefined && { description: body.description }),
-          ...(body.industry !== undefined && { industry: body.industry }),
-          ...(body.website !== undefined && { website: body.website }),
-          ...(body.sizeBucket !== undefined && { sizeBucket: body.sizeBucket }),
-          ...(body.logo !== undefined && { logo: body.logo }),
-          ...(body.bannerImage !== undefined && { bannerImage: body.bannerImage }),
-          ...(body.primaryColor !== undefined && { primaryColor: body.primaryColor }),
-          ...(body.secondaryColor !== undefined && { secondaryColor: body.secondaryColor }),
           ...(body.billingEmail !== undefined && { billingEmail: body.billingEmail }),
           ...(body.canSponsor !== undefined && { canSponsor: body.canSponsor }),
           ...(body.canHost !== undefined && { canHost: body.canHost }),
@@ -327,6 +319,71 @@ export async function PATCH(
           ...(body.paymentTermsDays !== undefined && {
             paymentTermsDays: body.paymentTermsDays,
           }),
+          // logo / bannerImage / primaryColor / secondaryColor / description /
+          // industry / website / sizeBucket live on the OrgBrandingProfile
+          // satellite (#768 lockdown #6), not Organization — write them via
+          // the brandingProfile relation. Same runtime/tsc dynamic as the
+          // taxInfo block below: the conditional-spread pattern hides the
+          // mistake from tsc until Prisma rejects it at runtime.
+          ...(body.logo !== undefined ||
+          body.bannerImage !== undefined ||
+          body.primaryColor !== undefined ||
+          body.secondaryColor !== undefined ||
+          body.description !== undefined ||
+          body.industry !== undefined ||
+          body.website !== undefined ||
+          body.sizeBucket !== undefined
+            ? {
+                brandingProfile: {
+                  upsert: {
+                    create: {
+                      ...(body.logo !== undefined && { logo: body.logo }),
+                      ...(body.bannerImage !== undefined && {
+                        bannerImage: body.bannerImage,
+                      }),
+                      ...(body.primaryColor !== undefined && {
+                        primaryColor: body.primaryColor,
+                      }),
+                      ...(body.secondaryColor !== undefined && {
+                        secondaryColor: body.secondaryColor,
+                      }),
+                      ...(body.description !== undefined && {
+                        description: body.description,
+                      }),
+                      ...(body.industry !== undefined && {
+                        industry: body.industry,
+                      }),
+                      ...(body.website !== undefined && { website: body.website }),
+                      ...(body.sizeBucket !== undefined && {
+                        sizeBucket: body.sizeBucket,
+                      }),
+                    },
+                    update: {
+                      ...(body.logo !== undefined && { logo: body.logo }),
+                      ...(body.bannerImage !== undefined && {
+                        bannerImage: body.bannerImage,
+                      }),
+                      ...(body.primaryColor !== undefined && {
+                        primaryColor: body.primaryColor,
+                      }),
+                      ...(body.secondaryColor !== undefined && {
+                        secondaryColor: body.secondaryColor,
+                      }),
+                      ...(body.description !== undefined && {
+                        description: body.description,
+                      }),
+                      ...(body.industry !== undefined && {
+                        industry: body.industry,
+                      }),
+                      ...(body.website !== undefined && { website: body.website }),
+                      ...(body.sizeBucket !== undefined && {
+                        sizeBucket: body.sizeBucket,
+                      }),
+                    },
+                  },
+                },
+              }
+            : {}),
           // gstin / pan / gstRegStatus / gstStateCode live on the
           // OrganizationTaxInfo satellite, not Organization — write them via the
           // taxInfo relation (a direct write here is a Prisma runtime error the
