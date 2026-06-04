@@ -55,6 +55,37 @@ describe("isProgramMoneyConfigLocked", () => {
   });
 });
 
+describe("program lock precedence (#779)", () => {
+  // Mirrors getProgramLockState's pure composition: the persisted
+  // configLockedAt timestamp is authoritative; the derived signal predicate is
+  // the belt-and-braces fallback. Kept DB-free by exercising the boolean
+  // combination directly.
+  const isLocked = (
+    configLockedAt: Date | null,
+    signals: Parameters<typeof isProgramMoneyConfigLocked>[0],
+  ): boolean => configLockedAt != null || isProgramMoneyConfigLocked(signals);
+
+  const NO_SIGNALS = {
+    assignmentCount: 0,
+    bookingCount: 0,
+    overageEventCount: 0,
+  };
+
+  it("explicit timestamp wins even with zero derived signals", () => {
+    expect(isLocked(new Date(), NO_SIGNALS)).toBe(true);
+  });
+
+  it("derived fallback still locks when counts > 0 even if timestamp is null", () => {
+    expect(
+      isLocked(null, { ...NO_SIGNALS, assignmentCount: 1 }),
+    ).toBe(true);
+  });
+
+  it("unlocked only when timestamp is null AND nothing rides on the program", () => {
+    expect(isLocked(null, NO_SIGNALS)).toBe(false);
+  });
+});
+
 describe("isContractTermsLocked", () => {
   it("DRAFT with nothing issued is editable", () => {
     expect(

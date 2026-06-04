@@ -154,6 +154,14 @@ export async function POST(
     );
     if (isNew) {
       await adjustActiveSeatCount(tx, { programId, delta: +1 });
+      // #779 — set-point for the persistent money-config lock: the FIRST genuine
+      // assignment freezes LOCKED_PROGRAM_FIELDS. updateMany gated on
+      // configLockedAt:null so a re-stamp (already-locked program, later
+      // assignment) is a no-op and the original lock instant is preserved.
+      await tx.program.updateMany({
+        where: { id: programId, configLockedAt: null },
+        data: { configLockedAt: new Date() },
+      });
     }
     await tx.orgAuditLog.create({
       data: {

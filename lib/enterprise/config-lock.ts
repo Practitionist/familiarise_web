@@ -1,14 +1,22 @@
 /**
  * #777 §B (locked decision: "edit safe fields, lock money config once in use").
  *
- * Pure predicates that derive whether a program/contract's MONEY config is
- * locked — without a `configLockedAt` column (that explicit field + the
- * "applies-next-cycle" cycle engine are #779 §A/§B, deferred to v4). The rule:
+ * Pure predicates over whether a program/contract's MONEY config is locked. The
+ * rule:
  *   - money config is editable while NOTHING is riding on it (no assignments,
  *     bookings, or overage events) — fixing a typo on a brand-new program is safe;
  *   - it locks read-only the moment it's in use, because a retroactive money edit
  *     would rewrite bookings already settled at the old terms (#779's hazard).
  * Safe identity fields (program name; contract auto-renew) stay editable always.
+ *
+ * #779 — the lock is now persistent: `Program.configLockedAt` is stamped in the
+ * tx that creates the FIRST assignment (see program-helpers.ts) and is the
+ * authoritative signal — locked is locked, and stays locked even after the
+ * triggering rows are gone. The derived count check below is kept as a
+ * belt-and-braces fallback (a pre-stamp legacy row, or counts > 0 with the
+ * column somehow null still reads locked). pendingConfig / "applies-next-cycle"
+ * was removed by design: changing money terms = archive this program + create a
+ * new one (mirrors RateCard bump / contract supersession).
  */
 import prisma from "@/lib/prisma";
 import type { ContractStatus } from "@prisma/client";
@@ -64,21 +72,32 @@ export function isContractTermsLocked(s: ContractLockSignals): boolean {
   );
 }
 
-/** Resolve the in-use signals for one program (bounded count queries). */
+/**
+ * Resolve the lock state for one program. #779 — `configLockedAt` is the
+ * authoritative signal (non-null ⇒ locked); the bounded count queries stay as a
+ * belt-and-braces fallback so counts > 0 still lock even if the column is null.
+ */
 export async function getProgramLockState(
   programId: string,
 ): Promise<{ locked: boolean; signals: ProgramLockSignals }> {
-  const [assignmentCount, bookingCount, overageEventCount] = await Promise.all([
-    prisma.programAssignment.count({ where: { programId } }),
-    prisma.bookingUtilization.count({
-      where: { programAssignment: { programId } },
-    }),
-    prisma.overageEvent.count({
-      where: { programAssignment: { programId } },
-    }),
-  ]);
+  const [program, assignmentCount, bookingCount, overageEventCount] =
+    await Promise.all([
+      prisma.program.findUnique({
+        where: { id: programId },
+        select: { configLockedAt: true },
+      }),
+      prisma.programAssignment.count({ where: { programId } }),
+      prisma.bookingUtilization.count({
+        where: { programAssignment: { programId } },
+      }),
+      prisma.overageEvent.count({
+        where: { programAssignment: { programId } },
+      }),
+    ]);
   const signals = { assignmentCount, bookingCount, overageEventCount };
-  return { locked: isProgramMoneyConfigLocked(signals), signals };
+  const locked =
+    program?.configLockedAt != null || isProgramMoneyConfigLocked(signals);
+  return { locked, signals };
 }
 
 /** Resolve the in-use signals for one contract. */
