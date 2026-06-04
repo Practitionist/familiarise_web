@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Coins, Plus } from "lucide-react";
 import { z } from "zod";
 
 import { useOrgRole } from "../useOrgRole";
+import { canSeeFinanceSurface } from "@/lib/auth/role-ranks";
 import { useToast } from "@/hooks/use-toast";
 import { loadScript } from "@/app/checkout/plans/utils";
 import { useSession } from "@/lib/auth-client";
@@ -15,6 +16,7 @@ import { StatCard } from "@/components/dashboard/StatCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Card,
   CardContent,
@@ -44,6 +46,10 @@ const walletResponseSchema = z.object({
     id: z.string(),
     currency: z.string(),
     walletBalance: z.number(),
+    // #777 §C — balance-alert config.
+    minBalancePaise: z.number().nullable(),
+    autoTopUpEnabled: z.boolean(),
+    autoTopUpAmountPaise: z.number().nullable(),
   }),
   ledger: z.array(
     z.object({
@@ -141,6 +147,31 @@ async function initiateTopUp(
   return topUpInitiateResponseSchema.parse(raw);
 }
 
+// #777 §C — persist the balance-alert config via the billing-account PATCH.
+// NOTIFY-ONLY floor: the toggle drives whether a minimum is set (cron alerts
+// off minBalancePaise alone); autoTopUpEnabled stays false until mandates land
+// — the API rejects enabling it without an autoTopUpAmountPaise anyway.
+async function patchBalanceAlerts(
+  orgId: string,
+  body: {
+    minBalancePaise: number | null;
+  },
+): Promise<void> {
+  const res = await fetch(`/api/organizations/${orgId}/billing-account`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const parsedError = apiErrorSchema.safeParse(await res.json().catch(() => null));
+    throw new Error(
+      parsedError.success
+        ? (parsedError.data.error ?? "Failed to save balance alerts")
+        : "Failed to save balance alerts",
+    );
+  }
+}
+
 async function fetchTopUpStatus(
   orgId: string,
   topUpId: string,
@@ -179,7 +210,7 @@ export function WalletTab({
   moneyMoveBlocked?: boolean;
   moneyMoveReason?: string;
 }) {
-  const { isAtLeast } = useOrgRole(orgId);
+  const { isAtLeast, role } = useOrgRole(orgId);
   const { data: session } = useSession();
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
@@ -189,6 +220,10 @@ export function WalletTab({
 
   const [showBuy, setShowBuy] = useState(false);
   const [amountMajor, setAmountMajor] = useState("1000");
+  // #777 §C — balance-alert config draft. Seeded from the loaded account once
+  // it lands (see effect below) so the inputs reflect persisted state.
+  const [minBalanceMajor, setMinBalanceMajor] = useState("");
+  const [alertsEnabled, setAlertsEnabled] = useState(false);
   const { toast } = useToast();
 
   const topUpMutation = useMutation({
@@ -272,6 +307,50 @@ export function WalletTab({
 
   const walletResponse = data && isWalletResponse(data) ? data : null;
   const walletError = data && !isWalletResponse(data) ? data : null;
+
+  // #777 §C — finance can see + edit balance alerts. canSeeFinanceSurface
+  // includes MANAGER (read-only), but the PATCH gate is BILLING_ADMIN|OWNER,
+  // so we only let those two roles actually save.
+  const canSeeAlerts = canSeeFinanceSurface(role);
+  const canEditAlerts = role === "OWNER" || role === "BILLING_ADMIN";
+
+  // Seed the draft from the persisted account once it loads, keyed on the
+  // returned config so a server-side change re-syncs the inputs. Alerts are
+  // "on" whenever a minimum is set — the cron keys off minBalancePaise alone.
+  const acct = walletResponse?.billingAccount;
+  useEffect(() => {
+    if (!acct) return;
+    setMinBalanceMajor(
+      acct.minBalancePaise != null ? String(acct.minBalancePaise / 100) : "",
+    );
+    setAlertsEnabled(acct.minBalancePaise != null);
+  }, [acct?.minBalancePaise]);
+
+  const alertsMutation = useMutation({
+    mutationFn: async () => {
+      const trimmed = minBalanceMajor.trim();
+      const parsed = trimmed === "" ? null : Math.round(parseFloat(trimmed) * 100);
+      // Toggle off (or a cleared field) clears the floor; toggle on needs a
+      // valid amount so the cron has a threshold to compare against.
+      if (alertsEnabled && (parsed == null || parsed < 0 || Number.isNaN(parsed))) {
+        throw new Error("Set a valid minimum balance to enable alerts.");
+      }
+      await patchBalanceAlerts(orgId, {
+        minBalancePaise: alertsEnabled ? parsed : null,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["org-wallet", orgId] });
+      toast({ title: "Balance alerts saved" });
+    },
+    onError: (err) => {
+      toast({
+        title: "Could not save balance alerts",
+        description: err instanceof Error ? err.message : undefined,
+        variant: "destructive",
+      });
+    },
+  });
 
   return (
     <>
@@ -396,6 +475,55 @@ export function WalletTab({
               </Table>
             </CardContent>
           </Card>
+
+          {/* #777 §C — balance alerts (NOTIFY-ONLY floor). */}
+          {canSeeAlerts && (
+            <Card className="mt-6">
+              <CardHeader>
+                <CardTitle className="text-base">Balance alerts</CardTitle>
+                <CardDescription>
+                  Email finance when the balance dips below the minimum —
+                  automatic top-up arrives with payment mandates.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2 max-w-xs">
+                  <Label htmlFor="min-balance">Minimum balance (₹)</Label>
+                  <Input
+                    id="min-balance"
+                    type="number"
+                    min="0"
+                    step="100"
+                    value={minBalanceMajor}
+                    disabled={
+                      !canEditAlerts || !alertsEnabled || alertsMutation.isPending
+                    }
+                    onChange={(e) => setMinBalanceMajor(e.target.value)}
+                  />
+                </div>
+                <div className="flex items-center gap-3">
+                  <Switch
+                    id="alerts-enabled"
+                    checked={alertsEnabled}
+                    disabled={!canEditAlerts || alertsMutation.isPending}
+                    onCheckedChange={setAlertsEnabled}
+                  />
+                  <Label htmlFor="alerts-enabled" className="font-normal">
+                    Email finance when the balance dips below the minimum
+                  </Label>
+                </div>
+                {canEditAlerts && (
+                  <Button
+                    size="sm"
+                    onClick={() => alertsMutation.mutate()}
+                    disabled={alertsMutation.isPending}
+                  >
+                    {alertsMutation.isPending ? "Saving…" : "Save alerts"}
+                  </Button>
+                )}
+              </CardContent>
+            </Card>
+          )}
         </>
       )}
 

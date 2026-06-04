@@ -205,12 +205,19 @@ export function deriveActionCenter(
   }
 
   if (s.pendingOverageCount > 0) {
+    // #777 §C — overage-as-expansion prompt: recurring overage is the
+    // strongest buy-more signal, so frame the cost against upsizing the
+    // allocation instead of just reporting a count.
+    const overageRupees =
+      s.pendingOveragePaise > 0
+        ? ` (₹${Math.round(s.pendingOveragePaise / 100).toLocaleString("en-IN")} this cycle)`
+        : "";
     items.push({
       key: "pending-overages",
       severity: "info",
-      title: `${s.pendingOverageCount} pending overage${s.pendingOverageCount === 1 ? "" : "s"}`,
-      body: "Members owe outstanding overage charges this cycle.",
-      ctaLabel: "View programs",
+      title: `${s.pendingOverageCount} pending overage${s.pendingOverageCount === 1 ? "" : "s"}${overageRupees}`,
+      body: "Members are booking past their covered allocation. If this recurs, expanding the program allocation is usually cheaper than paying overage.",
+      ctaLabel: "Review allocation",
       ctaHref: `${base}/programs`,
     });
   }

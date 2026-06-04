@@ -38,16 +38,29 @@ const FundingSourceSchema = z.enum([
 
 const CurrencySchema = z.enum(["INR", "USD", "EUR", "GBP"]);
 
+// #777 §C — wallet minimum-balance + auto-top-up config. NOTIFY-ONLY floor for
+// now (cron emails finance below the minimum); the mandate charge lands later.
 const PatchBodySchema = z
   .object({
     billingEmail: z.string().email().optional(),
     currency: CurrencySchema.optional(),
     fundingSource: FundingSourceSchema.optional(),
     creditLimit: z.coerce.number().int().min(0).nullable().optional(),
+    minBalancePaise: z.coerce.number().int().min(0).nullable().optional(),
+    autoTopUpEnabled: z.boolean().optional(),
+    autoTopUpAmountPaise: z.coerce.number().int().positive().nullable().optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
     message: "PATCH body must contain at least one field",
   });
+
+// #777 §C — the three wallet-alert fields are only meaningful for WALLET
+// funding; presence of any lets the handler reject non-WALLET accounts.
+const WALLET_ALERT_FIELDS = [
+  "minBalancePaise",
+  "autoTopUpEnabled",
+  "autoTopUpAmountPaise",
+] as const;
 
 export async function GET(
   _req: NextRequest,
@@ -115,6 +128,42 @@ export async function PATCH(
         );
       }
 
+      // #777 §C — wallet-alert config guards. The effective funding source
+      // is the incoming one if being changed, else the stored one. These
+      // fields only apply to WALLET funding, and enabling auto-top-up needs
+      // both the floor and the charge amount set so the cron has a target.
+      const walletAlertTouched = WALLET_ALERT_FIELDS.some(
+        (f) => body[f] !== undefined,
+      );
+      if (walletAlertTouched) {
+        const effectiveFunding = body.fundingSource ?? ba.fundingSource;
+        if (effectiveFunding !== "WALLET") {
+          throw Object.assign(
+            new Error(
+              "Balance alerts and auto-top-up only apply to WALLET-funded accounts.",
+            ),
+            { httpStatus: 400, code: "WALLET_ONLY" },
+          );
+        }
+        const nextEnabled = body.autoTopUpEnabled ?? ba.autoTopUpEnabled;
+        const nextMin =
+          body.minBalancePaise !== undefined
+            ? body.minBalancePaise
+            : ba.minBalancePaise;
+        const nextAmount =
+          body.autoTopUpAmountPaise !== undefined
+            ? body.autoTopUpAmountPaise
+            : ba.autoTopUpAmountPaise;
+        if (nextEnabled && (nextMin == null || nextAmount == null)) {
+          throw Object.assign(
+            new Error(
+              "Enabling auto-top-up requires both a minimum balance and a top-up amount.",
+            ),
+            { httpStatus: 400 },
+          );
+        }
+      }
+
       // Funding-source change guards. We only refuse the change when
       // moving away from WALLET with a non-zero balance or away from
       // INVOICE with outstanding invoices — either would orphan money
@@ -173,6 +222,15 @@ export async function PATCH(
           ...(body.creditLimit !== undefined && {
             creditLimit: body.creditLimit,
           }),
+          ...(body.minBalancePaise !== undefined && {
+            minBalancePaise: body.minBalancePaise,
+          }),
+          ...(body.autoTopUpEnabled !== undefined && {
+            autoTopUpEnabled: body.autoTopUpEnabled,
+          }),
+          ...(body.autoTopUpAmountPaise !== undefined && {
+            autoTopUpAmountPaise: body.autoTopUpAmountPaise,
+          }),
         },
       });
 
@@ -188,11 +246,17 @@ export async function PATCH(
               fundingSource: ba.fundingSource,
               currency: ba.currency,
               creditLimit: ba.creditLimit,
+              minBalancePaise: ba.minBalancePaise,
+              autoTopUpEnabled: ba.autoTopUpEnabled,
+              autoTopUpAmountPaise: ba.autoTopUpAmountPaise,
             },
             to: {
               fundingSource: next.fundingSource,
               currency: next.currency,
               creditLimit: next.creditLimit,
+              minBalancePaise: next.minBalancePaise,
+              autoTopUpEnabled: next.autoTopUpEnabled,
+              autoTopUpAmountPaise: next.autoTopUpAmountPaise,
             },
           },
         },
@@ -206,7 +270,12 @@ export async function PATCH(
     if (err instanceof Error && "httpStatus" in err) {
       const status =
         typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      return NextResponse.json({ error: err.message }, { status });
+      const code =
+        "code" in err && typeof err.code === "string" ? err.code : undefined;
+      return NextResponse.json(
+        { error: err.message, ...(code && { code }) },
+        { status },
+      );
     }
     throw err;
   }
