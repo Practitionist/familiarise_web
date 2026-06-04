@@ -302,10 +302,13 @@ export async function resolveActivationSignals(orgId: string): Promise<{
       : prisma.organizationPayout.count({
           where: { organizationId: orgId, status: "PROCESSING" },
         }),
-    // Cap-near: scan active assignments + their program meter. Bounded take —
-    // an org with >500 live assignments is past the point this banner matters.
+    // Cap-near: scan active in-window assignments + their program meter (a
+    // future row is 0% by definition — skip it). Bounded take — an org with
+    // >500 live assignments is past the point this banner matters.
     prisma.programAssignment.findMany({
       where: {
+        status: "ACTIVE",
+        periodStart: { lte: now },
         program: { contract: { organizationId: orgId }, status: "ACTIVE" },
         periodEnd: { gte: now },
       },

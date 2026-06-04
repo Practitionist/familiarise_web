@@ -112,6 +112,7 @@ export default async function MyProgramPage({
                   <tr key={s.id} className="border-t">
                     <td className="px-4 py-2">
                       {s.startsAt.toLocaleString("en-IN", {
+                        timeZone: "Asia/Kolkata", // RSC renders in UTC otherwise
                         day: "2-digit",
                         month: "short",
                         hour: "2-digit",
@@ -179,8 +180,10 @@ export default async function MyProgramPage({
                     <h2 className="font-medium">{a.program.name}</h2>
                     <p className="text-xs text-muted-foreground mt-1">
                       {PROGRAM_TYPE_LABEL[a.program.type] ?? a.program.type} ·
-                      cycle {a.periodStart.toLocaleDateString("en-IN")} →{" "}
-                      {a.periodEnd.toLocaleDateString("en-IN")}
+                      cycle{" "}
+                      {a.periodStart.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" })}{" "}
+                      →{" "}
+                      {a.periodEnd.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" })}
                     </p>
                   </div>
                   <span className="rounded-full border px-2.5 py-0.5 text-xs">
@@ -300,6 +303,7 @@ export default async function MyProgramPage({
                   <tr key={u.id} className="border-t">
                     <td className="px-4 py-2">
                       {u.createdAt.toLocaleDateString("en-IN", {
+                        timeZone: "Asia/Kolkata",
                         day: "2-digit",
                         month: "short",
                         year: "numeric",

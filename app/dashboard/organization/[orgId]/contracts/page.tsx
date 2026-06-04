@@ -650,12 +650,24 @@ function EditContractDialog({
     // when unlocked — the server is the final authority either way.
     const body: Parameters<typeof editContract>[2] = { autoRenew };
     if (!locked) {
-      if (effectiveTo && new Date(effectiveTo) <= new Date(effectiveFrom)) {
+      // A cleared/garbled date input is an empty string — new Date("") is an
+      // Invalid Date and .toISOString() on it throws. Validate before use.
+      const fromDate = new Date(effectiveFrom);
+      if (!effectiveFrom || Number.isNaN(fromDate.getTime())) {
+        setError("Start date is required.");
+        return;
+      }
+      const toDate = effectiveTo ? new Date(effectiveTo) : null;
+      if (toDate && Number.isNaN(toDate.getTime())) {
+        setError("End date is invalid.");
+        return;
+      }
+      if (toDate && toDate <= fromDate) {
         setError("End date must be after the start date.");
         return;
       }
-      body.effectiveFrom = new Date(effectiveFrom).toISOString();
-      body.effectiveTo = effectiveTo ? new Date(effectiveTo).toISOString() : null;
+      body.effectiveFrom = fromDate.toISOString();
+      body.effectiveTo = toDate ? toDate.toISOString() : null;
       // LICENSE terms are prepaid — don't send paymentTermsDays for them.
       if (!isLicense) {
         const parsed = parseInt(paymentTermsDays, 10);

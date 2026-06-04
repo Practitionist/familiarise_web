@@ -135,8 +135,13 @@ export async function GET(
   const usage = programs.length
     ? await prisma.programAssignment.groupBy({
         by: ["programId"],
+        // ACTIVE + in-window only: a future (not-yet-started) or
+        // cancelled/rolled row would inflate the capacity multiplier the
+        // utilization column derives from _count.
         where: {
           programId: { in: programs.map((p) => p.id) },
+          status: "ACTIVE",
+          periodStart: { lte: now },
           periodEnd: { gte: now },
         },
         _sum: { engagementsUsed: true, consumedPaise: true },

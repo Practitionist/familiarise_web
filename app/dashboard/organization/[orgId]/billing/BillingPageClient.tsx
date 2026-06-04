@@ -253,12 +253,13 @@ async function pollInvoiceUntilPaid(
 }
 
 // FDE: whole days an OVERDUE invoice is past its dueDate (falling back to
-// createdAt when dueDate is null). Floored, min 0 — a freshly-flipped row
-// reads "1 day late", never a negative.
+// createdAt when dueDate is null). Ceiled so a freshly-flipped row reads
+// "1 day late" — never "0 days late"; 0 only when not actually past due.
 function daysLate(dueDate: string | null, createdAt: string): number {
   const ref = new Date(dueDate ?? createdAt).getTime();
   const diffMs = Date.now() - ref;
-  return Math.max(0, Math.floor(diffMs / (24 * 60 * 60 * 1000)));
+  if (diffMs <= 0) return 0;
+  return Math.ceil(diffMs / (24 * 60 * 60 * 1000));
 }
 
 export function BillingPageClient({ orgId }: { orgId: string }) {

@@ -104,6 +104,7 @@ export default async function MyArrangementPage({
                   <tr key={s.id} className="border-t">
                     <td className="px-4 py-2">
                       {s.startsAt.toLocaleString("en-IN", {
+                        timeZone: "Asia/Kolkata", // RSC renders in UTC otherwise
                         day: "2-digit",
                         month: "short",
                         hour: "2-digit",
@@ -214,6 +215,7 @@ export default async function MyArrangementPage({
               The active default split for sessions hosted via{" "}
               {access.org.name}. In effect since{" "}
               {orgDefaultCard.effectiveFrom.toLocaleDateString("en-IN", {
+                timeZone: "Asia/Kolkata",
                 day: "2-digit",
                 month: "short",
                 year: "numeric",
@@ -284,6 +286,7 @@ export default async function MyArrangementPage({
                   <tr key={e.id} className="border-t">
                     <td className="px-4 py-2">
                       {e.payment.createdAt.toLocaleDateString("en-IN", {
+                        timeZone: "Asia/Kolkata",
                         day: "2-digit",
                         month: "short",
                         year: "numeric",

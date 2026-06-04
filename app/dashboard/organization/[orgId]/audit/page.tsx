@@ -109,9 +109,8 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
   // read-only for ticket investigation and the nav entry isn't a dead
   // redirect. Mirrors useRequireOrgAccess's redirect-on-fail so an
   // EXPERT/LEARNER/BILLING_ADMIN direct-URL bypass still bounces to /home.
-  // NOTE: the audit GET API (route.ts) is still requireOrgAccess
-  // "MAINTAINER", so SUPPORT's data fetch 403s until that floor is
-  // lowered — not broadening API auth in this PR.
+  // NOTE: the audit GET API (route.ts) admits SUPPORT read-only at the
+  // same floor as this gate, so SUPPORT's data fetch succeeds.
   const router = useRouter();
   const { role, isLoading: isGateLoading } = useOrgRole(orgId);
   const passes = role === "SUPPORT" || isAtLeastRole(role, "MAINTAINER");

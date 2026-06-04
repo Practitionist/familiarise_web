@@ -239,9 +239,19 @@ export default function OrgSettingsPage({
   // the whole taxInfo upsert OWNER-only, matching the UI gate below.
   const trimmedGstin = gstin.trim().toUpperCase();
   const gstinValid = trimmedGstin.length === 0 || trimmedGstin.length === 15;
+  // GST state code is exactly 2 digits (e.g. "29"); empty clears it. An
+  // invalid value blocks the save with an error instead of silently saving
+  // null while the input still shows the bad value.
   const trimmedStateCode = gstStateCode.trim();
+  const stateCodeValid =
+    trimmedStateCode.length === 0 || /^\d{2}$/.test(trimmedStateCode);
   const saveTaxInfo = () => {
     if (!gstinValid) return;
+    if (!stateCodeValid) {
+      setError("GST state code must be exactly 2 digits (e.g. 29).");
+      return;
+    }
+    setError(null);
     mutation.mutate({
       gstin: trimmedGstin.length === 15 ? trimmedGstin : null,
       gstStateCode: trimmedStateCode.length === 2 ? trimmedStateCode : null,
