@@ -136,6 +136,19 @@ export async function POST(
     );
   }
 
+  // LEARNER mirrors EXPERT: host-only orgs have no Contract / Program /
+  // Wallet to fund the learner's sessions, so the role is rejected at
+  // the invite boundary. Same defence-in-depth pattern.
+  if (role === "LEARNER" && !access.org.canSponsor) {
+    return NextResponse.json(
+      {
+        error: "LEARNER can only be assigned on sponsor-capable organizations",
+        code: "LEARNER_REQUIRES_CANSPONSOR",
+      },
+      { status: 400 },
+    );
+  }
+
   const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000);
 
   // De-dupe active invitations by (orgId, email). An inviter retrying

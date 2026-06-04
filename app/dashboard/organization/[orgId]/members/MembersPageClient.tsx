@@ -65,10 +65,14 @@ import {
 // so the dashboard and any other consumer (e.g. operator tools) share the
 // same runtime contract.
 
-// canHost-aware role list. EXPERT only appears on host-capable orgs;
-// the server enforces the same gate with EXPERT_REQUIRES_CANHOST.
-function selectableRoles(canHost: boolean): Array<{ value: MemberRole; label: string }> {
-  return getInvitableRoles(canHost).map((value) => ({
+// Capability-aware role list. EXPERT only appears on canHost orgs; LEARNER
+// only on canSponsor orgs. Server enforces the symmetric gates
+// (EXPERT_REQUIRES_CANHOST + LEARNER_REQUIRES_CANSPONSOR).
+function selectableRoles(
+  canSponsor: boolean,
+  canHost: boolean,
+): Array<{ value: MemberRole; label: string }> {
+  return getInvitableRoles(canSponsor, canHost).map((value) => ({
     value,
     label: MEMBER_ROLE_LABEL[value],
   }));
@@ -145,10 +149,19 @@ async function removeMember(orgId: string, memberId: string) {
 }
 
 export function MembersPageClient({ orgId }: { orgId: string }) {
-  const { isAtLeast, canHost } = useOrgRole(orgId);
+  const { isAtLeast, canSponsor, canHost } = useOrgRole(orgId);
   const { allowed } = useRequireOrgAccess(orgId, { minRole: "MANAGER" });
   const queryClient = useQueryClient();
-  const roleOptions = selectableRoles(canHost);
+  const roleOptions = selectableRoles(canSponsor, canHost);
+  // Default to the most common consumer role for the org's capability:
+  // LEARNER on sponsor-capable orgs, EXPERT on host-only orgs, MANAGER as
+  // a last resort. Hard-coding "LEARNER" left the Select trigger blank on
+  // host-only orgs because LEARNER was filtered out of roleOptions.
+  const defaultRole: MemberRole = canSponsor
+    ? "LEARNER"
+    : canHost
+      ? "EXPERT"
+      : "MANAGER";
 
   const { data, isLoading } = useQuery({
     queryKey: ["org-members", orgId],
@@ -158,7 +171,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
 
   const [showInvite, setShowInvite] = useState(false);
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState<MemberRole>("LEARNER");
+  const [role, setRole] = useState<MemberRole>(defaultRole);
   const [error, setError] = useState<string | null>(null);
 
   const addMutation = useMutation({
@@ -167,7 +180,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
       queryClient.invalidateQueries({ queryKey: ["org-members", orgId] });
       setShowInvite(false);
       setEmail("");
-      setRole("LEARNER");
+      setRole(defaultRole);
       setError(null);
     },
     onError: (err: Error) => setError(err.message),
