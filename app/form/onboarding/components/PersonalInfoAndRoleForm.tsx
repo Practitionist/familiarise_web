@@ -17,7 +17,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Loader2 } from "lucide-react";
 import { PersonalInfoAndRoleFormSchema } from "@/utils/onboarding";
 import { useSession } from "@/lib/auth-client";
 import { z } from "zod";
@@ -58,6 +58,11 @@ const GENDER_OPTIONS = [
 const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
   const { data: session } = useSession();
   const [optionalOpen, setOptionalOpen] = useState(false);
+  // Reflects the parent's async role-flip (ORG_WORKSPACE path hits the
+  // `setOnboardingRoleAction` server action before advancing). When the
+  // action fails, the parent shows a toast and does NOT unmount us, so the
+  // `finally` re-enables the button for retry.
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const {
     register,
@@ -115,12 +120,17 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
   const selectedRole = watch("role");
   const bioLength = watch("bio")?.length || 0;
 
-  const onSubmit = (data: FormData) => {
+  const onSubmit = async (data: FormData) => {
     const submissionData = {
       ...data,
       email: session?.user?.email || "",
     };
-    onNext(submissionData);
+    setIsSubmitting(true);
+    try {
+      await onNext(submissionData);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -349,8 +359,20 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
         </div>
       )}
 
-      <Button type="submit" className="w-full" size="lg">
-        Continue
+      <Button
+        type="submit"
+        className="w-full"
+        size="lg"
+        disabled={isSubmitting}
+      >
+        {isSubmitting ? (
+          <>
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            Continuing...
+          </>
+        ) : (
+          "Continue"
+        )}
       </Button>
     </form>
   );
