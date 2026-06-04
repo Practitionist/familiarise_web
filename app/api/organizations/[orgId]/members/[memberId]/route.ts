@@ -311,7 +311,7 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   {
     params,
   }: {
@@ -321,6 +321,11 @@ export async function DELETE(
   const { orgId, memberId } = await params;
   const access = await requireOrgAccess(orgId, "MAINTAINER");
   if (access.error) return access.error;
+
+  // #779 §C — in-flight-money override. Only an OWNER may force past the
+  // pre-check; MAINTAINERs must clear the money first.
+  const force = req.nextUrl.searchParams.get("force") === "true";
+  const isOwner = access.member.role === "OWNER";
 
   // A7: capture context for the post-commit Novu fire. Resolved BEFORE
   // the transaction so the notification payload is ready to dispatch the
@@ -366,6 +371,67 @@ export async function DELETE(
         // Idempotent: a repeat DELETE is a no-op that still returns 204.
         return;
       }
+
+      // #779 §C — in-flight-money pre-check. Removing a member while real
+      // money tied to THEM is still moving would strand it: a pending/accrued
+      // overage charge, unpaid consultant earnings, an in-progress refund, or
+      // an open dispute all need a settled owner. Scoped via the member's
+      // payments (payment.userId = member.userId); earnings via their
+      // ConsultantProfile. An OWNER may override with ?force=true once they've
+      // accepted the consequences.
+      const [overageInflight, unpaidEarnings, pendingRefunds, openDisputes] =
+        await Promise.all([
+          tx.overageEvent.count({
+            where: {
+              chargeStatus: { in: ["PENDING", "ACCRUED"] },
+              payment: { userId: current.userId },
+            },
+          }),
+          current.consultantProfileId
+            ? tx.consultantEarnings.count({
+                where: {
+                  consultantProfileId: current.consultantProfileId,
+                  status: { not: "PAID" },
+                },
+              })
+            : Promise.resolve(0),
+          tx.refund.count({
+            where: {
+              status: "PENDING",
+              payment: { userId: current.userId },
+            },
+          }),
+          tx.dispute.count({
+            where: {
+              // Open = anything not yet terminal (WON/LOST/CHARGE_REFUNDED/
+              // WARNING_CLOSED). Money may still move until then.
+              status: {
+                in: [
+                  "WARNING_NEEDS_RESPONSE",
+                  "WARNING_UNDER_REVIEW",
+                  "NEEDS_RESPONSE",
+                  "UNDER_REVIEW",
+                ],
+              },
+              payment: { userId: current.userId },
+            },
+          }),
+        ]);
+      const inflightTotal =
+        overageInflight + unpaidEarnings + pendingRefunds + openDisputes;
+      if (inflightTotal > 0 && !(force && isOwner)) {
+        throw Object.assign(new Error("MEMBER_HAS_INFLIGHT_MONEY"), {
+          httpStatus: 409,
+          code: "MEMBER_HAS_INFLIGHT_MONEY",
+          counts: {
+            overageInflight,
+            unpaidEarnings,
+            pendingRefunds,
+            openDisputes,
+          },
+        });
+      }
+      const forced = inflightTotal > 0;
 
       // Soft-delete (status=REMOVED) instead of hard-delete: audit rows
       // reference Membership via `actorMembershipId`/`targetMembershipId`,
@@ -414,10 +480,13 @@ export async function DELETE(
       // member can't be added. We close the period at `now` rather than
       // deleting so engagementsUsed history + UsageLedgerEntry rows
       // remain queryable for reconciliation.
+      // #779 §A — close the period AND stamp status=CANCELLED (member
+      // removed mid-cycle) so the assignment lifecycle is explicit, not
+      // inferred from periodEnd alone.
       const now = new Date();
       const terminated = await tx.programAssignment.updateMany({
         where: { membershipId: memberId, periodEnd: { gte: now } },
-        data: { periodEnd: now },
+        data: { periodEnd: now, status: "CANCELLED" },
       });
 
       await tx.orgAuditLog.create({
@@ -432,6 +501,9 @@ export async function DELETE(
             role: current.role,
             previousStatus: current.status,
             assignmentsTerminated: terminated.count,
+            // #779 §C — record an OWNER force-override past the in-flight money
+            // pre-check so the audit trail shows the money was knowingly left.
+            ...(forced && { forced: true }),
           },
         },
       });
@@ -503,7 +575,18 @@ export async function DELETE(
     if (err instanceof Error && "httpStatus" in err) {
       const status =
         typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      return NextResponse.json({ error: err.message }, { status });
+      // #779 §C — forward the structured code + breakdown counts so the UI
+      // renders the in-flight-money wind-down message.
+      const code =
+        "code" in err && typeof err.code === "string" ? err.code : undefined;
+      const counts =
+        "counts" in err && err.counts && typeof err.counts === "object"
+          ? err.counts
+          : undefined;
+      return NextResponse.json(
+        { error: err.message, ...(code && { code }), ...(counts && { counts }) },
+        { status },
+      );
     }
     throw err;
   }

@@ -72,12 +72,19 @@ export async function runExpireContracts(): Promise<ExpireStats> {
       });
       if (programs.length > 0) {
         const programIds = programs.map((p) => p.id);
+        // #779 §A — a contract expiry takes its ACTIVE programs (→ EXPIRED)
+        // and their still-ACTIVE assignments (→ CLOSED) with it, so the
+        // lifecycle is explicit rather than inferred from periodEnd alone.
+        await tx.program.updateMany({
+          where: { contractId: c.id, status: "ACTIVE" },
+          data: { status: "EXPIRED" },
+        });
         const closed = await tx.programAssignment.updateMany({
           where: {
             programId: { in: programIds },
             periodEnd: { gte: now },
           },
-          data: { periodEnd: now },
+          data: { periodEnd: now, status: "CLOSED" },
         });
         stats.assignmentsClosed += closed.count;
       }

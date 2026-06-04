@@ -183,6 +183,26 @@ export async function PATCH(
             { httpStatus: 409 },
           );
         }
+
+        // #779 §A — terminating a contract while invoices billed under it are
+        // still owed (ISSUED/OVERDUE) would sever the money trail. DRAFT
+        // invoices haven't billed yet, so they don't block.
+        const outstandingInvoices = await tx.organizationInvoice.count({
+          where: {
+            contractId,
+            status: { in: ["ISSUED", "OVERDUE"] },
+          },
+        });
+        if (outstandingInvoices > 0) {
+          throw Object.assign(
+            new Error("CONTRACT_HAS_OUTSTANDING_INVOICES"),
+            {
+              httpStatus: 409,
+              code: "CONTRACT_HAS_OUTSTANDING_INVOICES",
+              counts: { outstandingInvoices },
+            },
+          );
+        }
       }
 
       const next = await tx.contract.update({
@@ -208,6 +228,21 @@ export async function PATCH(
           }),
         },
       });
+
+      // #779 §A — TERMINATED cascade: a terminated contract takes its
+      // programs (ACTIVE → EXPIRED) and their still-ACTIVE assignments
+      // (→ CLOSED) down with it, in this same tx, so nothing is left
+      // drawing against a dead contract.
+      if (body.status === "TERMINATED" && current.status !== "TERMINATED") {
+        await tx.program.updateMany({
+          where: { contractId, status: "ACTIVE" },
+          data: { status: "EXPIRED" },
+        });
+        await tx.programAssignment.updateMany({
+          where: { program: { contractId }, status: "ACTIVE" },
+          data: { status: "CLOSED" },
+        });
+      }
 
       // Status transitions get dedicated audit actions so the timeline
       // reads cleanly; a plain "updated" line loses the lifecycle signal.
@@ -246,8 +281,14 @@ export async function PATCH(
         typeof err.httpStatus === "number" ? err.httpStatus : 500;
       const code =
         "code" in err && typeof err.code === "string" ? err.code : undefined;
+      // #779 §A — forward counts so the UI can render the outstanding-invoice
+      // wind-down message alongside the existing terms-lock code.
+      const counts =
+        "counts" in err && err.counts && typeof err.counts === "object"
+          ? err.counts
+          : undefined;
       return NextResponse.json(
-        { error: err.message, ...(code && { code }) },
+        { error: err.message, ...(code && { code }), ...(counts && { counts }) },
         { status },
       );
     }

@@ -26,10 +26,21 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     contract: { findFirst: jest.fn(), update: jest.fn() },
-    program: { findFirst: jest.fn(), delete: jest.fn() },
-    programAssignment: { count: jest.fn() },
+    program: {
+      findFirst: jest.fn(),
+      delete: jest.fn(),
+      // #779 — TERMINATED cascade (programs → EXPIRED).
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
+    programAssignment: {
+      count: jest.fn(),
+      // #779 — TERMINATED cascade (assignments → CLOSED).
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
     bookingUtilization: { findFirst: jest.fn() },
     purchaseOrder: { findUnique: jest.fn() },
+    // #779 — outstanding-invoice terminate guard; default = no invoices owed.
+    organizationInvoice: { count: jest.fn().mockResolvedValue(0) },
     orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
     $transaction: jest.fn(),
     $disconnect: jest.fn(),
@@ -66,10 +77,11 @@ import { DELETE as programDELETE } from "@/app/api/organizations/[orgId]/program
 
 const mockedPrisma = prisma as unknown as {
   contract: { findFirst: jest.Mock; update: jest.Mock };
-  program: { findFirst: jest.Mock; delete: jest.Mock };
-  programAssignment: { count: jest.Mock };
+  program: { findFirst: jest.Mock; delete: jest.Mock; updateMany: jest.Mock };
+  programAssignment: { count: jest.Mock; updateMany: jest.Mock };
   bookingUtilization: { findFirst: jest.Mock };
   purchaseOrder: { findUnique: jest.Mock };
+  organizationInvoice: { count: jest.Mock };
   orgAuditLog: { create: jest.Mock };
   $transaction: jest.Mock;
 };
@@ -100,6 +112,7 @@ function wireTxShim() {
       programAssignment: mockedPrisma.programAssignment,
       bookingUtilization: mockedPrisma.bookingUtilization,
       purchaseOrder: mockedPrisma.purchaseOrder,
+      organizationInvoice: mockedPrisma.organizationInvoice,
       orgAuditLog: mockedPrisma.orgAuditLog,
     };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
