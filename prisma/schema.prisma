@@ -457,6 +457,15 @@ model Organization {
 
   status OrgStatus @default(PENDING_VERIFICATION)
 
+  /// #779 §A — PENDING_VERIFICATION self-serve resubmit. When an admin rejects,
+  /// verificationReason explains why so the OWNER can fix + resubmit (bumps
+  /// verificationSubmittedAt, clears the reason). The org stays
+  /// PENDING_VERIFICATION through the loop; these carry the sub-state the banner
+  /// renders.
+  verificationReason      String?   @db.VarChar(500)
+  verificationSubmittedAt DateTime?
+  verificationRejectedAt  DateTime?
+
   // Capabilities (replace OrganizationKind enum).
   // An org can sponsor (pays for its members' sessions), host (hosts consultants
   // who earn through the org), both (HYBRID), or neither (inert).
@@ -873,6 +882,7 @@ model OrgKybVerification {
   sumsubApplicantId String?
 }
 
+
 model BillingAccount {
   id           String        @id @default(uuid())
   ownerOrgId   String        @unique
@@ -888,6 +898,15 @@ model BillingAccount {
 
   // INVOICE funding
   creditLimit Int? // paise; null = unlimited
+
+  /// #777 §C — wallet minimum-balance + auto-top-up. When walletBalance drops
+  /// below minBalancePaise the auto-top-up cron charges autoTopUpMandateId for
+  /// autoTopUpAmountPaise. All-null = manual top-up only (current behavior).
+  minBalancePaise      Int?
+  autoTopUpEnabled     Boolean   @default(false)
+  autoTopUpAmountPaise Int?
+  autoTopUpMandateId   String? // gateway recurring-payment token
+  autoTopUpLastFiredAt DateTime? // idempotency: rate-limit the cron per account
 
   invoices     OrganizationInvoice[]
   contracts    Contract[]
@@ -935,6 +954,16 @@ model Contract {
   // an invoice knows which contract governed its billing terms.
   invoices     OrganizationInvoice[]
 
+  /// #779 §A — amendment/renewal/supersession chain. The OLD row points forward
+  /// here; the new row is a fresh Contract. Self-join answers "what replaced X?".
+  supersededByContractId String?    @unique
+  supersededByContract   Contract?  @relation("ContractSupersession", fields: [supersededByContractId], references: [id], onDelete: SetNull)
+  supersededContract     Contract?  @relation("ContractSupersession")
+  supersededAt           DateTime?
+  supersessionReason     ContractSupersessionReason?
+  /// #779 §A — set by the auto-renew cron so renewal is idempotent (claim gate).
+  autoRenewedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -947,6 +976,12 @@ enum ContractStatus {
   ACTIVE
   EXPIRED
   TERMINATED
+}
+
+enum ContractSupersessionReason {
+  AMENDMENT
+  RENEWAL
+  TERMINATION_REPLACEMENT
 }
 
 model BillingSubscription {
@@ -1063,6 +1098,18 @@ model Program {
   licensedSeatConfig LicensedSeatConfig?
   creditPoolConfig   CreditPoolConfig?
 
+  /// #779 §B — persistent money-config lock. Replaces the DERIVED predicate in
+  /// lib/enterprise/config-lock.ts. Stamped in the tx that creates the FIRST
+  /// ProgramAssignment (not at program-create, so a typo on a brand-new program
+  /// is still fixable). Non-null ⇒ LOCKED_PROGRAM_FIELDS are read-only — locked
+  /// is locked; changing money terms = archive this program + create a new one
+  /// (mirrors the RateCard bump / contract supersession immutable pattern).
+  configLockedAt DateTime?
+
+  /// #777 §B — archive/soft-delete. Never hard-delete once configLockedAt is
+  /// set (financial history rides on it); archivedAt hides from active lists.
+  archivedAt DateTime?
+
   assignments ProgramAssignment[]
 
   createdAt DateTime @default(now())
@@ -1158,6 +1205,21 @@ model ProgramAssignment {
   consumedPaise   Int @default(0)
   overageCount    Int @default(0)
 
+  /// #779 §A — explicit assignment lifecycle (was inferred from periodEnd vs
+  /// now). ACTIVE = drawing from cap; ROLLED = cycle advanced, successor minted;
+  /// PAUSED = org-suspend cascade froze it; CLOSED = contract expired/terminated;
+  /// CANCELLED = member removed mid-cycle. The cycle engine drives the moves.
+  status AssignmentStatus @default(ACTIVE)
+
+  /// #779 §A — rollover chain. The cycle engine mints a fresh ACTIVE row for the
+  /// next period and points the closing row here (one self-join for history;
+  /// reconcile asserts no gap/overlap between periods).
+  rolledToAssignmentId String?            @unique
+  rolledToAssignment   ProgramAssignment? @relation("AssignmentRollover", fields: [rolledToAssignmentId], references: [id], onDelete: SetNull)
+  rolledFromAssignment ProgramAssignment? @relation("AssignmentRollover")
+  /// #779 §A — set when the cycle engine processed this row (idempotency gate).
+  rolledAt DateTime?
+
   utilizations BookingUtilization[]
 
   createdAt     DateTime       @default(now())
@@ -1166,6 +1228,7 @@ model ProgramAssignment {
 
   @@unique([programId, membershipId, periodStart])
   @@index([membershipId, periodEnd])
+  @@index([status, periodEnd])
 }
 
 model BookingUtilization {
@@ -1231,6 +1294,17 @@ enum ProgramStatus {
   EXPIRED
   CANCELLED
 }
+
+// #779 §A — ProgramAssignment lifecycle. Declared below ProgramAssignment's
+// cluster per the local convention (ProgramType/ProgramStatus sit here too).
+enum AssignmentStatus {
+  ACTIVE
+  ROLLED
+  PAUSED
+  CLOSED
+  CANCELLED
+}
+
 
 enum OverageBehavior {
   BLOCK // cap hit → checkout blocked
@@ -1570,6 +1644,15 @@ model OrganizationInvoice {
   // #778 §D — GST credit notes (Sec 34) adjusting this invoice.
   creditNotes CreditNote[]
 
+  /// #779 §A — DUNNING lifecycle. The dunning cron flips ISSUED→OVERDUE when
+  /// dueDate passes (no new status value — OVERDUE exists), then escalates.
+  /// Each stamp is an idempotency gate (claim-UPDATE on the prior being null).
+  markedOverdueAt       DateTime?
+  dunningReminderCount  Int       @default(0)
+  lastDunningReminderAt DateTime?
+  /// set when overdue triggered the (config-gated) booking-suspend cascade.
+  dunningSuspendedAt    DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1577,6 +1660,7 @@ model OrganizationInvoice {
   @@index([organizationId, status, dueDate])
   @@index([organizationId, fiscalYear, issuedAt])
   @@index([billingCycleStart, billingCycleEnd])
+  @@index([status, dueDate, markedOverdueAt])
 }
 
 // Typed line items for OrganizationInvoice — replaces the `items` Json
@@ -1700,6 +1784,12 @@ model OrganizationSSOSettings {
   allowedEmailDomains    String[]   @default([])
   enforceSSO             Boolean    @default(false)
   defaultRoleForAutoJoin MemberRole @default(LEARNER)
+
+  /// #779 §A — break-glass for enforceSSO. When SSO is enforced and the IdP is
+  /// down, an OWNER opens a time-boxed window where password login is permitted
+  /// again (auth layer skips the enforceSSO gate while breakGlassUntil > now).
+  /// Who/why lives in the OrgAuditLog row the route emits — no duplicate columns.
+  breakGlassUntil DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3458,6 +3548,14 @@ model Refund {
   // cron selects SUCCEEDED refunds where this is null.
   cascadedAt DateTime?
 
+  /// #779 §A — gateway-failure capture for FAILED refunds. `reason` above is the
+  /// OPERATOR's reason for refunding; `failureReason` is WHY the gateway rejected
+  /// it. failedAt drives the "refund failed, action needed" notify; the reconcile
+  /// cron selects FAILED refunds where failedNotifiedAt is null.
+  failureReason    String?   @db.VarChar(500)
+  failedAt         DateTime?
+  failedNotifiedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -3466,6 +3564,7 @@ model Refund {
   @@index([refundId])
   @@index([paymentId, status])
   @@index([status, cascadedAt])
+  @@index([status, failedNotifiedAt])
 }
 
 enum RefundStatus {
@@ -4717,11 +4816,20 @@ model OverageEvent {
   invoiceLineItem      InvoiceLineItem?    @relation(fields: [invoiceLineItemId], references: [id], onDelete: SetNull)
   settledAt            DateTime?
 
+  /// #779 §A — CHARGE_MEMBER timeout telemetry. A member-pays overage sits
+  /// PENDING until the side-payment SUCCEEDS; if abandoned it must time out →
+  /// FAILED. The sweep cron gates on these (mirrors the IRP retry fields).
+  chargeAttemptCount  Int       @default(0)
+  lastChargeAttemptAt DateTime?
+  chargeFailureReason String?   @db.VarChar(500)
+  chargeTimedOutAt    DateTime?
+
   createdAt DateTime @default(now())
 
   @@index([programAssignmentId, createdAt])
   @@index([settledAt])
   @@index([chargeStatus])
+  @@index([chargeStatus, lastChargeAttemptAt])
 }
 
 /// #769 Comment 4 — multi-jurisdiction tax prep. Today every org is IN;

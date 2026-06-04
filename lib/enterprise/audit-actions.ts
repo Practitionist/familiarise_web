@@ -41,10 +41,17 @@ export const AUDIT_ACTIONS = {
     CONTRACT_SIGNED: "CONTRACT_SIGNED",
     CONTRACT_TERMINATED: "CONTRACT_TERMINATED",
     CONTRACT_EXPIRED: "CONTRACT_EXPIRED",
+    // #779 — amend/renew/supersede + auto-renew cron.
+    CONTRACT_SUPERSEDED: "CONTRACT_SUPERSEDED",
+    CONTRACT_AUTO_RENEWED: "CONTRACT_AUTO_RENEWED",
   },
   PROGRAM: {
     PROGRAM_CREATED: "PROGRAM_CREATED",
     PROGRAM_PAUSED: "PROGRAM_PAUSED",
+    // #779 — cycle engine rolled an assignment to its next period.
+    PROGRAM_ASSIGNMENT_ROLLED: "PROGRAM_ASSIGNMENT_ROLLED",
+    // #777 §B — archive/unarchive (soft-hide; financial history preserved).
+    PROGRAM_ARCHIVED: "PROGRAM_ARCHIVED",
     // DELETE /api/organizations/[orgId]/programs/[programId] previously
     // reused PROGRAM_PAUSED which conflated delete with the pause/resume
     // status transition for audit consumers. Distinct action gives the
@@ -65,6 +72,8 @@ export const AUDIT_ACTIONS = {
     PURCHASE_ORDER_CREATED: "PURCHASE_ORDER_CREATED",
     INVOICE_GENERATED: "INVOICE_GENERATED",
     INVOICE_ISSUED: "INVOICE_ISSUED",
+    // #779 — dunning cron flipped ISSUED → OVERDUE.
+    INVOICE_OVERDUE: "INVOICE_OVERDUE",
     INVOICE_PAYMENT_INITIATED: "INVOICE_PAYMENT_INITIATED",
     INVOICE_PAID: "INVOICE_PAID",
     INVOICE_CANCELLED: "INVOICE_CANCELLED",
@@ -141,6 +150,11 @@ export const AUDIT_ACTIONS = {
     SUSPENDED: "SUSPENDED",
     REACTIVATED: "REACTIVATED",
     DEACTIVATED: "DEACTIVATED",
+    // #779 §A — PENDING_VERIFICATION resubmit loop. REJECTED is the admin
+    // bouncing the org back with a reason; RESUBMITTED is the OWNER/MAINTAINER
+    // re-submitting after fixing. Org stays PENDING_VERIFICATION throughout.
+    VERIFICATION_REJECTED: "VERIFICATION_REJECTED",
+    VERIFICATION_RESUBMITTED: "VERIFICATION_RESUBMITTED",
     // Emitted by DELETE /api/organizations/[orgId] when an OWNER tears
     // an org down. Kept inside SYSTEM so the audit row outlives the
     // org itself (soft-deleted targetMembershipId) and is still

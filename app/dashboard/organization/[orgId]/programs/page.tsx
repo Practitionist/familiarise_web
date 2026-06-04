@@ -444,7 +444,7 @@ function CreateProgramDialog({
       : null;
   }, [contracts, contractId]);
 
-  const reachableTypes = useMemo<ProgramType[]>(() => {
+  const reachableTypes = useMemo<Array<"LICENSED_SEAT" | "CREDIT_POOL">>(() => {
     if (!capability) return [];
     return (["LICENSED_SEAT", "CREDIT_POOL"] as const).filter((t) =>
       isReachableOrgFundingPath(capability, selectedFunding, t),
