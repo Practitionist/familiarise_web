@@ -2,7 +2,7 @@
 title: Design decisions (ADRs) — band index
 band: 70-design-decisions
 audience: sde3
-status: partial
+status: live
 last-reviewed: 2026-06-05
 ---
 
@@ -21,19 +21,19 @@ Every ADR follows the same four-part shape, written in full sentences:
 
 ## Index
 
-The twelve ADRs below are being written under #793; this index is the authoritative list of planned records. Each row links once the ADR lands.
+All twelve ADRs below are written and live (#793); this index is the authoritative list. Each row links to its record.
 
 | # | ADR | Decision in one line |
 |---|---|---|
-| 01 | Double-entry journal over three logs | One balanced `LedgerTransaction`/`LedgerEntry` journal replaced `FundingLedgerEntry`, `WalletEntry`, and `SettlementLedgerEntry` (#772). |
-| 02 | Integer paise and basis points | All money is integer paise and all splits are integer basis points, so no float ever touches a balance. |
-| 03 | Deterministic ledger-account IDs | Ledger accounts use deterministic composite IDs (`kind\|org\|consultant\|currency`) instead of UUIDs (#783). |
-| 04 | Batch payouts over streaming | Earnings settle in periodic idempotent batches rather than per-earning transfers. |
-| 05 | GitHub Actions crons | Scheduled jobs run as GitHub Actions hitting `CRON_SECRET`-gated endpoints rather than Netlify scheduled functions. |
-| 06 | Typed Membership over BetterAuth Member | Every permission gate reads the typed `Membership` row, never BetterAuth's own member table. |
-| 07 | Upstash rate limiting | BetterAuth's built-in limiter stays off; Upstash sliding windows gate the sensitive routes. |
-| 08 | Gapless invoice counters | Invoice and credit-note numbers come from per-org, per-fiscal-year atomic counters to satisfy CGST Rules 46/53. |
-| 09 | Webhook secret-rotation grace | Outbound webhook secret rotation dual-signs for 24 hours so receivers can cut over without a hard break. |
-| 10 | Session-generation clock | Role changes bump `User.sessionGeneration` to force a membership refetch instead of revoking sessions. |
-| 11 | Live-payout submission freeze | `ENABLE_LIVE_PAYOUTS` freezes only the gateway submission step; the whole pipeline upstream of it runs for real. |
-| 12 | PENDING_TRUST earnings parking | Earnings for unverified INVOICE-funded orgs park in `PENDING_TRUST` until the org verifies or pays, closing the ghost-org fraud hole (#687). |
+| 01 | [Double-entry journal over three logs](01-double-entry-over-three-logs.md) | One balanced `LedgerTransaction`/`LedgerEntry` journal replaced `FundingLedgerEntry`, `WalletEntry`, and `SettlementLedgerEntry` (#772). |
+| 02 | [Integer paise and basis points](02-integer-paise-and-basis-points.md) | All money is integer paise and all splits are integer basis points, so no float ever touches a balance. |
+| 03 | [Deterministic ledger-account IDs](03-deterministic-ledger-account-ids.md) | Ledger accounts use deterministic composite IDs (`kind\|org\|consultant\|currency`) instead of UUIDs (#783). |
+| 04 | [Batch payouts over streaming](04-batch-payouts-over-streaming.md) | Earnings settle in periodic idempotent batches rather than per-earning transfers. |
+| 05 | [GitHub Actions crons](05-github-actions-crons.md) | Scheduled jobs run as GitHub Actions invoking `npx tsx jobs/**` directly (with `CRON_SECRET`-gated routes as a manual fallback) rather than Netlify scheduled functions. |
+| 06 | [Typed Membership over BetterAuth Member](06-typed-membership-over-betterauth-member.md) | Every permission gate reads the typed `Membership` row, never BetterAuth's own member table. |
+| 07 | [Upstash rate limiting](07-upstash-rate-limiting.md) | BetterAuth's built-in limiter stays off; Upstash sliding windows gate the sensitive routes. |
+| 08 | [Gapless invoice counters](08-gapless-invoice-counters.md) | Invoice and credit-note numbers come from per-org, per-fiscal-year atomic counters to satisfy CGST Rules 46/53. |
+| 09 | [Webhook secret-rotation grace](09-webhook-rotation-grace.md) | Outbound webhook secret rotation dual-signs for 24 hours so receivers can cut over without a hard break. |
+| 10 | [Session-generation clock](10-session-generation-clock.md) | Role changes bump `User.sessionGeneration` to force a membership refetch instead of revoking sessions. |
+| 11 | [Live-payout submission freeze](11-live-payout-submission-freeze.md) | `ENABLE_LIVE_PAYOUTS` freezes only the gateway submission step; the whole pipeline upstream of it runs for real. |
+| 12 | [PENDING_TRUST earnings parking](12-pending-trust-earnings-parking.md) | Earnings for unverified INVOICE-funded orgs park in `PENDING_TRUST` until the org verifies or pays, closing the ghost-org fraud hole (#687). |
