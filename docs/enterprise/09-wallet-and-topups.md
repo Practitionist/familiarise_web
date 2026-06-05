@@ -45,6 +45,7 @@ Key fields (`model WalletTopUp`, `lib/api/organizations/wallet.ts`):
 - `amountPaise` — stored **up front** so `confirmTopUp` can assert the webhook-captured amount matches what was authorized.
 - `status` — `PENDING | CONFIRMED | FAILED`.
 - `confirmedAt?` — stamped when the claim wins.
+- `capturedAt?` (#785) — stamped **outside** `confirmTopUp`'s transaction the moment the gateway reports capture, so it survives a ledger-post rollback. The stale-reaper cron skips `capturedAt`-set rows (real money landed — don't GC them), and the `sweep-orphaned-topup-captures` reconciler re-credits any row that was captured but never confirmed (e.g. the confirm tx crashed after capture). This closes the "money in, no wallet credit" gap.
 
 > In code the failed top-up is **deleted**, not flipped to `FAILED`: `handleOrgPaymentFailure` (`app/api/webhooks/utils.ts`) runs `walletTopUp.deleteMany({ where: { status: PENDING, providerPaymentId: null } })` so the UI immediately shows "retry". The `FAILED` enum value is reserved for paths that want to keep the tombstone; the stale-reaper cron also GCs orphaned PENDING rows.
 
@@ -161,6 +162,40 @@ Every wallet movement is a journal posting:
 | Top-up refund | `Dr WALLET / Cr CASH` (`topup-refund:<paymentId>`) | `walletBalance -= amount` |
 
 The org's true balance is always `-ledgerBalancePaise({ kind: "WALLET", organizationId })` (WALLET is credit-normal, so the amount we owe is the negative of the signed balance). The reconcile cron's `WALLET_BALANCE_DRIFT` check asserts this equals the cache; any drift is an incident, never a thing to patch by hand. See [Ledger integrity](14-ledger-integrity.md).
+
+---
+
+## 7. Wallet floor + auto-top-up (#777 §C) — NOTIFY-ONLY today
+
+A WALLET-funded org can set a **minimum balance** so it learns the pool is running low *before* a booking gets refused for insufficient funds. The fields live on `BillingAccount`:
+
+```prisma
+model BillingAccount {
+  // ... wallet funding ...
+  walletBalance Int? // paise
+
+  /// #777 §C — wallet minimum-balance + auto-top-up. When walletBalance drops
+  /// below minBalancePaise the auto-top-up cron charges autoTopUpMandateId for
+  /// autoTopUpAmountPaise. All-null = manual top-up only (current behavior).
+  minBalancePaise      Int?
+  autoTopUpEnabled     Boolean   @default(false)
+  autoTopUpAmountPaise Int?
+  autoTopUpMandateId   String? // gateway recurring-payment token
+  autoTopUpLastFiredAt DateTime? // idempotency: rate-limit the cron per account
+}
+```
+
+> 🟡 **Designed for auto-charge; shipped as notify-only.** The schema comment describes the *intended* end state (cron charges the mandate). The current cron (`jobs/billing/wallet-low-balance.ts`) **moves no money and creates no `WalletTopUp`** — Razorpay recurring mandates aren't wired yet, so `autoTopUpEnabled` / `autoTopUpAmountPaise` / `autoTopUpMandateId` are written-but-unread by this wave (`TODO(#777)`). It detects the dip, **notifies finance** (`notifyOrgWalletLow`), and stamps the cooldown. Don't document auto-debit as live.
+
+**The cron** (daily 05:15 IST, `.github/workflows/wallet-low-balance.yml`):
+1. Select WALLET `BillingAccount`s with a non-null `minBalancePaise` whose `autoTopUpLastFiredAt` is null or older than 24h (the `walletBalance < minBalancePaise` comparison can't be a Prisma column-compare, so it's narrowed here and checked in JS).
+2. Skip any whose live `walletBalance >= minBalancePaise`.
+3. **Claim** the row with a conditional `updateMany WHERE autoTopUpLastFiredAt = <value-read>` → stamp `now`. `autoTopUpLastFiredAt` doubles as the **idempotency gate + 24h notify cooldown**: a second replica or same-day re-run sees `count === 0` and skips, so an org is alerted at most once per day.
+4. Fire `notifyOrgWalletLow` (Novu) with the balance, the floor, and a deep link to the billing top-up surface.
+
+When real mandates land, the charge (a `WalletTopUp` + `Dr CASH / Cr WALLET` posting, exactly like a manual top-up in §3.2) slots into step 3 inside the claim's transaction — the idempotency gate is already there.
+
+> **Related — overage-as-expansion.** A low wallet is the *funding-side* nudge; the [program-overage](10-booking-to-earnings.md) preview is the *consumption-side* one (a member about to breach a program cap). Both steer an org toward topping up / expanding rather than hitting a hard `BLOCK`. They are independent surfaces — overage meters a `ProgramAssignment` cap, the floor watches the wallet pool — but share the "warn before refuse" philosophy.
 
 ---
 

@@ -1,6 +1,8 @@
 # Invoicing
 
-**What this covers:** the India-compliant `OrganizationInvoice` — its lifecycle, GST breakdown, IRN/e-invoice fields, CGST Rule 46 numbering, the PO 3-way match, and how invoice payment clears the `ORG_RECEIVABLE` accrued at booking time. Funding mechanics are in [payment legs](13-payment-legs.md); the postings are in [ledger & postings](08-ledger-and-postings.md).
+**What this covers:** the India-compliant `OrganizationInvoice` — its lifecycle, GST breakdown, IRN/e-invoice fields, CGST Rule 46 numbering, the PO 3-way match, the **dunning** escalation, how a cycle's **overage** rolls into a line item, and how invoice payment clears the `ORG_RECEIVABLE` accrued at booking time — plus the **refund credit-note** machinery (CGST Sec 34 / Rule 53). Funding mechanics are in [payment legs](13-payment-legs.md); the postings are in [ledger & postings](08-ledger-and-postings.md).
+
+> _Refreshed 2026-06-05 (#777/#778/#779 mega-audit): added the dunning lifecycle (§7), the overage→`InvoiceLineItem` rollup (§9), the IRP payload mapper (§4), and the refund credit-note unification (§8)._
 
 > An INVOICE-funded org doesn't pay cash at booking — each booking debits `ORG_RECEIVABLE(org)` (the `INVOICE_ACCRUAL` leg). A monthly roll-up turns those accruals into an `OrganizationInvoice`; when the org pays, the `INVOICE_PAID` posting clears the receivable.
 
@@ -13,7 +15,8 @@ stateDiagram-v2
   [*] --> DRAFT: roll-up cron / manual create
   DRAFT --> ISSUED: OWNER issues (issuedAt, enqueue IRP)
   ISSUED --> PAID: invoice-paid webhook (posts INVOICE_PAID)
-  ISSUED --> OVERDUE: dueDate passes (cron)
+  ISSUED --> OVERDUE: dueDate passes (dunning cron, stamp markedOverdueAt)
+  OVERDUE --> OVERDUE: escalation reminder (7-day cadence, ≤3)
   OVERDUE --> PAID: late payment
   DRAFT --> VOID: cancelled pre-issue
   ISSUED --> CANCELLED: cancelled (if not partly paid)
@@ -24,7 +27,7 @@ stateDiagram-v2
   REFUNDED --> [*]
 ```
 
-`OrgInvoiceStatus` = `DRAFT | ISSUED | PAID | OVERDUE | VOID | CANCELLED | REFUNDED`. `REFUNDED` is distinct from `VOID`: `VOID` is pre-payment (cancelled before settlement), `REFUNDED` is post-payment. `PATCH …/invoices/[invoiceId]` (OWNER) gates transitions against an allow-list.
+`OrgInvoiceStatus` = `DRAFT | ISSUED | PAID | OVERDUE | VOID | CANCELLED | REFUNDED`. `REFUNDED` is distinct from `VOID`: `VOID` is pre-payment (cancelled before settlement), `REFUNDED` is post-payment. `PATCH …/invoices/[invoiceId]` (OWNER) gates transitions against an allow-list. The dunning escalation (§7) is **not** a new status — it loops within `OVERDUE`, bumping `dunningReminderCount` on each reminder.
 
 ```mermaid
 sequenceDiagram
@@ -79,13 +82,16 @@ model OrganizationInvoice {
   lutNumber     String?              // zero-rated exports
   gstin         String?  @db.VarChar(15)
 
-  // E-invoice (IRN)
-  irn             String? @db.VarChar(64)
-  ackNumber       String?
-  ackDate         DateTime?
-  signedQrPayload String? @db.Text
-  irpStatus       IrpStatus @default(PENDING)
-  irpUploadedAt   DateTime?
+  // E-invoice (IRN) — fields final; live IRP upload env-gated (§4)
+  irn              String? @db.VarChar(64)
+  ackNumber        String?
+  ackDate          DateTime?
+  signedQrPayload  String? @db.Text
+  irpStatus        IrpStatus @default(PENDING)
+  irpUploadedAt    DateTime?
+  irpLastError     String?  @db.VarChar(500)   // provider failure reason
+  irpLastAttemptAt DateTime?
+  irpRetryCount    Int      @default(0)          // → FAILED at the cron's cap
 
   // Lifecycle
   billingCycleStart DateTime?
@@ -98,6 +104,14 @@ model OrganizationInvoice {
 
   paymentId      String? @unique   // one-off invoices
   billedPayments Payment[]         // monthly roll-up: captured payments
+
+  creditNotes CreditNote[]         // #778 §D — GST credit notes (§8)
+
+  // #779 §A — dunning lifecycle (§7); each stamp is an idempotency gate
+  markedOverdueAt       DateTime?
+  dunningReminderCount  Int       @default(0)
+  lastDunningReminderAt DateTime?
+  dunningSuspendedAt    DateTime?  // set only by the (designed, NOT-active) suspend cascade
 }
 ```
 
@@ -120,9 +134,18 @@ model OrganizationInvoice {
 
 ---
 
-## 4. IRN (e-invoice)
+## 4. IRN (e-invoice) — mapper + uploader
 
-The model carries every field the IRP returns: `irn` (64-char), `ackNumber`, `ackDate`, `signedQrPayload`, `irpStatus` (`PENDING | GENERATED | CANCELLED | FAILED`), `irpUploadedAt`. `DRAFT → ISSUED` enqueues the daily IRP uploader (`.github/workflows/irp-uploader.yml`), which calls `generateIrn` (`lib/compliance/irp.ts`) for `PENDING` rows inside the CBIC window. Live but **env-gated**: with `CLEARTAX_API_KEY` / `CLEARTAX_GSP_TOKEN` / `CLEARTAX_GSTIN` set it makes real ClearTax calls; without them rows go `FAILED` after bounded retries (`irpRetryCount`, `irpLastError`). For sub-₹5cr orgs IRN is voluntary below the AATO threshold, so that's acceptable.
+The model carries every field the IRP returns: `irn` (64-char), `ackNumber`, `ackDate`, `signedQrPayload`, `irpStatus` (`PENDING | GENERATED | CANCELLED | FAILED`), `irpUploadedAt`, plus retry telemetry (`irpRetryCount`, `irpLastError`, `irpLastAttemptAt`). The daily IRP uploader (`jobs/compliance/irp-uploader.ts`, `.github/workflows/irp-uploader.yml`) selects `irpStatus = PENDING` invoices `issuedAt` within **30 days** (the CBIC retroactive-IRN cut-off), batch size 50, and for each one:
+
+1. **Map** the fetched row to the NIC e-invoice **schema v1.1** JSON via the pure mapper `buildIrpPayload` (`lib/compliance/irp-payload.ts`) — no DB access; the cron fetches, the mapper transforms. It splits each line's GST in the same intra/inter mode as the whole invoice (CGST+SGST vs IGST), rounds per line and pushes the paise residual onto the last line so `ItemList` sums reconcile to `ValDtls` exactly (the IRP rejects any per-line vs total mismatch), derives the 2-digit **numeric** GST state code from the GSTIN prefix, and tags `SupTyp` (`EXPWOP` for a zero-rated LUT export, else `B2B`). A mapping failure is **permanent** (missing buyer GSTIN, no line items, unresolved seller state): the row flips straight to `FAILED` with `irpLastError = "MAP: …"` — retrying can't fix structurally-unmappable data and the 30-day window shouldn't be burned looping on it.
+2. **Submit** via `generateIrn` (`lib/compliance/irp.ts`). On `GENERATED` it persists `irn` / `ackNumber` / `ackDate` / `signedQrPayload` / `irpUploadedAt`. On `FAILED` it keeps the row `PENDING` and bumps `irpRetryCount` until the **cap (12 ≈ 12 daily retries)**, then flips to `FAILED` for manual review.
+
+**Two independent gates** — don't conflate them:
+- `ENABLE_IRP_UPLOADER` (a GitHub Actions repo `var`) gates whether the **scheduled workflow runs at all** — false ⇒ the cron is skipped so CI minutes aren't burned hitting a stub. It's one of the [five feature flags](25-feature-flags-and-rollout.md).
+- `CLEARTAX_API_KEY` / `CLEARTAX_GSP_TOKEN` / `CLEARTAX_GSTIN` (env) gate whether `generateIrn` makes a **real ClearTax GSP call** vs returning the stub `{ status: "FAILED", reason: "STUB" }`. With the flag on but creds absent, the cron runs and records STUB as a normal retry — it never crashes on missing credentials.
+
+> **Threshold context (web-validated 2026-06-05).** E-invoicing/IRN is mandatory at **₹5 cr AATO**; the **30-day** reporting deadline applies to **₹10 cr+** filers. IRN covers B2B invoices, exports, **and credit/debit notes** (§8); **B2C is not reported**. An IRN can be **cancelled on the IRP only within 24h** of generation and **never amended** there — post-window corrections go via GSTR-1 / a credit note. Sub-₹5cr orgs ride the stub and don't need an IRN to let the buyer claim ITC, so the gated-off default is correct for the platform's current size. Sources: [CBIC e-invoice rules](https://cleartax.in/s/cgst-rules-chapter-6-tax-invoice-credit-and-debit-notes), [e-invoice cancellation 24h rule](https://cleartax.in/s/gst-e-invoice-amend-cancellation).
 
 ---
 
@@ -155,11 +178,71 @@ The predicate is the lock: two POSTs racing for the last ₹1 can't both win (`c
 
 ---
 
-## 7. Refunds
+## 7. Dunning — chasing an overdue invoice (#779 §A)
 
-A fully-refunded paid invoice goes `PAID → REFUNDED`. The booking-level refund posts a `REFUND` transaction that reverses the original legs proportionally — including the prorated `GST_PAYABLE` reversal — see [ledger & postings §4.7](08-ledger-and-postings.md). GST credit-note issuance for refunds is tracked in compliance ([`../compliance/05-refund-and-chargeback-tax-adjustments.md`](../compliance/05-refund-and-chargeback-tax-adjustments.md)).
+When an `ISSUED` invoice's `dueDate` passes, the **dunning cron** (`jobs/billing/dunning.ts`, daily ~05:00 IST, `.github/workflows/dunning.yml`) escalates in two stages. No new status value is introduced — it rides the existing `OVERDUE` and three idempotency-gate stamps on the invoice:
 
-## 8. Auto-generated vs hand-rolled
+| Stage | Selects | Claims (idempotency gate) | Side-effect |
+| --- | --- | --- | --- |
+| **1 — first notice** | `ISSUED`, `dueDate < now`, `markedOverdueAt = null` | `updateMany … status ISSUED → OVERDUE, markedOverdueAt = now` | `notifyOrgInvoiceOverdue` (stage 0) + an `INVOICE_OVERDUE` `OrgAuditLog` row |
+| **2 — escalation** | `OVERDUE`, `dunningReminderCount < 3`, last touch (`lastDunningReminderAt ?? markedOverdueAt`) older than **7 days** | `updateMany … lastDunningReminderAt = priorValue` → `now`, `dunningReminderCount += 1` | `notifyOrgInvoiceOverdue` at the next reminder stage |
+
+So the cadence is **7-day intervals, capped at 3 reminders**. Each claim is a conditional `updateMany` on the prior stamp value, so two cron replicas / a same-day re-run can't double-notify (the loser sees `count === 0` and skips). Only **dunnable** orgs are chased (`ACTIVE` / `PENDING_VERIFICATION` / `SUSPENDED`); a `DEACTIVATED` org is being torn down, so its invoices aren't pursued.
+
+> 🟡 **Suspension cascade is designed but NOT active.** `dunningSuspendedAt` exists for a config-gated "suspend bookings once OVERDUE drags past the grace window" stage — but no code writes it yet (`TODO(#779)`). Today dunning is **notify-only**: it marks overdue and sends reminders; it never suspends. Don't document booking-suspend-on-overdue as live.
+
+---
+
+## 8. Refund credit notes (CGST Sec 34 / Rule 53)
+
+A refund without a GST credit note is a filing mismatch, so a refund against an **invoiced** booking mints a `CreditNote` — the legal artifact that reverses output-tax liability. The minting is **unified**: one idempotent helper, `mintRefundCreditNote` (`lib/payments/operations/refund.ts`), is called from both the canonical refund cascade (`applyRefundCascade`) **and** the gateway-refund webhook (which bypasses the cascade), so exactly one CN is issued per refund regardless of redelivery or cron retry.
+
+**What it does** (must run inside the refund tx):
+- No-ops (returns `null`) for non-invoiced payments — a CN only makes sense against an issued `OrganizationInvoice`. It also refuses a **DRAFT/un-issued** invoice (minting a Sec 34 note against an undelivered document is a defect; DRAFT accruals are netted down on the leg instead — see [payment legs §5](13-payment-legs.md)).
+- Reverses the invoice-accrual legs (`INVOICE_ACCRUAL` + `OVERAGE_INVOICE_ACCRUAL`) **proportionally** to the refund (strict proportion, no remainder-absorb — a CN is a tax document).
+- Splits the proportional tax the same way the invoice did: **IGST** (inter-state) or **CGST+SGST** (intra-state, CGST takes the odd-paise remainder), mirroring `OrganizationInvoice`'s breakout so the CN nets cleanly.
+- Allocates a **gapless per-org credit-note number** `<PREFIX>-CN-<FY>-<SEQ>` from `OrgCreditNoteCounter` (`lib/payments/billing/credit-note-numbering.ts`), atomic `UPSERT…RETURNING` — a **separate series from the invoice counter**, as Rule 53 requires.
+- Idempotency is `CreditNote.refundId @unique`: it probes first and returns the existing CN on replay, so a webhook redelivery / cron retry never mints a duplicate or burns a sequence number.
+
+A sibling, `mintInvoiceRefundCreditNote`, covers the other path — the org paid an `OrganizationInvoice` directly (via the gateway) and that payment was refunded — keyed off the invoice rather than a booking's accrual legs. Same proportional-tax shape, same `refundId @unique` idempotency.
+
+```prisma
+model CreditNote {
+  id               String @id @default(cuid())
+  creditNoteNumber String                 // <PREFIX>-CN-<FY>-<SEQ>, per-org (Rule 53)
+  fiscalYear       Int    @default(0)
+  organizationId   String
+  invoiceId        String?                // original invoice (Sec 34 linkage); null for B2C/unregistered
+  refundId         String? @unique        // idempotent refund-driven minting
+  reason           String?
+  subtotalPaise    Int
+  igstPaise        Int @default(0)
+  cgstPaise        Int @default(0)
+  sgstPaise        Int @default(0)
+  totalPaise       Int
+  status           CreditNoteStatus @default(DRAFT)   // DRAFT | ISSUED | CANCELLED
+  issuedAt         DateTime?
+  @@unique([organizationId, creditNoteNumber])
+}
+```
+
+The status-level invoice transition is the coarse view (`PAID → REFUNDED` for a fully-refunded paid invoice); the booking-level refund itself posts a `REFUND` ledger transaction reversing the original legs proportionally — including the prorated `GST_PAYABLE` reversal — gated by `Refund.cascadedAt` so the app / webhook / backstop-cron each apply it exactly once. See [ledger & postings §4.7](08-ledger-and-postings.md) and [booking → earnings §6.5](10-booking-to-earnings.md).
+
+> 🟡 **TDS reversal (`TdsAdjustment`) is schema-only.** A refund that claws back a consultant payout *should* emit a negative `TdsAdjustment` line for the revised 26Q/27Q. The model exists and the refund cascade reverses earnings + posts the ledger reversal, but **no code writes a `TdsAdjustment` yet** — it's the documented consolidation target in `tds.ts`, blocked on the consultant-payout TDS unification + FVU export (#778 §E/§F). Don't document refund-driven TDS reversal as live. Web-validated GST rules for credit notes: serial number ≤16 chars unique per FY, must reference the original invoice, declared no later than **30 Nov following FY-end**. Source: [CGST Sec 34 / Rule 53](https://cleartax.in/s/cgst-rules-chapter-6-tax-invoice-credit-and-debit-notes).
+
+---
+
+## 9. Overage roll-up into a line item (#715 / #775)
+
+A `CHARGE_ORG` program overage isn't billed instantly — its marginal accrues as an `OVERAGE_INVOICE_ACCRUAL` `PaymentLeg` at checkout ([booking → earnings §6.3](10-booking-to-earnings.md)) and is **rolled into the cycle's invoice** alongside the base bookings. `rollupOrgInvoiceAccruals` (`lib/payments/billing/invoice-rollup.ts`, driven by `jobs/billing/settle-invoice-accruals.ts`) gathers each org's unbilled `SUCCEEDED` payments carrying **either** accrual source, sums **both** leg sources into the line `unitPricePaise` (the base + the overage), and emits one `InvoiceLineItem` per booking.
+
+For each rolled `CHARGE_ORG` `OverageEvent` it then walks the state machine `PENDING → ACCRUED` (via `transitionOverage`), stamping `settledAt` and the exact `invoiceLineItemId` the event landed on (auditability + reversal). The event reaches its terminal `CHARGED` only when the invoice is **paid** — the `INVOICE_PAID` ledger handler flips `ACCRUED → CHARGED`. This is why `settle-invoice-accruals` deliberately includes `OVERAGE_INVOICE_ACCRUAL` in its "orgs to bill" scan: an org whose base bookings are all LICENSE-covered (₹0 legs) but which has `CHARGE_ORG` overage would otherwise be skipped and never billed for the overage.
+
+The `base` vs `surcharge` split is itemized on the `OverageEvent` (`basePaise` / `surchargePaise` / `marginalPaise`), so the charge stays GST-auditable even though the current rollup writes one combined line per booking; per-line surcharge itemization on the invoice is a future refinement.
+
+---
+
+## 10. Auto-generated vs hand-rolled
 
 - `autoGenerated = true` — monthly roll-up cron; `billedPayments[]` lists captured payments.
 - `autoGenerated = false` — OWNER-created via `POST …/invoices` for ad-hoc charges (setup fees, overage bundles).
@@ -168,6 +251,9 @@ A fully-refunded paid invoice goes `PAID → REFUNDED`. The booking-level refund
 
 ### Related docs
 - [Funding & programs](02-funding-and-programs.md) — the INVOICE funding source.
-- [Payment legs](13-payment-legs.md) — how `INVOICE_ACCRUAL` legs roll up.
+- [Payment legs](13-payment-legs.md) — how `INVOICE_ACCRUAL` / `OVERAGE_INVOICE_ACCRUAL` legs roll up.
+- [Booking → earnings §6](10-booking-to-earnings.md) — the overage flow that feeds §9, and the refund-failed notify (§6.5).
 - [Ledger & postings](08-ledger-and-postings.md) — the `INVOICE_PAID` / `REFUND` transactions.
-- [Compliance map](30-compliance-dpdp-gst-tds-msme.md) → [`../compliance/02-gst-overview.md`](../compliance/02-gst-overview.md) — authoritative GST / TCS / IRN rules.
+- [Ledger integrity](14-ledger-integrity.md) — `INVOICE_TOTAL_MISMATCH`, `OVERAGE_CHARGESTATUS_INTEGRITY`.
+- [Compliance map](30-compliance-dpdp-gst-tds-msme.md) → [`../compliance/02-gst-overview.md`](../compliance/02-gst-overview.md) (GST/IRN) · [`../compliance/05-refund-and-chargeback-tax-adjustments.md`](../compliance/05-refund-and-chargeback-tax-adjustments.md) (credit notes / TDS adjustments) — authoritative.
+- Ground truth: `lib/payments/billing/{invoice-rollup,invoice-numbering,credit-note-numbering}.ts`, `lib/payments/operations/refund.ts`, `lib/compliance/{irp,irp-payload}.ts`, `jobs/billing/{dunning,settle-invoice-accruals}.ts`, `jobs/compliance/irp-uploader.ts`.

@@ -39,14 +39,15 @@ intuitive ones:
 | Role            | Rank | Typical responsibility |
 |-----------------|------|-------------------------|
 | `OWNER`         | 100  | Everything: billing, contracts, payouts, settings, SSO, org delete. |
-| `MAINTAINER`    | 80   | Members, invites, SSO, domain claims, programs, settings. **No billing** — see `MEMBER_ROLE_DESCRIPTION` in `lib/labels/org-labels.ts`. |
+| `MAINTAINER`    | 80   | Members, invites, plans, programs, contracts (read), branding/identity fields, settings. **No billing, no deletion** — and SSO / domain-claims / capability + tax fields stay OWNER-only (see `MEMBER_ROLE_DESCRIPTION` in `lib/labels/org-labels.ts`: _"Members, plans, programs, and settings. No billing or deletion."_). |
 | `BILLING_ADMIN` | 70   | Invoices, POs, payouts, rate cards, wallet top-ups, outbound webhooks. **No member or SSO changes.** |
 | `MANAGER`       | 60   | Team analytics, seat management, read-only views of invoices/earnings/payouts/rate-cards. |
 | `EXPERT`        | 40   | Delivers services on behalf of the org. |
 | `SUPPORT`       | 30   | Views support tickets and assists members. No billing. |
 | `LEARNER`       | 20   | Consumes services through the org's programs. |
 
-`orgRoleSatisfies(actual, minimum)` returns `rank[actual] >= rank[minimum]`.
+`isAtLeastRole(actual, minimum)` (`lib/auth/role-ranks.ts`) returns
+`ORG_ROLE_RANK[actual] >= ORG_ROLE_RANK[minimum]`.
 
 ### Why BILLING_ADMIN uses a disjunction gate, not a rank gate
 
@@ -58,18 +59,55 @@ governance-orthogonal: `MAINTAINER` is the org-admin surface,
 `BILLING_ADMIN` is the finance surface.
 
 The dedicated helper `requireOrgBillingAdminOrOwner` at
-`lib/auth/billing-admin-gate.ts` encodes this:
+`lib/auth/billing-admin-gate.ts` encodes this. It first runs
+`requireOrgAccess` with a `LEARNER` floor (so capability checks like
+`canSponsor` still run), then applies the load-bearing role disjunction:
 
 ```ts
 const role = access.member.role;
 if (role !== "OWNER" && role !== "BILLING_ADMIN") {
-  return { error: 403 "BILLING_ADMIN_OR_OWNER_REQUIRED" };
+  return {
+    error: NextResponse.json(
+      { error: "Forbidden", code: "BILLING_ADMIN_OR_OWNER_REQUIRED" },
+      { status: 403 },
+    ),
+  } as const;
 }
 ```
 
-Pin-down regression: `__tests__/enterprise/billing-admin-gate.test.ts`
-asserts that `MAINTAINER` is **denied** even though its rank is
-higher.
+It deliberately does NOT pass `minimumRole: "BILLING_ADMIN"`, because that
+would let `MAINTAINER` (rank 80) through on the rank comparison. Pin-down
+regression: `__tests__/enterprise/billing-admin-gate.test.ts` asserts that
+`MAINTAINER` is **denied** even though its rank is higher.
+
+### Two enforcement shapes: route-level gate vs field-level gate
+
+There are two distinct mechanisms, and both are live:
+
+1. **Route-level disjunction gate** (`requireOrgBillingAdminOrOwner`) —
+   used by routes whose *entire* surface is financial: the `billing-account`
+   PATCH, wallet top-ups, invoices, POs, payouts, rate-cards, outbound
+   webhook create/update/redeliver, and **data-exports**. The whole route
+   is OWNER ∨ BILLING_ADMIN.
+
+2. **Field-level gate** (per-field allowlist) — used by the org
+   `PATCH /api/organizations/[orgId]` handler, where a single row mixes
+   identity, branding, billing, tax, and capability fields. OWNER passes
+   everything; a non-OWNER's touched fields must each fall inside the
+   caller's remit or the route returns `403 FIELD_RBAC_FORBIDDEN` naming
+   the offending fields:
+
+   | Caller | May set | Source set |
+   |--------|---------|------------|
+   | `OWNER` | every field (incl. `canSponsor`/`canHost`, `gstin`, `pan`, `gstStateCode`, `requiresPO`, policies, `isPublic`) | — (bypass) |
+   | `MAINTAINER` | `name`, `description`, `industry`, `website`, `sizeBucket`, `logo`, `bannerImage`, `primaryColor`, `secondaryColor` | `MAINTAINER_FIELDS` |
+   | `BILLING_ADMIN` | `billingEmail`, `paymentTermsDays` | `BILLING_ADMIN_FIELDS` |
+
+   The point of the disjunction surfaces here too: `MAINTAINER` (the higher
+   rank) is the identity/branding surface and is deliberately **excluded
+   from billing fields** (`billingEmail`, `paymentTermsDays`) — those sit
+   with `BILLING_ADMIN`. Tax fields (`gstin`/`pan`/`gstStateCode`) and
+   capability flips stay OWNER-only because they're in neither allowlist.
 
 ### BILLING_ADMIN gate matrix
 
@@ -85,8 +123,12 @@ higher.
 | `payouts` | POST | OWNER or BILLING_ADMIN |
 | `payouts/[payoutId]` | PATCH | OWNER or BILLING_ADMIN |
 | `rate-cards` | POST | OWNER or BILLING_ADMIN |
-| `rate-cards/[cardId]` | PATCH / DELETE | OWNER or BILLING_ADMIN |
-| `webhooks` (Batch 3) | POST / PATCH / redeliver | OWNER or BILLING_ADMIN |
+| `rate-cards/[cardId]` | PATCH | OWNER or BILLING_ADMIN |
+| `webhooks` (Batch 3) | POST | OWNER or BILLING_ADMIN |
+| `webhooks/[endpointId]` | PATCH | OWNER or BILLING_ADMIN |
+| `webhooks/[endpointId]/deliveries/[deliveryId]/redeliver` | POST | OWNER or BILLING_ADMIN |
+| `data-exports` | GET / POST | OWNER or BILLING_ADMIN |
+| `data-exports/[exportId]/download` | GET | OWNER or BILLING_ADMIN |
 
 ### Surfaces that stay OWNER-only
 
@@ -96,7 +138,9 @@ higher.
 - `members/**` (invite, role change, removal)
 - `invitations/**`
 - `scim/tokens/**` (Batch 4)
-- `webhooks/[endpointId]` DELETE + rotate-secret (governance-sensitive)
+- `webhooks/[endpointId]` DELETE + `webhooks/[endpointId]/rotate-secret` POST (governance-sensitive)
+- `sso/break-glass` POST + DELETE (temporary SSO-enforcement bypass; see [15-sso-and-authentication.md](15-sso-and-authentication.md))
+- `contracts/[contractId]/supersede` POST (mints the successor contract)
 
 ## `requireOrgAccess` / `requireOrgOwner`
 
@@ -132,6 +176,7 @@ values (the stub id is `__admin_stub_<userId>`).
 | `/api/organizations/[orgId]/contracts` | `POST` | OWNER |
 | `/api/organizations/[orgId]/contracts/[contractId]` | `GET` | MAINTAINER |
 | `/api/organizations/[orgId]/contracts/[contractId]` | `PATCH`, `DELETE` | OWNER |
+| `/api/organizations/[orgId]/contracts/[contractId]/supersede` | `POST` | OWNER |
 | `/api/organizations/[orgId]/programs` | `GET` | any active member |
 | `/api/organizations/[orgId]/programs` | `POST` | MAINTAINER |
 | `/api/organizations/[orgId]/programs/[programId]` | `GET` | any active member |
@@ -141,37 +186,38 @@ values (the stub id is `__admin_stub_<userId>`).
 | `/api/organizations/[orgId]/programs/[programId]/assignments/[assignmentId]` | `GET` | any active member |
 | `/api/organizations/[orgId]/programs/[programId]/assignments/[assignmentId]` | `PATCH`, `DELETE` | MAINTAINER |
 | `/api/organizations/[orgId]/billing-account` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/billing-account` | `PATCH` | OWNER |
+| `/api/organizations/[orgId]/billing-account` | `PATCH` | OWNER or BILLING_ADMIN |
 | `/api/organizations/[orgId]/billing-account/wallet` | `GET` | MANAGER |
 | `/api/organizations/[orgId]/billing-account/wallet/top-ups` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/billing-account/wallet/top-ups` | `POST` | OWNER |
+| `/api/organizations/[orgId]/billing-account/wallet/top-ups` | `POST` | OWNER or BILLING_ADMIN |
 | `/api/organizations/[orgId]/billing-account/wallet/top-ups/[topUpId]` | `GET` | MANAGER |
 | `/api/organizations/[orgId]/billing-account/invoices` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/billing-account/invoices` | `POST` | OWNER |
+| `/api/organizations/[orgId]/billing-account/invoices` | `POST` | OWNER or BILLING_ADMIN |
 | `/api/organizations/[orgId]/billing-account/invoices/[invoiceId]` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/billing-account/invoices/[invoiceId]` | `PATCH` | OWNER |
-| `/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pay` | `POST` | OWNER |
+| `/api/organizations/[orgId]/billing-account/invoices/[invoiceId]` | `PATCH` | OWNER or BILLING_ADMIN |
+| `/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pay` | `POST` | OWNER or BILLING_ADMIN |
 | `/api/organizations/[orgId]/billing-account/purchase-orders` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/billing-account/purchase-orders` | `POST` | OWNER |
+| `/api/organizations/[orgId]/billing-account/purchase-orders` | `POST` | OWNER or BILLING_ADMIN |
 | `/api/organizations/[orgId]/billing-account/purchase-orders/[poId]` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/billing-account/purchase-orders/[poId]` | `PATCH`, `DELETE` | OWNER |
+| `/api/organizations/[orgId]/billing-account/purchase-orders/[poId]` | `PATCH`, `DELETE` | OWNER or BILLING_ADMIN |
 | `/api/organizations/[orgId]/rate-cards` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/rate-cards` | `POST` | OWNER |
+| `/api/organizations/[orgId]/rate-cards` | `POST` | OWNER or BILLING_ADMIN |
 | `/api/organizations/[orgId]/rate-cards/[cardId]` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/rate-cards/[cardId]` | `PATCH` | OWNER |
+| `/api/organizations/[orgId]/rate-cards/[cardId]` | `PATCH` | OWNER or BILLING_ADMIN |
 | `/api/organizations/[orgId]/payout-account` | `GET` | MANAGER |
 | `/api/organizations/[orgId]/payout-account` | `PUT` | OWNER |
 | `/api/organizations/[orgId]/earnings` | `GET` | MANAGER |
 | `/api/organizations/[orgId]/payouts` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/payouts` | `POST` | OWNER |
+| `/api/organizations/[orgId]/payouts` | `POST` | OWNER or BILLING_ADMIN |
 | `/api/organizations/[orgId]/payouts/[payoutId]` | `GET` | MANAGER |
-| `/api/organizations/[orgId]/payouts/[payoutId]` | `PATCH` | OWNER |
+| `/api/organizations/[orgId]/payouts/[payoutId]` | `PATCH` | OWNER or BILLING_ADMIN |
 | `/api/organizations/[orgId]/sso` | `GET` | MANAGER |
 | `/api/organizations/[orgId]/sso` | `PATCH` | OWNER |
 | `/api/organizations/[orgId]/sso/providers` | `GET` | MANAGER |
 | `/api/organizations/[orgId]/sso/providers` | `POST` | OWNER |
 | `/api/organizations/[orgId]/sso/providers/[providerId]` | `GET` | MANAGER |
 | `/api/organizations/[orgId]/sso/providers/[providerId]` | `DELETE` | OWNER |
+| `/api/organizations/[orgId]/sso/break-glass` | `POST`, `DELETE` | OWNER |
 | `/api/organizations/[orgId]/domain-claims` | `GET` | MANAGER |
 | `/api/organizations/[orgId]/domain-claims` | `POST` | OWNER |
 | `/api/organizations/[orgId]/domain-claims/[domain]` | `DELETE` | OWNER |
@@ -180,14 +226,25 @@ values (the stub id is `__admin_stub_<userId>`).
 | `/api/organizations/[orgId]/hris/sync` | `GET` | MANAGER |
 | `/api/organizations/[orgId]/hris/sync` | `POST` | OWNER |
 | `/api/organizations/[orgId]/hris/csv-upload` | `POST` | OWNER |
-| `/api/organizations/[orgId]/consent` | `GET`, `POST` | MANAGER |
+| `/api/organizations/[orgId]/consent` | `GET`, `POST`, `DELETE` | MANAGER |
 | `/api/organizations/[orgId]/analytics` | `GET` | MANAGER |
 | `/api/organizations/[orgId]/activity` | `GET` | MANAGER |
 | `/api/organizations/[orgId]/catalog` | `GET` | MANAGER |
 | `/api/organizations/[orgId]/catalog` | `POST`, `DELETE` | OWNER |
 | `/api/organizations/[orgId]/catalog/search` | `GET` | MANAGER |
 | `/api/organizations/[orgId]/settings` | `GET` | MANAGER (read-only wrapper) |
-| `/api/admin/organizations/[orgId]/verify` | `POST` | platform ADMIN |
+| `/api/organizations/[orgId]/webhooks` | `GET` | MANAGER |
+| `/api/organizations/[orgId]/webhooks` | `POST` | OWNER or BILLING_ADMIN |
+| `/api/organizations/[orgId]/webhooks/[endpointId]` | `GET` | MANAGER |
+| `/api/organizations/[orgId]/webhooks/[endpointId]` | `PATCH` | OWNER or BILLING_ADMIN |
+| `/api/organizations/[orgId]/webhooks/[endpointId]` | `DELETE` | OWNER |
+| `/api/organizations/[orgId]/webhooks/[endpointId]/rotate-secret` | `POST` | OWNER |
+| `/api/organizations/[orgId]/webhooks/[endpointId]/deliveries/[deliveryId]/redeliver` | `POST` | OWNER or BILLING_ADMIN |
+| `/api/organizations/[orgId]/data-exports` | `GET`, `POST` | OWNER or BILLING_ADMIN |
+| `/api/organizations/[orgId]/data-exports/[exportId]/download` | `GET` | OWNER or BILLING_ADMIN |
+| `/api/organizations/[orgId]/checkout/overage-preview` | `GET` | any active member |
+| `/api/organizations/[orgId]/verification/resubmit` | `POST` | MAINTAINER |
+| `/api/admin/organizations/[orgId]/verify` | `POST` | platform ADMIN (`action: VERIFY \| REJECT \| SUSPEND \| REACTIVATE \| DEACTIVATE`) |
 
 ## Role narrowing at the API boundary
 

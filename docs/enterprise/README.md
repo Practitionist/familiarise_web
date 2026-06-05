@@ -14,9 +14,9 @@ flowchart LR
   OV --> PATH{your area?}
   PATH -->|money / ledger| MONEY["06 → 07 → 08 → 09<br/>→ 10 → 11 → 12 → 13 → 14"]
   PATH -->|identity / SSO| IAM["03 roles · 15 SSO · 16 JIT<br/>17 SCIM · 18 limits · 19 headers"]
-  PATH -->|programs / app| PROG["20 concurrency · 21 programs<br/>22 experts · 23 dashboard · 24 discovery · 25 flags"]
+  PATH -->|programs / app| PROG["20 concurrency · 21 programs · 22 experts<br/>23 dashboard · 24 discovery · 25 flags<br/>26 contracts · 27 cycle engine"]
   PATH -->|compliance / data| COMP["30 compliance · 31 deletion<br/>32 export · 33 webhooks · 34 prefs · 35 integrations"]
-  PATH -->|on-call / ops| OPS["40 API · 41 routes · 42 runbooks<br/>43 monitoring · 44 events"]
+  PATH -->|on-call / ops| OPS["40 API · 41 routes · 42 runbooks<br/>43 monitoring · 44 events · 45 payout go-live"]
   PATH -->|sales / partners| SALES["50 scenarios · 51 verdict · 52 partners<br/>playbooks/"]
 ```
 
@@ -29,9 +29,9 @@ flowchart LR
 | `00–05` | **Foundations** | overview, org types, funding & programs, roles, lifecycle, hierarchy |
 | `06–14` | **Money & ledger** | money model, chart of accounts, postings, wallet, booking→earnings, payouts, invoicing, payment legs, integrity |
 | `15–19` | **IAM / SSO / security** | SSO, JIT, SCIM, rate-limiting, security headers |
-| `20–25` | **Programs / dashboard / discovery** | concurrency & idempotency, programs, experts, dashboard, discovery, feature flags |
+| `20–27` | **Programs / dashboard / discovery / lifecycle** | concurrency & idempotency, programs, experts, dashboard, discovery, feature flags, contract lifecycle, cycle engine & rollover |
 | `30–35` | **Compliance / integrations / data** | compliance map, deletion, data export, outbound webhooks, workspace prefs, cross-cutting integrations |
-| `40–44` | **Operations** | API reference, route migration, runbooks, monitoring, system events |
+| `40–45` | **Operations** | API reference, route migration, runbooks, monitoring, system events, live-payout go-live |
 | `50–52` | **Scenarios / verdict / partners** | worked scenarios, harness verdict, design-partner set |
 
 ---
@@ -46,7 +46,7 @@ flowchart LR
 | 02 | [funding-and-programs](02-funding-and-programs.md) | `FundingSource` enum + program subtypes |
 | 03 | [roles-and-permissions](03-roles-and-permissions.md) | `MemberRole` ladder + every API gate |
 | 04 | [organization-lifecycle](04-organization-lifecycle.md) | `OrgStatus` + contract/program state machines |
-| 05 | [hierarchy](05-hierarchy.md) | `parentId`/`rootId`/`depth` (UI deferred) |
+| 05 | [hierarchy](05-hierarchy.md) | `parentOrganizationId`/`rootOrganizationId` (UI deferred) |
 
 ### Money & ledger
 | # | Doc | Focus |
@@ -78,14 +78,16 @@ flowchart LR
 | 22 | [expert-lifecycle](22-expert-lifecycle.md) | expert apply/approve; `PayoutRecipient` |
 | 23 | [dashboard-pages](23-dashboard-pages.md) | every `app/dashboard/organization/[orgId]/**` page |
 | 24 | [public-pages-and-discovery](24-public-pages-and-discovery.md) | org catalog, search, marketplace identity |
-| 25 | [feature-flags-and-rollout](25-feature-flags-and-rollout.md) | `ENABLE_PROVIDER_ORGS` + capability-gated UI |
+| 25 | [feature-flags-and-rollout](25-feature-flags-and-rollout.md) | `ENABLE_HOST_ORGS` + capability-gated UI |
+| 26 | [contract-lifecycle](26-contract-lifecycle.md) | `Contract` state machine, auto-renew, supersession, end-early guard |
+| 27 | [cycle-engine-and-rollover](27-cycle-engine-and-rollover.md) | `ProgramAssignment` lifecycle, nightly cycle-advance, successor mint |
 
 ### Compliance / integrations / data
 | # | Doc | Focus |
 |---|---|---|
 | 30 | [compliance-dpdp-gst-tds-msme](30-compliance-dpdp-gst-tds-msme.md) | enterprise touchpoints → `../compliance/*` |
 | 31 | [deletion-policy](31-deletion-policy.md) | erasure, retention, immutable ledger |
-| 32 | [data-export](32-data-export.md) | `OrgDataExport` |
+| 32 | [data-export](32-data-export.md) | `OrgDataExportJob` |
 | 33 | [outbound-webhooks](33-outbound-webhooks.md) | `WebhookEndpoint`, delivery, signing |
 | 34 | [workspace-preferences](34-workspace-preferences.md) | `OrgWorkspaceProfile` prefs |
 | 35 | [cross-cutting-integrations](35-cross-cutting-integrations.md) | per-subsystem wired/skipped map |
@@ -121,7 +123,12 @@ Docs **defer to code** when prose drifts. The load-bearing sources:
 - `prisma/schema.prisma` — the schema is the source of truth; docs cite model/field names verbatim.
 - `lib/payments/ledger/post.ts` — `postLedgerTxn`, `ledgerAccountId`, `ledgerBalancePaise`.
 - `scripts/reconcile/reconcile-ledgers.ts` — the integrity invariants.
-- `lib/api/organizations/{wallet,program-helpers,rate-card,hierarchy}.ts` — transactional primitives.
+- `lib/api/organizations/{wallet,program-helpers,rate-card}.ts` — transactional primitives.
+- `lib/enterprise/cycle-engine.ts` — assignment roll-vs-close + successor mint (#779 §A/§B → [27](27-cycle-engine-and-rollover.md)).
+- `lib/enterprise/config-lock.ts` — which contract/program term fields freeze once in use (#779 §A → [26](26-contract-lifecycle.md)).
+- `lib/enterprise/org-activation.ts` — the one org-state model behind the activation checklist + action-required banners (#777 §A / #779 §F); server-side reads split into `org-activation-signals.ts`.
+- `lib/enterprise/governance.ts` — `verifiedAt`-gated feature locks (SSO / INVOICE billing / unverified seat cap) (#675/#687).
+- `lib/auth/billing-admin-gate.ts` — OWNER-or-`BILLING_ADMIN` disjunction gate for the financial surface.
 - `lib/labels/org-labels.ts`, `lib/enterprise/{audit-actions,role-transitions}.ts`, `lib/auth.ts` (the `customSession` hook).
 
 ---
@@ -130,9 +137,13 @@ Docs **defer to code** when prose drifts. The load-bearing sources:
 
 > **The double-entry journal (`LedgerTransaction` / `LedgerEntry` / `LedgerAccount`) replaced the three single-entry logs.** `FundingLedgerEntry`, `WalletEntry`, and `SettlementLedgerEntry` (+ `SettlementKind`) are **gone**; `WalletTopUp` carries top-up lifecycle, and balances derive from the journal. Revenue splits are integer **basis points**, not floats. If you find any of those removed names anywhere in this doc set, it's a stale reference — fix it.
 
+## Post-v2 note
+
+> **The v2 mega-audit (#777/#778/#779) was absorbed into these docs on 2026-06-05.** It closed the "silent stuck money / zombie row" gaps: the `Contract` lifecycle (auto-renew, supersede, end-early) → [26](26-contract-lifecycle.md); the cycle engine + assignment rollover (nightly cycle-advance, successor mint) → [27](27-cycle-engine-and-rollover.md); the `OverageEvent` system (breaker / surcharge / `CHARGE_MEMBER` timeout); dunning; wallet auto-top-up (**notify-only today** — the cron warns, it does not charge); SSO break-glass; verification resubmit; webhook secret-rotation grace; field-level RBAC on org/contract/program edits; and the IRN payload mapper behind `ENABLE_IRP_UPLOADER`. `TdsAdjustment` is schema-only (unwired). New idempotency anchors: `rolledAt` (cycle mint), `autoRenewedAt` (contract renew), `autoTopUpLastFiredAt` (auto-top-up).
+
 ## Conventions
 
 - **Money is integer paise**; splits/percentages are integer **basis points** (`10000 = 100%`).
-- **Idempotency keys** are structured: `booking:<paymentId>`, `topup:<orderId>`, `orgpayout:<payoutId>`, … ([20-concurrency-and-idempotency](20-concurrency-and-idempotency.md)).
+- **Idempotency keys** are structured: money keys like `booking:<paymentId>`, `topup:<providerOrderId>`, `orgpayout:<payoutId>`; cron claims gate on a stamped timestamp — `rolledAt` (cycle mint), `autoRenewedAt` (contract renew), `autoTopUpLastFiredAt` (auto-top-up) ([20-concurrency-and-idempotency](20-concurrency-and-idempotency.md)).
 - **Ledger rows are immutable** — corrections are counter-transactions, never edits or deletes.
 - **Balances are derived** by summing the journal; the few cached numbers are reconciled nightly.

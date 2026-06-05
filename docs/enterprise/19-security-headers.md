@@ -17,9 +17,10 @@ already in place; they get a brief mention here for completeness.
 | `Referrer-Policy` | `strict-origin-when-cross-origin` | |
 | `Permissions-Policy` | `camera=(self), microphone=(self), geolocation=(), payment=()` | Stream.io needs camera/mic; payment is iframe-scoped via Razorpay |
 
-All seven are applied globally via `next.config.mjs` `async headers()`.
-There are no per-route overrides — the production allow-list is already
-narrow enough to cover the dashboard surface (`/dashboard/org-workspace/**`)
+All seven are applied globally via `next.config.mjs` `async headers()`
+(the single `source: "/(.*)"` block over `securityHeaders`). There are
+no per-route overrides — the production allow-list is already narrow
+enough to cover the dashboard surface (`/dashboard/organization/[orgId]/**`)
 and the public marketplace pages alike.
 
 ## CSP allow-list rationale
@@ -42,6 +43,15 @@ Anything outside this list will be blocked once `ENABLE_CSP_ENFORCE=true`:
 - **`media-src`** — Stream.io recording + call audio/video. Requires both `blob:` (local recording playback) and the getstream.io CDN.
 
 - **`frame-src`** — Razorpay checkout opens an iframe. Without this entry, payments break in CSP-enforce mode.
+
+The remaining directives in `CSP_DIRECTIVES` carry no external origins
+and are listed here for completeness: `default-src 'self'`,
+`style-src 'self' 'unsafe-inline'` (Tailwind/runtime inline styles),
+`font-src 'self' data:`, and `img-src 'self' data: https: blob:` —
+note `img-src` is deliberately broad (`https:`) because user/consultant
+avatars come from many CDNs (Google, GitHub, logo.dev, Supabase, …);
+tightening it would mean enumerating every avatar host in the
+`images.remotePatterns` list.
 
 ## Rollout
 

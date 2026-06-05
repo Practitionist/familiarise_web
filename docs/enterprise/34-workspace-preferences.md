@@ -15,22 +15,39 @@ settings (branding, SSO, billing config) live on the org itself at
 
 ```prisma
 model OrgWorkspaceProfile {
-  id     String @id @default(uuid())
+  id String @id @default(uuid())
+
+  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String @unique
 
+  // Operator preferences. Per-field docs: docs/enterprise/34-workspace-preferences.md.
+  // Soft FK on default-landing org (plain String) so org deletes don't cascade here.
   defaultLandingOrganizationId String?
   notificationRoutingMode      NotificationRoutingMode @default(BELL_AND_EMAIL)
-  locale                       String?    // BCP-47
-  currencyDisplayCode          String?    // ISO 4217
+  locale                       String? // BCP-47 (e.g. "en-IN")
+  currencyDisplayCode          String? // ISO 4217 (e.g. "INR")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@map("org_workspace_profiles")
 }
 
+/// Operator-level notification routing for cross-org lifecycle events.
+/// See docs/enterprise/34-workspace-preferences.md.
 enum NotificationRoutingMode {
-  BELL_AND_EMAIL  // default — in-app bell + daily email digest
-  BELL_ONLY       // in-app only
-  EMAIL_ONLY      // email only, bell stream stays empty
-  NEITHER         // suppress all (use sparingly)
+  BELL_AND_EMAIL
+  BELL_ONLY
+  EMAIL_ONLY
+  NEITHER
 }
 ```
+
+The enum values map to the routing matrix below: `BELL_AND_EMAIL`
+(default — in-app bell + daily email digest), `BELL_ONLY` (in-app
+only), `EMAIL_ONLY` (email only, bell stream stays empty), `NEITHER`
+(suppress all — use sparingly).
 
 ## Field-by-field
 

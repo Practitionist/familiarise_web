@@ -79,13 +79,14 @@ Each section also lists:
 - **Why:** The gateway notes are a server-side proof that the booker's claimed org matches the gateway's record. Without them, a `#687` invoice-fraud reconciler would need a DB lookup per webhook to verify org attribution; with them, the verification is a string compare inside the webhook handler.
 - **Future work:** PR-3 webhook reconciler to cross-check `notes.organizationId` against `Payment.organizationId` and surface drift in `SystemEvent`.
 
-### B.2 Wallet — ✅ Wired
+### B.2 Wallet — ✅ Wired (auto-top-up floor wired; mandate auto-charge 🟡 designed-not-active)
 
-- **Schema:** `BillingAccount.walletBalance` (derived cache), `WalletTopUp` (top-up lifecycle, keyed by `providerOrderId @unique`), and the org's WALLET `LedgerAccount` (credit-normal) holding one `LedgerEntry` per cash movement.
-- **Code paths:** [`lib/api/organizations/wallet.ts`](../../lib/api/organizations/wallet.ts) — `walletDebit()`/`walletCredit()` move the cached balance; `initiateTopUp()`/`confirmTopUp()` drive the `WalletTopUp` lifecycle. A confirmed top-up posts one balanced `LedgerTransaction` (`Dr CASH / Cr WALLET`) via [`postLedgerTxn`](../../lib/payments/ledger/post.ts) inside the same `tx`.
+- **Schema:** `BillingAccount.walletBalance` (derived cache), `WalletTopUp` (top-up lifecycle, keyed by `providerOrderId @unique`), and the org's WALLET `LedgerAccount` (credit-normal) holding one `LedgerEntry` per cash movement. Auto-top-up columns: `{minBalancePaise, autoTopUpEnabled, autoTopUpAmountPaise, autoTopUpMandateId, autoTopUpLastFiredAt}` (#777 §C). Note: the threshold is `minBalancePaise` — there is no `walletFloorPaise`.
+- **Code paths:** [`lib/api/organizations/wallet.ts`](../../lib/api/organizations/wallet.ts) — `walletDebit()`/`walletCredit()` move the cached balance; `initiateTopUp()`/`confirmTopUp()` drive the `WalletTopUp` lifecycle. A confirmed top-up posts one balanced `LedgerTransaction` (`Dr CASH / Cr WALLET`) via [`postLedgerTxn`](../../lib/payments/ledger/post.ts) inside the same `tx`. [`jobs/billing/wallet-low-balance.ts`](../../jobs/billing/wallet-low-balance.ts) scans accounts whose `walletBalance < minBalancePaise` and notifies (one alert per `autoTopUpLastFiredAt` cooldown).
 - **Org dashboard surface:** `/billing`
 - **Why:** The journal (`08-ledger-and-postings.md`) is the source of truth; `walletBalance` is a cache asserted against the WALLET account by the reconciler (`WALLET_BALANCE_DRIFT`). `LedgerAccount.currency` exists so a future multi-currency wallet (`#711`) doesn't need a backfill against historical postings.
-- **Future work:** Multi-currency wallets (`#711`, parked).
+- 🟡 **Designed-not-active:** the low-balance cron today only *alerts*; the gateway-mandate auto-charge (`autoTopUpMandateId`/`autoTopUpAmountPaise`) is a TODO(`#777`) pending Razorpay recurring mandates — those two columns are unused by the cron until then.
+- **Future work:** Mandate auto-charge (`#777`); multi-currency wallets (`#711`, parked).
 
 ### B.3 Payouts — ✅ Wired (HOST orgs)
 
@@ -111,13 +112,16 @@ Each section also lists:
 - **Why:** Indian enterprise orgs frequently require a PO before an invoice can be issued. The atomic decrement pattern mirrors the wallet-debit `where: { remaining: { gte: amount } }` discipline.
 - **Future work:** none open.
 
-### B.6 BillingSubscription (LICENSE recurring) — ✅ Wired
+### B.6 BillingSubscription + dunning (LICENSE/INVOICE recurring) — ✅ Wired (suspension cascade 🟡 designed-not-active)
 
-- **Schema:** `BillingSubscription` (linked 1:1 to `Contract`). `BillingSubscription.renewalReminderSentAt` (once-per-cycle gate for renewal-upcoming notification, C.5).
-- **Code paths:** [`jobs/billing/generate-subscription-invoices.ts`](../../jobs/billing/generate-subscription-invoices.ts) — `sendRenewalReminders()` at job entry then the existing cycle-advance + invoice transaction (invoice-paid postings land via `postLedgerTxn` when the payment confirms).
+- **Schema:** `BillingSubscription` (linked 1:1 to `Contract`). `BillingSubscription.renewalReminderSentAt` (once-per-cycle gate for renewal-upcoming notification, C.5). Dunning state on `OrganizationInvoice` (`markedOverdueAt`, `dunningReminderCount`, `lastDunningReminderAt`, `dunningSuspendedAt`).
+- **Code paths:**
+  - Invoicing: [`jobs/billing/generate-subscription-invoices.ts`](../../jobs/billing/generate-subscription-invoices.ts) — `sendRenewalReminders()` then cycle-advance + invoice transaction (invoice-paid postings land via `postLedgerTxn` when the payment confirms).
+  - **Dunning** (#779 §A/§D): [`jobs/billing/dunning.ts`](../../jobs/billing/dunning.ts) — Stage 1 flips past-due ISSUED invoices to OVERDUE; Stage 2 sends escalation reminders on a 7-day cadence, capped at 3 (`MAX_REMINDERS = 3`). DEACTIVATED orgs are skipped.
 - **Org dashboard surface:** `/billing` (Annual License panel)
-- **Why:** Single daily cron handles both renewal-upcoming notification (7 days before `nextInvoiceDate`) and renewal-day invoice creation. Same idempotency pattern (conditional `updateMany` claim) for both steps.
-- **Future work:** GH Actions schedule for `generate-subscription-invoices` (currently local-only).
+- **Why:** A daily cron handles renewal-upcoming notification (7 days before `nextInvoiceDate`), renewal-day invoice creation, and OVERDUE dunning. Same idempotency pattern (conditional `updateMany` claim) throughout so no row is double-charged or double-reminded.
+- 🟡 **Designed-not-active:** the config-gated **booking-suspend cascade** is NOT live — `dunningSuspendedAt` stays unwritten; TODO(`#779`) wires the suspension once OVERDUE drags past a configurable cliff.
+- **Future work:** Booking-suspend cascade (`#779`); GH Actions schedule for `generate-subscription-invoices` (currently local-only).
 
 ### B.7 Double-entry ledger discipline — ✅ Wired
 
@@ -152,13 +156,20 @@ Each section also lists:
 - **Why:** A single human can operate multiple orgs (consultancy with several clients). The workspace profile lets the session carry the operator's preferences across the orgs they have access to, without polluting `Membership` (which is per-org).
 - **Future work:** none open.
 
-### C.4 SSO + Domain Claims — ✅ Wired
+### C.4 SSO + Domain Claims + break-glass — ✅ Wired
 
-- **Schema:** `OrganizationSSOSettings`, `OrgDomainClaim` (DNS TXT verification), SAML provider rows.
-- **Code paths:** [`lib/sso/provider-schemas.ts`](../../lib/sso/provider-schemas.ts) — `validateSamlCert` PEM check that fails closed before BetterAuth sees a malformed cert (closeout fix). [`app/api/auth/sso/domain-check/route.ts`](../../app/api/auth/sso/domain-check/route.ts).
+- **Schema:** `OrganizationSSOSettings.{enforceSSO, breakGlassUntil}` (#779 §E), `OrgDomainClaim` (DNS TXT verification), SAML provider rows.
+- **Code paths:** [`lib/sso/provider-schemas.ts`](../../lib/sso/provider-schemas.ts) — `validateSamlCert` PEM check that fails closed before BetterAuth sees a malformed cert. [`app/api/auth/sso/domain-check/route.ts`](../../app/api/auth/sso/domain-check/route.ts). **Break-glass** (#779 §E): [`app/api/organizations/[orgId]/sso/break-glass/route.ts`](../../app/api/organizations/[orgId]/sso/break-glass/route.ts) stamps `breakGlassUntil`; [`lib/sso/enforce-session.ts`](../../lib/sso/enforce-session.ts) skips the `enforceSSO` gate while `breakGlassUntil > now` so a locked-out admin can recover when the IdP is down.
 - **Org dashboard surface:** `/settings/sso`, `/domain-claims`
-- **Why:** Domain verification via TXT + cert PEM validation means the org provisioning surface fails fast and friendly instead of crashing BetterAuth at first assertion.
+- **Why:** Domain verification via TXT + cert PEM validation means the org provisioning surface fails fast and friendly instead of crashing BetterAuth at first assertion. Break-glass closes the "enforced SSO + dead IdP = nobody can log in" trap without disabling enforcement permanently.
 - **Future work:** OIDC live deployment (`#670`/`#672`, deferred); cert auto-rotation runbook.
+
+### C.6 Org verification resubmit — ✅ Wired
+
+- **Schema:** `Organization.status` (`OrgStatus`, e.g. `PENDING_VERIFICATION`) plus the verification stamps `{verificationReason, verificationSubmittedAt, verificationRejectedAt}` — no RESUBMIT enum value; resubmit is a state transition, not an enum.
+- **Code paths:** [`app/api/organizations/[orgId]/verification/resubmit/route.ts`](../../app/api/organizations/[orgId]/verification/resubmit/route.ts) (#779 §A) — only a previously-rejected, still-pending org can resubmit (`NOTHING_TO_RESUBMIT` guard otherwise); re-stamps `verificationSubmittedAt` and writes a `VERIFICATION_RESUBMITTED` audit row.
+- **Why:** Self-serve recovery after an admin rejection, instead of forcing a support ticket to re-open the KYB review.
+- **Future work:** none open.
 
 ### C.5 SCIM provisioning — ⏸ Parked (stubbed 501)
 
@@ -171,12 +182,15 @@ Each section also lists:
 
 ## D. Programs & rate plans
 
-### D.1 Programs — ✅ Wired (LICENSED_SEAT + CREDIT_POOL)
+### D.1 Programs — ✅ Wired (LICENSED_SEAT + CREDIT_POOL, cycle engine, overage)
 
-- **Schema:** `Program`, `LicensedSeatConfig`, `CreditPoolConfig`, `ProgramAssignment`, `BookingUtilization`.
-- **Code paths:** [`lib/api/organizations/program-helpers.ts:recordBookingUtilization`](../../lib/api/organizations/program-helpers.ts) — the cap-enforce + engagement-debit path. PR-1e cap counting (`#710`) handled in [`lib/payments/operations/checkout.ts`](../../lib/payments/operations/checkout.ts) where `engagementsForCap` is derived per-plan-type.
-- **Org dashboard surface:** `/programs`
-- **Why:** Cap enforcement modes (BLOCK/CHARGE_MEMBER/CHARGE_ORG) and the engagement-counter pattern are described in `21-programs.md`. The booking transaction owns both the cap decision and the appointment commit.
+- **Schema:** `Program.{configLockedAt, archivedAt}`, `LicensedSeatConfig.{overageSurchargeBps, maxOveragePerCyclePaise}`, `CreditPoolConfig`, `ProgramAssignment.{consumedPaise, status, rolledToAssignmentId, rolledAt}`, `BookingUtilization`, `OverageEvent` (append-only; `OverageChargeStatus {PENDING, ACCRUED, CHARGED, BLOCKED, REVERSED, FAILED}` + timeout telemetry).
+- **Code paths:**
+  - Cap-enforce + engagement-debit: [`lib/api/organizations/program-helpers.ts:recordBookingUtilization`](../../lib/api/organizations/program-helpers.ts); per-plan-type `engagementsForCap` in [`lib/payments/operations/checkout.ts`](../../lib/payments/operations/checkout.ts).
+  - **Cycle engine + rollover** (#779 §A/§B): [`lib/enterprise/cycle-engine.ts`](../../lib/enterprise/cycle-engine.ts) + [`jobs/billing/advance-program-cycles.ts`](../../jobs/billing/advance-program-cycles.ts) — advances cycles and rolls unused entitlement onto the next assignment (`rolledToAssignmentId`/`rolledAt`), killing the zombie-assignment problem.
+  - **Overage** (#778/#779): the `OverageEvent` ledger splits `marginalPaise == basePaise + surchargePaise`; CHARGE_MEMBER settles instantly, CHARGE_ORG rolls into the renewal invoice. The per-cycle circuit breaker (`maxOveragePerCyclePaise`) flips overruns to `BLOCKED`; abandoned CHARGE_MEMBER side-payments time out → `FAILED` via [`jobs/billing/timeout-member-overages.ts`](../../jobs/billing/timeout-member-overages.ts) (sweep also at `jobs/cleanup/sweep-abandoned-overage-charges.ts`).
+- **Org dashboard surface:** `/programs` (incl. overage view)
+- **Why:** Cap modes (BLOCK / CHARGE_MEMBER / CHARGE_ORG) and the engagement-counter pattern are in `21-programs.md`. The booking transaction owns both the cap decision and the appointment commit; the cycle cron owns rollover + overage roll-up.
 - **Future work:** Programs v2 (PROJECT/RETAINER) parked behind `PROGRAM_TYPE_NOT_AVAILABLE` rejection guard (`#681` parked).
 
 ### D.2 RateCards — ✅ Wired (canHost orgs)
@@ -187,12 +201,15 @@ Each section also lists:
 - **Why:** Settlement reads the BPS snapshot from the utilization row, not the live rate card, so an org changing its split doesn't restate past earnings.
 - **Future work:** none open.
 
-### D.3 Contracts — ✅ Wired
+### D.3 Contracts — ✅ Wired (incl. auto-renew / supersede / end-early)
 
-- **Schema:** `Contract` (status machine DRAFT → ACTIVE → EXPIRED/TERMINATED), `paymentTermsDays`, `autoRenew`.
-- **Code paths:** [`app/api/organizations/[orgId]/contracts/route.ts`](../../app/api/organizations/[orgId]/contracts/route.ts) handles LICENSE-funded create as an atomic Contract + BillingSubscription write so the org dashboard never sees half-configured LICENSE state (`#756`).
+- **Schema:** `Contract` (status machine DRAFT → ACTIVE → EXPIRED/TERMINATED), `paymentTermsDays`, `autoRenew`, plus the v2 lifecycle columns `{supersededByContractId, supersededAt, supersessionReason, autoRenewedAt}` (#779 §A/§C).
+- **Code paths:**
+  - Create: [`app/api/organizations/[orgId]/contracts/route.ts`](../../app/api/organizations/[orgId]/contracts/route.ts) handles LICENSE-funded create as an atomic Contract + BillingSubscription write so the dashboard never sees half-configured LICENSE state (`#756`).
+  - **Auto-renew** (#779 §A): [`jobs/contracts/auto-renew-contracts.ts`](../../jobs/contracts/auto-renew-contracts.ts) stamps `autoRenewedAt` and extends the term; [`jobs/contracts/expire-contracts.ts`](../../jobs/contracts/expire-contracts.ts) transitions lapsed contracts to EXPIRED. Together these kill the zombie-assignment problem (assignments outliving a dead contract).
+  - **Supersede / end-early** (#779 §A): supersession links the replacement via `supersededByContractId` + reason; end-early is a guarded status transition (see anti-lockout #7 in [§31](31-deletion-policy.md)).
 - **Org dashboard surface:** `/contracts`
-- **Why:** A LICENSE contract without a BillingSubscription is incoherent; bundling them in one transaction means the Get-Started checklist on `/home` doesn't need a retry path.
+- **Why:** A LICENSE contract without a BillingSubscription is incoherent; bundling them in one transaction means the Get-Started checklist on `/home` doesn't need a retry path. Renewal/expiry/supersession run on contract crons so the lifecycle advances without an operator click.
 - **Future work:** none open.
 
 ---
@@ -222,44 +239,48 @@ See A.4. Recording retention sweeps per-org via `Organization.streamRecordingRet
 
 ### F.1 GST — ✅ Wired
 
-- **Schema:** `Organization.gstin`, `Organization.gstStateCode`, GST columns on `OrganizationInvoice`.
-- **Code paths:** [`lib/compliance/gst.ts:deriveGstBreakdown`](../../lib/compliance/gst.ts).
+- **Schema:** `OrganizationTaxInfo.{gstin, gstStateCode, gstRegStatus, hsnDefault}` (1:1 carve-out off the `Organization` God-Model, #768); GST columns on `OrganizationInvoice` (`igstPaise`/`cgstPaise`/`sgstPaise`/`placeOfSupply`). Refund-driven `CreditNote` (sequential per-org, CGST Rule 53) + monthly `GstTcsBatch` / `GstTcsAdjustment` for GSTR-8 (#778 §D).
+- **Code paths:** [`lib/compliance/gst.ts:deriveGstBreakdown`](../../lib/compliance/gst.ts); credit notes via [`lib/payments/operations/refund.ts:mintRefundCreditNote`](../../lib/payments/operations/refund.ts) (idempotent on `CreditNote.refundId @unique`) + [`lib/payments/billing/credit-note-numbering.ts`](../../lib/payments/billing/credit-note-numbering.ts).
 - **Why:** Place-of-supply rules require supplier vs buyer state comparison; the helper returns either CGST+SGST (intra-state) or IGST (inter-state). The supplier state is env-overridable so a registered office move doesn't require code changes.
-- **Future work:** Live GSTIN registry verification API (format-only validation today, parked).
+- **Future work:** Live GSTIN registry verification API (format-only validation today, parked); GST TCS collection + GSTR-8 filing flag-gated pending CA sign-off.
 
-### F.2 TDS — ✅ Wired (Section default + derivation)
+### F.2 TDS — ✅ Wired (Section default + reversal)
 
-- **Schema:** TDS columns on `OrganizationPayout` (`tdsSectionApplied`, `tdsAmountPaise`, `form15caPartCRef`, etc.).
-- **Code paths:** [`lib/compliance/tds.ts:computeTdsForPayout`](../../lib/compliance/tds.ts).
-- **Why:** Section selection (194J vs 194O vs 194C) currently defaults to 194O; PR-2 will wire the full derivation including expert-status checks.
-- **Future work:** Section selection logic (`#713`-1); Form 26Q quarterly filing (parked).
+- **Schema:** TDS columns on `OrganizationPayout` / `ConsultantPayout` (`tdsSectionApplied`, `tdsAmountPaise`, `mustPayByDate`, `form15caPartCRef`, etc.); `TDSRecord` for Form 26Q; `TdsAdjustment` (signed-negative refund reversal, #778 §D).
+- **Code paths:** [`lib/compliance/tds.ts`](../../lib/compliance/tds.ts) — `computeTdsForPayout` (pure; `DEFAULT_SECTION = "194O"`) + the `TdsAdjustment` reversal path.
+- **Why:** Section selection (194J vs 194O vs 194C) currently defaults to 194O; full derivation including expert-status checks is `#713`. Refund reversals write a negative line for the revised 26Q/27Q. Admin TDS surface gated by `ENABLE_TDS_ADMIN_VIEW`.
+- **Future work:** Section selection logic (`#713`); FVU export for `TdsAdjustment` (#778 §F deferred); Form 26Q quarterly filing (parked).
 
 ### F.3 MSME — ✅ Wired
 
-- **Schema:** `Organization.msmeStatus` enum; `OrganizationPayout.mustPayByDate`.
+- **Schema:** `OrganizationMsmeInfo.{msmeStatus, msmeWrittenAgreementOnFile}` (1:1 carve-out, #771 D10); `OrganizationPayout.mustPayByDate`.
 - **Code paths:** [`lib/compliance/msme.ts:computeMsmePaymentDeadline`](../../lib/compliance/msme.ts); [`jobs/compliance/msme-payment-alerts.ts`](../../jobs/compliance/msme-payment-alerts.ts).
-- **Why:** Section 43B(h) of the Income Tax Act requires MSME payments within 15/45 days. The deadline cron alerts before a default would lock the org's expense deduction.
+- **Why:** Section 43B(h) requires MSME payments within 45 days (written agreement on file) or 15 days (none) per §15 MSMED Act — web-validated 2026-06-05. The deadline cron alerts before a default would lock the org's expense deduction.
 - **Future work:** none open.
 
-### F.4 DPDP — ConsentArtifact + DataExport + DataBreach — 🟡 Partial
+### F.4 DPDP — Consent + Erasure + DataExport + DataBreach — ✅ Wired
 
-- **Schema:** `ConsentArtifact`, `OrgDataExportJob`, `DataBreach`.
-- **Code paths:** [`scripts/cleanup/process-data-exports.ts`](../../scripts/cleanup/process-data-exports.ts) — 7-day signed-URL export bundles, in-app Novu notify to OWNERs (C.6). [`jobs/compliance/databreach-deadline-alerts.ts`](../../jobs/compliance/databreach-deadline-alerts.ts) — 72-hour DPDP breach reporting clock.
-- **Why:** The export bundle is JSON-only (not zipped JSON+CSV) — compliance reviewers prefer JSON, and integrators can convert via `jq -r '@csv'`. Bundle URL expiry matches the typical post-export ETL window.
-- **Future work:** Erasure cascade workflow (DPDP §12), retention dashboard UI, withdrawal-of-consent enforcement (`#701`).
+- **Schema:** `ConsentArtifact`, `ErasureRequest`, `OrgDataExportJob`, `DataBreach`.
+- **Code paths:**
+  - Consent: `POST/GET/DELETE /api/organizations/[orgId]/consent` → [`lib/compliance/dpdp.ts`](../../lib/compliance/dpdp.ts) `buildConsentArtifact` / `withdrawConsent`. Withdrawal stamps `withdrawnAt` (irreversible; re-grant = fresh artifact). `consent-retention-sweeper` purges past `auditRetainedUntil`.
+  - Erasure (§12): `ErasureRequest` queue (`/api/users/me/erasure-requests` → `/api/admin/erasure-requests/[id]/process`) → [`lib/compliance/erasure/scrub-user.ts`](../../lib/compliance/erasure/scrub-user.ts) tombstone scrub; read-side [`lib/enterprise/audit-sanitize.ts`](../../lib/enterprise/audit-sanitize.ts).
+  - Access (§11): [`scripts/cleanup/process-data-exports.ts`](../../scripts/cleanup/process-data-exports.ts) — 7-day signed-URL JSON bundle, Novu notify to OWNERs.
+  - Breach: [`jobs/compliance/databreach-deadline-alerts.ts`](../../jobs/compliance/databreach-deadline-alerts.ts) — 72-hour reporting clock.
+- **Why:** Export bundle is JSON-only (compliance reviewers prefer JSON; `jq -r '@csv'` for CSV). Erasure pseudonymizes the actor and retains the immutable money journal. See [§30](30-compliance-dpdp-gst-tds-msme.md), [§31](31-deletion-policy.md), [§32](32-data-export.md).
+- **Future work:** Self-service user-account consent-withdrawal route (org-side DELETE exists today); retention dashboard UI (`#701`).
 
-### F.5 IRP / e-invoice — 🟡 Partial (env-gated)
+### F.5 IRP / e-invoice — ✅ Wired (env-gated)
 
-- **Schema:** `OrganizationInvoice.irn`, `ackNumber`, `signedQrPayload`, `irpStatus`, `irpRetryCount`.
-- **Code paths:** [`jobs/compliance/irp-uploader.ts`](../../jobs/compliance/irp-uploader.ts) ClearTax connector with retry telemetry.
-- **Why:** Production approval pending; the env-gate (`ENABLE_IRP_LIVE=false`) keeps the connector exercised in dev without firing real IRP submissions.
-- **Future work:** Production approval + sandbox proof (PR-2).
+- **Schema:** `OrganizationInvoice.{irn, ackNumber, signedQrPayload, irpStatus, irpRetryCount, irpLastError, irpLastAttemptAt}`.
+- **Code paths:** [`jobs/compliance/irp-uploader.ts`](../../jobs/compliance/irp-uploader.ts) → [`lib/compliance/irp.ts:generateIrn`](../../lib/compliance/irp.ts) + payload mapper [`lib/compliance/irp-payload.ts:buildIrpPayload`](../../lib/compliance/irp-payload.ts), ClearTax GSP connector with retry telemetry.
+- **Why:** Body is live but gated behind `ENABLE_IRP_UPLOADER` + ClearTax creds (`CLEARTAX_API_KEY`/`CLEARTAX_GSP_TOKEN`/`CLEARTAX_GSTIN`). With creds absent `generateIrn` returns `{ status: "FAILED", reason: "STUB" }` and the cron records a normal retry — never crashes on missing credentials.
+- **Future work:** Production approval + sandbox proof; accountant/legal sign-off on IRN format (PR-2).
 
-### F.6 HRIS provisioning — ⏸ Parked
+### F.6 HRIS provisioning — ⏸ Parked (no schema yet)
 
-- **Schema:** `HrisConfig`.
-- **Code paths:** Routes return 404 when `ENABLE_HRIS=false` (default).
-- **Why:** No design-partner customer has asked. Schema is reserved; connector implementation deferred.
+- **Schema:** none. There is no `HrisConfig` model in `prisma/schema.prisma` today, and no `ENABLE_HRIS` flag (the five live flags are ENABLE_HOST_ORGS, ENABLE_LIVE_PAYOUTS, ENABLE_IRP_UPLOADER, ENABLE_TDS_ADMIN_VIEW, ENABLE_BETTERSTACK_TELEMETRY).
+- **Code paths:** none yet.
+- **Why:** No design-partner customer has asked. Deferred entirely — schema + connector land together when a customer commits.
 - **Future work:** Build when a customer commits (`#744` E3).
 
 ---
@@ -274,9 +295,9 @@ See A.4. Recording retention sweeps per-org via `Organization.streamRecordingRet
 - **Why:** Org-visible audit log must not leak engineering noise (stack traces, Prisma error syntax). The three-layer defense — write-side discipline, read-side scrub, channel separation — is documented in `44-system-events.md`.
 - **Future work:** none open.
 
-### G.2 SystemEvent (admin-only) — ✅ Wired
+### G.2 SystemEvent (admin-only) + BetterStack telemetry — ✅ Wired
 
-See `44-system-events.md`. Raw engineering payloads go here, never to `OrgAuditLog`.
+See `44-system-events.md`. Raw engineering payloads go here, never to `OrgAuditLog`. `recordSystemEvent`/`recordSystemError` always write the `SystemEvent` table (source of truth); when `ENABLE_BETTERSTACK_TELEMETRY=true` AND `BETTERSTACK_SOURCE_TOKEN` + `BETTERSTACK_INGEST_URL` are set, they ALSO ship the event to Better Stack Telemetry (#776 §K) so a failed reconcile / stuck payout / webhook-queue backlog / HMAC failure can page someone. Off by default; fire-and-forget side channel, never on the critical path.
 
 ### G.3 Notifications (Novu) — ✅ Wired
 
@@ -285,12 +306,12 @@ See `44-system-events.md`. Raw engineering payloads go here, never to `OrgAuditL
 - **Why:** Each `notifyOrg*` helper queries the relevant `Membership` roster (OWNER-only for finance events; all-active for membership events) and triggers Novu. Non-throwing — Novu downtime never blocks the underlying mutation.
 - **Future work:** Workflow template body/email/digest config in the Novu dashboard (ops track).
 
-### G.4 Outbound webhooks — ✅ Wired
+### G.4 Outbound webhooks — ✅ Wired (incl. 24h secret-rotation grace)
 
-- **Schema:** `WebhookEndpoint`, `OutboundWebhookDelivery` (HMAC-SHA256 signed).
-- **Code paths:** [`lib/enterprise/outbound-webhooks/`](../../lib/enterprise/outbound-webhooks).
-- **Why:** Integrators receive signed delivery events for org lifecycle changes; redeliver path is idempotency-keyed on `(endpointId, eventId)`.
-- **Future work:** none open.
+- **Schema:** `WebhookEndpoint.{secret, secretRotatedAt, previousSecretHash}`, `OutboundWebhookDelivery` (HMAC-SHA256 signed; the delivery table IS the queue).
+- **Code paths:** [`lib/enterprise/outbound-webhooks/`](../../lib/enterprise/outbound-webhooks) — `signing.ts` (`WEBHOOK_ROTATION_GRACE_MS = 24h`, `DEFAULT_REPLAY_WINDOW_SECONDS = 9h`), `worker.ts` (`runDispatchTick`, backoff 1m/5m/30m/2h/8h, MAX_ATTEMPTS 5), `dispatch.ts`. Jobs (`jobs/cleanup/`): `dispatch-outbound-webhooks` drains `OutboundWebhookDelivery` every 1 min; `sweep-stuck-webhook-events` / `archive-webhook-events` operate on the **inbound** `WebhookEvent` gateway ledger, not outbound delivery.
+- **Why:** Integrators receive signed delivery events for org lifecycle changes. **Secret rotation is a non-event**: `/rotate-secret` stashes the prior secret in `previousSecretHash` and stamps `secretRotatedAt`; the worker **dual-signs** (two `v1=` entries) for 24h so receivers verifying with either secret stay green — mirroring Stripe/Svix rotation overlap (web-validated 2026-06-05). End-to-end wired in `worker.ts`. Full detail in [§33](33-outbound-webhooks.md).
+- **Future work:** none open. (Schema doc-comment on `WebhookEndpoint` still says the rotate route "overwrites secret directly" — that comment is stale; the route + worker do the full grace dance.)
 
 ### G.5 MaintenanceWindow — ✅ Wired (read-side, C.2)
 
@@ -363,21 +384,22 @@ The combined SKIP rationale: every one of these would add 100–500 LoC of org-s
 Numbers are GitHub issues — refer to those for the canonical spec.
 
 - `#674` — org scope split (umbrella; many sub-tasks)
-- `#687` — invoice-fraud mitigation (Razorpay notes verification pending)
-- `#701` — DPDP full workflow (erasure cascade, retention UI, consent withdrawal)
+- `#687` — invoice-fraud mitigation (Razorpay notes verification pending; KYB gate via `OrgKybVerification` landed)
+- `#701` — DPDP retention dashboard UI + self-service user consent-withdrawal (erasure + org-side withdrawal now wired)
 - `#709` — cron schedule audit (per-org maintenance wiring is one half of this)
 - `#711` — multi-currency wallets (parked)
-- `#713` — TDS section derivation
-- `#715` — overage charging epic (parked)
-- `#716` — refund / payouts / pricing consolidation (parked)
+- `#713` — TDS section derivation (default 194O live; full derivation pending)
+- `#715` — overage charging epic — **landed** in v2 (breaker/surcharge/timeout, see D.1)
+- `#716` — refund / payouts / pricing consolidation — refund unification (`mintRefundCreditNote`, `TdsAdjustment`) **landed**; live payouts still parked
 - `#735` — OrgAdmin → OrgWorkspace mechanical rename (parked)
 - `#744` — post-MVP defer list (HRIS, multi-attendee billing)
 - `#745` — Enterprise simplification flagship (parked)
 - `#746` — Enterprise additions flagship (parked) — most "deferred" items here roll up
 - `#747` — Invitation partial-unique index (blocked on Prisma 7 GA)
+- `#777` / `#778` / `#779` — enterprise v2 mega-audit (cycle engine, contract auto-renew/supersede, overage, dunning, wallet floor, SSO break-glass, verification resubmit, webhook rotation grace) — **landed** (this doc reflects v2)
 
 ---
 
 **Owner:** enterprise platform team
-**Last touched:** 2026-05-28 (post-PR `#655` closeout + C-series cross-cutting wiring)
+**Last touched:** 2026-06-05 (post enterprise v2 mega-audit `#777`/`#778`/`#779` — cycle engine, contract lifecycle, overage, dunning, wallet floor, SSO break-glass, verification resubmit, webhook rotation grace).
 **Review cadence:** at each major enterprise PR landing.

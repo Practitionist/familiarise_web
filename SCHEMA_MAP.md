@@ -1,6 +1,6 @@
 # Familiarise — Prisma Schema Visualisation
 
-**60+ models · 35+ enums · 4,027 lines of schema**
+**120 models · 97 enums · 4,845 lines of schema** (as of 2026-06-05)
 
 24 focused diagrams, each covering one domain. Use the table of contents to jump to any section. All diagrams are based on the live `prisma/schema.prisma`.
 
@@ -116,10 +116,10 @@ flowchart TD
         Contract
         Program
     end
-    subgraph Ledgers["Three Ledgers"]
+    subgraph Ledgers["Accounting Ledgers"]
         UsageLedgerEntry
-        FundingLedgerEntry
-        SettlementLedgerEntry
+        LedgerAccount
+        LedgerEntry
     end
     subgraph Support["Support & Moderation"]
         SupportTicket
@@ -1134,15 +1134,52 @@ erDiagram
         boolean reportedInForm26Q
         datetime form26QFilingDate
     }
+    TdsAdjustment {
+        string id
+        string consultantProfileId
+        string tdsRecordId
+        string payoutId
+        string refundId
+        string financialYear
+        int quarter
+        int amountPaise
+        boolean reportedInForm26Q
+    }
+    GstTcsBatch {
+        string id
+        string financialYear
+        int month
+        int netSupplyPaise
+        int tcsCollectedPaise
+        GstTcsBatchStatus status
+        datetime filedAt
+    }
+    GstTcsAdjustment {
+        string id
+        string batchId
+        string paymentId
+        string refundId
+        int amountPaise
+    }
 
     ConsultantProfile ||--o{ ConsultantEarnings : "earns"
     ConsultantProfile ||--o{ Payout : "batch payouts"
     ConsultantProfile ||--o{ PayoutAccount : "bank accounts"
     ConsultantProfile ||--o| ConsultantTaxInfo : "tax info"
     ConsultantProfile ||--o{ TDSRecord : "TDS records"
+    ConsultantProfile ||--o{ TdsAdjustment : "TDS reversals (refund)"
     Payout ||--o{ ConsultantEarnings : "batches"
     Payout ||--o{ TDSRecord : "triggers TDS"
+    GstTcsBatch ||--o{ GstTcsAdjustment : "monthly GSTR-8 net"
 ```
+
+> **#778 §D refund-tax reversals.** `TdsAdjustment` posts a negative line in the
+> revised 26Q/27Q when previously-withheld TDS is reversed on refund;
+> `GstTcsBatch` aggregates GST TCS u/s 52 per month for GSTR-8 (e-commerce
+> operator, 1% on registered consultants), with `GstTcsAdjustment` netting
+> refund reversals into the period's batch. Collection + filing are flag-gated
+> pending CA signoff. `CreditNote` (Sec 34 / CGST Rule 53) is the org-side
+> refund document — see section 20 (Enterprise Invoicing).
 
 ---
 
@@ -1201,6 +1238,7 @@ erDiagram
         string id
         string organizationId
         boolean enforceSSO
+        datetime breakGlassUntil
         MemberRole defaultRoleForAutoJoin
     }
     OrgDomainClaim {
@@ -1252,6 +1290,21 @@ India-statutory gaps:
 
 Commercial structure: `BillingAccount` → `Contract` → `Program` → `ProgramAssignment` → `BookingUtilization`. Each link adds a layer of budget control.
 
+> **v2 (#777/#779) additions shown above:** `Contract` self-supersession chain
+> (`supersededByContractId` @unique + `supersessionReason`) for amend/renew/
+> terminate-replace; `Contract.autoRenew` + `autoRenewedAt` (renewal cron claim
+> gate); `Program.configLockedAt` (money-config lock, stamped at first
+> assignment) + `archivedAt` (soft-delete); `ProgramAssignment.status`
+> (`AssignmentStatus`) + `consumedPaise` (CREDIT_POOL money-meter) +
+> `rolledToAssignmentId` @unique self-relation (cycle-engine rollover);
+> `LicensedSeatConfig`/`CreditPoolConfig.{overageSurchargeBps,
+> maxOveragePerCyclePaise}` (surcharge + circuit-breaker); `OverageEvent`
+> (append-only over-cap charge ledger, `basePaise`+`surchargePaise`=`marginalPaise`);
+> and `BillingAccount.{minBalancePaise, autoTopUpEnabled, autoTopUpAmountPaise,
+> autoTopUpMandateId}` (wallet floor + auto-top-up). Top-up lifecycle is
+> `WalletTopUp` (PENDING→CONFIRMED/FAILED) — the wallet *balance* itself is a
+> credit-normal liability in the double-entry ledger, not a standalone table.
+
 ```mermaid
 erDiagram
     BillingAccount {
@@ -1260,17 +1313,23 @@ erDiagram
         FundingSource fundingSource
         int walletBalance
         int creditLimit
+        int minBalancePaise
+        boolean autoTopUpEnabled
+        int autoTopUpAmountPaise
+        string autoTopUpMandateId
+        datetime autoTopUpLastFiredAt
         string billingEmail
         Currency currency
     }
-    WalletEntry {
+    WalletTopUp {
         string id
         string billingAccountId
-        int deltaPaise
-        WalletReason reason
-        int balanceAfter
-        string paymentId
-        string membershipId
+        string providerOrderId
+        string providerPaymentId
+        int amountPaise
+        WalletTopUpStatus status
+        datetime confirmedAt
+        datetime capturedAt
     }
     Contract {
         string id
@@ -1280,6 +1339,10 @@ erDiagram
         ContractStatus status
         int paymentTermsDays
         boolean autoRenew
+        datetime autoRenewedAt
+        string supersededByContractId
+        ContractSupersessionReason supersessionReason
+        datetime supersededAt
         datetime effectiveFrom
         datetime effectiveTo
     }
@@ -1309,6 +1372,8 @@ erDiagram
         ProgramType type
         ProgramStatus status
         string name
+        datetime configLockedAt
+        datetime archivedAt
     }
     LicensedSeatConfig {
         string programId
@@ -1316,6 +1381,9 @@ erDiagram
         BillingCycle cycle
         int coveredEngagementsPerCycle
         OverageBehavior overageBehavior
+        int overageSurchargeBps
+        int maxOveragePerCyclePaise
+        int priceCapPerEngagementPaise
         int activeSeatCount
     }
     CreditPoolConfig {
@@ -1323,15 +1391,35 @@ erDiagram
         BillingCycle cycle
         int creditsPerCycle
         int minimumCreditsPerPeriod
+        OverageBehavior overageBehavior
+        int overageSurchargeBps
+        int maxOveragePerCyclePaise
     }
     ProgramAssignment {
         string id
         string programId
         string membershipId
+        AssignmentStatus status
         datetime periodStart
         datetime periodEnd
         int engagementsUsed
+        int consumedPaise
         int overageCount
+        string rolledToAssignmentId
+        datetime rolledAt
+    }
+    OverageEvent {
+        string id
+        string programAssignmentId
+        string bookingUtilizationId
+        OverageBehavior overageBehavior
+        int basePaise
+        int surchargePaise
+        int marginalPaise
+        OverageChargeStatus chargeStatus
+        string paymentId
+        string invoiceLineItemId
+        datetime chargeTimedOutAt
     }
     BookingUtilization {
         string id
@@ -1343,16 +1431,22 @@ erDiagram
         datetime reversedAt
     }
 
-    BillingAccount ||--o{ WalletEntry : "wallet ledger"
+    BillingAccount ||--o{ WalletTopUp : "top-up lifecycle"
     BillingAccount ||--o{ Contract : "governs"
     BillingAccount ||--o| BillingSubscription : "billing cycle"
+    Contract ||--o| Contract : "superseded by (amend/renew)"
     Contract ||--o{ Program : "contains"
     Contract ||--o{ RateCard : "rate cards"
     Contract ||--o| BillingSubscription : "subscription"
     Program ||--o| LicensedSeatConfig : "seat config"
     Program ||--o| CreditPoolConfig : "pool config"
     Program ||--o{ ProgramAssignment : "member assignments"
+    ProgramAssignment ||--o| ProgramAssignment : "rolls to (cycle rollover)"
     ProgramAssignment ||--o{ BookingUtilization : "usage tracking"
+    ProgramAssignment ||--o{ OverageEvent : "over-cap charges"
+    BookingUtilization ||--o| OverageEvent : "overage (1:1)"
+    OverageEvent ||--o| InvoiceLineItem : "CHARGE_ORG line"
+    OverageEvent ||--o| Payment : "CHARGE_MEMBER side-payment"
     Membership ||--o{ ProgramAssignment : "assigned to program"
 ```
 
@@ -1445,10 +1539,26 @@ erDiagram
         string razorpayContactId
         string stripeConnectId
     }
+    CreditNote {
+        string id
+        string creditNoteNumber
+        int fiscalYear
+        string organizationId
+        string invoiceId
+        string refundId
+        int subtotalPaise
+        int igstPaise
+        int cgstPaise
+        int sgstPaise
+        int totalPaise
+        CreditNoteStatus status
+    }
 
     Organization ||--o{ PurchaseOrder : "raises POs"
     Organization ||--o{ OrganizationInvoice : "receives invoices"
+    Organization ||--o{ CreditNote : "credit notes (Sec 34)"
     PurchaseOrder ||--o{ OrganizationInvoice : "covers invoice"
+    OrganizationInvoice ||--o{ CreditNote : "adjusted by"
     Organization ||--o{ OrganizationEarnings : "earns (canHost)"
     Organization ||--o{ OrganizationPayout : "batch payouts"
     Organization ||--o| OrganizationPayoutAccount : "bank account"
@@ -1457,9 +1567,18 @@ erDiagram
 
 ---
 
-## 21. Three-Ledger Accounting
+## 21. Double-Entry Cash Ledger
 
-Three separate immutable ledgers that must reconcile nightly. Finance reads these; product reads `WalletEntry`.
+> **Updated (#771 D1/D5).** The old "three single-entry logs"
+> (`WalletEntry` + `FundingLedgerEntry` + `SettlementLedgerEntry`) collapsed
+> into ONE balanced double-entry journal: every cash event is a
+> `LedgerTransaction` whose `LedgerEntry` rows satisfy Σ(DEBIT) == Σ(CREDIT),
+> and balances are DERIVED (sum of entries on a `LedgerAccount`). The append-only
+> `LedgerEntry` journal is the source of truth; `LedgerAccountBalance` is a
+> derived running-balance cache the reconcile cron validates.
+> `UsageLedgerEntry` (non-cash engagement counts) stays separate.
+> `BillingAccount.walletBalance` is retained only as a denormalized cache for the
+> atomic-debit guard, asserted equal to the WALLET account balance nightly.
 
 ```mermaid
 erDiagram
@@ -1473,42 +1592,57 @@ erDiagram
         int priceAtBookingPaise
         boolean wasOverage
     }
-    FundingLedgerEntry {
-        string id
-        string billingAccountId
-        int deltaPaise
-        FundingReason reason
-        int balanceAfterPaise
-        string paymentId
-        string walletEntryId
-        Currency currency
-    }
-    SettlementLedgerEntry {
+    LedgerAccount {
         string id
         string organizationId
+        string consultantProfileId
+        LedgerAccountKind kind
+        Currency currency
+    }
+    LedgerAccountBalance {
+        string accountId
+        bigint balancePaise
+        bigint entrySeq
+    }
+    LedgerTransaction {
+        string id
+        string idempotencyKey
+        LedgerTransactionKind kind
         string paymentId
         string invoiceId
         string payoutId
-        SettlementKind kind
-        int amountPaise
-        Currency currency
+        datetime postedAt
+    }
+    LedgerEntry {
+        string id
+        string transactionId
+        string accountId
+        LedgerDirection direction
+        bigint amountPaise
     }
     LedgerReconciliationReport {
         string id
         string scope
+        json summary
+        json findings
         boolean ok
         int durationMs
         datetime runAt
-        string triggeredById
     }
+
+    LedgerAccount ||--o| LedgerAccountBalance : "derived balance cache"
+    LedgerAccount ||--o{ LedgerEntry : "postings"
+    LedgerTransaction ||--o{ LedgerEntry : "balanced legs (ΣDr==ΣCr)"
 ```
 
-| Ledger | Audience | Purpose |
+| Table | Audience | Purpose |
 |---|---|---|
-| `UsageLedgerEntry` | Finance | Engagements consumed per program assignment |
-| `FundingLedgerEntry` | Finance | Wallet balance movements (includes GRANTs with no WalletEntry twin) |
-| `SettlementLedgerEntry` | Finance | All money flows: payments, invoices, payouts, refunds, chargebacks |
-| `LedgerReconciliationReport` | Admin/Ops | Nightly audit output — READ ONLY, never mutates ledgers |
+| `UsageLedgerEntry` | Finance | Engagements consumed per program assignment (non-cash) |
+| `LedgerAccount` | Finance | One account per (owner, `LedgerAccountKind`, currency) — CASH, WALLET, PLATFORM_FEE, ORG_PAYABLE, TDS_PAYABLE, GST_PAYABLE, etc. |
+| `LedgerTransaction` | Finance | One balanced cash event; `idempotencyKey` @unique makes posting retry-safe |
+| `LedgerEntry` | Finance | Immutable DEBIT/CREDIT legs (reversals are counter-transactions, never row edits) |
+| `LedgerAccountBalance` | Finance | Derived running balance (Σ Dr − Σ Cr); reconcile validates against the journal |
+| `LedgerReconciliationReport` | Admin/Ops | Nightly audit output — READ ONLY, never mutates the ledger |
 
 ---
 
@@ -1709,21 +1843,29 @@ Every enum in the schema and its values.
 | `DataRegion` | IN, US, EU |
 | `Currency` | INR, USD, EUR, GBP |
 | `GstRegStatus` | REGULAR, COMPOSITION, UNREGISTERED |
-| `FundingSource` | PERSONAL, LICENSE, WALLET, INVOICE, PROJECT |
+| `FundingSource` | PERSONAL, LICENSE, WALLET, INVOICE |
 | `WalletReason` | TOPUP, BOOKING, REFUND, ADJUSTMENT |
-| `FundingReason` | TOPUP, BOOKING_DEBIT, REFUND_CREDIT, ADJUSTMENT, GRANT |
-| `SettlementKind` | INVOICE_ISSUED, INVOICE_PAID, PAYMENT_RECEIVED, REFUND_ISSUED, PAYOUT_SENT, PAYOUT_REVERSED, CHARGEBACK, CREDIT_NOTE |
+| `WalletTopUpStatus` | PENDING, CONFIRMED, FAILED |
+| `LedgerAccountKind` | CASH, WALLET, PLATFORM_FEE, PLATFORM_PROMO, DISCOUNT, CONSULTANT_PAYABLE, ORG_PAYABLE, ORG_RECEIVABLE, TDS_PAYABLE, GST_PAYABLE |
+| `LedgerDirection` | DEBIT, CREDIT |
+| `LedgerTransactionKind` | BOOKING, TOPUP, TOPUP_REFUND, INVOICE_ISSUED, INVOICE_PAID, PAYOUT, ORG_PAYOUT, REFUND, OVERAGE_MEMBER, GRANT |
 | `ContractStatus` | DRAFT, ACTIVE, EXPIRED, TERMINATED |
+| `ContractSupersessionReason` | AMENDMENT, RENEWAL, TERMINATION_REPLACEMENT |
 | `BillingCycle` | MONTHLY, QUARTERLY, ANNUAL |
 | `SubscriptionModel` | PER_SEAT, FLAT_FEE |
-| `ProgramType` | LICENSED_SEAT, CREDIT_POOL, PROJECT, RETAINER |
+| `ProgramType` | LICENSED_SEAT, CREDIT_POOL |
 | `ProgramStatus` | ACTIVE, PAUSED, EXPIRED, CANCELLED |
+| `AssignmentStatus` | ACTIVE, ROLLED, PAUSED, CLOSED, CANCELLED |
 | `OverageBehavior` | BLOCK, CHARGE_MEMBER, CHARGE_ORG |
+| `OverageChargeStatus` | PENDING, ACCRUED, CHARGED, BLOCKED, REVERSED, FAILED |
 | `OrgPlanVisibility` | PUBLIC, ORG_ONLY, ORG_AND_PUBLIC |
 | `CoveredPlanType` | CONSULTATION, CLASS, WEBINAR, SUBSCRIPTION |
 | `OrgInvoiceStatus` | DRAFT, ISSUED, PAID, OVERDUE, VOID, CANCELLED, REFUNDED |
 | `IrpStatus` | PENDING, GENERATED, CANCELLED, FAILED |
 | `PoStatus` | ACTIVE, CLOSED, CANCELLED |
+| `CreditNoteStatus` | DRAFT, ISSUED, CANCELLED |
+| `GstTcsBatchStatus` | OPEN, FILED |
+| `OrgDataExportStatus` | PENDING, PROCESSING, READY, FAILED, EXPIRED |
 | `PayoutRecipient` | SELF, ORGANIZATION |
 | `ResidencyStatus` | RESIDENT, NON_RESIDENT |
 | `MsmeStatus` | NONE, MICRO, SMALL, MEDIUM |

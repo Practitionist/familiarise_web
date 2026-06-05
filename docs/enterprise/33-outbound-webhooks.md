@@ -61,40 +61,107 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 const REPLAY_WINDOW_SECONDS = 9 * 60 * 60; // match producer
 
 function verify(secret: string, body: string, header: string): boolean {
-  const t = header.split(",").find(p => p.startsWith("t="))?.slice(2);
-  const v1 = header.split(",").find(p => p.startsWith("v1="))?.slice(3);
-  if (!t || !v1) return false;
+  const parts = header.split(",");
+  const t = parts.find(p => p.startsWith("t="))?.slice(2);
+  // Scan EVERY v1= entry, not just the first: during a secret rotation
+  // we emit two (current + previous) — see "Secret rotation" below. A
+  // receiver matching only the first signature would reject deliveries
+  // signed with the secret it hasn't adopted yet.
+  const v1s = parts.filter(p => p.startsWith("v1=")).map(p => p.slice(3));
+  if (!t || v1s.length === 0) return false;
   if (Math.abs(Date.now() / 1000 - Number(t)) > REPLAY_WINDOW_SECONDS) return false;
   const expected = createHmac("sha256", secret).update(`${t}.${body}`).digest();
-  const received = Buffer.from(v1, "hex");
-  if (received.length !== expected.length) return false;
-  return timingSafeEqual(received, expected);
+  return v1s.some(v1 => {
+    const received = Buffer.from(v1, "hex");
+    return received.length === expected.length && timingSafeEqual(received, expected);
+  });
 }
 ```
 
-The replay window must be **at least 9 hours** because our retry
-schedule (1m / 5m / 30m / 2h / 8h) means the same signature can land at
-+8h after creation. A receiver with a tighter window will mis-reject
-late retries.
+The replay window (`DEFAULT_REPLAY_WINDOW_SECONDS` in `signing.ts`)
+must be **at least 9 hours** because our retry schedule (1m / 5m / 30m
+/ 2h / 8h) means the same signature can land at +8h after creation. A
+receiver with a tighter window will mis-reject late retries. (Stripe's
+own default tolerance is 5 minutes — web-validated 2026-06-05 — but
+Stripe redelivers on a much longer, separate schedule; our 9h window
+is sized to our in-band 8h backoff tail, and the rationale is sound.)
+
+## Secret rotation — the 24h dual-sign grace window 🔒
+
+Rotating a secret would normally break every in-flight receiver the
+instant the new secret lands: the receiver is still verifying with the
+old one. To make rotation a non-event, the worker **dual-signs** during
+a grace window.
+
+`WebhookEndpoint` carries two rotation columns:
+
+- `secretRotatedAt` — stamped at the moment of rotation.
+- `previousSecretHash` — despite the name, holds the **previous secret
+  value** (not a hash) for the duration of the window so the worker can
+  re-sign with it. The name is legacy; it gets renamed at the next
+  schema reset (#768).
+
+`WEBHOOK_ROTATION_GRACE_MS = 24h` (`signing.ts`). While
+`now - secretRotatedAt ≤ 24h` AND `previousSecretHash` is non-null, the
+worker emits **both** signatures as repeated `v1=` entries:
+
+```
+X-Familiarise-Signature: t=<unix>,v1=<sig-with-current>,v1=<sig-with-previous>
+```
+
+A receiver running the body through either secret matches one of the
+listed `v1=` values — exactly how Stripe/Svix list multiple signatures
+during their own rotation overlap (web-validated 2026-06-05: Stripe
+signs with both old and new secrets during a configurable overlap and
+SDK verifiers accept either). The reference verifier in
+[Signature verification](#signature-verification) already iterates every
+`v1=`, so a standard implementation Just Works. After 24h the worker
+drops back to single-signing with the current secret.
+
+End-to-end this is wired: `POST /rotate-secret` mints a fresh 32-byte
+secret, copies the prior `secret` into `previousSecretHash`, and stamps
+`secretRotatedAt` inside one transaction (plus a `WEBHOOK_SECRET_ROTATED`
+audit row with `graceWindowHours: 24`); the worker reads those columns
+on every tick and dual-signs accordingly. The new secret is returned
+**once** in the rotate response — the dashboard surfaces a copy-now
+affordance because subsequent GETs redact it.
 
 ## Retry semantics
 
-Worker schedule (`lib/enterprise/outbound-webhooks/worker.ts`):
+Worker schedule (`lib/enterprise/outbound-webhooks/worker.ts`,
+`runDispatchTick`; `MAX_ATTEMPTS = 5`):
 
-| Attempt | Wait before next | Cumulative wall-clock |
-|--------:|------------------|-----------------------|
-| 1 | 1m | 1m |
-| 2 | 5m | 6m |
-| 3 | 30m | 36m |
-| 4 | 2h | 2h 36m |
-| 5 | 8h | 10h 36m |
-| 6 (final) | — | FAILED |
+| Attempt | Outcome on transient failure | Cumulative wall-clock |
+|--------:|------------------------------|-----------------------|
+| 1 | RETRY, `nextRetryAt` +1m | 1m |
+| 2 | RETRY, +5m | 6m |
+| 3 | RETRY, +30m | 36m |
+| 4 | RETRY, +2h | 2h 36m |
+| 5 | RETRY, +8h | 10h 36m |
+| 6 | (`attempts ≥ 5`) → `FAILED` | terminal |
 
-Permanent client errors (`400`, `403`, `404`, `410`, etc., excluding
-`408` and `429`) skip the retry queue — the receiver told us the
-request is malformed and re-sending the same body won't change the
-outcome. `408 Request Timeout` and `429 Too Many Requests` are
-considered transient.
+Total wall-clock from first attempt to FAILED is ~10h 36m, which is
+why the 9h replay window has headroom to spare. Each delivery POST
+carries a 10-second timeout (`REQUEST_TIMEOUT_MS`); a hung receiver is
+aborted and treated as a transient network error.
+
+Outcome classification per attempt:
+
+- **2xx** → `SUCCESS`, stamp `deliveredAt`, reset `endpoint.failureCount`.
+- **4xx except 408 / 429** (`400`, `403`, `404`, `410`, …) → `FAILED`
+  immediately, no retry — the receiver told us the request is malformed
+  and re-sending the same body + signature won't change the outcome.
+- **5xx / 408 / 429 / network error / timeout** → `RETRY` with the next
+  backoff slot, OR `FAILED` if attempt 5 just ran.
+
+If the endpoint was `PAUSED`/`DISABLED` after a delivery was queued,
+the worker marks that delivery `FAILED` with a descriptive error —
+the operator's explicit pause wins over the retry schedule.
+
+`OutboundWebhookDelivery.status` is the `DeliveryStatus` enum:
+`PENDING` (first attempt due) → `IN_FLIGHT` (soft lock during the POST;
+a second tick observing IN_FLIGHT skips the row) → `SUCCESS` | `RETRY`
+| `FAILED`.
 
 ## API gate matrix
 
@@ -111,9 +178,11 @@ table. Quick view:
 | `DELETE` | `/webhooks/[endpointId]` | OWNER only |
 
 The OWNER-only floor on `DELETE` and `rotate-secret` is deliberate —
-both actions are destructive from the integrator's perspective
-(deletion cascade-drops pending deliveries; rotation invalidates the
-receiver's existing verification code until they update the secret).
+both actions are sensitive from the integrator's perspective (deletion
+cascade-drops pending deliveries; rotation starts the 24h dual-sign
+grace clock, after which the receiver MUST have adopted the new
+secret). BILLING_ADMIN can create endpoints and pause/disable them, but
+not rotate or delete.
 
 ## Local integration testing
 
@@ -130,7 +199,26 @@ The fastest path to a green receiver:
 ## Rate limits
 
 - `orgWebhookLimiter` — 5 per minute per org for POST/PATCH/rotate-secret. Org-keyed.
-- Worker per-endpoint host throttle is governed by the `MAX_BATCH` constant in `worker.ts` (50) and the worker's tick cadence (1 minute). A single endpoint cannot receive more than 50 deliveries per minute.
+- Worker batch ceiling is `MAX_BATCH = 50` in `worker.ts`, drained on a 1-minute tick. A single tick processes at most 50 due deliveries platform-wide; per-endpoint volume is bounded by the same tick cadence.
+
+## Jobs & schedule
+
+Three GitHub Actions crons touch the webhook surface — and two of them
+are about a **different** table, which is a common source of confusion:
+
+| Job (GH Actions wrapper → `scripts/cleanup/*`) | Table | What it does | Cadence |
+|---|---|---|---|
+| `dispatch-outbound-webhooks` → `runDispatchTick` | **`OutboundWebhookDelivery`** | Drains the delivery queue: signs, POSTs, walks the backoff schedule. The delivery table IS the queue. Emits a `WEBHOOK` SystemEvent warning if the due-backlog exceeds 200. | every 1 min |
+| `sweep-stuck-webhook-events` | **`WebhookEvent`** (inbound) | Re-drives **inbound** Razorpay gateway events left `processed=false` after an `after()`-callback crash, so money side-effects (invoice paid, wallet credited) actually land. Nothing to do with outbound delivery. | every ~10 min |
+| `archive-webhook-events` | **`WebhookEvent`** (inbound) | Prunes old inbound gateway events: processed >30d, failed/errored >90d. | weekly |
+
+So: **`dispatch` is the outbound delivery worker; `sweep`/`archive`
+operate on the inbound gateway-event ledger** (`WebhookEvent`), which
+backs Razorpay/RazorpayX webhook idempotency and is documented with the
+payments webhook handlers, not here. The canonical scheduler is GitHub
+Actions (`.github/workflows/*.yml`); each `jobs/cleanup/*.ts` wrapper
+is a thin GH-Actions shim, and `POST /api/cleanup/<job>` is a
+`CRON_SECRET`-gated manual trigger for the same logic.
 
 ## Audit trail
 

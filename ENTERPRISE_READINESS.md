@@ -8,9 +8,33 @@
 > - Round 1 2026-05-02: 73/100 — 5 false findings corrected, 7 real fixes applied (875/875 tests)
 > - Round 2 2026-05-02: **77/100** — 1 more false finding corrected (GST derivation live), 4 real fixes applied (IRP/MSME cron schedules, DataBreach deadline tracker, CSV size guard)
 
+## v2 Mega-Audit Update — 2026-06-05
+
+> The 77/100 scorecard below is **a point-in-time snapshot as of Round 2 (pre-v2)** — it is **not** re-derived here. Since then the v2 mega-audit series (#777 / #778 / #779) shipped the lifecycle + money-safety layer that Sections 2/3/4 were docking points for. Read this addendum as the delta; treat the per-section scores below as historical. For the live per-subsystem grid see `ENTERPRISE_SUBSYSTEM_CHECKLIST.md`.
+
+**Shipped in v2 (closes the biggest Round-2 gaps):**
+- ✅ **Cycle engine kills the zombie assignments** — `advance-program-cycles` cron + `lib/enterprise/cycle-engine.ts` roll each `ProgramAssignment` into a fresh `ACTIVE` successor (caps reset) when the contract is `ACTIVE`+`autoRenew`, else `CLOSED`. (#779 §A)
+- ✅ **Contract auto-renew / supersede / end-early** — `auto-renew-contracts` + `expire-contracts` crons; self-supersession chain (`supersededByContractId`, `supersessionReason` AMENDMENT/RENEWAL/TERMINATION_REPLACEMENT); TERMINATED contract cascades in-tx → programs EXPIRED → assignments CLOSED. (#779 §A)
+- ✅ **Program money-config lock** — `Program.configLockedAt` stamped at first assignment; `LOCKED_PROGRAM_FIELDS` read-only thereafter; safe identity fields stay editable (`lib/enterprise/config-lock.ts`). (#779 §B)
+- ✅ **Invoice dunning** — `jobs/billing/dunning.ts` (7-day cadence, max 3 reminders).
+- ✅ **CHARGE_MEMBER timeout** — `timeout-member-overages` cron + `OverageEvent.chargeTimedOutAt`/attempt telemetry; abandoned side-charges fail closed instead of stranding money. (#779 §A)
+- ✅ **Refund-failed notify** — no more silent stuck money on reconcile-pending refunds. (#779 §D)
+- ✅ **Field-level RBAC** — `requireOrgBillingAdminOrOwner` disjunction gate on money-bearing org mutations (not a per-column allowlist). (#779 §A)
+- ✅ **SSO break-glass** — `OrganizationSSOSettings.breakGlassUntil` + `/sso/break-glass` route lets an OWNER reopen password login while `enforceSSO` is on and the IdP is down. (#779 §E)
+- ✅ **Self-serve verification resubmit** — Organization stamps + `/verification/resubmit` route (no `RESUBMIT` enum). (#779 §A)
+- ✅ **Wallet auto-top-up** — `BillingAccount.{minBalancePaise, autoTopUpEnabled, autoTopUpAmountPaise, autoTopUpMandateId}` + `wallet-low-balance` cron; surfaced in the Wallet tab. (#777 §C)
+- ✅ **State-aware home / action center** — `lib/enterprise/org-activation.ts` derives the Getting-Started checklist + condition banners (overdue, cap-near, contract-expiring, overage-as-expansion, wallet-low, stuck-payout), wired in `HomePageClient`. (#777 §A / #779 §F)
+- ✅ **Webhook secret rotation grace** — `WebhookEndpoint` rotation fields + 24h dual-secret acceptance window.
+- 🟡 **IRN e-invoice mapper** — payload mapper landed behind `ENABLE_IRP_UPLOADER` (off); filing still pending CA signoff + >₹5cr AATO. (#778)
+
+**Still open after v2 (honest gaps):**
+- 🔴 **Live payout disbursement** — `ENABLE_LIVE_PAYOUTS` off; batches sit `PROCESSING` pending sandbox proof + go-live (#776 §B). Unchanged — the Section 4 cap still applies.
+- 🟡 **Dunning suspension cascade** — the 7-day×3 reminder sequence is live, but auto-suspend on terminal non-payment is **designed, not active** (reminders notify; they don't yet freeze the org). (#779 §D)
+- 🟡 **TDS admin view** — `ENABLE_TDS_ADMIN_VIEW` off; Form 26Q/16A surfaces + decrypted-PAN admin view are flag-gated pending accountant signoff. (#778)
+
 ---
 
-## Overall Score: 77 / 100
+## Overall Score: 77 / 100 *(as of Round 2; pre-v2 — see the 2026-06-05 addendum above)*
 
 | Section | Weight | Score | Earned | Δ R1 | Δ R2 |
 |---------|-------:|------:|-------:|-----:|-----:|
@@ -91,19 +115,22 @@ All 60+ enterprise models are production-final. No placeholder or nullable-where
 
 ### 1.2 Billing, Contracts & Programs
 
-- [x] ✅ `BillingAccount` — `fundingSource` enum (PERSONAL/LICENSE/WALLET/INVOICE/PROJECT), `walletBalance`, `creditLimit`, all relations
-- [x] ✅ `Contract` — status machine (DRAFT→ACTIVE→EXPIRED/TERMINATED), `autoRenew`, `rateCardId`, `terms JSON`, `purchaseOrderId`
-- [x] ✅ `Program` — `ProgramType` (LICENSED_SEAT/CREDIT_POOL/PROJECT/RETAINER), `OverageBehavior` (BLOCK/CHARGE_MEMBER/CHARGE_ORG), `coveredPlanTypes[]`, `allowedCategories[]`
-- [x] ✅ `LicensedSeatConfig` — `ratePerSeatPaise`, `BillingCycle`, `coveredEngagementsPerCycle`, `overageBehavior`, `activeSeatCount`, `priceCapPerEngagementPaise`
-- [x] ✅ `CreditPoolConfig` — `cycle`, `creditsPerCycle`, `minimumCreditsPerPeriod`
-- [x] ✅ `ProgramAssignment` — `periodStart/End`, `engagementsUsed`, `overageCount`; unique on `(programId, membershipId, periodStart)`
+- [x] ✅ `BillingAccount` — `fundingSource` enum (PERSONAL/LICENSE/WALLET/INVOICE), `walletBalance`, `creditLimit`, wallet floor + auto-top-up (`minBalancePaise`, `autoTopUpEnabled/AmountPaise/MandateId`), all relations *(PROJECT dropped — fixed in v2; auto-top-up added #777 §C)*
+- [x] ✅ `Contract` — status machine (DRAFT→ACTIVE→EXPIRED/TERMINATED), `autoRenew`+`autoRenewedAt`, supersession chain (`supersededByContractId`, `supersessionReason`), `rateCardId`, `purchaseOrderId` *(supersession added in v2 — #779 §A)*
+- [x] ✅ `Program` — `ProgramType` (LICENSED_SEAT/CREDIT_POOL), `OverageBehavior` (BLOCK/CHARGE_MEMBER/CHARGE_ORG), `configLockedAt`, `archivedAt`, `coveredPlanTypes[]`, `allowedCategories[]` *(PROJECT/RETAINER dropped; lock/archive added in v2 — #779 §B)*
+- [x] ✅ `LicensedSeatConfig` — `ratePerSeatPaise`, `BillingCycle`, `coveredEngagementsPerCycle`, `overageBehavior`, `overageSurchargeBps`, `maxOveragePerCyclePaise`, `activeSeatCount`, `priceCapPerEngagementPaise`
+- [x] ✅ `CreditPoolConfig` — `cycle`, `creditsPerCycle`, `minimumCreditsPerPeriod`, `overageBehavior`, `overageSurchargeBps`, `maxOveragePerCyclePaise`
+- [x] ✅ `ProgramAssignment` — `periodStart/End`, `engagementsUsed`, `consumedPaise` (CREDIT_POOL money-meter), `overageCount`, `status` (`AssignmentStatus`), rollover self-relation (`rolledToAssignmentId`/`rolledAt`); unique on `(programId, membershipId, periodStart)` *(status + meter + rollover added in v2 — #779 §A)*
+- [x] ✅ `OverageEvent` — append-only over-cap charge ledger (`basePaise`+`surchargePaise`=`marginalPaise`, `OverageChargeStatus`, member-charge timeout telemetry); relations to `ProgramAssignment`/`BookingUtilization`/`InvoiceLineItem`/`Payment` *(added in v2 — #778)*
 - [x] ✅ `BookingUtilization` — `engagementsConsumed`, `priceAtBookingPaise`, `wasOverage`, BPS snapshot fields, `reversedAt`, `appointmentIds[]`
 
-### 1.3 Wallet & Three-Ledger
+### 1.3 Wallet & Ledger
 
-- [x] ✅ `WalletEntry` — `deltaPaise` (signed), `WalletReason`, `balanceAfter`, `providerOrderId @unique` (idempotency)
-- [x] ✅ `FundingLedgerEntry` — funding-side ledger with `FundingReason`, signed `deltaPaise`, `balanceAfterPaise`
-- [x] ✅ `SettlementLedgerEntry` — `SettlementKind` (INVOICE_ISSUED/PAID, PAYMENT_RECEIVED, REFUND_ISSUED, PAYOUT_SENT/REVERSED, CHARGEBACK, CREDIT_NOTE)
+> *(corrected in v2 — #771):* the three single-entry logs (`WalletEntry` + `FundingLedgerEntry` + `SettlementLedgerEntry`) were collapsed into ONE balanced double-entry journal. The rows below describe the **current** schema, not the Round-2 shape.
+
+- [x] ✅ `WalletTopUp` — top-up lifecycle (`providerOrderId @unique` idempotency, `WalletTopUpStatus` PENDING→CONFIRMED/FAILED, `capturedAt`); the wallet *balance* is a credit-normal liability in the ledger, not a standalone log
+- [x] ✅ `LedgerAccount` / `LedgerEntry` / `LedgerTransaction` — double-entry journal: every cash event is a `LedgerTransaction` (`idempotencyKey @unique`) whose `LedgerEntry` DEBIT/CREDIT legs satisfy Σ(Dr)==Σ(Cr); reversals are counter-transactions, never row edits
+- [x] ✅ `LedgerAccountBalance` — derived running-balance cache (Σ Dr − Σ Cr) the reconcile cron validates against the journal
 - [x] ✅ `LedgerReconciliationReport` — `summary JSON`, `findings JSON`, `ok Boolean`, `durationMs`
 
 ### 1.4 Payout Pipeline
@@ -183,7 +210,7 @@ All 60+ enterprise models are production-final. No placeholder or nullable-where
 - [x] ✅ `OverageBehavior.BLOCK` — checkout rejected at cap
 - [x] ✅ `OverageBehavior.CHARGE_ORG` — overage leg uses `OVERAGE_INVOICE_ACCRUAL` source; P2002 crash eliminated *(FX-1)*
 - [x] ✅ `OverageBehavior.CHARGE_MEMBER` — correctly throws `PROGRAM_CAP_EXHAUSTED` (tx rolled back, user directed to personal payment) *(FX-2)*
-- [x] 🔴 Programs v2 (`PROJECT`, `RETAINER`) — enum values reserved; zero runtime; no API routes
+- [x] ✅ Cycle engine (`AssignmentStatus` rollover, contract auto-renew/cascade) — `lib/enterprise/cycle-engine.ts` + `advance-program-cycles`/`auto-renew-contracts`/`expire-contracts` crons *(fixed in v2 — #779 §A; the old `PROJECT`/`RETAINER` enum values were dropped, not built)*
 
 ### 2.5 Rate Cards
 
@@ -220,8 +247,8 @@ All 60+ enterprise models are production-final. No placeholder or nullable-where
 ### 3.2 Wallet Funding Flow (fundingSource=WALLET)
 
 - [x] ✅ `walletDebit()` — conditional UPDATE inside Serializable transaction (insufficient balance → 409)
-- [x] ✅ Atomic pair: `WalletEntry` + `FundingLedgerEntry` on confirmation
-- [x] ✅ Top-up: Razorpay order → `WalletEntry(reason=TOPUP)` on webhook → `providerOrderId @unique` (idempotency)
+- [x] ✅ Booking debit posts a balanced `LedgerTransaction` (Dr WALLET / Cr …) — *fixed in v2: the old `WalletEntry`+`FundingLedgerEntry` dual-write collapsed into the double-entry journal (#771/#772)*
+- [x] ✅ Top-up: Razorpay order → `WalletTopUp(status=CONFIRMED)` + ledger post on webhook → `providerOrderId @unique` (idempotency)
 - [x] ✅ Org-keyed rate limit on wallet top-ups (middleware, `org:<orgId>` bucket)
 
 ### 3.3 Invoice Funding Flow (fundingSource=INVOICE)
@@ -388,7 +415,7 @@ GST derivation, MSME deadline calculator, and IRP connector are all live. Cron s
 - [x] ✅ `/dashboard/organization/[orgId]/contracts` — `useRequireOrgAccess({ minRole: 'MAINTAINER', canSponsor: true })` guard present *(FF-3)*; in sidebar *(FF-4)*
 - [x] ✅ `/dashboard/organization/[orgId]/purchase-orders` — sidebar entry added (Receipt icon, `canSponsor && MAINTAINER+`) *(FX-4)*
 - [x] ✅ `/dashboard/organization/[orgId]/billing` — NET-60 StatCard conditional on `fundingSource !== "WALLET"` *(FX-3)*
-- [x] ✅ `/dashboard/organization/[orgId]/credits` — wallet balance + top-up + WalletEntry history (WALLET orgs)
+- [x] ✅ `/dashboard/organization/[orgId]/billing` (Wallet tab) — balance + top-up + auto-top-up settings (WALLET orgs) *(fixed in v2: no separate `/credits` route; history reads the ledger, not `WalletEntry`)*
 - [x] ✅ `/dashboard/organization/[orgId]/payouts` — payout history + TDS summary (MANAGER+, canHost)
 - [x] ✅ `/dashboard/organization/[orgId]/analytics` — bookings, revenue, earnings, wallet burn-down (MANAGER+)
 - [x] ✅ `/dashboard/organization/[orgId]/settings` — branding, billing email, PO requirement, logo (MAINTAINER+)
@@ -579,7 +606,7 @@ GST derivation, MSME deadline calculator, and IRP connector are all live. Cron s
 | Self-custodied escrow | Requires ₹15Cr net worth; route via RazorpayX/Cashfree |
 | Internal IRP integration | Use licensed connector; `lib/compliance/irp.ts` calls ClearTax |
 | Parent–child org hierarchy UI | Schema columns exist; defer until first customer request |
-| Programs v2 (PROJECT/RETAINER) runtime | Enum reserved; build only after design-partner feedback |
+| Programs v2 (PROJECT/RETAINER) | Enum values **dropped** in v2 (#779) — `ProgramType` is now LICENSED_SEAT/CREDIT_POOL only; revisit only on design-partner demand |
 
 ---
 

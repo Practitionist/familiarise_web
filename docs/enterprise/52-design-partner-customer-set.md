@@ -1,6 +1,8 @@
 # Design-partner customer set
 
-This document is the **single source of truth** for sales conversations during the design-partner phase (first 3-6 months post-MVP enterprise launch). It translates the current PR #682 readiness (~72-78%) into a concrete **yes / wait-list / hard-no** rubric for inbound prospects.
+This document is the **single source of truth** for sales conversations during the design-partner phase (first 3-6 months post-MVP enterprise launch). It translates current enterprise readiness — post the v2 mega-audit (#777/#778/#779) — into a concrete **yes / wait-list / hard-no** rubric for inbound prospects. _Last refreshed 2026-06-05._
+
+> **What v2 changed for this rubric (2026-06-05).** Several former wait-list blockers now ship: invoice **PDF rendering**, contract **lifecycle** (auto-renew / supersede / terminate-cascade), **cycle rollover**, program **config-lock + archive**, the **OverageEvent** system (surcharge + circuit-breaker + member-timeout), **invoice dunning reminders**, **wallet low-balance alerts**, **SSO break-glass**, self-serve **verification resubmit**, and **DPDP data export** (`OrgDataExportJob`). The hard gates that still hold the line are unchanged: **live payouts OFF** (`ENABLE_LIVE_PAYOUTS=false` — disbursement freezes at PROCESSING), **IRN e-invoice gated** (`ENABLE_IRP_UPLOADER` — fine sub-₹5cr), **dunning suspension / wallet auto-charge designed-not-active**, and **PROJECT/RETAINER program subtypes unbuilt**. Per-row readiness lives in [51-harness-verdict](51-harness-verdict.md); the verify-it-live flows are in `ENTERPRISE_VERIFICATION_GUIDE.md`.
 
 Reference for engineering: [#703](https://github.com/Practitionist/familiarise_web/issues/703) (Programs v2 + Compliance + Integrations) and [#706](https://github.com/Practitionist/familiarise_web/issues/706) (B2B Table-stakes + Deferred Integrations) contain the detailed sections linked below.
 
@@ -28,13 +30,24 @@ Reference for engineering: [#703](https://github.com/Practitionist/familiarise_w
 - Tech startup (40 engineers) sponsoring 1-on-1 mentorship sessions, pay-as-you-go credits.
 - Family-run consulting firm using Familiarise internally for professional development.
 
+**Demo it live — each yes-profile already exists in the seed cohort.** The deterministic seed (`prisma/seedFiles/15a-create-organizations.ts`) ships one org per archetype, so a sales engineer can walk a prospect through the exact shape on a seeded build (one password for all: `SeedPass123!`; full login table + click-through flows in `ENTERPRISE_VERIFICATION_GUIDE.md`):
+
+| Yes-profile | Seed org | Funding · Program | Canonical login |
+|---|---|---|---|
+| BUYER, flat-fee / pay-as-you-go, ≤100 seats (the headline fit) | **Wipro** (`wipro`, SPONSOR) | INVOICE · LICENSED_SEAT (200 seats, 12 covered/cycle) | `tour-owner@familiarise.dev` (OWNER) |
+| BUYER on a prepaid pool, pay-as-you-go credits | **IIT Madras** (`iit-madras`, HYBRID) | WALLET · CREDIT_POOL (10k credits/mo, ₹14,75,000 balance) | `charlotte.anderson@gmail.com` (OWNER) |
+| Agency / consulting firm hosting its own experts (host-side) | **LearnPro Academy** (`learnpro-academy`, HOST) | — · 10/10/80 RateCard, 5 EXPERTs | `daniel.anderson@outlook.com` (OWNER) |
+| Solo practitioner / single-consultant org | **Arjun's Coaching** (`arjun-anderson-coaching-…`, solo HOST) | — (personal org, dynamic slug) | `arjun.anderson@yahoo.com` (OWNER + IIT EXPERT) |
+
+Note the seed deliberately covers all four capability shapes (pure SPONSOR / pure HOST / HYBRID / solo) and both v1 Program types (LICENSED_SEAT + CREDIT_POOL) — it does **not** seed a PROJECT/RETAINER program (those subtypes are unbuilt, Section 2) or a ₹5cr+/non-resident/multi-currency org (those are wait-list, Section 2). The Wipro org doubles as the harness's `tour-owner` workspace.
+
 ## Section 2 — Wait-list profile
 
 Say **"this is on our roadmap, we're prioritizing customers like you — let's stay in touch"** if ANY of these hold. Capture them in the pipeline watchlist; each wait-list reason maps to a specific epic section whose demand-signal drives priority:
 
 | Wait-list reason | Why waitlist | Unblocks when |
 |---|---|---|
-| ₹5 crore+ turnover | Needs live IRN e-invoice uploader | [#703 §2.1](https://github.com/Practitionist/familiarise_web/issues/703) — 1.5 eng-weeks |
+| ₹5 crore+ turnover | IRN uploader is **built but gated** (`buildIrpPayload` mapper + `irp-uploader` cron exist behind `ENABLE_IRP_UPLOADER` + `CLEARTAX_*`); needs the flag on, real ClearTax GSP creds, and accountant signoff before a ₹5cr+ org can claim ITC | [#703 §2.1](https://github.com/Practitionist/familiarise_web/issues/703) / [12 §4](12-invoicing.md) — flip-on + sandbox proof |
 | Any non-resident consultant in their pool | Needs FEMA compliance + DTAA TDS derivation | [#703 §2.2 + §2.4](https://github.com/Practitionist/familiarise_web/issues/703) — 1.5 eng-weeks combined |
 | PROVIDER-type org (agency hosting multiple experts) with co-host webinars | Collaborators PROVIDER 3-way revenue split isn't wired | [#703 §4](https://github.com/Practitionist/familiarise_web/issues/703) — 1 eng-week |
 | Milestone-based fixed-price engagements (McKinsey-style) | Programs v2 PROJECT config tables not built | [#703 §1](https://github.com/Practitionist/familiarise_web/issues/703) — 2 eng-weeks |
@@ -78,7 +91,7 @@ Contact: Priya Desai <priya.desai@tcs.com>
 Ask: 500-seat subscription for graduate trainees; requires SSO JIT provisioning and SCIM.
 Blockers: @section706-section-4 (SSO JIT) + @section706-section-13 (SCIM)
 Decision: wait-list. Confirmed fit otherwise (resident consultants, INR, sub-₹5cr-division-scoped).
-Last contact: 2026-04-15.
+Last contact: 2026-06-05.
 ```
 
 ## Section 5 — Support posture for accepted customers

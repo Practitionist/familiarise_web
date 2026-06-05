@@ -23,7 +23,7 @@ erDiagram
   LedgerTransaction {
     string id PK
     string idempotencyKey UK "e.g. booking:<paymentId>"
-    string kind "BOOKING | TOPUP | PAYOUT | ..."
+    LedgerTransactionKind kind "BOOKING | TOPUP | OVERAGE_MEMBER | ..."
     string paymentId FK "nullable soft-link"
     string invoiceId FK "nullable soft-link"
     string payoutId FK "nullable soft-link"
@@ -40,7 +40,7 @@ erDiagram
 ```
 
 - `LedgerAccount` — a bucket; id is its [deterministic scope string](07-chart-of-accounts.md).
-- `LedgerTransaction` — one balanced cash event. `idempotencyKey @unique` is the dedupe anchor; `kind` is a **free `String`** (a convention, not a DB enum); `paymentId`/`invoiceId`/`payoutId` are optional indexed soft-links for tracing.
+- `LedgerTransaction` — one balanced cash event. `idempotencyKey @unique` is the dedupe anchor; `kind` is a **typed `LedgerTransactionKind` enum** (#778 §B made it an enum — a free-string typo like `"BOOKNG"` used to silently break reconcile's `groupBy`; now it's a compile error); `paymentId`/`invoiceId`/`payoutId` are optional indexed soft-links for tracing.
 - `LedgerEntry` — one leg. `amountPaise` is a **positive** `BigInt`; the sign lives in `direction`.
 
 ---
@@ -83,7 +83,7 @@ flowchart TD
 
 ## 3. The posting vocabulary (`kind`)
 
-`kind` is a string convention, paired with a structured `idempotencyKey`:
+`kind` is a value of the `LedgerTransactionKind` enum, paired with a structured `idempotencyKey`. The enum (verbatim) is `BOOKING · TOPUP · TOPUP_REFUND · INVOICE_ISSUED · INVOICE_PAID · PAYOUT · ORG_PAYOUT · REFUND · OVERAGE_MEMBER · GRANT`:
 
 | `kind` | `idempotencyKey` | Posted by |
 | --- | --- | --- |
@@ -91,11 +91,14 @@ flowchart TD
 | `BOOKING` | `booking:<paymentId>` | `createEarningsFromPayment()` — `lib/payments/payouts/earnings-service.ts` |
 | `INVOICE_PAID` | `invoicepaid:<invoiceId>` | invoice-paid webhook — `app/api/webhooks/utils.ts` |
 | `TOPUP_REFUND` | `topup-refund:<providerPaymentId>` | refund webhook — `app/api/webhooks/utils.ts` |
-| `REFUND` | `refund:<refundId>` | `reverseBookingLedger()` — `lib/payments/operations/refund.ts` |
+| `REFUND` | `refund:<refundId>` | refund cascade — `lib/payments/operations/refund.ts` |
 | `PAYOUT` | `payout:<payoutId>` | consultant payout — `lib/payments/payouts/payout-service.ts` |
 | `ORG_PAYOUT` | `orgpayout:<payoutId>` | host-org payout — `lib/payments/payouts/org-payout-service.ts` |
+| `OVERAGE_MEMBER` | `overage:<sideChargePaymentId>` | CHARGE_MEMBER overage settle — `lib/payments/webhooks/overage-handlers.ts` (see [§4.8](#48-member-overage--overage_member)) |
 
-`INVOICE_ISSUED`, `OVERAGE`, and `GRANT` are reserved in the vocabulary; note that **invoice *issuance* posts no money leg** — the receivable was already accrued in the booking transaction (`ORG_RECEIVABLE` debit from the `INVOICE_ACCRUAL` leg), so issuance just rolls accrued bookings into an `OrganizationInvoice` and writes an `OrgAuditLog` row. Payment is what clears the receivable.
+**`INVOICE_ISSUED` and `GRANT` are declared but post no journal leg today.** Invoice *issuance* posts nothing — the receivable was already accrued in the booking transaction (`ORG_RECEIVABLE` debit from the `INVOICE_ACCRUAL` leg), so issuance just rolls accrued bookings into an `OrganizationInvoice` and writes an `OrgAuditLog` row; **payment** is what clears the receivable.
+
+**There is no `OVERAGE` kind.** Overage money rides existing kinds (#778 §B): a **CHARGE_ORG** overage is billed through the normal invoice path (its marginal is an `OVERAGE_INVOICE_ACCRUAL` leg → `ORG_RECEIVABLE`, cleared by `INVOICE_PAID`), and a **CHARGE_MEMBER** overage settles as its own `BOOKING`-shaped side-charge — `OVERAGE_MEMBER` is the kind reserved for that member side-payment. See [booking → earnings](10-booking-to-earnings.md) for the overage flow.
 
 ---
 
@@ -118,13 +121,13 @@ Dr CASH(platform)            sum of CARD legs
 Dr WALLET(org)               sum of WALLET legs
 Dr ORG_RECEIVABLE(org)       sum of INVOICE_ACCRUAL + OVERAGE_INVOICE_ACCRUAL legs
 Dr PLATFORM_PROMO            sum of REFERRAL_CREDIT legs
-Dr DISCOUNT                  max(0, originalAmount + taxAmount − amount)
+Dr DISCOUNT                  max(0, originalAmount + taxAmount − Σ(funding-leg debits))
    Cr PLATFORM_FEE           platform fee
    Cr CONSULTANT_PAYABLE(consultant)   total consultant pool
    Cr ORG_PAYABLE(org)       org share (only if > 0)
    Cr GST_PAYABLE            tax amount
 ```
-`LICENSE` legs carry `amountPaise = 0` (no money moves — the seat is pre-paid), so they contribute nothing. **Only single-consultant bookings post this transaction inline**; multi-collaborator bookings defer the journal (tracked coverage gap **#773**) — see [booking → earnings](10-booking-to-earnings.md).
+`LICENSE` legs carry `amountPaise = 0` (no money moves — the seat is pre-paid), so they contribute nothing. The `DISCOUNT` plug is the platform-absorbed gap basing on **Σ(funding-leg debits)**, not `Payment.amount`: a `REFERRAL_CREDIT` leg funds the booking (debited as `PLATFORM_PROMO`) yet is excluded from `amount` (which is post-credit), so basing DISCOUNT on `amount` would double-count the credit and imbalance the posting (#776). **Only single-consultant bookings post this transaction inline**; multi-collaborator bookings defer the journal (tracked coverage gap **#773**) — see [booking → earnings](10-booking-to-earnings.md).
 
 ### 4.3 Invoice paid — `INVOICE_PAID` (`invoicepaid:<invoiceId>`)
 The org settles its NET-NN invoice; the receivable accrued at booking clears.
@@ -165,7 +168,15 @@ Dr ORG_PAYABLE(org)          refunded org share
 Dr GST_PAYABLE               refunded GST share
    Cr CASH / WALLET / ORG_RECEIVABLE / PLATFORM_PROMO   the original funding legs, prorated
 ```
-Posted only when the debit side balances to the refunded funding total (a guard in `refund.ts`); a partial/edge case that wouldn't balance is skipped and logged rather than written half-formed.
+Posted only when the debit side balances to the refunded funding total (a guard in `refund.ts`); a partial/edge case that wouldn't balance is skipped and logged rather than written half-formed. The whole reversal block is wrapped so a ledger imbalance can never block the customer refund (gateway money may already have moved) — the failure is logged + paged and the reconciler's `EARNINGS_LEDGER_DRIFT` / `LEDGER_TXN_IMBALANCE` catch any divergence.
+
+### 4.8 Member overage — `OVERAGE_MEMBER` (`overage:<sideChargePaymentId>`)
+A `CHARGE_MEMBER` program booked past its cap creates a parent-linked side-`Payment` at checkout; when the member settles it via the resume-checkout surface, the gateway webhook posts the **org-relief** transaction (`lib/payments/webhooks/overage-handlers.ts`). The booking already charged the org the full price and paid the consultant once, so the member's marginal *relieves* the org:
+```
+Dr CASH(platform)        side-charge amount   (the member's card)
+   Cr ORG_PAYABLE(org)   side-charge amount   (a credit the org realises in settlement)
+```
+The side-`Payment` carries a single `CARD` leg (`sourceRef` = gateway order id), and the same webhook flips the `OverageEvent` `PENDING → CHARGED`. There is **no separate overage debit on the parent** — checkout already carved the over-cap pass-through (`basePaise`) out of the parent's funding leg so the member isn't double-charged (#785); see [booking → earnings](10-booking-to-earnings.md). (How a buyer org nets this `ORG_PAYABLE` credit against its wallet/invoice is a tracked refinement, #775; the journal stays balanced regardless.)
 
 ---
 
@@ -175,13 +186,15 @@ Posted only when the debit side balances to the refunded funding total (a guard 
 2. **Immutable.** `LedgerEntry.transactionId` is `onDelete: Restrict` — postings are never deleted or updated. A wrong posting is corrected by a **counter-transaction**, not an edit (that's what `REFUND`/`TOPUP_REFUND` are).
 3. **Positive amounts only.** Sign is `direction`, never a negative `amountPaise`.
 4. **One event, one key.** Every flow's `idempotencyKey` is derived from a stable upstream id, so at-least-once webhooks and cron retries collapse to one posting. See [concurrency & idempotency](20-concurrency-and-idempotency.md).
+5. **INR-denominated (#783).** Razorpay settles in INR, `amountPaise` is INR paise, and no FX conversion happens before posting — `displayCurrencyAtCheckout` is a cosmetic buyer label, not the settlement currency. So every posting leaves `AccountRef.currency` unset (→ `INR`); keying an account by a display currency would file INR-paise amounts into a foreign-labelled account and break receivable/payable clearing. The reconciler's `LEDGER_ACCOUNT_NON_INR` check enforces this until a real multi-currency ledger is designed.
 
 ## 6. What NOT to do
 
 - **Don't read a balance from a column.** Sum the journal via `ledgerBalancePaise()` (the one cache, `walletBalance`, is the documented exception in [money model overview](06-money-model-overview.md) §4).
 - **Don't post an unbalanced set** "to fix later" — there is no later; it throws.
 - **Don't delete or update a `LedgerEntry`.** Post a counter-transaction.
-- **Don't invent a `kind`** without adding it to the vocabulary table above and giving it a structured `idempotencyKey`.
+- **Don't invent a `kind`** outside the `LedgerTransactionKind` enum — adding a value is a schema change, paired with a structured `idempotencyKey` in the vocabulary table above (the enum makes a stray string a compile error, not a silent reconcile break).
+- **Don't post in a non-INR currency** — leave `AccountRef.currency` unset (§5.5).
 
 ---
 

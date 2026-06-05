@@ -150,6 +150,165 @@ await recordSystemError({
 
 This pattern is the convention for every catch-and-record site.
 
+## `OrgAuditLog` action catalogue
+
+The org-visible audit trail. `OrgAuditLog.action` is a free-form `String`
+in the schema (new events ship without a migration), but
+[`lib/enterprise/audit-actions.ts`](../../lib/enterprise/audit-actions.ts)
+is the IDE-facing source of truth — callers import a constant for
+autocomplete + typo safety. The constant object is
+`satisfies Record<OrgAuditCategory, Record<string, string>>`, so every
+top-level key below is also a value of the `OrgAuditCategory` enum.
+
+Regenerated from code 2026-06-05. The v2 mega-audit (#777/#778/#779)
+added the rows flagged **(v2)** below — supersede/auto-renew/end-early,
+assignment rolled, invoice overdue/dunning, verification resubmit,
+archive, and the existing webhook-secret-rotation / data-export rows.
+
+> Dead vocabulary: `CONSULTANT_APPLIED` / `_APPROVED` / `_REJECTED` and
+> their `EXPERT_*` aliases were purged in the Arch-4 terminology
+> migration along with the old `OrgAuditAction` Prisma enum. They must
+> not reappear — EXPERT membership is invite-driven
+> ([`22-expert-lifecycle.md`](22-expert-lifecycle.md)).
+
+### `MEMBER`
+| action | Emission point |
+|---|---|
+| `MEMBER_ADDED` / `MEMBER_REACTIVATED` / `MEMBER_REMOVED` | members CRUD routes |
+| `ROLE_CHANGE` / `STATUS_CHANGE` | member PATCH |
+| `INVITE_SENT` / `INVITE_RESENT` / `INVITE_ACCEPTED` / `INVITE_REVOKED` | invite routes |
+| `INVITE_EXPIRED` | `cleanup-stale-invitations` cron (PENDING invite past 14d) |
+
+### `CONTRACT`
+| action | Emission point |
+|---|---|
+| `CONTRACT_CREATED` / `CONTRACT_SIGNED` / `CONTRACT_TERMINATED` / `CONTRACT_EXPIRED` | contract routes + `expire-contracts` cron |
+| `CONTRACT_SUPERSEDED` **(v2 #779)** | amend/renew/supersede route (manual term replacement) |
+| `CONTRACT_AUTO_RENEWED` **(v2 #779)** | `auto-renew-contracts` cron (mints RENEWAL successor, EXPIREs old) |
+
+### `PROGRAM`
+| action | Emission point |
+|---|---|
+| `PROGRAM_CREATED` / `PROGRAM_PAUSED` / `PROGRAM_DELETED` | program CRUD (DELETE no longer reuses `PROGRAM_PAUSED`) |
+| `PROGRAM_ARCHIVED` **(v2 #777 §B)** | archive/unarchive (soft-hide; financial history preserved) |
+| `PROGRAM_ASSIGNED` / `PROGRAM_ASSIGNMENT_UPDATED` / `PROGRAM_UNASSIGNED` | assignment routes |
+| `PROGRAM_ASSIGNMENT_ROLLED` **(v2 #779)** | `advance-program-cycles` cron — one row per ROLL **and** per CLOSE (`details.closed` distinguishes) |
+| `RATE_CARD_BUMPED` | rate-card change |
+
+### `WALLET`
+| action | Emission point |
+|---|---|
+| `WALLET_TOPUP` / `WALLET_TOPUP_CONFIRMED` | top-up initiate + webhook confirm |
+| `WALLET_REFUND` | wallet refund |
+| `WALLET_DEBIT_FAILED` | debit attempt with insufficient balance |
+
+### `INVOICE`
+| action | Emission point |
+|---|---|
+| `PURCHASE_ORDER_CREATED` | PO route |
+| `INVOICE_GENERATED` / `INVOICE_ISSUED` | `generate-subscription-invoices` + accrual rollup |
+| `INVOICE_OVERDUE` **(v2 #779)** | `dunning` cron stage 1 (ISSUED→OVERDUE, stamps `markedOverdueAt`) |
+| `INVOICE_PAYMENT_INITIATED` / `INVOICE_PAID` | invoice pay flow |
+| `INVOICE_CANCELLED` / `INVOICE_VOIDED` / `INVOICE_REFUNDED` / `REFUND_DENIED` | invoice admin actions |
+| `INVOICE_ROLLED_UP` | `consolidated-invoice-rollup` cron (parent rolls up child invoices) — see ⚠️ in `42-runbooks.md`: the workflow currently targets a missing script |
+
+> Dunning **stage 2** (escalation reminders, 7d cadence × max 3) does
+> **not** emit a distinct audit action — it bumps
+> `dunningReminderCount` + `lastDunningReminderAt` and re-notifies; only
+> the stage-1 ISSUED→OVERDUE flip writes `INVOICE_OVERDUE`. The
+> `dunningSuspendedAt` booking-suspend cascade is 🟡 designed-not-active
+> (`TODO(#779)`), so no suspend action exists yet.
+
+### `PAYOUT`
+| action | Emission point |
+|---|---|
+| `PAYOUT_INITIATED` / `PAYOUT_PROCESSED` / `PAYOUT_COMPLETED` / `PAYOUT_CANCELLED` / `PAYOUT_FAILED` | payout pipeline + webhooks |
+| `EARNINGS_HELD` / `EARNINGS_RELEASED` | hold gate + release cron |
+| `PAYOUT_CLAWBACK` | `applyRefundCascade` when a refund hits an already-COMPLETED payout (manual recovery v1) |
+| `PAYOUT_REVERSED` | `payout.reversed` webhook (bank rejected a submitted transfer) |
+
+### `SETTINGS`
+| action | Emission point |
+|---|---|
+| `SETTINGS_CHANGED` | org settings PATCH |
+| `SSO_ENABLED` / `SSO_DISABLED` | SSO config |
+| `DOMAIN_CLAIMED` / `DOMAIN_VERIFIED` / `DOMAIN_RELEASED` | domain-claim routes (DNS TXT verify) |
+| `AUDIT_LOG_EXPORTED` | `GET …/audit/export` (the CSV exporter is itself auditable) |
+| `SSO_CERT_EXPIRING` | `sso-cert-expiry-alert` cron (30d WARN / 7d CRITICAL; `details.daysRemaining`) |
+
+> There is **no** dedicated break-glass audit action. SSO break-glass is
+> a `breakGlassUntil` window on `OrganizationSSOSettings` enforced in
+> [`lib/sso/enforce-session.ts`](../../lib/sso/enforce-session.ts); the
+> open/close mutation rides the generic `SETTINGS_CHANGED` row. If you
+> are looking for "who opened break-glass", filter `SETTINGS_CHANGED`
+> with the break-glass `details` payload, not a distinct action.
+
+### `CONSENT`
+| action | Emission point |
+|---|---|
+| `CONSENT_GRANTED` / `CONSENT_WITHDRAWN` | consent routes (DPDP grant/withdraw) |
+| `DATA_BREACH_REPORTED` | breach intake |
+
+### `CATALOG`
+| action | Emission point |
+|---|---|
+| `CATALOG_PLAN_CREATED` | `POST …/catalog` (OWNER adds a sponsored plan) |
+| `CATALOG_PLAN_DEACTIVATED` | `DELETE …/catalog` bulk deactivate (one row, `details.planIds`) |
+
+### `SYSTEM`
+The catch-all for platform-actor events (the actor is the platform/an
+IdP token/a regulatory surface, not a human member).
+
+| action | Emission point |
+|---|---|
+| `VERIFIED` / `SUSPENDED` / `REACTIVATED` / `DEACTIVATED` | org status machine |
+| `VERIFICATION_REJECTED` / `VERIFICATION_RESUBMITTED` **(v2 #779 §A)** | PENDING_VERIFICATION resubmit loop (admin bounces → OWNER re-submits; org stays PENDING throughout) |
+| `ORG_DELETED` | `DELETE …/[orgId]` (row outlives the org via soft-deleted membership FK) |
+| `AUDIT_PRUNED` | `prune-audit-logs` cron (one summary row/org/run: `{deleted7y,deleted2y,cutoff7y,cutoff2y}`) |
+| `STREAM_RECORDING_DELETED` / `STREAM_CALLS_EXPORTED` / `STREAM_RETENTION_CHANGED` | Stream retention cron + export + settings |
+| `USER_ERASURE_REQUESTED` / `_PROCESSED` / `_REJECTED` / `_SLA_WARNING` | DPDP §12 erasure lifecycle |
+| `DATA_EXPORT_REQUESTED` / `_GENERATED` / `_FAILED` / `_DOWNLOADED` | DPDP §11 access-bundle lifecycle (`process-data-exports` worker writes GENERATED/FAILED) |
+| `SCIM_USER_*` / `SCIM_GROUP_*` / `SCIM_TOKEN_*` (9 actions) | SCIM 2.0 provisioning (actor is an IdP token) |
+
+### `WEBHOOK`
+Outbound webhook subsystem (one category for endpoint config + delivery
+results). Delivery rows emit **one summary per final state**, not per
+attempt.
+
+| action | Emission point |
+|---|---|
+| `WEBHOOK_ENDPOINT_CREATED` / `_UPDATED` / `_DELETED` | endpoint CRUD |
+| `WEBHOOK_SECRET_ROTATED` **(v2)** | secret rotation (starts the 24h dual-sign grace — see `43-monitoring.md`) |
+| `WEBHOOK_ENDPOINT_PAUSED` / `_RESUMED` | endpoint enable/disable |
+| `WEBHOOK_DELIVERY_SUCCEEDED` / `_FAILED` / `_REDELIVERED` | dispatch worker terminal states |
+
+## `SystemEvent` category catalogue
+
+`SystemEvent.category` is a free-form string (new workers add values
+without a migration). The conventional values and their current
+emitters — the ones that actually call `recordSystemEvent` /
+`recordSystemError` today (grep verified 2026-06-05):
+
+| category | Emitters (callsites) | Notes |
+|---|---|---|
+| `WEBHOOK` | `app/api/webhooks/razorpay/route.ts` (HMAC verification failed, WARN — both Razorpay + RazorpayX secret paths); `jobs/cleanup/dispatch-outbound-webhooks.ts` (outbound queue backlog > 200, WARN) | inbound tamper/misconfig + outbound queue health |
+| `RECONCILE` | `jobs/reconcile/reconcile-ledgers.ts` (discrepancies found → ERROR; auditor crashed → ERROR) | money-integrity drift |
+| `PAYOUT` | `jobs/payouts/handle-stuck-payouts.ts` (`recordSystemEvent` breadcrumb + `recordSystemError` on permanent failure) | stuck/failed disbursement |
+| `DATA_EXPORT` | DPDP §11 worker failure path (the canonical clean-prose-vs-raw-stack split below) | `correlationId = OrgDataExportJob.id` |
+
+Additional `recordSystemError` callsites that flow through the same sink
+(they pass their own `category`): `lib/payments/operations/refund.ts`,
+`lib/payments/operations/reversal-engine.ts`,
+`lib/payments/payouts/earnings-service.ts`. Every one of these ALSO
+ships to Better Stack Telemetry when `ENABLE_BETTERSTACK_TELEMETRY=true`
+— `recordSystemEvent` fires `emitTelemetryLog` fire-and-forget after the
+DB write (see `43-monitoring.md` for the sink wiring).
+
+> Other conventional categories named in the schema docstring
+> (`HRIS_SYNC`, `CRON`) have **no live emitter** as of 2026-06-05 — they
+> are reserved vocabulary, not active streams. Don't build an alert on a
+> category nothing writes.
+
 ## Reading events
 
 ### Platform admin API

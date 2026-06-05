@@ -405,15 +405,15 @@ flowchart TD
     Org --> HostQ{canHost?}
 
     SponsorQ -- Yes + canHost No --> Sponsor["SPONSOR\ne.g. Wipro, IIT Madras\nPays for employee sessions"]
-    HostQ -- Yes + canSponsor No --> Provider["PROVIDER\ne.g. LearnPro\nHosts consultants, earns revenue share"]
+    HostQ -- Yes + canSponsor No --> Host["HOST (canHost)\ne.g. LearnPro — behind ENABLE_HOST_ORGS\nHosts consultants, earns revenue share"]
     SponsorQ & HostQ -- Both Yes --> Hybrid["HYBRID\nLarge corp with internal training\nBoth pays AND earns"]
 
     Sponsor --> FundingSource["FundingSource"]
-    FundingSource --> WALLET["WALLET\nPre-funded credit pool\ne.g. ₹5L top-up\nDebit per booking"]
+    FundingSource --> WALLET["WALLET\nPre-funded credit pool\ne.g. ₹5L top-up\nDebit per booking\n(auto-top-up below minBalancePaise)"]
     FundingSource --> INVOICE["INVOICE\nAccrual at booking\nMonth-end roll-up\nGST-compliant e-invoice"]
     FundingSource --> LICENSE["LICENSE\nFlat annual fee\ne.g. ₹2L per 100 seats\nUnlimited sessions"]
 
-    Provider --> RateCard["RateCard (basis points)\nplatformBps + orgBps + consultantBps = 10000"]
+    Host --> RateCard["RateCard (basis points)\nplatformBps + orgBps + consultantBps = 10000"]
     RateCard --> Example["Example: 10% platform\n15% org\n75% consultant"]
     Example --> OrgEarnings["OrganizationEarnings\nWeekly batch payout to org bank"]
 
@@ -430,18 +430,21 @@ flowchart TD
     Programs --> LSeat["LICENSED_SEAT\ne.g. 4 sessions per learner per quarter"]
     Programs --> CPool["CREDIT_POOL\ne.g. ₹5L shared, resets quarterly"]
 
-    LSeat --> Assign["Member assigned to program\nProgramAssignment created\nengagementsConsumed = 0"]
+    LSeat --> Assign["Member assigned to program\nProgramAssignment ACTIVE\nengagementsUsed = 0 (LICENSED_SEAT)\nconsumedPaise = 0 (CREDIT_POOL)\nfirst assignment ⇒ Program.configLockedAt stamped"]
     CPool --> Assign
 
-    Assign --> MemberBooks["Member books a session"]
-    MemberBooks --> CapCheck{"Under engagement cap?\nengagementsConsumed < coveredEngagementsPerCycle"}
+    Assign --> MemberBooks["Member starts checkout"]
+    MemberBooks --> Preview["Pre-checkout overage preview\nresolveOverageDecision(): would this booking exceed the cap?"]
+    Preview --> CapCheck{"Under cap?\nengagementsUsed < coveredEngagementsPerCycle\nor consumedPaise < creditsPerCycle×100"}
 
-    CapCheck -- Yes --> Allowed["Booking proceeds\nBookingUtilization row created\nengagementsConsumed++"]
-    CapCheck -- No --> OverageBehavior{overage behavior}
+    CapCheck -- Yes --> Allowed["Booking proceeds\nBookingUtilization row created\nengagementsUsed++ / consumedPaise+="]
+    CapCheck -- No --> Breaker{"Circuit breaker\nmaxOveragePerCyclePaise hit?"}
+    Breaker -- "Yes (cumulative cap blown)" --> Blocked
+    Breaker -- No --> OverageBehavior{overage behavior}
 
     OverageBehavior -- BLOCK --> Blocked(["🚫 Booking rejected\nMember shown budget exhausted"])
-    OverageBehavior -- CHARGE_MEMBER --> MemberCard["Member's personal card charged\nfor overage amount"]
-    OverageBehavior -- CHARGE_ORG --> OrgOverage["Accrued to org overage invoice\nSeparate line item"]
+    OverageBehavior -- CHARGE_MEMBER --> MemberCard["OverageEvent PENDING\nMember's personal card charged\n(marginal = basePaise + surchargePaise)\nsweep cron times out abandoned charges → FAILED"]
+    OverageBehavior -- CHARGE_ORG --> OrgOverage["OverageEvent ACCRUED\nbasePaise + overageSurchargeBps markup\nrolled into org invoice line item"]
 
     Allowed --> Settlement["Settlement at period end"]
     MemberCard --> Settlement
@@ -453,7 +456,20 @@ flowchart TD
 
     InvoiceSettle --> GST["GST applied\nCGST + SGST (same state)\nor IGST (interstate)"]
     GST --> MSME["MSME payment deadline\n15 days (MICRO) or 45 days (SMALL/MEDIUM)"]
+
+    Settlement --> CycleEnd{"Cycle period ended?\n(advance-program-cycles cron)"}
+    CycleEnd -- "Contract ACTIVE + autoRenew" --> Roll["ROLL: mint successor ACTIVE assignment\nold row → ROLLED, rolledToAssignmentId set\ncap resets for the new period"]
+    CycleEnd -- "autoRenew off / contract inactive / clamped past effectiveTo" --> Close["CLOSE: assignment → CLOSED\nno successor (coverage lapses)"]
 ```
+
+> **v2 (#777/#779).** Caps now reset automatically: the `advance-program-cycles`
+> cron rolls each `ProgramAssignment` into a fresh successor (`ROLLED` → new
+> `ACTIVE`) when the governing contract is `ACTIVE` + `autoRenew`, else `CLOSED`
+> (`lib/enterprise/cycle-engine.ts`). Overage is split into `basePaise` +
+> `surchargePaise` (`overageSurchargeBps`) and capped by a per-cycle circuit
+> breaker (`maxOveragePerCyclePaise`) that forces `BLOCK` once cumulative overage
+> is exceeded. Money config locks (`Program.configLockedAt`) the moment the first
+> assignment exists.
 
 ---
 

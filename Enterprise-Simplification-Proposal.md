@@ -3,20 +3,21 @@ title: "Enterprise Subsystem Simplification Proposal"
 subtitle: "PR #655 closeout — what we can prune without touching the schema"
 author: "Familiarise Engineering"
 date: "May 2026"
-superseded_by: "docs/enterprise/simplification/SCHEMA-FINALIZATION.md"
+superseded_by: "docs/enterprise/00-overview.md (absorbed by the #768–#779 audit series)"
 toc: true
 toc-depth: 2
 ---
 
-> **Note (May 2026):** A schema-finalizing successor proposal lives at
-> [`docs/enterprise/simplification/SCHEMA-FINALIZATION.md`](docs/enterprise/simplification/SCHEMA-FINALIZATION.md).
-> It lifts this document's schema-frozen constraint and proposes schema-level
-> finalization (drop dead enum values, add reserved columns for v2 features,
-> optionally unify parallel earning/payout tables). Read both — they are
-> complementary, not redundant. This document remains authoritative for
-> doc-dedup + dead-code + helper-consolidation recipes; the successor is
-> authoritative for schema decisions, cross-cutting integration evidence,
-> and the 5 cross-straddle scenario walkthroughs.
+> **Note (updated 2026-06-05):** This proposal's schema-finalization and
+> cross-cutting recommendations were absorbed by the v0–v2 enterprise audit
+> series (#768/#776/#777/#778/#779) — the schema is now frozen with reserved
+> columns and dead enum values removed there. The earlier
+> `docs/enterprise/simplification/SCHEMA-FINALIZATION.md` pointer is dead (that
+> file was never landed); current authoritative docs are
+> [`docs/enterprise/00-overview.md`](docs/enterprise/00-overview.md) plus the
+> root scorecards `ENTERPRISE_READINESS.md` / `ENTERPRISE_SUBSYSTEM_CHECKLIST.md`.
+> This document remains useful as a historical record of the doc-dedup +
+> dead-code + helper-consolidation recipes.
 
 # Executive Summary
 

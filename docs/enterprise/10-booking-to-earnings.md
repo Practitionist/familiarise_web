@@ -72,7 +72,7 @@ The split becomes one balanced transaction (`booking:<paymentId>`, kind `BOOKING
 
 ```
 Dr CASH / WALLET(org) / ORG_RECEIVABLE(org) / PLATFORM_PROMO   (the funding legs)
-Dr DISCOUNT            max(0, originalAmount + taxAmount − amount)
+Dr DISCOUNT            max(0, originalAmount + taxAmount − Σ(funding-leg debits))
    Cr PLATFORM_FEE              platform fee
    Cr CONSULTANT_PAYABLE(consultant)   total consultant pool
    Cr ORG_PAYABLE(org)         org share (only if > 0)
@@ -120,6 +120,44 @@ Note (per-collaborator, A3): one `Payment` can carry **N** `OrganizationEarnings
 - `ORGANIZATION` — internal/salaried expert; the expert-share leg is booked to the org, collapsing the three-way split into platform + org for that booking.
 
 See [expert lifecycle](22-expert-lifecycle.md) for how an org flips an expert to `ORGANIZATION` on approval.
+
+---
+
+## 6. Program overage — when a booking breaches the cap
+
+A sponsored booking can exceed the covering `ProgramAssignment`'s cap (a LICENSED_SEAT's `coveredEngagementsPerCycle` or a CREDIT_POOL's `creditsPerCycle`). What happens is governed by the program's `OverageBehavior` (`BLOCK` / `CHARGE_MEMBER` / `CHARGE_ORG`) and computed by one pure mapper, `computeOverageForBooking` (`lib/payments/billing/overage.ts`), shared by both the pre-checkout preview and the at-checkout recorder so the two can never drift.
+
+### 6.1 The marginal: base + surcharge
+The marginal is the **over-cap portion of the real booking price** (consulting rates are heterogeneous, so it's a pass-through, optionally capped per engagement by `priceCapPerEngagementPaise`), then marked up by `overageSurchargeBps`. `OverageEvent` itemizes both so the charge stays auditable and GST-splittable:
+
+- `basePaise` — the pass-through over-cap portion. **Invariant: `coveredPaise + basePaise == booking price`.**
+- `surchargePaise` — `floor(basePaise × overageSurchargeBps / 10000)`. The surcharge is what can push the marginal *above* a single booking price (overage costs more, by design).
+- `marginalPaise` — the authoritative charged total, `basePaise + surchargePaise`.
+
+### 6.2 Pre-checkout preview
+`previewOverageForBooking` (`lib/payments/billing/overage-preview.ts`, surfaced at `POST /api/organizations/[orgId]/checkout/overage-preview`) answers "if this member books this plan via this org now, will it breach the cap and what does it cost?" — so the checkout UI warns **before** pay. It resolves the same active assignment as checkout and runs the same mapper over the assignment's *current* (pre-booking) usage, returning `coveredPaise` / `marginalPaise` / `surchargePaise`, `willExceedCap`, `willBlock`, and `chargeTo`. PERSONAL funding, no covering assignment, or an unlimited LICENSE seat → `applicable: false` (no overage line shown).
+
+### 6.3 At-checkout recording + the circuit breaker
+On a real over-cap checkout, `recordOverageAtCheckout` (`lib/payments/billing/overage-settlement.ts`) runs inside the booking's Serializable tx:
+
+- **Circuit breaker.** `maxOveragePerCyclePaise` is a per-cycle overage ceiling. If `cycleOverageSoFarPaise + marginal` would breach it, the mapper returns `decision: BLOCK, chargeTo: null` **regardless of `overageBehavior`** — the recorder throws `PROGRAM_CAP_EXHAUSTED` (HTTP 402), the same shape as a `BLOCK`-behavior refusal but with a distinct code so the dashboard can say "cycle ceiling" vs "per-member allocation". An unknown/missing `overageBehavior` also **fails safe to `BLOCK`**.
+- **`CHARGE_MEMBER`** → a parent-linked **PENDING side-`Payment`** for the marginal (gateway *not* called inside the tx; the order is minted lazily when the member opens the resume-checkout surface) + an `OverageEvent(PENDING)`. To avoid double-collecting `basePaise`, checkout carves it out of the org-funded parent's `INVOICE_ACCRUAL` leg (fail-closed: a non-invoice-funded parent has no credit-back path yet, #715, so it aborts rather than double-charge). Member is notified (`notifyOrgProgramOverageDue`) with a pay deep link. The webhook later posts the `OVERAGE_MEMBER` org-relief leg ([§4.8 of ledger & postings](08-ledger-and-postings.md)).
+- **`CHARGE_ORG`** → carve `basePaise` out of the base `INVOICE_ACCRUAL` leg and write the marginal as a distinct **`OVERAGE_INVOICE_ACCRUAL`** leg (the distinct source dodges the `@@unique([paymentId, source])` clash) + an `OverageEvent(PENDING)`. The cycle-close rollup turns it into an `InvoiceLineItem` and walks the event `PENDING → ACCRUED → CHARGED` ([invoicing](12-invoicing.md)).
+
+The `chargeStatus` state machine itself is a single guarded transition (`transitionOverage`, `overage-transitions.ts`); the [overage-event lifecycle table](#) of states (`PENDING/ACCRUED/CHARGED/BLOCKED/REVERSED/FAILED`) is in [funding & programs](02-funding-and-programs.md) / [programs](21-programs.md).
+
+### 6.4 CHARGE_MEMBER timeout — two crons, two jobs
+A member-pays overage sits `PENDING` until the side-payment SUCCEEDS. **Two distinct crons** retire never-settled ones — read both before touching either:
+
+| Cron | Window | What it does | Notifies? |
+| --- | --- | --- | --- |
+| `jobs/cleanup/sweep-abandoned-overage-charges.ts` (#785) | 7 days off the synthetic `overage:` intent | FAILs **never-*started*** side-charges (member never even minted the order) so they stop counting toward the circuit-breaker ceiling — **silent ceiling relief** | No |
+| `jobs/billing/timeout-member-overages.ts` (#779 §A) | hard **14-day** wall | FAILs the `OverageEvent` via the dedicated `chargeTimedOutAt` stamp + telemetry (`chargeAttemptCount` / `lastChargeAttemptAt` / `chargeFailureReason`) and **tells the member** the obligation lapsed | Yes |
+
+They're idempotent against each other: a row the 7-day sweep already moved to `FAILED` no longer matches `chargeStatus = PENDING` in the 14-day cron, and both claim on a `…:null` gate so a re-run/replica matches zero rows. A late capture webhook can still recover a wrongly-swept charge (`FAILED → CHARGED`, see `transitionOverage`).
+
+### 6.5 Refund-failed notification
+Refunds (including overage reversals) are gateway-bound; a `Refund` that the gateway **rejects** is stamped `failedAt` + `failureReason`, and the refund reconcile cron (`jobs/refunds/reconcile-pending-refunds.ts`, every 15 min) pages the payer via `notifyFailedRefunds`, selecting `FAILED` refunds where `failedNotifiedAt IS NULL` and stamping it so the alert fires once. (`Refund.reason` is the *operator's* reason for refunding; `failureReason` is *why the gateway said no* — don't conflate them.) See [invoicing §8](12-invoicing.md) for the refund credit-note cascade.
 
 ---
 

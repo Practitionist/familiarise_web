@@ -112,8 +112,8 @@ __tests__/enterprise/   cap, overage, credit-pool, reachable-paths, billing-admi
 - [ ] Wizard: OrgInfo → Billing → RevenueRates → Branding → InviteTeam → Review `✅`
 - [ ] Commit deferred to Review step (no orphan orgs) `✅`
 - [ ] Admin verify (`PENDING_VERIFICATION` → ACTIVE) `✅`
-- [ ] Self-serve verification resubmit/escalation `❌` #779 §B
-- [ ] Getting-Started activation checklist (contract→fund→program→assign) `❌` #777 §A
+- [ ] Self-serve verification resubmit/escalation `✅` #779 §A — `[orgId]/verification/resubmit/route.ts` (Organization stamps + resubmit; no `RESUBMIT` enum)
+- [ ] Getting-Started activation checklist (contract→fund→program→assign) `✅` #777 §A — `deriveActivationChecklist` in `lib/enterprise/org-activation.ts`, wired in `home/HomePageClient.tsx`
 - [ ] Razorpay billing-account link as a guided step `❌` #720
 - [ ] Slug collision handling inline `🟡` #719
 
@@ -144,7 +144,7 @@ __tests__/enterprise/   cap, overage, credit-pool, reachable-paths, billing-admi
 - [ ] enforceSSO server-side veto on direct BetterAuth requests `🟡 (verify)` #779 §E / #673
 - [ ] SAML cert X.509 validation + delete-then-recreate rotation `✅`
 - [ ] 30-day cert-expiry alert cron `✅` — `sso-cert-expiry-alert.ts`
-- [ ] **SSO break-glass / owner recovery on misconfig** `❌` #779 §E
+- [ ] **SSO break-glass / owner recovery on misconfig** `🟡` #779 §E — `OrganizationSSOSettings.breakGlassUntil` + `/sso/break-glass/route.ts` (OWNER reopens password login while IdP down); API-only, no dashboard control yet
 
 ## Phase 5 — SCIM provisioning
 **Code:** `[orgId]/scim/tokens/*`, `scim/group-mappings/*`, `lib/scim/*`
@@ -162,14 +162,14 @@ __tests__/enterprise/   cap, overage, credit-pool, reachable-paths, billing-admi
 - [ ] Audit log 60+ actions (`OrgAuditLog`) + CSV export `✅` — `audit-actions.ts`
 - [ ] Audit sanitization on erasure (pseudonymize actor) `✅` — `audit-sanitize.ts`
 - [ ] Audit pruning (7y finance / 2y other) `✅` — `jobs/cleanup/prune-audit-logs.ts`
-- [ ] `riskLevel` confirmation on dangerous mutations `❌` #779 §A
+- [ ] Dangerous-mutation guard (status precondition + in-flight count block + in-tx cascade + config-lock predicates) `✅` #779 §A — `lib/enterprise/config-lock.ts`; no `riskLevel` field, the guard is structural
 
 ## Phase 7 — Contracts & lifecycle
 **Code:** `[orgId]/contracts/*`, `jobs/contracts/expire-contracts.ts`
 - [ ] Contract create + DRAFT→ACTIVE→EXPIRED/TERMINATED `✅`
 - [ ] Terminate guarded vs live assignments `✅`
-- [ ] Contract-expiry/termination cascade to programs `❌` #779 §A (zombie programs)
-- [ ] `Contract.autoRenew` + renewal cycle `❌` #779 §B
+- [ ] Contract-expiry/termination cascade to programs `✅` #779 §A — in-tx TERMINATED → programs EXPIRED → assignments CLOSED (kills zombie programs)
+- [ ] `Contract.autoRenew` + renewal cycle `✅` #779 §A — `jobs/contracts/auto-renew-contracts.ts`; `autoRenewedAt` idempotency claim gate
 - [ ] Contract detail/amend/renew/e-sign UI `🟡` #777 §B / #770
 - [ ] Expire-contracts cron `✅` — `expire-contracts.ts`
 
@@ -188,7 +188,7 @@ __tests__/enterprise/   cap, overage, credit-pool, reachable-paths, billing-admi
 - [ ] Invoice pay (Razorpay) ISSUED→PAID + ledger `✅` — `invoices/[invoiceId]/pay`
 - [ ] Invoice PDF `✅ (verify post react-pdf #707)` — `invoices/[invoiceId]/pdf`
 - [ ] Subscription-invoice cron + accrual settle `✅` — `generate-subscription-invoices.ts`, `settle-invoice-accruals.ts`
-- [ ] Dunning / overdue / suspension `❌` #779 §D
+- [ ] Dunning / overdue / suspension `🟡` #779 §A — `jobs/billing/dunning.ts` marks OVERDUE + sends 7-day×3 reminders (`notifyOrgInvoiceOverdue`); booking-suspend cascade is **designed-not-active** (`dunningSuspendedAt` stays unwritten)
 - [ ] Credit notes on refund (GST Sec 34/Rule 53) `✅` #776 — `mintRefundCreditNote` (idempotent on refundId) shared by BOTH the app/cron cascade AND the gateway-refund webhook, so real Razorpay/Stripe refunds of invoiced bookings mint a CN; FY-sequential `<PREFIX>-CN-<FY>-<seq>` — `credit-note-numbering.ts`, `refund.ts`, `webhooks/utils.ts`
 
 ## Phase 10 — Wallet & top-ups
@@ -206,10 +206,10 @@ __tests__/enterprise/   cap, overage, credit-pool, reachable-paths, billing-admi
 - [ ] Reachable funding-path gate (CREDIT_POOL ⊄ LICENSE) `🔒` — `reachable-paths.ts`
 - [ ] Assign member → `ProgramAssignment` + `BookingUtilization` `✅` — `program-helpers.ts`
 - [ ] `activeSeatCount` denorm (reconcile `ACTIVE_SEAT_COUNT_DRIFT`) `✅` — `seat-count.ts`
-- [ ] Program money-config lock once in use (`configLockedAt`) `❌` #779 §A
-- [ ] Edit-after-create (safe fields) `❌` #777 §B
-- [ ] Cycle auto-rollover at `periodEnd` (counters reset / EXPIRED) `❌` #779 §B (zombie assignments)
-- [ ] Assignment soft-delete + explicit status `❌` #779 §B
+- [ ] Program money-config lock once in use (`configLockedAt`) `✅` #779 §B — stamped at first assignment; `LOCKED_PROGRAM_FIELDS` read-only (`config-lock.ts`)
+- [ ] Edit-after-create (safe fields) `✅` #777 §B — `programs/[programId]` PATCH allows safe fields, rejects locked money fields
+- [ ] Cycle auto-rollover at `periodEnd` (mint successor / CLOSE) `✅` #779 §A — `cycle-engine.ts` + `jobs/billing/advance-program-cycles.ts` (kills zombie assignments)
+- [ ] Assignment soft-delete + explicit status (`AssignmentStatus`) `✅` #779 §A — `assignments/[assignmentId]` sets status=CANCELLED; ROLLED/CLOSED driven by the cycle engine
 
 ## Phase 12 — Rate cards & revenue splits
 **Code:** `[orgId]/rate-cards/*`, `lib/api/organizations/rate-card.ts`
@@ -225,7 +225,7 @@ __tests__/enterprise/   cap, overage, credit-pool, reachable-paths, billing-admi
 - [ ] Tax engine: GST + buyer-country detection at checkout `✅` — `tax-engine.ts`
 - [ ] Cap counting (engagements vs paise) `✅` — `program-helpers.ts`
 - [ ] Referral credit blocked on org-funded bookings `🔒` — `checkout.ts`
-- [ ] Pre-checkout cap/overage warning (no surprise billing) `❌` #777 §C
+- [ ] Pre-checkout cap/overage warning (no surprise billing) `✅` #777 §C — `lib/payments/billing/overage-preview.ts` + `/checkout/overage-preview` route, surfaced in `OrgPayerSelector`
 - [ ] Program-assignment validation client-side `🟡` #777 §C
 - [ ] Approval-payment path (`operations/approval-payment.ts`) `✅ (verify)`
 
@@ -295,7 +295,7 @@ __tests__/enterprise/   cap, overage, credit-pool, reachable-paths, billing-admi
 - [ ] DPDP consent grant/withdraw `✅` — `dpdp.ts`, `[orgId]/consent`
 - [ ] DPDP erasure + financial-record retention `✅` — `lib/compliance/erasure/`
 - [ ] Consent retention sweeper + breach-deadline alerts `✅` — `jobs/compliance/{consent-retention-sweeper,databreach-deadline-alerts}.ts`
-- [ ] Data export (`OrgDataExport`) `✅` — `data-exports/*`, `jobs/cleanup/process-data-exports.ts` (Stream omitted 🟡 #776 §I)
+- [ ] Data export (`OrgDataExportJob`) `✅` — `data-exports/*` (request + 7-day signed-URL download), `jobs/cleanup/process-data-exports.ts` (Stream omitted 🟡 #776 §I)
 - [ ] GST TCS u/s 52 + GstTcsBatch + GstTcsAdjustment `❌` schema-now #778 §D
 - [ ] CreditNote + TdsAdjustment models `❌` #778 §D
 - [ ] taxEntityType + consumerStateCode `❌` #778 §D
@@ -321,7 +321,7 @@ __tests__/enterprise/   cap, overage, credit-pool, reachable-paths, billing-admi
 ## Phase 21 — Notifications (Novu)
 **Code:** `lib/novu/{workflows,org-workflows}.ts`
 - [ ] 16 org workflows wired: invite-sent/accepted, invoice-issued/paid, license-renewal, wallet-topup, payout-completed/failed/reversed, program cap-near/exhausted/overage-due, expert-removed, data-export, sso-cert-expiring/provider-deleted `✅`
-- [ ] **Missing action-needed:** invoice-overdue/dunning, payout-stuck, top-up-failed, dispute-deadline (org), verification-needed, SSO-misconfigured `❌` #779 §G
+- [ ] **Action-needed surfaces:** invoice-overdue/dunning (`notifyOrgInvoiceOverdue` + home banner), payout-stuck, verification-needed, wallet-low now covered by the dunning cron + action center (`deriveActionCenter`) `🟡` #779 §F/§G — still missing as dedicated Novu workflows: top-up-failed, dispute-deadline (org), SSO-misconfigured
 - [ ] Per-event-type operator preferences `🟡` #779 §G
 
 ## Phase 22 — Catalog, discovery & public surfaces
@@ -339,7 +339,7 @@ __tests__/enterprise/   cap, overage, credit-pool, reachable-paths, billing-admi
 - [ ] `/my-arrangement` expert earnings + payout recipient `✅`
 - [ ] Add-EXPERT management UI `❌` #729
 - [ ] Expert appointment visibility `❌` #754
-- [ ] State-driven "action required" home `❌` #779 §F
+- [ ] State-driven "action required" home `✅` #779 §F — `deriveActionCenter` in `lib/enterprise/org-activation.ts` (overdue, cap-near, contract-expiring, overage-as-expansion, wallet-low, stuck-payout), wired in `home/HomePageClient.tsx`
 - [ ] Reimbursements nav link for PERSONAL orgs `🟡` #714
 
 ## Phase 24 — Cross-cutting (appointments / trials / waitlist / reimbursements / documents / referrals)

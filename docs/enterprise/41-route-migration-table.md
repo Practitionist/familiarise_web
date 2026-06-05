@@ -3,7 +3,12 @@
 Map every pre-Arch-4 enterprise API route to its current home. Rows
 with "removed" in the "Now" column have no successor — the capability
 moved to a different surface or the feature was rolled up into an
-existing route.
+existing route. Rows marked **not yet landed** name a target route that
+the audit-action constants anticipate but that doesn't exist in the
+tree yet (don't link to it from code).
+
+_Last reconciled against the filesystem: 2026-06-05 (post v2 mega-audit,
+#777/#778/#779)._
 
 ## Core org record
 
@@ -16,8 +21,8 @@ existing route.
 
 | Old | Now | Notes |
 |-----|-----|-------|
-| `GET /api/organizations/[orgId]/billing` | `GET /api/organizations/[orgId]/billing-account` | `billingMode` replaced by `BillingAccount.fundingSource`. |
-| `PATCH /api/organizations/[orgId]/billing` | `PATCH /api/organizations/[orgId]/billing-account` | — |
+| `GET /api/organizations/[orgId]/billing` | same (still live) + `GET /api/organizations/[orgId]/billing-account` | `GET /billing` was **not** removed — it's the aggregated dashboard snapshot (month-to-date / outstanding / pending). Per-account detail (balance, creditLimit, fundingSource) moved to `/billing-account`. `billingMode` replaced by `BillingAccount.fundingSource`. |
+| `PATCH /api/organizations/[orgId]/billing` | `PATCH /api/organizations/[orgId]/billing-account` | Now gated OWNER ∨ BILLING_ADMIN (`requireOrgBillingAdminOrOwner`). |
 | `GET /api/organizations/[orgId]/credits` | `GET /api/organizations/[orgId]/billing-account/wallet` | `OrgCreditPool` → `BillingAccount.walletBalance`. |
 | `POST /api/organizations/[orgId]/credits/purchase` | `POST /api/organizations/[orgId]/billing-account/wallet/top-ups` | `OrgCreditPurchase` → `WalletTopUp` keyed by `providerOrderId @unique`; webhook confirm posts a `TOPUP` txn (`Dr CASH / Cr WALLET`). |
 | `GET /api/organizations/[orgId]/credits/ledger` | `GET /api/organizations/[orgId]/billing-account/wallet` | `OrgCreditLedger` → the org's WALLET-account `LedgerEntry` rows (the journal is the history). |
@@ -43,11 +48,13 @@ existing route.
 | `GET /api/organizations/[orgId]/contract` | **removed** | Multiple contracts per org now; use `GET /contracts` list. |
 | `PATCH /api/organizations/[orgId]/contract` | **removed** | — |
 | _(new)_ | `GET/POST /api/organizations/[orgId]/contracts` | — |
-| _(new)_ | `GET/PATCH/DELETE /api/organizations/[orgId]/contracts/[contractId]` | — |
+| _(new)_ | `GET/PATCH/DELETE /api/organizations/[orgId]/contracts/[contractId]` | PATCH now carries the term-lock + TERMINATED cascade (#777 §B / #779 §A). |
+| _(new, #779)_ | `POST /api/organizations/[orgId]/contracts/[contractId]/supersede` | Immutable-contract amend/renew; mints a successor + re-points programs. |
 | `GET /api/organizations/[orgId]/seats` | **removed** | Seats replaced by `Program` + `ProgramAssignment`. |
 | _(new)_ | `GET/POST /api/organizations/[orgId]/programs` | — |
-| _(new)_ | `GET/PATCH/DELETE /api/organizations/[orgId]/programs/[programId]` | — |
+| _(new)_ | `GET/PATCH/DELETE /api/organizations/[orgId]/programs/[programId]` | PATCH adds money-config lock + `archived` (#777 §B); DELETE emits `PROGRAM_DELETED` (was the conflated `PROGRAM_PAUSED`). |
 | _(new)_ | `GET/POST /api/organizations/[orgId]/programs/[programId]/assignments` | — |
+| _(new)_ | `GET/PATCH/DELETE /api/organizations/[orgId]/programs/[programId]/assignments/[assignmentId]` | — |
 
 ## Members and consultants
 
@@ -85,30 +92,62 @@ existing route.
 
 ## Plans + catalog
 
-| Old | Now | Notes |
-|-----|-----|-------|
-| `GET /api/organizations/[orgId]/plans` | `GET /api/organizations/[orgId]/catalog` | Collection moved. The pre-Arch-4 per-plan CRUD (`.../plans/[planId]`) was deleted in `2b9da181` (no 501 stub left behind); it returns when the plan refactor PR ships. |
-| `POST /api/organizations/[orgId]/plans` | `POST /api/organizations/[orgId]/catalog` | — |
-| `DELETE /api/organizations/[orgId]/plans` | `DELETE /api/organizations/[orgId]/catalog` | Bulk deactivate. |
-| `GET /api/organizations/[orgId]/plans/search` | `GET /api/organizations/[orgId]/catalog/search` | — |
-
-## HRIS, consent, analytics, activity
+The sponsored-catalog surface (`/catalog`, `/catalog/search`) is **not
+yet landed** — the `CATALOG_PLAN_CREATED` / `CATALOG_PLAN_DEACTIVATED`
+audit constants exist in `lib/enterprise/audit-actions.ts`, but no route
+file ships them yet. The pre-Arch-4 `/plans*` routes are already gone, so
+there is currently **no** org-plan CRUD surface in the tree.
 
 | Old | Now | Notes |
 |-----|-----|-------|
-| _(new)_ | `GET/PUT/DELETE /api/organizations/[orgId]/hris` | — |
-| _(new)_ | `GET/POST /api/organizations/[orgId]/hris/sync` | — |
-| _(new)_ | `POST /api/organizations/[orgId]/hris/csv-upload` | — |
-| _(new)_ | `GET/POST /api/organizations/[orgId]/consent` | DPDP artifact roster. |
-| _(new)_ | `GET /api/organizations/[orgId]/analytics` | Rollups. |
-| _(new)_ | `GET /api/organizations/[orgId]/activity` | OrgAuditLog feed. |
+| `GET /api/organizations/[orgId]/plans` | `GET /api/organizations/[orgId]/catalog` — **not yet landed** | The pre-Arch-4 collection + per-plan CRUD (`.../plans/[planId]`) were deleted in `2b9da181` (no 501 stub left behind). The `/catalog` successor returns when the plan refactor PR ships. |
+| `POST /api/organizations/[orgId]/plans` | `POST /api/organizations/[orgId]/catalog` — **not yet landed** | — |
+| `DELETE /api/organizations/[orgId]/plans` | `DELETE /api/organizations/[orgId]/catalog` — **not yet landed** | Bulk deactivate. |
+| `GET /api/organizations/[orgId]/plans/search` | `GET /api/organizations/[orgId]/catalog/search` — **not yet landed** | — |
+
+## Consent, analytics, activity, audit
+
+HRIS (`/hris`, `/hris/sync`, `/hris/csv-upload`) is **not yet landed** —
+there is no HRIS route file in the tree, and `HRIS_SYNC_*` is not even
+present in `audit-actions.ts`. Removed from this table to stop pointing
+code at a non-existent surface.
+
+| Old | Now | Notes |
+|-----|-----|-------|
+| _(new)_ | `GET/POST/DELETE /api/organizations/[orgId]/consent` | DPDP artifact roster; DELETE = withdraw (§12). MANAGER. |
+| _(new)_ | `GET /api/organizations/[orgId]/analytics` | Rollups. MANAGER. |
+| _(new)_ | `GET /api/organizations/[orgId]/activity` | OrgAuditLog feed. MANAGER. |
+| _(new)_ | `GET /api/organizations/[orgId]/audit` | Wider audit read (active member). |
+| _(new)_ | `GET /api/organizations/[orgId]/audit/export` | CSV export, MAINTAINER; emits `AUDIT_LOG_EXPORTED`. |
+| _(new, #779)_ | `POST /api/organizations/[orgId]/verification/resubmit` | Self-serve resubmit after admin REJECT. MAINTAINER. |
+| _(new, #779)_ | `POST/DELETE /api/organizations/[orgId]/sso/break-glass` | Time-boxed IdP-outage escape hatch. OWNER. |
+| _(new, #777)_ | `GET /api/organizations/[orgId]/checkout/overage-preview` | Advisory pre-checkout overage estimate. Active member. |
+| _(new)_ | `GET/POST /api/organizations/[orgId]/data-exports` + `[exportId]/download` | DPDP §11 export bundles. OWNER ∨ BILLING_ADMIN. |
 
 ## Admin
 
 | Old | Now | Notes |
 |-----|-----|-------|
-| `POST /api/admin/organizations/[orgId]/status` | `POST /api/admin/organizations/[orgId]/verify` | One route handles `VERIFY / SUSPEND / REACTIVATE / DEACTIVATE`. |
+| `POST /api/admin/organizations/[orgId]/status` | `POST /api/admin/organizations/[orgId]/verify` | One route handles `VERIFY / REJECT / SUSPEND / REACTIVATE / DEACTIVATE` (REJECT added in #779 §A — keeps the org PENDING and feeds the self-serve resubmit loop). |
 | `POST /api/admin/organizations/[orgId]/verify-consultants` | **removed** | Consultant verification is a separate flow on `ConsultantProfile.verificationStatus`. |
+
+## New subsystems (no pre-Arch-4 ancestor)
+
+These shipped after the migration baseline, so they have no "old" route
+— listed here only so a porter knows they exist and aren't a rename of
+something they remember.
+
+- **SCIM config** — `GET/POST /scim/tokens`, `DELETE /scim/tokens/[tokenId]`,
+  `GET/POST /scim/group-mappings`, `DELETE /scim/group-mappings/[mappingId]`
+  (all OWNER).
+- **Outbound webhooks** — `/webhooks` CRUD + `[endpointId]/rotate-secret`,
+  `[endpointId]/deliveries` + `.../[deliveryId]/redeliver` (mixed
+  OWNER / OWNER ∨ BILLING_ADMIN / MANAGER — see `40-api-reference.md`).
+- **Domain-claim verify** — `POST /domain-claims/[domain]/verify` (OWNER).
+- **Stream exports** — `GET /stream/channels`, `GET /stream/calls` (MANAGER).
+- **Read surfaces** — `/reimbursements` (+`/export`), `/disputes`,
+  `/documents`, `/trials`, `/waitlist`, `/appointments`, `/recordings`,
+  `/billing-account/invoices/[invoiceId]/pdf` (all MANAGER).
 
 ## Removed outright
 

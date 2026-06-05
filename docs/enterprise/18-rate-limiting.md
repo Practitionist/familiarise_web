@@ -3,15 +3,48 @@
 > **Scope.** Auth + enterprise rate-limit coverage matrix, who enforces
 > what, and why BetterAuth's own limiter is disabled.
 >
-> **Audience.** Engineers touching `middleware.ts`, `lib/auth.ts`,
-> any unauthenticated route under `app/api/auth/**`, or the wallet /
-> invoice endpoints.
+> **Audience.** Engineers touching `middleware.ts`, `lib/rate-limit.ts`,
+> `lib/auth.ts`, any unauthenticated route under `app/api/auth/**`, or
+> the wallet / invoice / webhook endpoints.
+
+---
+
+## §0 — Two enforcement layers
+
+Rate limits live in **two** places, and the matrix in §2 marks which is
+which. Don't assume a route is limited just because middleware exists:
+
+1. **Edge middleware** (`middleware.ts`, `RATE_LIMIT_RULES` table) — runs
+   *before* any serverless function is invoked, so it stops cost
+   amplification under DDoS. It's a small, explicit allow-list of
+   high-risk public/auth routes. Adding a limit = appending a `RateRule`
+   object to the `RATE_LIMIT_RULES` array (each rule is
+   `{ label, match, limiter, key?, skipLocalhost }`). The first matching
+   rule fires; rules match disjoint paths. **Do not** cite middleware
+   line numbers — the table is reorderable and the line-numbered `if`
+   chain it replaced is long gone.
+2. **Route-handler level** (`applyRateLimit(limiter, key)` called inside
+   the handler) — for authenticated org-scoped writes where the key
+   (e.g. `org:${orgId}` or a SCIM `tokenHash`) isn't cheaply parseable
+   at the edge, or where the limit is conceptually part of the
+   handler's contract. `orgWebhookLimiter`, `orgInviteLimiter`,
+   `orgDataExportLimiter`, and the SCIM `scimLimiter` are all enforced
+   here, NOT in middleware.
+
+All limiters are defined in `lib/rate-limit.ts` via the shared
+`makeLimiter(count, window, prefix)` helper (Upstash sliding window).
+`applyRateLimit` fails **open** (Redis down → request allowed) and
+returns a `429` with an `X-RateLimit-Remaining` header on exceed. The
+SCIM bearer path enforces `scimLimiter` from inside `requireScimAuth`
+(`lib/scim/auth.ts`), so every `/scim/v2/**` verb inherits it without a
+per-route call.
 
 ---
 
 ## §1 — Why BetterAuth's built-in limiter is disabled
 
-`lib/auth.ts` carries `rateLimit: { enabled: false }`. This is deliberate:
+`lib/auth.ts` carries `rateLimit: { enabled: false }` (still true as of
+this revision). This is deliberate:
 
 - BetterAuth's limiter is **in-memory per Node.js process**.
 - We deploy to **Netlify** (serverless). Each cold-start lambda gets
@@ -31,32 +64,87 @@ See audit Phase B.8.
 
 ## §2 — Coverage matrix
 
-| Surface | Limiter | Window | Key | Source |
+Two layers (see §0), split into the two tables below: **edge** = a
+`RATE_LIMIT_RULES` entry in `middleware.ts`; **handler** = an
+`applyRateLimit(...)` call inside the route (or, for SCIM, inside
+`requireScimAuth`). A third table lists v2 routes that are gated but
+deliberately carry no limiter. All limiters are the `lib/rate-limit.ts`
+exports — cite those names, not middleware line numbers.
+
+### Edge-enforced (`middleware.ts` → `RATE_LIMIT_RULES`)
+
+| Surface | Limiter | Window | Key | Skip localhost |
 |---|---|---|---|---|
-| `POST /api/auth/sign-up/email` | `authLimiter` (Upstash) | 10 req / 15 min | IP | `middleware.ts:192-197` |
-| `POST /api/auth/sign-in/email` | `authLimiter` (Upstash) | 10 req / 15 min | IP | `middleware.ts:192-197` |
-| `POST /api/auth/forget-password` | `authLimiter` (Upstash) | 10 req / 15 min | IP | `middleware.ts:192-197` |
-| `POST /api/auth/reset-password` | `authLimiter` (Upstash) | 10 req / 15 min | IP | `middleware.ts:192-197` |
-| `GET /api/auth/sso/domain-check` | `unauthLimiter` (Upstash) | 60 req / hour | IP | `middleware.ts:240-246` |
-| `POST /api/organizations/invitations/accept` | `inviteAcceptLimiter` | 5 req / hour | IP | `middleware.ts:231-233` |
-| `POST /api/organizations/[orgId]/billing-account/wallet/top-ups` | `walletTopUpLimiter` | 20 req / hour | `org:${orgId}` | `middleware.ts:254-267` |
+| `POST /api/auth/sign-in*` | `authLimiter` | 10 / 15 min | IP | yes |
+| `POST /api/auth/sign-up*` | `authLimiter` | 10 / 15 min | IP | yes |
+| `POST /api/auth/forget-password*` | `authLimiter` | 10 / 15 min | IP | yes |
+| `GET /api/auth/sso/domain-check` | `ssoDomainCheckLimiter` | 60 / hour | IP | yes |
+| `POST /api/organizations/invitations/accept` | `orgInviteAcceptLimiter` | 30 / hour | IP | yes |
+| `POST /api/organizations/[orgId]/billing-account/wallet/top-ups` | `orgWalletTopUpLimiter` | 20 / hour | `org:${orgId}` | yes |
+
+> The edge auth rule matches `sign-in` / `sign-up` / `forget-password`
+> by `startsWith`. **`reset-password` is NOT in the table** and
+> BetterAuth's own limiter is off (§1), so `POST /api/auth/reset-password`
+> is not rate-limited in code today — the reset *token* is the gate
+> (single-use, 30-min TTL via `resetPasswordTokenExpiresIn`). If you
+> want a limit there, add a rule keyed on IP. (Public read endpoints —
+> consultant search, trial-eligibility, newsletter, booking
+> availability — also live in this table but aren't enterprise surfaces;
+> they're documented in the global rate-limit notes, not here.)
+
+### Handler-enforced (`applyRateLimit(...)` inside the route)
+
+| Surface | Limiter | Window | Key | Gate |
+|---|---|---|---|---|
+| `POST /api/organizations/[orgId]/invitations` | `orgInviteLimiter` | 20 / hour | `${orgId}` | MAINTAINER+ |
+| `POST /api/organizations/[orgId]/webhooks` | `orgWebhookLimiter` | 5 / min | `org:${orgId}` | billing-admin∨owner |
+| `PATCH /api/organizations/[orgId]/webhooks/[endpointId]` | `orgWebhookLimiter` | 5 / min | `org:${orgId}` | billing-admin∨owner |
+| `POST .../webhooks/[endpointId]/rotate-secret` | `orgWebhookLimiter` | 5 / min | `org:${orgId}` | OWNER |
+| `POST /api/organizations/[orgId]/data-exports` | `orgDataExportLimiter` | 1 / 24 h | `org:${orgId}` | billing-admin∨owner |
+| `GET /scim/v2/**` (all verbs) | `scimLimiter` | 60 / min | `scim:${tokenHash}` | bearer token |
+
+> **`orgInviteLimiter` keys on the bare `orgId`** (not `org:${orgId}`);
+> the webhook + data-export limiters use the `org:` prefix. The keys are
+> distinct prefixes (`rl:org-invite` vs `rl:org-webhook` etc.) so the
+> mismatch is cosmetic, but copy the exact key when adding a sibling
+> route to the same limiter.
+
+### Gated but NOT rate-limited (intentional)
+
+These v2 routes rely on their auth gate + state preconditions; no
+limiter is wired, and none is needed at current threat-model:
+
+| Surface | Gate | Why no limiter |
+|---|---|---|
+| `POST` / `DELETE .../sso/break-glass` | OWNER | OWNER-only + already requires `enforceSSO` on; a flood just re-stamps one timestamp. Every call audits, so abuse is visible. |
+| `POST .../verification/resubmit` | MAINTAINER+ | Idempotent state flip gated on "previously rejected & still pending"; nothing to amplify. |
+| `GET .../checkout/overage-preview` | any member | Read-only projection; covered by the §4 authed-read rationale. |
+| `POST` / `DELETE .../consent` | MANAGER+ | MANAGER-gated config write; low call volume, audit-logged. |
 
 Everything else inherits the org-scoped role gates in
-`lib/auth-helpers.ts:requireOrgAccess` and the IP-level Cloudflare /
-Netlify edge rate limits (the latter are operational, not in code).
+`lib/auth-helpers.ts:requireOrgAccess` (and the field-level
+`requireOrgBillingAdminOrOwner` disjunction on finance writes) plus the
+IP-level Cloudflare / Netlify edge rate limits (the latter are
+operational, not in code).
 
 ---
 
 ## §3 — Localhost bypass
 
-`isBypassableIp(clientIp)` returns true for `::1`, `127.0.0.1`, and the
-unknown-IP sentinel. The booking-algorithm-tests + Chrome MCP runs
-need to fire hundreds of requests in a few minutes; the bypass keeps
-them unblocked without weakening production rate limits (production
-traffic never carries those IPs).
+`isBypassableIp(clientIp)` (`lib/rate-limit.ts`) returns true for `::1`,
+`127.0.0.1`, and the `unknown_ip` sentinel — **but only when
+`NODE_ENV !== "production"`**. In production it returns `false` for
+every value (including the sentinel), so a header-stripping proxy can't
+silently disable a limiter. The booking-algorithm-tests + Chrome MCP
+runs need to fire hundreds of requests in a few minutes; the dev-only
+bypass keeps them unblocked without weakening production limits.
 
-The bypass is fenced inside `middleware.ts` — it cannot be reached
-from a real client connecting via Vercel / Netlify edge.
+The bypass is opt-in **per rule**: each `RATE_LIMIT_RULES` entry carries
+a `skipLocalhost` flag and the value is intentionally inconsistent — the
+auth + enterprise *write* rules set it `true` (bypass on localhost), the
+public *read* rules (consultant search, eligibility, newsletter,
+availability) set it `false` so they rate-limit even locally. Preserve
+the original per-rule value when editing.
 
 See `CLAUDE.md` memory note on agent-006 booking tests for context.
 
@@ -78,19 +166,27 @@ See `CLAUDE.md` memory note on agent-006 booking tests for context.
 
 ## §5 — How to add a new limiter
 
-1. Define the limit in `middleware.ts` near the existing ones:
+1. Define the limiter once in `lib/rate-limit.ts` via the shared helper
+   (don't hand-roll `new Ratelimit({...})` — `makeLimiter` wires the
+   shared Upstash `redis` client + sliding window):
    ```ts
-   const myLimiter = new Ratelimit({
-     redis,
-     limiter: Ratelimit.slidingWindow(<count>, "<window>"),
-     prefix: "rl:my-key",
-   });
+   export const myLimiter = makeLimiter(<count>, "<window>", "rl:my-key");
    ```
-2. Apply inside the appropriate path branch. Use the same
-   `applyRateLimit(myLimiter, key)` helper everywhere — it returns a
-   `Response` (429) on exceed and `null` on pass.
-3. **Document the limiter in §2 of this doc** so the matrix stays
-   complete.
+   Pick a **unique `rl:` prefix** so its bucket can't collide with
+   another limiter's keyspace.
+2. Choose the layer:
+   - **Edge** (public/auth, cheap key): append a `RateRule` to
+     `RATE_LIMIT_RULES` in `middleware.ts` — `{ label, match, limiter,
+     key?, skipLocalhost }`. Omit `key` to default to client IP; return
+     `null` from `key` to skip when the identifier can't be parsed.
+   - **Handler** (authed org-scoped write, key needs the resolved
+     `orgId` / `tokenHash`): call
+     `const rl = await applyRateLimit(myLimiter, key); if (rl) return rl;`
+     near the top of the handler, after the auth gate.
+   Either way `applyRateLimit` returns a `429` `Response` on exceed and
+   `null` on pass, and fails open if Redis is down.
+3. **Document the limiter in §2 of this doc** (correct layer + key +
+   window) so the matrix stays complete.
 4. Add an MCP test case to the relevant prompt file (see SSO.9 in
    `prompts/enterprise-tests/1-membership-auth/1.3-sso-and-domain-claims.md`
    for the pattern — fire N requests, assert the tail returns 429).
@@ -109,7 +205,7 @@ See `CLAUDE.md` memory note on agent-006 booking tests for context.
 - **Don't conflate idempotency with rate limiting.** A wallet top-up
   retry of the same `clientIdempotencyKey` is legitimate and should
   not count against the limiter (or should at least be deduped before
-  counting). The current `walletTopUpLimiter` counts every request;
+  counting). The current `orgWalletTopUpLimiter` counts every request;
   the idempotency key handles deduplication at the route layer.
 
 ---
@@ -118,4 +214,7 @@ See `CLAUDE.md` memory note on agent-006 booking tests for context.
 
 - Phase B.8 — documented decision to keep BetterAuth's limiter
   disabled.
-- `lib/auth.ts:31` — the comment block referencing this doc.
+- `lib/auth.ts` `rateLimit: { enabled: false }` — the comment block
+  above it references this decision. (Note: that comment still points at
+  the pre-renumber `docs/enterprise/10-rate-limiting.md`; this file is
+  the current home.)

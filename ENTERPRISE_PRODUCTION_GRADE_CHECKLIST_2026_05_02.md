@@ -1,5 +1,10 @@
 # Enterprise Production-Grade Checklist
 
+> **Superseded (2026-06-05):** This is a point-in-time Round-2 audit. For the
+> current enterprise status see `ENTERPRISE_READINESS.md` (v2 mega-audit
+> addendum, #777/#778/#779) and `ENTERPRISE_SUBSYSTEM_CHECKLIST.md` (live
+> per-subsystem status). Kept for history; do not treat scores below as current.
+
 Date: 2026-05-02
 
 Supersedes: `ENTERPRISE_PRODUCTION_GRADE_CHECKLIST_2026_05_01.md`

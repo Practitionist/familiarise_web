@@ -108,12 +108,25 @@ calls `bumpUserSessionGeneration(tx, userId)`:
 - POST `/invitations/accept` (invitation acceptance)
 
 The helper increments `users.sessionGeneration` by 1 inside the same
-transaction as the mutation.
+transaction as the mutation (`{ increment: 1 }` — an atomic Prisma
+update, not a read-modify-write).
 
 `customSession` reads the live row's `sessionGeneration` on every
-session lookup and re-loads memberships from the DB unconditionally.
-Since memberships are always fresh, the user's effective permissions
-update on the next round-trip — no forced logout needed.
+session lookup and re-loads memberships from the DB **unconditionally**
+(the `memberships.findMany` always runs; the marker is not yet used as
+a skip-the-refetch guard — that fast-path is the future use noted in
+`lib/auth.ts`). Since memberships are always fresh, the user's effective
+permissions update on the next round-trip — no forced logout needed.
+The marker is what client code can compare against its cached payload to
+*detect* staleness; the always-on refetch is what actually corrects it.
+
+One nuance worth knowing: BetterAuth's cookie cache (`session.cookieCache`,
+`maxAge: 5 min` in `lib/auth.ts`) can serve a cached session shape for
+up to 5 minutes before `customSession` is re-invoked, so "next
+round-trip" means "next round-trip that misses the 5-minute cookie
+cache." The catastrophic 24h figure below is the worst case when the
+bump is *not* called at all and the only refresh is BetterAuth's
+`updateAge: 24h` rotation.
 
 ### Why a counter, not a boolean
 
@@ -206,6 +219,6 @@ the new permissions; no UX disruption.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | New SSO user can't access the dashboard, session cookie present | JIT auto-join transaction failed (non-P2002 error). Check server logs for the thrown error. | Investigate root cause — DB connection, RLS, FK. The narrowed catch surfaces it. |
-| User keeps acting as old role 30+ minutes after promotion | `bumpUserSessionGeneration` not called on the mutation path. | Search route handlers for the mutation; ensure `bumpUserSessionGeneration(tx, userId)` is called inside the tx. |
+| User keeps acting as old role well past the 5-min cookie-cache window after promotion | `bumpUserSessionGeneration` not called on the mutation path (so the only refresh left is BetterAuth's 24h `updateAge` rotation). | Search route handlers for the mutation; ensure `bumpUserSessionGeneration(tx, userId)` is called inside the tx. |
 | `customSession` slow under high SSO sign-in load | The bareMembers loop is running for many orgs without `preloadedProfiles`. | Ensure the pre-fetch at the top of `customSession` is still in place; passes through `preloadedProfiles` to `applyMembershipRoleEffects`. |
 | Settings page shows a role dropdown for `defaultRoleForAutoJoin` | A regression of audit Phase A.1. Schema must be `z.literal("LEARNER")`. | Re-check `JitDefaultRoleSchema` + the SSO settings page UI block. |

@@ -71,6 +71,43 @@ The enterprise-critical `event` names are:
 - `subs.invoice.created` — invoice row created
 - `subs.invoice.skipped` — already claimed by another worker
 
+### v2 subsystems — primary signal is the job summary line + `SystemEvent`
+
+The #777/#778/#779 crons don't all emit bespoke `event:` log names; most
+print a single structured **summary line** at completion and rely on
+their idempotency stamps as the observability surface (you alert on the
+*absence* of progress, or on a backlog of un-stamped rows, not on a
+per-row log). Know what each prints so you can build the alert:
+
+| Subsystem | Job | Summary fields | Audit / SystemEvent signal |
+|---|---|---|---|
+| Cycle engine | `advance-program-cycles` | `scanned / rolled / closed / skipped` | `PROGRAM_ASSIGNMENT_ROLLED` audit row per ROLL/CLOSE |
+| Contract auto-renew | `auto-renew-contracts` | `scanned / renewed / skipped` | `CONTRACT_AUTO_RENEWED` audit row |
+| Contract expiry | `expire-contracts` | (expired count) | `CONTRACT_EXPIRED` audit row |
+| Dunning | `dunning` | `scannedStage1 / markedOverdue / scannedStage2 / remindersSent` | `INVOICE_OVERDUE` (stage 1 only) |
+| Overage timeout | `timeout-member-overages` | `scanned / timedOut` | — (member notify) |
+| Overage abandon sweep | `sweep-abandoned-overage-charges` | `scanned / failed` + `::notice::` | — (silent) |
+| Wallet floor (notify-only) | `wallet-low-balance` | `scanned / notified` | — (finance notify) |
+| Stuck-webhook re-drive | `sweep-stuck-webhook-events` | `scanned / recovered / stillFailing` + `::warning::` | — |
+| Orphaned top-up captures | `sweep-orphaned-topup-captures` | `scanned / recredited / stillFailing` | — |
+| SSO cert expiry | `sso-cert-expiry-alert` | `scanned / alerted / parseFailures` | `SSO_CERT_EXPIRING` audit row |
+| Outbound webhook dispatch | `dispatch-outbound-webhooks` | `scanned / succeeded / retried / failed` | `WEBHOOK`/WARN `SystemEvent` when backlog > 200 |
+
+Two failure surfaces the v2 crons share, neither of which prints a
+distinct `event:` line:
+
+- **Webhook secret rotation** is observable via the `WEBHOOK_SECRET_ROTATED`
+  audit action + the 24h dual-sign window (`WEBHOOK_ROTATION_GRACE_MS`,
+  `lib/enterprise/outbound-webhooks/signing.ts`). Alert on deliveries
+  still failing **after** the grace window elapsed (the consumer never
+  swapped to the new secret).
+- **SSO break-glass opened** has **no** dedicated event or audit action —
+  it's a `breakGlassUntil` window on `OrganizationSSOSettings`, vetoed in
+  `lib/sso/enforce-session.ts`. To page on it, watch for `SETTINGS_CHANGED`
+  audit rows carrying the break-glass `details`, or query
+  `OrganizationSSOSettings WHERE breakGlassUntil > now()`. See the
+  warning row added below.
+
 ---
 
 ## Alerts
@@ -86,16 +123,24 @@ you have 30 days of traffic data.
 | Ledger reconciler failing | `reconcile.completed` with `ok=false` in the last 24h | `42-runbooks.md#ledger-reconciler-flagged-discrepancies` |
 | Wallet balance drift | any `reconcile.finding` with `kind=WALLET_BALANCE_DRIFT` | Same |
 | Subscription cron crash | `subs.invoice.created` count = 0 for 2 consecutive days while `BillingSubscription` rows with `nextInvoiceDate < now()` exist | N/A — page SRE |
-| HMAC verification failing | `webhook.*.failed` with `reason=hmac_mismatch` rate > 1/min | Rotate secret or check load balancer stripping headers |
+| HMAC verification failing | `WEBHOOK`/WARN `SystemEvent` ("HMAC verification failed") rate > 1/min | `42-runbooks.md#rotating-razorpay-credentials` / check LB stripping headers |
+| Reconcile/payout crash | `RECONCILE` or `PAYOUT` `SystemEvent` with `severity=ERROR` (Better Stack sink) | `42-runbooks.md#ledger-reconciler-flagged-discrepancies` |
+| Cycle engine stalled | `ProgramAssignment` with `status=ACTIVE`, `rolledAt=null`, `periodEnd < now() - 24h` count > 0 | `42-runbooks.md#cycle-engine-rollover-failed-assignment-stuck-un-rolled` |
+| Contract auto-renew stalled | `Contract` with `autoRenew=true`, `status=ACTIVE`, `autoRenewedAt=null`, `effectiveTo < now() - 1h` count > 0 | `42-runbooks.md#contract-auto-renew-failed` |
 
 ### Warning (Slack, no page)
 
 | Alert | Condition |
 |-------|-----------|
-| IRP upload failure rate | `invoice.irp.failed` / `invoice.irp.attempted` > 20% rolling 1h |
-| DPDP sweeper skipped | `dpdp.sweeper.counted` without a `dpdp.sweeper.deleted` follow-up for 7 days when `DPDP_SWEEPER_DELETE=true` |
+| IRP upload failure rate | `invoice.irp.failed` / `invoice.irp.attempted` > 20% rolling 1h (only meaningful when `ENABLE_IRP_UPLOADER=true`; stub returns are expected sub-₹5cr) |
+| Outbound webhook backlog | `WEBHOOK`/WARN `SystemEvent` "queue backlog" (fires at > 200 due deliveries) |
+| Webhook secret rotation not adopted | `WEBHOOK_DELIVERY_FAILED` for an endpoint still failing > 24h after its `WEBHOOK_SECRET_ROTATED` row (consumer never swapped — grace window lapsed) |
+| SSO break-glass open | `OrganizationSSOSettings.breakGlassUntil > now()` (SSO enforcement is bypassed for that window — confirm it was intentional) |
+| Overage ceiling wedged | `OverageEvent` `chargeStatus=PENDING`, `overageBehavior=CHARGE_MEMBER`, `createdAt < now() - 14d` count > 0 (timeout cron not draining) |
+| Dunning not escalating | `dunning` summary `markedOverdue + remindersSent = 0` for 48h while OVERDUE invoices with `dunningReminderCount < 3` exist |
+| Wallet floor breached | `BillingAccount` `fundingSource=WALLET`, `walletBalance < minBalancePaise` (notify-only cron; no auto-charge — may need manual top-up) |
+| DPDP sweeper skipped | `dpdp.sweeper.counted` without a `dpdp.sweeper.deleted` follow-up for 7 days when `DPDP_SWEEPER_DELETE=true` — **and note** the sweeper has no scheduled workflow today (see `42-runbooks.md` catalogue ⚠️) |
 | MSME alerts not firing | `msme.alert.logged` count = 0 for 48h |
-| Stripe payouts gated off | `ENABLE_STRIPE_PAYOUTS=false` in a non-India deployment |
 
 ### Info (dashboard only)
 

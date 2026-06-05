@@ -25,7 +25,7 @@ Concrete examples from the codebase:
 | `Organization` | `OrgStatus` | `DEACTIVATED` | `POST /api/admin/organizations/[orgId]/verify` with `action=DEACTIVATE` |
 | `Invitation` | (String) | `revoked`, `expired` | `DELETE /api/organizations/[orgId]/invitations/[invitationId]` → `revoked`; `cleanup-stale-invitations` cron → `expired` |
 | `Contract` | `ContractStatus` | `TERMINATED`, `EXPIRED` | `PATCH /api/organizations/[orgId]/contracts/[contractId]` with status transition |
-| `Program` | `ProgramStatus` | `CANCELLED`, `COMPLETED` | `DELETE /api/organizations/[orgId]/programs/[programId]` → soft cancel if assignments exist; hard-delete only if zero assignments |
+| `Program` | `ProgramStatus` + `archivedAt` | `CANCELLED`, `COMPLETED`; archive via `archivedAt` | `DELETE /api/organizations/[orgId]/programs/[programId]` → soft cancel if assignments exist; hard-delete only if zero assignments. Archive (`archivedAt`, #777 §B) is a separate **soft-hide** — it removes the program from active lists without ending it; once `configLockedAt` is set the program can never be hard-deleted (financial history rides on it). |
 | `OrganizationInvoice` | `OrgInvoiceStatus` | `VOID`, `CANCELLED`, `REFUNDED` | Status transitions via `PATCH` or webhook |
 | `SsoProvider` | (via delete with guard) | row removed | hard-delete here is a known exception — see Case 4 below |
 
@@ -130,6 +130,29 @@ erasure was an admin error, the only path is to create a fresh
 `User` (different email) and re-issue invitations. The pseudonymous id
 on the original row is preserved for cross-reference investigations.
 
+#### Audit pseudonymization vs. retention sweeps
+
+Two distinct mechanisms keep the audit/consent surface honest, and they
+are not the same thing:
+
+- **Pseudonymization** is part of the erasure scrub above —
+  `lib/compliance/erasure/scrub-user.ts` rewrites the actor's
+  identifiers to the deterministic pseudonym, and
+  `lib/enterprise/audit-sanitize.ts` is the read-side guard that keeps
+  engineering noise (Prisma errors, stack frames) out of the
+  org-visible projection. Neither deletes a row.
+- **Retention sweeps** are time-based deletes of rows that have aged
+  past their statutory window:
+  - `prune-audit-logs` (`jobs/cleanup/`, also `POST /api/cleanup/prune-audit-logs`)
+    deletes `OrgAuditLog` rows older than 7y (INVOICE / PAYOUT / WALLET /
+    CONTRACT / CONSENT) or 2y (everything else).
+  - `consent-retention-sweeper` (`jobs/compliance/`, GH-Actions only —
+    no manual HTTP trigger) purges `ConsentArtifact` rows past
+    `auditRetainedUntil`.
+
+  These are append-only-table hygiene, not erasure — the immutable
+  money journal (`LedgerTransaction` / `LedgerEntry`) is never swept.
+
 ### Case 4 — Reversible config without audit value
 
 Small configurational rows whose history lives in the audit log, not in the row itself:
@@ -174,7 +197,6 @@ Routes that hard-delete are listed below. The ones marked `OK` match the policy 
 
 | Route | Entity | Action | Verdict |
 |---|---|---|---|
-| `DELETE /organizations/[orgId]/hris` | `HrisConfig` | hard-delete | OK — Case 4 (ephemeral config, OWNER-gated, audit log captures) |
 | `DELETE /organizations/[orgId]/domain-claims/[domain]` | `OrgDomainClaim` | hard-delete | OK — Case 4 |
 | `DELETE /organizations/[orgId]/sso/providers/[providerId]` | `SsoProvider` | hard-delete | OK — Case 4 |
 | `DELETE /organizations/[orgId]/contracts/[contractId]` | `Contract` | hard-delete (DRAFT-only) | OK — Case 2 |

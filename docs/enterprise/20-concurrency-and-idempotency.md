@@ -23,7 +23,7 @@ The `>= :amountPaise` predicate **is** the lock: Postgres takes a row-level writ
 `lib/api/organizations/program-helpers.ts#claimProgramAssignment` — `@@unique([programId, membershipId, periodStart])` is the lock; two concurrent claims for the same member+period converge on one row via upsert (`ON CONFLICT DO NOTHING` semantics).
 
 ## Booking utilization (counter + usage ledger in lock-step)
-`recordBookingUtilization` — one transaction: read the assignment + `coveredEngagementsPerCycle`; check cap (throw `ProgramAssignmentLimitError` if over and `overageBehavior = BLOCK`); `increment` `engagementsUsed` (atomic `= engagementsUsed + :n`); create `BookingUtilization` + its `UsageLedgerEntry` twin. The cap read isn't Serializable-safe, but the atomic increment makes it eventually consistent — the second over-cap booking writes `wasOverage = true`, and either checkout refuses (`BLOCK`) or the overage path bills it. A follow-up converts the cap check to a conditional UPDATE. The reconciler's `PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT` is the backstop ([ledger integrity](14-ledger-integrity.md)).
+`recordBookingUtilization` — one transaction: claim cap headroom with a guarded conditional UPDATE (`updateMany WHERE engagementsUsed <= cap - :n`, so the cap check and the increment can't race), then create `BookingUtilization` + its `UsageLedgerEntry` twin (`consumedPaise` is the CREDIT_POOL twin, metered against `creditsPerCycle × 100`). When the guarded update matches zero rows the booking is over-cap: either checkout refuses (`BLOCK` → `ProgramAssignmentLimitError`) or the overage path bills it (`wasOverage = true`, persists an `OverageEvent`). The reconciler's `PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT` is the backstop ([ledger integrity](14-ledger-integrity.md)).
 
 ## Rate-card bump (two-step in one transaction)
 `bumpRateCard` — close the current card (`effectiveTo = at`) and insert a new one (`effectiveFrom = at`) in one tx. A degenerate same-instant race can overlap, but `findEffective` orders by `effectiveFrom DESC` so the winner's row wins lookups; money impact is nil because earnings already carry bps snapshots ([booking → earnings](10-booking-to-earnings.md)).
@@ -81,6 +81,21 @@ The server never accepts a client-supplied key — it reuses the `razorpay_order
 ## Invoices
 Subscription cron computes `invoiceNumber` from `subscriptionId + billingCycleIndex`; the atomic claim (`updateMany WHERE nextInvoiceDate <= now`) prevents double-invocation, and `OrganizationInvoice.invoiceNumber @unique` rejects any second insert (`P2002` → logged `subs.invoice.skipped`).
 
+## Cron claim gates (#777/#779 lifecycle crons)
+The nightly lifecycle crons run on GitHub Actions (`.github/workflows/*.yml` → `jobs/**`) and may double-fire (overlapping replica or same-day re-run). Each gates on a **timestamp-or-status column it stamps inside a `Serializable` `$transaction` via a conditional `updateMany`** — the claim *is* the distributed lock: `count === 0` ⇒ another replica won, skip cleanly. A second unique constraint backstops the rare slip past the claim.
+
+| Cron (`jobs/…`) | Claim gate (`updateMany WHERE …`) | Backstop unique |
+|---|---|---|
+| `billing/advance-program-cycles` (ROLL/CLOSE) | `status='ACTIVE' AND rolledAt IS NULL` → set `status`, `rolledAt` | successor mint: `rolledToAssignmentId @unique` + `@@unique([programId, membershipId, periodStart])` → `P2002` |
+| `contracts/auto-renew-contracts` | `status='ACTIVE' AND autoRenewedAt IS NULL` → set `autoRenewedAt` | `Contract.supersededByContractId @unique` → `P2002` |
+| `contracts/expire-contracts` | `status='ACTIVE'` → set `status='EXPIRED'` | (idempotent on status alone) |
+| `billing/timeout-member-overages` | `chargeStatus='PENDING' AND chargeTimedOutAt IS NULL` → set `chargeStatus='FAILED'`, `chargeTimedOutAt` | (PENDING→FAILED is the only legal target; a paid/swept row no longer matches) |
+| `billing/wallet-low-balance` (auto-top-up) | rate-limited per account by `autoTopUpLastFiredAt` | gateway recurring-charge idempotency |
+| `billing/dunning` stage 1 | `status='ISSUED' AND markedOverdueAt IS NULL` → set `status='OVERDUE'`, `markedOverdueAt` | (idempotent on status + stamp) |
+| `billing/dunning` stage 2 | `status='OVERDUE' AND lastDunningReminderAt = <value-read> AND dunningReminderCount < 3` → set `lastDunningReminderAt`, `increment dunningReminderCount` | the read-then-match on `lastDunningReminderAt` is the optimistic-lock (concurrent reminder loses) |
+
+The successor-mint chain (`rolledToAssignmentId @unique` + the zeroed-counter `ACTIVE` row) is the rollover idempotency anchor; `autoRenewedAt` is the contract-renewal anchor; `chargeTimedOutAt` is the member-overage-timeout anchor; `markedOverdueAt` / `lastDunningReminderAt` are the dunning anchors. None of these crons writes a `PAUSED` assignment (🟡 designed-not-active). Full state-machine detail: [cycle engine](27-cycle-engine-and-rollover.md), [contract lifecycle](26-contract-lifecycle.md).
+
 ## Payment legs
 `PaymentLeg.sourceRef` carries the per-source key: `CARD` → gateway payment id; `REFERRAL_CREDIT` → `referralCreditUsageId`; `INVOICE_ACCRUAL`/`LICENSE` → `programAssignmentId`. `@@unique([paymentId, source])` blocks duplicate-source legs ([payment legs](13-payment-legs.md)).
 
@@ -117,3 +132,5 @@ it("is idempotent on replay", async () => {
 - [Programs](21-programs.md) — the assignment-claim flow.
 - [Booking → earnings](10-booking-to-earnings.md) — rate-card bump semantics.
 - [Ledger integrity](14-ledger-integrity.md) — the drift checks that backstop these guards.
+- [Cycle engine & rollover](27-cycle-engine-and-rollover.md) — the successor-mint + roll/close claim gates.
+- [Contract lifecycle](26-contract-lifecycle.md) — the auto-renew / expire claim gates.

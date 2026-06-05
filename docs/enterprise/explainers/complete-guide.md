@@ -10,7 +10,7 @@
 >
 > **Other docs:** `docs/enterprise/**` (25+ specialized docs) is the canonical source of truth for implementation details. This doc is the roadmap **to** those docs. Business folks can stop at Part V. Technical folks can start at Part VI. Reference readers can jump to Part IX.
 >
-> **Last updated:** 2026-04-22. **Owner:** CEO. **Review cadence:** quarterly or after any schema change.
+> **Last updated:** 2026-06-05 (post the v2 mega-audit — #777/#778/#779: contract lifecycle, cycle engine, overage/dunning/wallet-floor, field-level RBAC, SSO break-glass, refund/credit-note unification). **Owner:** CEO. **Review cadence:** quarterly or after any schema change.
 
 ---
 
@@ -129,6 +129,8 @@ This doc gives you the holistic mental model. When you need implementation detai
 | Monitoring dashboards | `docs/enterprise/43-monitoring.md` |
 | Idempotency key design | `docs/enterprise/20-concurrency-and-idempotency.md` |
 | Programs deep-dive | `docs/enterprise/21-programs.md` |
+| Contract lifecycle (renew / supersede / end-early) | `docs/enterprise/26-contract-lifecycle.md` |
+| Cycle engine & assignment rollover | `docs/enterprise/27-cycle-engine-and-rollover.md` |
 | Hierarchy (parent-child orgs) | `docs/enterprise/05-hierarchy.md` |
 | Ledger discipline | `docs/enterprise/08-ledger-and-postings.md` |
 | SSO testing | `docs/enterprise/15-sso-and-authentication.md` |
@@ -583,11 +585,11 @@ A Program is a commercial package describing **what the org has bought for its m
 | `seatsUsed` | Current assigned seat count (atomically tracked) |
 | `cycleMonths` | 1 (monthly) or 12 (annual) |
 | `coveredEngagementsPerCycle` | Soft cap per member per cycle; null = unlimited |
-| `overageBehavior` | BLOCK (reject) or ALLOW_WITH_OVERAGE (charge extra) |
-| `overageRatePaise` | Price per overage session when ALLOW_WITH_OVERAGE |
+| `overageBehavior` | What happens past the cap: BLOCK / CHARGE_MEMBER / CHARGE_ORG (see § 8.7) |
+| `overageRatePaise` | Price per overage session when charging |
 | `pricePerSeatPaise` | Price per seat per cycle |
 
-**Use case:** Acme Corp wants 25 engineers to have unlimited mentorship. Acme signs a ₹3K/seat/month LICENSED_SEAT contract = ₹75K/month. Each engineer is capped at 4 sessions/month (soft cap) to prevent abuse. If they hit the cap, the overage behavior decides: BLOCK (try next month) or ALLOW_WITH_OVERAGE (charged extra).
+**Use case:** Acme Corp wants 25 engineers to have unlimited mentorship. Acme signs a ₹3K/seat/month LICENSED_SEAT contract = ₹75K/month. Each engineer is capped at 4 sessions/month (soft cap) to prevent abuse. If they hit the cap, `overageBehavior` decides: BLOCK (try next month), CHARGE_MEMBER (learner pays the overage on their own card), or CHARGE_ORG (overage accrues to the org's next invoice). The full machine is in § 8.7 and [27-cycle-engine-and-rollover](../27-cycle-engine-and-rollover.md).
 
 ### 8.2 CREDIT_POOL (shipped)
 
@@ -603,6 +605,8 @@ A Program is a commercial package describing **what the org has bought for its m
 | `minimumCreditsPerPeriod` | Minimum commitment per cycle; nullable (no floor when null) |
 
 The pool's running balance lives in the double-entry journal as the org's WALLET account (a credit-normal liability); `BillingAccount.walletBalance` (paise) is a **derived cache** of that account, asserted nightly by the reconciler (`WALLET_BALANCE_DRIFT` finding if it diverges). 1 credit = ₹1 = 100 paise by convention; the legacy `creditValuePaise` and `premiumMultiplier` fields were dropped (removed in #772) — premium pricing is now expressed via per-plan rate cards instead of a flat multiplier.
+
+**Config lock & archive (#777 §B).** A Program's commercial terms are editable while it's still a draft, but `Program.configLockedAt` is stamped at the **first assignment** — from then on the `LOCKED_PROGRAM_FIELDS` (the money-shaping ones: type, pricing, seat/credit config) are read-only, because financial history rides on them. Changing money terms after lock is not an edit, it's "archive this program and create a new one." A locked program is never hard-deleted; `Program.archivedAt` soft-hides it from active lists while preserving the assignments and bookings that reference it. See [21-programs](../21-programs.md).
 
 **Use case:** Wipro funds a ₹4L pool. Each 1-hour session deducts ₹1,500 worth of credits at the plan's listed rate. When the wallet balance hits the low-water threshold, OWNER gets a notification to top up.
 
@@ -649,22 +653,54 @@ flowchart LR
     D -->|not found| F[Fall back to PERSONAL or reject]
 ```
 
+### 8.7 What happens past the cap — the overage system (#777 §C)
+
+A LICENSED_SEAT member with a soft cap (`coveredEngagementsPerCycle`) doesn't just hit a wall. At checkout, a **pre-checkout preview** tells the learner what booking one more session will cost *before* they commit. If they're over the cap, an `OverageEvent` is written, broken into integer paise:
+
+- `basePaise` — the pass-through over-cap price (covered portion + `basePaise` == booking price).
+- `surchargePaise` — the `overageSurchargeBps` markup on top.
+- `marginalPaise` — the authoritative charged total. **Invariant:** `marginalPaise == basePaise + surchargePaise`.
+
+`overageBehavior` decides who pays:
+
+| Behavior | Effect | Settlement |
+|---|---|---|
+| `BLOCK` | Checkout is refused (409). | No charge. |
+| `CHARGE_MEMBER` | Learner pays the overage on their **own** card. | `OverageChargeStatus` walks PENDING → CHARGED. If the learner never completes it, a 14-day timeout (`timeout-member-overages` cron) flips it to **FAILED** — no more silently stuck money. |
+| `CHARGE_ORG` | Overage **accrues** to the org. | Status PENDING → ACCRUED; at the cycle/invoice rollup it becomes an `InvoiceLineItem` on the org's next bill. |
+
+**Circuit breaker.** `CreditPoolConfig.maxOveragePerCyclePaise` (also on the seat config) caps cumulative `OverageEvent.marginalPaise` per cycle. Once cumulative overage would cross it, further overage is **BLOCKED** regardless of behavior — the spend ceiling wins. `OverageChargeStatus` is the full machine: `PENDING | ACCRUED | CHARGED | BLOCKED | REVERSED | FAILED`. Detail in [27-cycle-engine-and-rollover](../27-cycle-engine-and-rollover.md).
+
+### 8.8 Assignment lifecycle — the cycle engine (#779 §A/§B)
+
+A `ProgramAssignment` is a **per-cycle** entitlement row — one per `(Program, Membership, periodStart)`. Before the cycle engine, "is this assignment still live?" was *inferred* from `periodEnd` vs now, which left **zombie assignments**: rows whose period had ended but which nothing advanced or closed, so caps and seat counts drifted.
+
+The engine gives every assignment an explicit `AssignmentStatus` — `ACTIVE | ROLLED | PAUSED | CLOSED | CANCELLED` — and a nightly job (`advance-program-cycles`, 02:15 UTC) that moves it. For each `ACTIVE` assignment whose period has ended (and `rolledAt` is null):
+
+- **ROLL** — if the governing contract is `ACTIVE` + `autoRenew` and a successor cycle fits the term: claim `ACTIVE → ROLLED` (stamp `rolledAt`), then mint the successor `ACTIVE` row with counters zeroed. `rolledAt` is the idempotency gate — it doubles as the distributed lock, so two cron replicas can't double-roll.
+- **CLOSE** — otherwise: claim `ACTIVE → CLOSED`, no successor.
+
+`PAUSED` holds an assignment out of the roll loop without closing it; `CANCELLED` is an explicit terminal stop. This is the spine that keeps `seatsUsed` and per-cycle caps honest, and it's clamped to the contract state machine (§ 15.5) — an assignment only rolls while its contract is live. Full decision table in [27-cycle-engine-and-rollover](../27-cycle-engine-and-rollover.md).
+
 ---
 
 ## 9. Roles, permissions & governance
 
 Organizations are governed by a **MemberRole** hierarchy, enforced at the API layer.
 
-### 9.1 The six roles
+### 9.1 The seven roles
 
 | Role | Seniority | Key capabilities | Platform equivalent |
 |---|---|---|---|
 | **OWNER** | Highest | Full control: billing, settings, SSO, member management, deletion | GitHub "Owner" |
 | **MAINTAINER** | High | Member management, program management, org settings (no billing, SSO, or deletion) | GitHub "Maintainer" |
+| **BILLING_ADMIN** | High (rank 70, below MAINTAINER) | Finance side-gate: invoices, POs, payouts, rate cards, wallet top-ups, outbound webhooks. **Cannot** touch org status / funding source / members / SSO. | Finance / AP team |
 | **MANAGER** | Mid | View billing, analytics, credit pool. Read-only access to management pages | Department lead |
 | **EXPERT** | Mid | Delivers services on behalf of the org (canHost only) | Marketplace consultant |
 | **LEARNER** | Base | Consumes sessions via the org | Marketplace consultee |
 | **SUPPORT** | Base | Non-billing staff for internal admin | Customer-facing support |
+
+Note `BILLING_ADMIN` sits *off* the linear seniority ladder — it's a **side-gate**, not a rung. It outranks MANAGER on billing surfaces but has none of MAINTAINER's member/SSO powers. See [03-roles-and-permissions](../03-roles-and-permissions.md).
 
 ### 9.2 Complete permission matrix
 
@@ -687,6 +723,14 @@ Organizations are governed by a **MemberRole** hierarchy, enforced at the API la
 | Book a session | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
 | Deliver a session | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
 | Delete the organization | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+
+(BILLING_ADMIN omitted from the columns above for width; its surface is the union of the MANAGER read rows **plus** write access to every billing/invoice/PO/payout/rate-card/wallet/webhook mutation — see § 9.2.1.)
+
+### 9.2.1 Field-level RBAC — the billing side-gate (#779 §A)
+
+Billing surfaces aren't gated by the linear `minimumRole` ladder. They use a dedicated helper, **`requireOrgBillingAdminOrOwner`** (`lib/auth/billing-admin-gate.ts`), which admits exactly **OWNER ∨ BILLING_ADMIN**. MAINTAINER is *deliberately excluded* — a MAINTAINER runs people and programs, not money. The gate fronts the rate-card, purchase-order, wallet-top-up, invoice (incl. `…/pay`), and billing-account routes.
+
+The same field-level discipline governs `PATCH /api/organizations/[orgId]`: the route carries a **field allowlist per role**, so the same endpoint accepts a different set of columns depending on who's calling. A MAINTAINER patching the org can change branding but not `fundingSource`; a BILLING_ADMIN can't flip `canHost`. The allowlist — not just the role rank — is what's checked, which is how one PATCH route serves several roles safely.
 
 ### 9.3 Role transitions (the LEARNER ↔ EXPERT guard)
 
@@ -774,7 +818,7 @@ These are end-to-end narrative examples. Each one covers: who the customer is, w
 - LearnPro share: ₹1,000 (20%)
 - Platform share: ₹500 (10%)
 
-**Payout:** At month-end, LearnPro's `OrganizationEarnings` are batched into an `OrganizationPayout`. Razorpay Payouts sends ₹X (month total) to LearnPro's account. Consultants get their shares via separate individual payouts.
+**Payout:** On the **weekly** payout run (Mondays), LearnPro's READY `OrganizationEarnings` are batched into an `OrganizationPayout`. Razorpay Payouts sends the batch total to LearnPro's account (only when `ENABLE_LIVE_PAYOUTS` is on — otherwise the batch freezes at PROCESSING, § 16.3). Consultants get their shares via separate individual payouts.
 
 ### 10.3 Scenario C — IIT Madras (HYBRID)
 
@@ -1100,14 +1144,15 @@ A cookbook of what each role typically does day-to-day.
 | Programs | ✅ | ✅ | ✅ (read) | ❌ | ❌ | ❌ |
 | Plans (catalog) | ✅ | ✅ | ✅ (read) | ❌ | ❌ | ❌ |
 | Contracts | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Credits (wallet) | ✅ | ❌ | ✅ (read) | ❌ | ❌ | ❌ |
-| Billing | ✅ | ❌ | ✅ (read) | ❌ | ❌ | ❌ |
+| Billing (Wallet tab lives here) | ✅ | ❌ | ✅ (read) | ❌ | ❌ | ❌ |
 | Purchase Orders | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Payouts (canHost) | ✅ | ❌ | ✅ (read) | ❌ | ❌ | ❌ |
 | Analytics | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ (read) |
 | Settings | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | SSO (in Settings) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Consent (DPDP) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+
+Two notes on the table: (1) the wallet/credit pool is **not a separate `/credits` route** — it's the **Wallet tab inside `/billing`** (no `/credits` page exists). (2) The columns are the six classic roles; **BILLING_ADMIN** (omitted for width) has **write** access to the Billing, Purchase Orders, Payouts, and rate-card surfaces — the union of what's gated by `requireOrgBillingAdminOrOwner` (§ 9.2.1).
 
 ### 13.2 Key UI components
 
@@ -1286,6 +1331,16 @@ Consultant's ₹5,000 session, 10/20/70 rate card:
 
 The org's ₹1,000 accrues to `OrganizationEarnings`. The consultant's ₹3,500 accrues to consultant earnings. Platform's ₹500 is platform revenue (commission).
 
+### 15.5 Contract lifecycle (#779 §A)
+
+A rate card hangs off a `Contract`, and the contract has its own state machine — `DRAFT → ACTIVE → EXPIRED | TERMINATED` — that the cycle engine (§ 8.8) clamps the whole program/assignment lifecycle to. Three lifecycle moves matter commercially:
+
+- **Auto-renew.** A `Contract` with `autoRenew = true` is rolled forward by the `auto-renew-contracts` cron (02:30 UTC), stamping `autoRenewedAt`. This is what keeps assignments rolling instead of silently expiring — no more zombie assignments at term boundaries.
+- **Supersession.** Rather than mutating a live contract, you mint a successor and link it (`supersededByContractId` / `supersededAt`). `POST …/contracts/[contractId]/supersede` (OWNER) takes a `ContractSupersessionType`: **AMENDMENT** (mid-term change — successor starts now, old → TERMINATED) or **RENEWAL** (term rollover — successor starts at the old term's end). The third value, **TERMINATION_REPLACEMENT**, is **system-set** (e.g. a replacement issued during termination), not a user choice.
+- **End-early / terminate.** Ending a contract before term is a `PATCH …/contracts/[contractId]` to its status, behind a **guard**: it returns **409** while there are still live assignments or outstanding invoices. Once clear, the termination runs an **in-transaction cascade** — its programs go `ACTIVE → EXPIRED` and their still-`ACTIVE` assignments go `→ CLOSED` in the same tx, so nothing is orphaned. (Past-term contracts expire naturally via the `expire-contracts` cron, 03:00 UTC.)
+
+Full state table + the supersession chain semantics: [26-contract-lifecycle](../26-contract-lifecycle.md).
+
 ---
 
 ## 16. Settlement & payouts
@@ -1297,7 +1352,7 @@ Settlement is **T+7 default** (can be contract-configured):
 - Consultant completes a session on April 15.
 - Earnings hit `status=HELD` until T+7 (April 22).
 - On April 22, a cron promotes `HELD → READY`.
-- At month-end (April 30), OWNER triggers payout OR admin-triggered batch payout.
+- The **weekly** payout batch (`create-payout-batch`, Mondays 20:00 UTC) sweeps READY earnings; `process-payouts` (Mondays 21:00 UTC) dispatches. OWNER/admin can also trigger an off-cycle batch. (Payouts are **weekly**, not monthly — the *invoice* cron is the month-end one.)
 
 ### 16.2 Payout batch creation
 
@@ -1334,6 +1389,8 @@ stateDiagram-v2
 ```
 
 `EarningStatus` (the source rows being settled): `PENDING / HELD / READY / PAID / REFUNDED / PENDING_TRUST`.
+
+**Live-payout gate.** Real money only leaves the platform when `ENABLE_LIVE_PAYOUTS` is on. With the flag **off** (today's default), the pipeline runs end-to-end but **freezes at `PROCESSING`** — batches are created, claimed, and reconciled, but the gateway dispatch is a no-op, so nothing actually disburses. This is intentional pre-launch: the accounting is exercised without moving funds. The go-live checklist is in [45-live-payout-go-live-runbook](../45-live-payout-go-live-runbook.md).
 
 ### 16.4 Ledger postings on payout
 
@@ -1383,8 +1440,8 @@ sequenceDiagram
 
 ### 17.4 Refund flow (INVOICE path)
 
-- Invoice has not yet been issued: remove the PaymentLeg and accrual. Invoice at month-end will be lower.
-- Invoice already issued: more complex — credit note issued (future work; currently manual reconciliation).
+- Invoice **not yet issued**: remove the PaymentLeg and accrual. Invoice at month-end will be lower.
+- Invoice **already issued**: a `CreditNote` is minted (see § 17.6). This is no longer manual reconciliation — credit-note issuance is live.
 
 ### 17.5 Refund policy matrix
 
@@ -1394,6 +1451,13 @@ sequenceDiagram
 | < 24 hours before session | 50% | 50% to consultant (kept for holding time) |
 | No-show by learner | 0% | 100% to consultant (consultant showed up) |
 | No-show by consultant | 100% | 0% + strike |
+
+### 17.6 Refund / credit-note unification (#776)
+
+Every refund that needs a tax document now routes through one idempotent path. `mintRefundCreditNote` (`lib/payments/operations/refund.ts`) creates a `CreditNote` row with its **own per-org numbering** — independent of the invoice series — so the credit-note sequence is auditable on its own and never collides with invoice numbers.
+
+- **Idempotency.** `Refund.cascadedAt` is the single gate. Exactly one caller flips it from `null` (a conditional `updateMany where cascadedAt: null`); everyone else sees the claim already taken and skips. This stops a retried webhook or a re-run cron from double-cascading earnings reversal or minting duplicate credit notes.
+- **Honesty flag — TDS is NOT reversed.** `TdsAdjustment` is a **schema-only** model. The refund cascade writes **no** tax-adjustment rows: it does not reverse TDS withheld at the original payout. Do not describe TDS-on-refund as live — the table exists for a future wiring, nothing populates it today (🟡). For the regulatory shape of refund/chargeback tax adjustments, see [docs/compliance/05-refund-and-chargeback-tax-adjustments.md](../../compliance/05-refund-and-chargeback-tax-adjustments.md).
 
 ---
 ---
@@ -1418,8 +1482,11 @@ The Digital Personal Data Protection Act, 2023.
 |---|---|
 | Consent recording | `ConsentArtifact` model, SHA-256 hash of full policy text at consent time |
 | Per-user consent log | `/api/organizations/[orgId]/consent` routes + `DataRegion` on Organization |
-| Right to erasure | Manual process in v1 (admin runs deletion script). Future: automated endpoint. |
-| Data breach log | `DataBreach` model (schema-final, admin UI pending) |
+| Right to access (§11) | Org-wide export via `OrgDataExportJob` (`PENDING → PROCESSING → READY → FAILED → EXPIRED`); gated by `requireOrgBillingAdminOrOwner`, drained by the `process-data-exports` cron. See [32-data-export](../32-data-export.md). |
+| Right to erasure (§12) | Manual process in v1 (admin runs deletion script). Future: automated endpoint. See [31-deletion-policy](../31-deletion-policy.md). |
+| Data breach log | `DataBreach` model (schema-final, admin UI pending); `databreach-deadline-alerts` cron watches the 72-hour clock. |
+
+> Note the model is `OrgDataExportJob` (a job row, not a static `OrgDataExport`); the export is delivered as a single JSON object. Right-to-access (§11, "give me my data") is distinct from right-to-erasure (§12, "delete my data") — they are different DPDP sections with different machinery.
 
 ### 18.3 Consent artifact flow
 
@@ -1448,11 +1515,13 @@ Indian Goods and Services Tax (GST) applies to almost everything.
 
 ### 19.1 GST rates on Familiarise services
 
-| Service | HSN/SAC | GST rate |
+GST on all of Familiarise's service lines is **18%**. The SAC *classification* (which code, for the ITC trail) is the subtle part and is owned by [docs/compliance/02-gst-overview.md](../../compliance/02-gst-overview.md) — defer to it for the authoritative codes rather than this table. In short: `999293` is *commercial training & coaching* (a 9992-group education code), while management **consulting** is `998311`. They all carry 18%, so the rate is never in question — but the old "999293 = consulting" labelling is a classification inaccuracy, not a tax-amount one.
+
+| Service | SAC (see compliance/02) | GST rate |
 |---|---|---|
-| Mentorship / consulting services | 999293 | 18% |
-| Training / educational services (if qualifying) | 999293 | 18% (or 0% for some exempt cases) |
-| Platform commission (B2B) | 999293 | 18% |
+| Mentorship / consulting services | 998311 (consulting) | 18% |
+| Training / educational services (if qualifying) | 999293 (training/coaching) | 18% (or exempt for some qualifying education) |
+| Platform commission (B2B) | per supply | 18% |
 
 ### 19.2 Invoice requirements
 
@@ -1475,14 +1544,16 @@ For inbound SaaS bought by Familiarise (Claude API, Apple Developer, etc.), we p
 
 Direct tax withheld from consultant payouts.
 
-### 20.1 Section applicability
+> **Renumbering watch (verified 2026-06-05).** The **Income-tax Act, 2025** came into force **1 Apr 2026** and consolidates every non-salary TDS provision into a single **Section 393** (keyed by numeric payment codes, the 10xx series); the old alphanumeric citations — 194J, 194C, 195, 206AA — **cease to exist as filing citations** for transactions on/after that date. **Rates and thresholds are unchanged** — only the citation/form taxonomy moved. Our code still *labels* withholding as `194J` etc., so the **filing layer will need a section→payment-code mapping**. This is owned by [docs/compliance/01-tds-overview.md](../../compliance/01-tds-overview.md) — defer to it; the table below keeps the familiar (1961-Act) names purely for reader recognition.
 
-| Consultant type | Section | Rate |
+### 20.1 Section applicability (1961-Act names; see compliance/01 for the §393 codes)
+
+| Consultant type | Section (old → 2025 Act) | Rate |
 |---|---|---|
-| Resident Indian consultant, professional | 194J | 10% |
-| Resident Indian consultant, non-professional | 194C | 1-2% |
-| Non-resident consultant | DTAA-dependent | 5-20% |
-| PAN not provided | Section 206AA | 20% |
+| Resident Indian consultant, professional | 194J → §393(1) Sl.6(iii) | 10% |
+| Resident Indian consultant, non-professional | 194C → §393(1) Sl.6(i) | 1-2% |
+| Non-resident consultant | 195 → §393(2) Sl.17 (DTAA-dependent) | 5-20% |
+| PAN not provided | 206AA → §397(2) | 20% |
 
 ### 20.2 Current implementation
 
@@ -1569,8 +1640,9 @@ Invoice Reference Number (IRN) is required for B2B invoices above ₹5cr turnove
 ### 23.2 Current implementation
 
 - Schema-final: `OrganizationInvoice.irn`, `ackNumber`, `ackDate`, `signedQrPayload`, `irpStatus`, `irpRetryCount`, `irpLastError`.
-- `jobs/compliance/irp-uploader.ts` is a stub that retries but doesn't actually call any IRP aggregator.
+- The **payload mapper is live** — `lib/compliance/irp.ts` builds the IRP request and a ClearTax GSP connector is wired; `jobs/compliance/irp-uploader.ts` drives it, gated by **`ENABLE_IRP_UPLOADER`**. With the flag off (default), the job short-circuits with `{ status: "FAILED", reason: "STUB" }` so CI doesn't burn minutes hitting a stubbed connector. This is a deliberate gate, not missing code.
 - `irpStatus` states: PENDING → UPLOADED / FAILED.
+- **Who it's for:** only orgs at **AATO ≥ ₹5 crore** need IRN at all (threshold unchanged as of 2026-06-05; a separate 30-day IRP-reporting cut-off bites at ₹10 cr). The pre-launch cohort is sub-₹5cr, so this is not launch-blocking. Authoritative thresholds live in [docs/compliance/02-gst-overview.md](../../compliance/02-gst-overview.md).
 
 ### 23.3 Who needs IRN
 
@@ -1608,21 +1680,23 @@ The enterprise-flavored section of `prisma/schema.prisma` is ~1200 lines coverin
 
 | Model | Purpose |
 |---|---|
-| `BillingAccount` | Per-org (canSponsor=true) funding record; `walletBalance` is a derived cache of the org's WALLET ledger account |
-| `Contract` | Legal + commercial agreement |
+| `BillingAccount` | Per-org (canSponsor=true) funding record; `walletBalance` is a derived cache of the org's WALLET ledger account. Wallet-floor / auto-top-up fields: `minBalancePaise`, `autoTopUpEnabled`, `autoTopUpAmountPaise`, `autoTopUpMandateId`, `autoTopUpLastFiredAt` (#777 §C) |
+| `Contract` | Legal + commercial agreement. Lifecycle fields: `autoRenew`, `autoRenewedAt`, the supersession chain (`supersededByContractId` / `supersededAt`), `ContractSupersessionType` {AMENDMENT, RENEWAL, TERMINATION_REPLACEMENT} (#779 §A) |
 | `BillingSubscription` | Recurring subscription (LICENSE mode) |
 | `WalletTopUp` | Wallet funding attempt (`providerOrderId` unique; PENDING/CONFIRMED/FAILED); replaced `WalletEntry` in #772 |
+| `OverageEvent` | Per-over-cap charge: `basePaise + surchargePaise = marginalPaise`; `OverageChargeStatus` machine (#777 §C) |
+| `CreditNote` | Refund credit note with per-org numbering independent of the invoice series (#776) |
 | `PurchaseOrder` | PO tracking |
-| `OrganizationInvoice` | Monthly invoice |
+| `OrganizationInvoice` | Monthly invoice (+ dunning fields: `markedOverdueAt`, `dunningReminderCount`, `dunningSuspendedAt`) |
 
 ### 24.3 Program entitlement
 
 | Model | Purpose |
 |---|---|
-| `Program` | The commercial package |
-| `LicensedSeatConfig` | Sub-config for LICENSED_SEAT |
-| `CreditPoolConfig` | Sub-config for CREDIT_POOL |
-| `ProgramAssignment` | Per-member entitlement |
+| `Program` | The commercial package. `configLockedAt` freezes `LOCKED_PROGRAM_FIELDS` at first assignment; `archivedAt` soft-hides (#777 §B) |
+| `LicensedSeatConfig` | Sub-config for LICENSED_SEAT (+ `maxOveragePerCyclePaise` circuit breaker) |
+| `CreditPoolConfig` | Sub-config for CREDIT_POOL (+ `maxOveragePerCyclePaise`) |
+| `ProgramAssignment` | Per-cycle per-member entitlement; `AssignmentStatus` {ACTIVE, ROLLED, PAUSED, CLOSED, CANCELLED} + `rolledAt` rollover idempotency (#779 §A/§B) |
 | `BookingUtilization` | Per-booking consumption record |
 
 ### 24.4 Revenue, earnings, payout
@@ -1640,6 +1714,8 @@ The enterprise-flavored section of `prisma/schema.prisma` is ~1200 lines coverin
 |---|---|
 | `ConsentArtifact` | DPDP consent record |
 | `DataBreach` | DPDP incident log |
+| `OrgDataExportJob` | DPDP §11 right-to-access export job (`OrgDataExportStatus` {PENDING, PROCESSING, READY, FAILED, EXPIRED}) |
+| `TdsAdjustment` | **Schema-only** refund tax-adjustment placeholder — no rows written yet (#776) |
 | `HrisConfig` | HRIS integration config |
 | `HrisSyncJob` | Sync job record |
 | `HrisEmployeeMap` | HRIS-to-member mapping |
@@ -1648,9 +1724,10 @@ The enterprise-flavored section of `prisma/schema.prisma` is ~1200 lines coverin
 
 | Model | Purpose |
 |---|---|
-| `OrganizationSSOSettings` | Per-org SSO config |
+| `OrganizationSSOSettings` | Per-org SSO config; `enforceSSO` + `breakGlassUntil` (OWNER-set 1-72h escape window, #779 §E) |
 | `SsoProvider` | SAML/OIDC provider |
 | `OrgDomainClaim` | Email domain → org mapping |
+| `WebhookEndpoint` | Per-org outbound webhook target; secret rotation via `secretRotatedAt` + `previousSecretHash` (24h dual-sign grace). Deliveries: `OutboundWebhookDelivery` |
 
 ### 24.7 Audit + ledger
 
@@ -1669,12 +1746,17 @@ The enterprise-flavored section of `prisma/schema.prisma` is ~1200 lines coverin
 
 ```
 OrgStatus: PENDING_VERIFICATION | ACTIVE | SUSPENDED | DEACTIVATED
-MemberRole: OWNER | MAINTAINER | MANAGER | EXPERT | LEARNER | SUPPORT
+MemberRole: OWNER | MAINTAINER | BILLING_ADMIN | MANAGER | EXPERT | LEARNER | SUPPORT
 MemberStatus: PENDING | ACTIVE | SUSPENDED | REMOVED
 FundingSource: PERSONAL | WALLET | INVOICE | LICENSE
 ProgramType: LICENSED_SEAT | CREDIT_POOL | PROJECT* | RETAINER*
+AssignmentStatus: ACTIVE | ROLLED | PAUSED | CLOSED | CANCELLED
 ContractStatus: DRAFT | ACTIVE | TERMINATED | EXPIRED
+ContractSupersessionType: AMENDMENT | RENEWAL | TERMINATION_REPLACEMENT
 OrgInvoiceStatus: DRAFT | ISSUED | PAID | OVERDUE | VOID | CANCELLED | REFUNDED
+OverageBehavior: BLOCK | CHARGE_MEMBER | CHARGE_ORG
+OverageChargeStatus: PENDING | ACCRUED | CHARGED | BLOCKED | REVERSED | FAILED
+OrgDataExportStatus: PENDING | PROCESSING | READY | FAILED | EXPIRED
 IrpStatus: PENDING | UPLOADED | FAILED
 PayoutArrangement: DIRECT | AOR* | EOR*
 * = reserved but not yet implemented
@@ -1697,26 +1779,35 @@ PayoutArrangement: DIRECT | AOR* | EOR*
     ├── /invitations        (GET list, POST send)
     │   └── /[invitationId] (GET, DELETE)
     ├── /contracts          (GET, POST)
-    │   └── /[contractId]   (GET, PATCH, DELETE)
+    │   └── /[contractId]   (GET, PATCH=end-early/terminate, DELETE)
+    │       └── /supersede  (POST — AMENDMENT|RENEWAL, OWNER)
     ├── /programs           (GET, POST)
     │   └── /[programId]
-    │       ├── /           (GET, PATCH, DELETE)
+    │       ├── /           (GET, PATCH, DELETE=archive)
     │       └── /assignments (GET, POST)
     │           └── /[assignmentId] (GET, PATCH, DELETE)
-    ├── /billing-account    (GET, PATCH)
+    ├── /billing-account    (GET, PATCH — OWNER∨BILLING_ADMIN)
     │   ├── /wallet         (GET)
     │   ├── /wallet/top-ups (GET, POST)
     │   │   └── /[topUpId]  (GET)
     │   ├── /invoices       (GET, POST)
-    │   │   └── /[invoiceId] (GET + /pay)
+    │   │   └── /[invoiceId] (GET, PATCH + /pay)
     │   └── /purchase-orders (GET, POST)
+    ├── /checkout/overage-preview (POST — pre-checkout cost preview)
     ├── /payout-account     (GET, PATCH)
     ├── /earnings           (GET)
     ├── /payouts            (GET, POST)
-    ├── /rate-cards         (GET, POST)
+    ├── /rate-cards         (GET, POST — OWNER∨BILLING_ADMIN)
     ├── /sso                (GET, PATCH)
-    │   └── /providers      (GET, POST, etc.)
+    │   ├── /providers      (GET, POST, etc.)
+    │   └── /break-glass    (POST — OWNER, 1-72h enforceSSO bypass window)
     ├── /domain-claims      (GET, POST, DELETE)
+    ├── /verification/resubmit (POST — MAINTAINER, re-submit after rejection)
+    ├── /webhooks           (GET, POST)
+    │   └── /[endpointId]   (GET, PATCH, DELETE)
+    │       ├── /rotate-secret (POST — 24h dual-sign grace)
+    │       └── /deliveries (GET; /[deliveryId]/redeliver POST)
+    ├── /data-exports       (GET, POST — DPDP §11; /[exportId]/download GET)
     ├── /consent            (GET, POST)
     ├── /hris               (GET, PATCH)
     ├── /activity           (audit log)
@@ -1791,6 +1882,18 @@ flowchart TD
     Verify -->|No| R409[Return 409 ORG_NOT_VERIFIED]
     Verify -->|Yes| Allow
 ```
+
+### 26.3 The billing side-gate (#779 §A)
+
+Money surfaces don't ride the `minimumRole` ladder. `requireOrgBillingAdminOrOwner` (`lib/auth/billing-admin-gate.ts`) admits **OWNER ∨ BILLING_ADMIN** and nobody else — MAINTAINER is deliberately shut out. It fronts rate-cards, purchase-orders, wallet top-ups, invoices (incl. `…/pay`), and the billing-account PATCH. Separately, `PATCH /api/organizations/[orgId]` enforces a **per-role field allowlist**, so the same route accepts different columns by caller (a MAINTAINER may set branding but not `fundingSource`). See § 9.2.1.
+
+### 26.4 SSO enforcement & break-glass (#779 §E)
+
+When `OrganizationSSOSettings.enforceSSO = true`, password login is vetoed server-side in `lib/sso/enforce-session.ts` — the session layer rejects any non-SSO session for a user whose email is in a claimed domain (not just a UI hint). The escape hatch is **break-glass**: an OWNER opens a `breakGlassUntil` window (1-72h, default 4h) via `POST /sso/break-glass`; while `breakGlassUntil > now`, the auth layer skips the `enforceSSO` gate so admins can recover from a misconfigured IdP without being locked out of their own org. This is the anti-lockout counterpart to "last SSO provider delete" (§ 9.4).
+
+### 26.5 Verification resubmit loop (#779 §A)
+
+A `PENDING_VERIFICATION` org that gets rejected isn't a dead end. The admin stamps `Organization.verificationRejectedAt` + `verificationReason`; the OWNER sees the reason in the banner, fixes the issue, and a MAINTAINER calls `POST /verification/resubmit`, which bumps `verificationSubmittedAt` and clears the reason. The org stays `PENDING_VERIFICATION` through the whole loop — there is **no** separate `RESUBMIT` status; the three timestamp columns carry the sub-state.
 
 ---
 
@@ -1870,27 +1973,83 @@ await tx.orgAuditLog.create({
 
 ## 29. Cron jobs & scheduled tasks
 
-### 29.1 Enterprise-related crons (as of 2026-04)
+### 29.1 How scheduling actually works
 
-| Cron | Schedule (IST/UTC) | Purpose | Status |
+These aren't platform cron entries — they're **GitHub Actions workflows** in `.github/workflows/*.yml`, each on a `schedule:` trigger, that `npx tsx` a script under `jobs/**` (~54 job scripts total). So "the cron" = a workflow YAML + the job it runs. Two consequences worth internalizing:
+
+- A workflow can exist without its script (or vice-versa) — see the honesty flags below.
+- Times are **UTC** in the YAML; IST shown for the India team is UTC + 5:30.
+
+### 29.2 Enterprise-relevant crons (verified against `.github/workflows/` + `jobs/`, 2026-06-05)
+
+**Billing**
+
+| Workflow → job | UTC / IST | Purpose |
+|---|---|---|
+| `advance-program-cycles` → `jobs/billing/advance-program-cycles.ts` | 02:15 / 07:45 | Cycle engine: ROLL or CLOSE ended assignments (§ 8.8) |
+| `dunning` → `jobs/billing/dunning.ts` | 23:30 / 05:00⁺ | ISSUED→OVERDUE, 7-day reminders ≤3 (§ 12 / doc 12) |
+| `wallet-low-balance` → `jobs/billing/wallet-low-balance.ts` | 23:45 / 05:15⁺ | Wallet-floor watch — **notify-only today** (see § 29.4) |
+| `timeout-member-overages` → `jobs/billing/timeout-member-overages.ts` | 23:00 / 04:30⁺ | 14-day CHARGE_MEMBER timeout → FAILED |
+
+**Contracts**
+
+| Workflow → job | UTC / IST | Purpose |
+|---|---|---|
+| `auto-renew-contracts` → `jobs/contracts/auto-renew-contracts.ts` | 02:30 / 08:00 | Renew `autoRenew` contracts (stamp `autoRenewedAt`) |
+| `expire-contracts` → `jobs/contracts/expire-contracts.ts` | 03:00 / 08:30 | Expire past-term contracts; cascade programs/assignments |
+
+**Cleanup**
+
+| Workflow → job | UTC / IST | Purpose |
+|---|---|---|
+| `sweep-abandoned-overage-charges` → `jobs/cleanup/sweep-abandoned-overage-charges.ts` | 02:30 / 08:00 | Reap stale overage charges |
+| `process-data-exports` → `jobs/cleanup/process-data-exports.ts` | every 10 min | Drain DPDP §11 export jobs |
+| `dispatch-outbound-webhooks` → `jobs/cleanup/dispatch-outbound-webhooks.ts` | every 1 min | Deliver queued outbound webhooks |
+| `archive-webhook-events` → `jobs/cleanup/archive-webhook-events.ts` | Sun 00:00 | Roll off old webhook events |
+| `sweep-stuck-webhook-events` → `jobs/cleanup/sweep-stuck-webhook-events.ts` | every 10 min | Un-stick in-flight webhook deliveries |
+| `sso-cert-expiry-alert` → `jobs/cleanup/sso-cert-expiry-alert.ts` | 03:00 / 08:30 | Parse SAML X.509 `notAfter`, emit audit |
+| `prune-audit-logs` → `jobs/cleanup/prune-audit-logs.ts` | 03:15 / 08:45 | Retention prune of `OrgAuditLog` |
+| `release-pending-trust-earnings` → `jobs/cleanup/release-pending-trust-earnings.ts` | hourly :30 | Release `PENDING_TRUST` earnings |
+| `cleanup-abandoned-org-top-ups` → `jobs/cleanup/cleanup-abandoned-org-top-ups.ts` | 02:00 / 07:30 | Reap stale PENDING `WalletTopUp` rows |
+
+**Compliance**
+
+| Workflow → job | UTC / IST | Purpose | Status |
 |---|---|---|---|
-| `cleanup-abandoned-org-top-ups` | Daily 07:30 IST / 02:00 UTC | Reap stale PENDING `WalletTopUp` rows | Live |
-| `cleanup-stale-invitations` | Daily 08:00 IST / 02:30 UTC | Expire PENDING invites past expiresAt | Live (new) |
-| `sso-cert-expiry-alert` | Daily 08:30 IST / 03:00 UTC | Parse SAML X.509 notAfter, emit audit | Live (new) |
-| `consolidated-invoice-rollup` | Monthly day-1 09:30 IST / 04:00 UTC | Parent-org invoice aggregation | Live (flag-gated) |
-| `process-payouts` | Varies | Dispatch payouts to gateway | Live |
-| `release-earnings` | Varies | HELD → READY after T+7 | Live |
-| `reconcile-payment-status` | Varies | Reconcile Payment table with gateway | Live |
-| `irp-uploader` | ? | IRN upload (stub) | Stubbed |
+| `irp-uploader` → `jobs/compliance/irp-uploader.ts` | 02:30 / 08:00 | IRN e-invoice upload | Live behind `ENABLE_IRP_UPLOADER`; short-circuits when off |
+| `databreach-deadline-alerts` → `jobs/compliance/databreach-deadline-alerts.ts` | hourly :15 | DPDP 72-hour breach clock | Live |
+| `msme-payment-alerts` → `jobs/compliance/msme-payment-alerts.ts` | 04:30 / 10:00 | MSME §15 payment-window alerts | Live |
+| `jobs/compliance/consent-retention-sweeper.ts` | **UNSCHEDULED** | Consent retention sweep | 🟡 script exists, **no workflow** runs it |
 
-### 29.2 Planning a new cron
+**Refunds / reconcile / payouts**
 
-Questions to answer:
+| Workflow → job | UTC / IST | Purpose |
+|---|---|---|
+| `cascade-refund-earnings` → `jobs/refunds/cascade-refund-earnings.ts` | every 15 min | Cascade refund → earnings reversal (`cascadedAt` gate) |
+| `reconcile-pending-refunds` → `jobs/refunds/reconcile-pending-refunds.ts` | every 15 min | Reconcile pending refunds with gateway |
+| `reconcile-ledgers` → `jobs/reconcile/reconcile-ledgers.ts` | 03:45 / 09:15 | Nightly journal reconciliation (§ 14.6) |
+| `create-payout-batch` → `jobs/payouts/create-payout-batch.ts` | Mon 20:00 / Tue 01:30 | Build weekly payout batch |
+| `process-payouts` → `jobs/payouts/process-payouts.ts` | Mon 21:00 / Tue 02:30 | Dispatch payouts — **freezes at PROCESSING** unless `ENABLE_LIVE_PAYOUTS` (§ 16.3) |
+| `reconcile-payout-status` → `jobs/payouts/reconcile-payout-status.ts` | every 6h | Reconcile payout status |
+| `handle-stuck-payouts` → `jobs/payouts/handle-stuck-payouts.ts` | every 4h | Un-stick stalled payouts |
 
-1. Is this job financial? If yes, register in `FINANCIAL_JOB_NAMES` in `lib/maintenance-cron.ts`.
-2. What's the dedup window? (Dedup audit rows, dedup work.)
+### 29.3 Honesty flags (workflow ↔ script mismatches as of 2026-06-05)
+
+- `jobs/billing/generate-subscription-invoices.ts` and `jobs/billing/settle-invoice-accruals.ts` **exist but have no workflow** scheduling them — they don't run on a timer today.
+- `consolidated-invoice-rollup.yml` **workflow exists** but it points at `jobs/cleanup/consolidated-invoice-rollup.ts`, which **does not exist** — the scheduled run would fail. (Part VII § 36's "shipped behind flag" claim is aspirational; treat parent-child rollup as not-actually-running.)
+- `jobs/compliance/consent-retention-sweeper.ts` exists with no workflow (above).
+
+### 29.4 Wallet floor / auto-top-up — notify-only today (#777 §C)
+
+`BillingAccount` carries the auto-top-up shape — `minBalancePaise`, `autoTopUpEnabled`, `autoTopUpAmountPaise`, `autoTopUpMandateId`, `autoTopUpLastFiredAt`. **But the `wallet-low-balance` cron only *notifies*** when the balance dips below the floor; it does **not** charge the mandate. Auto-charge is wired in schema and intended, not active — do not tell a customer their wallet will auto-refill. (There is no `walletFloorPaise` column; the floor is `minBalancePaise`.)
+
+### 29.5 Planning a new cron
+
+1. Is this job financial? If yes, register it in `FINANCIAL_JOB_NAMES` in `lib/maintenance-cron.ts`.
+2. What's the dedup window? (Dedup audit rows, dedup work — prefer a conditional `updateMany` on a stamp column as the lock.)
 3. What's the failure mode? Alert vs silent retry.
 4. What's the time slot? Stagger from other jobs to avoid Prisma connection contention.
+5. Wire **both** halves: a workflow YAML *and* the `jobs/**` script — § 29.3 shows what happens when only one ships.
 
 ---
 
@@ -1921,6 +2080,12 @@ Before logging webhook payloads, `scrubWebhookPayload()` redacts:
 - Phone numbers.
 - Payment method details (card numbers, CVV).
 - Free-text notes from gateway.
+
+### 30.4 Outbound webhooks & secret rotation
+
+§§ 30.1–30.3 cover *inbound* gateway webhooks. Orgs can also register **outbound** endpoints (`/webhooks`, OWNER∨BILLING_ADMIN) that Familiarise signs and POSTs to; the `dispatch-outbound-webhooks` cron drains the queue every minute, with `sweep-stuck-webhook-events` and `archive-webhook-events` keeping it healthy. Deliveries are inspectable and individually re-deliverable (`/webhooks/[endpointId]/deliveries/[deliveryId]/redeliver`).
+
+Rotating an endpoint's signing secret (`POST /webhooks/[endpointId]/rotate-secret`) is **zero-downtime**: the new secret is stamped (`secretRotatedAt`) and the prior secret's HMAC is stashed in `previousSecretHash`, so for a **24-hour grace** the dispatcher signs (and the receiver can verify) under **both** secrets. The customer updates their verifier any time inside that window without dropping a single delivery. See [33-outbound-webhooks](../33-outbound-webhooks.md).
 
 ---
 ---
@@ -2158,7 +2323,9 @@ Today: INR-centric. Orgs whose `contractCurrency` is USD/EUR/GBP route through S
 
 ### 36.1 Current status
 
-Schema ready (`Organization.parentId`, `rootId`, `depth`). Cron scaffolded but flag-gated (`ENABLE_CONSOLIDATED_INVOICE=false`) because most tenants don't have a parent hierarchy yet.
+Schema ready: hierarchy is `Organization.parentOrganizationId` + the denormalized `rootOrganizationId` (group root for fast subsidiary scoping). **There is no `depth` column and no hierarchy helper lib** — scoping is done with the two FK columns directly. See [05-hierarchy](../05-hierarchy.md).
+
+🟡 **Not actually running.** A `consolidated-invoice-rollup.yml` workflow exists, but the script it invokes (`jobs/cleanup/consolidated-invoice-rollup.ts`) **does not exist in the tree** (§ 29.3), so the scheduled rollup would fail. There is no `ENABLE_CONSOLIDATED_INVOICE` flag. Treat parent-child rollup as designed-and-scaffolded, not live — it needs the job script before any first parent-child tenant.
 
 ### 36.2 Use case
 
@@ -2171,7 +2338,7 @@ Each child has its own CREDIT_POOL + its own invoices. At month-end, the parent 
 
 ### 36.3 Status
 
-Shipped in close-bundle (`1c28b2b1`) behind flag. Ready for first parent-child tenant.
+Schema + workflow scaffolding present; the rollup **job script is missing** (§ 29.3), so it does not run. Needs the job implemented before the first parent-child tenant.
 
 ---
 
@@ -2270,7 +2437,9 @@ Common errors + resolutions.
 | 500 P2034 (Prisma TX conflict) | Concurrent Serializable TX collision | Retry with backoff |
 | 409 P2002 (unique constraint) | Duplicate invite/domain/etc. | Surface as "already exists" |
 | 400 Invalid body | Zod validation failed | Check error.flatten() for field errors |
-| 501 NOT_IMPLEMENTED | PROJECT/RETAINER program type | Not yet supported |
+| 400 (program type not accepted) | PROJECT/RETAINER program create | Reserved in enum, rejected with 400 — not yet supported (not a 501) |
+| 409 CONTRACT_TERMS_LOCKED | PATCH locked contract terms | Supersede (AMENDMENT/RENEWAL) instead of editing in place |
+| 409 (contract end-early blocked) | Terminate with live assignments / outstanding invoices | Close assignments + settle invoices first; then PATCH status |
 
 ---
 
@@ -2410,18 +2579,27 @@ See `docs/enterprise/43-monitoring.md` for suggested BetterStack / Grafana dashb
 
 ## 43. Schema cheat sheet
 
-See `prisma/schema.prisma` for canonical source. Quick navigation:
+See `prisma/schema.prisma` for canonical source. Navigate by **model name** (grep `^model <Name>`) rather than line number — the file moves. The enterprise cluster, by concern:
 
 ```
-Line 421-541: Organization + Membership + Member + Invitation
-Line 543-680: Membership + enums
-Line 733-870: BillingAccount + Contract + BillingSubscription + WalletTopUp
-              (money journal: LedgerAccount + LedgerTransaction + LedgerEntry)
-Line 882-1010: Program + sub-configs + ProgramAssignment + BookingUtilization
-Line 1012-1080: RateCard + OrganizationPayoutAccount
-Line 1083-1195: OrganizationEarnings + OrganizationPayout + OrganizationInvoice
-Line 1320-1400: OrganizationSSOSettings + OrgDomainClaim
-Line 1420-1500: OrgAuditLog + ConsentArtifact
+Identity:    Organization · Membership · Member · Invitation · OrgWorkspaceProfile
+Contracts:   Contract (+ supersession chain, autoRenew) · BillingSubscription
+Billing:     BillingAccount (+ wallet-floor/auto-top-up) · WalletTopUp ·
+             PurchaseOrder · OrganizationInvoice (+ dunning fields) · CreditNote ·
+             OverageEvent
+Money jrnl:  LedgerAccount · LedgerTransaction · LedgerEntry · UsageLedgerEntry ·
+             LedgerReconciliationReport
+Programs:    Program (configLockedAt/archivedAt) · LicensedSeatConfig ·
+             CreditPoolConfig · ProgramAssignment (AssignmentStatus) ·
+             BookingUtilization
+Revenue:     RateCard · OrganizationEarnings · OrganizationPayout ·
+             OrganizationPayoutAccount
+SSO/webhook: OrganizationSSOSettings (enforceSSO/breakGlassUntil) · SsoProvider ·
+             OrgDomainClaim · OutboundWebhookEndpoint (secretRotatedAt)
+Compliance:  ConsentArtifact · DataBreach · OrgDataExportJob · TdsAdjustment* ·
+             HrisConfig · HrisSyncJob · HrisEmployeeMap
+Audit:       OrgAuditLog
+* schema-only, no rows written yet
 ```
 
 ---
@@ -2451,12 +2629,14 @@ Admin:
 Verify:         /api/admin/organizations/[orgId]/verify
 ```
 
-Cron:
+Cron (GitHub Actions workflows → `jobs/**` scripts; full list + schedules in § 29.2):
 ```
-Stale invites:         /api/cleanup/stale-invitations
-SSO cert alert:        /api/cleanup/sso-cert-expiry-alert
-Consolidated invoice:  /api/cleanup/consolidated-invoice-rollup
-Abandoned top-ups:     /api/cleanup/abandoned-org-top-ups
+Cycle engine:     advance-program-cycles    (02:15 UTC)
+Contract renew:   auto-renew-contracts      (02:30 UTC)
+Contract expiry:  expire-contracts          (03:00 UTC)
+Dunning:          dunning                   (23:30 UTC)
+Wallet floor:     wallet-low-balance        (notify-only, § 29.4)
+Ledger recon:     reconcile-ledgers         (03:45 UTC)
 ```
 
 ---
@@ -2482,6 +2662,8 @@ Abandoned top-ups:     /api/cleanup/abandoned-org-top-ups
 | `docs/enterprise/50-scenarios-and-examples.md` | Worked examples |
 | `docs/enterprise/20-concurrency-and-idempotency.md` | Race safety |
 | `docs/enterprise/21-programs.md` | Program deep-dive |
+| `docs/enterprise/26-contract-lifecycle.md` | Contract state machine, auto-renew, supersession, end-early guard |
+| `docs/enterprise/27-cycle-engine-and-rollover.md` | Assignment lifecycle, nightly roll/close, overage settlement |
 | `docs/enterprise/05-hierarchy.md` | Parent-child orgs |
 | `docs/enterprise/06-money-model-overview.md` | Money model overview |
 | `docs/enterprise/07-chart-of-accounts.md` | Ledger account kinds |
@@ -2561,7 +2743,7 @@ A: Yes. Unused credits can be refunded; pro-rated based on usage.
 A: Contract-specific; typically ₹10L-₹50L initial; raised based on payment history.
 
 **Q17: What happens if a B2B invoice isn't paid by due date?**
-A: Status flips to OVERDUE. After 30 days past due, org status moves to SUSPENDED until paid.
+A: The `dunning` cron flips it `ISSUED → OVERDUE` (stamping `markedOverdueAt`) and sends reminders on a **7-day cadence, capped at 3**. A booking-suspension cascade is **designed but NOT active** (🟡) — `dunningSuspendedAt` is never written today, so an unpaid invoice does **not** currently auto-suspend the org. Don't promise customers automatic suspension. See doc 12 (invoicing).
 
 **Q18: Can members book with a different payer (personal card instead of org)?**
 A: Yes. Payer selector at checkout. Member picks.
@@ -2586,7 +2768,7 @@ A: Program = entitlement package for org members. Plan = consultant's public off
 ### Payouts & earnings
 
 **Q24: When do consultants get paid?**
-A: T+7 hold → T+30 payout (monthly batch) by default.
+A: T+7 hold (HELD → READY), then the **weekly** Monday payout batch sweeps READY earnings. Real disbursement only happens when `ENABLE_LIVE_PAYOUTS` is on; pre-launch it freezes at PROCESSING (§ 16.3).
 
 **Q25: What if consultant's bank account is invalid?**
 A: Payout fails; admin alerted; consultant notified; earnings held until resolved.
@@ -2606,7 +2788,7 @@ A: If revenue > ₹20L/year, yes. Sole Prop can wait until threshold.
 A: Only if turnover > ₹5cr/year.
 
 **Q30: What TDS rate applies?**
-A: Section 194J (10%) for professional services to resident Indian consultants. Higher for PAN-missing (20%) or DTAA-dependent for non-residents.
+A: 10% for professional services to resident Indian consultants (the old §194J; from 1-Apr-2026 this lives under §393 of the Income-tax Act 2025 — same rate, new citation, see § 20). Higher for PAN-missing (20%, old 206AA → §397(2)) or DTAA-dependent for non-residents. Authoritative: docs/compliance/01.
 
 **Q31: How is DPDP consent recorded?**
 A: `ConsentArtifact` row with SHA-256 hash of policy + timestamp.
@@ -2664,4 +2846,4 @@ This doc is intentionally comprehensive and long. Keep it as the **one** go-to f
 
 ---
 
-_End of document. 46 sections across 9 parts. Next review: 2026-07-22._
+_End of document. 46 sections across 9 parts. Next review: 2026-09-05 (quarterly)._

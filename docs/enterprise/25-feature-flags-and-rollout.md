@@ -1,153 +1,107 @@
 # Feature flags and rollout
 
-The enterprise layer ships behind a single process-env flag plus a
-pattern of capability-gated UI and inline WIP banners. Flags live in
-`lib/feature-flags.ts`.
+> **What this covers:** the five module-level feature flags in
+> `lib/feature-flags.ts` (purpose, default, gated surfaces), the non-module
+> `process.env` gates that live next to the code they guard, and the
+> capability-gated UI + WIP-banner pattern the layer ships behind. **Audience:**
+> anyone flipping a flag for a customer go-live or reading why a wired surface
+> is dark. Last verified against code 2026-06-05 (#776/#777).
 
-## `ENABLE_HOST_ORGS`
+Flags are read from `process.env` **at module load**. Setting one requires a
+redeploy — deliberate: we never want a runtime flip on a billing-affecting
+feature, because mid-stream some payments would take one settlement path and
+others another. To enable a flag locally, add it to `.env` (or export it) before
+`npm run dev`.
 
-```ts
-export const ENABLE_HOST_ORGS =
-  process.env.ENABLE_HOST_ORGS === "true";
-```
+## Module flags (`lib/feature-flags.ts`)
 
-> Renamed from `ENABLE_PROVIDER_ORGS` in the Arch-4 terminology purge
-> (`lib/feature-flags.ts:39`) — "provider" is dead vocabulary; the
-> capability is `canHost` and the kind label is `HOST`. No back-compat
-> shim because the app is pre-launch.
+Exactly five flags are exported from the module. Each is the literal
+`process.env.X === "true"` so absent/empty ⇒ off.
 
-Gates the host-side **settlement** flow. When `false` (pre-launch default):
+| Flag | Default | Purpose | Gated surfaces when OFF |
+|---|---|---|---|
+| `ENABLE_HOST_ORGS` | off | Hosting orgs (agencies hosting experts, 3-way split). | `POST /organizations` rejects `canHost=true` (501); `POST …/members` rejects `role=EXPERT` (501); org-create wizard hides the host checkbox; `…/{payouts,payout-account,earnings,rate-cards}` return 501; `/experts` + `/payouts` nav hidden; `earnings-service` takes the sponsor-only split. |
+| `ENABLE_LIVE_PAYOUTS` | off | Live payout **disbursement** gate (#776 §B). | The whole pipeline runs (batches, ledger, TDS, status machine) but gateway submission is held; org/consultant payouts sit `PROCESSING`, surfaced honestly as "pending platform enablement", **never** as a failure. Server-only — the home action-center + payout surfaces read it server-side and pass the boolean down. |
+| `ENABLE_IRP_UPLOADER` | off | IRP (Invoice Registration Portal) live e-invoice submission. | ClearTax GSP connector is wired (`lib/compliance/irp.ts`, `jobs/compliance/irp-uploader.ts`) but the GitHub Action short-circuits so CI doesn't burn minutes on a stub; sub-₹5cr orgs ride the `{ status: "FAILED", reason: "STUB" }` return (they don't need IRN to claim ITC). |
+| `ENABLE_TDS_ADMIN_VIEW` | off | Admin TDS dashboard + Form 26Q filing surfaces. | `app/api/admin/tds/route.ts` returns 404 (hides from discovery). TDS data is still captured continuously by the payout pipeline; only the *filing workflow* (mark-as-filed, decrypted-PAN view) is gated. |
+| `ENABLE_BETTERSTACK_TELEMETRY` | off | Better Stack Telemetry log sink for operational events (#776 §K). | `recordSystemEvent`/`recordSystemError` always write the `SystemEvent` table (source of truth); the flag (plus `BETTERSTACK_SOURCE_TOKEN` + `BETTERSTACK_INGEST_URL`) only adds the fire-and-forget side-channel that ships those events so a stuck payout / failed reconcile / HMAC failure can page someone. Never on the critical path. |
 
-- `lib/payments/payouts/earnings-service.ts#resolveOrgShare` short-
-  circuits to `null` — no `OrganizationEarnings` rows are written even
-  if the schema says the expert has a `canHost = true` org.
-- Dashboard pages (`/consultants`, `/payouts`, `/analytics` host-side
-  panels) still render, but the data is empty so nothing user-visible
-  leaks.
+> 🔒 **`ENABLE_HOST_ORGS` was renamed from `ENABLE_PROVIDER_ORGS`** in the Arch-4
+> terminology purge — "provider" is dead vocabulary; the capability is `canHost`
+> and the kind label is `HOST`. No back-compat shim (pre-launch). This is the
+> only historical alias worth knowing; nothing reads the old name.
 
-API routes under `/api/organizations/[orgId]/payouts`,
-`/earnings`, `/payout-account`, and the rate-card endpoints no longer
-reject with 501 when the flag is off — they return real data, just
-always empty for orgs that aren't actively hosting. The hard gate is
-at the settlement layer, not at the API edge. This is a deliberate
-change from the pre-Checkpoint-9 behaviour documented in older
-harness prompts.
+Each flag's go-live checklist lives in its module doc-comment (and a tracking
+issue: host #646/#662, live-payout `docs/enterprise/45-live-payout-go-live-runbook.md`,
+IRP #713, TDS #737). None is a runtime toggle.
 
-`POST /api/organizations` does **not** check this flag either — a
-canHost org can be created, members assigned, and rate cards stored.
-The earnings just won't accrue until the flag flips. The wizard's
-`OrgInfoStep` mounts a WIP banner when canHost is checked so operators
-know the gap without needing to read this doc.
+## Non-module env gates
 
-### Flipping the flag
+These are read inline at the point of use rather than re-exported from
+`lib/feature-flags.ts` — they gate a single call-site, so centralising them
+would only add indirection.
 
-Set `ENABLE_HOST_ORGS=true` in the deployment environment and
-redeploy. The flag is *not* a runtime toggle — flipping it mid-stream
-would mean some payments use the SPONSOR settlement path and others use
-the HOST split, which is a compliance nightmare.
+| Env var | Read at | Effect |
+|---|---|---|
+| `ENABLE_STRIPE_PAYOUTS` | `app/api/webhooks/stripe/route.ts` | When `!= "true"`, inbound Stripe Connect `transfer.*` / payout webhook events are logged-and-ignored (the platform settles via Razorpay; Stripe Connect payout rails are not live). |
+| `ENABLE_ROUTED_WALLET` | `lib/payments/payouts/razorpay-route.ts` | Gates the Razorpay **Route** (linked-account) wallet path. Off ⇒ the routed-wallet branch is skipped. |
+| `ENABLE_MOCK_PAYMENTS` | `lib/payments/operations/mock.ts` | Test/dev only — when `"true"`, the mock payment operator stands in for the real gateway so flows run without hitting Razorpay. Must stay off in production. |
+| `MAX_INVOICE_BOOKING_PAISE` | `lib/enterprise/governance.ts#getInvoiceCreditLimitPaise` | Numeric override (not a boolean). Sets the starter credit limit for new, not-yet-verified INVOICE-funded orgs for staged ramps; falls back to ₹50,000 (`50_000_00`) when unset/non-positive. Defends the "book everything then ghost" abuse pattern (#687). |
 
 ## Capability-gated UI
 
-The dashboard sidebar reads capability booleans from the session and
-hides pages that would 404 or render empty. See
-`23-dashboard-pages.md` for the full matrix. Capability gating is
-authoritative:
-
-- A `canSponsor = false` org never sees `/contracts`, `/programs`,
-  `/billing`, `/plans`, or `/purchase-orders`.
-- A `canHost = false` org never sees `/consultants` or `/payouts`.
-
-Both are navigation-level hides; the API gates remain
-role-based-only — a MAINTAINER on a `canHost = false` org who hand-
-crafts a `GET /api/organizations/[orgId]/payouts` request receives an
-empty list, not a 501.
+The dashboard sidebar reads the org's `canSponsor` / `canHost` / `fundingSource`
+booleans and the caller's `MemberRole`, and hides pages that would 404/403/501.
+See [dashboard pages](23-dashboard-pages.md) for the full matrix. Capability
+gating is a **navigation-level hide only** — the API gates stay role-based, so a
+MAINTAINER on a `canHost=false` org who hand-crafts `GET …/payouts` gets a 501
+(host endpoints) or empty data, not a leak. A `canSponsor=false` org never sees
+`/contracts`, `/programs`, `/billing`, `/purchase-orders`; a `canHost=false` org
+never sees `/experts` or `/payouts`.
 
 ## WIP banners — partial implementations stay visible
 
-The enterprise grid has permutations whose schema + API are wired but
-whose end-to-end financial / dashboard surface is still in flight. The
-2026-04-27 readiness review (`#issuecomment-4324209819`) recommended
-hiding these from self-service. We took the opposite call: keep them
-selectable, surface a WIP banner at the call site, and link the open
-issue. Hiding now risks forgetting to re-enable later; banners keep
-the gap auditable.
-
-The banner component lives at
-`components/enterprise/EnterpriseWipBanner.tsx`. Mount it on every
-permutation that's flagged for follow-up; pass the issue numbers it's
-tracking. Current mounts:
-
-| Mount point | Trigger | Tracked issue(s) |
-|---|---|---|
-| `BillingStep.tsx` | `fundingSource === "PERSONAL"` on a sponsor org | #714 |
-| `OrgInfoStep.tsx` | `canHost = true` checked | #662, #716 |
-| `programs/page.tsx` | `programType === "CREDIT_POOL"` | #715, #716 |
-| `programs/page.tsx` | `overageBehavior` is `CHARGE_MEMBER` or `CHARGE_ORG` | #715 |
-
-The matching server-side `TODO(#NNN)` comments live next to the schemas
-that accept these values (`schemas/organizations.ts`,
-`app/api/organizations/[orgId]/programs/route.ts`,
-`app/api/organizations/route.ts`) so a future contributor doing a
-surface sweep can find every permutation in one search:
-
-```bash
-rg 'TODO\(#7(14|15|16|62)\)' app lib schemas
-```
-
-When a permutation's downstream side effect ships, drop the banner
-mount and the matching `TODO(#NNN)` in the same commit. The full sweep
-is tracked in **#730 — Enterprise v1 production-grid lockdown**; that
-issue stays open until every banner above is gone.
+The enterprise grid has permutations whose schema + API are wired but whose
+end-to-end financial/dashboard surface is still in flight. Rather than hide them
+(and risk forgetting to re-enable), we keep them selectable and mount a WIP
+banner at the call site linking the open issue — the gap stays auditable. The
+component is `components/enterprise/EnterpriseWipBanner.tsx`; the matching
+server-side `TODO(#NNN)` comments sit next to the schemas that accept these
+values so a surface sweep finds every permutation in one search. When a
+permutation's downstream effect ships, drop the banner and its `TODO(#NNN)` in
+the same commit.
 
 ## Plan visibility (`OrgPlanVisibility`)
 
-Org-owned plans (`ConsultationPlan` / `SubscriptionPlan` /
-`WebinarPlan` / `ClassPlan` with `organizationId` set) carry an
-`OrgPlanVisibility` enum (`PUBLIC` / `ORG_ONLY` / `ORG_AND_PUBLIC`).
-Personal plans default to `PUBLIC`; org-owned plans default to
-`ORG_AND_PUBLIC` until an operator switches them to `ORG_ONLY`.
-
-Public marketplace endpoints filter via
-`lib/api/plans/visibility.ts` so a private org-owned plan never leaks
-to `/explore/**`. The filter is applied in:
-
-- `app/api/plans/{consultations,subscriptions,webinars,classes}/route.ts`
-- `app/api/plans/shared/plan-filters.ts` (covers webinars + classes via
-  `buildPlanWhereClause`)
-- `app/api/user/consultants/[id]/route.ts` (the consultant detail GET
-  narrows included plans for non-privileged viewers)
-
-Org-internal catalog endpoints (operators viewing their own org's
-plans) MUST NOT use this filter — those surfaces accept `ORG_ONLY` for
-the viewer's own org by design.
+Org-owned plans (`ConsultationPlan` / `SubscriptionPlan` / `WebinarPlan` /
+`ClassPlan` with `organizationId` set) carry an `OrgPlanVisibility` enum
+(`PUBLIC` / `ORG_ONLY` / `ORG_AND_PUBLIC`, default `PUBLIC`). Public marketplace
+endpoints filter via `lib/api/plans/visibility.ts` so an `ORG_ONLY` plan never
+leaks to `/explore/**`; org-internal catalog surfaces deliberately skip the
+filter. Full detail in [public pages & discovery](24-public-pages-and-discovery.md).
 
 ## Data-residency flag
 
-Not a feature flag per se, but worth noting:
-`Organization.dataResidencyRegion: DataRegion` is read at write time
-for audit logs and consent artifacts. Rows written against an org with
-`dataResidencyRegion = IN` must never be replicated to US-hosted
-infrastructure. v1 enforces this at application layer via a shared
-helper in `lib/compliance/`; a future PR will add a DB trigger that
-rejects writes from the wrong replica.
+Not a feature flag per se: `Organization.dataResidencyRegion: DataRegion` is read
+at write time for audit logs + consent artifacts. Rows written against an `IN`
+org must never replicate to US-hosted infra. v1 enforces this at the application
+layer via a `lib/compliance/` helper; a DB-trigger backstop is a future PR.
 
 ## Rollout sequence
 
-The layer ships in one piece — there is no per-feature flag for
-wallet vs invoice vs license, because the schema they share is already
-deployed. The rollout order for new customers:
+The layer ships in one piece — there is no per-funding-source flag (wallet vs
+invoice vs license share one already-deployed schema). The order for a new
+customer:
 
 1. Sponsor org onboarding (`PERSONAL` or `WALLET` to start).
 2. Invite members (LEARNER role).
-3. First test booking that exercises the full `PaymentLeg` path.
-4. (Optional) Upgrade to `INVOICE` or `LICENSE` once the customer
-   signs a contract.
-5. (Optional) Enable `canHost` once the host-side KYC is cleared.
-
-No per-feature toggles are exposed to orgs.
+3. First test booking exercising the full `PaymentLeg` path.
+4. (Optional) Upgrade to `INVOICE` or `LICENSE` once a contract is signed.
+5. (Optional) Enable `canHost` once host-side KYC clears (needs `ENABLE_HOST_ORGS`).
 
 ## Related docs
 
-- `01-organization-types.md` — capability booleans.
-- `23-dashboard-pages.md` — page-by-page visibility matrix.
-- `50-scenarios-and-examples.md` — worked end-to-end flows.
+- [Organization types](01-organization-types.md) — the capability booleans.
+- [Dashboard pages](23-dashboard-pages.md) — page-by-page visibility matrix.
+- [Public pages & discovery](24-public-pages-and-discovery.md) — `OrgPlanVisibility` filtering.
+- [Scenarios & examples](50-scenarios-and-examples.md) — worked end-to-end flows.

@@ -15,6 +15,98 @@ top-to-bottom without reading any other document.
 
 ---
 
+## 🗓️ Scheduled-task catalogue (cron → script)
+
+**Scheduling is GitHub Actions, not Netlify.** Every recurring task is a
+workflow under [`.github/workflows/*.yml`](../../.github/workflows) with a
+`schedule.cron` block that invokes one standalone script under
+[`jobs/**`](../../jobs) via `npx tsx`. There is **no** `netlify.toml`
+cron, no `app/api/cron` route, and no external scheduler. To find what
+runs a job, open its workflow; to run it by hand, see *🔬 Running cron
+jobs locally* below, or trigger the workflow with `workflow_dispatch`.
+
+> ⚠️ **GitHub-Actions cron caveats** (verified against GitHub docs
+> 2026-06-05). Scheduled workflows (a) enforce a **5-minute minimum**
+> interval — a `* * * * *` (every-minute) cron is silently throttled to
+> ~5 min; and (b) are **best-effort, not guaranteed** — runs are
+> commonly delayed 5–30 min and can be **dropped entirely** under
+> platform load, especially on the top-of-hour / midnight-UTC spike.
+> Treat every cadence below as a ceiling, never a deadline. The crons
+> are built to absorb this: each is idempotent (claim-by-conditional-
+> `updateMany`, count===0 ⇒ skip), so a delayed run, a double run, or a
+> skipped-then-catch-up run is always safe. A sharp-deadline job
+> (DPDP 72h breach, MSME) runs **hourly** precisely so a dropped run
+> can't cross the cutoff.
+
+All cron times are **UTC** (GitHub Actions interprets cron in UTC). Some
+job docstrings annotate the IST-local equivalent; both are noted where
+they differ.
+
+### Enterprise billing & lifecycle
+
+| Workflow | Script | Cron (UTC) | What it does |
+|---|---|---|---|
+| `advance-program-cycles` | `jobs/billing/advance-program-cycles.ts` | `15 2 * * *` | Cycle engine: per ended `ProgramAssignment` ROLL (mint successor, `rolledAt`) or CLOSE. Runs **before** auto-renew so a live contract's assignment rolls first. |
+| `auto-renew-contracts` | `jobs/contracts/auto-renew-contracts.ts` | `30 2 * * *` | Mints RENEWAL successor + EXPIREs old (`autoRenewedAt` gate). Re-points programs to successor so the cycle engine keeps rolling. Runs 30 min **before** expire. |
+| `expire-contracts` | `jobs/contracts/expire-contracts.ts` | `0 3 * * *` | Flips ACTIVE contracts past `effectiveTo` → EXPIRED. Auto-renew already moved the renewable ones, so this catches only the non-renewing. |
+| `generate-subscription-invoices` | `jobs/billing/generate-subscription-invoices.ts` ⚠️ | **NO WORKFLOW** | One invoice per `BillingSubscription` with `nextInvoiceDate <= now`; claim = advance `nextInvoiceDate`. ⚠️ **No `.github/workflows` file invokes this as of 2026-06-05** — the job exists and its docstring claims "daily 01:00 IST", but nothing schedules it. Run manually until a workflow is added. (Inverse of `consolidated-invoice-rollup`: there the workflow exists but the script doesn't.) |
+| `settle-invoice-accruals` | `jobs/billing/settle-invoice-accruals.ts` ⚠️ | **NO WORKFLOW** | Rolls each org's unbilled `INVOICE_ACCRUAL` + `OVERAGE_INVOICE_ACCRUAL` bookings into one invoice (thin wrapper over `rollupOrgInvoiceAccruals`). ⚠️ Same gap — docstring says "monthly alongside generate-subscription-invoices" but **no workflow fires it**. Run manually until wired. |
+| `consolidated-invoice-rollup` | `jobs/cleanup/consolidated-invoice-rollup.ts` ⚠️ | `0 4 1 * *` (monthly, day-1) | Parent-org child-invoice rollup (`INVOICE_ROLLED_UP`). Gated by `ENABLE_CONSOLIDATED_INVOICE` (workflow no-ops when unset). ⚠️ **The referenced script is absent from the repo as of 2026-06-05** — the workflow will fail at `tsx` if the flag is ever set. Treat as not-yet-wired; do not rely on monthly parent rollups until the script lands. |
+| `dunning` | `jobs/billing/dunning.ts` | `30 23 * * *` (05:00 IST) | Stage 1 ISSUED→OVERDUE (`markedOverdueAt`, `INVOICE_OVERDUE`); stage 2 escalation reminders, 7-day cadence × max 3 (`dunningReminderCount`). Booking-suspend (`dunningSuspendedAt`) is 🟡 designed-not-active. |
+| `timeout-member-overages` | `jobs/billing/timeout-member-overages.ts` | `0 23 * * *` (04:30 IST per docstring) | Hard 14-day wall: never-settled `CHARGE_MEMBER` `OverageEvent` PENDING→FAILED (`chargeTimedOutAt`), frees the per-cycle ceiling, notifies the member. |
+| `sweep-abandoned-overage-charges` | `jobs/cleanup/sweep-abandoned-overage-charges.ts` | `30 2 * * *` | Sibling sweep (#785): FAILs never-*started* side-charges at 7d to free the ceiling **silently** (no member notify). Idempotent against the 14-day timeout cron. |
+| `wallet-low-balance` | `jobs/billing/wallet-low-balance.ts` | `45 23 * * *` (05:15 IST) | **NOTIFY-ONLY** floor: WALLET `BillingAccount`s below `minBalancePaise` → alert finance, stamp `autoTopUpLastFiredAt` (24h cooldown). No money moves; gateway-mandate auto-charge is `TODO(#777)`. |
+
+### Webhooks, top-ups & money reconciliation
+
+| Workflow | Script | Cron (UTC) | What it does |
+|---|---|---|---|
+| `dispatch-outbound-webhooks` | `jobs/cleanup/dispatch-outbound-webhooks.ts` | `* * * * *` → **~5 min effective** | Drains the `OutboundWebhookDelivery` queue (PENDING + due RETRY). Emits a `WEBHOOK`/WARN `SystemEvent` when backlog > 200. |
+| `archive-webhook-events` | `jobs/cleanup/archive-webhook-events.ts` | `0 0 * * 0` (weekly Sun) | Ages out processed inbound `WebhookEvent` rows. |
+| `sweep-stuck-webhook-events` | `jobs/cleanup/sweep-stuck-webhook-events.ts` | `*/10 * * * *` | Re-drives inbound `WebhookEvent` rows left `processed=false` after an `after()` callback crash, so money side-effects land without a gateway redelivery. |
+| `sweep-orphaned-topup-captures` | `jobs/cleanup/sweep-orphaned-topup-captures.ts` | `*/30 * * * *` | Re-credits gateway-captured top-ups whose confirm/ledger post rolled back (`capturedAt` set, still PENDING). |
+| `cleanup-abandoned-org-top-ups` | `jobs/cleanup/cleanup-abandoned-org-top-ups.ts` | `0 2 * * *` | Reaps never-completed org wallet top-up intents past the grace window. |
+| `cascade-refund-earnings` | `jobs/refunds/cascade-refund-earnings.ts` | `*/15 * * * *` | Idempotent refund→earnings cascade (`mintRefundCreditNote`; `Refund.cascadedAt` gate). |
+| `reconcile-pending-refunds` | `jobs/refunds/reconcile-pending-refunds.ts` | `*/15 * * * *` | Reconciles PENDING refunds against the gateway; notifies on failed refunds (no more silent stuck money). |
+| `reconcile-ledgers` | `jobs/reconcile/reconcile-ledgers.ts` | `45 3 * * *` | Nightly money-integrity audit. Exit 2 + `RECONCILE`/ERROR `SystemEvent` on discrepancies, exit 1 + `recordSystemError` on crash. See *🚨 Ledger reconciler flagged discrepancies*. |
+| `reconcile-document-storage` | `jobs/cleanup/reconcile-document-storage.ts` | `0 2 * * *` | Reconciles `OrganizationDocument` rows against object storage (orphaned + missing files). |
+
+### Payouts & earnings
+
+| Workflow | Script | Cron (UTC) | What it does |
+|---|---|---|---|
+| `create-payout-batch` | `jobs/payouts/create-payout-batch.ts` | `0 20 * * 1` (Mon) | Assembles the weekly payout batch. |
+| `process-payouts` | `jobs/payouts/process-payouts.ts` | `0 21 * * 1` (Mon) | Submits batch to gateway — **gated by `ENABLE_LIVE_PAYOUTS`** (off ⇒ rows freeze at PROCESSING). See [`45-live-payout-go-live-runbook.md`](./45-live-payout-go-live-runbook.md). |
+| `handle-stuck-payouts` | `jobs/payouts/handle-stuck-payouts.ts` | `0 */4 * * *` | Reconciles/retries/fails PROCESSING payouts with no terminal webhook. Emits `PAYOUT` `SystemEvent` (+ `recordSystemError` on permanent failure → Better Stack). |
+| `reconcile-payout-status` | `jobs/payouts/reconcile-payout-status.ts` | `0 */6 * * *` | Pulls gateway truth for in-flight payouts. |
+| `release-earnings` | `jobs/earnings/release-earnings.ts` | `0 * * * *` (hourly) | PENDING → READY when `holdUntil` lapses. |
+| `release-pending-trust-earnings` | `jobs/cleanup/release-pending-trust-earnings.ts` | `30 * * * *` (hourly) | Invoice-fraud trust gate: PENDING_TRUST → PENDING once the org is ACTIVE or has paid an invoice (#687). Disjoint rows from `release-earnings`. |
+| `sync-payment-earnings` | `jobs/earnings/sync-payment-earnings.ts` | `0 * * * *` (hourly) | Backfills earnings rows from succeeded payments. |
+
+### Compliance & SSO
+
+| Workflow | Script | Cron (UTC) | What it does |
+|---|---|---|---|
+| `irp-uploader` | `jobs/compliance/irp-uploader.ts` | `30 2 * * *` (08:00 IST) | E-invoice IRN generation via ClearTax GSP. **Gated by `ENABLE_IRP_UPLOADER`**; stubbed sub-₹5cr returns `{status:"FAILED",reason:"STUB"}` recorded as a normal retry. |
+| `databreach-deadline-alerts` | `jobs/compliance/databreach-deadline-alerts.ts` | `15 * * * *` (hourly) | DPDP 72h breach-report deadline alerts (`event:"dpdp.databreach.deadline"`). Hourly because the cutoff is sharp. |
+| `msme-payment-alerts` | `jobs/compliance/msme-payment-alerts.ts` | `30 4 * * *` | MSME §43B(h) at-risk-payout email to finance. Degrades to log-only if `MSME_ALERT_EMAIL`/`RESEND_API_KEY` unset. |
+| `sso-cert-expiry-alert` | `jobs/cleanup/sso-cert-expiry-alert.ts` | `0 3 * * *` (08:30 IST) | SP/IdP cert expiry: 30d WARN / 7d CRITICAL → `SSO_CERT_EXPIRING` audit row. |
+| `consent-retention-sweeper` | `jobs/compliance/consent-retention-sweeper.ts` ⚠️ | **NOT SCHEDULED** | DPDP `ConsentArtifact` retention sweep (`DPDP_SWEEPER_DELETE`-gated). ⚠️ **The job exists but has no workflow file** as of 2026-06-05 — its docstring claims "weekly Sunday 03:00 IST" but nothing fires it. Run manually until a workflow is added, or treat retention deletion as not-yet-automated. |
+| `prune-audit-logs` | `jobs/cleanup/prune-audit-logs.ts` | `15 3 * * *` | Deletes audit rows past retention (7y financial / 2y other); one `AUDIT_PRUNED` summary row per org. |
+| `process-data-exports` | `jobs/cleanup/process-data-exports.ts` → `scripts/cleanup/process-data-exports.ts` | `*/10 * * * *` (≈10 min) | DPDP §11 right-to-access worker: drains pending `OrgDataExportJob` rows, builds the bundle, writes `DATA_EXPORT_GENERATED`/`_FAILED`. On failure writes the clean prose audit row + a raw `SystemEvent` (`category=DATA_EXPORT`, `correlationId=job.id`). Outputs `picked/succeeded/failed`. |
+
+### Non-enterprise crons (for completeness)
+
+Disputes (`alert-dispute-deadlines` hourly, `handle-lost-disputes` /
+`reconcile-disputes` every 6h), appointments, waitlist, Stream recording
+retention (`cleanup-old-stream-recordings`, `mark-expired-recordings`,
+`transfer-expiring-recordings`), discount expiry, and the auth-token /
+empty-folder / tentative-slot cleanups all live under the same
+`.github/workflows` + `jobs/**` convention but are outside the
+enterprise billing/compliance surface this doc owns.
+
+---
+
 ## 🚨 Webhook handler is backed up (Razorpay or Stripe)
 
 **Symptoms:** `webhookEvent.status = "QUEUED"` rows accumulating, or
@@ -157,6 +249,252 @@ email from `jobs/compliance/msme-payment-alerts.ts`.
 4. If the alert window itself is wrong (e.g. 3 days, not 7), edit
    `ALERT_WINDOW_DAYS` in the job source, not the env — this is a
    compliance parameter that should be code-reviewed.
+
+---
+
+## 🚨 Overage charges stuck PENDING (timeout sweep)
+
+**Symptoms:** `OverageEvent` rows with `overageBehavior=CHARGE_MEMBER`,
+`chargeStatus=PENDING`, and `chargeAttemptCount` climbing or
+`chargeFailureReason` set — members report "I was told I owe an overage
+but can't pay it", or a program's per-cycle circuit-breaker ceiling is
+wedged because never-resolved PENDING charges still count against it.
+
+**Impact:** A PENDING member-pays overage holds a slot in the per-cycle
+ceiling. Enough wedged rows and the breaker trips, blocking *legitimate*
+new overage on that assignment.
+
+**Two crons own this — know which one applies:**
+
+- `jobs/billing/timeout-member-overages.ts` (`0 23 * * *`) — the hard
+  **14-day** wall. PENDING → FAILED, stamps `chargeTimedOutAt` +
+  `chargeFailureReason`, **notifies the member** the obligation lapsed.
+- `jobs/cleanup/sweep-abandoned-overage-charges.ts` (`30 2 * * *`) — FAILs
+  never-*started* side-charges at **7 days silently** (no notify) to free
+  the ceiling.
+
+They are idempotent against each other: once a row is FAILED it no longer
+matches `chargeStatus = PENDING`.
+
+**Response:**
+
+1. Confirm which rows are stuck and how old:
+   ```sql
+   SELECT id, "chargeStatus", "chargeAttemptCount", "chargeFailureReason",
+          "chargeTimedOutAt", "lastChargeAttemptAt", "createdAt"
+   FROM "OverageEvent"
+   WHERE "overageBehavior" = 'CHARGE_MEMBER' AND "chargeStatus" = 'PENDING'
+   ORDER BY "createdAt" ASC LIMIT 50;
+   ```
+2. If rows are **older than 14 days** and still PENDING, the timeout cron
+   isn't running. Force it: `npx tsx jobs/billing/timeout-member-overages.ts`.
+   Expect `timedOut=N` and one member notification per row.
+3. If the ceiling is wedged but the rows are **younger than the windows**,
+   that's a real unpaid obligation, not a stuck-money bug — don't FAIL
+   them early. Confirm the member was actually billed (`Payment` against
+   the synthetic `overage:` intent) before touching anything.
+4. **Do not** hand-edit `chargeStatus` to CHARGED — that fakes a payment
+   that never landed and desyncs the ledger. Only the side-payment
+   webhook may move PENDING → CHARGED.
+
+`OverageChargeStatus` legal values: `PENDING`, `ACCRUED`, `CHARGED`,
+`BLOCKED`, `REVERSED`, `FAILED`.
+
+---
+
+## 🚨 Dunning escalation gone wrong
+
+**Symptoms:** an org reports duplicate/too-frequent overdue reminders, an
+invoice stuck `ISSUED` past due with no reminders, or finance asks why a
+clearly-overdue invoice never escalated.
+
+**Impact:** reputational (spamming a paying customer) or revenue
+(genuinely overdue invoice never chased). The dunning cron
+(`jobs/billing/dunning.ts`, `30 23 * * *` = 05:00 IST) runs **after**
+invoice-gen + expire so it reads invoices in their final state.
+
+**How it's supposed to behave:**
+
+- **Stage 1:** `ISSUED` + `dueDate` past + `markedOverdueAt:null` → claim
+  ISSUED→OVERDUE (stamp `markedOverdueAt`), notify, emit `INVOICE_OVERDUE`.
+- **Stage 2:** OVERDUE rows with `dunningReminderCount < 3` whose last
+  reminder (`lastDunningReminderAt`, else `markedOverdueAt`) is **>7 days**
+  old → bump count, re-notify at the next stage.
+- Only orgs in `ACTIVE` / `PENDING_VERIFICATION` / `SUSPENDED` are dunned;
+  `DEACTIVATED` orgs are not chased.
+- Booking-suspend (`dunningSuspendedAt`) is 🟡 **designed-not-active**
+  (`TODO(#779)`) — if someone expects an overdue org to get
+  booking-suspended automatically, that has **not** shipped.
+
+**Response:**
+
+1. **Duplicate reminders** → a same-day double-run or two replicas. The
+   claim (`updateMany` gated on the exact `lastDunningReminderAt` the read
+   saw) makes this near-impossible; if you see it, check for a job
+   invoked outside GitHub Actions (a stray manual `tsx` loop) racing the
+   cron. The notify is fire-and-forget *after* a committed claim, so a
+   notify retry (Novu side) is the more likely culprit — check Novu, not
+   the DB.
+2. **Stuck ISSUED past due, no reminder** → confirm the org status is in
+   the dunnable set and `dueDate < now`. Then force a run:
+   `npx tsx jobs/billing/dunning.ts` and read the `scannedStage1 /
+   markedOverdue / scannedStage2 / remindersSent` summary line.
+3. **Stopped at 3 reminders** → working as designed (`MAX_REMINDERS=3`).
+   Escalation past that is a manual finance/collections action, not a
+   cron concern.
+4. **Never raise `MAX_REMINDERS` or shorten `REMINDER_INTERVAL_MS` via
+   env** — they're code constants in `dunning.ts`; changing dunning
+   cadence is a policy decision that must be code-reviewed.
+
+---
+
+## 🚨 Auto-top-up / wallet-floor mandate failure
+
+**Symptoms:** an org's wallet sits below its `minBalancePaise` floor and
+bookings start failing for insufficient balance, OR finance complains the
+low-balance alert "fires every run" / "never fires".
+
+**Impact:** a sponsored org with a drained wallet can't cover bookings.
+
+**Critical context — there is NO auto-charge yet.** `wallet-low-balance.ts`
+(`45 23 * * *` = 05:15 IST) is **NOTIFY-ONLY**. It detects WALLET
+`BillingAccount`s below `minBalancePaise`, alerts finance, and stamps
+`autoTopUpLastFiredAt` as a **24h cooldown** — it does **not** create a
+`WalletTopUp`, does **not** move money, and does **not** charge
+`autoTopUpMandateId`. The gateway-mandate auto-charge is `TODO(#777)`
+pending Razorpay mandates. (There is no `walletFloorPaise` field — the
+floor is `minBalancePaise`.)
+
+**Response:**
+
+1. **Alert fires every run** → the 24h cooldown stamp isn't sticking.
+   `autoTopUpLastFiredAt` is both the cooldown gate and the claim key;
+   if two replicas race, the loser skips. Verify a single scheduled
+   invocation. Confirm the column is actually being written:
+   ```sql
+   SELECT id, "ownerOrgId", "walletBalance", "minBalancePaise",
+          "autoTopUpLastFiredAt"
+   FROM "BillingAccount"
+   WHERE "fundingSource" = 'WALLET' AND "minBalancePaise" IS NOT NULL;
+   ```
+2. **Alert never fires** → either no floor is configured
+   (`minBalancePaise IS NULL` ⇒ the org opted out of the floor) or the
+   balance is above it. Force a run: `npx tsx jobs/billing/wallet-low-balance.ts`
+   and read `scanned / notified`.
+3. **Org genuinely drained** → because auto-charge is not wired, the
+   **only** remedy today is the org topping up manually (or finance
+   raising an invoice). Do not expect the cron to refill the wallet.
+4. When mandates land (#777), the charge will happen inside a tx that
+   writes the `WalletTopUp` + ledger row gated on `autoTopUpEnabled`;
+   until then, treat this purely as an alerting signal.
+
+---
+
+## 🚨 Cycle-engine rollover failed (assignment stuck un-rolled)
+
+**Symptoms:** a `ProgramAssignment` with `status=ACTIVE`, `rolledAt:null`,
+and `periodEnd` in the **past** — the member's usage counters never reset
+for the new period, or a renewed contract's program shows no successor
+assignment.
+
+**Impact:** the member is metered against a stale (expired) period;
+engagements/consumed counters don't reset; billing for the new cycle may
+not accrue.
+
+**How it's supposed to behave** (`jobs/billing/advance-program-cycles.ts`,
+`15 2 * * *`, **before** auto-renew at 02:30 and expire at 03:00):
+
+- Contract ACTIVE + `autoRenew` + successor period fits within
+  `effectiveTo` → **ROLL**: claim ACTIVE→ROLLED (`rolledAt`), mint the
+  successor ACTIVE row (counters reset to 0), link
+  `rolledToAssignmentId` (`@unique` backstops a double-mint as P2002).
+- Otherwise → **CLOSE**: claim ACTIVE→CLOSED, no successor.
+- Both write one `PROGRAM_ASSIGNMENT_ROLLED` audit row
+  (`details.closed` distinguishes).
+
+**Response:**
+
+1. Find stuck assignments:
+   ```sql
+   SELECT pa.id, pa."programId", pa.status, pa."periodEnd", pa."rolledAt",
+          p.status AS program_status, p."archivedAt"
+   FROM "ProgramAssignment" pa
+   JOIN "Program" p ON p.id = pa."programId"
+   WHERE pa.status = 'ACTIVE' AND pa."rolledAt" IS NULL
+     AND pa."periodEnd" < now()
+   ORDER BY pa."periodEnd" ASC LIMIT 50;
+   ```
+2. **Program archived / not ACTIVE** → the engine deliberately skips
+   assignments on a non-live program (`program.status='ACTIVE',
+   archivedAt:null`). That's correct; the assignment is dormant by design.
+3. **Malformed program (no money-config)** → `resolveProgramCycle`
+   returns null and the row is counted as `skipped`. Fix the program's
+   `licensedSeatConfig`/`creditPoolConfig`, then re-run.
+4. **Contract isn't ACTIVE when it should be** → this is the classic
+   ordering bug. Auto-renew **re-points programs to the successor
+   contract** so the engine still sees ACTIVE. If a renewal failed (see
+   next runbook), the engine will CLOSE every assignment instead of
+   rolling. **Fix the contract first, then re-run cycles.**
+5. Force a drain (bounded 500/run, so loop if the backlog is large):
+   ```bash
+   npx tsx jobs/billing/advance-program-cycles.ts   # scanned/rolled/closed/skipped
+   ```
+6. **Never** hand-mint a successor assignment — the `@@unique([programId,
+   membershipId, periodStart])` + `rolledToAssignmentId @unique` are the
+   only safe double-mint guards; bypassing them risks double-billing.
+
+---
+
+## 🚨 Contract auto-renew failed
+
+**Symptoms:** a contract with `autoRenew=true`, `status=ACTIVE`,
+`effectiveTo` in the past, and `autoRenewedAt:null` — i.e. it should have
+renewed last night and didn't. Downstream, the cycle engine then CLOSEs
+the contract's assignments (see runbook above), so the two failures
+usually surface together.
+
+**Impact:** the org's programs lose their governing term; assignments
+close instead of rolling; new-cycle billing stops. This is the "zombie
+assignment" failure mode the renewal engine exists to prevent.
+
+**How it's supposed to behave** (`jobs/contracts/auto-renew-contracts.ts`,
+`30 2 * * *`, 30 min **before** expire at 03:00 — renewal must win the
+race with expiry):
+
+1. Claim by stamping `autoRenewedAt` (distributed lock).
+2. Mint RENEWAL successor (same org / billing account / terms;
+   `effectiveFrom = old.effectiveTo`; same duration).
+3. Re-point the old contract's programs to the successor (so the cycle
+   engine keeps rolling) — invoices keep their old `contractId`.
+4. Stamp `supersededByContractId` / `supersededAt` /
+   `supersessionReason=RENEWAL` and flip old → EXPIRED in the same tx,
+   write `CONTRACT_AUTO_RENEWED`.
+
+**Response:**
+
+1. Find un-renewed-but-due contracts:
+   ```sql
+   SELECT id, "organizationId", status, "autoRenew", "effectiveTo",
+          "autoRenewedAt", "supersededByContractId"
+   FROM "Contract"
+   WHERE status = 'ACTIVE' AND "autoRenew" = true
+     AND "autoRenewedAt" IS NULL AND "effectiveTo" < now()
+   ORDER BY "effectiveTo" ASC;
+   ```
+2. Force the renewal cron: `npx tsx jobs/contracts/auto-renew-contracts.ts`
+   → read `scanned / renewed / skipped`.
+3. **`skipped` due to P2002** → `supersededByContractId @unique` tripped
+   because another replica already renewed it. Idempotent; the successor
+   exists — verify and move on.
+4. **Order matters at 3 AM:** if you are manually unsticking a batch, run
+   **auto-renew first, then advance-program-cycles, then expire-contracts**
+   — the same order the crons fire. Running expire first will EXPIRE a
+   contract the renewal would have carried, and you'll be repairing
+   closed assignments by hand.
+5. **Never** leave two ACTIVE contracts on one org — auto-renew EXPIREs
+   the predecessor precisely because two ACTIVE terms double-count
+   billing. If you find two, the renewal half-applied; reconcile to one
+   ACTIVE (the successor) before re-running cycles.
 
 ---
 

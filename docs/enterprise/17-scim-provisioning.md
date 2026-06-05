@@ -10,11 +10,25 @@ work without modification.
 
 | Verb | Path | Purpose |
 |---|---|---|
-| `GET` | `/scim/v2/Users` | List + filter (`?filter=userName eq "x"`). |
-| `POST` | `/scim/v2/Users` | Create or re-provision a user. |
+| `GET` | `/scim/v2/Users` | List + filter (`?filter=userName eq "x"`), `startIndex`/`count` paginated (RFC 7644 §3.4.2). Returns a `ListResponse`. |
+| `POST` | `/scim/v2/Users` | Create or re-provision a user. `201` with the `User` resource. |
 | `GET` | `/scim/v2/Users/[id]` | Detail. |
-| `PATCH` | `/scim/v2/Users/[id]` | Currently supports `replace active` (Okta deactivate). |
-| `DELETE` | `/scim/v2/Users/[id]` | Soft-deprovision (Membership.status = SUSPENDED). |
+| `PATCH` | `/scim/v2/Users/[id]` | `replace active` (Okta deactivate) + Azure-style whole-object `replace`. `200` with the resource. |
+| `DELETE` | `/scim/v2/Users/[id]` | Soft-deprovision (`Membership.status = SUSPENDED`); returns `204 No Content`. |
+
+The `[id]` segment is resolved as `Membership.externalScimId` **OR**
+`Membership.id` (an `OR` predicate). An IdP-created resource keeps the
+`externalScimId` it was minted with; an in-app-created membership keeps
+its Familiarise `Membership.id` as its SCIM identity — so the URL stays
+stable across the whole lifecycle regardless of who created the row.
+
+**PATCH is a deliberate subset.** Only `op: "replace"` is honored
+(`active` flips, or a whole-object replace that carries `active`); any
+other op returns `400 invalidSyntax`. Full RFC 7644 §3.5.2 PATCH
+(`add` / `remove` on arbitrary paths) is intentionally NOT implemented
+— it's rarely used by IdP connectors and carries path-injection attack
+surface. A PATCH whose operations we don't understand is a no-op that
+echoes the current resource (rather than `500`) so the IdP doesn't loop.
 
 Discovery endpoints (`ServiceProviderConfig`, `ResourceTypes`,
 `Schemas`) are intentionally **not** mounted in v1 — the connectors we
@@ -25,15 +39,30 @@ IdP starts requiring them.
 ## Authentication
 
 Every SCIM call carries `Authorization: Bearer <raw token>`.
-`/api/organizations/[orgId]/scim/tokens` (OWNER-only) mints tokens —
-the **raw value is returned exactly once** on POST. We store only its
-SHA-256 hash, so a lost token requires creating a fresh one. The
-auth helper at `lib/scim/auth.ts` also:
+`/api/organizations/[orgId]/scim/tokens` (OWNER-only — `requireOrgOwner`;
+BILLING_ADMIN deliberately excluded, since a leaked token provisions
+arbitrary users) mints tokens. The token is 48 random bytes
+(base64url), and the **raw value is returned exactly once** on POST. We
+store only its SHA-256 hash (`ScimToken.tokenHash`, unique), so a lost
+token requires creating a fresh one. The auth helper at
+`lib/scim/auth.ts` (`requireScimAuth`) also:
 
-- enforces `scimLimiter` (60 RPM per token);
-- writes a `SCIM_TOKEN_USED_AFTER_REVOKE` audit row when a revoked
-  token attempts to authenticate;
-- bumps `lastUsedAt` on every successful call (fire-and-forget).
+- hashes the bearer → looks it up → the token's `organizationId` becomes
+  the implicit tenant (no `?orgId=` is accepted — that would risk an IdP
+  cross-tenant leak);
+- enforces `scimLimiter` (60 req/min per token, keyed on `tokenHash`);
+- writes a `SCIM_TOKEN_USED_AFTER_REVOKE` audit row when a `REVOKED`
+  token attempts to authenticate (still-in-IdP-config is useful signal),
+  then 401s;
+- bumps `lastUsedAt` on every successful call (fire-and-forget — a
+  failed timestamp write never 5xxes the IdP).
+
+> 🟡 **`ScimToken.expiresAt` is designed-not-active.** The column exists
+> (so OWNERs can set a 6/12-month TTL at mint time and a rotation cron
+> has a stable column to scan), but `requireScimAuth` does **not** yet
+> reject an `ACTIVE` token past its `expiresAt`. Today tokens expire
+> only on explicit `DELETE` (→ `REVOKED`). Don't document TTL
+> enforcement as shipped.
 
 ## Group → role mapping
 
@@ -117,6 +146,6 @@ curl -X PATCH $BASE/scim/v2/Users/okta-user-42 \
 
 All SCIM mutations land in `OrgAuditLog` under the `SYSTEM` category:
 
-- `SCIM_USER_CREATED` / `SCIM_USER_UPDATED` / `SCIM_USER_DEPROVISIONED`
+- `SCIM_USER_CREATED` / `SCIM_USER_REPROVISIONED` / `SCIM_USER_UPDATED` / `SCIM_USER_DEPROVISIONED`
 - `SCIM_GROUP_MAPPED` / `SCIM_GROUP_UNMAPPED`
 - `SCIM_TOKEN_CREATED` / `SCIM_TOKEN_REVOKED` / `SCIM_TOKEN_USED_AFTER_REVOKE`

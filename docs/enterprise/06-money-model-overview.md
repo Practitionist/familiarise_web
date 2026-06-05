@@ -60,7 +60,7 @@ So today there are **two** ledgers, not three:
 | Thing | Role | Detail |
 | --- | --- | --- |
 | `LedgerAccount` | a bucket money sits in (CASH, WALLET, …), scoped to platform / org / consultant | [chart of accounts](07-chart-of-accounts.md) |
-| `LedgerTransaction` | one balanced cash event, `idempotencyKey @unique`, free-string `kind` | [ledger & postings](08-ledger-and-postings.md) |
+| `LedgerTransaction` | one balanced cash event, `idempotencyKey @unique`, typed `kind` (`LedgerTransactionKind` enum since #778 §B — was a free string) | [ledger & postings](08-ledger-and-postings.md) |
 | `LedgerEntry` | one leg of a transaction: `direction` + positive `amountPaise BigInt` | [ledger & postings](08-ledger-and-postings.md) |
 
 The sign of money is carried by **direction**, never by a negative amount. Every `LedgerEntry.amountPaise` is a positive integer; whether it adds or subtracts from a balance depends on the entry's `direction` and the account's normal side (§ in [chart of accounts](07-chart-of-accounts.md)).
@@ -77,7 +77,7 @@ So `BillingAccount.walletBalance` exists as a **cache** of the org's `WALLET` ac
 - The cache is what the hot path reads/writes for the atomic guard.
 - The nightly reconciler asserts `-balance(WALLET) == walletBalance` (`WALLET_BALANCE_DRIFT`); any divergence is an incident, never something to hand-patch.
 
-This "reconciled cache" pattern recurs: `ConsultantEarnings`/`OrganizationEarnings` amount columns are also caches the reconciler checks against the booking journal (`EARNINGS_LEDGER_DRIFT`). See [ledger integrity](14-ledger-integrity.md).
+This "reconciled cache" pattern recurs: `ConsultantEarnings`/`OrganizationEarnings` amount columns are caches the reconciler checks against the booking journal (`EARNINGS_LEDGER_DRIFT`), and the **usage-side** denormalized counters — `ProgramAssignment.engagementsUsed` and the CREDIT_POOL money-meter `ProgramAssignment.consumedPaise` — are re-derived from `UsageLedgerEntry` (`PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT` / `CREDIT_POOL_CONSUMED_DRIFT`). Same contract every time: the append-only journal/ledger is truth, the column is a checked cache. See [ledger integrity](14-ledger-integrity.md).
 
 ---
 
@@ -89,6 +89,7 @@ This "reconciled cache" pattern recurs: `ConsultantEarnings`/`OrganizationEarnin
 | Booking (funding legs → fee/payable/GST) | `BOOKING` | [booking → earnings](10-booking-to-earnings.md) |
 | Payout to a consultant / host org | `PAYOUT` / `ORG_PAYOUT` | [payout pipeline](11-payout-pipeline.md) |
 | Invoice issued / paid | `INVOICE_ISSUED` / `INVOICE_PAID` | [invoicing](12-invoicing.md) |
+| Program overage (member-pays side-charge) | `OVERAGE_MEMBER` | [booking → earnings](10-booking-to-earnings.md) |
 | Refund / top-up refund | `REFUND` / `TOPUP_REFUND` | [invoicing](12-invoicing.md), [wallet & top-ups](09-wallet-and-topups.md) |
 | How funding sources stack on one checkout | — | [payment legs](13-payment-legs.md) |
 | Proving it all ties out | — | [ledger integrity](14-ledger-integrity.md) |
