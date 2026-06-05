@@ -10,17 +10,17 @@ last-reviewed: 2026-06-05
 
 > **Last refreshed post-#772 (double-entry ledger cutover):** the money model is now a double-entry journal (`LedgerAccount` / `LedgerTransaction` / `LedgerEntry`). The legacy `WalletEntry` / `FundingLedgerEntry` / `SettlementLedgerEntry` rows and the "three-ledger" framing were removed; see Part IV.
 
-> **Purpose:** This is the single consolidated doc for the entire Familiarise Enterprise subsystem — past, present, and planned future. It replaces the need to hop between 25+ docs when onboarding, training, or explaining.
+> **Purpose:** This is the single consolidated doc for the entire Familiarise Enterprise subsystem — past, present, and planned future. It replaces the need to hop between the banded docs when onboarding, training, or explaining.
 >
 > **Audience:** Anyone who needs to understand enterprise. Product managers, sales reps, junior developers, senior engineers, support leads, founders, auditors, and onboarding customers.
 >
 > **Reading strategy:** the doc is intentionally long. Use the Table of Contents to jump. Each Part stands alone; you don't have to read cover-to-cover.
 >
-> **Other docs:** `docs/enterprise/**` (25+ specialized docs) is the canonical source of truth for implementation details. This doc is the roadmap **to** those docs. Business folks can stop at Part V. Technical folks can start at Part VI. Reference readers can jump to Part IX.
+> **Other docs:** `docs/enterprise/**` is the canonical source of truth for implementation details. It is organized into **nine banded folders** — the seven story-line bands (`00-foundations/`, `10-money-and-ledger/`, `20-iam-and-security/`, `30-programs-and-lifecycle/`, `40-compliance-and-data/`, `50-operations/`, `60-scenarios-and-verdicts/`) that read in order as one continuous narrative, plus two that sit outside the story line: `70-design-decisions/` (the architecture decision records that explain *why* the system is shaped the way it is) and `90-audits/` (the audit-artifact annex). Every doc carries a five-key frontmatter block (`title`, `band`, `audience`, `status`, `last-reviewed`), so you always know which band a page belongs to and who it is pitched at. This guide is the roadmap **to** those docs. Business folks can stop at Part V. Technical folks can start at Part VI. Reference readers can jump to Part IX.
 >
 > **How we got here:** for the chronological story of how the subsystem was built — the audit-series journey (#655 → #768 → #772 → #776/#785 → #777/#787 → #779 → docs refresh) — see [Design history](../00-foundations/01-overview.md#design-history).
 >
-> **Last updated:** 2026-06-05 (post the v2 mega-audit — #777/#778/#779: contract lifecycle, cycle engine, overage/dunning/wallet-floor, field-level RBAC, SSO break-glass, refund/credit-note unification). **Owner:** CEO. **Review cadence:** quarterly or after any schema change.
+> **Last updated:** 2026-06-05. This revision reconciles the guide with the banded-docs rewrite of the same day. Every band was given a five-key frontmatter block (`title`, `band`, `audience`, `status`, `last-reviewed`) and per-level reading paths. The `10-money-and-ledger/` money band was renumbered and grew to **thirteen docs**, absorbing payouts, refunds, disputes, and inbound payment webhooks out of the old `docs/payments` tree and adding a new earnings-lifecycle doc (the `EarningStatus` machine, including `PENDING_TRUST` and the `HOLD_PERIOD_HOURS` windows). A new `70-design-decisions/` band of twelve ADRs now records *why* the system is shaped the way it is. The compliance layer absorbed a regulatory refresh: the Income-tax Act 2025 in force since 1-Apr-2026 (§393 non-salary TDS, §397(2) no-PAN), the 194-O marketplace rate confirmed at 0.1%, and DPDP operational duties dated to 13 May 2027. The previous milestone was the v2 mega-audit (#777/#778/#779: contract lifecycle, cycle engine, overage/dunning/wallet-floor, field-level RBAC, SSO break-glass, refund/credit-note unification). **Owner:** CEO. **Review cadence:** quarterly or after any schema change.
 
 ---
 
@@ -48,8 +48,8 @@ last-reviewed: 2026-06-05
 **Part IV — The Financial Layer**
 14. Payment legs & the double-entry ledger
 15. Rate cards & revenue splits
-16. Settlement & payouts
-17. Refunds & reversals
+16. Settlement, the earnings lifecycle & payouts
+17. Refunds, credit notes & disputes
 
 **Part V — The Compliance Layer**
 18. DPDP — India's data protection act
@@ -87,8 +87,9 @@ last-reviewed: 2026-06-05
 42. Complete glossary (A-Z)
 43. Schema cheat sheet
 44. API cheat sheet
-45. Related docs index
-46. FAQ (40 questions answered)
+45. Design decisions (ADRs) — and when to read one
+46. Related docs index
+47. FAQ (40 questions answered)
 
 ---
 ---
@@ -129,7 +130,7 @@ Time investment: ~2-3 hours.
 
 ### 1.5 Relationship to other docs
 
-This doc gives you the holistic mental model. When you need implementation detail, the 25+ docs in `docs/enterprise/**` have depth:
+This doc gives you the holistic mental model. When you need implementation detail, the banded docs in `docs/enterprise/**` have depth:
 
 | Need this depth | Go here |
 |---|---|
@@ -143,6 +144,11 @@ This doc gives you the holistic mental model. When you need implementation detai
 | Cycle engine & assignment rollover | `docs/enterprise/30-programs-and-lifecycle/08-cycle-engine-and-rollover.md` |
 | Hierarchy (parent-child orgs) | `docs/enterprise/00-foundations/06-hierarchy.md` |
 | Ledger discipline | `docs/enterprise/10-money-and-ledger/03-ledger-and-postings.md` |
+| Earnings state machine (incl. `PENDING_TRUST`) | `docs/enterprise/10-money-and-ledger/06-earnings-lifecycle.md` |
+| Refund cascade & credit notes | `docs/enterprise/10-money-and-ledger/10-refunds.md` |
+| Dispute / chargeback handling | `docs/enterprise/10-money-and-ledger/11-disputes.md` |
+| Inbound payment webhooks (signature + idempotency) | `docs/enterprise/10-money-and-ledger/12-payment-webhooks.md` |
+| Why a design is the way it is (ADRs) | `docs/enterprise/70-design-decisions/00-README.md` |
 | SSO testing | `docs/enterprise/20-iam-and-security/01-sso-and-authentication.md` |
 
 ---
@@ -379,6 +385,8 @@ The four capability kinds — BUYER, HOST, HYBRID, INERT — are determined by t
 
 ### 6.5 Capability transition matrix
 
+Rows enumerate every `(canSponsor, canHost)` capability flip an OWNER might attempt, stating whether the API allows it and the preconditions that must be met first — most "why did that return a 409?" questions about org-type changes are answered here.
+
 | From | To | Allowed? | Notes |
 |---|---|---|---|
 | BUYER | HYBRID | Yes | Flip `canHost=true`. Must go through Program + RateCard setup. |
@@ -553,6 +561,8 @@ sequenceDiagram
 
 ### 7.5 Billing mode comparison
 
+Attributes such as cost cap, financial risk, and GST complexity run down the rows while the four `BillingMode` values span the columns, so an account manager can use this as a quick scorecard when matching a prospect to the right mode.
+
 | Dimension | PERSONAL | WALLET | INVOICE | LICENSE |
 |---|---|---|---|---|
 | Who pays? | Individual members | Org (pre-paid) | Org (post-paid) | Org (subscription) |
@@ -644,6 +654,8 @@ The pool's running balance lives in the double-entry journal as the org's WALLET
 
 ### 8.5 Program type comparison
 
+Dimensions run down the rows and the four program types run across the columns, letting a sales or solutions engineer instantly compare billing unit, cost shape, and best-fit scenario when advising a prospect on which program to adopt.
+
 | Dimension | LICENSED_SEAT | CREDIT_POOL | PROJECT (future) | RETAINER (future) |
 |---|---|---|---|---|
 | Billing unit | Seat × cycle | Credit | Milestone | Hour |
@@ -702,6 +714,8 @@ Organizations are governed by a **MemberRole** hierarchy, enforced at the API la
 
 ### 9.1 The seven roles
 
+Each row introduces one `MemberRole` value with its position in the seniority ladder, a plain-English summary of what it can do, and a familiar platform analogy to orient engineers who haven't yet memorised the full permission surface.
+
 | Role | Seniority | Key capabilities | Platform equivalent |
 |---|---|---|---|
 | **OWNER** | Highest | Full control: billing, settings, SSO, member management, deletion | GitHub "Owner" |
@@ -715,6 +729,8 @@ Organizations are governed by a **MemberRole** hierarchy, enforced at the API la
 Note `BILLING_ADMIN` sits *off* the linear seniority ladder — it's a **side-gate**, not a rung. It outranks MANAGER on billing surfaces but has none of MAINTAINER's member/SSO powers. See [roles-and-permissions](../00-foundations/04-roles-and-permissions.md).
 
 ### 9.2 Complete permission matrix
+
+Actions are the rows and the six primary roles are the columns; a checkmark means the role may perform that action unilaterally, so this is the authoritative reference for writing or auditing route-level guards — note that `BILLING_ADMIN` is omitted for width and described in § 9.2.1 instead.
 
 | Action | OWNER | MAINTAINER | MANAGER | EXPERT | LEARNER | SUPPORT |
 |---|---|---|---|---|---|---|
@@ -830,7 +846,7 @@ These are end-to-end narrative examples. Each one covers: who the customer is, w
 - LearnPro share: ₹1,000 (20%)
 - Platform share: ₹500 (10%)
 
-**Payout:** On the **weekly** payout run (Mondays), LearnPro's READY `OrganizationEarnings` are batched into an `OrganizationPayout`. Razorpay Payouts sends the batch total to LearnPro's account (only when `ENABLE_LIVE_PAYOUTS` is on — otherwise the batch freezes at PROCESSING, § 16.3). Consultants get their shares via separate individual payouts.
+**Payout:** On the **weekly** payout run (Mondays), LearnPro's READY `OrganizationEarnings` are batched into an `OrganizationPayout`. Razorpay Payouts sends the batch total to LearnPro's account (only when `ENABLE_LIVE_PAYOUTS` is on — otherwise the gated org payout parks at PENDING, § 16.4). Consultants get their shares via separate individual payouts.
 
 ### 10.3 Scenario C — IIT Madras (HYBRID)
 
@@ -1146,6 +1162,8 @@ A cookbook of what each role typically does day-to-day.
 
 ### 13.1 Dashboard sidebar items (by role)
 
+Every sidebar destination is a row, and the columns show which roles can see it, giving product and front-end engineers a single reference for conditionally rendering nav items without digging into individual route guards.
+
 | Sidebar item | OWNER | MAINTAINER | MANAGER | EXPERT | LEARNER | SUPPORT |
 |---|---|---|---|---|---|---|
 | Overview (/home) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -1193,7 +1211,7 @@ If the user has no Membership, the payer selector hides entirely (no extra UX no
 
 ## 14. Payment legs & the double-entry ledger
 
-This Part is how money is tracked. The core idea is **double-entry** bookkeeping: every rupee that moves is written twice — once as where it came from, once as where it went — and the two always sum to zero, so the books can never silently drift. A **PaymentLeg** is just one slice of how a single payment was funded (card, wallet, invoice, etc.). Every movement of money on the platform is recorded in a **double-entry money journal** alongside the **PaymentLeg** composition model. Understanding this is load-bearing for trusting the numbers. (Detail docs, all under `10-money-and-ledger/`: `money-model-overview`, `chart-of-accounts`, `ledger-and-postings`, `payment-legs`, `ledger-integrity`.)
+This Part is how money is tracked. The core idea is **double-entry** bookkeeping: every rupee that moves is written twice — once as where it came from, once as where it went — and the two always sum to zero, so the books can never silently drift. A **PaymentLeg** is just one slice of how a single payment was funded (card, wallet, invoice, etc.). Every movement of money on the platform is recorded in a **double-entry money journal** alongside the **PaymentLeg** composition model. Understanding this is load-bearing for trusting the numbers. The `10-money-and-ledger/` band holds the full detail in **thirteen docs**, written to be read in order: [money-model-overview](../10-money-and-ledger/01-money-model-overview.md), [chart-of-accounts](../10-money-and-ledger/02-chart-of-accounts.md), [ledger-and-postings](../10-money-and-ledger/03-ledger-and-postings.md), [wallet-and-topups](../10-money-and-ledger/04-wallet-and-topups.md), [booking-to-earnings](../10-money-and-ledger/05-booking-to-earnings.md), [earnings-lifecycle](../10-money-and-ledger/06-earnings-lifecycle.md), [payout-pipeline](../10-money-and-ledger/07-payout-pipeline.md), [invoicing](../10-money-and-ledger/08-invoicing.md), [payment-legs](../10-money-and-ledger/09-payment-legs.md), [refunds](../10-money-and-ledger/10-refunds.md), [disputes](../10-money-and-ledger/11-disputes.md), [payment-webhooks](../10-money-and-ledger/12-payment-webhooks.md), and [ledger-integrity](../10-money-and-ledger/13-ledger-integrity.md). The sections below summarize the load-bearing ideas and link into that band where each concept lives in full.
 
 ### 14.1 The two ledgers
 
@@ -1217,6 +1235,8 @@ The money journal lives in `lib/payments/ledger/post.ts`:
 A Payment is composed of 1+ PaymentLegs. Each leg has a `source` (CARD, REFERRAL_CREDIT, WALLET, INVOICE_ACCRUAL, LICENSE) and an `amountPaise`. Legs sum to `Payment.amount` — invariant enforced at the end of every checkout transaction.
 
 ### 14.3 Leg composition patterns
+
+Reading across a row shows exactly which `PaymentLeg` records are written for each booking scenario and what sum invariant they must satisfy, so you can quickly verify whether a new checkout path produces the correct leg set.
 
 | Scenario | Legs written | Invariant |
 |---|---|---|
@@ -1355,18 +1375,23 @@ Full state table + the supersession chain semantics: [contract-lifecycle](../30-
 
 ---
 
-## 16. Settlement & payouts
+## 16. Settlement, the earnings lifecycle & payouts
 
-### 16.1 Settlement cadence
+Settlement has two halves: an **earnings** half (how a row that owes a consultant or a host-org money is born, held, and released) and a **payout** half (how released rows are swept into a bank transfer). The earnings half has its own state machine and its own doc — [earnings-lifecycle](../10-money-and-ledger/06-earnings-lifecycle.md), summarized in § 16.1 — and the payout half is the pipeline in §§ 16.2–16.4, detailed in [payout-pipeline](../10-money-and-ledger/07-payout-pipeline.md).
 
-Settlement is **T+7 default** (can be contract-configured):
+### 16.1 The earnings lifecycle (`EarningStatus`)
 
-- Consultant completes a session on April 15.
-- Earnings hit `status=HELD` until T+7 (April 22).
-- On April 22, a cron promotes `HELD → READY`.
-- The **weekly** payout batch (`create-payout-batch`, Mondays 20:00 UTC) sweeps READY earnings; `process-payouts` (Mondays 21:00 UTC) dispatches. OWNER/admin can also trigger an off-cycle batch. (Payouts are **weekly**, not monthly — the *invoice* cron is the month-end one.)
+Every booking that owes someone money mints an earnings row — a `ConsultantEarnings` row for the expert and, for canHost orgs, an `OrganizationEarnings` row for the org's revenue share. Both move through one `EarningStatus` machine: **`PENDING → READY → PAID`** on the happy path, with **`HELD`** as a dispute freeze, **`REFUNDED`** as the terminal reversal, and **`PENDING_TRUST`** as a fraud-guard parking state. The full state diagram, the legal-transition guard (`assertEarningStatusTransitionLegal`, which makes `REFUNDED` terminal and lets a `PAID` row move only to `REFUNDED`), and the append-only refund-decrement rule all live in [earnings-lifecycle](../10-money-and-ledger/06-earnings-lifecycle.md).
 
-### 16.2 Payout batch creation
+**`PENDING_TRUST` — the #687 invoice-fraud guard.** When an org that is still `PENDING_VERIFICATION` and funds by INVOICE accrues consultant earnings, those earnings could otherwise be released — and the consultant paid — before the org ever pays its first invoice, leaving the platform exposed if the org disappears. So when the sponsoring org is unverified and has zero `PAID` invoices, the `OrganizationEarnings` row is minted in **`PENDING_TRUST`** instead of `PENDING`. A `PENDING_TRUST` row is invisible to the hold-release cron and can never reach `READY`; the `release-pending-trust-earnings` cron (hourly :30) promotes it to `PENDING` only once the org goes `ACTIVE` or pays its first invoice. (This is also recorded as an ADR — see § 70 and [PENDING_TRUST earnings parking](../70-design-decisions/12-pending-trust-earnings-parking.md).)
+
+**Hold windows.** A new row's hold is **not** "completedAt + 3 days." At mint time `createEarningsFromPayment` sets `holdUntil = now + HOLD_PERIOD_HOURS[appointmentType]`, anchored at the moment of earnings creation (payment-success time), not the appointment's completion time. The per-type windows are **24h** for `CONSULTATION` and `CLASS`, **48h** for `WEBINAR`, and **168h (7 days)** for `SUBSCRIPTION`, with the 24-hour `CONSULTATION` window as the default for an unknown type. The hourly `releaseEarningsFromHold` cron flips every `PENDING` row whose `holdUntil <= now` to `READY`; it never touches `HELD` rows, which are released only by an explicit dispute resolution.
+
+### 16.2 Payout cadence
+
+Once earnings are `READY`, the **weekly** payout batch (`create-payout-batch`, Mondays 20:00 UTC) sweeps them; `process-payouts` (Mondays 21:00 UTC) dispatches. OWNER/admin can also trigger an off-cycle batch. (Payouts are **weekly**, not monthly — the *invoice* cron is the month-end one.)
+
+### 16.3 Payout batch creation
 
 ```mermaid
 flowchart TD
@@ -1385,7 +1410,7 @@ flowchart TD
     Final -->|No| Failed[Update to FAILED + audit PAYOUT_FAILED + alert admin]
 ```
 
-### 16.3 Payout state machine
+### 16.4 Payout state machine
 
 ```mermaid
 stateDiagram-v2
@@ -1400,22 +1425,24 @@ stateDiagram-v2
     CANCELLED --> [*]
 ```
 
-`EarningStatus` (the source rows being settled): `PENDING / HELD / READY / PAID / REFUNDED / PENDING_TRUST`.
+`EarningStatus` (the source rows being settled): `PENDING / PENDING_TRUST / HELD / READY / PAID / REFUNDED` (the lifecycle in § 16.1).
 
-**Live-payout gate.** Real money only leaves the platform when `ENABLE_LIVE_PAYOUTS` is on. With the flag **off** (today's default), the pipeline runs end-to-end but **freezes at `PROCESSING`** — batches are created, claimed, and reconciled, but the gateway dispatch is a no-op, so nothing actually disburses. This is intentional pre-launch: the accounting is exercised without moving funds. The go-live checklist is in [live-payout-go-live-runbook](../50-operations/06-live-payout-go-live-runbook.md).
+**Live-payout gate.** Real money only leaves the platform when `ENABLE_LIVE_PAYOUTS` is on. With the flag **off** (today's default), the pipeline runs end-to-end but a **gated org payout parks at `PENDING`** — batches are created, claimed, and reconciled, but the gateway submission step is frozen, so nothing actually disburses. (Only the gateway *submission* is gated; everything upstream of it runs for real — see [live-payout submission freeze](../70-design-decisions/11-live-payout-submission-freeze.md).) This is intentional pre-launch: the accounting is exercised without moving funds. The go-live checklist is in [live-payout-go-live-runbook](../50-operations/06-live-payout-go-live-runbook.md).
 
-### 16.4 Ledger postings on payout
+### 16.5 Ledger postings on payout
 
 When a payout dispatches, it draws down the payable accrued at booking time:
 
 - **Consultant payout** — `payout:<payoutId>` (kind `PAYOUT`): `Dr CONSULTANT_PAYABLE / Cr CASH + TDS_PAYABLE`.
 - **Org payout** (canHost orgs' revenue share) — `orgpayout:<payoutId>` (kind `ORG_PAYOUT`): `Dr ORG_PAYABLE / Cr CASH + TDS_PAYABLE`.
 
-The TDS leg captures Section 194J withholding; net cash leaves via CASH. Reconcile asserts `ORG_PAYOUT_TOTAL_MISMATCH` if a batch's legs don't sum to the claimed earnings.
+The TDS leg captures professional-services withholding (historically §194J at 10%; from 1-Apr-2026 the same 10% under §393 of the Income-tax Act 2025 — see § 20); net cash leaves via CASH. Reconcile asserts `ORG_PAYOUT_TOTAL_MISMATCH` if a batch's legs don't sum to the claimed earnings.
 
 ---
 
-## 17. Refunds & reversals
+## 17. Refunds, credit notes & disputes
+
+When money has to come *back* — because a learner cancelled, an org overpaid an invoice, or a cardholder filed a chargeback — three engines handle it: the **refund cascade** (a learner- or org-initiated return), **credit notes** (the GST document a refund against an issued invoice requires), and the **dispute machine** (a bank-driven chargeback the platform must contest or accept). The first two are detailed in [refunds](../10-money-and-ledger/10-refunds.md); the third in [disputes](../10-money-and-ledger/11-disputes.md). This section summarizes all three.
 
 ### 17.1 Refund principles
 
@@ -1457,6 +1484,8 @@ sequenceDiagram
 
 ### 17.5 Refund policy matrix
 
+How much is refunded — and how much the consultant keeps — depends on when the cancellation happens relative to the session. The matrix below is the policy applied at refund time.
+
 | Cancellation timing | Refund amount | Consultant earnings |
 |---|---|---|
 | > 24 hours before session | 100% | Reversed (0% to consultant) |
@@ -1464,12 +1493,20 @@ sequenceDiagram
 | No-show by learner | 0% | 100% to consultant (consultant showed up) |
 | No-show by consultant | 100% | 0% + strike |
 
-### 17.6 Refund / credit-note unification (#776)
+### 17.6 The refund cascade & credit-note unification (#776)
 
-Every refund that needs a tax document now routes through one idempotent path. `mintRefundCreditNote` (`lib/payments/operations/refund.ts`) creates a `CreditNote` row with its **own per-org numbering** — independent of the invoice series — so the credit-note sequence is auditable on its own and never collides with invoice numbers.
+Every refund fans out through one function — **`applyRefundCascade(tx, input)`** ([refunds §2](../10-money-and-ledger/10-refunds.md)) — that reverses every downstream money record in a single atomic body: it reverses the `PaymentLeg`s (a WALLET leg credits the org wallet, an unbilled accrual is netted down in place, a paid invoice defers to clawback), releases the `BookingUtilization` engagements, increments the append-only refunded columns on `ConsultantEarnings`/`OrganizationEarnings`, claws back a `COMPLETED` `OrganizationPayout` where one exists, mints a GST credit note for any invoiced portion, and posts a balanced `REFUND` ledger transaction. It is invoked from three trigger paths — the gateway `refund.processed` webhook, the `cascade-refund-earnings` backstop cron (every 15 min), and the in-app refund call — that all converge on the same body.
 
-- **Idempotency.** `Refund.cascadedAt` is the single gate. Exactly one caller flips it from `null` (a conditional `updateMany where cascadedAt: null`); everyone else sees the claim already taken and skips. This stops a retried webhook or a re-run cron from double-cascading earnings reversal or minting duplicate credit notes.
+Every refund that needs a tax document routes through that same idempotent path. The credit note gets its **own per-org numbering** — independent of the invoice series, satisfying CGST Rule 53's separate-series requirement — so the credit-note sequence is auditable on its own and never collides with invoice numbers, and each note links back to its originating `OrganizationInvoice`.
+
+- **Idempotency.** `Refund.cascadedAt` is the single gate. The cascade's first act flips it from `null` to `now()` with a conditional `updateMany where cascadedAt: null`; exactly one caller wins the claim and everyone else short-circuits as a no-op. This stops a retried webhook or a re-run cron from double-cascading earnings reversal or minting duplicate credit notes.
 - **Honesty flag — TDS is NOT reversed.** `TdsAdjustment` is a **schema-only** model. The refund cascade writes **no** tax-adjustment rows: it does not reverse TDS withheld at the original payout. Do not describe TDS-on-refund as live — the table exists for a future wiring, nothing populates it today (🟡). For the regulatory shape of refund/chargeback tax adjustments, see [docs/compliance/05-refund-and-chargeback-tax-adjustments.md](../../compliance/05-refund-and-chargeback-tax-adjustments.md).
+
+### 17.7 Disputes & chargebacks
+
+A refund is something we initiate; a **dispute** is something a cardholder's bank forces on us, and it has its own machine. `DisputeStatus` carries **eight** values in three clusters: the early-warning cluster (`WARNING_NEEDS_RESPONSE`, `WARNING_UNDER_REVIEW`, `WARNING_CLOSED`) models a pre-chargeback fraud alert that can still escalate; the active cluster (`NEEDS_RESPONSE`, `UNDER_REVIEW`) is a live chargeback awaiting our evidence and the bank's review; and the terminal cluster (`WON`, `LOST`, `CHARGE_REFUNDED`) records the verdict and is final — `isLegalDisputeTransition` rejects any outgoing edge so a replayed webhook can never re-drive the side effects.
+
+The subtlety is that the gateway doesn't speak our enum. Razorpay models a dispute along **two independent axes** — a `status` (`open`, `under_review`, `won`, `lost`, `closed`) and a `phase` (`fraud`, `retrieval`, `chargeback`, `pre_arbitration`, `arbitration`) — and our handler (`mapDisputeStatus`) collapses both onto the single `DisputeStatus`. When a dispute opens, the linked earnings are frozen `→ HELD`; a seller-favourable `won` releases them back to `READY`, and a `lost` cascades into an earnings refund plus an org chargeback. Several handler mappings have known gaps (a `closed` event mis-maps to `NEEDS_RESPONSE`; `under_review` and `action_required` are not dispatched) — these are flagged in [disputes §4](../10-money-and-ledger/11-disputes.md), which holds the full state diagram, the status×phase mapping table, and the contest/accept API mechanics.
 
 ---
 ---
@@ -1480,7 +1517,7 @@ This Part walks the six Indian regulations enterprise has to satisfy, one sectio
 
 ## 18. DPDP — India's Data Protection Act
 
-The Digital Personal Data Protection Act, 2023.
+The Digital Personal Data Protection Act, 2023. The Act was passed in 2023, but its **operational duties bind from 13 May 2027** (the DPDP Rules, 2025 set a phased commencement, and the consent/notice/breach-reporting/data-principal-rights obligations carry an 18-month runway from rule notification). We treat that date as the compliance deadline for the consent, export, erasure, and breach machinery below — schema and the easy paths are built today; the remaining manual paths must be automated before it bites.
 
 ### 18.1 What DPDP requires
 
@@ -1491,6 +1528,8 @@ The Digital Personal Data Protection Act, 2023.
 - **Data breach notification (§8).** Report within 72 hours.
 
 ### 18.2 How Familiarise implements DPDP
+
+Each row maps a statutory DPDP obligation to the specific model, route, or cron that satisfies it, making it straightforward to answer a compliance audit question without having to trace through source files.
 
 | Requirement | Implementation |
 |---|---|
@@ -1558,16 +1597,22 @@ For inbound SaaS bought by Familiarise (Claude API, Apple Developer, etc.), we p
 
 Direct tax withheld from consultant payouts.
 
-> **Renumbering watch (verified 2026-06-05).** The **Income-tax Act, 2025** came into force **1 Apr 2026** and consolidates every non-salary TDS provision into a single **Section 393** (keyed by numeric payment codes, the 10xx series); the old alphanumeric citations — 194J, 194C, 195, 206AA — **cease to exist as filing citations** for transactions on/after that date. **Rates and thresholds are unchanged** — only the citation/form taxonomy moved. Our code still *labels* withholding as `194J` etc., so the **filing layer will need a section→payment-code mapping**. This is owned by [docs/compliance/01-tds-overview.md](../../compliance/01-tds-overview.md) — defer to it; the table below keeps the familiar (1961-Act) names purely for reader recognition.
+> **Renumbering watch (verified 2026-06-05).** The **Income-tax Act, 2025** came into force **1 Apr 2026** and consolidates every non-salary TDS provision into a single **Section 393** (keyed by numeric payment codes, the 10xx series); the old alphanumeric citations — 194J, 194C, 195, 194-O, 206AA — **cease to exist as filing citations** for transactions on/after that date. **Rates and thresholds are unchanged** — only the citation/form taxonomy moved. Our code still *labels* withholding as `194J` etc., so the **filing layer will need a section→payment-code mapping**. This is owned by [docs/compliance/01-tds-overview.md](../../compliance/01-tds-overview.md) — defer to it; the table below keeps the familiar (1961-Act) names purely for reader recognition.
 
 ### 20.1 Section applicability (1961-Act names; see compliance/01 for the §393 codes)
+
+Rows cover each consultant category Familiarise encounters, mapping the familiar 1961-Act citation to its Income-tax Act 2025 §393 successor and the applicable withholding rate — the marketplace row (194-O → 0.1%) is the one most likely to surprise engineers used to the standard 10% professional rate.
 
 | Consultant type | Section (old → 2025 Act) | Rate |
 |---|---|---|
 | Resident Indian consultant, professional | 194J → §393(1) Sl.6(iii) | 10% |
 | Resident Indian consultant, non-professional | 194C → §393(1) Sl.6(i) | 1-2% |
+| Marketplace seller (platform-facilitated gross) | 194-O → §393 (e-commerce code) | **0.1%** |
 | Non-resident consultant | 195 → §393(2) Sl.17 (DTAA-dependent) | 5-20% |
-| PAN not provided | 206AA → §397(2) | 20% |
+| PAN not provided (general) | 206AA → §397(2) | 20% |
+| PAN not provided (194-O / marketplace) | 206AA → §397(2) | **5%** |
+
+The marketplace row matters because Familiarise *is* an e-commerce operator facilitating payments to sellers: the **194-O equivalent rate is 0.1%** of gross (not 1%), and under that regime a seller with no PAN is withheld at **5%** under §397(2) (the §206AA reduced rate for 194-O), not the general 20%.
 
 ### 20.2 Current implementation
 
@@ -1661,6 +1706,8 @@ Invoice Reference Number (IRN) is required for B2B invoices above ₹5cr turnove
 
 ### 23.3 Who needs IRN
 
+This two-row lookup maps annual aggregate turnover bands to the IRN obligation, establishing at a glance that the pre-launch cohort falls below the ₹5 crore threshold and is therefore exempt.
+
 | Org turnover | IRN required? |
 |---|---|
 | < ₹5 crore | No (exempt) |
@@ -1683,6 +1730,8 @@ The enterprise-flavored section of `prisma/schema.prisma` is ~1200 lines coverin
 
 ### 24.1 Core identity
 
+The five rows here form the tenant-and-membership foundation that every other enterprise model references via foreign key; `OrgWorkspaceProfile` is lazy-created rather than eagerly seeded, which matters when bootstrapping test fixtures.
+
 | Model | Purpose |
 |---|---|
 | `Organization` | The tenant; canSponsor + canHost + hierarchy |
@@ -1692,6 +1741,8 @@ The enterprise-flavored section of `prisma/schema.prisma` is ~1200 lines coverin
 | `OrgWorkspaceProfile` | Lazy-created for any user creating an org |
 
 ### 24.2 Billing & funding
+
+Eight models cover the full funding and invoicing stack; pay particular attention to the dunning fields on `OrganizationInvoice` and the auto-top-up fields on `BillingAccount`, as these are the operationally sensitive knobs most likely to need tuning in production.
 
 | Model | Purpose |
 |---|---|
@@ -1706,6 +1757,8 @@ The enterprise-flavored section of `prisma/schema.prisma` is ~1200 lines coverin
 
 ### 24.3 Program entitlement
 
+These five models govern the commercial package and its per-member, per-cycle assignment lifecycle; `configLockedAt` and `rolledAt` are the idempotency anchors you should check first whenever a cap or rollover behaves unexpectedly.
+
 | Model | Purpose |
 |---|---|
 | `Program` | The commercial package. `configLockedAt` freezes `LOCKED_PROGRAM_FIELDS` at first assignment; `archivedAt` soft-hides (#777 §B) |
@@ -1716,6 +1769,8 @@ The enterprise-flavored section of `prisma/schema.prisma` is ~1200 lines coverin
 
 ### 24.4 Revenue, earnings, payout
 
+These four models capture the full earnings and settlement chain — from the three-way rate-card split on a session through projected org earnings to the batch payout and the bank account that receives it.
+
 | Model | Purpose |
 |---|---|
 | `RateCard` | 3-way split (integer `shareBps` / `revenueShareBps`; Float `sharePercentage` / `revenueSharePercentage` removed in #772) with effective dates |
@@ -1724,6 +1779,8 @@ The enterprise-flavored section of `prisma/schema.prisma` is ~1200 lines coverin
 | `OrganizationPayoutAccount` | Bank details + compliance fields |
 
 ### 24.5 Compliance
+
+This group of models implements DPDP obligations and HRIS integration; `TdsAdjustment` is schema-final but carries no rows yet, which is the key signal that TDS refund adjustments are deliberately deferred without blocking launch.
 
 | Model | Purpose |
 |---|---|
@@ -1737,6 +1794,8 @@ The enterprise-flavored section of `prisma/schema.prisma` is ~1200 lines coverin
 
 ### 24.6 Identity & SSO
 
+These four models underpin single-sign-on, email-domain routing, and outbound webhook delivery; the `breakGlassUntil` and `previousSecretHash` fields call out the escape-hatch and secret-rotation windows that operators most commonly need to know when something breaks.
+
 | Model | Purpose |
 |---|---|
 | `OrganizationSSOSettings` | Per-org SSO config; `enforceSSO` + `breakGlassUntil` (OWNER-set 1-72h escape window, #779 §E) |
@@ -1745,6 +1804,8 @@ The enterprise-flavored section of `prisma/schema.prisma` is ~1200 lines coverin
 | `WebhookEndpoint` | Per-org outbound webhook target; secret rotation via `secretRotatedAt` + `previousSecretHash` (24h dual-sign grace). Deliveries: `OutboundWebhookDelivery` |
 
 ### 24.7 Audit + ledger
+
+Rows cover the six models that form the immutable audit and double-entry money journal; note that `UsageLedgerEntry` tracks session entitlement consumption and is explicitly not a money model — a distinction that matters for reconciliation.
 
 | Model | Purpose |
 |---|---|
@@ -1847,6 +1908,8 @@ PayoutArrangement: DIRECT | AOR* | EOR*
 
 ### 25.3 Status code conventions
 
+This reference covers every HTTP status code the enterprise API surface returns and the semantic condition it signals, so client authors and API reviewers have a single canonical mapping to check against.
+
 | Code | Meaning |
 |---|---|
 | 200 | Read success |
@@ -1920,6 +1983,8 @@ A `PENDING_VERIFICATION` org that gets rejected isn't a dead end. The admin stam
 - **Serializable:** money-moving transactions (checkout, rate-card bump, payout creation) — prevents phantom reads.
 
 ### 27.2 Race patterns in enterprise
+
+Each row names a concurrent-write scenario that could corrupt money or entitlement state, paired with the specific database-level technique that prevents it — useful when reviewing a new mutation for concurrency safety.
 
 | Pattern | Mitigation |
 |---|---|
@@ -2044,7 +2109,7 @@ These aren't platform cron entries — they're **GitHub Actions workflows** in `
 | `reconcile-pending-refunds` → `jobs/refunds/reconcile-pending-refunds.ts` | every 15 min | Reconcile pending refunds with gateway |
 | `reconcile-ledgers` → `jobs/reconcile/reconcile-ledgers.ts` | 03:45 / 09:15 | Nightly journal reconciliation (§ 14.6) |
 | `create-payout-batch` → `jobs/payouts/create-payout-batch.ts` | Mon 20:00 / Tue 01:30 | Build weekly payout batch |
-| `process-payouts` → `jobs/payouts/process-payouts.ts` | Mon 21:00 / Tue 02:30 | Dispatch payouts — **freezes at PROCESSING** unless `ENABLE_LIVE_PAYOUTS` (§ 16.3) |
+| `process-payouts` → `jobs/payouts/process-payouts.ts` | Mon 21:00 / Tue 02:30 | Dispatch payouts — gated org payout **parks at PENDING** unless `ENABLE_LIVE_PAYOUTS` (§ 16.4) |
 | `reconcile-payout-status` → `jobs/payouts/reconcile-payout-status.ts` | every 6h | Reconcile payout status |
 | `handle-stuck-payouts` → `jobs/payouts/handle-stuck-payouts.ts` | every 4h | Un-stick stalled payouts |
 
@@ -2070,22 +2135,28 @@ These aren't platform cron entries — they're **GitHub Actions workflows** in `
 
 ## 30. Webhooks & idempotency
 
+Inbound gateway webhooks are how the authoritative money state actually arrives — a top-up confirms, a refund processes, a dispute opens — so the ingestion path is hardened against forgery and against the at-least-once delivery every gateway promises. The full pipeline (signature verification, persistence-and-dedup, asynchronous dispatch, and the stuck-event replay path) is documented in [payment-webhooks](../10-money-and-ledger/12-payment-webhooks.md); the essentials are below.
+
 ### 30.1 Webhook handlers
+
+The two rows map each payment gateway to its Route Handler file and the full set of event types it processes, giving you the single lookup you need when tracing an incoming webhook signature failure or a missing state transition.
 
 | Gateway | Handler | Events handled |
 |---|---|---|
 | Razorpay | `app/api/webhooks/razorpay/route.ts` | payment.captured, payment.failed, refund.created, refund.failed, subscription.charged, payout.processed, payout.reversed, dispute.* |
 | Stripe | `app/api/webhooks/stripe/route.ts` | checkout.session.completed, payout.paid, dispute.* |
 
-### 30.2 Idempotency
+### 30.2 Signature verification & idempotency
 
-Every webhook invocation:
+Every inbound webhook is first **signature-verified**: `verifyWebhookSignature` computes `HMAC-SHA256(rawBody, RAZORPAY_WEBHOOK_SECRET)` as hex and compares it with the incoming `x-razorpay-signature` using `crypto.timingSafeEqual`, so the check can't be timed; a mismatch is rejected with HTTP 400 and logged as a tamper/misconfig signal (for `payout.*` events the route re-verifies against `RAZORPAYX_WEBHOOK_SECRET`).
 
-1. Check `WebhookEvent` table for `eventId`.
-2. If found + processed + no-error: skip (already handled).
-3. If found + in-progress > 5min: treat as stale, allow reprocess.
-4. If not found: start processing, write WebhookEvent row with status=IN_PROGRESS.
-5. On completion: update status to PROCESSED or FAILED.
+Money state is then protected against at-least-once delivery at **three independent idempotency gates** (detailed in [payment-webhooks §2](../10-money-and-ledger/12-payment-webhooks.md)):
+
+1. **`WebhookEvent.eventId`** (`@unique`, of the form `eventType:entityId`) — a redelivered event is caught at `logWebhookEvent` and skipped; a failed attempt can be retried, a >5-minute in-progress row is treated as abandoned and re-eligible.
+2. **`Refund.cascadedAt`** — claims the refund side effects so exactly one caller runs the cascade (§ 17.6).
+3. **`LedgerTransaction.idempotencyKey`** — per-flow keys (`topup:<orderId>`, `refund:<refundId>`, `invoicepaid:<invoiceId>`, …) make `postLedgerTxn` a no-op on a duplicate key, so even a handler that runs twice posts money once.
+
+After verification the route persists the event, returns 200 immediately, and dispatches asynchronously; a `sweep-stuck-webhook-events` cron re-drives any row left unprocessed by a mid-callback crash.
 
 ### 30.3 PII scrub
 
@@ -2381,6 +2452,8 @@ Final: `HrisConfig`, `HrisSyncJob`, `HrisEmployeeMap` models exist. Logic stubbe
 
 ### 38.2 Events to wire
 
+Each row is a lifecycle event that should produce an org-scoped bell notification once Novu workflows carry an `organizationId`; reading across a row tells you who receives it and what server-side action fires the send.
+
 | Event | Recipients | Trigger |
 |---|---|---|
 | INVITE_SENT | Invitee (email) | POST /invitations |
@@ -2462,6 +2535,8 @@ Common errors + resolutions.
 
 ### 41.1 Key metrics to track
 
+Rows represent individual signals the on-call engineer should watch; the right column gives the threshold at which an alert should fire, so you can calibrate BetterStack or Grafana rules without guesswork.
+
 | Metric | Alert threshold |
 |---|---|
 | Webhook processing failure rate | > 5% over 5 min |
@@ -2521,6 +2596,8 @@ See `docs/enterprise/50-operations/04-monitoring.md` for suggested BetterStack /
 **FundingSource** — How an org pays: PERSONAL / WALLET / INVOICE / LICENSE.
 
 **GST** — India's Goods and Services Tax (18% on mentorship/consulting).
+
+**Hold window** — The delay before an earnings row promotes `PENDING → READY`, set per appointment type via `HOLD_PERIOD_HOURS` (24h consultation/class, 48h webinar, 168h subscription) and anchored at payment-success time, not `completedAt`. See [earnings-lifecycle](../10-money-and-ledger/06-earnings-lifecycle.md).
 
 **HRIS** — Human Resources Information System (Workday, BambooHR, Rippling).
 
@@ -2584,9 +2661,7 @@ See `docs/enterprise/50-operations/04-monitoring.md` for suggested BetterStack /
 
 **SUPPORT** — MemberRole. Non-billing admin/observer.
 
-**T+7** — Earnings hold period: 7 days before HELD → READY promotion.
-
-**TDS** — Tax Deducted at Source (Section 194J = 10% for professional services).
+**TDS** — Tax Deducted at Source. 10% for professional services to resident Indian consultants — the rate is unchanged, but from 1-Apr-2026 the filing citation is §393 of the Income-tax Act 2025, not the historical §194J.
 
 **Three axes** — Capability / Funding / Entitlement.
 
@@ -2656,7 +2731,17 @@ Ledger recon:     reconcile-ledgers         (03:45 UTC)
 
 ---
 
-## 45. Related docs index
+## 45. Design decisions (ADRs) — and when to read one
+
+The narrative bands document *what* the system does and *how* it does it; the `70-design-decisions/` band documents *why* one design was chosen over its alternatives at the moment the choice was made. An **ADR** (architecture decision record) here is a short, four-part document — **Context** (the forces and the incident that prompted the decision), **Decision** (the choice, with the code or schema that embodies it), **Alternatives considered** (what was rejected and why each lost), and **Consequences** (what we gained, what we pay for it, and when to revisit). Twelve are written and live, indexed in [70-design-decisions/00-README.md](../70-design-decisions/00-README.md).
+
+**When to read one.** Reach for an ADR before proposing a structural change: most "why don't we just…" questions — *why a single double-entry journal instead of three logs* (#772), *why integer paise and basis points*, *why batch payouts instead of streaming*, *why GitHub Actions crons*, *why `PENDING_TRUST` parking* (#687), *why the live-payout freeze gates only the gateway submission* — are already answered, and a change that reverses an ADR should say so explicitly in its PR description. They are pitched at SDE3 (design-and-review) readers; an SDE1 shipping a feature rarely needs them, but anyone touching the shape of money, auth, or webhooks should read the relevant record first.
+
+---
+
+## 46. Related docs index
+
+Each row names a canonical document and summarises the slice of the enterprise system it covers, so you can quickly locate where to read further without having to scan the full `docs/enterprise/` tree.
 
 | Doc | Coverage |
 |---|---|
@@ -2684,6 +2769,11 @@ Ledger recon:     reconcile-ledgers         (03:45 UTC)
 | `docs/enterprise/10-money-and-ledger/02-chart-of-accounts.md` | Ledger account kinds |
 | `docs/enterprise/10-money-and-ledger/03-ledger-and-postings.md` | Ledger rules + canonical postings |
 | `docs/enterprise/10-money-and-ledger/13-ledger-integrity.md` | Reconciliation + finding codes |
+| `docs/enterprise/10-money-and-ledger/06-earnings-lifecycle.md` | `EarningStatus` machine, `PENDING_TRUST`, hold windows |
+| `docs/enterprise/10-money-and-ledger/10-refunds.md` | `applyRefundCascade`, credit notes, TDS-on-refund |
+| `docs/enterprise/10-money-and-ledger/11-disputes.md` | 8-state dispute machine, Razorpay status×phase model |
+| `docs/enterprise/10-money-and-ledger/12-payment-webhooks.md` | Inbound webhook signature + idempotency |
+| `docs/enterprise/70-design-decisions/00-README.md` | ADR band index (12 records) |
 | `docs/enterprise/60-scenarios-and-verdicts/02-harness-verdict.md` | Evaluation harness |
 | `docs/enterprise/10-money-and-ledger/09-payment-legs.md` | PaymentLeg detail |
 | `docs/enterprise/50-operations/01-api-reference.md` | Every API route |
@@ -2701,7 +2791,7 @@ Ledger recon:     reconcile-ledgers         (03:45 UTC)
 
 ---
 
-## 46. FAQ (40 questions answered)
+## 47. FAQ (40 questions answered)
 
 ### Setup & onboarding
 
@@ -2783,7 +2873,7 @@ A: Program = entitlement package for org members. Plan = consultant's public off
 ### Payouts & earnings
 
 **Q24: When do consultants get paid?**
-A: T+7 hold (HELD → READY), then the **weekly** Monday payout batch sweeps READY earnings. Real disbursement only happens when `ENABLE_LIVE_PAYOUTS` is on; pre-launch it freezes at PROCESSING (§ 16.3).
+A: Each earnings row holds for `HOLD_PERIOD_HOURS[appointmentType]` — 24h for a consultation/class, 48h for a webinar, 168h (7 days) for a subscription — anchored at payment-success (earnings-creation) time, after which `PENDING → READY`. The **weekly** Monday payout batch then sweeps READY earnings. Real disbursement only happens when `ENABLE_LIVE_PAYOUTS` is on; pre-launch a gated org payout parks at PENDING (§ 16.4). See [earnings-lifecycle](../10-money-and-ledger/06-earnings-lifecycle.md).
 
 **Q25: What if consultant's bank account is invalid?**
 A: Payout fails; admin alerted; consultant notified; earnings held until resolved.
@@ -2861,4 +2951,4 @@ This doc is intentionally comprehensive and long. Keep it as the **one** go-to f
 
 ---
 
-_End of document. 46 sections across 9 parts. Next review: 2026-09-05 (quarterly)._
+_End of document. 47 sections across 9 parts. Next review: 2026-09-05 (quarterly)._
