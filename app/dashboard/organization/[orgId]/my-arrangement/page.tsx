@@ -73,6 +73,16 @@ export default async function MyArrangementPage({
       consultantProfileId: member.consultantProfileId,
     });
 
+  // Mirror of the learner-side /my-program fix: deep-link to the
+  // consultant's own /appointments tab (where the real Stream Join
+  // button lives — see AppointmentsTab.tsx). /home has no per-session
+  // join, so linking there from "Join now" was a dead end. Carry
+  // ?orgScope=<orgId> so future filter work on the consultant
+  // appointments page can scope correctly.
+  const appointmentsHref = member.consultantProfileId
+    ? `/dashboard/consultant/${member.consultantProfileId}/appointments?orgScope=${orgId}`
+    : `/dashboard?orgScope=${orgId}`;
+
   return (
     <div className="space-y-6">
       <header>
@@ -128,7 +138,7 @@ export default async function MyArrangementPage({
                           dashboard). Gate the link to the 10-min window. */}
                       {s.joinable ? (
                         <Link
-                          href={`/dashboard/consultant/${member.consultantProfileId}/home`}
+                          href={appointmentsHref}
                           className="inline-flex rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground"
                         >
                           Join now
@@ -146,10 +156,7 @@ export default async function MyArrangementPage({
           </div>
           <p className="mt-2 text-xs text-muted-foreground">
             Sessions you host under {access.org.name}. Join from your{" "}
-            <Link
-              href={`/dashboard/consultant/${member.consultantProfileId}/home`}
-              className="underline text-primary"
-            >
+            <Link href={appointmentsHref} className="underline text-primary">
               consultant dashboard
             </Link>{" "}
             when the room opens.
