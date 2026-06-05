@@ -108,4 +108,4 @@ bookings require an upfront commitment (a signed contract or a deposit)
 that itself constitutes sufficient trust — at which point the accrual-time
 gate could key off that commitment instead of verification/first-payment,
 or be removed if the commitment makes the ghost scenario impossible. Until
-invoice funding can ghost, the parking state stays.
+invoice-funded organizations can no longer ghost, the parking state stays.

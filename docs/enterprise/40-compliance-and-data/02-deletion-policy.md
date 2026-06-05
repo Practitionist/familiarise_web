@@ -179,7 +179,7 @@ seven days of expiry.
 > ahead of that date by choice; the runway is the build window, not a
 > reason to defer. (Source: DPDP Rules 2025 Rule 1(4),
 > https://www.dpdpa.com/dpdparules/rule1.html.)
-> Authoritative: `docs/compliance/08-dpdp-and-privacy.md`.
+> Authoritative: [docs/compliance/08-dpdp-and-privacy.md](../../compliance/08-dpdp-and-privacy.md).
 
 #### What gets scrubbed (canonical reference)
 

@@ -98,7 +98,7 @@ It is worth stating precisely what the law does and does not demand. Rule 46(b) 
 
 > 🟡 **Gap:** The `lib/compliance/irp.ts` header says e-invoicing is mandatory "AATO > ₹5 Cr (since 2017-18)" and uses `>` rather than `≥`. The ₹5 crore mandate is since 1 August 2023 (2017-18 is only the AATO look-back base year), and the thresholds are inclusive. Cosmetic comment fix. (No issue filed yet.)
 
-**Authoritative:** `docs/compliance/02-gst-overview.md`.
+**Authoritative:** [docs/compliance/02-gst-overview.md](../../compliance/02-gst-overview.md).
 
 ## 2. TDS (tax withheld at payout)
 
@@ -122,7 +122,7 @@ When a payout is refunded after TDS has been withheld and deposited, the excess 
 
 > 🟡 **Gap:** `TdsAdjustment` is unwired (#778 §D), its `reportedInForm26Q` flag is a legacy label (the concept maps to Form 140 for FY 2026-27+), and the FVU/quarterly-return export — where the §393-code translation and Form 140/144/131 naming belong — is deferred (#778 §F). The `194J` rate is a flat 10% and does not model the technical-2% versus professional-10% split that §393 now exposes as distinct payment codes; this is a pre-existing withholding nuance, not a 2025-Act regression. (Tracked under #778; FVU export has no separate issue.)
 
-**Authoritative:** `docs/compliance/01-tds-overview.md`, `docs/compliance/04-tds-quarterly-filings.md`, `docs/compliance/05-refund-and-chargeback-tax-adjustments.md`.
+**Authoritative:** [docs/compliance/01-tds-overview.md](../../compliance/01-tds-overview.md), [docs/compliance/04-tds-quarterly-filings.md](../../compliance/04-tds-quarterly-filings.md), [docs/compliance/05-refund-and-chargeback-tax-adjustments.md](../../compliance/05-refund-and-chargeback-tax-adjustments.md).
 
 ## 3. MSME (15/45-day payment clearance)
 
@@ -142,7 +142,7 @@ The revised Udyam thresholds (S.O. 1364(E), effective 1 April 2025) are Micro �
 
 > 🟡 **Gap:** `computeMsmePaymentDeadline` keys the deadline off `invoiceDate`, but §15 keys off acceptance / deemed acceptance. For rendered consulting services these effectively coincide (service rendered ≈ accepted), so invoice date is a defensible conservative proxy, but it is a proxy. The §16 interest is documented nowhere and not computed; the cron only alerts. Every "43B(h)" label in code and alert copy should be updated to read "43B(h) / §37(2)(g) (Income-tax Act 2025)" before the first filing covering a payment on or after 1 April 2026. (No issue filed yet.)
 
-**Authoritative:** `docs/compliance/03-msme-43b-h.md`.
+**Authoritative:** [docs/compliance/03-msme-43b-h.md](../../compliance/03-msme-43b-h.md).
 
 ## 4. DPDP 2023 (consent, erasure, retention, breach)
 
@@ -164,7 +164,7 @@ The Digital Personal Data Protection Act 2023, with the **DPDP Rules 2025** noti
 
 > 🟡 **Gap (self-serve consumer rights).** Per-data-principal self-serve access (`/api/me/*`) and correction endpoints are missing, and there is no published grievance officer or intake for the 90-day Rule 14(3) ceiling — the one hard statutory clock. The org-scoped export and admin-driven erasure cover the operator and tenant paths today. (Tracked under #701.)
 
-**Authoritative:** `docs/compliance/08-dpdp-and-privacy.md`.
+**Authoritative:** [docs/compliance/08-dpdp-and-privacy.md](../../compliance/08-dpdp-and-privacy.md).
 
 ### Compliance-domain entity map
 
@@ -249,10 +249,10 @@ The remaining statutory surfaces touch enterprise more lightly; each has its own
 
 | Topic | Enterprise hook | Authoritative |
 | --- | --- | --- |
-| RBI PA / payment architecture | wallet is a closed-system prepaid liability, not custody; payouts via provider float | `docs/compliance/10-rbi-pa-and-payment-architecture.md` |
-| Cross-border (Sec 195 → §393(2), 15CA/CB) | `OrganizationPayout.form15caPartCRef` / `form15cbRef` (schema-final, stubbed) | `docs/compliance/07-cross-border-flows.md` |
-| Consumer protection / grievance | refund SLA, grievance officer (48h ack / one-month redress) | `docs/compliance/09-consumer-protection-and-grievance.md` |
-| Compliance calendar and roadmap | recurring filing cadence | `docs/compliance/12-india-compliance-calendar.md`, `docs/compliance/13-implementation-roadmap.md` |
+| RBI PA / payment architecture | wallet is a closed-system prepaid liability, not custody; payouts via provider float | [docs/compliance/10-rbi-pa-and-payment-architecture.md](../../compliance/10-rbi-pa-and-payment-architecture.md) |
+| Cross-border (Sec 195 → §393(2), 15CA/CB) | `OrganizationPayout.form15caPartCRef` / `form15cbRef` (schema-final, stubbed) | [docs/compliance/07-cross-border-flows.md](../../compliance/07-cross-border-flows.md) |
+| Consumer protection / grievance | refund SLA, grievance officer (48h ack / one-month redress) | [docs/compliance/09-consumer-protection-and-grievance.md](../../compliance/09-consumer-protection-and-grievance.md) |
+| Compliance calendar and roadmap | recurring filing cadence | [docs/compliance/12-india-compliance-calendar.md](../../compliance/12-india-compliance-calendar.md), [docs/compliance/13-implementation-roadmap.md](../../compliance/13-implementation-roadmap.md) |
 
 ---
 

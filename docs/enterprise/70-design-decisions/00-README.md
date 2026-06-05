@@ -27,7 +27,7 @@ All twelve ADRs below are written and live (#793); this index is the authoritati
 |---|---|---|
 | 01 | [Double-entry journal over three logs](01-double-entry-over-three-logs.md) | One balanced `LedgerTransaction`/`LedgerEntry` journal replaced `FundingLedgerEntry`, `WalletEntry`, and `SettlementLedgerEntry` (#772). |
 | 02 | [Integer paise and basis points](02-integer-paise-and-basis-points.md) | All money is integer paise and all splits are integer basis points, so no float ever touches a balance. |
-| 03 | [Deterministic ledger-account IDs](03-deterministic-ledger-account-ids.md) | Ledger accounts use deterministic composite IDs (`kind\|org\|consultant\|currency`) instead of UUIDs (#783). |
+| 03 | [Deterministic ledger-account IDs](03-deterministic-ledger-account-ids.md) | Ledger accounts use deterministic composite IDs (<code>kind&#124;org&#124;consultant&#124;currency</code>) instead of UUIDs (#783). |
 | 04 | [Batch payouts over streaming](04-batch-payouts-over-streaming.md) | Earnings settle in periodic idempotent batches rather than per-earning transfers. |
 | 05 | [GitHub Actions crons](05-github-actions-crons.md) | Scheduled jobs run as GitHub Actions invoking `npx tsx jobs/**` directly (with `CRON_SECRET`-gated routes as a manual fallback) rather than Netlify scheduled functions. |
 | 06 | [Typed Membership over BetterAuth Member](06-typed-membership-over-betterauth-member.md) | Every permission gate reads the typed `Membership` row, never BetterAuth's own member table. |

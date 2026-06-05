@@ -98,13 +98,21 @@ classDiagram
     rank = 20
     consumes services
   }
-  MAINTAINER --|> OWNER
-  BILLING_ADMIN --|> MAINTAINER
-  MANAGER --|> BILLING_ADMIN
-  EXPERT --|> MANAGER
-  SUPPORT --|> EXPERT
-  LEARNER --|> SUPPORT
+  OWNER --|> MAINTAINER
+  OWNER --|> BILLING_ADMIN
+  MAINTAINER --|> MANAGER
+  BILLING_ADMIN --|> MANAGER
+  MANAGER --|> EXPERT
+  EXPERT --|> SUPPORT
+  SUPPORT --|> LEARNER
 ```
+
+The generalization arrows point from the broader role to the narrower one it
+extends: `OWNER` is both a `MAINTAINER` and a `BILLING_ADMIN`, and those two
+governance-orthogonal roles each extend `MANAGER`, so `OWNER` inherits every
+capability on both branches. `BILLING_ADMIN` and `MAINTAINER` are siblings, not
+a single rung — which is why the finance surface is gated by an explicit
+disjunction rather than by rank, as the note below explains.
 
 The numeric order of the ladder is only a capability partial-order, and it is not
 the gate for the finance surface. As the next sections explain, `BILLING_ADMIN`
@@ -497,8 +505,10 @@ hunting for the URL.
 ## Related docs
 
 The [organization-lifecycle](05-organization-lifecycle.md) doc describes what a
-membership looks like in each org status, and the `expert-lifecycle` doc explains
+membership looks like in each org status, and the
+[expert-lifecycle](../30-programs-and-lifecycle/03-expert-lifecycle.md) doc explains
 how the EXPERT role gets populated. The
 [sso-and-authentication](../20-iam-and-security/01-sso-and-authentication.md) doc
-covers `defaultRoleForAutoJoin` on `OrganizationSSOSettings`, and the API reference
+covers `defaultRoleForAutoJoin` on `OrganizationSSOSettings`, and the
+[API reference](../50-operations/01-api-reference.md)
 carries the exhaustive table of the audit actions each route emits.

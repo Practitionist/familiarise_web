@@ -142,11 +142,18 @@ export async function createOrReprovisionScimUser(
     });
 
     if (existingMembership) {
+      const nextStatus = active ? "ACTIVE" : "SUSPENDED";
+      // #789 review — only invalidate the session when the role or status
+      // actually moves, so an idempotent reprovision (the common IdP heartbeat)
+      // doesn't pay a sessionGeneration write + forced client refetch each time.
+      const membershipChanged =
+        existingMembership.role !== targetRole ||
+        existingMembership.status !== nextStatus;
       const updated = await tx.membership.update({
         where: { id: existingMembership.id },
         data: {
           role: targetRole,
-          status: active ? "ACTIVE" : "SUSPENDED",
+          status: nextStatus,
           externalScimId:
             externalId ?? existingMembership.externalScimId ?? null,
           consulteeProfileId: roleEffects.consulteeProfileId,
@@ -154,11 +161,13 @@ export async function createOrReprovisionScimUser(
           payoutRecipient: roleEffects.payoutRecipient,
         },
       });
-      // #789 — an IdP-driven role change or deactivation must invalidate the
-      // user's cached session memberships, same as the in-app member routes;
-      // otherwise a SCIM-suspended user keeps a stale active membership in
-      // their session payload until the cookie cache lapses.
-      await bumpUserSessionGeneration(tx, user.id);
+      // An IdP-driven role change or deactivation must invalidate the user's
+      // cached session memberships, same as the in-app member routes; otherwise
+      // a SCIM-suspended user keeps a stale active membership in their session
+      // payload until the cookie cache lapses.
+      if (membershipChanged) {
+        await bumpUserSessionGeneration(tx, user.id);
+      }
       await tx.orgAuditLog.create({
         data: {
           organizationId,
@@ -166,7 +175,12 @@ export async function createOrReprovisionScimUser(
           category: "SYSTEM",
           action: AUDIT_ACTIONS.SYSTEM.SCIM_USER_UPDATED,
           description: `SCIM: updated ${emailLower} (role=${targetRole}, active=${active})`,
-          details: { userName: emailLower, role: targetRole, active, groupNames },
+          details: {
+            userName: emailLower,
+            role: targetRole,
+            active,
+            groupNames,
+          },
         },
       });
       return {
@@ -190,6 +204,9 @@ export async function createOrReprovisionScimUser(
         payoutRecipient: roleEffects.payoutRecipient,
       },
     });
+    // #789 review — a newly provisioned membership must show up in the user's
+    // session immediately if they already have a live session in another org.
+    await bumpUserSessionGeneration(tx, user.id);
 
     await tx.orgAuditLog.create({
       data: {

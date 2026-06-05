@@ -138,14 +138,14 @@ Every row here represents a condition where money integrity, subscription contin
 
 | Alert | Condition | Runbook |
 |-------|-----------|---------|
-| Webhook queue backup | `count(webhook.razorpay.received) - count(webhook.razorpay.processed)` > 50 for 5 min | `03-runbooks.md#-webhook-handler-is-backed-up-razorpay-or-stripe` |
-| Ledger reconciler failing | `reconcile.completed` with `ok=false` in the last 24h | `03-runbooks.md#-ledger-reconciler-flagged-discrepancies` |
+| Webhook queue backup | `count(webhook.razorpay.received) - count(webhook.razorpay.processed)` > 50 for 5 min | `03-runbooks.md#webhook-handler-is-backed-up-razorpay-or-stripe` |
+| Ledger reconciler failing | `reconcile.completed` with `ok=false` in the last 24h | `03-runbooks.md#ledger-reconciler-flagged-discrepancies` |
 | Wallet balance drift | any `reconcile.finding` with `kind=WALLET_BALANCE_DRIFT` | Same |
 | Subscription cron crash | `subs.invoice.created` count = 0 for 2 consecutive days while `BillingSubscription` rows with `nextInvoiceDate < now()` exist | N/A — page SRE |
-| HMAC verification failing | `WEBHOOK`/WARN `SystemEvent` ("HMAC verification failed") rate > 1/min | `03-runbooks.md#-rotating-razorpay-credentials` / check LB stripping headers |
-| Reconcile/payout crash | `RECONCILE` or `PAYOUT` `SystemEvent` with `severity=ERROR` (Better Stack sink) | `03-runbooks.md#-ledger-reconciler-flagged-discrepancies` |
-| Cycle engine stalled | `ProgramAssignment` with `status=ACTIVE`, `rolledAt=null`, `periodEnd < now() - 24h` count > 0 | `03-runbooks.md#-cycle-engine-rollover-failed-assignment-stuck-un-rolled` |
-| Contract auto-renew stalled | `Contract` with `autoRenew=true`, `status=ACTIVE`, `autoRenewedAt=null`, `effectiveTo < now() - 1h` count > 0 | `03-runbooks.md#-contract-auto-renew-failed` |
+| HMAC verification failing | `WEBHOOK`/WARN `SystemEvent` ("HMAC verification failed") rate > 1/min | `03-runbooks.md#rotating-razorpay-credentials` / check LB stripping headers |
+| Reconcile/payout crash | `RECONCILE` or `PAYOUT` `SystemEvent` with `severity=ERROR` (Better Stack sink) | `03-runbooks.md#ledger-reconciler-flagged-discrepancies` |
+| Cycle engine stalled | `ProgramAssignment` with `status=ACTIVE`, `rolledAt=null`, `periodEnd < now() - 24h` count > 0 | `03-runbooks.md#cycle-engine-rollover-failed-assignment-stuck-un-rolled` |
+| Contract auto-renew stalled | `Contract` with `autoRenew=true`, `status=ACTIVE`, `autoRenewedAt=null`, `effectiveTo < now() - 1h` count > 0 | `03-runbooks.md#contract-auto-renew-failed` |
 
 ### Warning (Slack, no page)
 

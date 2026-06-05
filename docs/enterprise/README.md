@@ -53,9 +53,9 @@ This path gives you the system shape, the role model, and just enough of the mon
 This path makes you productive inside any one band and safe at its boundaries with the others.
 
 1. Everything in the SDE1 path.
-2. All of [`10-money-and-ledger/`](#money--ledger--10-money-and-ledger) in order — the money story only makes sense read front to back.
-3. All of [`20-iam-and-security/`](#iam--sso--security--20-iam-and-security) — SSO, JIT, SCIM, rate limiting, headers.
-4. All of [`30-programs-and-lifecycle/`](#programs--dashboard--discovery--lifecycle--30-programs-and-lifecycle) — programs are where the commercial terms live.
+2. All of [`10-money-and-ledger/`](10-money-and-ledger/01-money-model-overview.md) in order — the money story only makes sense read front to back.
+3. All of [`20-iam-and-security/`](20-iam-and-security/01-sso-and-authentication.md) — SSO, JIT, SCIM, rate limiting, headers.
+4. All of [`30-programs-and-lifecycle/`](30-programs-and-lifecycle/01-concurrency-and-idempotency.md) — programs are where the commercial terms live.
 5. [compliance map](40-compliance-and-data/01-compliance-dpdp-gst-tds-msme.md), [deletion-policy](40-compliance-and-data/02-deletion-policy.md), [data-export](40-compliance-and-data/03-data-export.md), and [outbound-webhooks](40-compliance-and-data/04-outbound-webhooks.md).
 6. Re-read [concurrency-and-idempotency](30-programs-and-lifecycle/01-concurrency-and-idempotency.md) after the money band — the idempotency keys will mean more the second time.
 
@@ -78,7 +78,7 @@ This path covers the whole surface, the audit history, and the regulatory rails 
 2. [complete-guide](explainers/complete-guide.md) — the full narrative, front to back.
 3. [compliance map](40-compliance-and-data/01-compliance-dpdp-gst-tds-msme.md) together with the authoritative rule set in [`docs/compliance/`](../compliance/00-overview.md).
 4. [live-payout-go-live-runbook](50-operations/06-live-payout-go-live-runbook.md) — the one flag flip with real-money consequences.
-5. All of [`60-scenarios-and-verdicts/`](#scenarios--verdict--partners--60-scenarios-and-verdicts) — the worked scenarios and the honest ✅/🟡/🔴 verdict grid.
+5. All of [`60-scenarios-and-verdicts/`](60-scenarios-and-verdicts/01-scenarios-and-examples.md) — the worked scenarios and the honest ✅/🟡/🔴 verdict grid.
 6. [readiness-audit](90-audits/01-readiness-audit.md) and [simplification-proposal](90-audits/04-simplification-proposal.md) — where the system stands and what could be cut.
 
 ---

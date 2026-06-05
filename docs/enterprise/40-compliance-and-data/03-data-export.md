@@ -34,7 +34,7 @@ emails the requester with a 7-day signed-URL link.
 > after the 13 November 2025 notification; the intervening runway is the
 > build window, and the `OrgDataExportJob` schema is already in place.
 > (Source: DPDP Rules 2025 Rule 14, https://www.dpdpa.com/dpdparules/rule14.html;
-> commencement Rule 1(4).) Authoritative: `docs/compliance/08-dpdp-and-privacy.md`.
+> commencement Rule 1(4).) Authoritative: [docs/compliance/08-dpdp-and-privacy.md](../../compliance/08-dpdp-and-privacy.md).
 
 ## Schema
 

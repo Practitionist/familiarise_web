@@ -42,8 +42,10 @@ export function fitPrefixToRule46(
 ): string {
   const budget = GST_DOC_NUMBER_MAX_LEN - nonPrefixLength;
   // The non-prefix segments already fit comfortably for both our formats, so
-  // the budget is always positive; guard against an empty prefix regardless.
-  return budget >= 1 ? prefix.slice(0, budget) : prefix.slice(0, 1);
+  // the budget is always positive. If it were ever zero or negative we drop the
+  // prefix entirely rather than keep one character, which would push the total
+  // back over the 16-character cap (#789 review).
+  return budget >= 1 ? prefix.slice(0, budget) : "";
 }
 
 export function indianFiscalYear(d: Date): number {

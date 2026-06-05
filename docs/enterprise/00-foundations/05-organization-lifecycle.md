@@ -475,5 +475,5 @@ flips also gate status mutations, since an org cannot disable `canSponsor` while
 still holds a non-zero wallet balance. The
 [sso-and-authentication](../20-iam-and-security/01-sso-and-authentication.md) doc
 covers SSO enforcement for `PENDING_VERIFICATION` orgs, and
-[funding-and-programs](03-funding-and-programs.md) describes the program subtypes
+[programs](../30-programs-and-lifecycle/02-programs.md) describes the program subtypes
 that sit behind this lifecycle.

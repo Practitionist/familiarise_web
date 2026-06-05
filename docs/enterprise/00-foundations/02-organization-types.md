@@ -187,7 +187,7 @@ sources that sit on the sponsor side. The
 [roles-and-permissions](04-roles-and-permissions.md) doc explains the role ladder,
 which is the same regardless of capability; whether a member is an expert or a
 learner is controlled through their `Membership` row rather than through the org's
-capability flags. The dashboard-pages reference describes which pages render for
+capability flags. The [dashboard-pages](../30-programs-and-lifecycle/04-dashboard-pages.md) reference describes which pages render for
 which capability, and
 [scenarios-and-examples](../60-scenarios-and-verdicts/01-scenarios-and-examples.md)
 walks four end-to-end worked cases.

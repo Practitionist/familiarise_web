@@ -78,7 +78,10 @@ export type RefundResult = {
 };
 
 export class RefundValidationError extends Error {
-  constructor(message: string, public code: string) {
+  constructor(
+    message: string,
+    public code: string,
+  ) {
     super(message);
     this.name = "RefundValidationError";
   }
@@ -206,9 +209,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
         _sum: { amountPaise: true },
       });
       const remainingNow =
-        payment.amount -
-        refundedNow -
-        (chargedBackNow._sum.amountPaise ?? 0);
+        payment.amount - refundedNow - (chargedBackNow._sum.amountPaise ?? 0);
       if (requested > remainingNow) {
         throw new RefundValidationError(
           `Race-loss: refund amount ${requested} exceeds refundable ${remainingNow} on payment ${input.paymentId}`,
@@ -353,10 +354,12 @@ export async function applyRefundCascade(
   let legsReversed = 0;
   // legAmounts holds only positive legs — LICENSE/zero-value legs are excluded
   // here so they never skew the proportional split.
-  const legAmounts: Array<{ leg: (typeof payment.legs)[number]; reverse: number }> =
-    payment.legs
-      .filter((l) => l.amountPaise > 0) // negative refund legs already in place
-      .map((leg) => ({ leg, reverse: proportion(leg.amountPaise) }));
+  const legAmounts: Array<{
+    leg: (typeof payment.legs)[number];
+    reverse: number;
+  }> = payment.legs
+    .filter((l) => l.amountPaise > 0) // negative refund legs already in place
+    .map((leg) => ({ leg, reverse: proportion(leg.amountPaise) }));
 
   if (legAmounts.length > 0) {
     const totalAssigned = legAmounts.reduce((a, l) => a + l.reverse, 0);
@@ -462,7 +465,9 @@ export async function applyRefundCascade(
         ? u.engagementsConsumed
         : Math.max(
             1,
-            Math.ceil((u.engagementsConsumed * input.amountPaise) / payment.amount),
+            Math.ceil(
+              (u.engagementsConsumed * input.amountPaise) / payment.amount,
+            ),
           );
     await reverseBookingUtilization(tx, {
       paymentId: payment.id,
@@ -537,7 +542,15 @@ export async function applyRefundCascade(
     const orgShareRev = proportion(orgEarn.orgSharePaise);
     if (orgShareRev <= 0) continue;
 
-    const newRefunded = orgEarn.refundedAmountPaise + orgShareRev;
+    // #789 review — cap at the org share, mirroring the ConsultantEarnings
+    // Math.min above. A second reversal against the same row (e.g. an app refund
+    // followed by a lost-dispute chargeback that mints a fresh Refund) would
+    // otherwise inflate refundedAmountPaise past orgSharePaise and drive the
+    // payout readyAmount negative, blocking the whole batch.
+    const newRefunded = Math.min(
+      orgEarn.orgSharePaise,
+      orgEarn.refundedAmountPaise + orgShareRev,
+    );
     // Fully refunded when the org share is exhausted — its sole refundable
     // portion (platform fee + consultant share are not org receivables).
     const fully = newRefunded >= orgEarn.orgSharePaise;
@@ -864,7 +877,8 @@ export async function mintRefundCreditNote(
   const invoicedReverse = payment.legs
     .filter(
       (l) =>
-        l.source === "INVOICE_ACCRUAL" || l.source === "OVERAGE_INVOICE_ACCRUAL",
+        l.source === "INVOICE_ACCRUAL" ||
+        l.source === "OVERAGE_INVOICE_ACCRUAL",
     )
     .reduce((s, l) => s + Math.max(proportion(l.amountPaise), 0), 0);
   if (invoicedReverse <= 0) return { creditNoteId: null };

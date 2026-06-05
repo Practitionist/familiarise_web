@@ -305,13 +305,13 @@ export async function processRazorpayWebhookEvent(
         break;
       }
 
-      // RazorpayX Payout events
+      // RazorpayX Payout events. #789 — payout.failed was previously dropped to
+      // `default` even though handleRazorpayPayoutWebhook + markOrgPayoutFailed
+      // already handle it, leaving a failed org payout stuck in PROCESSING with
+      // earnings unreleased; it is now routed alongside the other terminal events.
       case "payout.processed":
       case "payout.reversed":
       case "payout.rejected":
-      // #789 — payout.failed was dropped to `default` even though
-      // handleRazorpayPayoutWebhook + markOrgPayoutFailed already handle it,
-      // leaving a failed org payout stuck in PROCESSING with earnings unreleased.
       case "payout.failed":
       case "payout.queued":
       case "payout.pending":
