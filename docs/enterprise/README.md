@@ -22,7 +22,7 @@ The flowchart below routes you from "new developer" to the band that owns your a
 flowchart LR
   START([new developer]) --> OV["00-foundations/<br/>overview · org-types · funding-and-programs"]
   OV --> PATH{your area?}
-  PATH -->|money / ledger| MONEY["10-money-and-ledger/<br/>money-model · chart-of-accounts · postings · wallet<br/>booking→earnings · payouts · invoicing · payment-legs · integrity"]
+  PATH -->|money / ledger| MONEY["10-money-and-ledger/<br/>money-model · chart-of-accounts · postings · wallet<br/>booking→earnings · earnings-lifecycle · payouts · invoicing<br/>payment-legs · refunds · disputes · payment-webhooks · integrity"]
   PATH -->|identity / SSO| IAM["roles-and-permissions (00-foundations/)<br/>20-iam-and-security/<br/>sso · jit · scim · rate-limiting · security-headers"]
   PATH -->|programs / app| PROG["30-programs-and-lifecycle/<br/>concurrency · programs · expert-lifecycle<br/>dashboard · discovery · feature-flags<br/>contract-lifecycle · cycle-engine"]
   PATH -->|compliance / data| COMP["40-compliance-and-data/<br/>compliance · deletion · data-export<br/>webhooks · workspace-prefs · integrations"]
@@ -90,7 +90,7 @@ The table below lists every band in reading order, with the documents each one c
 | Band folder | Section | Docs |
 | --- | --- | --- |
 | `00-foundations/` | **Foundations** | overview, org types, funding & programs, roles, lifecycle, hierarchy |
-| `10-money-and-ledger/` | **Money & ledger** | money model, chart of accounts, postings, wallet, booking→earnings, earnings lifecycle, payouts, invoicing, payment legs, integrity |
+| `10-money-and-ledger/` | **Money & ledger** | money model, chart of accounts, postings, wallet, booking→earnings, earnings lifecycle, payouts, invoicing, payment legs, refunds, disputes, payment webhooks, integrity |
 | `20-iam-and-security/` | **IAM / SSO / security** | SSO, JIT, SCIM, rate-limiting, security headers |
 | `30-programs-and-lifecycle/` | **Programs / dashboard / discovery / lifecycle** | concurrency & idempotency, programs, experts, dashboard, discovery, feature flags, contract lifecycle, cycle engine & rollover |
 | `40-compliance-and-data/` | **Compliance / integrations / data** | compliance map, deletion, data export, outbound webhooks, workspace prefs, cross-cutting integrations |
@@ -131,6 +131,9 @@ This band tells the money story front to back: how value enters (wallet, invoice
 | 07 | [payout-pipeline](10-money-and-ledger/07-payout-pipeline.md) | earnings roll-up → payout, RazorpayX states, TDS/MSME, `ORG_PAYOUT` |
 | 08 | [invoicing](10-money-and-ledger/08-invoicing.md) | GST, IRN, PO match, `ORG_RECEIVABLE`, refunds |
 | 09 | [payment-legs](10-money-and-ledger/09-payment-legs.md) | stackable funding legs → ledger debits |
+| 10 | [refunds](10-money-and-ledger/10-refunds.md) | `applyRefundCascade`, gateway refund mechanics, credit notes |
+| 11 | [disputes](10-money-and-ledger/11-disputes.md) | `DisputeStatus` machine, evidence/contest, lost-dispute reversal |
+| 12 | [payment-webhooks](10-money-and-ledger/12-payment-webhooks.md) | inbound gateway events, signature verify, idempotency |
 | 13 | [ledger-integrity](10-money-and-ledger/13-ledger-integrity.md) | the reconciler: 7 checks + report |
 
 ### IAM / SSO / security — `20-iam-and-security/`
@@ -213,6 +216,8 @@ These are point-in-time audit artifacts; their `last-reviewed` dates intentional
 | 05 | [production-grade-checklist-2026-05-02](90-audits/05-production-grade-checklist-2026-05-02.md) | superseded 2026-05-02 production-grade checklist |
 
 ### The complete guide
+
+One document sits outside the bands and walks the whole system as a single story.
 
 | File | Purpose |
 |---|---|

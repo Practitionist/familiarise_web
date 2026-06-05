@@ -1,5 +1,7 @@
 # Dispute Handling Flow
 
+> **Moved (org/B2B side):** The organization-side documentation for disputes now lives in [`docs/enterprise/10-money-and-ledger/11-disputes.md`](../../enterprise/10-money-and-ledger/11-disputes.md). This file keeps the consumer-marketplace (B2C) and gateway-generic details only.
+
 ## Overview
 
 Disputes (chargebacks) occur when a customer contacts their bank/card issuer to reverse a payment. The system tracks dispute lifecycle and supports evidence submission for Stripe disputes.
