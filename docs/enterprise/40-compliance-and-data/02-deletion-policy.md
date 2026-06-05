@@ -67,9 +67,11 @@ if (contract.status !== "DRAFT") {
 await tx.contract.delete({ where: { id: contractId } });
 ```
 
-### Case 3 — DPDP §12 right-to-erasure scrub
+### Case 3 — DPDP erasure scrub (§8(7) duty, §12 right)
 
-When a data subject exercises their §12 right under the DPDP Act 2023, the platform must erase their personal data within 30 days. Implementation is a **tombstone scrub**, not a row deletion:
+When a data subject exercises their right to erasure under the DPDP Act 2023, the platform erases their personal data through a **tombstone scrub** rather than a row deletion. The legal basis is twofold. The Data Fiduciary's erasure duty is Act §8(7), read with Rule 8 of the DPDP Rules 2025: personal data must be erased once the specified purpose is no longer served, **"unless its retention is necessary for compliance with any law for the time being in force."** The data principal's corresponding right to request erasure is Act §12. Our scrub leans squarely on that statutory retention exception — Indian tax and accounting law (a 5–7 year keep on financial records) overrides the erasure right for money rows, so we pseudonymise the actor and retain the books. This is the exact carve-out the Rules contemplate, not a workaround.
+
+The implementation is a tombstone scrub:
 
 - `User` row stays (financial records depend on it). Identifiable fields (`name`, `email`, `phoneNumber`, `image`) are overwritten with deterministic tombstones: `email = erased-<hash>@erased.invalid`, `name = ERASED_<hash>`.
 - `ConsulteeProfile` / `ConsultantProfile` rows stay; free-text fields (`bio`, `linkedIn`) are nulled.
@@ -89,11 +91,14 @@ When a data subject exercises their §12 right under the DPDP Act 2023, the plat
 new requests flow through the API path below. Existing manual
 entries remain for historical audit continuity.
 
-> **War story — "erase the user" vs "never edit a money row".** DPDP §12
-> says erase the data subject's personal data within 30 days. Indian
-> IT-Act retention says keep financial records for years. These collide
-> head-on the moment an erased user is the actor on a paid invoice or a
-> payout. The two-table double-entry journal makes the collision
+> **War story — "erase the user" vs "never edit a money row".** DPDP
+> §8(7) says erase the data subject's personal data once the purpose is
+> served — with an express exception where retention is necessary to
+> comply with another law. Indian IT-Act retention says keep financial
+> records for years. These collide head-on the moment an erased user is
+> the actor on a paid invoice or a payout, and the §8(7) exception is
+> precisely what resolves the collision in favour of retention for the
+> money rows. The two-table double-entry journal makes the collision
 > non-negotiable on one side: `LedgerEntry` is `onDelete: Restrict` on
 > *both* its transaction and account FK, and reversals are explicit
 > counter-transactions — there is no code path that edits or deletes a
@@ -128,16 +133,53 @@ gone; the org's books and the proof-of-compliance are not.
 
 #### Request lifecycle
 
-1. User files via `POST /api/users/me/erasure-requests` (idempotent —
-   re-filing while a PENDING request is open returns the existing row).
-   `ErasureRequest.status = PENDING`.
-2. Admin reviews via `GET /api/admin/erasure-requests` (queue surface).
-3. Admin processes via `POST /api/admin/erasure-requests/[id]/process`
-   (route flips status to IN_PROGRESS, runs `scrubUser`, marks COMPLETED).
-4. OR admin rejects via `POST /api/admin/erasure-requests/[id]/reject`
-   with a required `reason` (e.g. user has an open financial dispute).
-5. 30-day SLA monitored externally — the request's `requestedAt` is the
-   clock start; ops alerts when within 7 days of expiry.
+The flow runs through four steps and a self-imposed clock.
+
+1. The user files a request via `POST /api/users/me/erasure-requests`,
+   which is idempotent — re-filing while a PENDING request is already
+   open returns the existing row rather than creating a duplicate, and
+   the new row lands at `ErasureRequest.status = PENDING`.
+2. An admin reviews the queue via `GET /api/admin/erasure-requests`.
+3. The admin processes a request via
+   `POST /api/admin/erasure-requests/[id]/process`, which flips the
+   status to IN_PROGRESS, runs `scrubUser`, and marks the row COMPLETED.
+4. Alternatively the admin rejects the request via
+   `POST /api/admin/erasure-requests/[id]/reject` with a required
+   `reason` — for example, the user has an open financial dispute.
+
+Our **30-day erasure turnaround is an internal service standard, not a
+statutory deadline.** The DPDP Rules 2025 fix no fixed response time for
+access, correction, or erasure requests under Rule 14; they require the
+Data Fiduciary to publish, and then meet, its own timeline. The only
+hard clock the Rules impose is grievance redressal — a "reasonable
+period not exceeding ninety days" under Rule 14(3). We therefore commit
+to 30 days for erasure as a stricter-than-required promise (and 90 days
+as the grievance ceiling), publish both, and monitor the 30-day target
+externally from `requestedAt`, alerting ops when a request is within
+seven days of expiry.
+
+> **What does *not* apply to us: the Third Schedule three-year
+> auto-erase.** The DPDP Rules 2025 Third Schedule imposes a
+> three-year erase-after-inactivity clock, but only on three enumerated
+> large-scale classes — e-commerce and social-media intermediaries with
+> at least two crore registered Indian users, and online-gaming
+> intermediaries with at least fifty lakh registered users. Familiarise
+> is a consulting platform in none of those classes and orders of
+> magnitude below those thresholds, so our erasure duty is the general
+> §8(7) "purpose-served / consent-withdrawn, subject to the
+> legal-retention exception" duty, not a calendar-driven auto-purge. The
+> `consent-retention-sweeper` that does run governs the distinct
+> seven-year audit-retention window on consent artifacts, not an
+> inactivity erase.
+
+> **When this binds.** None of the DPDP operational duties — erasure
+> included — are legally enforceable against an operator of our size
+> before **13 May 2027**, when Rules 3, 7, 8, and 14 commence eighteen
+> months after the 13 November 2025 notification. We implement the scrub
+> ahead of that date by choice; the runway is the build window, not a
+> reason to defer. (Source: DPDP Rules 2025 Rule 1(4),
+> https://www.dpdpa.com/dpdparules/rule1.html.)
+> Authoritative: `docs/compliance/08-dpdp-and-privacy.md`.
 
 #### What gets scrubbed (canonical reference)
 
@@ -242,6 +284,8 @@ gated by its own precondition or guard.
 Routes that hard-delete are listed below. The ones marked `OK` match the policy above; the ones marked `REVIEW` are flagged for follow-up.
 
 ### Enterprise surface (`app/api/organizations/**`)
+
+Each org-namespaced delete route is audited against the four-case deletion policy above; the Verdict column records whether it matches (OK), requires follow-up (REVIEW), or follows the hybrid hard/soft logic the policy allows.
 
 | Route | Entity | Action | Verdict |
 |---|---|---|---|
