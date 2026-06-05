@@ -8,23 +8,13 @@ last-reviewed: 2026-06-05
 
 # Feature flags and rollout
 
-> **What this covers:** the five module-level feature flags in
-> `lib/feature-flags.ts` (purpose, default, gated surfaces), the non-module
-> `process.env` gates that live next to the code they guard, and the
-> capability-gated UI + WIP-banner pattern the layer ships behind. **Audience:**
-> anyone flipping a flag for a customer go-live or reading why a wired surface
-> is dark. Last verified against code 2026-06-05 (#776/#777).
+This document covers the five module-level feature flags in `lib/feature-flags.ts` (their purpose, default, and the surfaces they gate when off), the non-module `process.env` gates that live next to the code they guard, and the capability-gated UI plus WIP-banner pattern that the layer ships behind. It is for anyone flipping a flag for a customer go-live or trying to understand why a fully wired surface is dark, and it was last verified against code on 2026-06-05 (#776/#777).
 
-Flags are read from `process.env` **at module load**. Setting one requires a
-redeploy — deliberate: we never want a runtime flip on a billing-affecting
-feature, because mid-stream some payments would take one settlement path and
-others another. To enable a flag locally, add it to `.env` (or export it) before
-`npm run dev`.
+Flags are read from `process.env` at module load, so setting one requires a redeploy. That is deliberate: a runtime flip on a billing-affecting feature would let some payments mid-stream take one settlement path while others take another. To enable a flag locally, add it to `.env` (or export it) before running `npm run dev`.
 
 ## Module flags (`lib/feature-flags.ts`)
 
-Exactly five flags are exported from the module. Each is the literal
-`process.env.X === "true"` so absent/empty ⇒ off.
+Exactly five flags are exported from the module, and each one is the literal expression `process.env.X === "true"`, so an absent or empty value means off. The table below gives each flag's default, purpose, and the surfaces it dark-fails when off.
 
 | Flag | Default | Purpose | Gated surfaces when OFF |
 |---|---|---|---|
@@ -76,9 +66,7 @@ IRP #713, TDS #737). None is a runtime toggle.
 
 ## Non-module env gates
 
-These are read inline at the point of use rather than re-exported from
-`lib/feature-flags.ts` — they gate a single call-site, so centralising them
-would only add indirection.
+The gates below are read inline at the point of use rather than re-exported from `lib/feature-flags.ts`, because each one gates a single call-site and centralising it would only add indirection.
 
 | Env var | Read at | Effect |
 |---|---|---|
@@ -128,15 +116,13 @@ layer via a `lib/compliance/` helper; a DB-trigger backstop is a future PR.
 
 ## Rollout sequence
 
-The layer ships in one piece — there is no per-funding-source flag (wallet vs
-invoice vs license share one already-deployed schema). The order for a new
-customer:
+The layer ships in one piece, because there is no per-funding-source flag — wallet, invoice, and license all share one already-deployed schema. A new customer is brought up in this order:
 
-1. Sponsor org onboarding (`PERSONAL` or `WALLET` to start).
-2. Invite members (LEARNER role).
-3. First test booking exercising the full `PaymentLeg` path.
-4. (Optional) Upgrade to `INVOICE` or `LICENSE` once a contract is signed.
-5. (Optional) Enable `canHost` once host-side KYC clears (needs `ENABLE_HOST_ORGS`).
+1. Onboard the sponsor org, starting on `PERSONAL` or `WALLET` funding.
+2. Invite members in the LEARNER role.
+3. Run a first test booking that exercises the full `PaymentLeg` path.
+4. Optionally upgrade the org to `INVOICE` or `LICENSE` funding once a contract is signed.
+5. Optionally enable `canHost` once host-side KYC clears, which also requires `ENABLE_HOST_ORGS`.
 
 ## Related docs
 

@@ -26,9 +26,9 @@ path between them:
 ```mermaid
 flowchart TD
   START["ENABLE_LIVE_PAYOUTS<br/>(lib/feature-flags.ts —<br/>OFF by default, redeploy to change)"]
-  START -->|"false (today)"| FREEZE["process-payouts runs:<br/>posts Dr *_PAYABLE / Cr CASH,<br/>submittedToGateway = false,<br/>row freezes at PROCESSING<br/>(no money leaves)"]
+  START -->|"false (today)"| FREEZE["process-payouts runs:<br/>posts Dr *_PAYABLE / Cr CASH,<br/>submittedToGateway = false,<br/>consultant rows freeze at PROCESSING,<br/>org payouts park at PENDING (#785)<br/>(no money leaves)"]
   FREEZE --> PROVE["Sandbox proof:<br/>org-payout-sandbox-smoke.ts asserts<br/>gated behaviour + manual RazorpayX<br/>sandbox submit lands payout.processed"]
-  PROVE --> CHECK{Pre-flip checklist<br/>all green?<br/>(KYB · secrets · VERIFIED accounts ·<br/>TDS/MSME · idempotency keys ·<br/>reconcile ok:true · telemetry on)}
+  PROVE --> CHECK{"Pre-flip checklist<br/>all green?<br/>KYB · secrets · VERIFIED accounts ·<br/>TDS/MSME · idempotency keys ·<br/>reconcile ok:true · telemetry on"}
   CHECK -->|"no"| FREEZE
   CHECK -->|"yes"| FLIP["Set ENABLE_LIVE_PAYOUTS=true<br/>+ redeploy → canary ONE<br/>small VERIFIED payout"]
   FLIP --> LIVE["next tick submits eligible<br/>PROCESSING payouts to RazorpayX<br/>→ COMPLETED on webhook"]
@@ -61,6 +61,50 @@ is real money on the first run — so the prerequisites below are hard gates.
 - [ ] **Monitoring live**: `ENABLE_BETTERSTACK_TELEMETRY=true` so a stuck/failed
       payout pages someone (#776 §K — `handle-stuck-payouts` emits to the sink).
 - [ ] **Rollback understood** (final section).
+
+## RazorpayX go-live realities the checklist must cover
+
+The checklist above proves the *submission* path, but the gateway's own
+lifecycle has three sharp edges that only matter once real money is
+moving. Each is documented in detail in
+[`payout-pipeline`](../10-money-and-ledger/07-payout-pipeline.md) §3; they
+are summarised here as go-live concerns because the prove-before-flip work
+must account for them before any high-value payout ships.
+
+The first edge is **post-completion reversal**. A RazorpayX payout that
+reaches `processed` is not guaranteed to be final: if the beneficiary's
+bank later returns the funds — a closed, frozen, or name-mismatched
+account — RazorpayX credits the amount back to our business account and
+fires a `payout.reversed` webhook. Our `PayoutStatus` has no `REVERSED`
+value today, so `reversed` collapses into `FAILED`, and the reconciler
+only re-polls rows in `PENDING`/`PROCESSING`, which means a
+`COMPLETED → reversed` transition is invisible to the poller. At go-live,
+the canary and the first production batches must therefore be reconciled
+by reading the `OrgAuditLog` `PAYOUT_REVERSED` row rather than relying on
+the status column, and a `REVERSED` enum plus a `COMPLETED → reversed`
+reconciliation path is the recommended fast-follow before NEFT/RTGS
+payouts go live.
+
+The second edge is the **UTR, which arrives on `payout.updated`**. The
+Unique Transaction Reference is the bank-rail receipt a host org uses to
+trace funds, and it is null while a payout is `processing` — it only
+becomes available once the beneficiary bank confirms the credit, delivered
+on the `payout.updated` webhook. The `OrganizationPayout.gatewayUtr` column
+exists but is not yet populated, so a go-live operator must be prepared to
+fetch the UTR from the RazorpayX dashboard when a host org asks for a bank
+reference, until persisting `payout.updated` is wired.
+
+The third edge is **deemed-success and the T+3 window**. IMPS and UPI
+payouts are near-instant, but a payout still `processing` after roughly
+three minutes is most likely in NPCI's deemed-success state and can take
+up to T+3 working days to resolve. That window exceeds the
+`handle-stuck-payouts` 24-hour threshold, so a row carrying a
+`providerPayoutId` will be reconciled against the gateway rather than
+re-submitted — which is safe precisely because of the deterministic
+`payout_<profile>_<batch>` idempotency key. The canary should be a UPI or
+IMPS payout whose `processed` confirmation you can watch land, and the
+operator must not treat a still-`processing` row inside the T+3 window as a
+failure to retry.
 
 ## Sandbox proof
 

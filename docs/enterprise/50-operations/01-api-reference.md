@@ -8,6 +8,38 @@ last-reviewed: 2026-06-05
 
 # API reference
 
+This page is one of four operational surfaces in this band, and it sits at
+the front of the chain that the rest of the band documents. The HTTP routes
+catalogued below are the synchronous entry points; the crons in
+[`03-runbooks.md`](03-runbooks.md) drive the asynchronous work; both write to
+the event streams described in [`05-system-events.md`](05-system-events.md);
+and [`04-monitoring.md`](04-monitoring.md) turns those streams into alerts.
+The diagram below shows how the four fit together so you can place any route
+in the larger operational picture.
+
+```mermaid
+flowchart LR
+  subgraph Sync["synchronous (this doc)"]
+    R["app/api/organizations/**<br/>+ /api/admin/organizations/[orgId]/verify"]
+  end
+  subgraph Async["asynchronous (03-runbooks)"]
+    C[".github/workflows/*.yml<br/>→ jobs/**/*.ts crons"]
+  end
+  subgraph Streams["event streams (05-system-events)"]
+    OAL[("OrgAuditLog<br/>customer-facing")]
+    SE[("SystemEvent<br/>engineering-facing")]
+  end
+  subgraph Watch["alerting (04-monitoring)"]
+    M["Better Stack<br/>+ on-call"]
+  end
+  R -->|"mutations write audit rows"| OAL
+  R -->|"caught failures"| SE
+  C -->|"lifecycle audit rows"| OAL
+  C -->|"caught failures"| SE
+  OAL --> M
+  SE --> M
+```
+
 > **How to read this table.** Each row is one `path × verb`.
 > **Min role** is the *floor* — `requireOrgAccess(orgId, minRole)` (or
 > `requireOrgOwner`) from `lib/auth-helpers.ts`; higher ranks and
@@ -39,6 +71,8 @@ the bottom._
 
 ## Top-level collection
 
+These are the unscoped routes that operate above any single organization — the org switcher feed, org creation, the public directory, and invite acceptance.
+
 | Path | Verb | Min role | Purpose | Audit actions |
 |------|------|----------|---------|----------------|
 | `/api/organizations` | `GET` | authenticated | List the caller's orgs (switcher feed) | — |
@@ -47,6 +81,8 @@ the bottom._
 | `/api/organizations/invitations/accept` | `POST` | authenticated | Accept an invite via token. Side-effects: LEARNER invites lazily upsert a `ConsulteeProfile` (via `ensureConsulteeProfile`); EXPERT invites upsert a placeholder `ConsultantProfile` (`Domain "General"`, `scheduleType = WEEKLY`, `verificationStatus = PENDING_VERIFICATION`) if the user doesn't already have one. | `INVITE_ACCEPTED` (MEMBER) |
 
 ## Org record
+
+These routes read and mutate the organization record itself, including branding assets and the platform-admin verification state machine.
 
 | Path | Verb | Min role | Purpose | Audit actions |
 |------|------|----------|---------|----------------|
@@ -59,6 +95,8 @@ the bottom._
 | `/api/admin/organizations/[orgId]/verify` | `POST` | platform ADMIN | One route handles `VERIFY / REJECT / SUSPEND / REACTIVATE / DEACTIVATE` (action upper-cased, defaults to `VERIFY`). `REJECT` requires a `reason` and keeps the org `PENDING_VERIFICATION` (stamps `verificationReason` + `verificationRejectedAt` for the resubmit loop). | `VERIFIED` / `VERIFICATION_REJECTED` / `SUSPENDED` / `REACTIVATED` / `DEACTIVATED` (SYSTEM) |
 
 ## Members and invitations
+
+These routes manage membership records and the invitation lifecycle; the anti-lockout guard and the LEARNER↔EXPERT transition guard both live here.
 
 | Path | Verb | Min role | Purpose | Audit actions |
 |------|------|----------|---------|----------------|
@@ -75,6 +113,8 @@ the bottom._
 
 ## Contracts
 
+These routes cover the contract lifecycle — creation, term edits, the lock state that freezes terms once a contract is in use, and the supersede flow that replaces a contract immutably.
+
 | Path | Verb | Min role | Purpose | Audit actions |
 |------|------|----------|---------|----------------|
 | `/api/organizations/[orgId]/contracts` | `GET` | MAINTAINER | List with `?status=` filter | — |
@@ -85,6 +125,8 @@ the bottom._
 | `/api/organizations/[orgId]/contracts/[contractId]/supersede` | `POST` | OWNER | #779 §A — contracts are immutable in use; supersede mints a successor with new terms, re-points programs, and retires the old row. `reason` accepts only `AMENDMENT` (cuts over now, old→TERMINATED) or `RENEWAL` (chains off old `effectiveTo`, old→EXPIRED). Invoices keep their old `contractId`; `supersededByContractId @unique` is the double-run backstop. `409` if the contract isn't ACTIVE or is already superseded. | `CONTRACT_SUPERSEDED` (CONTRACT) |
 
 ## Programs and assignments
+
+These routes manage programs and their per-member assignments, including the money-config lock that freezes pricing fields once a program is live.
 
 | Path | Verb | Min role | Purpose | Audit actions |
 |------|------|----------|---------|----------------|
@@ -101,6 +143,8 @@ the bottom._
 
 ## Billing account
 
+These routes expose the billing account, wallet balance, and top-up flow; the money-mutating ones gate on `requireOrgBillingAdminOrOwner` and are marked 🔒.
+
 | Path | Verb | Min role | Purpose | Audit actions |
 |------|------|----------|---------|----------------|
 | `/api/organizations/[orgId]/billing` | `GET` | MANAGER | Aggregated billing snapshot for the unified Billing dashboard (month-to-date gross, outstanding, pending charges, paymentTermsDays). DB-side `aggregate({ _sum })`, O(1). | — |
@@ -112,6 +156,8 @@ the bottom._
 | `/api/organizations/[orgId]/billing-account/wallet/top-ups/[topUpId]` | `GET` | MANAGER | Top-up detail; `topUpId` is the `WalletTopUp` id | — |
 
 ## Invoices and purchase orders
+
+These routes cover manual invoices, invoice-payment initiation, PDF rendering, and purchase orders; the webhook completes the ISSUED→PAID flip out of band.
 
 | Path | Verb | Min role | Purpose | Audit actions |
 |------|------|----------|---------|----------------|
@@ -129,6 +175,8 @@ the bottom._
 
 ## Rate cards, earnings, payouts (host side)
 
+These are the host-side money routes for organizations that earn — rate cards, the payout account, and the earnings-to-payout rollup; most mutations gate on `requireOrgBillingAdminOrOwner`.
+
 | Path | Verb | Min role | Purpose | Audit actions |
 |------|------|----------|---------|----------------|
 | `/api/organizations/[orgId]/rate-cards` | `GET` | active member (canHost) | Effective cards + history. Read widened from MANAGER so an EXPERT can confirm their commission split. | — |
@@ -145,6 +193,8 @@ the bottom._
 
 ## Reimbursements, disputes, documents (read surfaces)
 
+These are read-only roster endpoints — reimbursements, disputes, documents, trials, waitlist, appointments, and recordings — all gated at MANAGER and none of them emit audit rows.
+
 | Path | Verb | Min role | Purpose | Audit actions |
 |------|------|----------|---------|----------------|
 | `/api/organizations/[orgId]/reimbursements` | `GET` | MANAGER | Reimbursement roster | — |
@@ -157,6 +207,8 @@ the bottom._
 | `/api/organizations/[orgId]/recordings` | `GET` | MANAGER | Stream recording roster | — |
 
 ## SSO and domains
+
+These routes configure SSO providers, the break-glass escape hatch, and domain claims; the OWNER-only gates reflect that these are IdP-trust roots.
 
 | Path | Verb | Min role | Purpose | Audit actions |
 |------|------|----------|---------|----------------|
@@ -207,6 +259,8 @@ operations from the integrator's POV). Read surfaces are MANAGER.
 
 ## Compliance: verification, consent, data exports
 
+Routes in this group implement DPDP §11 (data access bundles), §12 (consent grant/withdrawal), and the self-serve verification resubmit loop; the minimum role column reflects that financial PII in export bundles demands the same governance floor as billing mutations.
+
 | Path | Verb | Min role | Purpose | Audit actions |
 |------|------|----------|---------|----------------|
 | `/api/organizations/[orgId]/verification/resubmit` | `POST` | MAINTAINER | #779 §A — self-serve resubmit after an admin REJECT. Bumps `verificationSubmittedAt`, clears `verificationReason` + `verificationRejectedAt`. `409 NOTHING_TO_RESUBMIT` unless the org is `PENDING_VERIFICATION` with a non-null rejection stamp. | `VERIFICATION_RESUBMITTED` (SYSTEM) |
@@ -219,6 +273,8 @@ operations from the integrator's POV). Read surfaces are MANAGER.
 
 ## Checkout, analytics, activity, audit
 
+These routes cover the advisory overage preview, analytics rollups, and the two audit-log read surfaces (the narrower `/activity` feed and the wider `/audit` read plus its auditable CSV export).
+
 | Path | Verb | Min role | Purpose | Audit actions |
 |------|------|----------|---------|----------------|
 | `/api/organizations/[orgId]/checkout/overage-preview` | `GET` | active member | #777 §C — advisory pre-checkout overage preview ("will booking this plan breach my cap, and what does it cost?"). Price is read **server-side** from the plan list price (`?planType=` / `?planId=` / `?sessions=`); a safe over-estimate vs the authoritative checkout charge. | — |
@@ -228,6 +284,8 @@ operations from the integrator's POV). Read surfaces are MANAGER.
 | `/api/organizations/[orgId]/audit/export` | `GET` | MAINTAINER | CSV export of the audit trail (`?actions[]=` / date). The export is itself auditable. | `AUDIT_LOG_EXPORTED` (SETTINGS) |
 
 ## Stream (chat / video)
+
+These two routes expose the org's Stream chat and video metadata; the call/recording export is auditable because it is a compliance pull.
 
 | Path | Verb | Min role | Purpose | Audit actions |
 |------|------|----------|---------|----------------|
@@ -277,12 +335,16 @@ dropped in the same cycle — any doc referencing those is stale.
 ## Route count
 
 71 route files reconcile to the row-groups above (a row-group is one
-path; multiple verbs on a path each get their own line):
+path; multiple verbs on a path each get their own line). The count
+breaks down as follows, verified against the filesystem on 2026-06-05:
 
-- 67 under `app/api/organizations/**` that carry org-admin row-groups
+- 67 under `app/api/organizations/[orgId]/**` that carry org-admin row-groups
 - 3 top-level org routes (`/organizations`, `/organizations/public`,
   `/organizations/invitations/accept`)
 - 1 enterprise admin route (`/api/admin/organizations/[orgId]/verify`)
+
+The 70 files under `app/api/organizations/**` (67 scoped to `[orgId]` plus
+the 3 top-level routes) and the single admin route sum to 71.
 
 `members/bulk` is counted (it ships a deterministic `405` stub, listed
 above). There are **no** `/hris*` or `/catalog*` routes in the tree —

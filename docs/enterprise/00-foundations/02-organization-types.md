@@ -23,6 +23,10 @@ model Organization {
 }
 ```
 
+The table below reads the four combinations of the two booleans down its first two
+columns and gives the derived kind and its meaning in the last two; the INERT row
+is the combination that the API rejects at create time.
+
 | canSponsor | canHost | Derived kind | Meaning |
 |------------|---------|--------------|---------|
 | `true`     | `false` | `SPONSOR`    | Pays for its members' sessions. Has a `BillingAccount`. No hosting-side payout flow. |
@@ -83,6 +87,8 @@ not an access gate.
 
 ### Design decision: what the enum cost, and what booleans cost back
 
+Columns are the two candidate designs; rows are the concrete extensibility and correctness scenarios that drove the choice — read it to understand why the INERT guard and `deriveCapabilityKind` are deliberate prices worth paying.
+
 | | Single `OrganizationKind` enum (rejected) | Two booleans (shipped) |
 |---|---|---|
 | Add a 4th capability (e.g. RESELL) | new enum value → migration + every `switch` re-audited for exhaustiveness | a 3rd boolean, or the `capabilitiesExtra` JSON escape hatch — no migration |
@@ -112,8 +118,10 @@ render sites will tell three stories.
 
 ## Label + badge source of truth
 
-Every user-facing string for capability kind lives in
-`lib/labels/org-labels.ts`:
+Every user-facing string for the capability kind lives in
+`lib/labels/org-labels.ts`. The table below pairs each derived kind with the label
+that renders in the UI and the Tailwind badge class that colours it, all read
+verbatim from `CAPABILITY_LABEL` and `CAPABILITY_BADGE_CLASS`.
 
 | Capability | Label | Badge class |
 |------------|-------|-------------|
@@ -160,6 +168,10 @@ uses its own `RateCard`.
 
 ## What replaced what
 
+The table below maps each pre-Arch-4 term in the left column to its current
+representation in the middle column, so a reader coming from the old vocabulary can
+find the new shape.
+
 | Pre-Arch-4 term | Now | Notes |
 |-----------------|-----|-------|
 | `OrganizationKind.BUYER` | `canSponsor=true, canHost=false` | — |
@@ -170,8 +182,12 @@ uses its own `RateCard`.
 
 ## Related docs
 
-- `funding-and-programs` — funding sources on the sponsor side.
-- `roles-and-permissions` — roles are the same regardless of
-  capability; seat of expert vs learner is controlled via Membership.
-- `dashboard-pages` — which pages render for which capability.
-- `scenarios-and-examples` — four end-to-end worked cases.
+The [funding-and-programs](03-funding-and-programs.md) doc covers the funding
+sources that sit on the sponsor side. The
+[roles-and-permissions](04-roles-and-permissions.md) doc explains the role ladder,
+which is the same regardless of capability; whether a member is an expert or a
+learner is controlled through their `Membership` row rather than through the org's
+capability flags. The dashboard-pages reference describes which pages render for
+which capability, and
+[scenarios-and-examples](../60-scenarios-and-verdicts/01-scenarios-and-examples.md)
+walks four end-to-end worked cases.

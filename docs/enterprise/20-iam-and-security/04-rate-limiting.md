@@ -8,12 +8,12 @@ last-reviewed: 2026-06-05
 
 # Rate limiting
 
-> **Scope.** Auth + enterprise rate-limit coverage matrix, who enforces
-> what, and why BetterAuth's own limiter is disabled.
->
-> **Audience.** Engineers touching `middleware.ts`, `lib/rate-limit.ts`,
-> `lib/auth.ts`, any unauthenticated route under `app/api/auth/**`, or
-> the wallet / invoice / webhook endpoints.
+This document is the coverage matrix for auth and enterprise rate
+limiting: it records who enforces what, at which layer, and why
+BetterAuth's own limiter is disabled. It is written for engineers
+touching `middleware.ts`, `lib/rate-limit.ts`, `lib/auth.ts`, any
+unauthenticated route under `app/api/auth/**`, or the wallet, invoice,
+and webhook endpoints.
 
 ---
 
@@ -138,6 +138,8 @@ exports — cite those names, not middleware line numbers.
 
 ### Edge-enforced (`middleware.ts` → `RATE_LIMIT_RULES`)
 
+Middleware rules apply before any route handler executes and key exclusively on IP, making them the first line of defence for auth, SSO, and wallet endpoints against credential-stuffing and high-frequency abuse.
+
 | Surface | Limiter | Window | Key | Skip localhost |
 |---|---|---|---|---|
 | `POST /api/auth/sign-in*` | `authLimiter` | 10 / 15 min | IP | yes |
@@ -158,6 +160,8 @@ exports — cite those names, not middleware line numbers.
 > they're documented in the global rate-limit notes, not here.)
 
 ### Handler-enforced (`applyRateLimit(...)` inside the route)
+
+Handler-side limiters sit inside each route (or inside `requireScimAuth` for SCIM) and can therefore key on org-scoped identifiers rather than raw IP — consult the Key column carefully when adding a sibling route to an existing limiter.
 
 | Surface | Limiter | Window | Key | Gate |
 |---|---|---|---|---|

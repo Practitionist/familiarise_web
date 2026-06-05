@@ -16,6 +16,8 @@ last-reviewed: 2026-06-05
 
 ## 1. The axes
 
+Five independent decision points — capability, funding source, program type, overage behaviour, and payout recipient — together determine every enterprise configuration; this table names their values and where each one lives in the schema.
+
 | Axis | Values | Lives on | Doc |
 | --- | --- | --- | --- |
 | **Capability** | `canSponsor` × `canHost` → SPONSOR / HOST / HYBRID (INERT rejected) | `Organization` | [organization-types](../00-foundations/02-organization-types.md) |
@@ -56,6 +58,8 @@ Funding only applies to the **sponsor** side. A pure HOST org has no `BillingAcc
 A HYBRID org runs **two independent flows on the same `Payment`** when it sponsors its own expert: the sponsor side pays (via its funding source) and the host side accrues `OrganizationEarnings` — each computed from its own `RateCard`. They never net inside one ledger account; they're separate postings.
 
 ## 3. Funding × program — what the program adds
+
+Each funding source pairs with a limited set of program types and drives a distinct per-booking money leg; read this to understand what journal entry a booking will produce given a sponsor org's configuration.
 
 | Funding | Typical program | Per-booking money | Notes |
 | --- | --- | --- | --- |
@@ -323,7 +327,7 @@ sequenceDiagram
   participant TX as Serializable tx
   Cron->>D: assignment past periodEnd, contract ACTIVE + autoRenew
   D-->>Cron: ROLL (AUTORENEW)
-  Cron->>TX: claim ACTIVE→ROLLED (+rolledAt); P2002-safe
+  Cron->>TX: claim ACTIVE→ROLLED (+rolledAt), P2002-safe
   TX->>TX: mint successor ACTIVE (counters zeroed)
   TX->>TX: old.rolledToAssignmentId = successor.id
   Note over TX: CLOSE path: claim ACTIVE→CLOSED, no successor, reason=CONTRACT_INACTIVE/AUTORENEW_OFF/CLAMPED
@@ -425,16 +429,18 @@ sequenceDiagram
   participant S as OrganizationSSOSettings
   participant A as enforce-session (auth layer)
   O->>R: { hours: 4, reason: "Okta outage INC-123" }
-  R->>R: requireOrgOwner; refuse 404 if !enforceSSO
+  R->>R: requireOrgOwner, refuse 404 if !enforceSSO
   R->>S: breakGlassUntil = now + 4h
   R->>R: OrgAuditLog (who + why)
-  Note over A: while breakGlassUntil > now → skip enforceSSO gate; password login allowed
+  Note over A: while breakGlassUntil > now → skip enforceSSO gate, password login allowed
   O->>R: DELETE (or let it lapse) → breakGlassUntil = null
 ```
 
 ---
 
 ## 6. The seed cohort at a glance
+
+Four seeded organizations cover every major org shape; use this map as a quick cheat-sheet when tracing a worked example to its real seed counterpart or when signing in via `SEED_PASSWORD` to walk a flow live.
 
 | Org | Capability | Funding | Program | Money fact |
 | --- | --- | --- | --- | --- |

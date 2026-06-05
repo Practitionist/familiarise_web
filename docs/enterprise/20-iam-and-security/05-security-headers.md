@@ -49,6 +49,8 @@ flowchart LR
 
 ## Header inventory (production)
 
+All seven production headers, their values, and what each one defends against, are listed in the table below.
+
 | Header | Value | Notes |
 |---|---|---|
 | `Content-Security-Policy-Report-Only` | see `next.config.mjs` CSP_DIRECTIVES | flipped to enforce by `ENABLE_CSP_ENFORCE=true` |
@@ -67,24 +69,15 @@ and the public marketplace pages alike.
 
 ## CSP allow-list rationale
 
-Anything outside this list will be blocked once `ENABLE_CSP_ENFORCE=true`:
+Anything outside the directives below will be blocked once `ENABLE_CSP_ENFORCE=true`, so each external origin earns its place by being load-bearing for a real product surface.
 
-- **`script-src`** — `'self' 'unsafe-inline' 'unsafe-eval'` is non-negotiable until Next.js 16 ships hashed inline runtime chunks. External:
-  - `https://checkout.razorpay.com` — payment SDK
-  - `https://*.sentry.io` — error reporting
-  - `https://*.getstream.io` — call widget
-  - `https://*.supabase.co` — storage signed URLs
+The `script-src` directive keeps `'self' 'unsafe-inline' 'unsafe-eval'`, which is non-negotiable until Next.js 16 ships hashed inline runtime chunks. Its external origins are Razorpay's checkout CDN (`https://checkout.razorpay.com`, the payment SDK), Sentry (`https://*.sentry.io`, error reporting), Stream.io (`https://*.getstream.io`, the call widget), and Supabase (`https://*.supabase.co`, storage signed URLs).
 
-- **`connect-src`** — XHR / fetch / WSS targets. External:
-  - `https://api.razorpay.com`
-  - `wss://*.getstream.io` + `https://*.getstream.io`
-  - `https://*.supabase.co` + `https://*.upstash.io`
-  - `https://*.sentry.io`
-  - `https://api.resend.com`
+The `connect-src` directive governs XHR, fetch, and WebSocket targets. It opens `https://api.razorpay.com` for payments, both `wss://*.getstream.io` and `https://*.getstream.io` for Stream call signalling and media, `https://*.supabase.co` and `https://*.upstash.io` for storage and Redis, `https://*.sentry.io` for error reporting, and `https://api.resend.com` for transactional email.
 
-- **`media-src`** — Stream.io recording + call audio/video. Requires both `blob:` (local recording playback) and the getstream.io CDN.
+The `media-src` directive serves Stream.io recording and call audio/video, so it requires both `blob:` (local recording playback) and the getstream.io CDN.
 
-- **`frame-src`** — Razorpay checkout opens an iframe. Without this entry, payments break in CSP-enforce mode.
+The `frame-src` directive allows Razorpay's checkout iframe; without this entry, payments break the moment CSP is flipped to enforce mode.
 
 The remaining directives in `CSP_DIRECTIVES` carry no external origins
 and are listed here for completeness: `default-src 'self'`,
@@ -97,13 +90,15 @@ tightening it would mean enumerating every avatar host in the
 
 ## Rollout
 
-1. **Day 0 (now)**: report-only mode shipped. Violations stream to `/api/csp-report` and surface as `event: "csp_violation"` log lines.
-2. **Day 7**: review the report log for unexpected entries. Update the allow-list if a legitimate dependency was missed; create an issue if a suspicious entry shows up.
-3. **Day 14**: flip `ENABLE_CSP_ENFORCE=true` in the production env. The header key changes from `Content-Security-Policy-Report-Only` to `Content-Security-Policy`; the same reports keep arriving but the browser blocks the request instead of allowing-but-flagging.
+The rollout walks a bounded three-step schedule that keeps the report-only observation window from drifting open indefinitely.
+
+1. On day zero, which is now, report-only mode is already shipped, so violations stream to `/api/csp-report` and surface as `event: "csp_violation"` log lines without blocking anything.
+2. On day seven, review the report log for unexpected entries, update the allow-list if a legitimate dependency was missed, and create an issue if a suspicious entry shows up.
+3. On day fourteen, flip `ENABLE_CSP_ENFORCE=true` in the production environment so the header key changes from `Content-Security-Policy-Report-Only` to `Content-Security-Policy`; the same reports keep arriving, but the browser now blocks the offending request instead of allowing-but-flagging it.
 
 ## Auditing
 
-Headers are visible via `curl -sI`. The rollout-readiness check:
+The production headers are visible to anyone with `curl -sI`, which makes the rollout-readiness check a one-liner.
 
 ```bash
 curl -sI https://app.familiarise.work/ | grep -iE 'content-security|strict-transport|x-frame'

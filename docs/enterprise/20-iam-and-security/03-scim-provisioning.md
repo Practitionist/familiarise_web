@@ -36,7 +36,7 @@ sequenceDiagram
   Auth->>DB: SHA-256(token) → ScimToken → org = token.organizationId
   Note over Auth: no ?orgId accepted — token IS the tenant.<br/>scimLimiter 60/min per tokenHash.
   Auth->>Op: grant { organizationId }
-  Op->>DB: resolve role from group mapping (highest rank; default LEARNER)
+  Op->>DB: resolve role from group mapping (highest rank, default LEARNER)
   Op->>DB: upsert User by email + Membership by (org, userId)
   Note over Op,DB: externalScimId ← Okta externalId.<br/>If User.erasedAt set → 410 Gone (DPDP §12), no create.
   Op->>DB: audit SCIM_USER_CREATED + webhook member.added
@@ -58,6 +58,8 @@ a different, user-initiated act (DPDP §12 erasure), and the erasure
 short-circuit below is what makes the two paths refuse to collide.
 
 ## Endpoint inventory
+
+The five SCIM verbs we mount, their paths, and what each one does are summarized below.
 
 | Verb | Path | Purpose |
 |---|---|---|
@@ -125,17 +127,20 @@ token requires creating a fresh one. The auth helper at
 - bumps `lastUsedAt` on every successful call (fire-and-forget — a
   failed timestamp write never 5xxes the IdP).
 
-> 🟡 **`ScimToken.expiresAt` is designed-not-active.** The column exists
-> (so OWNERs can set a 6/12-month TTL at mint time and a rotation cron
-> has a stable column to scan), but `requireScimAuth` does **not** yet
-> reject an `ACTIVE` token past its `expiresAt`. Today tokens expire
-> only on explicit `DELETE` (→ `REVOKED`). Don't document TTL
-> enforcement as shipped.
+> 🟡 **Gap: `ScimToken.expiresAt` is designed-not-enforced.** The column
+> exists (so OWNERs can set a 6/12-month TTL at mint time and a rotation
+> cron has a stable column to scan), but `requireScimAuth` does **not**
+> yet reject an `ACTIVE` token past its `expiresAt` — its lookup selects
+> only `{ id, organizationId, status }` and never reads `expiresAt`
+> (verified in `lib/scim/auth.ts`). Today a token expires only on explicit
+> `DELETE` (which flips it to `REVOKED`). Do not document TTL enforcement
+> as shipped. (No issue filed yet.)
 
 ## Group → role mapping
 
 `/api/organizations/[orgId]/scim/group-mappings` lets the OWNER bind
-IdP group names to local `MemberRole` values:
+IdP group names to local `MemberRole` values, and a representative set
+of those bindings looks like the table below.
 
 | SCIM group name | → MemberRole |
 |---|---|

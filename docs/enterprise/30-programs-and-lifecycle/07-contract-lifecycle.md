@@ -8,12 +8,7 @@ last-reviewed: 2026-06-05
 
 # Contract lifecycle
 
-> **What this covers:** the `Contract` state machine (DRAFT → ACTIVE →
-> EXPIRED/TERMINATED), auto-renewal, the supersession chain (amend/renew/
-> replace), the end-early/terminate mutation guard + in-tx cascade, and which
-> term fields lock once a contract is in use. **Audience:** engineers touching
-> contract CRUD, the renewal/expiry crons, or the program/assignment lifecycle
-> that hangs off a contract. Last verified against code 2026-06-05 (#779 §A).
+This document covers the `Contract` state machine (DRAFT → ACTIVE → EXPIRED or TERMINATED), auto-renewal, the supersession chain that handles amend, renew, and replace, the end-early and terminate mutation guard with its in-transaction cascade, and which term fields lock once a contract is in use. It is for engineers touching contract CRUD, the renewal and expiry crons, or the program and assignment lifecycle that hangs off a contract, and it was last verified against code on 2026-06-05 (#779 §A).
 
 A `Contract` is the negotiated commercial relationship between an org and the
 platform. Every `Program` hangs off exactly one contract
@@ -142,7 +137,9 @@ Contracts are immutable once in use, so the only way to change committed terms
 is to **supersede**: mint a successor with the new terms, re-point the programs,
 and retire the old row with the chain recorded. The OLD row points forward via
 `supersededByContractId @unique` (that `@unique` is the double-run backstop —
-a second supersede on the same contract hits `P2002`).
+a second supersede on the same contract hits `P2002`). The three supersession
+reasons in the `ContractSupersessionReason` enum, and how each one treats the
+successor and the old row, are laid out in the table below.
 
 | Reason | Trigger | Successor `effectiveFrom` | Old contract → | Set by |
 |---|---|---|---|---|
@@ -382,6 +379,8 @@ a second supersede on the same row hits `P2002`. Auto-renew is the same machiner
 run unattended.
 
 ## Route table
+
+The contract routes and the role gate each verb enforces are listed below.
 
 | Route | Verb | Role gate |
 |---|---|---|

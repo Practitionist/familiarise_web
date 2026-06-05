@@ -40,6 +40,8 @@ Legend:
 
 ## 1. Subsidiary billing (Wipro shape — SPONSOR · INVOICE · LICENSED_SEAT)
 
+Items 1–7 exercise the postpaid invoice path end-to-end — contract creation and signing, `LICENSED_SEAT` program with an overage circuit breaker, per-booking accrual legs, cycle-close invoicing, contract supersession, and the IRN uploader — noting where the 🟡 operational gaps currently pause automation.
+
 | # | Item | Verdict | Notes |
 |---|------|---------|-------|
 | 1 | Sponsor org `canSponsor=true, canHost=false, fundingSource=INVOICE` creates + signs a Contract | ✅ | `POST /api/organizations` + `POST /contracts` + `PATCH /contracts/[id]` (DRAFT→ACTIVE, `signedAt`). |
@@ -52,6 +54,8 @@ Legend:
 
 ## 2. Mixed compensation (LearnPro / Acme — HOST)
 
+Items 8–12 cover the HOST (earn-only) shape: wallet top-up atomicity, the overdraft guard at checkout, `payoutRecipient=ORGANIZATION` collapsing the expert split, rate-card snapshot correctness, and where the live-payout gate currently stops the money.
+
 | # | Item | Verdict | Notes |
 |---|------|---------|-------|
 | 8 | WALLET top-up via Razorpay → `WalletTopUp` (PENDING→CONFIRMED) + balanced `TOPUP` posting, atomic | ✅ | `confirmTopUp` posts `Dr CASH / Cr WALLET(org)`; `walletBalance` cache bumped in the same TX; idempotent on `providerOrderId` + `idempotencyKey`. |
@@ -61,6 +65,8 @@ Legend:
 | 12 | Host-org payout (`ORG_PAYOUT`) with TDS + MSME deadline | 🟡 | `createOrgPayoutBatch` computes TDS (194-O default / 206AA fallback) + `mustPayByDate`, posts `Dr ORG_PAYABLE / Cr CASH + TDS_PAYABLE`, and **freezes at PROCESSING** — gateway disbursement is gated off (`ENABLE_LIVE_PAYOUTS=false`, #776 §B). Money doesn't leave the gateway. |
 
 ## 3. Hybrid org (IIT Madras — HYBRID · WALLET · CREDIT_POOL)
+
+Items 13–20 verify that a HYBRID org correctly runs sponsor and host flows on the same payment, that the `CREDIT_POOL` money-meter accounts value rather than count, and that the v2 lifecycle additions (cycle rollover, auto-renew, SSO break-glass, wallet floor) behave as designed.
 
 | # | Item | Verdict | Notes |
 |---|------|---------|-------|
@@ -75,12 +81,16 @@ Legend:
 
 ## 4. Solo marketplace consultant (Arjun — the org-layer no-op)
 
+This scenario confirms that an independent consultant with no org membership flows through the standard marketplace path untouched by the enterprise layer — look here to verify the org layer is a true no-op for that shape.
+
 | # | Item | Verdict | Notes |
 |---|------|---------|-------|
 | 21 | `resolveOrgShare()` returns null for an independent expert | ✅ | `lib/payments/payouts/earnings-service.ts`; the marketplace path is untouched by the enterprise layer. |
 | 22 | `ConsultantProfile.isIndependent` flips correctly on membership add/remove | ✅ | Written by member CRUD. |
 
 ## Cross-cutting
+
+Each row covers a capability that spans all four org shapes — RBAC, audit trails, config locking, SSO, compliance workflows, and reconciliation — where a gap would affect every scenario above.
 
 | # | Item | Verdict | Notes |
 |---|------|---------|-------|

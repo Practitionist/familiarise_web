@@ -8,50 +8,51 @@ last-reviewed: 2026-06-05
 
 # Enterprise layer — overview
 
-> **Scope:** organization primitives, programs, wallets, contracts, invoices,
-> payouts, SSO, consent, HRIS, audit log.
-> **Audience:** engineers working on anything under `app/api/organizations/**`,
-> `app/api/admin/organizations/**`, `app/dashboard/organization/**`, and the
-> related `lib/api/organizations/**`, `lib/labels/org-labels.ts`,
-> `lib/enterprise/**` modules.
+This band covers the organization primitives, programs, wallets, contracts,
+invoices, payouts, SSO, consent, HRIS, and the audit log. It is written for
+engineers working on anything under `app/api/organizations/**`,
+`app/api/admin/organizations/**`, or `app/dashboard/organization/**`, together
+with the related `lib/api/organizations/**`, `lib/labels/org-labels.ts`, and
+`lib/enterprise/**` modules.
 
-The enterprise layer is a capability-driven B2B surface on top of the
-marketplace. Every organization is defined by two orthogonal booleans and
-(if it sponsors) one funding source; every API gate reads from a typed
-`Membership` row rather than from BetterAuth's own member table.
+The enterprise layer is a capability-driven B2B surface that sits on top of the
+marketplace. Every organization is defined by two orthogonal booleans and, if it
+sponsors, one funding source. Every API gate reads from a typed `Membership` row
+rather than from BetterAuth's own member table. For the reasoning behind the big
+structural choices in this layer — double-entry over three logs, integer paise,
+deterministic ledger account ids, typed membership, and the rest — see
+[../70-design-decisions/00-README.md](../70-design-decisions/00-README.md).
 
 ## Mental model
 
-An organization is described by two axes:
+An organization is described by two axes. The first axis is **capability** —
+what the org is allowed to do — and it is carried by two boolean columns:
+`canSponsor` is true when the org pays for its members' sessions, and `canHost`
+is true when the org hosts experts who earn through it. An org with both booleans
+true is a HYBRID, while an org with both false is INERT, a transitional shape that
+is rejected at create time. The second axis is **funding source**, which records
+how sponsored sessions are paid for. It is an enum set on the single
+`BillingAccount` row that belongs to a sponsor org, and its values are `PERSONAL`,
+`LICENSE`, `WALLET`, and `INVOICE`.
 
-1. **Capability** — what the org is allowed to do.
-   - `canSponsor`: pays for its members' sessions.
-   - `canHost`: hosts experts who earn through the org.
-   - Both true → HYBRID. Both false → INERT (transitional; rejected at
-     create time).
-2. **FundingSource** — *how* sponsored sessions are paid for. Set on the
-   single `BillingAccount` row that belongs to a sponsor org. Values:
-   `PERSONAL`, `LICENSE`, `WALLET`, `INVOICE`.
-
-The third primitive — **Program** — is where the commercial terms live.
-Every booking that an org sponsors is attributed to a Program, and every
-Program subtype (`LICENSED_SEAT`, `CREDIT_POOL`) is a row in its own
-config table. See [programs](../30-programs-and-lifecycle/02-programs.md).
+The third primitive is the **Program**, which is where the commercial terms live.
+Every booking that an org sponsors is attributed to a Program, and each Program
+subtype (`LICENSED_SEAT` or `CREDIT_POOL`) is a row in its own config table. See
+[programs](../30-programs-and-lifecycle/02-programs.md) for the full treatment.
 
 ### `OrgWorkspaceProfile`
 
-Orthogonal to Membership: `OrgWorkspaceProfile` is a per-user profile row
-(mirrors `StaffProfile` / `AdminProfile`) that exists for any user who
-operates at least one org. `POST /api/organizations` provisions one
-inside the creation transaction; `prisma/scripts/backfill-org-workspace-profiles.ts`
-covers existing OWNERs. The profile id surfaces on the BetterAuth
-session and backs the operator home at
-`/dashboard/org-workspace/:orgWorkspaceId/home`, which redirects single-org
-operators straight into that org, shows a chooser for multi-org
-operators, and a "create an organization" CTA for operators whose
-orgs have all been deactivated. See
-`docs/onboarding/onboarding-system-reference.md` §0 for the full
-profile-model roster.
+`OrgWorkspaceProfile` is orthogonal to `Membership`. It is a per-user profile row
+that mirrors `StaffProfile` and `AdminProfile`, and it exists for any user who
+operates at least one org. `POST /api/organizations` provisions one inside the
+creation transaction, and `prisma/scripts/backfill-org-workspace-profiles.ts`
+covers existing OWNERs. The profile id surfaces on the BetterAuth session and
+backs the operator home at `/dashboard/org-workspace/:orgWorkspaceId/home`. That
+home redirects single-org operators straight into their one org, shows a chooser
+for multi-org operators, and presents a "create an organization" call to action
+for operators whose orgs have all been deactivated. See
+`docs/onboarding/onboarding-system-reference.md` §0 for the full profile-model
+roster.
 
 ## Anatomy of one booking
 
@@ -76,11 +77,11 @@ sequenceDiagram
 
   M->>CO: book consultation (planId, slot)
   CO->>PA: find ACTIVE assignment covering CONSULTATION
-  Note over PA: program ACTIVE + contract ACTIVE,<br/>in effectiveFrom..effectiveTo;<br/>coveredPlanTypes ∋ CONSULTATION
+  Note over PA: program ACTIVE + contract ACTIVE,<br/>in effectiveFrom..effectiveTo,<br/>coveredPlanTypes include CONSULTATION
   PA-->>CO: programAssignmentId
   CO->>CO: acquire checkout lock (anti double-book)
   CO->>PA: recordBookingUtilization(tx) — cap check
-  Note over PA: in-cap → engagementsUsed += 1;<br/>over-cap → BLOCK throws 402,<br/>or flags wasOverage (CHARGE_*)
+  Note over PA: in-cap → engagementsUsed += 1,<br/>over-cap → BLOCK throws 402,<br/>or flags wasOverage (CHARGE_*)
   CO->>CO: makeLeg INVOICE_ACCRUAL (amount, sourceRef=assignment)
   Note over CO: WALLET→Dr WALLET · INVOICE→Dr ORG_RECEIVABLE ·<br/>LICENSE→amount 0 (Program absorbed)
   CO->>ES: createEarningsFromPayment(payment)
@@ -95,27 +96,42 @@ sequenceDiagram
   CO-->>M: booked ✅
 ```
 
-Where each hop's full story lives:
+Each hop's full story lives in a dedicated money-and-ledger doc. The assignment
+lookup and cap check are covered by [programs](../30-programs-and-lifecycle/02-programs.md),
+which carries the `OverageEvent` state machine for the case where this booking is
+engagement #13 and has gone past the cap, and by
+[funding-and-programs](03-funding-and-programs.md), which explains
+`coveredPlanTypes` and `OverageBehavior`. The payment legs themselves —
+`makeLeg` and the per-source `sourceRef` invariant — are documented in
+[payment-legs](../10-money-and-ledger/09-payment-legs.md). The three-way split and
+the BOOKING posting are split across
+[booking-to-earnings](../10-money-and-ledger/05-booking-to-earnings.md), which
+explains `RateCard` resolution and the bps snapshot, and
+[ledger-and-postings](../10-money-and-ledger/03-ledger-and-postings.md). The
+eventual payout is the subject of
+[payout-pipeline](../10-money-and-ledger/07-payout-pipeline.md): the `PENDING`
+earnings rows are later rolled into an `OrganizationPayout` or `ConsultantPayout`,
+and disbursement is a separate cron gated by `ENABLE_LIVE_PAYOUTS`.
 
-- **Assignment + cap check** → [programs](../30-programs-and-lifecycle/02-programs.md)
-  (the `OverageEvent` state machine when this booking is #13, past the cap)
-  and [funding-and-programs](03-funding-and-programs.md) (`coveredPlanTypes`,
-  `OverageBehavior`).
-- **Payment legs** → [payment-legs](../10-money-and-ledger/09-payment-legs.md)
-  (`makeLeg`, the per-source `sourceRef` invariant).
-- **The split + the BOOKING posting** → [booking-to-earnings](../10-money-and-ledger/05-booking-to-earnings.md)
-  (`RateCard` resolution, bps snapshot) and [ledger & postings](../10-money-and-ledger/03-ledger-and-postings.md).
-- **(Eventual) payout** → [payout-pipeline](../10-money-and-ledger/07-payout-pipeline.md);
-  the `PENDING` earnings rows are rolled into an `OrganizationPayout` /
-  `ConsultantPayout` later — disbursement is a separate cron, gated by
-  `ENABLE_LIVE_PAYOUTS`.
+This booking spine is the happy path. When money has to flow backwards or a
+booking is contested, three further money-band docs pick up the thread: a
+refund unwinds the booking and its earnings through the reversal engine in
+[refunds](../10-money-and-ledger/10-refunds.md); a chargeback or contested
+payment runs through the dispute lifecycle in
+[disputes](../10-money-and-ledger/11-disputes.md); and the gateway events that
+drive top-up confirmation, refund settlement, and dispute notifications are
+handled in [payment-webhooks](../10-money-and-ledger/12-payment-webhooks.md). The
+ongoing state of an earnings row after this booking — `PENDING` to `PAID` to
+`REVERSED` — is tracked in
+[earnings-lifecycle](../10-money-and-ledger/06-earnings-lifecycle.md).
 
-> **Why the ledger posts *after* checkout, not inside it.** The wallet
-> `walletBalance` debit during checkout moves only the **cache**; the
+> **Why the ledger posts after checkout rather than inside it.** The
+> `walletBalance` debit that happens during checkout moves only the cache. The
 > authoritative `Dr WALLET` leg is posted by `earnings-service` once the full
-> three-way split is known, so the journal is balanced in one shot
-> (`booking:<paymentId>` is the idempotency key). A single-consultant booking
-> posts inline; a multi-collaborator one defers the journal (#773). See
+> three-way split is known, so the journal balances in a single shot keyed on
+> `booking:<paymentId>`. A single-consultant booking posts its journal inline,
+> whereas a multi-collaborator booking defers the journal until every share is
+> resolved (#773). See
 > [booking-to-earnings](../10-money-and-ledger/05-booking-to-earnings.md) §1.
 
 ## Design history
@@ -166,18 +182,23 @@ key FKs, status enums, settlement-relevant amounts); see the model
 definitions for the full list. For a flowchart-style view that clusters
 models by subsystem, see [Schema by cluster](#schema-by-cluster) below.
 
-Three v2 lifecycle chains (#779 §A) are self-relations worth calling out:
-`Contract.supersededByContractId` (the amend/renew/replace chain — old row
-points forward, new row is a fresh `Contract`), `ProgramAssignment.rolledToAssignmentId`
-(the per-cycle rollover chain the [cycle engine](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md)
-mints), and `Organization.parentOrganizationId` (the `OrgHierarchy` group tree;
-`rootOrganizationId` denormalizes the group root — there is no depth column).
-The over-cap money meter is the `OverageEvent` row (#775/#778): 1:1 with a
-`BookingUtilization`, split into `basePaise` + `surchargePaise` = `marginalPaise`,
-routed to a `Payment` (CHARGE_MEMBER) or an `InvoiceLineItem` (CHARGE_ORG). The
-per-cycle overage knobs (`overageSurchargeBps`, `maxOveragePerCyclePaise`
-circuit-breaker) live on `LicensedSeatConfig` / `CreditPoolConfig`, not shown as
-their own entity blocks — see [programs](../30-programs-and-lifecycle/02-programs.md).
+Three v2 lifecycle chains (#779 §A) are self-relations worth calling out. The
+first is `Contract.supersededByContractId`, the amend, renew, or replace chain in
+which the old row points forward and the new row is a fresh `Contract`. The second
+is `ProgramAssignment.rolledToAssignmentId`, the per-cycle rollover chain that the
+[cycle engine](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md) mints.
+The third is `Organization.parentOrganizationId`, the `OrgHierarchy` group tree, in
+which `rootOrganizationId` denormalizes the group root and there is no depth
+column.
+
+The over-cap money meter is the `OverageEvent` row (#775/#778). It is 1:1 with a
+`BookingUtilization` and splits into `basePaise` plus `surchargePaise`, which sum
+to `marginalPaise`. That marginal is routed to a `Payment` when the behaviour is
+CHARGE_MEMBER, or to an `InvoiceLineItem` when it is CHARGE_ORG. The per-cycle
+overage knobs — the `overageSurchargeBps` markup and the
+`maxOveragePerCyclePaise` circuit-breaker — live on `LicensedSeatConfig` and
+`CreditPoolConfig`, which are not drawn as their own entity blocks below; see
+[programs](../30-programs-and-lifecycle/02-programs.md).
 
 ```mermaid
 erDiagram
@@ -434,7 +455,13 @@ erDiagram
     }
 ```
 
-> **Money model:** the three single-entry logs (`WalletEntry`, `FundingLedgerEntry`, `SettlementLedgerEntry`) were replaced by the double-entry journal (`LedgerTransaction`/`LedgerEntry`/`LedgerAccount`) + `WalletTopUp` in #772. `BillingAccount.walletBalance` is now a **derived cache** of the org's `WALLET` account, asserted by the reconciler. See the [money & ledger band](../10-money-and-ledger/01-money-model-overview.md) (`10-money-and-ledger/`).
+On the money model, the three single-entry logs (`WalletEntry`,
+`FundingLedgerEntry`, and `SettlementLedgerEntry`) were replaced in #772 by the
+double-entry journal — `LedgerTransaction`, `LedgerEntry`, and `LedgerAccount` —
+together with `WalletTopUp`. `BillingAccount.walletBalance` is now a derived cache
+of the org's `WALLET` account, asserted by the reconciler. See the
+[money and ledger band](../10-money-and-ledger/01-money-model-overview.md) for the
+full picture.
 
 ## System architecture
 
@@ -475,11 +502,28 @@ flowchart TB
 
 ## Index
 
-> The full, current doc index — section map, reading paths, and the `NN-slug → purpose` table for every doc — lives in **[README.md](../README.md)**. It is intentionally not duplicated here to avoid drift. The money & ledger band is `10-money-and-ledger/`; start at [money-model-overview](../10-money-and-ledger/01-money-model-overview.md). The commercial-lifecycle band (`30-programs-and-lifecycle/`) ends with the two #779 §A docs: [contract-lifecycle](../30-programs-and-lifecycle/07-contract-lifecycle.md) (Contract state machine, auto-renew, supersession chain, the end-early/terminate guard + cascade) and [cycle-engine-and-rollover](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md) (the `ProgramAssignment` lifecycle, nightly cycle-advance, roll-vs-close + the rollover chain).
+The full, current doc index — the section map, the reading paths, and the
+`NN-slug → purpose` table for every doc — lives in [README.md](../README.md). It
+is intentionally not duplicated here, so that there is only one place to keep in
+sync. The money and ledger band lives under `10-money-and-ledger/`, and the right
+place to start is
+[money-model-overview](../10-money-and-ledger/01-money-model-overview.md). The
+commercial-lifecycle band under `30-programs-and-lifecycle/` ends with the two
+#779 §A docs. The first is
+[contract-lifecycle](../30-programs-and-lifecycle/07-contract-lifecycle.md), which
+covers the Contract state machine, auto-renew, the supersession chain, and the
+end-early or terminate guard and its cascade. The second is
+[cycle-engine-and-rollover](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md),
+which covers the `ProgramAssignment` lifecycle, the nightly cycle-advance, the
+roll-versus-close decision, and the rollover chain.
 
 ## Schema by cluster
 
-The ER above relates entities; this view groups the same models by **subsystem**, the lens you'll navigate the band by (Identity & Access, Commercial/Billing, Programs, Supply/Payouts, the double-entry Ledger, Compliance/Tax).
+The ER diagram above relates entities to one another, whereas this view groups the
+same models by subsystem. The subsystem lens is the one you will navigate the band
+by, and it has six clusters: Identity and Access, Commercial and Billing, Programs
+and Entitlements, Supply and Payouts, the double-entry Ledger, and Compliance and
+Tax.
 
 ```mermaid
 flowchart TD
@@ -554,11 +598,22 @@ flowchart TD
 
 ## The complete guide
 
+The table below points at the one document that reads the whole band as a single
+connected narrative; read the banded folders as the chapters and the guide as the
+thread that walks you between them.
+
 | File | Purpose |
 |------|---------|
-| [`explainers/complete-guide.md`](../explainers/complete-guide.md) | the single end-to-end narrative — read the banded folders (`00-foundations/` → … → `60-scenarios-and-verdicts/`) as the story, the guide as the connective walkthrough |
+| [`explainers/complete-guide.md`](../explainers/complete-guide.md) | The single end-to-end narrative. Read the banded folders (`00-foundations/` through `60-scenarios-and-verdicts/`) as the story, and read the guide as the connective walkthrough. |
 
-> **Where the old auxiliary docs went.** The former `playbooks/` and `reference/` were folded into the band: SSO testing recipes + typed error codes → [sso-and-authentication](../20-iam-and-security/01-sso-and-authentication.md); the money vocabulary (Refund/Reimbursement/Payout/Referral/Credits) → [money-model-overview](../10-money-and-ledger/01-money-model-overview.md); the capability × funding matrix → [funding-and-programs](03-funding-and-programs.md); the clustered schema view → above.
+The former `playbooks/` and `reference/` directories were folded into this band.
+The SSO testing recipes and the typed error codes moved into
+[sso-and-authentication](../20-iam-and-security/01-sso-and-authentication.md). The
+money vocabulary — refund, reimbursement, payout, referral, and credits — moved
+into [money-model-overview](../10-money-and-ledger/01-money-model-overview.md). The
+capability-by-funding matrix moved into
+[funding-and-programs](03-funding-and-programs.md). The clustered schema view is
+the one shown above.
 
 ## Ground-truth files
 

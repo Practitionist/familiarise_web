@@ -8,18 +8,16 @@ last-reviewed: 2026-06-05
 
 # JIT auto-join & session refresh
 
-> **Scope.** How org memberships materialize when a user signs in via
-> SSO for the first time (JIT auto-join), and how role changes
-> propagate to active sessions without forcing logout.
->
-> **Audience.** Engineers touching `lib/auth.ts:customSession`,
-> `lib/api/organizations/membership-transitions.ts`, the
-> `/api/organizations/[orgId]/members` route family, or
-> `OrganizationSSOSettings`.
->
-> Companion docs: [`sso-and-authentication`](01-sso-and-authentication.md)
-> for the SSO enforcement chain, [`rate-limiting`](04-rate-limiting.md)
-> for the limiter posture.
+This document explains how organization memberships materialize when a
+user signs in through an org's IdP for the very first time (Just-In-Time
+auto-join), and how a role change propagates to an already-active session
+without forcing the user to log out. It is written for engineers touching
+`lib/auth.ts:customSession`, `lib/api/organizations/membership-transitions.ts`,
+the `/api/organizations/[orgId]/members` route family, or the
+`OrganizationSSOSettings` model. The companion docs are
+[`sso-and-authentication`](01-sso-and-authentication.md), which covers the
+SSO enforcement chain, and [`rate-limiting`](04-rate-limiting.md), which
+covers the limiter posture.
 
 ---
 
@@ -74,7 +72,7 @@ sequenceDiagram
   CS->>DB: findMany members WHERE membership IS null
   Note over CS,DB: defaultRole = ssoSettings.defaultRoleForAutoJoin ?? "LEARNER"<br/>(schema-locked to LEARNER)
   CS->>DB: BEGIN tx — applyMembershipRoleEffects + Membership.create
-  Note over CS,DB: catch swallows P2002 ONLY (concurrent-create race);<br/>every other error re-throws (audit Phase A.3)
+  Note over CS,DB: catch swallows P2002 ONLY (concurrent-create race) —<br/>every other error re-throws (audit Phase A.3)
   CS-->>S: session with LEARNER membership ✅
 ```
 
@@ -137,12 +135,13 @@ dashboard for 24h. Both are real bugs, not just hygiene.
 ### The fix — `sessionGeneration` marker
 
 Every membership mutation that affects the effective permission set
-calls `bumpUserSessionGeneration(tx, userId)`:
+calls `bumpUserSessionGeneration(tx, userId)`, and the four mutation
+paths that do so are as follows.
 
-- POST `/members` (add or reactivate)
-- PATCH `/members/[memberId]` (role / status / departmentLabel change)
-- DELETE `/members/[memberId]` (soft-delete → REMOVED)
-- POST `/invitations/accept` (invitation acceptance)
+- A `POST /members` adds or reactivates a member.
+- A `PATCH /members/[memberId]` changes a member's role, status, or departmentLabel.
+- A `DELETE /members/[memberId]` soft-deletes a member to `REMOVED`.
+- A `POST /invitations/accept` accepts an invitation.
 
 The helper increments `users.sessionGeneration` by 1 inside the same
 transaction as the mutation (`{ increment: 1 }` — an atomic Prisma
@@ -271,6 +270,8 @@ boolean (see [Why a counter](#why-a-counter-not-a-boolean)).
 ---
 
 ## §5 — Failure modes + how to detect them
+
+The table below maps the symptoms you are most likely to observe back to their probable cause and the fix for each.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
