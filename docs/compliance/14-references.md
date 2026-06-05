@@ -117,8 +117,8 @@ Ordered by topic to mirror the doc series. Hyperlinks should outlive their citin
 | Enterprise overage charging epic | https://github.com/Practitionist/familiarise_web/issues/715 |
 | Compliance master tracker (April 2026) | https://github.com/Practitionist/familiarise_web/issues/681 |
 | Payments subsystem audit master | https://github.com/Practitionist/familiarise_web/issues/677 |
-| Enterprise readiness checklist | `ENTERPRISE_PRODUCTION_GRADE_CHECKLIST_2026_05_02.md` |
-| Enterprise readiness audit | `ENTERPRISE_READINESS.md` |
+| Enterprise readiness checklist | `docs/enterprise/90-audits/05-production-grade-checklist-2026-05-02.md` |
+| Enterprise readiness audit | `docs/enterprise/90-audits/01-readiness-audit.md` |
 | Round 1 agent response | `tasks/checklist-agent-response-2026-05-02.txt` |
 | Round 2 agent response | `tasks/checklist-agent-response-2026-05-02-round-2.txt` |
 | #737 issue body backup | `tasks/b2c-compliance-issue-body.md` |

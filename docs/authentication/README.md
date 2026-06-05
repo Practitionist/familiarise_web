@@ -55,11 +55,11 @@ before touching any auth code.
 
 ## 4. Companion docs
 
-- [`docs/enterprise/08-sso-and-authentication.md`](../enterprise/08-sso-and-authentication.md)
+- [`docs/enterprise/20-iam-and-security/01-sso-and-authentication.md`](../enterprise/20-iam-and-security/01-sso-and-authentication.md)
   — enterprise admin's view of SSO config (allowedEmailDomains,
   IdP recipes for Okta/Auth0). Configuration-side; this folder is
   implementation-side. Keep them in lock-step but don't duplicate.
-- [`docs/enterprise/playbooks/sso-testing.md`](../enterprise/playbooks/sso-testing.md)
+- `docs/enterprise/playbooks/sso-testing.md` *(planned; not in repo yet)*
   — four ways to exercise SSO locally
   (mocksaml.com / saml-idp / Keycloak / real dev tenants). Read after
   this folder if you need to test.

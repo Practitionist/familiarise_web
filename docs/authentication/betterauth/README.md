@@ -19,8 +19,8 @@ Authorization (role hierarchy, capability gates, `requireOrgAccess`) lives in [`
 
 ## Companion docs (already in repo, don't duplicate)
 
-- [`docs/enterprise/08-sso-and-authentication.md`](../../enterprise/08-sso-and-authentication.md) — enterprise admin's view of SSO config (allowedEmailDomains, enforceSSO, IdP recipes for Okta/Auth0).
-- [`docs/enterprise/playbooks/sso-testing.md`](../../enterprise/playbooks/sso-testing.md) — four ways to exercise the SAML/OIDC flow locally (mocksaml.com, saml-idp, Keycloak, real Auth0/Okta dev tenants).
+- [`docs/enterprise/20-iam-and-security/01-sso-and-authentication.md`](../../enterprise/20-iam-and-security/01-sso-and-authentication.md) — enterprise admin's view of SSO config (allowedEmailDomains, enforceSSO, IdP recipes for Okta/Auth0).
+- `docs/enterprise/playbooks/sso-testing.md` *(planned; not in repo yet)* — four ways to exercise the SAML/OIDC flow locally (mocksaml.com, saml-idp, Keycloak, real Auth0/Okta dev tenants).
 
 This folder focuses on **the implementation**: what the code does, why
 it does it that way, and the foot-guns. The enterprise docs above focus

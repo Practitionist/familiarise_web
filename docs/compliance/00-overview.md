@@ -3,7 +3,7 @@
 > **Scope:** every statutory obligation that touches **both** the B2B / enterprise org-sponsored flow **and** the B2C / consumer marketplace flow. Payments, payouts, refunds, disputes, invoices, data privacy, grievance handling, and cross-border are all included.
 > **Audience:** engineers writing payment / payout / refund / invoice / consent code; admin/finance operators; CA / legal reviewers.
 > **Last reviewed:** 2026-06-05 (regulatory claims web-verified as of 2026-06-05)
-> **Linked issues:** [#737](https://github.com/Practitionist/familiarise_web/issues/737) (B2C original audit), [#738](https://github.com/Practitionist/familiarise_web/issues/738) (B2C refined scope), `ENTERPRISE_PRODUCTION_GRADE_CHECKLIST_2026_05_02.md` + `ENTERPRISE_READINESS.md` (B2B audits).
+> **Linked issues:** [#737](https://github.com/Practitionist/familiarise_web/issues/737) (B2C original audit), [#738](https://github.com/Practitionist/familiarise_web/issues/738) (B2C refined scope), `docs/enterprise/90-audits/05-production-grade-checklist-2026-05-02.md` + `docs/enterprise/90-audits/01-readiness-audit.md` (B2B audits).
 
 This series is the canonical compliance reference covering **both rails** of the platform:
 
@@ -89,7 +89,7 @@ The same regulation can apply differently to the two rails. This table is the qu
 
 | Layer | Coverage |
 |---|---|
-| **B2B / Enterprise schema** | Comprehensive — see `ENTERPRISE_PRODUCTION_GRADE_CHECKLIST_2026_05_02.md`. Schema-final. Compliance helpers live (`lib/compliance/{tds,msme,gst,irp,dpdp}.ts`). |
+| **B2B / Enterprise schema** | Comprehensive — see `docs/enterprise/90-audits/05-production-grade-checklist-2026-05-02.md`. Schema-final. Compliance helpers live (`lib/compliance/{tds,msme,gst,irp,dpdp}.ts`). |
 | **B2B compliance crons** | IRP uploader + MSME alerts + DataBreach 72h all wired to GH Actions schedules (Round 2, 2026-05-02). |
 | **B2B payouts (RazorpayX)** | Schema final; live submission gated by `ENABLE_LIVE_PAYOUTS` (PR-3 epic). |
 | **B2C consumer flow** | Audit complete (#737, #738). Two production bugs (TDS section + rate) + multiple gaps (TCS, refund tax adjustments, DPDP consumer layer, Grievance Officer). Implementation queued. |

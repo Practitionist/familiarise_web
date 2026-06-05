@@ -636,10 +636,10 @@ flowchart TD
 | Trial sessions | `docs/booking/09-trial-sessions.md` |
 | Waitlist system | `docs/booking/11-waitlist-system.md` |
 | Checkout + payment | `docs/booking/10-checkout-payment-integration.md` |
-| Enterprise overview | `docs/enterprise/00-overview.md` |
-| Enterprise scenarios | `docs/enterprise/14-scenarios-and-examples.md` |
-| Funding & programs | `docs/enterprise/02-funding-and-programs.md` |
-| Enterprise readiness | `ENTERPRISE_READINESS.md` |
+| Enterprise overview | `docs/enterprise/00-foundations/01-overview.md` |
+| Enterprise scenarios | `docs/enterprise/60-scenarios-and-verdicts/01-scenarios-and-examples.md` |
+| Funding & programs | `docs/enterprise/00-foundations/03-funding-and-programs.md` |
+| Enterprise readiness | `docs/enterprise/90-audits/01-readiness-audit.md` |
 | Slot allocation engine | `utils/slotAllocation/SlotAllocationService.ts` |
 | Checkout orchestration | `lib/payments/operations/checkout.ts` |
 | Webhook handlers | `lib/payments/webhooks/handlers.ts` |

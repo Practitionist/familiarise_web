@@ -123,17 +123,17 @@ This doc gives you the holistic mental model. When you need implementation detai
 
 | Need this depth | Go here |
 |---|---|
-| Every API route in detail | `docs/enterprise/40-api-reference.md` |
-| Old → new route migration | `docs/enterprise/41-route-migration-table.md` |
-| Runbook for specific failure modes | `docs/enterprise/42-runbooks.md` |
-| Monitoring dashboards | `docs/enterprise/43-monitoring.md` |
-| Idempotency key design | `docs/enterprise/20-concurrency-and-idempotency.md` |
-| Programs deep-dive | `docs/enterprise/21-programs.md` |
-| Contract lifecycle (renew / supersede / end-early) | `docs/enterprise/26-contract-lifecycle.md` |
-| Cycle engine & assignment rollover | `docs/enterprise/27-cycle-engine-and-rollover.md` |
-| Hierarchy (parent-child orgs) | `docs/enterprise/05-hierarchy.md` |
-| Ledger discipline | `docs/enterprise/08-ledger-and-postings.md` |
-| SSO testing | `docs/enterprise/15-sso-and-authentication.md` |
+| Every API route in detail | `docs/enterprise/50-operations/01-api-reference.md` |
+| Old → new route migration | `docs/enterprise/50-operations/02-route-migration-table.md` |
+| Runbook for specific failure modes | `docs/enterprise/50-operations/03-runbooks.md` |
+| Monitoring dashboards | `docs/enterprise/50-operations/04-monitoring.md` |
+| Idempotency key design | `docs/enterprise/30-programs-and-lifecycle/01-concurrency-and-idempotency.md` |
+| Programs deep-dive | `docs/enterprise/30-programs-and-lifecycle/02-programs.md` |
+| Contract lifecycle (renew / supersede / end-early) | `docs/enterprise/30-programs-and-lifecycle/07-contract-lifecycle.md` |
+| Cycle engine & assignment rollover | `docs/enterprise/30-programs-and-lifecycle/08-cycle-engine-and-rollover.md` |
+| Hierarchy (parent-child orgs) | `docs/enterprise/00-foundations/06-hierarchy.md` |
+| Ledger discipline | `docs/enterprise/10-money-and-ledger/03-ledger-and-postings.md` |
+| SSO testing | `docs/enterprise/20-iam-and-security/01-sso-and-authentication.md` |
 
 ---
 
@@ -239,7 +239,7 @@ This is a mini-glossary for the terms you'll see everywhere. A full A-Z glossary
 |---|---|
 | **Organization** | The tenant — Wipro, LearnPro, IIT Madras. |
 | **Member / Membership** | A person's relationship to an org (distinct from User — a User can have many Memberships in different orgs). |
-| **MemberRole** | The role a Member has inside a specific org: OWNER, MAINTAINER, **BILLING_ADMIN**, MANAGER, EXPERT, LEARNER, SUPPORT. **BILLING_ADMIN** (rank 70, between MAINTAINER and MANAGER) is the finance-team side-gate — manages invoices, POs, payouts, rate cards, wallet top-ups, and outbound webhooks, but **cannot** change org status / funding source / members / SSO. See [03-roles-and-permissions](../03-roles-and-permissions.md). |
+| **MemberRole** | The role a Member has inside a specific org: OWNER, MAINTAINER, **BILLING_ADMIN**, MANAGER, EXPERT, LEARNER, SUPPORT. **BILLING_ADMIN** (rank 70, between MAINTAINER and MANAGER) is the finance-team side-gate — manages invoices, POs, payouts, rate cards, wallet top-ups, and outbound webhooks, but **cannot** change org status / funding source / members / SSO. See [roles-and-permissions](../00-foundations/04-roles-and-permissions.md). |
 | **canSponsor** | Boolean flag: does this org pay for its members' bookings? |
 | **canHost** | Boolean flag: does this org host EXPERTs who earn revenue through it? |
 | **BillingAccount** | The org's wallet + funding-source record. 1:1 with Organization when `canSponsor=true`. |
@@ -589,7 +589,7 @@ A Program is a commercial package describing **what the org has bought for its m
 | `overageRatePaise` | Price per overage session when charging |
 | `pricePerSeatPaise` | Price per seat per cycle |
 
-**Use case:** Acme Corp wants 25 engineers to have unlimited mentorship. Acme signs a ₹3K/seat/month LICENSED_SEAT contract = ₹75K/month. Each engineer is capped at 4 sessions/month (soft cap) to prevent abuse. If they hit the cap, `overageBehavior` decides: BLOCK (try next month), CHARGE_MEMBER (learner pays the overage on their own card), or CHARGE_ORG (overage accrues to the org's next invoice). The full machine is in § 8.7 and [27-cycle-engine-and-rollover](../27-cycle-engine-and-rollover.md).
+**Use case:** Acme Corp wants 25 engineers to have unlimited mentorship. Acme signs a ₹3K/seat/month LICENSED_SEAT contract = ₹75K/month. Each engineer is capped at 4 sessions/month (soft cap) to prevent abuse. If they hit the cap, `overageBehavior` decides: BLOCK (try next month), CHARGE_MEMBER (learner pays the overage on their own card), or CHARGE_ORG (overage accrues to the org's next invoice). The full machine is in § 8.7 and [cycle-engine-and-rollover](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md).
 
 ### 8.2 CREDIT_POOL (shipped)
 
@@ -606,7 +606,7 @@ A Program is a commercial package describing **what the org has bought for its m
 
 The pool's running balance lives in the double-entry journal as the org's WALLET account (a credit-normal liability); `BillingAccount.walletBalance` (paise) is a **derived cache** of that account, asserted nightly by the reconciler (`WALLET_BALANCE_DRIFT` finding if it diverges). 1 credit = ₹1 = 100 paise by convention; the legacy `creditValuePaise` and `premiumMultiplier` fields were dropped (removed in #772) — premium pricing is now expressed via per-plan rate cards instead of a flat multiplier.
 
-**Config lock & archive (#777 §B).** A Program's commercial terms are editable while it's still a draft, but `Program.configLockedAt` is stamped at the **first assignment** — from then on the `LOCKED_PROGRAM_FIELDS` (the money-shaping ones: type, pricing, seat/credit config) are read-only, because financial history rides on them. Changing money terms after lock is not an edit, it's "archive this program and create a new one." A locked program is never hard-deleted; `Program.archivedAt` soft-hides it from active lists while preserving the assignments and bookings that reference it. See [21-programs](../21-programs.md).
+**Config lock & archive (#777 §B).** A Program's commercial terms are editable while it's still a draft, but `Program.configLockedAt` is stamped at the **first assignment** — from then on the `LOCKED_PROGRAM_FIELDS` (the money-shaping ones: type, pricing, seat/credit config) are read-only, because financial history rides on them. Changing money terms after lock is not an edit, it's "archive this program and create a new one." A locked program is never hard-deleted; `Program.archivedAt` soft-hides it from active lists while preserving the assignments and bookings that reference it. See [programs](../30-programs-and-lifecycle/02-programs.md).
 
 **Use case:** Wipro funds a ₹4L pool. Each 1-hour session deducts ₹1,500 worth of credits at the plan's listed rate. When the wallet balance hits the low-water threshold, OWNER gets a notification to top up.
 
@@ -669,7 +669,7 @@ A LICENSED_SEAT member with a soft cap (`coveredEngagementsPerCycle`) doesn't ju
 | `CHARGE_MEMBER` | Learner pays the overage on their **own** card. | `OverageChargeStatus` walks PENDING → CHARGED. If the learner never completes it, a 14-day timeout (`timeout-member-overages` cron) flips it to **FAILED** — no more silently stuck money. |
 | `CHARGE_ORG` | Overage **accrues** to the org. | Status PENDING → ACCRUED; at the cycle/invoice rollup it becomes an `InvoiceLineItem` on the org's next bill. |
 
-**Circuit breaker.** `CreditPoolConfig.maxOveragePerCyclePaise` (also on the seat config) caps cumulative `OverageEvent.marginalPaise` per cycle. Once cumulative overage would cross it, further overage is **BLOCKED** regardless of behavior — the spend ceiling wins. `OverageChargeStatus` is the full machine: `PENDING | ACCRUED | CHARGED | BLOCKED | REVERSED | FAILED`. Detail in [27-cycle-engine-and-rollover](../27-cycle-engine-and-rollover.md).
+**Circuit breaker.** `CreditPoolConfig.maxOveragePerCyclePaise` (also on the seat config) caps cumulative `OverageEvent.marginalPaise` per cycle. Once cumulative overage would cross it, further overage is **BLOCKED** regardless of behavior — the spend ceiling wins. `OverageChargeStatus` is the full machine: `PENDING | ACCRUED | CHARGED | BLOCKED | REVERSED | FAILED`. Detail in [cycle-engine-and-rollover](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md).
 
 ### 8.8 Assignment lifecycle — the cycle engine (#779 §A/§B)
 
@@ -680,7 +680,7 @@ The engine gives every assignment an explicit `AssignmentStatus` — `ACTIVE | R
 - **ROLL** — if the governing contract is `ACTIVE` + `autoRenew` and a successor cycle fits the term: claim `ACTIVE → ROLLED` (stamp `rolledAt`), then mint the successor `ACTIVE` row with counters zeroed. `rolledAt` is the idempotency gate — it doubles as the distributed lock, so two cron replicas can't double-roll.
 - **CLOSE** — otherwise: claim `ACTIVE → CLOSED`, no successor.
 
-`PAUSED` holds an assignment out of the roll loop without closing it; `CANCELLED` is an explicit terminal stop. This is the spine that keeps `seatsUsed` and per-cycle caps honest, and it's clamped to the contract state machine (§ 15.5) — an assignment only rolls while its contract is live. Full decision table in [27-cycle-engine-and-rollover](../27-cycle-engine-and-rollover.md).
+`PAUSED` holds an assignment out of the roll loop without closing it; `CANCELLED` is an explicit terminal stop. This is the spine that keeps `seatsUsed` and per-cycle caps honest, and it's clamped to the contract state machine (§ 15.5) — an assignment only rolls while its contract is live. Full decision table in [cycle-engine-and-rollover](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md).
 
 ---
 
@@ -700,7 +700,7 @@ Organizations are governed by a **MemberRole** hierarchy, enforced at the API la
 | **LEARNER** | Base | Consumes sessions via the org | Marketplace consultee |
 | **SUPPORT** | Base | Non-billing staff for internal admin | Customer-facing support |
 
-Note `BILLING_ADMIN` sits *off* the linear seniority ladder — it's a **side-gate**, not a rung. It outranks MANAGER on billing surfaces but has none of MAINTAINER's member/SSO powers. See [03-roles-and-permissions](../03-roles-and-permissions.md).
+Note `BILLING_ADMIN` sits *off* the linear seniority ladder — it's a **side-gate**, not a rung. It outranks MANAGER on billing surfaces but has none of MAINTAINER's member/SSO powers. See [roles-and-permissions](../00-foundations/04-roles-and-permissions.md).
 
 ### 9.2 Complete permission matrix
 
@@ -1181,7 +1181,7 @@ If the user has no Membership, the payer selector hides entirely (no extra UX no
 
 ## 14. Payment legs & the double-entry ledger
 
-Every movement of money on the platform is recorded in a **double-entry money journal** alongside the **PaymentLeg** composition model. Understanding this is load-bearing for trusting the numbers. (Detail docs: `06-money-model-overview.md`, `07-chart-of-accounts.md`, `08-ledger-and-postings.md`, `13-payment-legs.md`, `14-ledger-integrity.md`.)
+Every movement of money on the platform is recorded in a **double-entry money journal** alongside the **PaymentLeg** composition model. Understanding this is load-bearing for trusting the numbers. (Detail docs, all under `10-money-and-ledger/`: `money-model-overview`, `chart-of-accounts`, `ledger-and-postings`, `payment-legs`, `ledger-integrity`.)
 
 ### 14.1 The two ledgers
 
@@ -1339,7 +1339,7 @@ A rate card hangs off a `Contract`, and the contract has its own state machine �
 - **Supersession.** Rather than mutating a live contract, you mint a successor and link it (`supersededByContractId` / `supersededAt`). `POST …/contracts/[contractId]/supersede` (OWNER) takes a `ContractSupersessionType`: **AMENDMENT** (mid-term change — successor starts now, old → TERMINATED) or **RENEWAL** (term rollover — successor starts at the old term's end). The third value, **TERMINATION_REPLACEMENT**, is **system-set** (e.g. a replacement issued during termination), not a user choice.
 - **End-early / terminate.** Ending a contract before term is a `PATCH …/contracts/[contractId]` to its status, behind a **guard**: it returns **409** while there are still live assignments or outstanding invoices. Once clear, the termination runs an **in-transaction cascade** — its programs go `ACTIVE → EXPIRED` and their still-`ACTIVE` assignments go `→ CLOSED` in the same tx, so nothing is orphaned. (Past-term contracts expire naturally via the `expire-contracts` cron, 03:00 UTC.)
 
-Full state table + the supersession chain semantics: [26-contract-lifecycle](../26-contract-lifecycle.md).
+Full state table + the supersession chain semantics: [contract-lifecycle](../30-programs-and-lifecycle/07-contract-lifecycle.md).
 
 ---
 
@@ -1390,7 +1390,7 @@ stateDiagram-v2
 
 `EarningStatus` (the source rows being settled): `PENDING / HELD / READY / PAID / REFUNDED / PENDING_TRUST`.
 
-**Live-payout gate.** Real money only leaves the platform when `ENABLE_LIVE_PAYOUTS` is on. With the flag **off** (today's default), the pipeline runs end-to-end but **freezes at `PROCESSING`** — batches are created, claimed, and reconciled, but the gateway dispatch is a no-op, so nothing actually disburses. This is intentional pre-launch: the accounting is exercised without moving funds. The go-live checklist is in [45-live-payout-go-live-runbook](../45-live-payout-go-live-runbook.md).
+**Live-payout gate.** Real money only leaves the platform when `ENABLE_LIVE_PAYOUTS` is on. With the flag **off** (today's default), the pipeline runs end-to-end but **freezes at `PROCESSING`** — batches are created, claimed, and reconciled, but the gateway dispatch is a no-op, so nothing actually disburses. This is intentional pre-launch: the accounting is exercised without moving funds. The go-live checklist is in [live-payout-go-live-runbook](../50-operations/06-live-payout-go-live-runbook.md).
 
 ### 16.4 Ledger postings on payout
 
@@ -1482,8 +1482,8 @@ The Digital Personal Data Protection Act, 2023.
 |---|---|
 | Consent recording | `ConsentArtifact` model, SHA-256 hash of full policy text at consent time |
 | Per-user consent log | `/api/organizations/[orgId]/consent` routes + `DataRegion` on Organization |
-| Right to access (§11) | Org-wide export via `OrgDataExportJob` (`PENDING → PROCESSING → READY → FAILED → EXPIRED`); gated by `requireOrgBillingAdminOrOwner`, drained by the `process-data-exports` cron. See [32-data-export](../32-data-export.md). |
-| Right to erasure (§12) | Manual process in v1 (admin runs deletion script). Future: automated endpoint. See [31-deletion-policy](../31-deletion-policy.md). |
+| Right to access (§11) | Org-wide export via `OrgDataExportJob` (`PENDING → PROCESSING → READY → FAILED → EXPIRED`); gated by `requireOrgBillingAdminOrOwner`, drained by the `process-data-exports` cron. See [data-export](../40-compliance-and-data/03-data-export.md). |
+| Right to erasure (§12) | Manual process in v1 (admin runs deletion script). Future: automated endpoint. See [deletion-policy](../40-compliance-and-data/02-deletion-policy.md). |
 | Data breach log | `DataBreach` model (schema-final, admin UI pending); `databreach-deadline-alerts` cron watches the 72-hour clock. |
 
 > Note the model is `OrgDataExportJob` (a job row, not a static `OrgDataExport`); the export is delivered as a single JSON object. Right-to-access (§11, "give me my data") is distinct from right-to-erasure (§12, "delete my data") — they are different DPDP sections with different machinery.
@@ -1987,7 +1987,7 @@ These aren't platform cron entries — they're **GitHub Actions workflows** in `
 | Workflow → job | UTC / IST | Purpose |
 |---|---|---|
 | `advance-program-cycles` → `jobs/billing/advance-program-cycles.ts` | 02:15 / 07:45 | Cycle engine: ROLL or CLOSE ended assignments (§ 8.8) |
-| `dunning` → `jobs/billing/dunning.ts` | 23:30 / 05:00⁺ | ISSUED→OVERDUE, 7-day reminders ≤3 (§ 12 / doc 12) |
+| `dunning` → `jobs/billing/dunning.ts` | 23:30 / 05:00⁺ | ISSUED→OVERDUE, 7-day reminders ≤3 (§ 12 / invoicing doc) |
 | `wallet-low-balance` → `jobs/billing/wallet-low-balance.ts` | 23:45 / 05:15⁺ | Wallet-floor watch — **notify-only today** (see § 29.4) |
 | `timeout-member-overages` → `jobs/billing/timeout-member-overages.ts` | 23:00 / 04:30⁺ | 14-day CHARGE_MEMBER timeout → FAILED |
 
@@ -2085,7 +2085,7 @@ Before logging webhook payloads, `scrubWebhookPayload()` redacts:
 
 §§ 30.1–30.3 cover *inbound* gateway webhooks. Orgs can also register **outbound** endpoints (`/webhooks`, OWNER∨BILLING_ADMIN) that Familiarise signs and POSTs to; the `dispatch-outbound-webhooks` cron drains the queue every minute, with `sweep-stuck-webhook-events` and `archive-webhook-events` keeping it healthy. Deliveries are inspectable and individually re-deliverable (`/webhooks/[endpointId]/deliveries/[deliveryId]/redeliver`).
 
-Rotating an endpoint's signing secret (`POST /webhooks/[endpointId]/rotate-secret`) is **zero-downtime**: the new secret is stamped (`secretRotatedAt`) and the prior secret's HMAC is stashed in `previousSecretHash`, so for a **24-hour grace** the dispatcher signs (and the receiver can verify) under **both** secrets. The customer updates their verifier any time inside that window without dropping a single delivery. See [33-outbound-webhooks](../33-outbound-webhooks.md).
+Rotating an endpoint's signing secret (`POST /webhooks/[endpointId]/rotate-secret`) is **zero-downtime**: the new secret is stamped (`secretRotatedAt`) and the prior secret's HMAC is stashed in `previousSecretHash`, so for a **24-hour grace** the dispatcher signs (and the receiver can verify) under **both** secrets. The customer updates their verifier any time inside that window without dropping a single delivery. See [outbound-webhooks](../40-compliance-and-data/04-outbound-webhooks.md).
 
 ---
 ---
@@ -2323,7 +2323,7 @@ Today: INR-centric. Orgs whose `contractCurrency` is USD/EUR/GBP route through S
 
 ### 36.1 Current status
 
-Schema ready: hierarchy is `Organization.parentOrganizationId` + the denormalized `rootOrganizationId` (group root for fast subsidiary scoping). **There is no `depth` column and no hierarchy helper lib** — scoping is done with the two FK columns directly. See [05-hierarchy](../05-hierarchy.md).
+Schema ready: hierarchy is `Organization.parentOrganizationId` + the denormalized `rootOrganizationId` (group root for fast subsidiary scoping). **There is no `depth` column and no hierarchy helper lib** — scoping is done with the two FK columns directly. See [hierarchy](../00-foundations/06-hierarchy.md).
 
 🟡 **Not actually running.** A `consolidated-invoice-rollup.yml` workflow exists, but the script it invokes (`jobs/cleanup/consolidated-invoice-rollup.ts`) **does not exist in the tree** (§ 29.3), so the scheduled rollup would fail. There is no `ENABLE_CONSOLIDATED_INVOICE` flag. Treat parent-child rollup as designed-and-scaffolded, not live — it needs the job script before any first parent-child tenant.
 
@@ -2460,7 +2460,7 @@ Common errors + resolutions.
 
 ### 41.2 Dashboards
 
-See `docs/enterprise/43-monitoring.md` for suggested BetterStack / Grafana dashboards.
+See `docs/enterprise/50-operations/04-monitoring.md` for suggested BetterStack / Grafana dashboards.
 
 ---
 ---
@@ -2606,7 +2606,7 @@ Audit:       OrgAuditLog
 
 ## 44. API cheat sheet
 
-See `docs/enterprise/40-api-reference.md` for the full reference. High-level map:
+See `docs/enterprise/50-operations/01-api-reference.md` for the full reference. High-level map:
 
 ```
 Org CRUD:       /api/organizations[/orgId]
@@ -2645,38 +2645,38 @@ Ledger recon:     reconcile-ledgers         (03:45 UTC)
 
 | Doc | Coverage |
 |---|---|
-| `docs/enterprise/00-overview.md` | High-level intro |
-| `docs/enterprise/01-organization-types.md` | Org-kind deep dive |
-| `docs/enterprise/02-funding-and-programs.md` | Funding + program deep dive |
-| `docs/enterprise/10-booking-to-earnings.md` | 3-way split mechanics |
-| `docs/enterprise/03-roles-and-permissions.md` | Permission matrix |
-| `docs/enterprise/04-organization-lifecycle.md` | Org status state machine |
-| `docs/enterprise/22-expert-lifecycle.md` | EXPERT joining flow |
-| `docs/enterprise/11-payout-pipeline.md` | Settlement detail |
-| `docs/enterprise/15-sso-and-authentication.md` | SSO implementation |
-| `docs/enterprise/09-wallet-and-topups.md` | Wallet + ledger |
-| `docs/enterprise/12-invoicing.md` | Invoice lifecycle |
-| `docs/enterprise/24-public-pages-and-discovery.md` | Org marketplace pages |
-| `docs/enterprise/23-dashboard-pages.md` | Dashboard UX |
-| `docs/enterprise/25-feature-flags-and-rollout.md` | Env flags |
-| `docs/enterprise/50-scenarios-and-examples.md` | Worked examples |
-| `docs/enterprise/20-concurrency-and-idempotency.md` | Race safety |
-| `docs/enterprise/21-programs.md` | Program deep-dive |
-| `docs/enterprise/26-contract-lifecycle.md` | Contract state machine, auto-renew, supersession, end-early guard |
-| `docs/enterprise/27-cycle-engine-and-rollover.md` | Assignment lifecycle, nightly roll/close, overage settlement |
-| `docs/enterprise/05-hierarchy.md` | Parent-child orgs |
-| `docs/enterprise/06-money-model-overview.md` | Money model overview |
-| `docs/enterprise/07-chart-of-accounts.md` | Ledger account kinds |
-| `docs/enterprise/08-ledger-and-postings.md` | Ledger rules + canonical postings |
-| `docs/enterprise/14-ledger-integrity.md` | Reconciliation + finding codes |
-| `docs/enterprise/51-harness-verdict.md` | Evaluation harness |
-| `docs/enterprise/13-payment-legs.md` | PaymentLeg detail |
-| `docs/enterprise/40-api-reference.md` | Every API route |
-| `docs/enterprise/41-route-migration-table.md` | Old → new routes |
-| `docs/enterprise/42-runbooks.md` | Operations runbooks |
-| `docs/enterprise/43-monitoring.md` | Dashboards + alerts |
-| `docs/enterprise/20-concurrency-and-idempotency.md` | Idempotency design |
-| `docs/enterprise/15-sso-and-authentication.md` | SSO testing |
+| `docs/enterprise/00-foundations/01-overview.md` | High-level intro |
+| `docs/enterprise/00-foundations/02-organization-types.md` | Org-kind deep dive |
+| `docs/enterprise/00-foundations/03-funding-and-programs.md` | Funding + program deep dive |
+| `docs/enterprise/10-money-and-ledger/05-booking-to-earnings.md` | 3-way split mechanics |
+| `docs/enterprise/00-foundations/04-roles-and-permissions.md` | Permission matrix |
+| `docs/enterprise/00-foundations/05-organization-lifecycle.md` | Org status state machine |
+| `docs/enterprise/30-programs-and-lifecycle/03-expert-lifecycle.md` | EXPERT joining flow |
+| `docs/enterprise/10-money-and-ledger/06-payout-pipeline.md` | Settlement detail |
+| `docs/enterprise/20-iam-and-security/01-sso-and-authentication.md` | SSO implementation |
+| `docs/enterprise/10-money-and-ledger/04-wallet-and-topups.md` | Wallet + ledger |
+| `docs/enterprise/10-money-and-ledger/07-invoicing.md` | Invoice lifecycle |
+| `docs/enterprise/30-programs-and-lifecycle/05-public-pages-and-discovery.md` | Org marketplace pages |
+| `docs/enterprise/30-programs-and-lifecycle/04-dashboard-pages.md` | Dashboard UX |
+| `docs/enterprise/30-programs-and-lifecycle/06-feature-flags-and-rollout.md` | Env flags |
+| `docs/enterprise/60-scenarios-and-verdicts/01-scenarios-and-examples.md` | Worked examples |
+| `docs/enterprise/30-programs-and-lifecycle/01-concurrency-and-idempotency.md` | Race safety |
+| `docs/enterprise/30-programs-and-lifecycle/02-programs.md` | Program deep-dive |
+| `docs/enterprise/30-programs-and-lifecycle/07-contract-lifecycle.md` | Contract state machine, auto-renew, supersession, end-early guard |
+| `docs/enterprise/30-programs-and-lifecycle/08-cycle-engine-and-rollover.md` | Assignment lifecycle, nightly roll/close, overage settlement |
+| `docs/enterprise/00-foundations/06-hierarchy.md` | Parent-child orgs |
+| `docs/enterprise/10-money-and-ledger/01-money-model-overview.md` | Money model overview |
+| `docs/enterprise/10-money-and-ledger/02-chart-of-accounts.md` | Ledger account kinds |
+| `docs/enterprise/10-money-and-ledger/03-ledger-and-postings.md` | Ledger rules + canonical postings |
+| `docs/enterprise/10-money-and-ledger/09-ledger-integrity.md` | Reconciliation + finding codes |
+| `docs/enterprise/60-scenarios-and-verdicts/02-harness-verdict.md` | Evaluation harness |
+| `docs/enterprise/10-money-and-ledger/08-payment-legs.md` | PaymentLeg detail |
+| `docs/enterprise/50-operations/01-api-reference.md` | Every API route |
+| `docs/enterprise/50-operations/02-route-migration-table.md` | Old → new routes |
+| `docs/enterprise/50-operations/03-runbooks.md` | Operations runbooks |
+| `docs/enterprise/50-operations/04-monitoring.md` | Dashboards + alerts |
+| `docs/enterprise/30-programs-and-lifecycle/01-concurrency-and-idempotency.md` | Idempotency design |
+| `docs/enterprise/20-iam-and-security/01-sso-and-authentication.md` | SSO testing |
 | `PRICING_STRATEGY.md` (repo root) | Pricing strategy |
 | `HIRING_PLAN.md` (repo root) | Headcount plan |
 | `SALES_MARKETING_PLAYBOOK.md` (repo root) | Sales scripts |
@@ -2743,7 +2743,7 @@ A: Yes. Unused credits can be refunded; pro-rated based on usage.
 A: Contract-specific; typically ₹10L-₹50L initial; raised based on payment history.
 
 **Q17: What happens if a B2B invoice isn't paid by due date?**
-A: The `dunning` cron flips it `ISSUED → OVERDUE` (stamping `markedOverdueAt`) and sends reminders on a **7-day cadence, capped at 3**. A booking-suspension cascade is **designed but NOT active** (🟡) — `dunningSuspendedAt` is never written today, so an unpaid invoice does **not** currently auto-suspend the org. Don't promise customers automatic suspension. See doc 12 (invoicing).
+A: The `dunning` cron flips it `ISSUED → OVERDUE` (stamping `markedOverdueAt`) and sends reminders on a **7-day cadence, capped at 3**. A booking-suspension cascade is **designed but NOT active** (🟡) — `dunningSuspendedAt` is never written today, so an unpaid invoice does **not** currently auto-suspend the org. Don't promise customers automatic suspension. See [invoicing](../10-money-and-ledger/07-invoicing.md).
 
 **Q18: Can members book with a different payer (personal card instead of org)?**
 A: Yes. Payer selector at checkout. Member picks.

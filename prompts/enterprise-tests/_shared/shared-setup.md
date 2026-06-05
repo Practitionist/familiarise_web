@@ -240,8 +240,8 @@ Webhook handler is idempotent on `WalletEntry.providerOrderId` /
 ## §6 — Schema reference (table names)
 
 For canonical model defs, read `prisma/schema.prisma` directly.
-For the ER view: `docs/enterprise/00-overview.md#schema-map--organization-at-the-centre`.
-For the clustered flowchart: `docs/enterprise/reference/schema-diagram.md`.
+For the ER view: `docs/enterprise/00-foundations/01-overview.md` (master ER + schema-by-cluster).
+For the platform-wide diagrams: `SCHEMA_MAP.md` (repo root).
 
 | Prisma Model | PostgreSQL Table | Notes |
 |---|---|---|
