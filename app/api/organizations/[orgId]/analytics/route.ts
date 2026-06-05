@@ -21,7 +21,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { ledgerAccountId } from "@/lib/payments/ledger/post";
-import { resolveActivationSignals } from "@/lib/enterprise/org-activation";
+import { resolveActivationSignals } from "@/lib/enterprise/org-activation-signals";
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
