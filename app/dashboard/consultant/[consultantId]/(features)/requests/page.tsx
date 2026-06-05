@@ -27,15 +27,14 @@ export default function RequestsPage({
   // toggle between "Personal" / "<org>" / "All". Self-hides for
   // consultants with zero org memberships (no behavioral change there).
   const { scope, setScope } = useOrgScope();
-  // "all" from the UI means "show my entire activity" — send no orgScope
-  // param so the API returns personal + every org the user belongs to.
-  // Sending orgScope=all is reserved for ADMIN/STAFF and would 403 here.
-  // Issue: #732 (enterprise readiness backlog — scope semantics audit).
+  // "all" sends `?orgScope=all` to the API. This is now allowed for
+  // owners of self-scoped endpoints (lib/api/scope/parse.ts —
+  // allowAllForOwner). Returns personal + every org the user belongs to.
   const orgScopeParam =
     scope.kind === "personal"
       ? "personal"
       : scope.kind === "all"
-        ? undefined
+        ? "all"
         : scope.orgId;
   const requestsQuery = createConsultantQueries(consultantId, orgScopeParam)
     .requests;

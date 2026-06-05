@@ -79,6 +79,10 @@ export async function GET(
       raw: url.searchParams.get("orgScope"),
       memberships: callerMemberships,
       userRole: session.user.role,
+      // Self-scoped: route already rejects requests for someone else's
+      // consulteeProfileId, so `?orgScope=all` here means "my personal
+      // + every org I belong to" — safe for any role.
+      allowAllForOwner: true,
     });
     if (!scopeResolution.ok) {
       return NextResponse.json(

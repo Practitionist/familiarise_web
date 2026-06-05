@@ -62,6 +62,13 @@ export default async function MyProgramPage({
     consulteeProfileId: access.member.consulteeProfileId,
   });
 
+  // Deep-link to the learner's appointments tab scoped to THIS org so
+  // org-funded sessions show. /dashboard alone lands on /home which has no
+  // OrgContextFilter and defaults to personal scope, hiding the rows.
+  const appointmentsHref = access.member.consulteeProfileId
+    ? `/dashboard/consultee/${access.member.consulteeProfileId}/appointments?orgScope=${orgId}`
+    : `/dashboard?orgScope=${orgId}`;
+
   return (
     <div className="space-y-6">
       <header>
@@ -126,7 +133,7 @@ export default async function MyProgramPage({
                           dashboard). Gate the link to the 10-min window. */}
                       {s.joinable ? (
                         <Link
-                          href="/dashboard"
+                          href={appointmentsHref}
                           className="inline-flex rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground"
                         >
                           Join now
@@ -144,7 +151,7 @@ export default async function MyProgramPage({
           </div>
           <p className="mt-2 text-xs text-muted-foreground">
             Join from your{" "}
-            <Link href="/dashboard" className="underline text-primary">
+            <Link href={appointmentsHref} className="underline text-primary">
               dashboard
             </Link>{" "}
             when the room opens (within 10 minutes of the start time).

@@ -151,6 +151,8 @@ export async function GET(
       raw: searchParams.get("orgScope"),
       memberships: callerMembershipsForScope,
       userRole: session.user.role,
+      // Self-scoped consultant endpoint.
+      allowAllForOwner: true,
     });
     if (!docScopeResolution.ok) {
       return NextResponse.json(

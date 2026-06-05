@@ -42,6 +42,17 @@ export interface ResolveScopeContext {
   memberships: Pick<Membership, "organizationId" | "status">[];
   /** Top-level UserRole — used to gate `?orgScope=all`. */
   userRole: string | null | undefined;
+  /**
+   * Opt-in for endpoints that are already self-scoped to the caller's
+   * own data (e.g. `/api/dashboard/consultee/<myId>/events` — the route
+   * authz already rejects requests for someone else's profile). For
+   * those, `?orgScope=all` just means "personal + every org I belong
+   * to" — no cross-tenant leak is possible, so the admin gate is
+   * unnecessary and was the reason learners couldn't see their full
+   * activity in one view. Cross-tenant endpoints (e.g. /api/appointments,
+   * /api/waitlist) leave this false and keep the admin restriction.
+   */
+  allowAllForOwner?: boolean;
 }
 
 const PRIVILEGED_USER_ROLES = new Set(["ADMIN", "STAFF"]);
@@ -71,7 +82,9 @@ export function resolveOrgScope(ctx: ResolveScopeContext): ScopeResolution {
     return { ok: true, scope: { kind: "personal" } };
   }
   if (raw === "all") {
-    if (!ctx.userRole || !PRIVILEGED_USER_ROLES.has(ctx.userRole)) {
+    const isPrivileged =
+      ctx.userRole && PRIVILEGED_USER_ROLES.has(ctx.userRole);
+    if (!isPrivileged && !ctx.allowAllForOwner) {
       return {
         ok: false,
         status: 403,

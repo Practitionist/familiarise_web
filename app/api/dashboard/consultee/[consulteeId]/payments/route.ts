@@ -58,6 +58,8 @@ export async function GET(
       raw: searchParams.get("orgScope"),
       memberships: callerMemberships,
       userRole: session.user.role,
+      // Self-scoped consultee endpoint.
+      allowAllForOwner: true,
     });
     if (!scopeResolution.ok) {
       return NextResponse.json(

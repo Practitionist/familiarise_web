@@ -50,15 +50,14 @@ export default function DocumentsPage({
   // accepts the param and filters via Appointment.organizationId on
   // the joined parent appointment.
   const { scope, setScope } = useOrgScope();
-  // "all" from the UI means "show my entire activity" — send no orgScope
-  // param so the API returns personal + every org the user belongs to.
-  // Sending orgScope=all is reserved for ADMIN/STAFF and would 403 here.
-  // Issue: #732 (enterprise readiness backlog — scope semantics audit).
+  // "all" sends `?orgScope=all` to the API. Self-scoped consultant
+  // endpoints opt in via allowAllForOwner — returns personal + every
+  // org the user belongs to.
   const orgScopeParam =
     scope.kind === "personal"
       ? "personal"
       : scope.kind === "all"
-        ? undefined
+        ? "all"
         : scope.orgId;
 
   const {

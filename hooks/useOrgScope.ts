@@ -22,6 +22,7 @@
 
 import { useCallback, useMemo } from "react";
 import { useParams, useRouter, useSearchParams, usePathname } from "next/navigation";
+import { useSession } from "@/lib/auth-client";
 
 export type Scope =
   | { kind: "personal" }
@@ -60,6 +61,7 @@ export function useOrgScope(): UseOrgScopeResult {
   const pathname = usePathname();
   const params = useParams();
   const searchParams = useSearchParams();
+  const { data: session } = useSession();
 
   const orgIdFromPath =
     typeof params?.orgId === "string" ? params.orgId : null;
@@ -67,23 +69,41 @@ export function useOrgScope(): UseOrgScopeResult {
     orgIdFromPath && pathname?.startsWith("/dashboard/organization/"),
   );
 
+  const role = session?.user?.role;
+  const firstOrgId =
+    session?.user?.organizationMemberships?.[0]?.organizationId ?? null;
+
   const scope: Scope = useMemo(() => {
     if (pinned && orgIdFromPath) {
       return { kind: "org", orgId: orgIdFromPath };
     }
-    return parseRaw(searchParams?.get("orgScope") ?? null);
-  }, [pinned, orgIdFromPath, searchParams]);
+    const raw = searchParams?.get("orgScope") ?? null;
+    // URL is the source of truth. Honor whatever it says.
+    if (raw) return parseRaw(raw);
+
+    // No URL param — pick a sensible default per role:
+    //   - ADMIN / STAFF see "all" so cross-org visibility is on by default.
+    //   - Any user with at least one active membership lands in their
+    //     first org so org-funded bookings surface without a manual
+    //     toggle every visit (B1-personal-retrofit follow-up).
+    //   - Pure B2C users get "personal" — only option that means
+    //     anything for them.
+    if (role === "ADMIN" || role === "STAFF") return { kind: "all" };
+    if (firstOrgId) return { kind: "org", orgId: firstOrgId };
+    return { kind: "personal" };
+  }, [pinned, orgIdFromPath, searchParams, role, firstOrgId]);
 
   const setScope = useCallback(
     (next: Scope) => {
       if (pinned) return; // No-op when route-pinned.
       const sp = new URLSearchParams(searchParams?.toString() ?? "");
-      const ser = serialize(next);
-      if (ser === "personal") {
-        sp.delete("orgScope"); // default — keep URL clean
-      } else {
-        sp.set("orgScope", ser);
-      }
+      // Always write the param so the URL reflects the user's choice.
+      // Previously we omitted `?orgScope=personal` because personal was
+      // the implicit default. Now that the default is role-dependent
+      // (first org for org members, all for admins), omitting the
+      // param would let the default rule snap the user back instantly,
+      // making "Personal only" effectively unselectable.
+      sp.set("orgScope", serialize(next));
       const qs = sp.toString();
       router.replace(`${pathname}${qs ? `?${qs}` : ""}`, { scroll: false });
     },
