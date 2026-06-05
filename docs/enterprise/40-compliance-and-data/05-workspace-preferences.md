@@ -196,6 +196,8 @@ form drifts from the server-known value.
 
 ## When to reach for this vs. `Organization.*`
 
+Use this decision table to determine whether a new preference belongs on `OrgWorkspaceProfile` (per-operator, follows the person across orgs) or on one of the `Organization`-scoped models (shared by every member of that org).
+
 | Setting | Lives on | Scope |
 |---|---|---|
 | Default landing org | `OrgWorkspaceProfile` | Per-operator, cross-org |

@@ -14,12 +14,27 @@ BILLING_ADMIN can request a JSON bundle of every entity scoped to their
 org; the worker builds the bundle, uploads it to Supabase Storage, and
 emails the requester with a 7-day signed-URL link.
 
-> DPDP §11 (web-validated 2026-06-05) is the data principal's
-> right-to-access: a summary of personal data processed plus the
-> recipients it was shared with. This export is the org-tenant analogue
-> — a full snapshot of org-scoped rows the operator is entitled to. The
+> DPDP Act §11 (web-validated 2026-06-05) is the data principal's
+> right of access: a summary of the personal data being processed plus
+> the identities of every Data Fiduciary and Data Processor with whom it
+> has been shared. This export is the org-tenant analogue — a full
+> snapshot of the org-scoped rows the operator is entitled to. The
 > per-data-principal §12 erasure path is a separate flow; see
 > [deletion policy](02-deletion-policy.md).
+>
+> Rule 14 of the DPDP Rules 2025 requires us only to publish the means by
+> which such a request is made and the identifier needed to authenticate
+> it; it sets **no fixed statutory turnaround** for the access response
+> itself. Our asynchronous job model — the request returns `202`, a
+> worker builds the bundle out-of-band, and a 7-day signed URL delivers
+> it — therefore comfortably satisfies the Rule, and the polling surface
+> and rate limit are operational choices rather than compliance
+> constraints. None of this is enforceable against an operator of our
+> size before **13 May 2027**, when Rule 14 commences eighteen months
+> after the 13 November 2025 notification; the intervening runway is the
+> build window, and the `OrgDataExportJob` schema is already in place.
+> (Source: DPDP Rules 2025 Rule 14, https://www.dpdpa.com/dpdparules/rule14.html;
+> commencement Rule 1(4).) Authoritative: `docs/compliance/08-dpdp-and-privacy.md`.
 
 ## Schema
 
@@ -123,6 +138,8 @@ per-data-principal §12 *erasure* path is separate (see
 [deletion policy](02-deletion-policy.md)).
 
 ## Routes
+
+Three endpoints form the request-poll-download lifecycle of a DPDP §11 export bundle; all are gated to OWNER or BILLING_ADMIN because every bundle contains financial PII.
 
 | Verb | Path | Behaviour |
 |---|---|---|

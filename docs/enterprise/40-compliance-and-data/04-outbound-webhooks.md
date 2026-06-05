@@ -13,6 +13,17 @@ external integrations (HRIS, finance ERP, customer-success tools) can
 react to lifecycle events without polling the dashboard or scraping the
 audit-log export.
 
+> **Outbound, not inbound.** This document is about the events
+> Familiarise *sends out* to an integrator's endpoint (rows in
+> `OutboundWebhookDelivery`). It is not the same surface as the
+> **inbound** Razorpay/RazorpayX gateway webhooks Familiarise *receives*
+> (rows in `WebhookEvent`), which back payment idempotency and money
+> side-effects; those are documented separately at
+> [`../10-money-and-ledger/12-payment-webhooks.md`](../10-money-and-ledger/12-payment-webhooks.md).
+> The two share the word "webhook" and nothing else — different table,
+> different direction, different signing scheme. The "Jobs & schedule"
+> section below spells out which crons touch which table.
+
 ## Delivery lifecycle at a glance
 
 A "webhook" here is one row in `OutboundWebhookDelivery` — that table
@@ -35,7 +46,7 @@ sequenceDiagram
     Route->>DB: insert row · status=PENDING<br/>(inside the caller's tx)
     Note over Route,DB: dispatch.ts never HTTPs out — a slow<br/>receiver must not gate the OWNER's click
     loop every 1 min, MAX_BATCH=50, due rows
-        Worker->>DB: claim row → status=IN_FLIGHT<br/>(soft lock; 2nd tick skips)
+        Worker->>DB: claim row → status=IN_FLIGHT<br/>(soft lock — 2nd tick skips)
         Worker->>Worker: sign body → t=…,v1=…<br/>(10s REQUEST_TIMEOUT_MS)
         Worker->>Rcv: POST application/json + X-Familiarise-Signature
         alt 2xx
