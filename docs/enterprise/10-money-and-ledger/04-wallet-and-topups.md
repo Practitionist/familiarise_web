@@ -16,6 +16,8 @@ last-reviewed: 2026-06-05
 
 ## 1. The two records behind a wallet
 
+A wallet is not a single model — it is a `WalletTopUp` lifecycle record paired with a `WALLET` ledger account; understanding which is truth (the account) versus which is the fast-path cache (`walletBalance`) is essential before touching any top-up or debit code.
+
 | Thing | Where | Role |
 | --- | --- | --- |
 | **`WalletTopUp`** | `prisma/schema.prisma` model `WalletTopUp` (~1000) | Lifecycle + idempotency record for one top-up attempt (PENDING → CONFIRMED / FAILED). |

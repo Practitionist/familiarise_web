@@ -92,6 +92,8 @@ So today there are **two** ledgers, not three:
 
 ## 3. The three moving parts of the journal
 
+Every money event in the system is represented by exactly three Prisma models working together; the table names each one, its role in the double-entry scheme, and where its full specification lives.
+
 | Thing | Role | Detail |
 | --- | --- | --- |
 | `LedgerAccount` | a bucket money sits in (CASH, WALLET, …), scoped to platform / org / consultant | [chart of accounts](02-chart-of-accounts.md) |
@@ -128,6 +130,8 @@ The three rules in §1 were choices with alternatives we rejected. Why these, wh
 | **Idempotency keyed per flow** (`topup:<orderId>`, `booking:<paymentId>`, …) | request-level dedup (one key per HTTP call) | A booking and its refund and its top-up are *different cash events on the same upstream id*; per-flow keys let each post exactly once even when they share a `paymentId`, and survive at-least-once webhooks + cron retries. A request-level key would conflate them. See [ledger & postings §2](03-ledger-and-postings.md). |
 
 ## 5. Where each money flow is documented
+
+Every cash event that touches the journal has a canonical `LedgerTransactionKind` and a dedicated doc; use this index to jump directly to the relevant deep-dive rather than scanning the full money-and-ledger band.
 
 | Flow | Journal `kind` | Doc |
 | --- | --- | --- |

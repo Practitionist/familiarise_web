@@ -30,7 +30,7 @@ sequenceDiagram
   ES->>DB: ConsultantEarnings (+ OrganizationEarnings if HOST) — bps snapshot
   ES->>L: postLedgerTxn(booking:<paymentId>)
   L->>DB: Dr funding legs == Cr PLATFORM_FEE + CONSULTANT_PAYABLE + ORG_PAYABLE + GST_PAYABLE
-  Note over ES,L: single-consultant booking posts inline;<br/>multi-collaborator defers the journal (#773)
+  Note over ES,L: single-consultant booking posts inline,<br/>multi-collaborator defers the journal (#773)
 ```
 
 The `walletDebit` in step 2 moves only the **cache** ([wallet & top-ups](04-wallet-and-topups.md)); the authoritative `Dr WALLET` leg is posted later, inside the booking transaction, where the full split is known.
