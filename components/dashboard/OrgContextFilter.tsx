@@ -65,24 +65,30 @@ export function OrgContextFilter({
 
   return (
     <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className={className ?? "h-9 w-[220px]"}>
+      <SelectTrigger
+        className={`cursor-pointer ${className ?? "h-9 w-[220px]"}`}
+      >
         <SelectValue placeholder="Filter by organization" />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value={ORG_FILTER_ALL}>
+        <SelectItem value={ORG_FILTER_ALL} className="cursor-pointer">
           <span className="inline-flex items-center gap-2">
             <Building2 className="h-4 w-4" />
             All activity
           </span>
         </SelectItem>
-        <SelectItem value={ORG_FILTER_PERSONAL}>
+        <SelectItem value={ORG_FILTER_PERSONAL} className="cursor-pointer">
           <span className="inline-flex items-center gap-2">
             <UserIcon className="h-4 w-4" />
             Personal only
           </span>
         </SelectItem>
         {memberships.map((m) => (
-          <SelectItem key={m.organizationId} value={m.organizationId}>
+          <SelectItem
+            key={m.organizationId}
+            value={m.organizationId}
+            className="cursor-pointer"
+          >
             <span className="inline-flex items-center gap-2">
               <Building2 className="h-4 w-4" />
               {m.organizationName}

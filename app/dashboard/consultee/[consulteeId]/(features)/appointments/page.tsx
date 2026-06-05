@@ -30,7 +30,10 @@ export default function AppointmentsPage({ params }: Readonly<PageProps>) {
   // so org-funded sessions surface here (e.g. deep-links from
   // /dashboard/organization/<orgId>/my-program "Join now"). Default is
   // personal — backwards-compatible with B2C users.
-  const { scope, setScope } = useOrgScope();
+  // Land on the union view by default — for an org learner who books
+  // both personally and through their org, the appointments page is
+  // the one place they want the full picture without toggling.
+  const { scope, setScope } = useOrgScope({ defaultForOrgMember: "all" });
   const orgScopeParam =
     scope.kind === "personal"
       ? "personal"

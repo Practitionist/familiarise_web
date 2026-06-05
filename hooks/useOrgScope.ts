@@ -56,12 +56,31 @@ function serialize(scope: Scope): string {
   return scope.orgId;
 }
 
-export function useOrgScope(): UseOrgScopeResult {
+export interface UseOrgScopeOptions {
+  /**
+   * Default scope for org members when the URL has no `?orgScope=`.
+   *   - "first-org" (default) — land on their first org so org-funded
+   *     items surface without a manual toggle.
+   *   - "all" — land on the union view (personal + every org). Only
+   *     safe on pages that hit `allowAllForOwner: true` routes (see
+   *     lib/api/scope/parse.ts) — e.g. the consultee appointments
+   *     page, where seeing the full picture by default is the most
+   *     useful landing state.
+   * ADMIN / STAFF always default to "all" regardless of this option.
+   * B2C users (no orgs) always default to "personal".
+   */
+  defaultForOrgMember?: "first-org" | "all";
+}
+
+export function useOrgScope(
+  options?: UseOrgScopeOptions,
+): UseOrgScopeResult {
   const router = useRouter();
   const pathname = usePathname();
   const params = useParams();
   const searchParams = useSearchParams();
   const { data: session } = useSession();
+  const defaultForOrgMember = options?.defaultForOrgMember ?? "first-org";
 
   const orgIdFromPath =
     typeof params?.orgId === "string" ? params.orgId : null;
@@ -81,17 +100,21 @@ export function useOrgScope(): UseOrgScopeResult {
     // URL is the source of truth. Honor whatever it says.
     if (raw) return parseRaw(raw);
 
-    // No URL param — pick a sensible default per role:
-    //   - ADMIN / STAFF see "all" so cross-org visibility is on by default.
-    //   - Any user with at least one active membership lands in their
-    //     first org so org-funded bookings surface without a manual
-    //     toggle every visit (B1-personal-retrofit follow-up).
-    //   - Pure B2C users get "personal" — only option that means
-    //     anything for them.
     if (role === "ADMIN" || role === "STAFF") return { kind: "all" };
-    if (firstOrgId) return { kind: "org", orgId: firstOrgId };
+    if (firstOrgId) {
+      return defaultForOrgMember === "all"
+        ? { kind: "all" }
+        : { kind: "org", orgId: firstOrgId };
+    }
     return { kind: "personal" };
-  }, [pinned, orgIdFromPath, searchParams, role, firstOrgId]);
+  }, [
+    pinned,
+    orgIdFromPath,
+    searchParams,
+    role,
+    firstOrgId,
+    defaultForOrgMember,
+  ]);
 
   const setScope = useCallback(
     (next: Scope) => {
