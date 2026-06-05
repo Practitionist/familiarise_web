@@ -2,7 +2,7 @@
 
 > **Status:** ✅ none of these are live in code. This doc exists to prevent re-implementation by accident and to flag any stale references in docs / comments.
 > **Audience:** anyone tempted to add code for one of these.
-> **Last reviewed:** 2026-05-02
+> **Last reviewed:** 2026-06-05 (abolition/omission dates web-verified as of 2026-06-05; nothing has returned)
 > **Linked issues:** [#737 §13](https://github.com/Practitionist/familiarise_web/issues/737).
 
 ## What these are
@@ -15,10 +15,10 @@ Tax provisions that were live in past financial years and are now **abolished or
 
 | Levy | What it was | Abolition |
 |---|---|---|
-| 2% e-commerce EL | 2% on consideration received from non-resident e-commerce operators for online supply of goods/services to India | **Abolished by Finance (No. 2) Act 2024 w.e.f. 1 Aug 2024.** |
-| 6% advertisement EL | 6% on online advertisement payments to non-resident service providers | **Abolished by Finance Act 2025 w.e.f. 1 Apr 2025.** Sec 10(50) sunset accordingly. |
+| 2% e-commerce EL | 2% on consideration received from non-resident e-commerce operators for online supply of goods/services to India | **Abolished by Finance (No. 2) Act 2024 w.e.f. 1 Aug 2024.** *(Verified 2026-06-05.)* |
+| 6% advertisement EL | 6% on online advertisement payments to non-resident service providers | **Abolished by Finance Act 2025 (No. 7, signed 29 Mar 2025) w.e.f. 1 Apr 2025.** Sec 10(50) exemption sunset accordingly. *(Verified 2026-06-05.)* |
 
-**Residual:** Pending assessments for transactions before sunset dates remain assessable (open-FY filings can still be raised). No new prospective filings (Form 1) needed for FY 2025-26 onward.
+**Residual:** Pending assessments for transactions before the sunset dates remain assessable. The EL Statement (Form 1) for FY 2024-25 (covering 6% receipts up to 31 Mar 2025) was due **30 Jun 2025** — so a residual filing existed for FY 2024-25. No new prospective EL filings needed for FY 2025-26 onward.
 
 **Action**: grep + remove any `equalisationLevy` / `equalization_levy` / `EL_RATE` references in code or doc comments. Already noted in `lib/compliance/tds.ts` header docblock as "Removed provisions (DO NOT implement)".
 
@@ -27,7 +27,7 @@ Tax provisions that were live in past financial years and are now **abolished or
 **Status: omitted.**
 
 - Was: TCS at 0.1% on sale of goods > ₹50L per buyer per FY.
-- **Omitted by Finance Act 2025 w.e.f. 1 Apr 2025.**
+- **Omitted by Finance Act 2025 w.e.f. 1 Apr 2025.** *(Verified 2026-06-05.)*
 - Never applied to services anyway (we sell services), so this was always out-of-scope for us. Kept for completeness.
 
 **Action**: confirm no `206C` / `TCS_GOODS` references — none found at audit.
@@ -36,8 +36,8 @@ Tax provisions that were live in past financial years and are now **abolished or
 
 **Status: omitted.**
 
-- Was: a multiplier on TDS / TCS rates for payees who hadn't filed their last 2 ITRs and had aggregate TDS / TCS > ₹50,000 in those years.
-- **Both omitted by Finance Act 2025 w.e.f. 1 Apr 2025.**
+- Was: a multiplier on TDS / TCS rates for payees who hadn't filed their last ITR (post-2024 amendment: one year, previously two) and had aggregate TDS / TCS > ₹50,000.
+- **Both omitted by Finance Act 2025 w.e.f. 1 Apr 2025.** *(Verified 2026-06-05.)*
 - Removed the need for platforms to do "PAN vs ITR-filing" reconciliation against the Compliance Check API.
 
 **Action**: grep + remove any `206AB` / `206CCA` / `nonFilerHigherRate` references. None found at audit. Confirmed in `lib/compliance/tds.ts` header docblock.
@@ -79,7 +79,7 @@ Tax provisions that were live in past financial years and are now **abolished or
 
 **Status: schema-only, deferred.**
 
-- `Organization.parentId` / `rootId` / `depth` exist in schema.
+- `Organization.parentOrganizationId` (self-relation "OrgHierarchy") + `rootOrganizationId` exist in schema (re-added under #771 D3 after being dropped in #768; APIs stubbed 501). There is **no `depth` column** — earlier docs that listed `parentId`/`rootId`/`depth` were wrong on the field names. *(Schema verified 2026-06-05.)*
 - No dominant marketplace ships parent-child UI at launch.
 - Defer until a customer asks.
 

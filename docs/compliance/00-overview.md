@@ -2,7 +2,7 @@
 
 > **Scope:** every statutory obligation that touches **both** the B2B / enterprise org-sponsored flow **and** the B2C / consumer marketplace flow. Payments, payouts, refunds, disputes, invoices, data privacy, grievance handling, and cross-border are all included.
 > **Audience:** engineers writing payment / payout / refund / invoice / consent code; admin/finance operators; CA / legal reviewers.
-> **Last reviewed:** 2026-05-02
+> **Last reviewed:** 2026-06-05 (regulatory claims web-verified as of 2026-06-05)
 > **Linked issues:** [#737](https://github.com/Practitionist/familiarise_web/issues/737) (B2C original audit), [#738](https://github.com/Practitionist/familiarise_web/issues/738) (B2C refined scope), `ENTERPRISE_PRODUCTION_GRADE_CHECKLIST_2026_05_02.md` + `ENTERPRISE_READINESS.md` (B2B audits).
 
 This series is the canonical compliance reference covering **both rails** of the platform:
@@ -33,7 +33,7 @@ A previous `india/` subfolder under this directory has been merged into this top
 | 07 | [Cross-border flows](./07-cross-border-flows.md) | Non-resident consumers + non-resident consultants, both rails | 🟠 High |
 | 08 | [DPDP — Act 2023 + Rules 2025](./08-dpdp-and-privacy.md) | Both rails — consent, DSAR, erasure, retention, breach 72h | 🔴 Critical |
 | 09 | [Consumer Protection / E-Commerce Rules 2020](./09-consumer-protection-and-grievance.md) | B2C-primary; B2B inherits Grievance Officer + ODR | 🟠 High |
-| 10 | [RBI PA Master Direction Sep 2025 + payment architecture](./10-rbi-pa-and-payment-architecture.md) | Both rails — Razorpay PG + RazorpayX + Stripe Connect | 🟡 Medium |
+| 10 | [RBI Payment Aggregator Directions 2025 + payment architecture](./10-rbi-pa-and-payment-architecture.md) | Both rails — Razorpay PG + RazorpayX + Stripe Connect | 🟡 Medium |
 | 11 | [Removed / deprecated levies](./11-removed-and-deprecated-levies.md) | EL / 206AB / 206C(1H) — cleanup hygiene | 🟢 Low |
 | 12 | [India compliance calendar](./12-india-compliance-calendar.md) | Filing deadlines for both rails | — |
 | 13 | [Implementation roadmap](./13-implementation-roadmap.md) | Consolidated B2B + B2C plan | — |
@@ -80,7 +80,7 @@ The same regulation can apply differently to the two rails. This table is the qu
 | **DPDP consent + DSAR** | Applies for org operators. | Applies for consumers. Doc 08. |
 | **DPDP breach reporting (72h)** | Applies. | Applies. Doc 08. |
 | **Consumer Protection / Grievance Officer** | Inherits — same officer covers both rails. | **Applies** — primary obligation. Doc 09. |
-| **RBI PA Master Direction Sep 2025** | Org payouts via RazorpayX → arch memo only. | Consumer payments via Razorpay PG → arch memo only. Doc 10. |
+| **RBI PA Directions 2025** (RBI/DPSS/2025-26/141, 15 Sep 2025) | Org payouts via RazorpayX → arch memo only. | Consumer payments via Razorpay PG → arch memo only. Doc 10. |
 | **FEMA / PA-CB / Form 15CA-CB** | Applies for org's non-resident consultants + cross-border invoices. | Applies for B2C non-resident flows. Doc 07. |
 | **Equalisation Levy** (abolished 2024) | Cleanup. | Cleanup. Doc 11. |
 | **Sec 206AB / 206C(1H)** (omitted 2025) | Cleanup. | Cleanup. Doc 11. |

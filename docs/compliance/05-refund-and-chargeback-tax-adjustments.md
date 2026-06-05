@@ -1,8 +1,8 @@
 # 05 — Refund & chargeback tax adjustments
 
-> **Status:** 🔴 critical gap on both rails. Refund cascade exists (`lib/payments/operations/refund.ts`) but emits **no tax adjustments** — every refund silently corrupts the next 26Q / GSTR-8 filing period.
+> **Status:** 🟡 schema now landed, wiring still missing. The tax-adjustment **models** (`CreditNote`, `TdsAdjustment`, `GstTcsAdjustment`) are **present in `prisma/schema.prisma`** as of #776/#778 (verified 2026-06-05) — but the refund cascade (`lib/payments/operations/refund.ts`) still emits **no tax-adjustment rows**, so every refund still silently corrupts the next 26Q (→Form 140) / GSTR-8 filing period until the cascade is wired.
 > **Audience:** payment / refund / dispute code; finance ops.
-> **Last reviewed:** 2026-05-02
+> **Last reviewed:** 2026-06-05 (regulatory facts web-verified as of 2026-06-05; prior review 2026-05-02)
 > **Linked issues:** [#738 Items A, B, H](https://github.com/Practitionist/familiarise_web/issues/738) (this is the largest gap added in #738).
 
 ## What it is
@@ -11,9 +11,9 @@ When a payment is refunded (or a chargeback is lost), the **money already moved*
 
 | Hook | What was deposited | Adjustment required |
 |---|---|---|
-| **Income-tax TDS (Sec 194O / 195)** | Already deposited to govt by 7th of following month | Reverse-credit in **next** 26Q / 27Q quarterly return as a negative adjustment line. Cross-FY adjustments require an income-tax refund claim by the consultant — NOT something we can self-adjust. |
-| **GST output liability** (the GST charged on the original invoice) | Already discharged in GSTR-3B for the month of supply | Issue a **GST credit note** under CGST Sec 34, link to original invoice, and net it off in the next month's GSTR-1 / 3B. |
-| **GST TCS (Sec 52)** — B2C only | Already collected from consultant + deposited via GSTR-8 | Reduce the next-month GSTR-8 by the refunded TCS, OR file a GSTR-8 amendment if the supply month already passed. |
+| **Income-tax TDS (Sec 194O / 195; §393 under the 2025 Act from 1-Apr-2026)** | Already deposited to govt by 7th of following month | Reverse-credit in **next** 26Q→Form 140 / 27Q→Form 144 quarterly return as a negative adjustment line. Cross-FY adjustments require an income-tax refund claim by the consultant — NOT something we can self-adjust. |
+| **GST output liability** (the GST charged on the original invoice) | Already discharged in GSTR-3B for the month of supply | Issue a **GST credit note** under CGST **Sec 34** (Rule 53 content/format), link to original invoice, and net it off in the next month's GSTR-1 / 3B. *(Sec 34/GSTR mechanics unaffected by GST 2.0 — verified 2026-06-05.)* |
+| **GST TCS (Sec 52)** — B2C only | Already collected from consultant + deposited via GSTR-8 | Reduce the next-month GSTR-8 by the refunded TCS, OR file a GSTR-8 amendment if the supply month already passed. (TCS rate is 0.5% since 10-Jul-2024 — see [doc 02](./02-gst-overview.md).) |
 | **Consultant earnings ledger** | Already credited to consultant's earnings | Reverse via the existing PaymentLeg negative-leg cascade. ✅ already works. |
 | **Org earnings ledger** (B2B) | Already credited to org's earnings + accrued in the next invoice | Reverse via existing cascade. ✅ already works. |
 | **Org payout / consultant payout** (already disbursed) | Money is gone | **Clawback** flow needed — see #715/#716 epics. |
@@ -50,11 +50,13 @@ The **first three rows** are entirely unimplemented. Without them, every refund 
 | File | What it does | State |
 |---|---|---|
 | `lib/payments/operations/refund.ts:336–388` | Refund cascade — negative `PaymentLeg`, wallet credit, ConsultantEarnings refundedShareAmount update | ✅ ledger-side OK |
-| Refund tax-adjustment hook | **Missing** | 🔴 |
-| `CreditNote` model | **Missing** | 🔴 |
-| GST output reversal in GSTR-1/3B | **Missing** | 🔴 |
-| 26Q / 27Q negative-adjustment line | **Missing** | 🔴 |
-| Monthly GSTR-8 amendment for TCS reversal | **Missing** (Sec 52 itself missing — see [doc 02](./02-gst-overview.md)) | 🔴 |
+| Refund tax-adjustment hook (writes the rows below) | **Missing** (schema is ready; the cascade doesn't call it) | 🔴 |
+| `CreditNote` model (schema) | **Present** — per-org `creditNoteNumber` + `fiscalYear`, `@@unique([organizationId, creditNoteNumber])`, `refundId @unique` (idempotent minting, #776), Sec 34 invoice FK | ✅ schema-final |
+| `TdsAdjustment` model (schema) | **Present** — signed `amountPaise`, `financialYear`/`quarter`, `reportedInForm26Q` | ✅ schema-final |
+| `GstTcsAdjustment` model (schema) | **Present** — signed `amountPaise`, FK to `GstTcsBatch` | ✅ schema-final |
+| GST output reversal in GSTR-1/3B (export reads `CreditNote`) | **Missing** (no GSTR-1 export yet) | 🔴 |
+| 26Q→140 / 27Q→144 negative-adjustment line (FVU reads `TdsAdjustment`) | **Missing** | 🔴 |
+| Monthly GSTR-8 amendment for TCS reversal (reads `GstTcsAdjustment`) | **Missing** (Sec 52 collection itself stubbed — see [doc 02](./02-gst-overview.md)) | 🔴 |
 | `app/api/webhooks/utils.ts:955–1104` | Dispute auto-hold of consultant earnings | ✅ holds money correctly |
 | Chargeback tax-adjustment trigger on dispute LOST | **Missing** | 🔴 |
 
@@ -71,35 +73,37 @@ The **first three rows** are entirely unimplemented. Without them, every refund 
 
 ## Required
 
-### A. CreditNote model
+### A. CreditNote model — ✅ ALREADY LANDED (schema), wiring pending
+
+The `CreditNote` / `TdsAdjustment` / `GstTcsAdjustment` models are already in `prisma/schema.prisma` (#776/#778) — **do not re-add them.** The shipped `CreditNote` shape differs from (and improves on) the original proposal below:
+
+- Numbering is **per-org gapless** via `@@unique([organizationId, creditNoteNumber])` + `fiscalYear` (CGST **Rule 53** sequence, mirroring `OrganizationInvoice`), minted by `lib/payments/billing/credit-note-numbering.ts` (`<prefix>-CN-<FY>-<seq>`) — **not** a single global `@unique` counter.
+- `refundId String? @unique` makes refund-driven minting **idempotent** — a webhook redelivery / cron retry can't mint a duplicate or burn a sequence number.
+- Links to **`OrganizationInvoice`** (`invoiceId String?`, nullable for B2C/unregistered where no GST invoice was issued); money split is `subtotalPaise` + `cgstPaise`/`sgstPaise`/`igstPaise` + `totalPaise`; lifecycle `status CreditNoteStatus` (DRAFT/…); `issuedAt DateTime?`.
+
+🟡 *The shipped schema has **no `reportedInGstr1` flag** (the original proposal did). The GSTR-1 export (not built) will need either that flag added or a join against filing records to avoid double-reporting credit notes. Engineering follow-up.*
+
+Original proposal (historical — superseded by the landed schema above):
 
 ```prisma
+// SUPERSEDED — see lib/payments/billing/credit-note-numbering.ts + schema CreditNote
 model CreditNote {
   id                  String          @id @default(cuid())
-  creditNoteNumber    String          @unique  // sequential, separate from invoice numbering
+  creditNoteNumber    String          @unique  // ← shipped version is per-org @@unique, not global
   invoiceId           String
-  invoice             Invoice         @relation(fields: [invoiceId], references: [id])
-  amountPaise         Int             // signed positive
+  amountPaise         Int
   cgstPaise           Int
   sgstPaise           Int
   igstPaise           Int
-  reason              String          // refund / cancellation / discount
+  reason              String
   refundId            String?         @unique
-  refund              Refund?         @relation(fields: [refundId], references: [id])
-  issuedAt            DateTime        @default(now())
-  reportedInGstr1     Boolean         @default(false)
-  reportedInGstr1At   DateTime?
-
-  @@index([invoiceId])
-  @@index([reportedInGstr1])
+  reportedInGstr1     Boolean         @default(false)  // ← NOT in shipped schema
 }
 ```
 
-Same shape but linked to `OrganizationInvoice` for the B2B side (reuse via polymorphic FK or two parallel relations).
-
 ### B. Refund cascade additions
 
-Inside the existing Prisma transaction in `refund.ts`:
+Inside the existing Prisma transaction in `refund.ts`. **Field-name note (verified 2026-06-05):** the landed schema uses `amountPaise` (signed) on both `TdsAdjustment` and `GstTcsAdjustment` — *not* `adjustmentPaise`; `TdsAdjustment` keys the source as `tdsRecordId` / `payoutId` / `refundId` (not `originalTdsRecordId`); `GstTcsAdjustment` keys `paymentId` / `refundId` / `batchId`. Treat the pseudocode below as intent, mapping the field names to the real schema:
 
 ```typescript
 // 1. existing — negative PaymentLeg, wallet credit, ConsultantEarnings reversal
@@ -192,7 +196,8 @@ When the refund happens in a different FY than the original payment, **we cannot
 
 ## References
 
-- [CGST Sec 34 — credit and debit notes](https://www.cbic.gov.in/htdocs-cbec/gst/cgst-act-2017-amend-finance-act-2024.pdf)
+- [CGST Sec 34 — credit and debit notes](https://www.cbic.gov.in/htdocs-cbec/gst/cgst-act-2017-amend-finance-act-2024.pdf) — *Sec 34 + Rule 53 credit-note mechanics unchanged by GST 2.0; verified 2026-06-05*
 - [Sec 52 GSTR-8 amendments (TaxGuru)](https://taxguru.in/goods-and-service-tax/gstr-8-amendment-rules.html)
 - [TDS adjustment vs refund-claim guidance (CBDT)](https://www.incometax.gov.in/iec/foportal/help/individual/return-applicable-1)
-- See also: [04](./04-tds-quarterly-filings.md), [02](./02-gst-overview.md), [#715](https://github.com/Practitionist/familiarise_web/issues/715) (clawback for already-disbursed payouts), [#716](https://github.com/Practitionist/familiarise_web/issues/716) (refund unification epic).
+- *Schema landed: `CreditNote` / `TdsAdjustment` / `GstTcsAdjustment` verified present in `prisma/schema.prisma`, 2026-06-05; numbering in `lib/payments/billing/credit-note-numbering.ts`.*
+- See also: [04](./04-tds-quarterly-filings.md) (26Q→Form 140 negative lines), [02](./02-gst-overview.md), [#715](https://github.com/Practitionist/familiarise_web/issues/715) (clawback for already-disbursed payouts), [#716](https://github.com/Practitionist/familiarise_web/issues/716) (refund unification epic).

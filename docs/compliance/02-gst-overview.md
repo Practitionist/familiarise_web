@@ -1,8 +1,8 @@
 # 02 — GST overview (TCS Sec 52, invoicing, place of supply, HSN, IRN, LUT)
 
-> **Status:** core derivation real (`deriveGstBreakdown` does CGST/SGST/IGST split + zero-rated export); TCS Sec 52 + GSTR-8 missing entirely; place-of-supply state capture missing on B2C side; e-invoicing / IRN connector live (env-gated) + cron wired (Round 2, 2026-05-02).
+> **Status:** core derivation real (`deriveGstBreakdown` does CGST/SGST/IGST split + zero-rated export); TCS Sec 52 + GSTR-8 missing entirely; place-of-supply state capture missing on B2C side; e-invoicing / IRN connector live (env-gated) + cron wired (Round 2, 2026-05-02). 🟡 **NEW (2026-06-05): GST TCS rate corrected 1% → 0.5% (halved by Notif 15/2024-CT w.e.f. 10-Jul-2024) throughout this doc.**
 > **Audience:** payments + invoice + finance code.
-> **Last reviewed:** 2026-05-02
+> **Last reviewed:** 2026-06-05 (regulatory facts web-verified as of 2026-06-05; prior review 2026-05-02)
 > **Linked issues:** [#737 §2,§5,§11](https://github.com/Practitionist/familiarise_web/issues/737), [#738 §A,§F](https://github.com/Practitionist/familiarise_web/issues/738).
 
 ## What it is
@@ -10,14 +10,14 @@
 GST has four interlocking obligations for an e-commerce operator (us):
 
 1. **GST registration (Sec 24(x))** — mandatory for the platform regardless of turnover.
-2. **Tax invoice (Rule 46)** — must be issued for every taxable supply; specific format + HSN/SAC + place-of-supply rules.
-3. **TCS Section 52** — the platform must collect 1% (0.5% CGST + 0.5% SGST or 1% IGST) on the **net taxable value** of supplies of registered consultants and file **GSTR-8** monthly.
-4. **E-invoicing (Notif 10/2023)** — mandatory for any registered person with aggregate annual turnover (AATO) ≥ ₹5 cr; voluntary B2C pilot launched Sep 2024.
+2. **Tax invoice (Rule 46)** — must be issued for every taxable supply; specific format + HSN/SAC + place-of-supply rules. *(Rate context, verified 2026-06-05: the GST 2.0 rationalization — 56th GST Council, 3-Sep-2025, effective 22-Sep-2025 — collapsed the four-slab structure into two main slabs **5% + 18%** (plus 40% sin/luxury); the 12% and 28% slabs were removed. **Professional / consulting / commercial-training services stay at 18%** — so the CGST 9% + SGST 9% / IGST 18% derivation below is unchanged.)*
+3. **TCS Section 52** — the platform must collect **0.5% (0.25% CGST + 0.25% SGST, or 0.5% IGST)** on the **net taxable value** of supplies of registered consultants and file **GSTR-8** monthly. *(Halved from 1% by Notification 15/2024-Central Tax + the parallel IGST/UTGST notifications, w.e.f. 10 Jul 2024 — verified 2026-06-05.)*
+4. **E-invoicing (Notif 10/2023)** — mandatory for any registered person with aggregate annual turnover (AATO) ≥ ₹5 cr (threshold unchanged as of 2026-06-05); voluntary B2C pilot launched Sep 2024. *(Separate 30-day IRP-reporting cut-off applies at AATO ≥ ₹10 cr since 1-Apr-2025.)*
 
 Plus the orthogonal obligations:
 
 - **Place of supply** (IGST Sec 12 / 13) — determines IGST vs CGST+SGST.
-- **HSN/SAC codes** — mandatory on invoice; B2C reporting in GSTR-1 Table 12 is optional below ₹5 cr AATO.
+- **HSN/SAC codes** — mandatory on invoice; B2C reporting in GSTR-1 Table 12 is optional below ₹5 cr AATO. ⚠️ **SAC correction (verified 2026-06-05): `999293` is *commercial training & coaching* (an education code under group 9992), NOT consulting. Management consulting is `998311`. All of 998311 / 999293 / 999294 / 999299 carry 18% GST, so the *rate* is unaffected — but the doc's old "999293 (consulting)" labelling and the code's 999293 catch-all are a classification (ITC-trail) inaccuracy, not a tax-amount error.**
 - **LUT (Letter of Undertaking)** — for zero-rated exports without IGST payment.
 - **Reverse charge (RCM)** — for imports of services and notified categories.
 - **GST credit note (Sec 34)** — required on refund / cancellation / discount post-invoice. See [doc 05](./05-refund-and-chargeback-tax-adjustments.md).
@@ -59,7 +59,7 @@ Plus the orthogonal obligations:
 | Reverse charge routing | Schema field exists; no routing | 🔴 |
 | LUT enforcement | Schema field exists; no enforcement | 🔴 |
 | Credit note on refund | **Missing** entirely | 🔴 |
-| HSN selection per appointment type | Static default 999293 / 999299 in PDF | 🟡 |
+| HSN selection per appointment type | Static default (999293 catch-all) in PDF — should be 998311 consulting / 999293 training | 🟡 |
 
 ## Gap
 
@@ -67,7 +67,7 @@ Plus the orthogonal obligations:
 2. **Place-of-supply state capture missing on B2C checkout** (CBIC Notification 02/2023-IT mandates it).
 3. **GST credit notes on refunds missing** (handled in [doc 05](./05-refund-and-chargeback-tax-adjustments.md)).
 4. **GSTIN live registry verification missing** — only format check today.
-5. **HSN selection static** — should pick 999293 (consulting) for CONSULTATION; 999299 (education) for WEBINAR / CLASS / SUBSCRIPTION on educational content.
+5. **HSN selection static** — should pick **998311** (management consulting, group 9983) for CONSULTATION; **999293** (commercial training & coaching, group 9992) for WEBINAR / CLASS / SUBSCRIPTION on educational content. *(See header SAC correction — 999293 is training, NOT consulting; both 18%, so this is a classification/ITC-trail fix, not a rate fix.)*
 6. **LUT enforcement** — invoice generator doesn't gate on `lutNumber` for non-resident purchases.
 7. **RCM routing** — schema field present; no logic.
 
@@ -77,7 +77,7 @@ This is the largest discrete gap. What it requires:
 
 | Item | Detail |
 |---|---|
-| **Rate** | 1% total — 0.5% CGST + 0.5% SGST (intra-state) **or** 1% IGST (inter-state) |
+| **Rate** | **0.5% total — 0.25% CGST + 0.25% SGST (intra-state) or 0.5% IGST (inter-state)**. Halved from 1% by Notif 15/2024-CT (+ parallel IGST 02/2024-IT / UTGST) w.e.f. 10-Jul-2024 (verified 2026-06-05). **No TCS rate constant is wired anywhere in `lib/` or `jobs/` (verified 2026-06-05 — `GstTcsBatch` stores `netSupplyPaise` / `tcsCollectedPaise` only, with no rate literal or stale "1%" comment); collection is stubbed pending CA signoff, so there is no incorrect *computation* in production.** When collection is wired, hardcode 0.5%, not 1%. |
 | **Base** | Net taxable value of supplies through ECO = gross supplies − returns/refunds (Sec 52(3) + Rule 67(1)) |
 | **Frequency** | Monthly. **GSTR-8 due 10th of following month.** |
 | **Liability** | Platform deposits to govt; consultant claims credit in GSTR-2B. |
@@ -106,7 +106,7 @@ Phased — TCS first because it has a deadline (monthly):
 3. **`lib/payments/operations/refund.ts`**: emit GST credit note (see [doc 05](./05-refund-and-chargeback-tax-adjustments.md)) and reduce TCS collected for the affected month's batch.
 4. **Cron `jobs/gst/aggregate-tcs-batches.ts`**: run on 1st of each month for the prior month — group `Payment.gstTcsCollectedPaise` by consultant, write `GstTcsBatch` rows.
 5. **GSTR-8 CSV export**: `app/api/admin/gst/gstr8/[monthYear]/route.ts` returning the filing-ready CSV.
-6. **HSN selection logic**: read appointment type → pick 999293 vs 999299. Update `lib/pdf/invoice-renderer.tsx`.
+6. **HSN selection logic**: read appointment type → pick **998311** (consulting) vs **999293** (training/coaching). Update `lib/pdf/invoice-renderer.tsx`.
 7. **LUT enforcement**: in invoice generator, if `buyerCountry !== "IN"` and platform's LUT is on file, mark `lutNumber` on the invoice; otherwise charge IGST and let the consultant claim the export refund.
 8. **GSTIN live verification**: integrate GSTN API (or GSP partner) at consultant onboarding.
 
@@ -115,7 +115,7 @@ Phased — TCS first because it has a deadline (monthly):
 - A B2C purchase by a Karnataka consumer of a Karnataka-registered consultant: invoice shows CGST 9% + SGST 9%, place of supply = KA.
 - Same purchase by a Tamil Nadu consumer: invoice shows IGST 18%, place of supply = TN.
 - Same purchase by a US consumer: invoice shows zero GST, "Zero-rated export under IGST Sec 16", LUT number on the invoice.
-- A purchase by any consumer of a GST-registered consultant emits `Payment.gstTcsCollectedPaise` = 1% of net.
+- A purchase by any consumer of a GST-registered consultant emits `Payment.gstTcsCollectedPaise` = **0.5%** of net (0.25% CGST + 0.25% SGST intra-state, or 0.5% IGST inter-state).
 - Monthly cron writes a `GstTcsBatch` per consultant; GSTR-8 export passes GSTN sandbox validation.
 - A refund post-invoice issues a GST credit note (see doc 05).
 
@@ -134,4 +134,8 @@ Phased — TCS first because it has a deadline (monthly):
 - [HSN/SAC requirement clarification (A2Z Taxcorp)](https://a2ztaxcorp.net/cbic-issued-clarification-on-gstns-tweet-hsn-code-requirement-in-gstr-1-mandatory-for-b2b-optional-for-b2c-below-%E2%82%B95-crore-turnover/)
 - [Place of supply for online services (VJM Global)](https://www.vjmglobal.com/blog/clarification-on-place-supply-online-services-supplied-by-suppliers-services-to-unregistered-recipients)
 - [GST Sec 9(5) — when ECO is deemed supplier (ClearTax)](https://cleartax.in/s/gst-on-notified-services-ecommerce-operators-95) — *not applicable to consulting/education; we're a facilitator, not deemed supplier*
+- [GST 2.0 two-slab rationalization (5% + 18%), effective 22-Sep-2025 — PIB](https://static.pib.gov.in/WriteReadData/specificdocs/documents/2025/sep/doc202594628401.pdf) — *verified 2026-06-05; professional services remain 18%*
+- [SAC 998311 = management consulting; 999293 = commercial training & coaching, both 18% (ClearTax SAC 9983)](https://cleartax.in/s/other-professional-services-gst-rates-sac-code-9983) — *verified 2026-06-05*
+- [GST TCS §52 halved 1% → 0.5% by Notif 15/2024-CT, w.e.f. 10-Jul-2024 (GST Safar)](https://gstsafar.com/tcs-rate-for-e-commerce-operator/) — *verified 2026-06-05*
+- [E-invoice AATO ≥ ₹5 cr unchanged; 30-day IRP reporting at ₹10 cr since 1-Apr-2025 (Tally)](https://tallysolutions.com/accounting/e-invoicing-rules-in-india/) — *verified 2026-06-05*
 - See also: [05](./05-refund-and-chargeback-tax-adjustments.md) (credit notes), [07](./07-cross-border-flows.md) (LUT, RCM, IGST Sec 16).

@@ -2,7 +2,7 @@
 
 > **Status:** schema fields exist on both sides (`form15caPartCRef`, `form15cbRef`, `firceRef`, `dtaaRateApplied`, `Organization.parentCountry`); logic + UI mostly absent on both rails. B2C side is **completely missing** — TDS code skips non-residents entirely.
 > **Audience:** payment + payout + onboarding code; finance + tax-ops.
-> **Last reviewed:** 2026-05-02
+> **Last reviewed:** 2026-06-05 (FEMA / Sec 195 / 15CA-CB / PA-CB web-verified as of 2026-06-05)
 > **Linked issues:** [#737 §5.5](https://github.com/Practitionist/familiarise_web/issues/737) (FEMA), [#738 Items D, E](https://github.com/Practitionist/familiarise_web/issues/738).
 
 ## What it is
@@ -13,8 +13,8 @@ Cross-border = either side of the transaction is non-resident. Two flavours:
 
 Regulations:
 - **IGST Sec 16** — supply to a non-resident outside India is **zero-rated export** of services. No GST charged. Either with payment of IGST + claim refund, OR under **LUT (Letter of Undertaking)** without payment.
-- **RBI PA-CB Master Direction (Oct 2023, amended 2024–2025)** — only PAs with PA-CB license can collect cross-border. Razorpay PG holds it; we just need to enable cross-border merchant settings + retain FEMA documentation.
-- **FEMA reporting** — outward flow from us to consultant is in INR, no FEMA. Inward flow from foreign consumer to us is in foreign currency; the AD bank issues an inward remittance acknowledgement (e-FIRC).
+- **RBI PA-CB regime** — the standalone PA-CB circular (31 Oct 2023) has been **consolidated into the Reserve Bank of India (Regulation of Payment Aggregators) Directions, 2025** (RBI/DPSS/2025-26/141, 15 Sep 2025), where PA-CB is one of three formal PA categories. Inward flows route through an **Inward Collection Account (InCA)**, outward through an **Outward Collection Account (OCA)**. Only PAs authorised for PA-CB can collect cross-border. Razorpay holds it; we enable cross-border merchant settings + retain FEMA documentation. *(Verified 2026-06-05 — see [doc 10](./10-rbi-pa-and-payment-architecture.md).)*
+- **FEMA reporting** — outward flow from us to consultant is in INR, no FEMA. Inward flow from foreign consumer to us is in foreign currency; the AD bank issues an inward remittance acknowledgement. For **export of services** the current artifact is the **e-FIRA / e-FIRC** (Electronic Foreign Inward Remittance Advice/Certificate) generated under RBI's **EDPMS** — the physical FIRC has been largely phased out since 2016 and now applies mainly to FDI/VC inflows. The e-FIRA is what unlocks GST export refunds. *(Verified 2026-06-05.)*
 - **Invoice in foreign currency** — must record the FX rate snapshot for INR-equivalent reporting. CGST Rule 34 mandates RBI reference rate at invoice date.
 
 ### Outward (resident platform pays a non-resident consultant)
@@ -23,7 +23,7 @@ Regulations:
 - **Income Tax Sec 195** (NOT 194O) — TDS at 20% or DTAA rate, whichever is **lower**, but DTAA rate only applies if the consultant produces a Tax Residency Certificate (TRC) + Form 10F + (optionally) a no-PE declaration.
 - **Form 15CA** — pre-remittance declaration filed by the deductor with the IT dept.
 - **Form 15CB** — CA's certificate accompanying Form 15CA, required if the remittance exceeds ₹5,00,000 in a year and is taxable in India.
-- **RBI purpose code** — every outward remittance must be coded (P0802 / P0807 etc.) for FEMA reporting via the AD bank. `OrganizationPayout.rbiPurposeCode` schema field exists.
+- **RBI purpose code** — every outward remittance must be coded for FEMA reporting via the AD bank. The correct code depends on the service: **P0802** (software consultancy/implementation, non-SOFTEX) or **P0807** (off-site software export, SOFTEX) for IT/software consultants; **P1006** (business & management consultancy) and related P10xx codes for non-software professional consultancy. `OrganizationPayout.rbiPurposeCode` schema field exists — populate it per consultant's service type, not a hard-coded default. *(Purpose-code mapping verified 2026-06-05.)*
 - **Outward Remittance Certificate (ORC)** — issued by the AD bank for the consultant; we don't generate it but we should retain refs.
 
 ## When it applies
@@ -121,6 +121,8 @@ Regulations:
 
 - [IGST Sec 16 — zero-rated supply](https://www.cbic.gov.in/htdocs-cbec/gst/igst-act-2017-amend-finance-act-2024.pdf)
 - [Section 195 + DTAA + Form 10F (TaxGuru)](https://taxguru.in/income-tax/section-195-tds-payment-non-residents.html)
-- [Form 15CA + 15CB filing process (income-tax.gov.in)](https://www.incometax.gov.in/iec/foportal/help/itr/form-15ca-cb)
-- [RBI PA-CB Master Direction](https://rbi.org.in/Scripts/NotificationUser.aspx/upload/Scripts/NotificationUser.aspx?Id=12561)
+- [Form 15CA + 15CB filing process (income-tax.gov.in)](https://www.incometax.gov.in/iec/foportal/help/itr/form-15ca-cb) — 15CB required when remittance/aggregate **> ₹5L in FY and taxable** *(verified 2026-06-05)*
+- [RBI (Regulation of Payment Aggregators) Directions, 2025 — PA-CB now consolidated here](https://www.rbi.org.in/Scripts/BS_ViewMasDirections.aspx?id=12896) *(supersedes the standalone 31 Oct 2023 PA-CB circular; verified 2026-06-05)*
+- [e-FIRA / e-FIRC under EDPMS — export-of-services remittance advice](https://razorpay.com/blog/e-fira/) *(verified 2026-06-05)*
+- [RBI purpose-code list (inward/outward remittance)](https://razorpay.com/blog/rbi-purpose-code-remittance-compliance-guide/) *(P0802/P0807/P1006 mapping verified 2026-06-05)*
 - See also: [01](./01-tds-overview.md) (Sec 195), [02](./02-gst-overview.md) (LUT, IGST Sec 16), [04](./04-tds-quarterly-filings.md) (27Q), [10](./10-rbi-pa-and-payment-architecture.md) (PA-CB architecture).

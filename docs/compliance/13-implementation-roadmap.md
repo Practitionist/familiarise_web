@@ -2,7 +2,14 @@
 
 > **Status:** consolidated B2B + B2C compliance roadmap. Synthesised from #737 + #738 + this doc series.
 > **Audience:** engineering leads + product + finance.
-> **Last reviewed:** 2026-05-02
+> **Last reviewed:** 2026-06-05 (reconciled with shipped enterprise-v2 reality + DPDP/PA deadlines web-verified as of 2026-06-05)
+
+> **Already-shipped reality check (verified 2026-06-05 against the repo)** — several items below are partially done; verify in code before re-scoping:
+> - DPDP: `checkConsent` / `withdrawConsent` are **real** (fail-closed); `ConsentArtifact` schema + `lib/compliance/dpdp.ts:buildConsentArtifact` live; `consent-retention-sweeper.ts` **exists** (env-gated, but not yet on a GH Actions schedule); `OrgDataExportJob` + `app/api/organizations/[orgId]/data-exports/**` + `scripts/cleanup/process-data-exports.ts` (DPDP §11) **live**; admin `ErasureRequest` flow + `scrubUser` (DPDP §12) **live**; `databreach-deadline-alerts` cron **live**.
+> - Tax-adjustment schema: `CreditNote`, `TdsAdjustment`, `GstTcsBatch`, `GstTcsAdjustment` models **already exist** (Phase 2 below is implementation/wiring on top of them, not greenfield schema).
+> - IRP: `irp-uploader` cron + `lib/compliance/irp.ts` + `lib/compliance/irp-payload.ts` mapper **live**, gated behind `ENABLE_IRP_UPLOADER` + ClearTax env.
+> - MSME: `msme-payment-alerts` cron + `lib/compliance/msme.ts` (15/45-day rule) **live**.
+> - Still genuinely undone: consumer signup consent, consumer self-serve `/api/me/*` DSAR, multilingual notices, age gate, Grievance (consumer-protection) model + page + SLA cron, refund-SLA tracking, GST TCS *collection* at payment time, 26Q/27Q FVU generation, cross-border consultant (Sec 195) pivot.
 
 This is the master plan. It is split into phases by **dependency + risk**, not by team. Some phases can run in parallel; the dependency graph at the bottom shows what's blocking what.
 
@@ -17,7 +24,7 @@ This is the master plan. It is split into phases by **dependency + risk**, not b
 | **5** | Subscription mid-period refund UI (collapsed from #737's Phase 5) | ~0.5 days | none |
 | **6** | Cross-border — non-resident consumer flow, non-resident consultant payouts (Sec 195 + DTAA + 15CA/CB), 27Q | ~2 weeks | Phase 2 |
 | **7** | Consultant onboarding — GSTIN field + validation, tax-entity-type capture | ~1 week | Phases 1, 2 |
-| **8** | Architecture memos + cleanup — RBI PA Master Direction memo, removed-levies cleanup grep, doc drift pass | ~1 week | none |
+| **8** | Architecture memos + cleanup — RBI PA Directions 2025 memo, removed-levies cleanup grep, doc drift pass | ~1 week | none |
 
 **Total**: ~10 weeks. Critical path = Phases 1 → 2 → 4 (driven by DPDP 13 May 2027). Cross-border (Phase 6) deferrable if non-resident traffic is small.
 
@@ -56,8 +63,8 @@ The two TDS bugs and the place-of-supply gap are real production risks today.
 The biggest correctness phase. Refund/chargeback tax cascade is the single largest gap in #738.
 
 ### PR 2.1 — GST TCS Sec 52 collection
-- Schema: `Payment.gstTcsCollectedPaise`, `ConsultantEarnings.gstTcsAccruedPaise`, `GstTcsBatch` model.
-- Compute at payment success when consultant is GST-registered: 1% of net taxable.
+- Schema: `Payment.gstTcsCollectedPaise` (field exists) + `GstTcsBatch` model (**already exists**, `@@unique([financialYear, month])`); add `ConsultantEarnings.gstTcsAccruedPaise` if missing.
+- Compute at payment success when consultant is GST-registered: 1% of net taxable. *(Sec 52 TCS rate 1% — note: the 0.5%+0.5% intra-state split; verify against current GSTR-8 norms at build.)*
 - Monthly cron `gst-tcs-batches-aggregator.yml` (1st of month, 05:00 UTC).
 - GSTR-8 CSV export endpoint.
 
@@ -69,7 +76,7 @@ The biggest correctness phase. Refund/chargeback tax cascade is the single large
 - Admin dashboard `/dashboard/admin/tds/quarterly-returns`.
 
 ### PR 2.3 — Refund tax-adjustment cascade (the big one)
-- Schema: `CreditNote` model + `TdsAdjustment` + `GstTcsAdjustment`.
+- Schema: `CreditNote`, `TdsAdjustment`, `GstTcsAdjustment` models **already exist** (#778 §D) — this PR is the *cascade logic*, not the schema.
 - Refund cascade emits all four (negative leg + credit note + TDS adj + TCS adj) in one Prisma transaction.
 - Proportional logic for partial refunds.
 - 26Q FVU includes negative-line entries.
@@ -109,7 +116,7 @@ The biggest correctness phase. Refund/chargeback tax cascade is the single large
 
 ## Phase 4 — DPDP consumer layer (~3 weeks)
 
-Hard deadline: **13 May 2027** (Phase 3 of DPDP Rules 2025).
+Hard deadline: **13 May 2027** (Phase 3 / substantive obligations of DPDP Rules 2025; consent-manager framework is Phase 2 / 13 Nov 2026). *(Verified 2026-06-05.)* Note several pieces are already built (see the reality-check banner at the top) — this phase is mostly the *consumer-facing* layer + wiring.
 
 ### PR 4.1 — Consumer signup consent
 - `ConsumerConsentArtifact` model.
@@ -126,8 +133,8 @@ Hard deadline: **13 May 2027** (Phase 3 of DPDP Rules 2025).
 - Confirmation email.
 
 ### PR 4.4 — Retention sweeper
-- `dpdp-retention-sweeper.yml` weekly cron.
-- 3-year inactivity rule with 60-day notice.
+- `jobs/compliance/consent-retention-sweeper.ts` **already exists** (env-gated `DPDP_SWEEPER_DELETE`). Remaining: add a `.github/workflows/consent-retention-sweeper.yml` schedule + land the hash-only archival pipeline before enabling delete mode.
+- Add inactivity-based erasure (Rules' Third Schedule period) with a prior notice email.
 
 ### PR 4.5 — Multilingual notices
 - English + Hindi + Bengali + Tamil at minimum.
@@ -138,8 +145,7 @@ Hard deadline: **13 May 2027** (Phase 3 of DPDP Rules 2025).
 - Block payment / recording until verified.
 
 ### PR 4.7 — `checkConsent` enforcement
-- Replace stub with real lookup against latest non-withdrawn artefact.
-- Wire into every data-touching code path.
+- ~~Replace stub with real lookup~~ — **already real** (fail-closed predicate in `lib/compliance/dpdp.ts`). Remaining work is *wiring*: call it from every data-touching code path (booking, payment, recording, analytics, Stream.io handoff) + seed real artifacts at signup (PR 4.1) so the guard has grants to read.
 
 **Acceptance**: see [doc 08](./08-dpdp-and-privacy.md).
 
@@ -190,7 +196,7 @@ Defer if non-resident traffic is < 5% of volume.
 
 ## Phase 8 — Architecture memos + cleanup (~1 week)
 
-### PR 8.1 — RBI PA Master Direction memo
+### PR 8.1 — RBI PA Directions 2025 memo
 - See PR 2.5 above.
 
 ### PR 8.2 — Removed-levies cleanup grep

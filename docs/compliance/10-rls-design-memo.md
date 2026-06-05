@@ -1,9 +1,14 @@
 # RLS design memo (deferred — defense-in-depth proposal)
 
+> **Last reviewed:** 2026-06-05 (wiring claims re-verified against the repo)
+
 ## Status
 
 **Open for design.** No Supabase Row Level Security policies are
-enabled today. This memo captures the tradeoff, what enabling RLS
+enabled today — **verified 2026-06-05**: there is no `supabase/`
+config directory and no `prisma/migrations/` directory in the repo
+(schema is applied via `prisma db push`), so no policy DDL is in
+force. This memo captures the tradeoff, what enabling RLS
 would actually look like, and the migration risks — so that when we
 DO decide to enable it (likely tied to the first SOC 2 audit or the
 first time we expose the Supabase anon key in client code), the
@@ -12,9 +17,9 @@ implementation plan already exists.
 ## What Supabase advisory says
 
 Every Supabase project surfaces an `rls_disabled` advisory when any
-table in `public` has `relrowsecurity = false`. As of PR #655 we have
-**119 tables with RLS disabled** — every model the Prisma schema
-declares. The advisory's recommendation is the
+table in `public` has `relrowsecurity = false`. The Prisma schema now
+declares **120 models** (was ~119 at PR #655), all with RLS disabled.
+The advisory's recommendation is the
 `ALTER TABLE … ENABLE ROW LEVEL SECURITY` script Supabase auto-generates,
 but **running it without per-table policies would lock the app out
 entirely** because RLS-enabled-without-policies defaults to
@@ -134,10 +139,13 @@ in a Phase 2 if SOC 2 or anon-key exposure forces our hand.
    Mitigation: audit every Supabase client construction site for
    the key being used.
 3. **Migration ordering** — Prisma's `db push` cannot represent
-   policies, so they must live in a parallel `prisma/migrations/`
-   SQL or in Supabase's policy editor. Mitigation: keep all policy
-   DDL under `prisma/migrations/<datetime>_rls_phase_1/migration.sql`
-   so the policies version with the schema.
+   policies (this repo has no `prisma/migrations/` dir — it pushes the
+   schema directly), so they must live in raw SQL or in Supabase's
+   policy editor. The project already keeps hand-written DDL under
+   **`prisma/sql/`** (e.g. `prisma/sql/ledger-triggers.sql`).
+   Mitigation: add policy DDL as `prisma/sql/rls-phase-1.sql` applied
+   on deploy alongside the existing trigger SQL, so the policies
+   version with the schema.
 4. **`auth.jwt()` mismatch** — Supabase's `auth.jwt()` returns the
    token a Supabase client minted, not BetterAuth's session. If we
    ever want client-side Supabase reads with user scoping, BetterAuth

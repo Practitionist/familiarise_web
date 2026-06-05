@@ -1,21 +1,23 @@
 # 04 — Form 26Q / 27Q / 16A — quarterly TDS returns + consultant certificates
 
-> **Status:** schema-tracking is real (`TDSRecord.reportedInForm26Q` flag); FVU export + filing automation + Form 16A generation all missing.
+> **Status:** schema-tracking is real (`TDSRecord.reportedInForm26Q` flag); FVU export + filing automation + Form 16A generation all missing. 🔴 **NEW (2026-06-05): the Income-tax Act, 2025 + Income-tax Rules, 2026 renamed every TDS form w.e.f. 1-Apr-2026 — 26Q→Form 140, 27Q→Form 144, 16A→Form 131. The `reportedInForm26Q` flag name is now a legacy label (the *concept* is unchanged; the form it maps to is Form 140 for FY 2026-27+).**
 > **Audience:** payout pipeline + admin tax-ops dashboard.
-> **Last reviewed:** 2026-05-02
+> **Last reviewed:** 2026-06-05 (regulatory facts web-verified as of 2026-06-05; prior review 2026-05-02)
 > **Linked issues:** [#737 §6](https://github.com/Practitionist/familiarise_web/issues/737), [#738 Phase 2 PR 2.2](https://github.com/Practitionist/familiarise_web/issues/738).
 
 ## What it is
 
-Three related deliverables to the income-tax department after every quarter's TDS deductions:
+Three related deliverables to the income-tax department after every quarter's TDS deductions. **Form names changed under the Income-tax Act, 2025 (Income-tax Rules, 2026, G.S.R. 198(E)) for any return covering a period on/after 1-Apr-2026** — verified 2026-06-05:
 
-| Deliverable | Form | Frequency | Audience |
+| Deliverable | Form (1961 Act → 2025 Act) | Frequency | Audience |
 |---|---|---|---|
-| Quarterly TDS return (resident payees) | **26Q** | Quarterly | Income Tax Dept (TRACES / NSDL) |
-| Quarterly TDS return (non-resident payees) | **27Q** | Quarterly | Income Tax Dept |
-| Consultant TDS certificate | **16A** | Issued within 15 days of return due date | The consultant |
+| Quarterly TDS return (resident payees) | **26Q → Form 140** | Quarterly | Income Tax Dept (TRACES / NSDL) |
+| Quarterly TDS return (non-resident payees) | **27Q → Form 144** | Quarterly | Income Tax Dept |
+| Consultant TDS certificate (income other than salary, §195(4) wording) | **16A → Form 131** | Issued within 15 days of return due date | The consultant |
 
-**Cadence (FY 2025-26):**
+**Filing transition (verified):** Q4 FY 2025-26 (period up to 31-Mar-2026) returns are still filed under the **old** form names (26Q/27Q/16A) + old section numbers. From the Q1 FY 2026-27 return onward (Apr–Jun 2026, due ~31-Jul-2026), use the **new** form numbers (140/144/131) + §393 payment codes (the 10xx series — see [doc 01](./01-tds-overview.md)). Section codes inside the FVU change from `194O`/`194J`/`194C` strings to the numeric §393 payment codes. Related renumbering: 24Q→138, 16→130, 26AS→168, 15CA→145, 15CB→146.
+
+**Cadence (unchanged for FY 2025-26 and FY 2026-27 — due dates were not altered by the 2025 Act; verified 2026-06-05):**
 
 | Quarter | Period | Return due |
 |---|---|---|
@@ -26,10 +28,14 @@ Three related deliverables to the income-tax department after every quarter's TD
 
 **TDS deposit (separate from return):** by **7th of following month**; March deductions by 30 Apr.
 
-**Penalties:**
-- Late filing: ₹200/day under Sec 234E, capped at the TDS amount.
-- Non-filing > 1 year: ₹10,000–₹1,00,000 under Sec 271H.
+**Threshold note (verified 2026-06-05):** the §194J professional/technical threshold rose ₹30,000 → **₹50,000/FY** from FY 2026-27 (per payment-type); §194O stays at ₹5,00,000/FY for resident individuals/HUF. See [doc 01](./01-tds-overview.md).
+
+**Penalties (section numbers shown 1961-Act → 2025-Act equivalent; the ₹/day mechanics are unchanged):**
+- Late filing: ₹200/day under **Sec 234E** (→ §427 of the 2025 Act), capped at the TDS amount.
+- Non-filing > 1 year: ₹10,000–₹1,00,000 under **Sec 271H** (→ penalty provisions consolidated in the 2025 Act).
 - Wrong PAN / mis-quoted: separate Sec 271H penalty.
+
+🟡 *The 271H/234E → 2025-Act mappings are penalty-provision equivalents; cite the 1961-Act numbers for any return/period up to 31-Mar-2026, and verify the exact 2025-Act penalty section before quoting it in a notice. The ₹-amounts are unchanged.*
 
 ## When it applies
 
@@ -75,8 +81,8 @@ Three related deliverables to the income-tax department after every quarter's TD
 In commit order:
 
 1. **Quarterly aggregator query**: a single SQL/Prisma query that, given a consultant and an FY quarter, returns the list of all TDS withholdings from both `OrganizationPayout` and `Payout` rows. Test with mixed-rail consultants.
-2. **FVU generator** for 26Q (resident): output a `.txt` file in NSDL FVU format. Include 26Q-specific fields (deductor TAN, deductee PAN, section code, rate, amount, deduction date, deposit challan refs).
-3. **FVU generator** for 27Q (non-resident): same shape, different section codes (typically 195) + DTAA fields (treaty country, treaty rate, Form 10F ref).
+2. **FVU generator** for 26Q→**Form 140** (resident): output a `.txt` file in NSDL FVU format. Include the fields (deductor TAN, deductee PAN, section code, rate, amount, deduction date, deposit challan refs). **For FY 2026-27+ the section field must carry the §393 numeric payment code, not the `194O`/`194J`/`194C` string** — add a label→code mapping at the export boundary (the code stores the old labels on `TDSRecord.tdsSection`; see [doc 01](./01-tds-overview.md) §393 renumbering note). An upload with a literal old section string will be rejected by the portal/FVU validator.
+3. **FVU generator** for 27Q→**Form 144** (non-resident): same shape, §393(2) Table Sl.17 (code 1057, the old Sec 195) + DTAA fields (treaty country, treaty rate, Form 10F ref).
 4. **Form 16A PDF generator**: per-consultant per-quarter PDF using the standard 16A template. Include all withholdings for that quarter aggregated across rails.
 5. **Admin dashboard** `/dashboard/admin/tds/quarterly-returns`:
    - Pending (current quarter, not filed)
@@ -104,7 +110,9 @@ In commit order:
 ## References
 
 - [Form 26Q (ClearTax)](https://cleartax.in/s/tds-return-non-salary)
-- [TDS return due dates FY 2025-26 (SAG Infotech)](https://blog.saginfotech.com/due-date-filing-tds-tcs-return)
+- [TDS return due dates (SAG Infotech)](https://blog.saginfotech.com/due-date-filing-tds-tcs-return) — *quarterly due dates unchanged for FY 2026-27; verified 2026-06-05*
+- [New TDS/TCS forms under IT Act 2025 — 26Q→140, 27Q→144, 16A→131 (TDSMan, Mar 2026)](https://blog.tdsman.com/2026/03/new-tds-tcs-forms-it-act-2025-mapping-with-old-forms/) — *verified 2026-06-05*
+- [12 key tax forms changing from 1-Apr-2026 (Business Today)](https://www.businesstoday.in/personal-finance/tax/story/new-income-tax-act-2025-explained-12-key-tax-forms-changing-from-april-1-2026-530661-2026-05-10) — *verified 2026-06-05*
 - [Income-tax e-filing portal](https://www.incometax.gov.in/iec/foportal/)
 - [NSDL TRACES](https://contents.tdscpc.gov.in/)
-- See also: [01](./01-tds-overview.md) (sections + rates), [07](./07-cross-border-flows.md) (27Q for non-residents), [05](./05-refund-and-chargeback-tax-adjustments.md) (refund-of-quarter-already-filed handling).
+- See also: [01](./01-tds-overview.md) (sections + rates + §393 codes), [07](./07-cross-border-flows.md) (27Q→144 for non-residents), [05](./05-refund-and-chargeback-tax-adjustments.md) (refund-of-quarter-already-filed handling).
