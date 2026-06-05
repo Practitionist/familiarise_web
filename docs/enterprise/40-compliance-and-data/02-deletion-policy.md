@@ -1,3 +1,11 @@
+---
+title: Deletion policy
+band: 40-compliance-and-data
+audience: sde3
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Deletion policy
 
 This document defines when the codebase should **soft-delete** (flip a status flag) versus **hard-delete** (`prisma.x.delete()` / `deleteMany`). The current codebase already follows most of these rules; this doc captures the policy so new routes stay consistent.

@@ -1,3 +1,11 @@
+---
+title: Compliance: GST · TDS · MSME · DPDP (enterprise touchpoints)
+band: 40-compliance-and-data
+audience: sde3
+status: partial
+last-reviewed: 2026-06-05
+---
+
 # Compliance: GST · TDS · MSME · DPDP (enterprise touchpoints)
 
 **What this covers:** where the enterprise subsystem *touches* India statutory compliance, and the journal/schema hooks behind each. This is the **enterprise-side map**; the authoritative rules, rates, thresholds, and roadmap live in [`../compliance/`](../../compliance/00-overview.md) — this doc links out rather than restating tax law.

@@ -1,3 +1,11 @@
+---
+title: JIT auto-join & session refresh
+band: 20-iam-and-security
+audience: sde3
+status: live
+last-reviewed: 2026-06-05
+---
+
 # JIT auto-join & session refresh
 
 > **Scope.** How org memberships materialize when a user signs in via

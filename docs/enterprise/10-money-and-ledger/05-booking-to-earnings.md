@@ -1,3 +1,11 @@
+---
+title: Booking → earnings
+band: 10-money-and-ledger
+audience: sde2
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Booking → earnings
 
 **What this covers:** how a sponsored booking turns into money — the three-way split (`RateCard`, basis points, snapshots), the `BOOKING` ledger posting it produces, and the `ConsultantEarnings` / `OrganizationEarnings` rows that cache the result for payout. The funding side (which sources paid) is in [payment legs](08-payment-legs.md); the journal mechanics are in [ledger & postings](03-ledger-and-postings.md).

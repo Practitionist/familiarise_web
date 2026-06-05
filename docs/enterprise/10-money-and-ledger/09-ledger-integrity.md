@@ -1,3 +1,11 @@
+---
+title: Ledger integrity & reconciliation
+band: 10-money-and-ledger
+audience: sde3
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Ledger integrity & reconciliation
 
 **What this covers:** the read-only auditor that proves the money model holds — the invariants it checks, the one informational coverage metric, how it runs (nightly cron + on-demand admin route), and what a finding means. This is the safety net that lets us trust derived balances and reconciled caches.

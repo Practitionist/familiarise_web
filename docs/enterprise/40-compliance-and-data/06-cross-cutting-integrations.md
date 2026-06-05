@@ -1,3 +1,11 @@
+---
+title: Cross-cutting integrations — enterprise surface map
+band: 40-compliance-and-data
+audience: sde3
+status: partial
+last-reviewed: 2026-06-05
+---
+
 # Cross-cutting integrations — enterprise surface map
 
 The enterprise subsystem is not a self-contained module. It plumbs

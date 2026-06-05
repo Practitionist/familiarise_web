@@ -1,3 +1,11 @@
+---
+title: SystemEvent — engineering-facing operational events
+band: 50-operations
+audience: sde3
+status: partial
+last-reviewed: 2026-06-05
+---
+
 # SystemEvent — engineering-facing operational events
 
 > **Two taxonomies, on purpose.** `SystemEvent` (this doc) is the

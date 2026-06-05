@@ -1,3 +1,11 @@
+---
+title: Enterprise Subsystem — Production Readiness Checklist
+band: 90-audits
+audience: sde4
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Enterprise Subsystem — Production Readiness Checklist
 
 **Branch:** `feature/enterprise` | **Updated:** 2026-05-02 (Round 2) | **Auditor:** Claude Code (Sonnet 4.6)

@@ -1,3 +1,11 @@
+---
+title: Cycle engine and rollover
+band: 30-programs-and-lifecycle
+audience: sde3
+status: partial
+last-reviewed: 2026-06-05
+---
+
 # Cycle engine and rollover
 
 > **What this covers:** the `ProgramAssignment` lifecycle

@@ -1,3 +1,11 @@
+---
+title: Organization lifecycle
+band: 00-foundations
+audience: sde2
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Organization lifecycle
 
 Three models carry their own lifecycle state machine in the enterprise

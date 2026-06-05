@@ -1,3 +1,11 @@
+---
+title: Org-wide data export (DPDP §11)
+band: 40-compliance-and-data
+audience: sde2
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Org-wide data export (DPDP §11)
 
 Familiarise honours DPDP §11 right-to-access at the organization level

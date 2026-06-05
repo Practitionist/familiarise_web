@@ -4,6 +4,10 @@ subtitle: "PR #655 closeout — what we can prune without touching the schema"
 author: "Familiarise Engineering"
 date: "May 2026"
 superseded_by: "docs/enterprise/00-foundations/01-overview.md (absorbed by the #768–#779 audit series)"
+band: 90-audits
+audience: sde4
+status: live
+last-reviewed: 2026-06-05
 toc: true
 toc-depth: 2
 ---

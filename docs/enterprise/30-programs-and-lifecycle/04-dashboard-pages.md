@@ -1,3 +1,11 @@
+---
+title: Dashboard pages
+band: 30-programs-and-lifecycle
+audience: sde1
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Dashboard pages
 
 Every organization-scoped dashboard page lives under

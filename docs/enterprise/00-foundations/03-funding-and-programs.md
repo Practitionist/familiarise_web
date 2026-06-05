@@ -1,3 +1,11 @@
+---
+title: Funding sources and programs
+band: 00-foundations
+audience: sde1
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Funding sources and programs
 
 Sponsor-side orgs (`canSponsor=true`) attach exactly one `BillingAccount`

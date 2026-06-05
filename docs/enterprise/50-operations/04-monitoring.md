@@ -1,3 +1,11 @@
+---
+title: Monitoring & alerting
+band: 50-operations
+audience: sde3
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Monitoring & alerting
 
 This document is the source of truth for every alert, metric, and

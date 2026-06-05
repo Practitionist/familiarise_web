@@ -1,3 +1,11 @@
+---
+title: Route migration table
+band: 50-operations
+audience: sde2
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Route migration table
 
 > **How to read this table.** Two columns: **Old** = the pre-Arch-4

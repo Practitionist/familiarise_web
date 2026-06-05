@@ -1,3 +1,11 @@
+---
+title: Live-payout go-live runbook
+band: 50-operations
+audience: sde4
+status: designed-not-active
+last-reviewed: 2026-06-05
+---
+
 # Live-payout go-live runbook
 
 > **Status:** `ENABLE_LIVE_PAYOUTS` is **OFF**. Payouts create rows and post

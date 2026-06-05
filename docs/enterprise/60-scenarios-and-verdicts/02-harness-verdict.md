@@ -1,3 +1,11 @@
+---
+title: Harness verdict
+band: 60-scenarios-and-verdicts
+audience: sde2
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Harness verdict
 
 The evaluation harness exercises four representative org scenarios plus a

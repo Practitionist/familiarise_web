@@ -1,3 +1,11 @@
+---
+title: Money model overview
+band: 10-money-and-ledger
+audience: sde2
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Money model overview
 
 **What this covers:** the principles every money doc in this section (`06`–`14`) builds on — integer paise, the double-entry journal, derived balances, and what the **#772 cutover** changed. Read this first; the rest of the band is detail.

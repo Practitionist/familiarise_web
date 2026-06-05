@@ -1,3 +1,11 @@
+---
+title: Public pages and discovery
+band: 30-programs-and-lifecycle
+audience: sde1
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Public pages and discovery
 
 > **What this covers:** how an org and its plans surface on the public

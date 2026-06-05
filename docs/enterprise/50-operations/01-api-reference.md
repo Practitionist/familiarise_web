@@ -1,3 +1,11 @@
+---
+title: API reference
+band: 50-operations
+audience: sde1
+status: live
+last-reviewed: 2026-06-05
+---
+
 # API reference
 
 > **How to read this table.** Each row is one `path × verb`.

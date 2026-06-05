@@ -1,3 +1,11 @@
+---
+title: Ledger & postings
+band: 10-money-and-ledger
+audience: sde3
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Ledger & postings
 
 **What this covers:** the double-entry journal in detail — the `postLedgerTxn()` API, the balance invariant, idempotency, immutability, and the **exact legs every money flow posts**, transcribed from code. This is the reference the rest of the money band cites.

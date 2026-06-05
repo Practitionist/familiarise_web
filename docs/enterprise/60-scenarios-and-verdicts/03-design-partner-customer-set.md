@@ -1,3 +1,11 @@
+---
+title: Design-partner customer set
+band: 60-scenarios-and-verdicts
+audience: sde1
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Design-partner customer set
 
 This document is the **single source of truth** for sales conversations during the design-partner phase (first 3-6 months post-MVP enterprise launch). It translates current enterprise readiness — post the v2 mega-audit (#777/#778/#779) — into a concrete **yes / wait-list / hard-no** rubric for inbound prospects. _Last refreshed 2026-06-05._
