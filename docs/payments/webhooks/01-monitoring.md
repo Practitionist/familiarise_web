@@ -1,5 +1,7 @@
 # Webhook Monitoring & Success Notifications Guide
 
+> **Moved (org/B2B side):** The organization-side documentation for inbound payment webhooks (including the org-relevant monitoring and archival jobs) now lives in [`docs/enterprise/10-money-and-ledger/12-payment-webhooks.md`](../../enterprise/10-money-and-ledger/12-payment-webhooks.md). This file keeps the consumer-marketplace (B2C) and gateway-generic details only.
+
 ## Overview
 
 This guide covers how to monitor webhook activity, track success notifications, and troubleshoot payment gateway integrations.

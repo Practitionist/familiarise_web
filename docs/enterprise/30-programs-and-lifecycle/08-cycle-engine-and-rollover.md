@@ -152,7 +152,7 @@ A ROLL mints a fresh `ACTIVE` row for `[successorStart, successorEnd]` with
 `overageCount = 0` — so the new cycle starts clean. The closing row points
 forward via `rolledToAssignmentId`; the successor's `rolledFromAssignment`
 back-relation answers "where did this come from?". Reconcile
-([ledger integrity](../10-money-and-ledger/09-ledger-integrity.md)) asserts no gap/overlap between a
+([ledger integrity](../10-money-and-ledger/13-ledger-integrity.md)) asserts no gap/overlap between a
 chained pair's periods.
 
 ### Worked example — IIT Madras's credit pool rolls a month
@@ -217,7 +217,7 @@ member booked over-cap during the cycle is settled separately:
 
 - **CHARGE_ORG** overage accrues onto the org invoice; the cycle-close +
   invoice path drives `OverageEvent` `PENDING → ACCRUED → CHARGED`
-  (see [invoicing](../10-money-and-ledger/07-invoicing.md)).
+  (see [invoicing](../10-money-and-ledger/08-invoicing.md)).
 - **CHARGE_MEMBER** overage settles instantly at checkout (`PENDING → CHARGED`)
   or times out (`→ FAILED`) via the timeout cron — independent of the cycle
   roll.
@@ -227,7 +227,7 @@ Because a successor's counters are zeroed, cycle-scoped aggregates
 `engagementsUsed == sum(UsageLedgerEntry.engagementsConsumed)` and, for
 CREDIT_POOL, `consumedPaise == sum(price)` **per assignment** — i.e. per cycle,
 since each cycle is its own row. The `PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT`
-check ([ledger integrity](../10-money-and-ledger/09-ledger-integrity.md)) is the backstop.
+check ([ledger integrity](../10-money-and-ledger/13-ledger-integrity.md)) is the backstop.
 
 ## Design decisions & trade-offs
 
@@ -290,5 +290,5 @@ no ended period stays `ACTIVE` past one nightly tick.
   decision table reads.
 - [Concurrency & idempotency](01-concurrency-and-idempotency.md) — the claim
   gates + unique constraints as idempotency anchors.
-- [Invoicing](../10-money-and-ledger/07-invoicing.md) — CHARGE_ORG overage settlement at cycle close.
-- [Ledger integrity](../10-money-and-ledger/09-ledger-integrity.md) — the reconcile/drift checks.
+- [Invoicing](../10-money-and-ledger/08-invoicing.md) — CHARGE_ORG overage settlement at cycle close.
+- [Ledger integrity](../10-money-and-ledger/13-ledger-integrity.md) — the reconcile/drift checks.

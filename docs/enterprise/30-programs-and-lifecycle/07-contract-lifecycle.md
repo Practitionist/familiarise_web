@@ -407,5 +407,5 @@ time (created atomically in the same tx).
   a contract.
 - [Cycle engine & rollover](08-cycle-engine-and-rollover.md) — how the contract
   state clamps assignment roll-vs-close.
-- [Invoicing](../10-money-and-ledger/07-invoicing.md) — invoices that reference a contract and block
+- [Invoicing](../10-money-and-ledger/08-invoicing.md) — invoices that reference a contract and block
   its termination while outstanding.

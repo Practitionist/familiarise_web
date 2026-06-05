@@ -75,7 +75,7 @@ flowchart TB
   BEFORE ==>|"#772 cutover"| AFTER
 ```
 
-The "no structural guarantee" box is not rhetorical: three independently-signed logs can each be internally consistent and still disagree with each other, and nothing in the schema forced them to agree. The double-entry rewrite makes "the books are wrong" a *single per-transaction predicate* the reconciler re-proves nightly ([ledger integrity](09-ledger-integrity.md) `LEDGER_TXN_IMBALANCE`).
+The "no structural guarantee" box is not rhetorical: three independently-signed logs can each be internally consistent and still disagree with each other, and nothing in the schema forced them to agree. The double-entry rewrite makes "the books are wrong" a *single per-transaction predicate* the reconciler re-proves nightly ([ledger integrity](13-ledger-integrity.md) `LEDGER_TXN_IMBALANCE`).
 
 ### 🛠️ What this design survived
 
@@ -91,6 +91,8 @@ So today there are **two** ledgers, not three:
 ---
 
 ## 3. The three moving parts of the journal
+
+Every money event in the system is represented by exactly three Prisma models working together; the table names each one, its role in the double-entry scheme, and where its full specification lives.
 
 | Thing | Role | Detail |
 | --- | --- | --- |
@@ -112,7 +114,7 @@ So `BillingAccount.walletBalance` exists as a **cache** of the org's `WALLET` ac
 - The cache is what the hot path reads/writes for the atomic guard.
 - The nightly reconciler asserts `-balance(WALLET) == walletBalance` (`WALLET_BALANCE_DRIFT`); any divergence is an incident, never something to hand-patch.
 
-This "reconciled cache" pattern recurs: `ConsultantEarnings`/`OrganizationEarnings` amount columns are caches the reconciler checks against the booking journal (`EARNINGS_LEDGER_DRIFT`), and the **usage-side** denormalized counters — `ProgramAssignment.engagementsUsed` and the CREDIT_POOL money-meter `ProgramAssignment.consumedPaise` — are re-derived from `UsageLedgerEntry` (`PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT` / `CREDIT_POOL_CONSUMED_DRIFT`). Same contract every time: the append-only journal/ledger is truth, the column is a checked cache. See [ledger integrity](09-ledger-integrity.md).
+This "reconciled cache" pattern recurs: `ConsultantEarnings`/`OrganizationEarnings` amount columns are caches the reconciler checks against the booking journal (`EARNINGS_LEDGER_DRIFT`), and the **usage-side** denormalized counters — `ProgramAssignment.engagementsUsed` and the CREDIT_POOL money-meter `ProgramAssignment.consumedPaise` — are re-derived from `UsageLedgerEntry` (`PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT` / `CREDIT_POOL_CONSUMED_DRIFT`). Same contract every time: the append-only journal/ledger is truth, the column is a checked cache. See [ledger integrity](13-ledger-integrity.md).
 
 ---
 
@@ -129,16 +131,18 @@ The three rules in §1 were choices with alternatives we rejected. Why these, wh
 
 ## 5. Where each money flow is documented
 
+Every cash event that touches the journal has a canonical `LedgerTransactionKind` and a dedicated doc; use this index to jump directly to the relevant deep-dive rather than scanning the full money-and-ledger band.
+
 | Flow | Journal `kind` | Doc |
 | --- | --- | --- |
 | Wallet top-up (`Dr CASH / Cr WALLET`) | `TOPUP` | [wallet & top-ups](04-wallet-and-topups.md) |
 | Booking (funding legs → fee/payable/GST) | `BOOKING` | [booking → earnings](05-booking-to-earnings.md) |
-| Payout to a consultant / host org | `PAYOUT` / `ORG_PAYOUT` | [payout pipeline](06-payout-pipeline.md) |
-| Invoice issued / paid | `INVOICE_ISSUED` / `INVOICE_PAID` | [invoicing](07-invoicing.md) |
+| Payout to a consultant / host org | `PAYOUT` / `ORG_PAYOUT` | [payout pipeline](07-payout-pipeline.md) |
+| Invoice issued / paid | `INVOICE_ISSUED` / `INVOICE_PAID` | [invoicing](08-invoicing.md) |
 | Program overage (member-pays side-charge) | `OVERAGE_MEMBER` | [booking → earnings](05-booking-to-earnings.md) |
-| Refund / top-up refund | `REFUND` / `TOPUP_REFUND` | [invoicing](07-invoicing.md), [wallet & top-ups](04-wallet-and-topups.md) |
-| How funding sources stack on one checkout | — | [payment legs](08-payment-legs.md) |
-| Proving it all ties out | — | [ledger integrity](09-ledger-integrity.md) |
+| Refund / top-up refund | `REFUND` / `TOPUP_REFUND` | [invoicing](08-invoicing.md), [wallet & top-ups](04-wallet-and-topups.md) |
+| How funding sources stack on one checkout | — | [payment legs](09-payment-legs.md) |
+| Proving it all ties out | — | [ledger integrity](13-ledger-integrity.md) |
 
 ---
 
@@ -148,7 +152,7 @@ New devs routinely conflate these. They are different flows with different model
 
 - **Refund** — money back to the *buyer* (consultee). A booking is reversed; the buyer's card/wallet is credited. Model `Refund` (`lib/payments/operations/refund.ts`), status `PENDING → SUCCEEDED | FAILED | CANCELLED` (gateway-aligned — success is `SUCCEEDED`, matching Razorpay's `refund.processed`). Journal: `refund:<refundId>` reverses the booking legs ([§4.7](03-ledger-and-postings.md)); a *top-up* refund is `topup-refund:<paymentId>`.
 - **Reimbursement** — money from an *org to its own member* who fronted org-sponsored spend. Model `OrganizationReimbursement` (`/api/organizations/[orgId]/reimbursements`). **Not** a refund — org → member, not platform → card.
-- **Payout** — money from the *platform to a seller* (consultant or host org), net of commission + TDS. Models `ConsultantPayout` / `OrganizationPayout`; journal `payout:<id>` / `orgpayout:<id>` (Dr `*_PAYABLE` / Cr `CASH` + `TDS_PAYABLE`) — see [payout pipeline](06-payout-pipeline.md).
+- **Payout** — money from the *platform to a seller* (consultant or host org), net of commission + TDS. Models `ConsultantPayout` / `OrganizationPayout`; journal `payout:<id>` / `orgpayout:<id>` (Dr `*_PAYABLE` / Cr `CASH` + `TDS_PAYABLE`) — see [payout pipeline](07-payout-pipeline.md).
 - **Referral** — a *platform-funded* incentive, not a buyer payment. A shared link earns a `ReferralCredit`; consumed at checkout as `PaymentLeg.source = REFERRAL_CREDIT`, posting to `PLATFORM_PROMO` (the platform absorbs it) inside the booking txn.
 - **Credits** — two senses, don't confuse: (a) an **org's prepaid wallet balance** — the `WALLET` ledger account, cached on `BillingAccount.walletBalance`; (b) a **consultee's referral/promo credits** — `ReferralCredit`, consumed via the `REFERRAL_CREDIT` leg. The first is org money we owe back; the second is a platform-funded discount.
 
@@ -156,9 +160,9 @@ New devs routinely conflate these. They are different flows with different model
 
 **Grounded in the seeded orgs**, the five flows are five different actors moving money:
 
-- **Refund** — a learner Wipro sponsored cancels; the booking reverses and the *funding source* (here Wipro's `ORG_RECEIVABLE` accrual) is credited back, with a GST credit note ([invoicing §8](07-invoicing.md)).
+- **Refund** — a learner Wipro sponsored cancels; the booking reverses and the *funding source* (here Wipro's `ORG_RECEIVABLE` accrual) is credited back, with a GST credit note ([invoicing §8](08-invoicing.md)).
 - **Reimbursement** — an IIT Madras member paid out of pocket for sponsored coaching; IIT Madras pays *its own member* back via `OrganizationReimbursement`. The platform is not in this loop.
-- **Payout** — **LearnPro Academy** hosts the expert, so the org-share leg accrues to LearnPro and a weekly `ORG_PAYOUT` pays it out net of TDS ([payout pipeline](06-payout-pipeline.md)). **Arjun** (solo HOST) is the consultant-side mirror: his earnings pay out via `PAYOUT`.
+- **Payout** — **LearnPro Academy** hosts the expert, so the org-share leg accrues to LearnPro and a weekly `ORG_PAYOUT` pays it out net of TDS ([payout pipeline](07-payout-pipeline.md)). **Arjun** (solo HOST) is the consultant-side mirror: his earnings pay out via `PAYOUT`.
 - **Referral** — a learner books with a `ReferralCredit`; the platform eats it (`PLATFORM_PROMO`), independent of who sponsored the seat.
 - **Credits** — IIT Madras's ₹14,75,000 prepaid pool is the `WALLET` sense (org money we owe back); a consultee's promo balance is the `ReferralCredit` sense (a platform-funded discount). Same English word, opposite direction of obligation.
 
@@ -168,5 +172,5 @@ New devs routinely conflate these. They are different flows with different model
 - [Chart of accounts](02-chart-of-accounts.md) — the buckets and their normal sides.
 - [Ledger & postings](03-ledger-and-postings.md) — `postLedgerTxn`, idempotency, every flow's legs.
 - [Wallet & top-ups](04-wallet-and-topups.md) — the cache pattern in practice.
-- [Ledger integrity](09-ledger-integrity.md) — the reconciler that proves the model holds.
+- [Ledger integrity](13-ledger-integrity.md) — the reconciler that proves the model holds.
 - Ground truth: `lib/payments/ledger/post.ts`, `prisma/schema.prisma` (the `Ledger*` models), `scripts/reconcile/reconcile-ledgers.ts`.

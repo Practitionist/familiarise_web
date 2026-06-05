@@ -16,6 +16,8 @@ last-reviewed: 2026-06-05
 
 ## 1. The two records behind a wallet
 
+A wallet is not a single model — it is a `WalletTopUp` lifecycle record paired with a `WALLET` ledger account; understanding which is truth (the account) versus which is the fast-path cache (`walletBalance`) is essential before touching any top-up or debit code.
+
 | Thing | Where | Role |
 | --- | --- | --- |
 | **`WalletTopUp`** | `prisma/schema.prisma` model `WalletTopUp` (~1000) | Lifecycle + idempotency record for one top-up attempt (PENDING → CONFIRMED / FAILED). |
@@ -136,7 +138,7 @@ WHERE "id" = :id
 
 If `rowsAffected === 0`, the balance was insufficient and it throws `WalletInsufficientFundsError`. Because the predicate and the decrement are one atomic statement, two concurrent bookings can never both drain the same last rupee.
 
-> **Important:** `walletDebit` only moves the **cache**. It does **not** post a journal leg. The accounting leg `Dr WALLET` is posted later from the settlement layer (`createEarningsFromPayment`), where the full fee/payable/GST split is known — that single balanced `booking:<paymentId>` transaction is also the authoritative wallet-history record. See [Booking → earnings](05-booking-to-earnings.md) and [Payment legs](08-payment-legs.md).
+> **Important:** `walletDebit` only moves the **cache**. It does **not** post a journal leg. The accounting leg `Dr WALLET` is posted later from the settlement layer (`createEarningsFromPayment`), where the full fee/payable/GST split is known — that single balanced `booking:<paymentId>` transaction is also the authoritative wallet-history record. See [Booking → earnings](05-booking-to-earnings.md) and [Payment legs](09-payment-legs.md).
 
 `walletCredit` is the mirror: it bumps the cache for any reason, but **only posts a journal txn when `reason === "TOPUP"`**. Refund credits post their WALLET leg from the refund layer (next section), not here — this keeps each cash event owning exactly one posting.
 
@@ -171,7 +173,7 @@ Every wallet movement is a journal posting:
 | Booking debit | `Dr WALLET …` inside `booking:<paymentId>` | `walletBalance -= amount` (via `walletDebit`) |
 | Top-up refund | `Dr WALLET / Cr CASH` (`topup-refund:<paymentId>`) | `walletBalance -= amount` |
 
-The org's true balance is always `-ledgerBalancePaise({ kind: "WALLET", organizationId })` (WALLET is credit-normal, so the amount we owe is the negative of the signed balance). The reconcile cron's `WALLET_BALANCE_DRIFT` check asserts this equals the cache; any drift is an incident, never a thing to patch by hand. See [Ledger integrity](09-ledger-integrity.md).
+The org's true balance is always `-ledgerBalancePaise({ kind: "WALLET", organizationId })` (WALLET is credit-normal, so the amount we owe is the negative of the signed balance). The reconcile cron's `WALLET_BALANCE_DRIFT` check asserts this equals the cache; any drift is an incident, never a thing to patch by hand. See [Ledger integrity](13-ledger-integrity.md).
 
 ---
 
@@ -228,6 +230,6 @@ When real mandates land, the charge (a `WalletTopUp` + `Dr CASH / Cr WALLET` pos
 - [Chart of accounts](02-chart-of-accounts.md) — `CASH`, `WALLET`, and the rest.
 - [Ledger & postings](03-ledger-and-postings.md) — `postLedgerTxn`, balanced postings, idempotency.
 - [Booking → earnings](05-booking-to-earnings.md) — where the `Dr WALLET` booking leg actually posts.
-- [Payment legs](08-payment-legs.md) — `WALLET` as one funding leg of a stacked checkout.
+- [Payment legs](09-payment-legs.md) — `WALLET` as one funding leg of a stacked checkout.
 - [Concurrency & idempotency](../30-programs-and-lifecycle/01-concurrency-and-idempotency.md) — the atomic-debit guard pattern.
-- [Ledger integrity](09-ledger-integrity.md) — the `WALLET_BALANCE_DRIFT` reconcile check.
+- [Ledger integrity](13-ledger-integrity.md) — the `WALLET_BALANCE_DRIFT` reconcile check.

@@ -81,7 +81,7 @@ flowchart LR
 
 ## 3. Invariants
 
-1. **Sum identity.** `sum(PaymentLeg.amountPaise) === Payment.amount` (LICENSE is 0). Enforced at checkout; the reconciler's `PAYMENT_LEG_SUM_MISMATCH` is the retroactive detector ([ledger integrity](09-ledger-integrity.md)).
+1. **Sum identity.** `sum(PaymentLeg.amountPaise) === Payment.amount` (LICENSE is 0). Enforced at checkout; the reconciler's `PAYMENT_LEG_SUM_MISMATCH` is the retroactive detector ([ledger integrity](13-ledger-integrity.md)).
 2. **Leg count ≥ 1.** A `SUCCEEDED` payment with zero legs is a data bug.
 3. **Source uniqueness per payment.** `@@unique([paymentId, source])` — a duplicate-source leg fails on insert (`P2002`) rather than corrupting the sum. If split-billing across sub-orgs becomes real, drop this and add a `legGroupId` (tracked follow-up).
 4. **`sourceRef` for reversal.** Populated for `REFERRAL_CREDIT` (→ `ReferralCredit.id`) and where a gateway/accrual ref exists. `WALLET` legs no longer reference a per-row wallet log (`WalletEntry` was removed in #772) — the authoritative wallet movement is the booking journal's `Dr WALLET(org)` leg; the cache decrement is `walletDebit()`. `LICENSE`/`CARD` may omit `sourceRef`.
@@ -140,7 +140,7 @@ Refunds are a `Refund` row (not an inverse leg) plus a `REFUND` journal transact
 
 ## 7. What this design survived
 
-- **The `CHARGE_ORG` overage that double-billed via an extra leg (`7f7e7d12`, #785 C3).** When an org-charged overage was recorded at checkout, the code **added** an `OVERAGE_INVOICE_ACCRUAL` leg for the marginal *on top of* the base `INVOICE_ACCRUAL` leg — but the base leg already covered the over-cap pass-through (`basePaise`). Because `rollupOrgInvoiceAccruals` sums **both** leg sources into the invoice ([invoicing §9](07-invoicing.md#9-overage-roll-up-into-a-line-item-715--775)), the org was billed `basePaise` **twice**, and `sum(PaymentLeg.amountPaise)` no longer equalled `Payment.amount` — tripping the reconciler's `PAYMENT_LEG_SUM_MISMATCH` ([ledger integrity](09-ledger-integrity.md)). The fix **carves** `basePaise` *out* of the base `INVOICE_ACCRUAL` leg and writes only the genuinely-additional surcharge as the overage leg, so the two legs sum to the price exactly. The symmetric `CHARGE_MEMBER` carve (so `basePaise` isn't collected on both the org's parent leg and the member's side-charge) shipped in the same commit — latent, since no `CHARGE_MEMBER` program is configured yet. This is the invariant in §3 rule 1 doing its job: the leg-sum identity is what made a silent double-bill a *loud* reconcile finding.
+- **The `CHARGE_ORG` overage that double-billed via an extra leg (`7f7e7d12`, #785 C3).** When an org-charged overage was recorded at checkout, the code **added** an `OVERAGE_INVOICE_ACCRUAL` leg for the marginal *on top of* the base `INVOICE_ACCRUAL` leg — but the base leg already covered the over-cap pass-through (`basePaise`). Because `rollupOrgInvoiceAccruals` sums **both** leg sources into the invoice ([invoicing §9](08-invoicing.md#9-overage-roll-up-into-a-line-item-715--775)), the org was billed `basePaise` **twice**, and `sum(PaymentLeg.amountPaise)` no longer equalled `Payment.amount` — tripping the reconciler's `PAYMENT_LEG_SUM_MISMATCH` ([ledger integrity](13-ledger-integrity.md)). The fix **carves** `basePaise` *out* of the base `INVOICE_ACCRUAL` leg and writes only the genuinely-additional surcharge as the overage leg, so the two legs sum to the price exactly. The symmetric `CHARGE_MEMBER` carve (so `basePaise` isn't collected on both the org's parent leg and the member's side-charge) shipped in the same commit — latent, since no `CHARGE_MEMBER` program is configured yet. This is the invariant in §3 rule 1 doing its job: the leg-sum identity is what made a silent double-bill a *loud* reconcile finding.
 
 ---
 
@@ -148,5 +148,5 @@ Refunds are a `Refund` row (not an inverse leg) plus a `REFUND` journal transact
 - [Funding & programs](../00-foundations/03-funding-and-programs.md) — how each `FundingSource` maps to a leg source.
 - [Booking → earnings](05-booking-to-earnings.md) — the credit side of the booking posting.
 - [Wallet & top-ups](04-wallet-and-topups.md) — `WALLET` leg mechanics.
-- [Invoicing](07-invoicing.md) — how `INVOICE_ACCRUAL` legs roll up.
+- [Invoicing](08-invoicing.md) — how `INVOICE_ACCRUAL` legs roll up.
 - [Ledger & postings](03-ledger-and-postings.md) — the full booking/refund transactions.

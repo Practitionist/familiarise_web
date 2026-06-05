@@ -146,7 +146,7 @@ Legend:
 
 | # | Item | Verdict | Notes |
 |---|------|---------|-------|
-| 36 | ISSUED invoice past `dueDate` → OVERDUE + 7-day × ≤3 reminders | 🟡 | Reminders **✅**: the `dunning.ts` cron (23:30 UTC ≈ 05:00 IST, **scheduled**) marks `ISSUED → OVERDUE` (`markedOverdueAt`) and sends `notifyOrgInvoiceOverdue` on a 7-day cadence capped at 3 (`dunningReminderCount`), each claim idempotency-gated. **🟡 overall** because the booking-suspend cascade on terminal non-payment is **designed-not-active** (`dunningSuspendedAt`, `TODO(#779)`) — it never freezes the org. See [scenarios-and-examples §5.13](01-scenarios-and-examples.md) / [invoicing §7](../10-money-and-ledger/07-invoicing.md). |
+| 36 | ISSUED invoice past `dueDate` → OVERDUE + 7-day × ≤3 reminders | 🟡 | Reminders **✅**: the `dunning.ts` cron (23:30 UTC ≈ 05:00 IST, **scheduled**) marks `ISSUED → OVERDUE` (`markedOverdueAt`) and sends `notifyOrgInvoiceOverdue` on a 7-day cadence capped at 3 (`dunningReminderCount`), each claim idempotency-gated. **🟡 overall** because the booking-suspend cascade on terminal non-payment is **designed-not-active** (`dunningSuspendedAt`, `TODO(#779)`) — it never freezes the org. See [scenarios-and-examples §5.13](01-scenarios-and-examples.md) / [invoicing §7](../10-money-and-ledger/08-invoicing.md). |
 
 > **Cron schedule cross-check** (GitHub Actions → `jobs/**`, verified
 > 2026-06-05): `advance-program-cycles` 02:15 · `auto-renew-contracts`
