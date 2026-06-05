@@ -764,10 +764,17 @@ export async function handleRefundCreated(
         return;
       }
 
-      console.warn(
-        `Payment not found for refund: ${refundId} (paymentIntent=${paymentIntentId}, providerPaymentId=${providerPaymentId})`,
+      // #812 — the refund references a payment we can't find on ANY path. The
+      // common cause is ordering: `refund.created` arrived before the
+      // `payment.captured` that creates the Payment row. Returning here ACKs the
+      // event (markWebhookEventProcessed stamps processed=true, error=null), so
+      // it is never retried and the refund's reversal side-effects (earnings,
+      // credit note, ledger) never run. THROW instead so the event is recorded
+      // as failed and re-driven by gateway redelivery / the stuck-event sweeper
+      // once the payment exists.
+      throw new Error(
+        `Payment not found for refund ${refundId} (paymentIntent=${paymentIntentId}, providerPaymentId=${providerPaymentId}) — likely refund-before-capture; re-driving`,
       );
-      return;
     }
 
     // Check if refund already exists

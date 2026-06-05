@@ -110,7 +110,15 @@ export type Finding = {
     | "REFUND_BOOKING_COHERENCE"
     // #776 — an OrganizationInvoice whose totalPaise != subtotalPaise + CGST +
     // SGST + IGST (a mis-totaled GST invoice is a filing defect).
-    | "INVOICE_TOTAL_MISMATCH";
+    | "INVOICE_TOTAL_MISMATCH"
+    // #812 — a ConsultantEarnings reversed (refundedShareAmount > 0) with no
+    // REFUND ledger transaction for its payment: the reversal never hit the
+    // journal (the blind spot the blocking-ledger change closes going forward;
+    // this check surfaces any legacy/back-dated drift).
+    | "REVERSED_EARNING_WITHOUT_REFUND_TXN"
+    // #812 — a COMPLETED OrganizationPayout with no ORG_PAYOUT ledger
+    // transaction: the cash left but the payable was never cleared in the journal.
+    | "COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN";
   organizationId?: string;
   billingAccountId?: string;
   billingSubscriptionId?: string;
@@ -783,6 +791,75 @@ export async function runReconcileLedgers(
   const earningsPaymentsWithoutBookingTxn = earningsPaymentRows.filter(
     (e) => e.paymentId && !coveredPaymentIds.has(e.paymentId),
   ).length;
+
+  // #812 — a reversed earning with no REFUND ledger transaction. The new
+  // blocking-ledger behaviour prevents this going forward (a refund that can't
+  // post a balanced journal rolls back), but the check surfaces any legacy or
+  // back-dated divergence the nightly run should page on.
+  const reversedEarnings = await prisma.consultantEarnings.findMany({
+    where: {
+      refundedShareAmount: { gt: 0 },
+      ...(opts.organizationId
+        ? { payment: { organizationId: opts.organizationId } }
+        : {}),
+    },
+    select: {
+      id: true,
+      paymentId: true,
+      refundedShareAmount: true,
+      payment: { select: { organizationId: true } },
+    },
+  });
+  for (const rev of reversedEarnings) {
+    if (!rev.paymentId) continue;
+    const refundTxn = await prisma.ledgerTransaction.findFirst({
+      where: { kind: "REFUND", paymentId: rev.paymentId },
+      select: { id: true },
+    });
+    if (!refundTxn) {
+      findings.push({
+        kind: "REVERSED_EARNING_WITHOUT_REFUND_TXN",
+        paymentId: rev.paymentId,
+        organizationId: rev.payment?.organizationId ?? undefined,
+        expectedPaise: rev.refundedShareAmount,
+        actualPaise: 0,
+        deltaPaise: rev.refundedShareAmount,
+        details: {
+          consultantEarningsId: rev.id,
+          note: "ConsultantEarnings.refundedShareAmount > 0 but no REFUND ledger transaction for this payment.",
+        },
+      });
+    }
+  }
+
+  // #812 — a COMPLETED OrganizationPayout with no ORG_PAYOUT ledger transaction:
+  // the cash left but the payable was never cleared in the journal.
+  const completedPayouts = await prisma.organizationPayout.findMany({
+    where: {
+      status: "COMPLETED",
+      ...(opts.organizationId ? { organizationId: opts.organizationId } : {}),
+    },
+    select: { id: true, organizationId: true, netPayoutPaise: true },
+  });
+  for (const po of completedPayouts) {
+    const payoutTxn = await prisma.ledgerTransaction.findFirst({
+      where: { kind: "ORG_PAYOUT", payoutId: po.id },
+      select: { id: true },
+    });
+    if (!payoutTxn) {
+      findings.push({
+        kind: "COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN",
+        organizationId: po.organizationId,
+        payoutId: po.id,
+        expectedPaise: po.netPayoutPaise,
+        actualPaise: 0,
+        deltaPaise: po.netPayoutPaise,
+        details: {
+          note: "OrganizationPayout.status=COMPLETED but no ORG_PAYOUT ledger transaction.",
+        },
+      });
+    }
+  }
 
   const durationMs = Date.now() - startedAt;
   const ok = findings.length === 0;

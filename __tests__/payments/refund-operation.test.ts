@@ -74,6 +74,22 @@ const stableUuid = (): string => `uuid-${++uuidCounter}`;
 
 function txStub() {
   return {
+    // #812 — the refund cascade now posts a balanced ledger txn inside the tx and
+    // the ledger BLOCKS on failure, so the stub must satisfy postLedgerTxn:
+    // idempotency miss → upsert accounts → create txn → upsert balance snapshot.
+    // These are no-ops; the ledger journal itself is covered by ledger-specific
+    // tests, not this cascade test.
+    ledgerTransaction: {
+      findUnique: jest.fn(async () => null),
+      create: jest.fn(async () => ({ id: stableUuid() })),
+    },
+    ledgerAccount: {
+      upsert: jest.fn(async ({ where }: any) => ({ id: where.id })),
+    },
+    ledgerAccountBalance: {
+      upsert: jest.fn(async () => ({})),
+    },
+    systemEvent: { create: jest.fn(async () => ({})) },
     payment: {
       findUnique: jest.fn(async ({ where, select, include }: any) => {
         const p = state.payments.get(where.id);
@@ -415,6 +431,9 @@ function seedSinglePartyWalletPayment({
     id: paymentId,
     amount,
     originalAmount: amount,
+    // #812 — realistic payments always carry taxAmount (0 here); omitting it made
+    // the refund posting's gstRev NaN and the (now-blocking) ledger reject it.
+    taxAmount: 0,
     currency: "INR",
     paymentStatus: "SUCCEEDED",
     paymentGateway: "RAZORPAY",
@@ -536,6 +555,7 @@ describe("refundPayment — multi-leg WALLET + REFERRAL_CREDIT", () => {
       id: "pay-2",
       amount: 10001, // odd amount forces a remainder
       originalAmount: 10001,
+      taxAmount: 0, // #812 — realistic payments carry taxAmount
       currency: "INR",
       paymentStatus: "SUCCEEDED",
       paymentGateway: "RAZORPAY",

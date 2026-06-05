@@ -58,6 +58,12 @@ const MAX_BATCH = 50;
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_ATTEMPTS = 5;
 
+// #812: A row flipped to IN_FLIGHT (the soft lock below) but never resolved is a
+// worker that crashed mid-delivery. Nothing re-selects IN_FLIGHT, so without a
+// reaper window the row is orphaned forever. Anything older than this (> the
+// 10s request timeout by a wide margin) is treated as crashed and re-queued.
+const IN_FLIGHT_STALE_MS = 10 * 60 * 1000; // 10 min
+
 /**
  * Backoff lookup keyed by the attempt number AFTER incrementing. So if
  * a row currently has `attempts = 0` and we just tried once, we look up
@@ -111,11 +117,21 @@ export async function runDispatchTick(params: {
   // The status flip to IN_FLIGHT below is the soft lock — a second
   // worker grabbing the same row would observe IN_FLIGHT and skip.
   const nowDate = new Date(now());
+  const inFlightStaleBefore = new Date(now() - IN_FLIGHT_STALE_MS);
   const dueRows = await prisma.outboundWebhookDelivery.findMany({
     where: {
       OR: [
         { status: "PENDING" },
         { status: "RETRY", nextRetryAt: { lte: nowDate } },
+        // #812: A stale IN_FLIGHT row is a crashed-mid-delivery orphan — the
+        // worker died after the soft-lock flip but before recording the
+        // outcome. Re-queue it; the receiver-side idempotency keys make a
+        // re-POST safe even if the original request did land. Bounded on
+        // createdAt (the model has no updatedAt/@updatedAt yet); the staleness
+        // floor is so far past the 10s request timeout that createdAt-age is a
+        // safe orphan signal regardless. Switch to updatedAt once the schema
+        // grows an @updatedAt.
+        { status: "IN_FLIGHT", createdAt: { lt: inFlightStaleBefore } },
       ],
     },
     orderBy: [{ nextRetryAt: { sort: "asc", nulls: "first" } }],

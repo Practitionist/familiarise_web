@@ -18,19 +18,28 @@ export async function POST(req: NextRequest) {
     }
 
     // Verify webhook signature for Lemon Squeezy
-    if (signature) {
-      const expectedSignature = crypto
-        .createHmac("sha256", process.env.LEMON_SQUEEZY_WEBHOOK_SECRET)
-        .update(body)
-        .digest("hex");
+    // #812: REJECT a missing header — previously an unsigned request skipped
+    // verification entirely, so a forged unsigned POST was accepted.
+    if (!signature) {
+      console.error("Lemon Squeezy webhook missing signature header");
+      return NextResponse.json({ error: "Missing signature" }, { status: 401 });
+    }
 
-      if (signature !== `sha256=${expectedSignature}`) {
-        console.error("Lemon Squeezy webhook signature verification failed");
-        return NextResponse.json(
-          { error: "Invalid signature" },
-          { status: 400 },
-        );
-      }
+    const expectedSignature = `sha256=${crypto
+      .createHmac("sha256", process.env.LEMON_SQUEEZY_WEBHOOK_SECRET)
+      .update(body)
+      .digest("hex")}`;
+
+    // #812: Constant-time compare to avoid HMAC timing attacks. timingSafeEqual
+    // throws on unequal-length Buffers, so length-gate first.
+    const sigBuf = Buffer.from(signature);
+    const expectedBuf = Buffer.from(expectedSignature);
+    if (
+      sigBuf.length !== expectedBuf.length ||
+      !crypto.timingSafeEqual(sigBuf, expectedBuf)
+    ) {
+      console.error("Lemon Squeezy webhook signature verification failed");
+      return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
     }
 
     // DB health check — return 503 if DB is unreachable so Lemon Squeezy retries

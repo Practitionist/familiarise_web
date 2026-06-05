@@ -46,6 +46,18 @@ jest.mock("../../lib/api/organizations/rate-card", () => ({
   resolveEffectiveRateCard: jest.fn(),
 }));
 
+// #812 — this suite verifies the per-collaborator EARNINGS-split logic, not the
+// double-entry journal. The booking posting is incidental and its mock payment
+// amounts aren't designed to balance, so stub postLedgerTxn (the real balance
+// invariant is covered by ledger-invariants.test.ts). Real exports (types,
+// LedgerImbalanceError) are preserved.
+jest.mock("../../lib/payments/ledger/post", () => ({
+  ...jest.requireActual("../../lib/payments/ledger/post"),
+  postLedgerTxn: jest
+    .fn()
+    .mockResolvedValue({ transactionId: "ltxn-stub", created: true }),
+}));
+
 // Capture every organizationEarnings.create payload across the suite.
 type CapturedCreate = {
   organizationId: string;
@@ -67,6 +79,25 @@ let p2002Targets: Set<string> = new Set();
 // methods proxy to the mock store.
 jest.mock("../../lib/prisma", () => {
   const mockTx = {
+    // #812 — createEarningsFromPayment now posts a balanced booking journal and
+    // the ledger BLOCKS on failure, so the stub must satisfy postLedgerTxn
+    // (idempotency miss → upsert account → create txn → upsert balance). No-ops;
+    // the journal is asserted by ledger-specific tests, not this earnings test.
+    ledgerTransaction: {
+      findUnique: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({ id: "ltxn-1" }),
+    },
+    ledgerAccount: {
+      upsert: jest
+        .fn()
+        .mockImplementation(async ({ where }: { where: { id: string } }) => ({
+          id: where.id,
+        })),
+    },
+    ledgerAccountBalance: { upsert: jest.fn().mockResolvedValue({}) },
+    paymentLeg: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     consultantEarnings: {
       findFirst: jest.fn().mockResolvedValue(null),
       create: jest.fn().mockImplementation(async ({ data }: { data: { id?: string } }) => ({

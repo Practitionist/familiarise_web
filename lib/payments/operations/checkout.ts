@@ -1805,6 +1805,27 @@ export async function handleCheckout(
       );
     }
 
+    // #812 — dunning-suspend gate (config-gated, default off). The dunning cron's
+    // Stage 3 stamps OrganizationInvoice.dunningSuspendedAt once an invoice is
+    // unpaid past the grace window; while any such invoice is still OVERDUE, new
+    // sponsored bookings for the org are blocked until it is paid. Paying the
+    // invoice clears its OVERDUE status, which lifts this gate naturally.
+    if (process.env.ENABLE_DUNNING_SUSPEND === "true") {
+      const suspended = await prisma.organizationInvoice.findFirst({
+        where: {
+          organizationId: org.id,
+          status: "OVERDUE",
+          dunningSuspendedAt: { not: null },
+        },
+        select: { invoiceNumber: true },
+      });
+      if (suspended) {
+        throw new Error(
+          `This organization has an overdue invoice (${suspended.invoiceNumber}) and is suspended from new sponsored bookings until it is paid.`,
+        );
+      }
+    }
+
     // SECURITY: Verify the caller is an active Membership of this org.
     const callerMembership = await prisma.membership.findUnique({
       where: { userId_organizationId: { userId, organizationId: org.id } },

@@ -74,6 +74,9 @@ export const AUDIT_ACTIONS = {
     INVOICE_ISSUED: "INVOICE_ISSUED",
     // #779 — dunning cron flipped ISSUED → OVERDUE.
     INVOICE_OVERDUE: "INVOICE_OVERDUE",
+    // #812 — dunning Stage 3 stamped dunningSuspendedAt; the org's sponsored
+    // bookings are gated until the invoice is paid (config-gated cascade).
+    INVOICE_DUNNING_SUSPENDED: "INVOICE_DUNNING_SUSPENDED",
     INVOICE_PAYMENT_INITIATED: "INVOICE_PAYMENT_INITIATED",
     INVOICE_PAID: "INVOICE_PAID",
     INVOICE_CANCELLED: "INVOICE_CANCELLED",

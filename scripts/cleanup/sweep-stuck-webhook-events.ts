@@ -31,7 +31,13 @@ export interface SweepResult {
 export interface SweepOptions {
   /** Skip events newer than this — avoids racing an in-flight after() callback. */
   staleMinutes?: number;
-  /** Ignore events older than this — archive-webhook-events reaps the long-dead. */
+  /**
+   * #812: No longer a hard lower bound on the scan — kept only as the threshold
+   * past which we WARN that a stuck event has aged out of the old 72h window.
+   * Sweeping is still safe at any age (idempotency keys + status guards), and
+   * the archive retains failed rows 90d, so a lower floor here orphaned events
+   * stuck between 72h and 90d (no actor). Defaults to the old 72h.
+   */
   maxAgeHours?: number;
   limit?: number;
 }
@@ -40,24 +46,39 @@ export async function sweepStuckWebhookEvents(
   opts: SweepOptions = {},
 ): Promise<SweepResult> {
   const staleMinutes = opts.staleMinutes ?? 6;
-  const maxAgeHours = opts.maxAgeHours ?? 72;
+  const warnAgeHours = opts.maxAgeHours ?? 72;
   const limit = opts.limit ?? 200;
   const now = Date.now();
   const staleBefore = new Date(now - staleMinutes * 60_000);
-  const tooOld = new Date(now - maxAgeHours * 3_600_000);
+  const warnOlderThan = new Date(now - warnAgeHours * 3_600_000);
 
   // Stuck = after() crashed before markWebhookEventProcessed ran. Only razorpay
   // for now (stripe dispatch not yet extracted — tracked separately).
+  // #812: No lower-age floor — events stuck between the old 72h floor and the
+  // 90d archive window were left with no actor. Keep only the upper bound
+  // (don't race in-flight after() callbacks via staleBefore); re-driving an old
+  // event is safe (per-row idempotency keys + status guards).
   const stuck = await prisma.webhookEvent.findMany({
     where: {
       provider: "razorpay",
       processed: false,
       error: null,
-      receivedAt: { lt: staleBefore, gte: tooOld },
+      receivedAt: { lt: staleBefore },
     },
     orderBy: { receivedAt: "asc" },
     take: limit,
   });
+
+  // #812: Surface events that aged past the old 72h window — these are exactly
+  // the rows the previous lower bound would have silently orphaned.
+  const aged = stuck.filter((ev) => ev.receivedAt < warnOlderThan);
+  if (aged.length > 0) {
+    console.warn(
+      `⚠️  Sweeping ${aged.length} stuck webhook event(s) older than ${warnAgeHours}h ` +
+        `(oldest: ${aged[0].eventId} @ ${aged[0].receivedAt.toISOString()}) — ` +
+        `these were orphaned by the removed lower-age floor.`,
+    );
+  }
 
   const errors: string[] = [];
   let recovered = 0;

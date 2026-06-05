@@ -3634,6 +3634,7 @@ enum PayoutStatus {
   COMPLETED // Successfully sent
   FAILED // Provider rejected
   CANCELLED // Manually cancelled
+  REVERSED // #812 — bank returned funds AFTER COMPLETED; ORG_PAYOUT posting reversed, earnings re-opened
 }
 
 enum PayoutMethod {
