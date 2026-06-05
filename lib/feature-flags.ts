@@ -45,7 +45,7 @@ export const ENABLE_HOST_ORGS = process.env.ENABLE_HOST_ORGS === "true";
 /**
  * Live payout *disbursement* gate (#776 §B). The whole payout pipeline runs
  * (batches, ledger, TDS, status machine) but gateway submission is held until a
- * post-MVP sandbox proof + go-live (`docs/enterprise/45-live-payout-go-live-runbook.md`).
+ * post-MVP sandbox proof + go-live (`docs/enterprise/50-operations/06-live-payout-go-live-runbook.md`).
  * While false, org/consultant payouts sit PROCESSING — surfaced honestly in the
  * UI as "pending platform enablement", never as a failure. Server-only; the home
  * action-center + payout surfaces read it on the server and pass the boolean down.

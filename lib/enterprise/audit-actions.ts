@@ -13,7 +13,7 @@
  * NB: `CONSULTANT_APPLIED / CONSULTANT_APPROVED / CONSULTANT_REJECTED`
  * and their EXPERT_* aliases were purged in the Arch-4 terminology
  * migration. Do not re-add; EXPERT membership is invite-driven (see
- * docs/enterprise/06-expert-lifecycle.md) and the dead `OrgAuditAction`
+ * docs/enterprise/30-programs-and-lifecycle/03-expert-lifecycle.md) and the dead `OrgAuditAction`
  * enum was dropped from the Prisma schema at the same time.
  */
 

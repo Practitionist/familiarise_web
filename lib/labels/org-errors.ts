@@ -30,7 +30,7 @@ export const ORG_ERROR_COPY: Record<string, string> = {
     "Expert can only be assigned on host-capable organizations. Enable hosting under Settings → Capabilities first.",
   LEARNER_REQUIRES_CANSPONSOR:
     "Learner can only be assigned on sponsor-capable organizations. Enable sponsorship under Settings → Capabilities first.",
-// Why: PO balance enforcement (see docs/enterprise/10-invoicing.md
+// Why: PO balance enforcement (see docs/enterprise/10-money-and-ledger/07-invoicing.md
   // "PO balance enforcement" section). The server emits EXCEEDED; the
   // INSUFFICIENT alias exists so route renames don't break the UI copy.
   PO_BALANCE_EXCEEDED:
@@ -45,7 +45,7 @@ export const ORG_ERROR_COPY: Record<string, string> = {
   DOMAIN_NOT_VERIFIED:
     "The domain claim is pending DNS verification. Finish the TXT-record step under Settings → SSO → Domains.",
   // Why: pre-auth runtime guard at /api/auth/sso/domain-check — see
-  // docs/enterprise/08-sso-and-authentication.md "Pre-auth runtime
+  // docs/enterprise/20-iam-and-security/01-sso-and-authentication.md "Pre-auth runtime
   // guard". Surfaced when a stored SAML cert is unparseable; we want
   // operators (not end users) to know to re-paste the PEM.
   SSO_PROVIDER_MISCONFIGURED:

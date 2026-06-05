@@ -138,7 +138,7 @@ export default function DataExportsPage({ params }: Readonly<PageProps>) {
               One request per organization per 24 hours. Bundles are emailed
               when ready and expire 7 days after generation. See{" "}
               <a
-                href="/docs/enterprise/33-data-export"
+                href="/docs/enterprise/40-compliance-and-data/03-data-export"
                 className="underline"
                 target="_blank"
                 rel="noreferrer"

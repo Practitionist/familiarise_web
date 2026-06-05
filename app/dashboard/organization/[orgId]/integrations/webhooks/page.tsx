@@ -7,7 +7,7 @@
  * endpoints. Listing + create-form + delivery-log link. Detail-pane
  * mutations (rotate-secret, delete) are intentionally GA follow-ups —
  * v1 hands the operator the curl recipes from
- * `docs/enterprise/29-outbound-webhooks.md` for the destructive paths.
+ * `docs/enterprise/40-compliance-and-data/04-outbound-webhooks.md` for the destructive paths.
  *
  * Gated via `useRequireFinanceSurface` so OWNER + MAINTAINER +
  * BILLING_ADMIN + MANAGER all reach it. MANAGER is read-only at the

@@ -55,7 +55,7 @@ export const auth = betterAuth({
   // If you ever re-enable BetterAuth's rate limit, audit the overlap
   // against `authLimiter` to avoid double-counting and the surprises
   // that follow (two different 429 responses for the same flow).
-  // See audit Phase B.8 + docs/enterprise/10-rate-limiting.md.
+  // See audit Phase B.8 + docs/enterprise/20-iam-and-security/04-rate-limiting.md.
   rateLimit: {
     enabled: false,
   },
@@ -176,7 +176,7 @@ export const auth = betterAuth({
       // customSession callback compares this to the current row value
       // on every session lookup; if they diverge, the cached
       // memberships array is stale and we refetch. See audit Phase B.5
-      // and docs/enterprise/09-jit-and-session-refresh.md.
+      // and docs/enterprise/20-iam-and-security/02-jit-and-session-refresh.md.
       sessionGeneration: {
         type: "number",
         required: false,

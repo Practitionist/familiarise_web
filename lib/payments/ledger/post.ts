@@ -14,7 +14,7 @@
  * Idempotency: `LedgerTransaction.idempotencyKey` is `@unique`; a retry with the
  * same key is a no-op. Safe to call inside an existing `$transaction` (pass the
  * tx client). Chart of accounts + per-flow postings: see
- * `docs/enterprise/07-chart-of-accounts.md` + `docs/enterprise/08-ledger-and-postings.md`.
+ * `docs/enterprise/10-money-and-ledger/02-chart-of-accounts.md` + `docs/enterprise/10-money-and-ledger/03-ledger-and-postings.md`.
  */
 import type {
   Currency,

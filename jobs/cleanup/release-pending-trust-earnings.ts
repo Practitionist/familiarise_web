@@ -23,7 +23,7 @@
 // Without dotenv/config, DATABASE_URL is undefined and PrismaClient throws
 // on the first query. GitHub Actions workflows load env via repo secrets
 // and would still work, but local + emergency manual runs fail — see
-// docs/enterprise/23-runbooks.md "Running cron jobs locally".
+// docs/enterprise/50-operations/03-runbooks.md "Running cron jobs locally".
 import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { EarningStatus } from "@prisma/client";

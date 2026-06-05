@@ -97,7 +97,7 @@ export async function GET(
   // Read is widened to any ACTIVE org member: LEARNERs legitimately need
   // to see "which programs am I under" (drives the home dashboard,
   // booking UI, and utilization widgets). Mutations (POST below) stay
-  // MANAGER+canSponsor — see docs/enterprise/02-roles-and-access.md.
+  // MANAGER+canSponsor — see docs/enterprise/00-foundations/04-roles-and-permissions.md.
   const access = await requireOrgAccess(orgId);
   if (access.error) return access.error;
   if (!access.org.canSponsor) {

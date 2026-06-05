@@ -88,7 +88,7 @@ export function signPayload(
 
 /**
  * Verifier — for integration tests + the receiver-side reference
- * implementation in `docs/enterprise/29-outbound-webhooks.md`. Not
+ * implementation in `docs/enterprise/40-compliance-and-data/04-outbound-webhooks.md`. Not
  * called from production code paths; lives here so the canonical
  * verification logic stays adjacent to the signing logic.
  */

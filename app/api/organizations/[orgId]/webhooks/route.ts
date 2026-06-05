@@ -10,7 +10,7 @@
  *
  * GET is MANAGER+ (read-only view shows up on the billing dashboard's
  * Integrations card). POST is OWNER + BILLING_ADMIN per the gate
- * matrix in `docs/enterprise/04-roles-and-permissions.md`.
+ * matrix in `docs/enterprise/00-foundations/04-roles-and-permissions.md`.
  */
 
 import { NextResponse, type NextRequest } from "next/server";

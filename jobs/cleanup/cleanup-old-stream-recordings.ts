@@ -5,7 +5,7 @@
  * Tombstones recordings older than each org's retention window.
  */
 
-// Why: see docs/enterprise/23-runbooks.md "Running cron jobs locally".
+// Why: see docs/enterprise/50-operations/03-runbooks.md "Running cron jobs locally".
 import "dotenv/config";
 
 import {

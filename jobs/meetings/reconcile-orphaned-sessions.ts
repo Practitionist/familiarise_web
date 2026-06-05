@@ -12,7 +12,7 @@
 // Next.js runtime. Without dotenv/config, DATABASE_URL + STREAM_API_KEY
 // are undefined, PrismaClient throws on first query, and the Stream
 // client fails to initialize. See
-// docs/enterprise/23-runbooks.md "Running cron jobs locally".
+// docs/enterprise/50-operations/03-runbooks.md "Running cron jobs locally".
 import "dotenv/config";
 import prisma from "../../lib/prisma";
 import {

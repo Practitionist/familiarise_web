@@ -47,7 +47,7 @@ export const oidcConfigSchema = z.object({
  *   - Throws `ERR_OSSL_*` or `ERR_INVALID_ARG_TYPE` on anything else.
  *   Wrapping in try/catch normalizes both error families to a boolean.
  *
- * See audit Phase A.2 + `docs/enterprise/08-sso-and-authentication.md#cert-rotation`.
+ * See audit Phase A.2 + `docs/enterprise/20-iam-and-security/01-sso-and-authentication.md#cert-rotation`.
  */
 /**
  * Exported because the same parse-or-fail check needs to run at two

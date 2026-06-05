@@ -6,7 +6,7 @@
  * `app/api/staff/stats/route.ts` to give a single source of truth and
  * eliminate drift between the two dashboards' numbers.
  *
- * Future work (see `docs/enterprise/00-canonical-design.md` follow-ups):
+ * Future work (see `docs/enterprise/00-foundations/01-overview.md` follow-ups):
  * extract similar shared functions for payments listing, invoice listing,
  * verification queue, etc. The pattern is:
  *   1. Put the query/aggregation in `lib/api/operators/<resource>.ts`.

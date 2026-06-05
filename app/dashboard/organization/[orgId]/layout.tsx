@@ -272,7 +272,7 @@ export default function OrgLayout({
         // Only orgs running India AP 3-way-match (requiresPO=true) need
         // the PO tab in their primary nav. The PO surface itself stays
         // reachable by URL for orgs that opt in later — this is sidebar
-        // visibility, not authz. See docs/enterprise/12-dashboard-pages.md.
+        // visibility, not authz. See docs/enterprise/30-programs-and-lifecycle/04-dashboard-pages.md.
         name: "Purchase Orders",
         icon: Receipt,
         path: "purchase-orders",

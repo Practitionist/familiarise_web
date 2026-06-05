@@ -415,7 +415,7 @@ export async function applyCreditsToPayment(
 
       // Enterprise (Arch 4-Modified): every credit consumption writes a
       // matching PaymentLeg so the per-payment leg invariant
-      // (`docs/enterprise/20-payment-legs.md`) holds for any flow that
+      // (`docs/enterprise/10-money-and-ledger/08-payment-legs.md`) holds for any flow that
       // mixes referral credits with card / wallet / invoice. `sourceRef`
       // points at the ReferralCreditUsage row so refund + reversal can
       // join the credit ledger without scanning by paymentId+credit.

@@ -49,7 +49,7 @@ jest.mock("../../lib/auth-helpers", () => {
   // breaks jest's CJS loader). Keep the rank list in sync with
   // lib/auth-helpers.ts — the ordering OWNER > MAINTAINER > MANAGER >
   // SUPPORT > EXPERT = LEARNER is a documented invariant from
-  // docs/enterprise/04-roles-and-permissions.md.
+  // docs/enterprise/00-foundations/04-roles-and-permissions.md.
   const RANK: Record<string, number> = {
     OWNER: 5,
     MAINTAINER: 4,
@@ -221,7 +221,7 @@ describe("PATCH /api/organizations/[orgId]/members/[memberId] — anti-lockout",
   });
 
   it("blocks LEARNER → EXPERT role transition with 409", async () => {
-    // Separate invariant (docs/enterprise/04-roles-and-permissions.md):
+    // Separate invariant (docs/enterprise/00-foundations/04-roles-and-permissions.md):
     // disjoint LEARNER/EXPERT boundary forces remove + re-invite rather
     // than in-place mutation, because the two roles imply different
     // profile types.

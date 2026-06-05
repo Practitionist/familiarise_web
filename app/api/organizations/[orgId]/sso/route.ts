@@ -32,7 +32,7 @@ const PatchBodySchema = z
     // explicitly after first signin via /dashboard/.../members. This
     // closes a privilege-escalation hole where `defaultRoleForAutoJoin
     // = "OWNER"` would make the first SSO user co-owner. See audit
-    // Phase A.1 + docs/enterprise/08-sso-and-authentication.md.
+    // Phase A.1 + docs/enterprise/20-iam-and-security/01-sso-and-authentication.md.
     defaultRoleForAutoJoin: JitDefaultRoleSchema.optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {

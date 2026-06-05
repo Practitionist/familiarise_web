@@ -68,7 +68,7 @@ export interface FixtureResult {
  * for that extraction.
  *
  * Until then, tests that need this should seed via Supabase MCP
- * directly (see `docs/enterprise/23-runbooks.md` "Running cron jobs
+ * directly (see `docs/enterprise/50-operations/03-runbooks.md` "Running cron jobs
  * locally" → "Seeding test data" section) and call
  * `createEarningsFromPayment` themselves.
  */

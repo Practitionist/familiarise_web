@@ -11,7 +11,7 @@
  *
  * Returning a deterministic 405 here closes the door on a future
  * accidental implementation that bypasses the lockout invariant.
- * docs/enterprise/26-deletion-policy.md is the source of truth.
+ * docs/enterprise/40-compliance-and-data/02-deletion-policy.md is the source of truth.
  */
 
 import { NextResponse } from "next/server";

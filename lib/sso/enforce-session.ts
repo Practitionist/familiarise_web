@@ -45,7 +45,7 @@ export interface EnforcedOrgInfo {
  *   - `OrganizationSSOSettings.enforceSSO` is false.
  *   - `allowedEmailDomains` is set but does not include this domain.
  *
- * Audit Phase B.6. See `docs/enterprise/08-sso-and-authentication.md`.
+ * Audit Phase B.6. See `docs/enterprise/20-iam-and-security/01-sso-and-authentication.md`.
  */
 export async function lookupEnforcedOrg(
   prisma: PrismaClient,

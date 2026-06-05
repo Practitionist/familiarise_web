@@ -347,7 +347,7 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   // (Okta, Azure AD) hit when provisioning. A session-cookie check here would
   // mis-classify it as an unauth user and bounce it to /auth/signin. The route
   // handler enforces token auth + rate limit + per-org scoping. See
-  // lib/scim/auth.ts and docs/enterprise/31-scim-provisioning.md.
+  // lib/scim/auth.ts and docs/enterprise/20-iam-and-security/03-scim-provisioning.md.
   if (pathname.startsWith("/scim/v2/")) {
     return NextResponse.next();
   }

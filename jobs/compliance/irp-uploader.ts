@@ -16,7 +16,7 @@
  *   2. Payload mapping validated against CBIC schema (HSN, GSTIN, amounts)
  *   3. 24-hour IRN cancellation window behaviour proven
  *   4. Accountant / legal sign-off on IRN format and invoice sequence
- *   5. Retry dashboard and ops runbook in place (see docs/enterprise/23-runbooks.md)
+ *   5. Retry dashboard and ops runbook in place (see docs/enterprise/50-operations/03-runbooks.md)
  *
  * Schedule: daily at 02:30 UTC (08:00 IST).
  * GH Actions: `.github/workflows/irp-uploader.yml`.
@@ -27,7 +27,7 @@
 // Why: tsx does not auto-load .env when this script runs outside the
 // Next.js runtime. Without dotenv/config, DATABASE_URL is undefined and
 // PrismaClient throws on the first query. See
-// docs/enterprise/23-runbooks.md "Running cron jobs locally".
+// docs/enterprise/50-operations/03-runbooks.md "Running cron jobs locally".
 import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { generateIrn } from "@/lib/compliance/irp";

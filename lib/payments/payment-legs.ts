@@ -9,7 +9,7 @@
  *
  * Keep this in lockstep with:
  *   - `prisma/schema.prisma` → `model PaymentLeg`
- *   - `docs/enterprise/20-payment-legs.md`
+ *   - `docs/enterprise/10-money-and-ledger/08-payment-legs.md`
  *
  * If you add a new `PaymentLegSource` enum value you MUST add its
  * sourceRef semantics here so downstream reconcile code stays honest.

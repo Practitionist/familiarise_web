@@ -126,7 +126,7 @@ export async function POST(
           recordName: `_familiarise-verify.${created.domain}`,
           recordValue: created.verificationToken,
           recordType: "TXT",
-          instructionsUrl: "/docs/enterprise/08-sso-and-authentication.md",
+          instructionsUrl: "/docs/enterprise/20-iam-and-security/01-sso-and-authentication.md",
         },
       },
       { status: 201 },

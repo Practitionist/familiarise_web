@@ -224,7 +224,7 @@ export async function POST(req: NextRequest) {
       //
       // The same profile may be linked to memberships at several orgs
       // concurrently; the schema is deliberately many-to-many and
-      // docs/enterprise/14-scenarios-and-examples.md lists multi-org
+      // docs/enterprise/60-scenarios-and-verdicts/01-scenarios-and-examples.md lists multi-org
       // experts and learners as first-class cases.
       const roleEffects = await applyMembershipRoleEffects(tx, {
         userId,

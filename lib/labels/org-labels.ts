@@ -224,7 +224,7 @@ export const SELF_SERVICE_MEMBER_ROLES = SelfServiceMemberRoleSchema.options;
  * first SSO user became co-owner instantly. That's a catastrophic
  * privilege-grant; see audit Phase A.1.
  *
- * See `docs/enterprise/08-sso-and-authentication.md#jit-default-role`.
+ * See `docs/enterprise/20-iam-and-security/01-sso-and-authentication.md#jit-default-role`.
  */
 export const JitDefaultRoleSchema = z.literal("LEARNER");
 export type JitDefaultRole = z.infer<typeof JitDefaultRoleSchema>;
