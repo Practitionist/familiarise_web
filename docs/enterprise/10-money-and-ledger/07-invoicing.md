@@ -47,6 +47,26 @@ sequenceDiagram
 
 On `ISSUED → PAID` the invoice-paid webhook (`app/api/webhooks/utils.ts`) posts `invoicepaid:<invoiceId>` (kind `INVOICE_PAID`): `Dr CASH / Cr ORG_RECEIVABLE(org)` for the invoice total, in the same transaction that flips the status. Note **issuance posts no money leg** — the receivable was accrued at booking; issuance just rolls accrued bookings into the invoice and records an audit row ([ledger & postings §3](03-ledger-and-postings.md)).
 
+### 1.1 Worked walkthrough — Wipro's month-end invoice
+
+**Wipro Limited** (seeded SPONSOR, `fundingSource = INVOICE`, GSTIN `29AABCW1234K1Z5`, `gstStateCode = KA`, NET-60) sponsors a leadership program. Through the cycle, every Wipro-sponsored booking past its LICENSED_SEAT coverage debits `ORG_RECEIVABLE(wipro)` via an `INVOICE_ACCRUAL` leg — **no cash moves at booking**. Say the cycle accrued **₹2,00,000** of billable bookings (`subtotalPaise = 20_000_000`).
+
+At month-end the roll-up cron sums Wipro's unbilled `SUCCEEDED` accrual-funded payments into an `OrganizationInvoice(DRAFT)`, one `InvoiceLineItem` per booking. The platform's supplier GSTIN is also Karnataka-registered (state `29`) and Wipro's `placeOfSupply` is `KA` — **same state, so this is an intra-state supply**: GST splits CGST + SGST (9% + 9%), not IGST (`deriveGstBreakdown`, [§3](#3-gst-breakdown-cgst--sgst--igst)):
+
+```
+subtotalPaise =                                    20_000_000   (₹2,00,000)
+taxPaise      = round(20_000_000 × 0.18)         =   3_600_000   (total GST @ 18%)
+cgstPaise     = floor(taxPaise / 2)              =   1_800_000   (₹18,000)
+sgstPaise     = taxPaise − cgstPaise             =   1_800_000   (₹18,000, absorbs the odd-paise remainder)
+totalPaise    = 20_000_000 + 3_600_000           =  23_600_000   (₹2,36,000)
+```
+
+(The code rounds the *whole* 18% tax first, then floors half for CGST and lets SGST take the remainder, so `cgst + sgst == taxPaise` exactly — `gst.ts:16`. On a round subtotal like this there's no residual; on an odd subtotal SGST carries the extra paise.)
+
+`invoiceNumber` is allocated gapless per `(orgId, FY)` — Wipro's first FY2026 invoice is `INV-WIP-2026-0001` (the seed's prefix). The OWNER issues it (`DRAFT → ISSUED`, `issuedAt` stamped, IRN enqueued), `dueDate = issuedAt + 60d` (NET-60). **Issuance posts no money leg** — the ₹2,36,000 receivable was already accrued booking-by-booking. Sixty days later Wipro pays; the invoice-paid webhook posts `Dr CASH 23_600_000 / Cr ORG_RECEIVABLE(wipro) 23_600_000` and flips `ISSUED → PAID` in one transaction. The `ORG_RECEIVABLE(wipro)` balance returns to zero for that invoice's bookings.
+
+Were Wipro registered in a *different* state from the platform's supplier registration, the same ₹2,00,000 would carry `igstPaise = 36_00000` (₹36,000) and zero CGST/SGST — same total, different columns, because the place-of-supply crossed a state line.
+
 ---
 
 ## 2. Schema highlights
@@ -189,6 +209,8 @@ When an `ISSUED` invoice's `dueDate` passes, the **dunning cron** (`jobs/billing
 
 So the cadence is **7-day intervals, capped at 3 reminders**. Each claim is a conditional `updateMany` on the prior stamp value, so two cron replicas / a same-day re-run can't double-notify (the loser sees `count === 0` and skips). Only **dunnable** orgs are chased (`ACTIVE` / `PENDING_VERIFICATION` / `SUSPENDED`); a `DEACTIVATED` org is being torn down, so its invoices aren't pursued.
 
+> **Walkthrough — Meridian Consulting (fictional) goes overdue.** Meridian's ₹4,00,000 NET-30 invoice issues 1-Apr, `dueDate` 1-May. It isn't paid. **Day 1 of overdue (≈2-May):** the dunning cron's stage-1 query finds it (`ISSUED`, `dueDate < now`, `markedOverdueAt = null`), claims `ISSUED → OVERDUE` stamping `markedOverdueAt`, fires `notifyOrgInvoiceOverdue` (reminder 0), and writes an `INVOICE_OVERDUE` audit row. **+7d (≈9-May):** stage 2 sees `OVERDUE`, `dunningReminderCount (0) < 3`, last touch (`markedOverdueAt`) >7d old → bumps the count to 1, stamps `lastDunningReminderAt`, sends reminder 1. **+14d, +21d:** reminders 2 and 3. **+28d:** `dunningReminderCount` is now 3, the `< 3` predicate fails, **the cron stops chasing** — Meridian gets no fourth reminder. Throughout, the invoice never leaves `OVERDUE` and **nothing suspends Meridian's bookings**: the suspension cascade is designed (the `dunningSuspendedAt` column) but no code writes it (callout below). A human picks up collections from here. Meridian is fictional precisely because this is a failure path — a real seeded org (Wipro, IIT Madras) is never shown defaulting.
+
 > 🟡 **Suspension cascade is designed but NOT active.** `dunningSuspendedAt` exists for a config-gated "suspend bookings once OVERDUE drags past the grace window" stage — but no code writes it yet (`TODO(#779)`). Today dunning is **notify-only**: it marks overdue and sends reminders; it never suspends. Don't document booking-suspend-on-overdue as live.
 
 ---
@@ -246,6 +268,19 @@ The `base` vs `surcharge` split is itemized on the `OverageEvent` (`basePaise` /
 
 - `autoGenerated = true` — monthly roll-up cron; `billedPayments[]` lists captured payments.
 - `autoGenerated = false` — OWNER-created via `POST …/invoices` for ad-hoc charges (setup fees, overage bundles).
+
+---
+
+## 11. Design decisions & trade-offs
+
+- **Invoice-level GST split, not per-line (today).** The GST columns (`cgstPaise`/`sgstPaise`/`igstPaise`) live on `OrganizationInvoice`, computed once for the whole invoice, even though `InvoiceLineItem[]` is a typed child table (#772-era, `51e64547`). A per-line tax split would be more granular (and the IRP payload *does* split per line at upload time, §4), but the invoice's single intra/inter mode (driven by one place-of-supply) makes per-line tax redundant for a domestic services invoice — every line on a Wipro invoice is the same HSN, same place-of-supply, same rate. The cost is that a future mixed-rate invoice (different HSN per line) would need the split pushed down to the line; the benefit today is one GST computation and one `INVOICE_TOTAL_MISMATCH` check ([ledger integrity](09-ledger-integrity.md)) instead of N. The base/surcharge overage itemization (§9) is the first place this pressure shows up — it's itemized on the `OverageEvent` but still written as one combined line.
+- **Dunning rides `OVERDUE` + idempotency-gate stamps, not a new status per reminder.** A `REMINDER_1`/`REMINDER_2`/`REMINDER_3` status ladder would encode the cadence in the type, but it also fragments the lifecycle and makes "is this invoice overdue?" a multi-value check. Instead one `OVERDUE` status loops, and three nullable stamps (`markedOverdueAt`, `dunningReminderCount`, `lastDunningReminderAt`) carry the escalation + double-send guard (§7). The cost is the cadence lives in cron logic, not the schema; the benefit is the status enum stays small and every reminder claim is a conditional `updateMany` that can't double-fire.
+- **IRP upload is two independent gates, fail-soft on missing creds.** `ENABLE_IRP_UPLOADER` (does the cron run at all) and `CLEARTAX_*` (real GSP call vs stub) are deliberately separate (§4): the flag-on/creds-absent combination runs the cron and records `STUB` as a normal retry rather than crashing. This lets the pipeline be exercised before a ClearTax contract exists, and matches the platform's sub-₹5cr size where IRN isn't yet mandatory. The cost is a STUB result that looks like a retry in telemetry; the benefit is the uploader never hard-fails on configuration.
+
+## 12. What this design survived
+
+- **Gapless per-org invoice + credit-note counters under CGST Rule 46/53 (`37e3c71a`/`eae45f38`, #776).** A GST invoice series must be **gapless and monotonic per issuer per FY** — a missing or duplicated number is a filing defect. A naive `MAX(seq)+1` read-then-write races: two concurrent month-end roll-ups for the same org both read the same max and mint the same number, violating `@@unique([organizationId, invoiceNumber])` (one aborts, losing its invoice) or — worse — skipping a number. The design allocates from a dedicated `OrgInvoiceCounter` via an atomic upsert whose UPDATE path `increment`s `nextSeq` and returns the pre-increment value (`invoice-numbering.ts:46`) — equivalent to `INSERT … ON CONFLICT … RETURNING`, a single DB-level op the compound `@@id` serialises. Credit notes get their **own** counter (`OrgCreditNoteCounter`, `<PREFIX>-CN-<FY>-<SEQ>`) because Rule 53 requires a separate series (§8). The fiscal-year reckoning was also moved to **IST** (not UTC) so an invoice issued just before midnight IST on 31-Mar doesn't slip into the wrong FY's sequence (`37e3c71a` F3).
+- **IRP mapping failures are permanent; submission failures retry to a cap (`53ee63de`, #777 §C).** The daily uploader (`jobs/compliance/irp-uploader.ts`) distinguishes two failure classes. A **mapping** failure — missing buyer GSTIN, no line items, unresolved seller state — is structural: retrying can't fix unmappable data, so `buildIrpPayload` returns `{ ok: false }` and the row flips **straight to `FAILED`** with `irpLastError = "MAP: …"` rather than burning the 30-day reporting window looping (`irp-uploader.ts:143`). A **submission** failure (GSP transient, network) keeps the row `PENDING` and bumps `irpRetryCount` until the cap (**`MAX_RETRIES = 12`** ≈ 12 daily attempts, `irp-uploader.ts:183`), then flips to `FAILED` for manual review. The per-line GST split rounds per line and pushes the paise residual onto the last line so `ItemList` sums reconcile to `ValDtls` exactly — the IRP rejects any per-line-vs-total mismatch. Without the permanent/transient split, one structurally-broken invoice would retry 12× a day forever and could starve the batch.
 
 ---
 

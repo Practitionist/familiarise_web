@@ -111,6 +111,51 @@ The org grid that used to live there is gone — non-OrgWorkspace members
 (LEARNER, EXPERT) navigate between orgs via the OrganizationSwitcher
 dropdown in the top bar, which never required a list page.
 
+## Role-visibility nav-map
+
+The same `[orgId]` URL lands four different humans on four different surfaces.
+`[orgId]/page.tsx` does the role-branched redirect (consumers to their personal
+view, operators to `/home`); from there the sidebar shows only what that role's
+gate would let through. This is the mental model a new reader needs before the
+exhaustive matrix below — *who sees what*, not *which constant enforces it*:
+
+```mermaid
+flowchart TD
+  ENTRY["/dashboard/organization/[orgId]<br/>role-branched redirect"]
+  ENTRY -->|LEARNER| LRN["/my-program only<br/>(own ProgramAssignment progress,<br/>coverage rules, utilization)"]
+  ENTRY -->|EXPERT| EXP["/my-arrangement only<br/>(own payoutRecipient,<br/>RateCard split, earnings)"]
+  ENTRY -->|MANAGER+ / SUPPORT / OWNER| HOME["/home — activation center"]
+
+  subgraph MGR["MANAGER sees (rank 40)"]
+    direction LR
+    M1["/members · /experts · /learners"]
+    M2["/billing · /payouts · /analytics"]
+    M3["/consent · /appointments · /audit"]
+  end
+  subgraph MNT["+ MAINTAINER adds (rank 60)"]
+    direction LR
+    T1["/invitations · /programs"]
+    T2["/contracts · /purchase-orders"]
+    T3["/settings"]
+  end
+  subgraph OWN["+ OWNER only (rank 70)"]
+    direction LR
+    O1["/settings/sso<br/>(policy + providers + domain claims)"]
+    O2["/integrations/data-exports<br/>(DPDP §11, OWNER + BILLING_ADMIN)"]
+  end
+  HOME --> MGR --> MNT --> OWN
+
+  HOME -.->|BILLING_ADMIN branch| FIN["FinanceLeadViewCard<br/>finance-tuned /home overview"]
+  HOME -.->|sub-MANAGER deep-link| CON["role-specific ConsumerViewCard<br/>(deep-links to /my-program or /my-arrangement)"]
+```
+
+Two nuances the arrows compress: the role ranks are cumulative (a MAINTAINER
+sees everything a MANAGER does, plus the MAINTAINER tier), and the boxes are
+*also* capability-gated — a `canHost=false` org hides `/experts` + `/payouts`
+even from an OWNER, and a `canSponsor=false` org hides `/programs`,
+`/contracts`, `/billing`, `/purchase-orders`. The matrix below is the
+authoritative cross-product.
+
 ## Visibility by capability
 
 Visibility here is the **capability** gate only. Every tab is **also** role-gated — see the "Min role" column. "Min role" reflects what the page itself enforces via `useRequireOrgAccess` / `useRequireOrgRole` (or, for pages that have no page-level gate, the API gate that fails first). The canonical API gate matrix lives in `03-roles-and-permissions.md:63-134`.

@@ -45,6 +45,111 @@ orgs have all been deactivated. See
 `docs/onboarding/onboarding-system-reference.md` §0 for the full
 profile-model roster.
 
+## Anatomy of one booking
+
+If you read one diagram in this band, read this one. It traces a single
+sponsored session end-to-end — the spine every other doc hangs detail off.
+
+**Scenario.** A Wipro learner (canSponsor org, `INVOICE` funding,
+`LICENSED_SEAT` program — the seeded `wipro` org) books a 1:1 consultation.
+Wipro's program covers 12 engagements/cycle at a ₹10,000/engagement cap; this
+booking is engagement #4 of the cycle, so it's in-cap (no overage). The hops
+below are the real call order in `lib/payments/operations/checkout.ts` →
+`lib/payments/payouts/earnings-service.ts` → `lib/payments/ledger/post.ts`.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor M as Member (Wipro learner)
+  participant CO as Checkout<br/>(operations/checkout.ts)
+  participant PA as Program / Assignment
+  participant ES as earnings-service
+  participant L as Ledger (postLedgerTxn)
+
+  M->>CO: book consultation (planId, slot)
+  CO->>PA: find ACTIVE assignment covering CONSULTATION
+  Note over PA: program ACTIVE + contract ACTIVE,<br/>in effectiveFrom..effectiveTo;<br/>coveredPlanTypes ∋ CONSULTATION
+  PA-->>CO: programAssignmentId
+  CO->>CO: acquire checkout lock (anti double-book)
+  CO->>PA: recordBookingUtilization(tx) — cap check
+  Note over PA: in-cap → engagementsUsed += 1;<br/>over-cap → BLOCK throws 402,<br/>or flags wasOverage (CHARGE_*)
+  CO->>CO: makeLeg INVOICE_ACCRUAL (amount, sourceRef=assignment)
+  Note over CO: WALLET→Dr WALLET · INVOICE→Dr ORG_RECEIVABLE ·<br/>LICENSE→amount 0 (Program absorbed)
+  CO->>ES: createEarningsFromPayment(payment)
+  ES->>ES: resolveEffectiveRateCard() @ payment.createdAt
+  Note over ES: bps snapshot frozen onto the rows —<br/>a later RateCard bump never rewrites this
+  ES->>L: postLedgerTxn(booking:<paymentId>)
+  L->>L: assert Σ DEBIT == Σ CREDIT (else throw)
+  Note over L: Dr funding leg == Cr PLATFORM_FEE +<br/>CONSULTANT_PAYABLE (+ ORG_PAYABLE if HOST) + GST_PAYABLE
+  L-->>ES: balanced txn (idempotent on key)
+  Note over ES,L: ConsultantEarnings (+OrganizationEarnings if expert is<br/>a HOST member) now PENDING — money owed, not yet sent
+  ES-->>CO: earnings created
+  CO-->>M: booked ✅
+```
+
+Where each hop's full story lives:
+
+- **Assignment + cap check** → [programs](../30-programs-and-lifecycle/02-programs.md)
+  (the `OverageEvent` state machine when this booking is #13, past the cap)
+  and [funding-and-programs](03-funding-and-programs.md) (`coveredPlanTypes`,
+  `OverageBehavior`).
+- **Payment legs** → [payment-legs](../10-money-and-ledger/08-payment-legs.md)
+  (`makeLeg`, the per-source `sourceRef` invariant).
+- **The split + the BOOKING posting** → [booking-to-earnings](../10-money-and-ledger/05-booking-to-earnings.md)
+  (`RateCard` resolution, bps snapshot) and [ledger & postings](../10-money-and-ledger/03-ledger-and-postings.md).
+- **(Eventual) payout** → [payout-pipeline](../10-money-and-ledger/06-payout-pipeline.md);
+  the `PENDING` earnings rows are rolled into an `OrganizationPayout` /
+  `ConsultantPayout` later — disbursement is a separate cron, gated by
+  `ENABLE_LIVE_PAYOUTS`.
+
+> **Why the ledger posts *after* checkout, not inside it.** The wallet
+> `walletBalance` debit during checkout moves only the **cache**; the
+> authoritative `Dr WALLET` leg is posted by `earnings-service` once the full
+> three-way split is known, so the journal is balanced in one shot
+> (`booking:<paymentId>` is the idempotency key). A single-consultant booking
+> posts inline; a multi-collaborator one defers the journal (#773). See
+> [booking-to-earnings](../10-money-and-ledger/05-booking-to-earnings.md) §1.
+
+## Design history
+
+This band reads cleaner than the road that built it. The chronology below is
+the journey — each entry links to the band doc that carries the full story.
+
+- **#655 — enterprise foundation.** The first cut of the org subsystem:
+  capability booleans, `Membership`, the role ladder, and the
+  `BILLING_ADMIN` finance role gated by a disjunction (not a rank) —
+  `lib/auth/billing-admin-gate.ts`. See [roles-and-permissions](04-roles-and-permissions.md).
+- **#768 — v0 schema freeze + God-model breakup.** The monolithic
+  `Organization` row was split into satellites (`OrganizationTaxInfo`,
+  `OrgBrandingProfile`, `OrganizationMsmeInfo`), `OrganizationKind` was
+  deleted in favour of the two booleans, PAN moved to encrypted-at-rest, and
+  several JSON escape-hatch columns became typed child tables
+  (`InvoiceLineItem`, etc.). See [organization-types](02-organization-types.md).
+- **#771 / #772 — three single-entry logs → one double-entry journal.**
+  `WalletEntry` + `FundingLedgerEntry` + `SettlementLedgerEntry` were
+  replaced by `LedgerTransaction` / `LedgerEntry` / `LedgerAccount` +
+  `WalletTopUp`; `walletBalance` became a derived cache asserted by the
+  reconciler. See [money-model-overview](../10-money-and-ledger/01-money-model-overview.md).
+- **#776 — v1 money core (+ #785 review hardening).** The reversal engine,
+  credit notes, refund-cascade unification, idempotency keys, and the
+  `LedgerAccountBalance` O(1) snapshot. See [money-model-overview](../10-money-and-ledger/01-money-model-overview.md)
+  and [ledger-integrity](../10-money-and-ledger/09-ledger-integrity.md).
+- **#777 — v2 customer experience (shipped as PR #787).** The state-aware
+  `/home` activation + action center, field-level RBAC on org PATCH, and the
+  revenue levers (IRN payload mapper, wallet floor, overage-as-expansion).
+  See [organization-lifecycle](05-organization-lifecycle.md).
+- **#779 — lifecycle work (landed inside v2).** The cycle engine + auto-renew
+  (kills zombie assignments), the contract supersession chain, persistent
+  money-config lock (`configLockedAt`), dunning, and verification resubmit.
+  See [contract-lifecycle](../30-programs-and-lifecycle/07-contract-lifecycle.md)
+  and [cycle-engine-and-rollover](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md).
+- **2026-06-05 — docs refresh + reorg.** The flat doc set was verified against
+  code and reorganized into the numbered bands you're reading
+  (`dc85f8ef`); diagrams + engineering narrative were layered on next.
+
+For the audit-by-audit verdict (what each `#NNN` checked, what it left
+`🟡`/`❌`), see [subsystem-checklist](../90-audits/02-subsystem-checklist.md).
+
 ### Schema map — Organization at the centre
 
 The ER diagram below covers the enterprise-specific models in
@@ -542,7 +647,7 @@ across `prisma migrate reset`). Source: `prisma/seedFiles/15a-create-organizatio
 | `wipro` | Sponsor (canSponsor=true, canHost=false) | INVOICE | LICENSED_SEAT | PO + draft monthly invoice; pure buyer-side. |
 | `learnpro-academy` | Host (canSponsor=false, canHost=true) | — | — | Payout account + 10/10/80 RateCard + EXPERT memberships. |
 | `iit-madras` | Hybrid (canSponsor=true, canHost=true) | WALLET | CREDIT_POOL | Both money flows live in parallel. |
-| Rahul's solo org | Host (canSponsor=false, canHost=true) | — | — | Single-consultant convenience org; dynamic slug. |
+| Arjun's solo org (`arjun-anderson-coaching-…`) | Host (canSponsor=false, canHost=true) | — | — | Single-consultant convenience org; dynamic slug. |
 
 **Tour owner:** `tour-owner@familiarise.dev`, password from
 `SEED_PASSWORD` (default `SeedPass123!`). Created with

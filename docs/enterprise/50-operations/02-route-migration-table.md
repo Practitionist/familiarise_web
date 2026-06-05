@@ -1,5 +1,16 @@
 # Route migration table
 
+> **How to read this table.** Two columns: **Old** = the pre-Arch-4
+> path you may remember (or find in an old branch); **Now** = where that
+> capability lives today. `same` = path unchanged (Notes say what else
+> moved). **removed** = no successor — the Notes name the surface that
+> absorbed it. **not yet landed** = the `Now` path is anticipated by an
+> audit-action constant in `lib/enterprise/audit-actions.ts` but **no
+> route file ships it** — do not link code to it. To verify a row:
+> `ls app/api/<path>/route.ts` for the **Now** side (present ⇒ live,
+> absent ⇒ removed/not-landed), and cross-check the live table in
+> [`./01-api-reference.md`](01-api-reference.md).
+
 Map every pre-Arch-4 enterprise API route to its current home. Rows
 with "removed" in the "Now" column have no successor — the capability
 moved to a different surface or the feature was rolled up into an

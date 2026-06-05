@@ -10,6 +10,8 @@
 >
 > **Other docs:** `docs/enterprise/**` (25+ specialized docs) is the canonical source of truth for implementation details. This doc is the roadmap **to** those docs. Business folks can stop at Part V. Technical folks can start at Part VI. Reference readers can jump to Part IX.
 >
+> **How we got here:** for the chronological story of how the subsystem was built — the audit-series journey (#655 → #768 → #772 → #776/#785 → #777/#787 → #779 → docs refresh) — see [Design history](../00-foundations/01-overview.md#design-history).
+>
 > **Last updated:** 2026-06-05 (post the v2 mega-audit — #777/#778/#779: contract lifecycle, cycle engine, overage/dunning/wallet-floor, field-level RBAC, SSO break-glass, refund/credit-note unification). **Owner:** CEO. **Review cadence:** quarterly or after any schema change.
 
 ---
@@ -267,6 +269,8 @@ This is a mini-glossary for the terms you'll see everywhere. A full A-Z glossary
 # PART II — THE BUSINESS LAYER
 
 ## 6. Organization types & capabilities
+
+This Part is the business view of enterprise: what kinds of organizations exist, how they pay, and what they buy for their people. Before the detail — two flags decide everything an org can do. `canSponsor` means "the org pays for sessions its members book"; `canHost` means "the org has experts who earn money through it." Every org is just a combination of those two.
 
 The four capability kinds — BUYER, HOST, HYBRID, INERT — are determined by the `canSponsor` and `canHost` booleans.
 
@@ -589,7 +593,7 @@ A Program is a commercial package describing **what the org has bought for its m
 | `overageRatePaise` | Price per overage session when charging |
 | `pricePerSeatPaise` | Price per seat per cycle |
 
-**Use case:** Acme Corp wants 25 engineers to have unlimited mentorship. Acme signs a ₹3K/seat/month LICENSED_SEAT contract = ₹75K/month. Each engineer is capped at 4 sessions/month (soft cap) to prevent abuse. If they hit the cap, `overageBehavior` decides: BLOCK (try next month), CHARGE_MEMBER (learner pays the overage on their own card), or CHARGE_ORG (overage accrues to the org's next invoice). The full machine is in § 8.7 and [cycle-engine-and-rollover](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md).
+**Use case:** Acmeware (a product company) wants 25 engineers to have unlimited mentorship. Acmeware signs a ₹3K/seat/month LICENSED_SEAT contract = ₹75K/month. Each engineer is capped at 4 sessions/month (soft cap) to prevent abuse. If they hit the cap, `overageBehavior` decides: BLOCK (try next month), CHARGE_MEMBER (learner pays the overage on their own card), or CHARGE_ORG (overage accrues to the org's next invoice). The full machine is in § 8.7 and [cycle-engine-and-rollover](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md).
 
 ### 8.2 CREDIT_POOL (shipped)
 
@@ -850,19 +854,19 @@ These are end-to-end narrative examples. Each one covers: who the customer is, w
 
 ### 10.4 Scenario D — Solo consultant joining a HOST org
 
-**User:** Freelance career coach.
+**User:** Arjun Anderson, a freelance career coach (he already runs his own solo HOST org, `arjun-anderson-coaching`).
 
 **Need:** Move from solo B2C to agency-backed (more structured, better tax handling).
 
 **Flow:**
 
-1. Freelancer has been on Familiarise as a CONSULTANT (B2C path).
-2. An agency (HOST org) invites them as an EXPERT via email.
-3. Freelancer accepts → Membership row created with `role=EXPERT`, `status=ACTIVE`.
-4. Freelancer's future bookings now flow through the agency's rate card + earnings split.
-5. Existing bookings on the B2C path retain their original (100% to freelancer minus commission) split.
+1. Arjun has been on Familiarise as a CONSULTANT (B2C path).
+2. An agency (HOST org) invites him as an EXPERT via email.
+3. Arjun accepts → Membership row created with `role=EXPERT`, `status=ACTIVE`.
+4. Arjun's future bookings now flow through the agency's rate card + earnings split.
+5. Existing bookings on the B2C path retain their original (100% to Arjun minus commission) split.
 
-**Governance:** Freelancer can belong to multiple HOST orgs simultaneously. Session attribution uses the org whose marketplace page the learner booked from.
+**Governance:** Arjun can belong to multiple HOST orgs simultaneously (he's also an EXPERT at IIT Madras). Session attribution uses the org whose marketplace page the learner booked from.
 
 ### 10.5 Scenario E — Small startup (BUYER + WALLET + simple)
 
@@ -1181,7 +1185,7 @@ If the user has no Membership, the payer selector hides entirely (no extra UX no
 
 ## 14. Payment legs & the double-entry ledger
 
-Every movement of money on the platform is recorded in a **double-entry money journal** alongside the **PaymentLeg** composition model. Understanding this is load-bearing for trusting the numbers. (Detail docs, all under `10-money-and-ledger/`: `money-model-overview`, `chart-of-accounts`, `ledger-and-postings`, `payment-legs`, `ledger-integrity`.)
+This Part is how money is tracked. The core idea is **double-entry** bookkeeping: every rupee that moves is written twice — once as where it came from, once as where it went — and the two always sum to zero, so the books can never silently drift. A **PaymentLeg** is just one slice of how a single payment was funded (card, wallet, invoice, etc.). Every movement of money on the platform is recorded in a **double-entry money journal** alongside the **PaymentLeg** composition model. Understanding this is load-bearing for trusting the numbers. (Detail docs, all under `10-money-and-ledger/`: `money-model-overview`, `chart-of-accounts`, `ledger-and-postings`, `payment-legs`, `ledger-integrity`.)
 
 ### 14.1 The two ledgers
 
@@ -1464,6 +1468,8 @@ Every refund that needs a tax document now routes through one idempotent path. `
 
 # PART V — THE COMPLIANCE LAYER
 
+This Part walks the six Indian regulations enterprise has to satisfy, one section each. They split into two families: **data-protection** (DPDP — how we handle personal data) and **tax/finance** (GST, TDS, MSME, FEMA, IRN — how money is taxed, withheld, paid on time, sent abroad, and e-invoiced). Each acronym is expanded at the top of its own section; you can read any one in isolation.
+
 ## 18. DPDP — India's Data Protection Act
 
 The Digital Personal Data Protection Act, 2023.
@@ -1642,6 +1648,7 @@ Invoice Reference Number (IRN) is required for B2B invoices above ₹5cr turnove
 - Schema-final: `OrganizationInvoice.irn`, `ackNumber`, `ackDate`, `signedQrPayload`, `irpStatus`, `irpRetryCount`, `irpLastError`.
 - The **payload mapper is live** — `lib/compliance/irp.ts` builds the IRP request and a ClearTax GSP connector is wired; `jobs/compliance/irp-uploader.ts` drives it, gated by **`ENABLE_IRP_UPLOADER`**. With the flag off (default), the job short-circuits with `{ status: "FAILED", reason: "STUB" }` so CI doesn't burn minutes hitting a stubbed connector. This is a deliberate gate, not missing code.
 - `irpStatus` states: PENDING → UPLOADED / FAILED.
+- **Worked example (Wipro):** the seeded `wipro` org carries a DRAFT `OrganizationInvoice` with `irn=null` and `irpStatus=PENDING` — exactly the pre-upload state. If Wipro were above the AATO threshold and the flag were on, the uploader would map that invoice (GSTIN `29AABCW1234K1Z5`, place-of-supply KA) into the IRP request, receive the IRN + ackNumber, and flip `irpStatus → UPLOADED`. Today the flag is off, so it stays `PENDING` — correct, because Wipro's design-partner profile is sub-₹5cr and doesn't yet need an IRN.
 - **Who it's for:** only orgs at **AATO ≥ ₹5 crore** need IRN at all (threshold unchanged as of 2026-06-05; a separate 30-day IRP-reporting cut-off bites at ₹10 cr). The pre-launch cohort is sub-₹5cr, so this is not launch-blocking. Authoritative thresholds live in [docs/compliance/02-gst-overview.md](../../compliance/02-gst-overview.md).
 
 ### 23.3 Who needs IRN
@@ -2092,7 +2099,7 @@ Rotating an endpoint's signing secret (`POST /webhooks/[endpointId]/rotate-secre
 
 # PART VII — FUTURE FEATURES & ROADMAP
 
-This part describes features **not yet implemented** but planned. Schema elements are ready for some (reserved enum values); full implementation is tracked in **issue #703 Enterprise Phase 2 epic**.
+This part describes features **not yet implemented** but planned. Schema elements are ready for some (reserved enum values); full implementation is tracked in **issue #703 Enterprise Phase 2 epic**. For the road *already* travelled — the audit-series chronology that built today's subsystem — see [Design history](../00-foundations/01-overview.md#design-history).
 
 ## 31. Programs v2 — PROJECT (milestone-driven)
 
@@ -2743,7 +2750,7 @@ A: Yes. Unused credits can be refunded; pro-rated based on usage.
 A: Contract-specific; typically ₹10L-₹50L initial; raised based on payment history.
 
 **Q17: What happens if a B2B invoice isn't paid by due date?**
-A: The `dunning` cron flips it `ISSUED → OVERDUE` (stamping `markedOverdueAt`) and sends reminders on a **7-day cadence, capped at 3**. A booking-suspension cascade is **designed but NOT active** (🟡) — `dunningSuspendedAt` is never written today, so an unpaid invoice does **not** currently auto-suspend the org. Don't promise customers automatic suspension. See [invoicing](../10-money-and-ledger/07-invoicing.md).
+A: Say Meridian Consulting (a fictional customer we use for failure walk-throughs) misses its NET-60 date. The `dunning` cron flips the invoice `ISSUED → OVERDUE` (stamping `markedOverdueAt`) and sends Meridian reminders on a **7-day cadence, capped at 3**. A booking-suspension cascade is **designed but NOT active** (🟡) — `dunningSuspendedAt` is never written today, so an unpaid invoice does **not** currently auto-suspend the org. Don't promise customers automatic suspension. See [invoicing](../10-money-and-ledger/07-invoicing.md).
 
 **Q18: Can members book with a different payer (personal card instead of org)?**
 A: Yes. Payer selector at checkout. Member picks.

@@ -49,30 +49,70 @@ signed URL has lapsed.
 
 ## Lifecycle
 
+The export is **asynchronous on purpose**: the request returns `202`
+immediately and a cron builds the bundle out-of-band. The states are
+`PENDING → PROCESSING → READY → EXPIRED` (with `FAILED` as the off-ramp).
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Officer as BILLING_ADMIN / OWNER
+    participant API as /data-exports route
+    participant Job as OrgDataExportJob
+    participant Worker as processDataExports<br/>(~10-min cron)
+    participant Store as Supabase Storage
+
+    Officer->>API: POST /data-exports
+    API->>Job: insert · status=PENDING<br/>audit DATA_EXPORT_REQUESTED
+    API-->>Officer: 202 { export: PENDING }
+
+    loop every ~10 min
+        Worker->>Job: findFirst PENDING (oldest)
+        Worker->>Job: claim → PROCESSING (startedAt)<br/>2nd tick sees PROCESSING & skips
+        Worker->>Worker: build bundle<br/>($transaction, 8-entity snapshot)
+        alt build + upload OK
+            Worker->>Store: upload {orgId}/{jobId}.json
+            Store-->>Worker: createSignedUrl (7-day TTL)
+            Worker->>Job: READY · fileUrl · expiresAt<br/>audit DATA_EXPORT_GENERATED
+            Worker-->>Officer: Resend email + Novu notify OWNERs
+        else error
+            Worker->>Job: FAILED · error (org-safe msg)<br/>raw cause → SystemEvent
+        end
+    end
+
+    Officer->>API: GET /data-exports/[id]/download
+    API->>Job: check status + expiry
+    alt READY & now < expiresAt
+        API-->>Officer: { url, expiresAt }<br/>audit DATA_EXPORT_DOWNLOADED
+    else past expiresAt
+        API-->>Officer: 410 EXPORT_EXPIRED
+    end
 ```
-            [Dashboard]                  [Worker]
-                |                            |
-   POST /data-exports → 202                  |
-                |--→ insert OrgDataExportJob |
-                |    status = PENDING        |
-                |    audit DATA_EXPORT_REQUESTED
-                |                            |
-                |       cron tick (every 10 min)
-                |                       ←----
-                |    findFirst PENDING       |
-                |    flip → PROCESSING       |
-                |    build bundle            |
-                |    upload to Supabase      |
-                |    sign 7d URL             |
-                |    flip → READY            |
-                |    audit DATA_EXPORT_GENERATED
-                |    email requester via Resend + Novu notify OWNERs
-                |                            |
-   GET /data-exports/[id]/download           |
-                |--→ verify status + expiry  |
-                |    audit DATA_EXPORT_DOWNLOADED
-                |    return { url, expiresAt }
-```
+
+> **Trade-off — async job + expiring URL, not a synchronous download.**
+> The bundle is an 8-entity, full-org snapshot (members, contracts,
+> programs, invoices, earnings, payouts, audit log). Streaming that
+> inline off the `POST` would hold a request open for an unbounded build
+> and pin financial PII in the response buffer. Instead the worker writes
+> it to object storage behind a **7-day signed URL** (`createSignedUrl`),
+> so the heavy build is off the request path and the PII lives behind a
+> short-lived, revocable link rather than a permanent download route. The
+> cost is the polling surface (`GET /data-exports` lists recent jobs) and
+> the `PENDING → READY` wait — acceptable for a once-per-24h compliance
+> artifact. v1 ships **JSON-only** (no zipped JSON+CSV); see "Why
+> JSON-only" below.
+
+**Persona — Wipro's compliance officer files a DPDP §11 access
+request.** Wipro (a SPONSOR enterprise in the design-partner set) gets a
+regulator query and needs a full snapshot of the org-scoped personal
+data the platform holds. Their compliance officer — who holds
+BILLING_ADMIN, the governance floor these routes require — hits
+`POST /data-exports`, gets a `202`, and polls the dashboard until the
+job flips `READY`. The 7-day signed URL is long enough to run their
+post-export ETL; after that the link lapses to `EXPIRED` and a fresh
+request is needed. The §11 *access* path is org-tenant-wide; the
+per-data-principal §12 *erasure* path is separate (see
+[deletion policy](02-deletion-policy.md)).
 
 ## Routes
 

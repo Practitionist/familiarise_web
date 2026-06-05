@@ -13,6 +13,46 @@ top-to-bottom without reading any other document.
 > - 🗓️ — scheduled operational task (proactive)
 > - 🔬 — diagnostic helper (read-only, safe to run any time)
 
+## Triage: "money looks stuck — where?"
+
+Start here when a customer or an alert says money is stuck and you don't
+yet know which subsystem owns it. Each leaf routes to the runbook (or the
+cron in the 🗓️ catalogue) that owns the recovery. This is a *router*, not
+a procedure — once you land on a 🚨 section, follow it top-to-bottom.
+
+```mermaid
+flowchart TD
+  Q{What's stuck?}
+
+  Q -->|"top-up paid, wallet<br/>not credited"| TU{webhook received?}
+  TU -->|"no / delayed"| W[🚨 Webhook handler<br/>is backed up]
+  TU -->|"yes, but no credit"| OTC[🗓️ sweep-orphaned-<br/>topup-captures<br/>+ sweep-stuck-<br/>webhook-events]
+
+  Q -->|"member owes overage,<br/>can't pay / ceiling wedged"| OV[🚨 Overage charges<br/>stuck PENDING]
+
+  Q -->|"payout not paid"| PO{ENABLE_LIVE_<br/>PAYOUTS on?}
+  PO -->|"off ⇒ frozen<br/>at PROCESSING"| GL[live-payout-go-live-<br/>runbook §rollback]
+  PO -->|"on, no terminal<br/>webhook"| HSP[🗓️ handle-stuck-<br/>payouts]
+
+  Q -->|"refund not landing"| RF[🗓️ reconcile-pending-<br/>refunds + cascade-<br/>refund-earnings]
+
+  Q -->|"invoice never<br/>generated"| INV[🗓️ generate-subscription-<br/>invoices ⚠️ NO WORKFLOW<br/>— run manually]
+
+  Q -->|"new cycle didn't<br/>bill / counters stale"| AS{assignment<br/>or contract?}
+  AS -->|"assignment ACTIVE,<br/>rolledAt null"| CE[🚨 Cycle-engine<br/>rollover failed]
+  AS -->|"contract due,<br/>autoRenewedAt null"| AR[🚨 Contract<br/>auto-renew failed]
+
+  Q -->|"balances don't<br/>add up"| REC[🚨 Ledger reconciler<br/>flagged discrepancies]
+```
+
+Three of those leaves (orphaned top-up captures, stuck payouts, pending
+refunds) have **no dedicated 🚨 section** — the cron *is* the runbook:
+force a run from the 🗓️ catalogue below and read its summary line. The
+two ⚠️ honestly-broken paths (`generate-subscription-invoices` has no
+workflow; `consolidated-invoice-rollup` references a missing script) are
+flagged inline in the catalogue — for those, "run it manually" is the
+current answer.
+
 ---
 
 ## 🗓️ Scheduled-task catalogue (cron → script)
@@ -41,6 +81,48 @@ jobs locally* below, or trigger the workflow with `workflow_dispatch`.
 All cron times are **UTC** (GitHub Actions interprets cron in UTC). Some
 job docstrings annotate the IST-local equivalent; both are noted where
 they differ.
+
+### Anatomy of a cron run
+
+Every enterprise cron has the same skeleton, which is why a delayed,
+doubled, or dropped GitHub-Actions run is always safe. The **claim gate**
+is the load-bearing step: a conditional `updateMany` (or an idempotency
+stamp) that lets exactly one runner own a row. If `count === 0`, someone
+else already claimed it — skip, don't retry-into-a-double. Knowing this
+shape tells you, for any "the cron isn't working" page, *where* to look:
+no rows scanned ⇒ the schedule didn't fire; rows scanned but 0 claimed ⇒
+a stamp is already set (often the fix already happened); rows claimed but
+work failed ⇒ the per-row `catch` + the failure `SystemEvent`.
+
+```mermaid
+flowchart TD
+  GHA["GitHub Actions schedule.cron<br/>(.github/workflows/&lt;job&gt;.yml)<br/>UTC · best-effort · 5-min floor"]
+  GHA --> WF["workflow job:<br/>checkout → npm ci →<br/>prisma generate"]
+  WF --> RUN["npx tsx jobs/&lt;area&gt;/&lt;job&gt;.ts<br/>(import 'dotenv/config' first line)"]
+  RUN --> SCAN["findMany candidates<br/>(bounded BATCH_SIZE,<br/>next tick drains rest)"]
+  SCAN --> LOOP{for each row}
+  LOOP --> CLAIM["claim gate inside<br/>Serializable $transaction:<br/>updateMany WHERE still-eligible"]
+  CLAIM -->|"count === 0<br/>(another replica won)"| SKIP[skip — idempotent]
+  CLAIM -->|"count === 1<br/>(we own it)"| WORK["side effects + OrgAuditLog<br/>row in the same tx"]
+  WORK --> NEXT[next row]
+  SKIP --> NEXT
+  NEXT --> LOOP
+  LOOP -->|done| SUM["structured summary line<br/>(scanned / rolled / closed / …)"]
+  SUM --> DISC["await prisma.$disconnect()<br/>in .finally() — or CI hangs"]
+  WORK -.->|"on exception"| ERR["recordSystemError →<br/>SystemEvent (ERROR) [+ Better Stack]<br/>exit 1"]
+```
+
+Two real variants of this skeleton:
+- **v2 lifecycle jobs** (`advance-program-cycles.ts`, `dunning.ts`) are
+  self-contained: `dotenv/config` first line, `if (require.main ===
+  module)` main block, explicit `$disconnect()` in `.finally()`. The
+  claim gate is the conditional `updateMany` shown above. `expire-
+  contracts.ts` is the canonical template (see *🔬 Running cron jobs
+  locally*).
+- **#785 sweepers** (`sweep-stuck-webhook-events.ts`) are thin wrappers
+  over a `scripts/cleanup/*` helper and additionally emit GitHub-Actions
+  annotations (`::notice::` on recovery, `::warning::` on still-failing)
+  plus `GITHUB_OUTPUT` key=value pairs the workflow can read.
 
 ### Enterprise billing & lifecycle
 
@@ -105,6 +187,16 @@ empty-folder / tentative-slot cleanups all live under the same
 `.github/workflows` + `jobs/**` convention but are outside the
 enterprise billing/compliance surface this doc owns.
 
+> 🔬 **How the ⚠️ gaps surfaced.** The four mismatches flagged above
+> (`generate-subscription-invoices` / `settle-invoice-accruals` /
+> `consent-retention-sweeper` exist with no workflow; `consolidated-
+> invoice-rollup` has a workflow targeting a missing script) were caught
+> in the 2026-06-05 docs refresh by diffing the `jobs/**` tree against
+> `.github/workflows/*.yml` both ways — a job with no matching `npx tsx`
+> line in any workflow, and a workflow whose `tsx` target doesn't exist
+> on disk. Re-run that diff after adding or moving any cron; a docstring
+> that *claims* a cadence is not proof a workflow fires it.
+
 ---
 
 ## 🚨 Webhook handler is backed up (Razorpay or Stripe)
@@ -117,6 +209,15 @@ dashboard timestamp.
 to the user because the downstream `WalletTopUp` confirm + ledger
 postings (and `OrganizationInvoice` updates) are gated on the webhook.
 Subscriptions keep billing but the local `BillingSubscription` state lags.
+
+> **Why a sweeper backs this up.** The `sweep-stuck-webhook-events` cron
+> (catalogue above; `26772ea9`, #785) exists because a `WebhookEvent`
+> could land, get HMAC-verified, then have its `after()` callback crash —
+> leaving `processed=false` with no gateway redelivery coming. The sweeper
+> re-drives those rows every ~10 min so the money side-effect lands
+> without a manual replay. If this runbook fires, check whether the
+> sweeper is *already* recovering the backlog (its `::notice::` /
+> `recovered` count) before replaying by hand.
 
 **Response:**
 

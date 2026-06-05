@@ -58,6 +58,60 @@ flowchart LR
   LICENSE["LICENSE → LICENSE leg (0)"] --> NONE["no money — Program absorbs"]
 ```
 
+## One worked example per funding source
+
+Paise integers throughout (₹1 = 100 paise). Three of these are seeded; the
+LICENSE case is hypothetical (no LICENSE org is seeded — it's a
+`LICENSED_SEAT` program with `coveredEngagementsPerCycle = null`).
+
+- **`PERSONAL` — a learner pays their own card.** A student outside any
+  sponsored program books a ₹2,000 consultation. `Payment.amount = 2_00_000`
+  paise; the single leg is `CARD` (`sourceRef` = gateway `pay_…`); the org,
+  if tagged at all, is attribution-only. Booking posts `Dr CASH`. No wallet,
+  no invoice, no cron. (Arjun, the seeded solo consultant, sells into exactly
+  this flow on the *host* side — his learners pay PERSONAL.)
+- **`WALLET` — IIT Madras pre-funds a credit pool.** The seed tops up
+  3 × ₹5,00,000 = ₹15,00,000 (`WalletTopUp` CONFIRMED, each posting
+  `Dr CASH / Cr WALLET`) and debits 5 × ₹5,000 against it
+  (`Dr WALLET / Cr PLATFORM_FEE`), leaving `walletBalance = 14_75_000`
+  paise (₹14,75,000). A student booking debits the `WALLET` leg; when the
+  balance crosses `minBalancePaise` the auto-top-up (#779) refills it. The
+  cache is asserted against `balance(WALLET)` by the reconcile cron — the
+  journal is the truth, the column is the fast path.
+- **`INVOICE` — Wipro books now, pays NET-60.** Wipro's `BillingAccount`
+  carries a ₹1 Cr `creditLimit` backed by a ₹50,00,000 PO.
+  Each sponsored booking writes an `INVOICE_ACCRUAL` leg
+  (`Dr ORG_RECEIVABLE`); the month-end roll-up cron groups accruals into one
+  `OrganizationInvoice` (the seed ships a DRAFT `INV-WIP-2026-0001`:
+  subtotal ₹1,00,000 + IGST ₹18,000 = ₹1,18,000, `irpStatus = PENDING`).
+  Payment posts `Dr CASH / Cr ORG_RECEIVABLE`. This is the headline
+  design-partner fit (see [design-partner-customer-set](../60-scenarios-and-verdicts/03-design-partner-customer-set.md)).
+- **`LICENSE` — a flat-fee enterprise deal (hypothetical, TCS-style).** A
+  services enterprise pre-pays a flat annual fee for unmetered coaching. Its
+  `LICENSED_SEAT` program sets `coveredEngagementsPerCycle = null`, so every
+  booking writes a `LICENSE` leg with `amountPaise = 0` — no money moves at
+  booking time because the cost was sunk at contract signing. The leg exists
+  only so every `Payment` still has ≥1 leg and reconciliation can prove the
+  booking was lawfully fulfilled without a gateway charge.
+
+### LICENSE vs WALLET vs INVOICE — when a buyer picks which, and what it costs us
+
+(`PERSONAL` is excluded — it's the no-sponsorship default, zero org
+operational load.)
+
+| | `LICENSE` | `WALLET` | `INVOICE` |
+|---|---|---|---|
+| Buyer picks it when | usage is high + predictable; wants one flat number, no per-seat metering | wants prepaid control + a hard spend ceiling (pool can't be overdrawn) | wants to book freely now and reconcile later on NET terms (classic AP) |
+| Money timing | paid up front, sunk at signing | prepaid, drawn down per booking | postpaid, settled after the invoice |
+| Per-booking leg | `LICENSE` (₹0) | `WALLET` (`Dr WALLET`) | `INVOICE_ACCRUAL` (`Dr ORG_RECEIVABLE`) |
+| What it costs us operationally | least: no per-booking money movement; risk is *us* over-delivering against a flat fee | top-up reconciliation + the `walletBalance` cache must stay ==`balance(WALLET)`; auto-top-up mandate to manage | most: AR carrying risk, the month-end roll-up cron, dunning when a NET-60 invoice goes `OVERDUE`, and IRN/GST e-invoice obligations |
+| Failure mode that bites | margin erosion if usage spikes (cap it with a `LICENSED_SEAT` engagement ceiling instead of `null`) | a *captured-but-uncredited* top-up stranding money — the bug #785 fixed (`ca6e9073`) | silent stuck money: a stuck `CHARGE_MEMBER` or an unpaid invoice — the dunning + timeout work #779 §D added (`59482e83`) |
+
+Operational claims here are grounded in the money-band docs:
+[wallet-and-topups](../10-money-and-ledger/04-wallet-and-topups.md) (cache vs
+journal, auto-top-up), [invoicing](../10-money-and-ledger/07-invoicing.md)
+(roll-up, GST, dunning, IRN), and [payout-pipeline](../10-money-and-ledger/06-payout-pipeline.md).
+
 ## Programs layer
 
 A `Contract` holds commercial terms. A `Program` sits under the contract

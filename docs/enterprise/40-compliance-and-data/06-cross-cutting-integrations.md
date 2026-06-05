@@ -13,6 +13,104 @@ to "should this new feature touch enterprise?" and as a triage map
 when an org operator reports "X feels broken — does this even know
 about orgs?".
 
+## The one-picture map (how it all hangs together)
+
+If you read nothing else, read this. Every box is a pre-enterprise
+subsystem; the **enterprise layer** in the centre is the thin tenancy
+seam that tags each one with an `Organization`. Edge labels are the
+*link* — the column or relation that carries org identity. Box colour
+is the integration status (the same ✅/🟡/🔴/⏸ markers the tables below
+use). The picture is derived entirely from the verified section tables
+that follow — if a box and its section ever disagree, the section wins.
+
+```mermaid
+flowchart TB
+  ENT["Enterprise tenancy layer<br/>Organization · Membership · Contract"]:::wired
+
+  subgraph BOOK["A · Booking plane"]
+    APPT["Appointments<br/>Appointment.organizationId"]:::wired
+    DOCR["Docs-for-review<br/>via Appointment"]:::wired
+    MEET["Stream meeting/recording<br/>MeetingSession.organizationId"]:::wired
+  end
+
+  subgraph MONEY["B · Money plane"]
+    PAY["Payments<br/>Payment.organizationId + notes"]:::wired
+    WALLET["Wallet<br/>BillingAccount.walletBalance"]:::partial
+    PAYOUT["Payouts (HOST)<br/>OrganizationPayout"]:::wired
+    INV["Invoicing + PO<br/>OrganizationInvoice / OrgInvoiceCounter"]:::wired
+    DUN["BillingSubscription + dunning"]:::partial
+    LEDGER["Double-entry ledger<br/>LedgerTransaction / LedgerEntry"]:::wired
+  end
+
+  subgraph ACCESS["C · Membership & access"]
+    ROLES["Roles · Invitations<br/>Membership.role"]:::wired
+    SSO["SSO + domain claims + break-glass<br/>OrganizationSSOSettings"]:::wired
+    SCIM["SCIM provisioning"]:::parked
+  end
+
+  subgraph PROG["D · Programs & rate plans"]
+    PROGRAMS["Programs + cycle engine + overage<br/>Program → Contract"]:::wired
+    RATE["RateCards (HOST)<br/>ownerOrgId"]:::wired
+    CONTRACT["Contracts (auto-renew/supersede)<br/>Contract.organizationId"]:::wired
+  end
+
+  subgraph STREAMSG["E · Stream chat & video"]
+    CHAN["Consultation/webinar channels<br/>custom.organization_id"]:::wired
+    DM["DM channels"]:::skipped
+  end
+
+  subgraph COMP["F · Compliance crons"]
+    GST["GST / e-invoice (IRN)<br/>OrganizationTaxInfo"]:::wired
+    TDS["TDS<br/>OrganizationPayout.tds*"]:::wired
+    MSME["MSME 43B(h)<br/>OrganizationMsmeInfo"]:::wired
+    DPDP["DPDP: consent / erasure / export / breach"]:::wired
+    HRIS["HRIS provisioning"]:::parked
+  end
+
+  subgraph OPS["G · Operational plane"]
+    AUDIT["OrgAuditLog (append-only)"]:::wired
+    SYSEV["SystemEvent + BetterStack"]:::wired
+    NOVU["Notifications (Novu)"]:::wired
+    HOOKS["Outbound webhooks (+24h rotation grace)"]:::wired
+  end
+
+  DASH["H · Org dashboard — 25 routes<br/>/dashboard/organization/[orgId]/*"]:::wired
+
+  ENT --> BOOK
+  ENT --> MONEY
+  ENT --> ACCESS
+  ENT --> PROG
+  ENT --> STREAMSG
+  ENT --> COMP
+  ENT --> OPS
+  ENT --> DASH
+
+  %% Cross-plane edges that carry money/identity truth
+  PAY -->|"posts"| LEDGER
+  WALLET -->|"Dr CASH / Cr WALLET"| LEDGER
+  PAYOUT -->|"withholds TDS"| TDS
+  INV -->|"GST split + IRN"| GST
+  CONTRACT -->|"1:1"| DUN
+  PROGRAMS -->|"hangs off"| CONTRACT
+  ROLES -->|"deprovision"| HOOKS
+  DPDP -->|"member.removed on erasure"| HOOKS
+  AUDIT -->|"raw payloads diverted"| SYSEV
+
+  classDef wired fill:#d6f5d6,stroke:#2e7d32,color:#11270f;
+  classDef partial fill:#fff3cd,stroke:#b7791f,color:#3a2f00;
+  classDef skipped fill:#f8d7da,stroke:#c0392b,color:#3a0f12;
+  classDef parked fill:#e2e3e5,stroke:#6c757d,color:#1c1f23;
+```
+
+Legend: 🟢 ✅ Wired · 🟡 🟡 Partial (a sub-surface is designed-not-active —
+e.g. wallet mandate auto-charge, dunning suspend cascade) · 🔴 🔴 Skipped
+(deliberately not org-aware) · ⚪ ⏸ Parked (schema-ready, impl stubbed
+behind a flag or a customer-demand gate). The single most important
+property the picture encodes: **money truth always flows *into* the
+double-entry ledger** (`B.7`), and every deprovisioning — including a
+DPDP erasure — *fans out through outbound webhooks* (`G.4`) so an
+external HRIS never desyncs silently.
+
 ## How to read this doc
 
 Every subsystem has a status row:

@@ -12,6 +12,21 @@ RazorpayX POST). It is gated solely by `process.env.ENABLE_LIVE_PAYOUTS === "tru
 The risk at go-live is paying the wrong amount/recipient on an unproven path, so
 we prove the path in sandbox before flipping the production flag.
 
+The gate, end to end — one flag, two states, with the prove-before-flip
+path between them:
+
+```mermaid
+flowchart TD
+  START["ENABLE_LIVE_PAYOUTS<br/>(lib/feature-flags.ts —<br/>OFF by default, redeploy to change)"]
+  START -->|"false (today)"| FREEZE["process-payouts runs:<br/>posts Dr *_PAYABLE / Cr CASH,<br/>submittedToGateway = false,<br/>row freezes at PROCESSING<br/>(no money leaves)"]
+  FREEZE --> PROVE["Sandbox proof:<br/>org-payout-sandbox-smoke.ts asserts<br/>gated behaviour + manual RazorpayX<br/>sandbox submit lands payout.processed"]
+  PROVE --> CHECK{Pre-flip checklist<br/>all green?<br/>(KYB · secrets · VERIFIED accounts ·<br/>TDS/MSME · idempotency keys ·<br/>reconcile ok:true · telemetry on)}
+  CHECK -->|"no"| FREEZE
+  CHECK -->|"yes"| FLIP["Set ENABLE_LIVE_PAYOUTS=true<br/>+ redeploy → canary ONE<br/>small VERIFIED payout"]
+  FLIP --> LIVE["next tick submits eligible<br/>PROCESSING payouts to RazorpayX<br/>→ COMPLETED on webhook"]
+  LIVE -.->|"rollback: flag=false + redeploy"| STOP["new ticks stop submitting;<br/>already-submitted rows settle via<br/>webhook (can't un-send — clawback,<br/>reversal-engine.ts §C)"]
+```
+
 ## Why a runbook and not just "flip the flag"
 
 `processOrgPayout` reads the flag at call time. With it off, `submittedToGateway`

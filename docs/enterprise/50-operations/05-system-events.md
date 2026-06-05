@@ -1,5 +1,16 @@
 # SystemEvent — engineering-facing operational events
 
+> **Two taxonomies, on purpose.** `SystemEvent` (this doc) is the
+> **engineering-facing** stream — raw, admin-only, keyed by `category`.
+> `OrgAuditLog` is the **customer-facing** stream — clean prose, member-
+> readable, keyed by `action`. Same incident can write to both. This page
+> documents both taxonomies (the `OrgAuditLog` action catalogue lives
+> here too because callers need one place to look up "what string do I
+> emit"), but they are distinct tables with distinct audiences and
+> distinct read paths. If you're deciding where a new event goes: does an
+> *org member* need to see it? → `OrgAuditLog` action. Does only
+> *engineering* need the stack trace? → `SystemEvent` category.
+
 Familiarise keeps **two** event streams, not one. This separation
 prevents engineering noise (Prisma stack traces, internal IDs, raw
 worker errors) from leaking into the org-visible audit log.
@@ -283,6 +294,35 @@ attempt.
 | `WEBHOOK_DELIVERY_SUCCEEDED` / `_FAILED` / `_REDELIVERED` | dispatch worker terminal states |
 
 ## `SystemEvent` category catalogue
+
+Before the table: the **emission map**. This is the engineering-facing
+half of the two-stream split — which subsystem writes which `category`,
+and where those rows are read. Use it to answer "I'm seeing `PAYOUT`
+ERROR events, who emits those?" without grepping. (The customer-facing
+half — `OrgAuditLog` actions by category — is the catalogue two sections
+up.) Only the four categories with a **live emitter** are shown; `CRON`
+and `HRIS_SYNC` are reserved vocabulary nothing writes yet.
+
+```mermaid
+flowchart LR
+  subgraph Emitters["subsystem (callsite)"]
+    R["reconcile-ledgers.ts"]
+    P["handle-stuck-payouts.ts"]
+    Wi["webhooks/razorpay/route.ts<br/>(inbound HMAC)"]
+    Wo["dispatch-outbound-webhooks.ts<br/>(queue backlog)"]
+    D["DPDP §11 export worker"]
+    X["refund / reversal /<br/>earnings services"]
+  end
+  R -->|"RECONCILE · ERROR"| EV
+  P -->|"PAYOUT · INFO/ERROR"| EV
+  Wi -->|"WEBHOOK · WARN"| EV
+  Wo -->|"WEBHOOK · WARN"| EV
+  D -->|"DATA_EXPORT · ERROR<br/>correlationId = job.id"| EV
+  X -->|"caller-set category · ERROR"| EV
+  EV[("SystemEvent table")]
+  EV --> API["GET /api/admin/system-events<br/>(admin-only read)"]
+  EV --> SINK["Better Stack Telemetry<br/>(when ENABLE_BETTERSTACK_<br/>TELEMETRY=true)"]
+```
 
 `SystemEvent.category` is a free-form string (new workers add values
 without a migration). The conventional values and their current

@@ -33,6 +33,24 @@ flowchart TD
   D -- false --> IN["INERT — rejected at create"]
 ```
 
+### Each combo, grounded in a seeded persona
+
+The four seeded orgs (`prisma/seedFiles/15a-create-organizations.ts`) exist
+precisely to put one real shape behind every cell of the table above:
+
+| Derived kind | Seeded org | One concrete line |
+|--------------|-----------|-------------------|
+| `SPONSOR`  | **Wipro** (`wipro`) | `canSponsor=true, canHost=false` — buys coaching for its own engineers; has a `BillingAccount` (INVOICE), a PO, and a `LICENSED_SEAT` program. No payout account, because Wipro never earns. |
+| `HOST`     | **LearnPro Academy** (`learnpro-academy`) | `canSponsor=false, canHost=true` — an agency that aggregates independent experts; has an `OrganizationPayoutAccount` + a 10/10/80 `RateCard` + 5 `EXPERT` memberships. No `BillingAccount`, because LearnPro never sponsors a learner. |
+| `HYBRID`   | **IIT Madras** (`iit-madras`) | `canSponsor=true, canHost=true` — sponsors its students (WALLET-funded `CREDIT_POOL`) **and** hosts its professors as experts (payout account). Both records exist; the two flows run in parallel. |
+| `HOST` (solo) | **Arjun's Coaching** (`arjun-anderson-coaching-…`) | `canSponsor=false, canHost=true` — a single-consultant convenience org so a freelancer (Arjun, the seeded solo consultant) has a payout surface. Same capability shape as LearnPro, one member. |
+| `INERT`    | — (never seeded) | `canSponsor=false, canHost=false` — rejected at create. Nothing to demo because it can't exist; see the INERT guard below. |
+
+The seed covers all four real cells on purpose, so a sales engineer or a new
+SDE can open the dashboard for any capability shape without hand-crafting a
+fixture. The hypothetical conglomerate case (a Wipro-style parent with
+subsidiary orgs) is [hierarchy](06-hierarchy.md) — schema-only in v1.
+
 `capabilitiesExtra` is a JSON blob reserved for one-off capabilities
 (e.g. an org that also resells third-party content) so future additions
 don't need a migration. The 90% path is covered by the two typed
@@ -54,6 +72,35 @@ about:
 
 `deriveCapabilityKind()` still exists, but it is a presentation helper,
 not an access gate.
+
+### Design decision: what the enum cost, and what booleans cost back
+
+| | Single `OrganizationKind` enum (rejected) | Two booleans (shipped) |
+|---|---|---|
+| Add a 4th capability (e.g. RESELL) | new enum value → migration + every `switch` re-audited for exhaustiveness | a 3rd boolean, or the `capabilitiesExtra` JSON escape hatch — no migration |
+| "Does it buy?" check | must special-case BUYER **and** HYBRID | `canSponsor` — one column |
+| HYBRID | a distinct value every consumer must remember to handle | falls out for free (both booleans true) |
+| Cost we pay back | — | two columns can drift into the INERT `false/false` combo, so every write path needs the guard below; and `deriveCapabilityKind` exists solely to re-derive the label the enum used to store |
+
+The booleans win because the two questions (*buy?* / *sell?*) are genuinely
+orthogonal — collapsing them into one axis made HYBRID a permanent special
+case. The price is the INERT guard (a combo the enum made unrepresentable by
+construction) and a presentation helper to reconstitute the label. We took
+that trade.
+
+### War story: the labels used to disagree with each other
+
+Before Arch-4 there was no single label module: capability/funding strings
+were defined inline in `OrgContextBar`, `OrganizationSwitcher`, and the
+org-list — and they **drifted out of sync** (one surface said "Provider",
+another "Host"). The fix was to centralize every user-facing string in
+`lib/labels/org-labels.ts`; its header comment records the reason verbatim:
+_"Centralising avoids the taxonomy drift we saw before Arch-4, when labels
+were defined inline … and disagreed with each other."_ The same module now
+owns `MEMBER_ROLE_LABEL` for the identical reason — see the
+_"enum says MAINTAINER, UI says Admin"_ note beside it. The lesson baked into
+this band: a taxonomy with three render sites needs one owner, or the three
+render sites will tell three stories.
 
 ## Label + badge source of truth
 

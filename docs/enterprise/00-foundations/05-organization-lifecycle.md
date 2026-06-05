@@ -61,6 +61,35 @@ it up fresh. `VERIFY` clears the same sub-state on the way to `ACTIVE`.
 There is **no** `RESUBMIT` enum value — the loop is carried entirely by
 the three nullable timestamp/reason columns.
 
+#### Walkthrough: IIT Madras fails verification, fixes its GSTIN, resubmits
+
+Concrete trace of the reject→resubmit loop using the seeded hybrid org
+(`iit-madras`). Every stamp below is a column on `Organization`, not a status
+move:
+
+1. IIT submits for verification — `status = PENDING_VERIFICATION`,
+   `verificationSubmittedAt` stamped.
+2. A platform admin spots a typo in the GSTIN (`33AAACT5678M1Z9` mistyped) and
+   calls the verify route with `action: REJECT` + a `reason`. The route stamps
+   `verificationReason` + `verificationRejectedAt` and **leaves**
+   `status = PENDING_VERIFICATION` — REJECT is a sub-state, not a transition.
+3. IIT's OWNER (the dean) or a MAINTAINER fixes the GSTIN via
+   `PATCH /api/organizations/[orgId]` (tax fields are OWNER-only; GSTIN is one
+   of them) and calls
+   `POST /api/organizations/[orgId]/verification/resubmit` (MAINTAINER+).
+   The resubmit only succeeds because the org is still
+   `PENDING_VERIFICATION` **and** `verificationRejectedAt` is non-null;
+   otherwise it would 409 `NOTHING_TO_RESUBMIT`.
+4. Resubmit bumps `verificationSubmittedAt`, clears `verificationReason` +
+   `verificationRejectedAt` — the admin queue picks it up fresh.
+5. Admin calls `action: VERIFY` → `status = ACTIVE`, the same sub-state
+   columns cleared on the way through. Now IIT's WALLET top-ups and
+   `CREDIT_POOL` bookings can flow.
+
+The whole loop is carried by three nullable timestamp/reason columns and
+**zero** new enum values — there is no `RESUBMIT` `OrgStatus`. That's the
+design choice the next section unpacks.
+
 ## What each status allows
 
 - **PENDING_VERIFICATION** — the default on org creation. The org owner
@@ -326,6 +355,39 @@ stateDiagram-v2
 The roll-vs-close decision, period math, and rollover chain are detailed in
 [cycle-engine-and-rollover](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md)
 (`lib/enterprise/cycle-engine.ts` + `jobs/billing/advance-program-cycles.ts`).
+
+## Design decisions & trade-offs
+
+Three choices in this doc share one principle — *don't mutate a row whose
+history something else depends on; mint a new row and chain.*
+
+- **REJECT is a sub-state, not an `OrgStatus`.** Adding a `REJECTED` enum
+  value would force every status `switch` to handle it and would lose the
+  reason/timestamp once the org re-entered the queue. Instead three nullable
+  columns (`verificationReason` / `verificationRejectedAt` /
+  `verificationSubmittedAt`) overlay `PENDING_VERIFICATION` (#779 §A). Cost:
+  callers must read the columns, not just the status, to know an org was
+  bounced.
+- **Supersede contracts, don't edit them.** A contract's money/term fields
+  lock once it leaves DRAFT (`LOCKED_CONTRACT_FIELDS`). Amending terms mints a
+  fresh `Contract` and points the old row forward via
+  `supersededByContractId` (`@unique`) — because in-flight earnings and
+  invoices snapshot the term that billed them, and a retroactive edit would
+  rewrite settled money. The `@unique` on the forward pointer is also the
+  double-run backstop (a racing supersede can't fork the chain). The same
+  immutable shape governs `RateCard` bumps and `Program` config (#779 §A,
+  CRUD completeness landed in `e454d429`). Cost: reading a contract's full
+  history means walking the chain, not reading one row.
+- **Cascade on terminate runs in the same transaction.** When a contract goes
+  `EXPIRED`/`TERMINATED`, its `ACTIVE` programs → `EXPIRED` and their
+  still-`ACTIVE` assignments → `CLOSED` **inside the one tx** (the cron also
+  pins `periodEnd = now`). If the cascade were a follow-up job, a crash
+  between steps would leave an assignment still drawing on a dead contract — a
+  *zombie assignment*, the exact bug the cycle engine + cascade work killed
+  (#779 §A/§B, `52a6d37f`; tracked `✅` in
+  [subsystem-checklist](../90-audits/02-subsystem-checklist.md) under
+  "contract-expiry/termination cascade"). Cost: a larger transaction holding
+  more row locks — acceptable because termination is rare and operator-driven.
 
 ## Related docs
 

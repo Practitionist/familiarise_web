@@ -39,6 +39,36 @@ SCIM bearer path enforces `scimLimiter` from inside `requireScimAuth`
 (`lib/scim/auth.ts`), so every `/scim/v2/**` verb inherits it without a
 per-route call.
 
+Read this as a gauntlet a request runs, edge first. The left branch
+(edge middleware) exists to kill cost-amplification *before* a lambda
+spins up; the right branch (handler limiter) catches authed writes whose
+key only becomes known after the route resolves `orgId` / `tokenHash`.
+Note where BetterAuth's own limiter *would* sit — and that it is off (§1):
+
+```mermaid
+flowchart TD
+  REQ([Incoming request]) --> MW{"middleware.ts matches a RATE_LIMIT_RULES rule?"}
+  MW -->|yes, over limit| R429edge["429 at edge — no lambda invoked"]
+  MW -->|yes, under limit| INVOKE[invoke route handler]
+  MW -->|no rule matches| INVOKE
+  INVOKE --> BA{"BetterAuth built-in limiter"}
+  BA -.->|"enabled:false (§1)"| SKIP["in-memory per-lambda — bypassed entirely"]
+  SKIP --> HANDLER
+  INVOKE --> HANDLER{"handler calls applyRateLimit(limiter, key)?"}
+  HANDLER -->|no applyRateLimit call| GATE["auth gate + state preconditions only"]
+  HANDLER -->|over limit| R429h["429 at handler — X-RateLimit-Remaining"]
+  HANDLER -->|"under limit, or Redis down (fail-open)"| GATE
+  GATE --> OK([handler runs])
+```
+
+The dotted BetterAuth node is the whole point of §1: it is wired into
+the auth stack but `enabled: false`, so it never fires — every auth-path
+limit you see is Upstash-backed at the edge instead. Two behaviors the
+diagram bakes in, both load-bearing: a matched edge rule short-circuits
+*before* the function runs (left branch), and `applyRateLimit` **fails
+open** — if Redis is unreachable the request is allowed, not blocked, so
+a Redis outage degrades to "no rate limit" rather than "site down."
+
 ---
 
 ## §1 — Why BetterAuth's built-in limiter is disabled
@@ -59,6 +89,33 @@ different 429 responses for the same flow and confuses operators
 during incident response.
 
 See audit Phase B.8.
+
+**What this design survived.** The disable isn't a default we never
+touched — it's a documented decision with a comment block right above
+`rateLimit: { enabled: false }` in `lib/auth.ts` that spells out the
+serverless reasoning and points back here (and at audit Phase B.8). The
+failure it pre-empts is subtle: leave BetterAuth's in-memory limiter
+*on* alongside the Upstash one and the same brute-force flow can trip
+*two different* 429s depending on which lambda served it — an
+incident-response trap where the operator can't tell which limiter
+fired or why the counts don't add up. One coherent limiter beats two
+that disagree.
+
+### Trade-off: per-subsystem limiters vs one global gate
+
+The matrix has eight-plus named limiters instead of a single
+catch-all. The cost is real — every new authed-write route has to pick
+the right limiter (or define one) and document it in §2, and it's easy
+to forget. The payoff is that each surface gets a window sized to *its*
+threat: auth signin is 10/15min on IP (brute force), webhook config is
+5/min on `org:` (config thrash), data-export is 1/24h on `org:`
+(expensive job). A single global limiter can't express that spread
+without either throttling logins too loosely or throttling reads too
+tightly, and — because the keys differ (IP vs `org:` vs `tokenHash`) —
+one bucket would force every tenant through the same keyspace, so one
+noisy org behind a corporate NAT could starve everyone (see §6). Many
+narrow limiters, each with its own `rl:` prefix, is the price of not
+having that cross-tenant blast radius.
 
 ---
 
@@ -215,6 +272,5 @@ See `CLAUDE.md` memory note on agent-006 booking tests for context.
 - Phase B.8 — documented decision to keep BetterAuth's limiter
   disabled.
 - `lib/auth.ts` `rateLimit: { enabled: false }` — the comment block
-  above it references this decision. (Note: that comment still points at
-  the pre-renumber `docs/enterprise/10-rate-limiting.md`; this file is
-  the current home.)
+  above it references this decision and already points at this file's
+  current path (`docs/enterprise/20-iam-and-security/04-rate-limiting.md`).

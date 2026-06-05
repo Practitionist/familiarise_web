@@ -81,6 +81,43 @@ When a data subject exercises their §12 right under the DPDP Act 2023, the plat
 new requests flow through the API path below. Existing manual
 entries remain for historical audit continuity.
 
+> **War story — "erase the user" vs "never edit a money row".** DPDP §12
+> says erase the data subject's personal data within 30 days. Indian
+> IT-Act retention says keep financial records for years. These collide
+> head-on the moment an erased user is the actor on a paid invoice or a
+> payout. The two-table double-entry journal makes the collision
+> non-negotiable on one side: `LedgerEntry` is `onDelete: Restrict` on
+> *both* its transaction and account FK, and reversals are explicit
+> counter-transactions — there is no code path that edits or deletes a
+> posted money row. So erasure could not be "delete the rows that mention
+> the user." The resolution (shipped in `e40914fa`,
+> `lib/compliance/erasure/scrub-user.ts`) is **pseudonymize the actor,
+> retain the money**: overwrite the `User`'s identifiers with
+> deterministic tombstones, stamp a one-way `pseudonymousId =
+> sha256(userId + ERASURE_SALT)`, and leave every `Payment` /
+> `OrganizationInvoice` / `OrganizationPayout` / ledger row intact — the
+> tombstoned identity is enough to de-link the human while keeping the
+> books auditable. The companion read-side guard,
+> `lib/enterprise/audit-sanitize.ts` (hardened in `bd61b3fb`), keeps the
+> *next* leak from happening in reverse: it redacts engineering noise
+> (Prisma errors, stack frames) out of the org-visible audit projection
+> so an erased-user investigation can't surface raw internals. Two
+> mechanisms, one principle: the row survives, the identity does not.
+
+**Persona — an IIT Madras student invokes erasure.** IIT Madras is a
+HYBRID campus org in the design-partner set; a graduating student who
+booked consultations through it files §12. Walking what `scrubUser`
+does to them: their `User.name`/`email`/`phone`/`bio` become tombstones,
+their `Membership` on IIT Madras flips to `ERASED`, their BetterAuth
+`Session` + `Account` rows are hard-deleted (immediate sign-out
+everywhere), and a `member.removed` webhook fires to IIT Madras with
+`source: "dpdp_erasure"` so any SCIM/HRIS downstream deprovisions too.
+What **survives**: the `LedgerTransaction`/`LedgerEntry` rows for every
+booking they paid for (immutable, retained), and a `USER_ERASURE_PROCESSED`
+audit row on the org — *pseudonymized*, but kept past the user's own
+erasure as the regulatory evidence-of-erasure record. The student is
+gone; the org's books and the proof-of-compliance are not.
+
 #### Request lifecycle
 
 1. User files via `POST /api/users/me/erasure-requests` (idempotent —
@@ -164,30 +201,33 @@ Both are OWNER-gated and guarded, so accidental deletion is unlikely.
 
 ## Decision tree
 
-When adding a new route that removes something, walk this tree top-down. Stop at the first match.
+When adding a new route that removes something, walk this tree top-down. Stop at the first match. New devs: start here before writing any `delete()` — the default answer is soft-delete, and hard-delete is the narrow exception.
 
+```mermaid
+flowchart TD
+    START([New route removes a row]) --> Q1{Carries historical /<br/>audit / compliance value?}
+    Q1 -->|yes| SOFT[/"SOFT-DELETE<br/>add terminal status enum value"/]:::soft
+    Q1 -->|no| Q2{FK dependencies from<br/>other preserved rows?}
+    Q2 -->|yes| SOFT
+    Q2 -->|no| Q3{DPDP §12<br/>erasure scrub?}
+    Q3 -->|yes| C3[/"TOMBSTONE — Case 3<br/>scrub PII in place,<br/>retain financials &amp; ledger"/]:::tomb
+    Q3 -->|no| Q4{Purely ephemeral?<br/>session / tentative placeholder}
+    Q4 -->|yes| C1[/"HARD-DELETE OK — Case 1"/]:::hard
+    Q4 -->|no| Q5{DRAFT &amp; never entered<br/>commercial lifecycle?}
+    Q5 -->|yes| C2[/"HARD-DELETE OK — Case 2<br/>+ precondition check"/]:::hard
+    Q5 -->|no| Q6{Reversible config,<br/>history is audit-logged?}
+    Q6 -->|yes| C4[/"HARD-DELETE OK — Case 4<br/>+ anti-lockout guards"/]:::hard
+    Q6 -->|no| DEFAULT[/"SOFT-DELETE (default)<br/>document here first if you<br/>think it's a new hard case"/]:::soft
+
+    classDef soft fill:#d6f5d6,stroke:#2e7d32,color:#11270f;
+    classDef hard fill:#f8d7da,stroke:#c0392b,color:#3a0f12;
+    classDef tomb fill:#fff3cd,stroke:#b7791f,color:#3a2f00;
 ```
-1. Does the row carry historical / audit / compliance value?
-     └─ YES → soft-delete. Add a terminal status value. Stop.
 
-2. Does the row have FK dependencies from other preserved rows?
-     └─ YES → soft-delete. Stop.
-
-3. Is this a DPDP erasure scrub?
-     └─ YES → see Case 3. Tombstone PII in place; retain financials. Stop.
-
-4. Is the row purely ephemeral (session state, tentative placeholder)?
-     └─ YES → hard-delete is OK (Case 1).
-
-5. Is the row in DRAFT and has never entered the commercial lifecycle?
-     └─ YES → hard-delete is OK with precondition check (Case 2).
-
-6. Is the row reversible config whose history is audit-logged?
-     └─ YES → hard-delete is OK with anti-lockout guards (Case 4).
-
-7. Otherwise → soft-delete. If you genuinely think this is a new hard-delete
-    case, document it here before writing the route.
-```
+Three exits, three colours: 🟢 soft-delete (the default and Q1/Q2/Q7),
+🟡 the DPDP tombstone (Case 3 — neither a true delete nor a plain
+soft-delete), 🔴 the three genuine hard-delete cases (1/2/4), each
+gated by its own precondition or guard.
 
 ## Current codebase audit
 

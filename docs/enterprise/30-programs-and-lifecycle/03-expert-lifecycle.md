@@ -50,6 +50,58 @@ re-adding fields to `Membership` — keeping join state separate from
 membership state avoids the LEARNER↔EXPERT ambiguity this refactor
 fixed.
 
+## The expert journey, end to end
+
+Two facts trip up new readers: there is **no org-side "approve" step** (the
+membership is `ACTIVE` the instant the invite is accepted), and the review that
+*does* gate visibility is **platform** verification of the underlying
+`ConsultantProfile`, not anything the org does. So the journey has two
+independent axes — org membership status, and platform verification status —
+plus the settlement fork that decides whose books an earning lands on:
+
+```mermaid
+stateDiagram-v2
+  [*] --> Invited: OWNER/MAINTAINER sends EXPERT invite
+  [*] --> AdminAdded: MAINTAINER POST members role=EXPERT (profile must pre-exist)
+  Invited --> Active: accept → Membership ACTIVE\n+ auto-provision ConsultantProfile\n(Domain "General", WEEKLY, PENDING_VERIFICATION)
+  AdminAdded --> Active: Membership ACTIVE (existing profile)
+
+  state Active {
+    [*] --> Hidden: profile PENDING_VERIFICATION
+    Hidden --> Discoverable: platform admin verifies\n→ surfaces in /explore/experts
+    note right of Hidden: org-active but NOT on the marketplace yet
+  }
+
+  Active --> Removed: DELETE member → status REMOVED\n(row retained for audit)
+  Removed --> [*]
+  note right of Removed: platform ConsultantProfile untouched —\nexpert keeps operating independently
+```
+
+```mermaid
+stateDiagram-v2
+  [*] --> SELF: default on accept (roleEffects → SELF)
+  SELF --> ORGANIZATION: MAINTAINER PATCH member (flip mid-relationship)
+  ORGANIZATION --> SELF: MAINTAINER PATCH member
+  note right of SELF: booking → ConsultantEarnings →\nexpert's own payout pipeline
+  note right of ORGANIZATION: booking → OrganizationEarnings →\norg pays the expert via its own payroll
+```
+
+The fork is read **at booking time** and snapshotted onto that booking's
+earnings, so flipping `payoutRecipient` later never rewrites money already
+settled — `SELF` and `ORGANIZATION` are per-org on the `Membership`, which is
+exactly why a freelancer can earn independently at one org while being salaried
+at another (e.g. Arjun, the solo consultant, takes `SELF` at his own org but
+joins IIT Madras as an external-panel EXPERT also on `SELF`, whereas IIT's
+internal professors are seeded `ORGANIZATION`).
+
+> **Design note — why org accept is not an approval gate.** Folding "platform
+> verification" into the org's accept step was rejected: an org admin can't
+> vouch for KYC/identity the platform is liable for, and making the org wait on
+> platform review would block the expert from completing their own profile +
+> schedule. Splitting the axes lets the expert be productive inside the org
+> (visible to managers, assignable) the moment they accept, while the
+> marketplace stays gated on the verification the platform actually owns.
+
 ## `PayoutRecipient`
 
 Every EXPERT membership carries `payoutRecipient: PayoutRecipient`:

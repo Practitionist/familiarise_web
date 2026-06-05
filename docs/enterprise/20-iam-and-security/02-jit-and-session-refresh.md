@@ -41,6 +41,35 @@ for (const bm of bareMembers) {
 }
 ```
 
+Concretely: a new graduate student signs in to **IIT Madras** via the
+campus IdP for the first time. The IdP asserts their identity, BetterAuth
+writes the bare `members` row, and on the very next session load
+`customSession` notices the row has no typed `Membership` sibling and
+mints one as `LEARNER` (the locked `defaultRoleForAutoJoin`). No admin
+touched anything; the student lands on a working dashboard scoped to
+exactly LEARNER capabilities. (IIT Madras is a seeded org; the IdP wiring
+is the operator-configured shape, not part of the seed.)
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor S as New IIT student
+  participant IdP as Campus IdP
+  participant BA as BetterAuth (SSO plugin)
+  participant CS as customSession hook
+  participant DB as Postgres
+  S->>IdP: first SSO sign-in
+  IdP-->>BA: assertion (email @ iitm.ac.in)
+  BA->>DB: create User + Account + bare `members` row
+  Note over BA,DB: BetterAuth writes the Member shim but NOT<br/>the typed Membership the app reads
+  BA->>CS: build session
+  CS->>DB: findMany members WHERE membership IS null
+  Note over CS,DB: defaultRole = ssoSettings.defaultRoleForAutoJoin ?? "LEARNER"<br/>(schema-locked to LEARNER)
+  CS->>DB: BEGIN tx — applyMembershipRoleEffects + Membership.create
+  Note over CS,DB: catch swallows P2002 ONLY (concurrent-create race);<br/>every other error re-throws (audit Phase A.3)
+  CS-->>S: session with LEARNER membership ✅
+```
+
 Three invariants make this safe:
 
 ### Invariant 1 — Role floor is LEARNER
@@ -128,6 +157,25 @@ cache." The catastrophic 24h figure below is the worst case when the
 bump is *not* called at all and the only refresh is BetterAuth's
 `updateAge: 24h` rotation.
 
+#### Trade-off: 5-minute cookie cache vs a DB hit every request
+
+The cookie cache is a deliberate freshness-for-throughput trade.
+Without it, every authenticated request would re-run `customSession` —
+which reads the live `users` row and a `memberships.findMany` — turning
+the session check into a guaranteed two-query round-trip on *every* page
+load and API call. With `cookieCache.maxAge = 5 min`, most requests are
+served from the signed cookie and skip the DB entirely. The cost is a
+bounded staleness window: a role change can take up to 5 minutes to
+surface. We accept that ceiling because the only *dangerous* staleness —
+a downgraded OWNER still acting as OWNER, or a removed member still
+inside — is handled out-of-band by an explicit `revokeSession` kill on
+the removal path, not by waiting for the cache to expire. So the 5-minute
+window applies to benign role *changes*, where "your new capabilities
+appear within a few minutes, no re-login" is the right UX. Shrink
+`maxAge` toward zero and you trade DB load for fresher roles; the current
+value says throughput wins for the benign case and the kill-switch covers
+the dangerous one.
+
 ### Why a counter, not a boolean
 
 Concurrent role mutations (e.g. a script bulk-promoting interns)
@@ -151,40 +199,40 @@ the new permissions; no UX disruption.
 
 ### Sequence diagram
 
+Walk it through a real promotion: a **Wipro** admin promotes a member
+from LEARNER to MANAGER. The PATCH bumps `sessionGeneration` inside the
+same transaction as the role write; the promoted user does *not* get
+logged out. Their next request that misses the 5-minute cookie cache
+re-runs `customSession`, which re-reads memberships and the new MANAGER
+capabilities simply appear.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor A as Wipro admin
+  participant API as PATCH /members/[id]
+  participant DB as Postgres
+  actor M as Promoted member (live session)
+  A->>API: PATCH { role: "MANAGER" }
+  API->>DB: BEGIN tx
+  API->>DB: Membership.update(role = MANAGER)
+  API->>DB: users.update sessionGeneration { increment: 1 }
+  Note over API,DB: atomic increment, not read-modify-write —<br/>concurrent promotions can't lose a bump
+  API->>DB: COMMIT
+  API-->>A: 200 OK
+  Note over M: no forced logout. Cookie cache (maxAge 5 min)<br/>may still serve the OLD shape briefly.
+  M->>API: next request that MISSES the 5-min cookie cache
+  API->>DB: customSession reads user.sessionGeneration → N+1
+  API->>DB: memberships.findMany (always runs)
+  API-->>M: session.user now reflects MANAGER ✅
 ```
-┌────────┐                ┌─────────┐               ┌─────────────┐
-│ OWNER  │                │  API    │               │  Postgres   │
-└───┬────┘                └────┬────┘               └──────┬──────┘
-    │ PATCH /members/abc        │                          │
-    │ { role: "MANAGER" }       │                          │
-    ├──────────────────────────▶│                          │
-    │                           │ BEGIN tx                 │
-    │                           ├─────────────────────────▶│
-    │                           │                          │
-    │                           │ Membership.update        │
-    │                           ├─────────────────────────▶│
-    │                           │                          │
-    │                           │ users.update             │
-    │                           │ sessionGeneration += 1   │
-    │                           ├─────────────────────────▶│
-    │                           │                          │
-    │                           │ COMMIT                   │
-    │                           ├─────────────────────────▶│
-    │ 200 OK                    │                          │
-    │◀──────────────────────────┤                          │
-    │                           │                          │
-    │ (next request — any URL)  │                          │
-    ├──────────────────────────▶│                          │
-    │                           │ customSession reads user │
-    │                           │ sessionGeneration: N+1   │
-    │                           ├─────────────────────────▶│
-    │                           │                          │
-    │                           │ memberships.findMany     │
-    │                           ├─────────────────────────▶│
-    │ session.user reflects     │                          │
-    │ new MANAGER role          │                          │
-    │◀──────────────────────────┤                          │
-```
+
+The "misses the 5-min cookie cache" qualifier is the honest version of
+"next request": BetterAuth may serve a cached session shape for up to
+`cookieCache.maxAge` (5 min) before `customSession` re-runs. The bump
+itself is the *atomic increment* in the COMMIT box — it can never lose a
+concurrent promotion, which is why the marker is a counter and not a
+boolean (see [Why a counter](#why-a-counter-not-a-boolean)).
 
 ---
 

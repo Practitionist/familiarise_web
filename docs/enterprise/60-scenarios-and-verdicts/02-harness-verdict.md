@@ -5,6 +5,8 @@ set of cross-cutting checks — **36 line items**, **re-derived against
 current code** after the v2 mega-audit (#777/#778/#779) shipped.
 Current verdict: **30 ✅ / 6 🟡 / 0 🔴** as of **2026-06-05**.
 
+**How to read this verdict.** Each row is one capability the harness asserts, scored from the customer's POV: **✅** means a seed user can drive it end-to-end *today* and get the right money/state; **🟡** means the schema is final and the happy path is correct, but a follow-on (a gateway call, a cron schedule, a cascade) is deliberately gated **off** — it stops short, it isn't wrong. The **evidence** for each row lives in three places, named in its Notes cell: the **code path** (`lib/…` / route / `jobs/…`), the **worked Dr/Cr** in [scenarios-and-examples](01-scenarios-and-examples.md) (linked per row), and the **click-through** to see it live in [verification-guide](../90-audits/03-verification-guide.md). A row is only ✅ if all three line up on a fresh reseed.
+
 > **Seed cohort:** the four scenarios below map onto the deterministic
 > seed cohort. See `00-overview.md → Seed / production-shaped grid` for the
 > canonical slugs / capability shape per scenario, plus the
@@ -63,7 +65,7 @@ Legend:
 | 19 | Contract auto-renew (idempotent claim-gate) | ✅ | `auto-renew-contracts.ts` (02:30 UTC, scheduled) claims via `autoRenewedAt`, mints a RENEWAL successor, flips old → EXPIRED in one tx; `supersededByContractId @unique` is the double-run backstop. |
 | 20 | Wallet floor / auto-top-up | 🟡 | `wallet-low-balance.ts` (23:45 UTC, scheduled) detects the dip and **notifies** finance + stamps the cooldown — **NOTIFY-ONLY**. `autoTopUpEnabled`/`autoTopUpAmountPaise`/`autoTopUpMandateId` are written-but-unread (no recurring mandate; no money moves, #777 §C). |
 
-## 4. Solo marketplace consultant (Rahul — the org-layer no-op)
+## 4. Solo marketplace consultant (Arjun — the org-layer no-op)
 
 | # | Item | Verdict | Notes |
 |---|------|---------|-------|

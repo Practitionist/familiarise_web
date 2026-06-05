@@ -37,6 +37,22 @@ stateDiagram-v2
 
 A weekly cron does the same in batch (`createOrgPayoutBatch`, `lib/payments/payouts/org-payout-service.ts`); live submission to RazorpayX is gated by `ENABLE_LIVE_PAYOUTS` with idempotency-key persistence.
 
+### 1.1 Worked walkthrough — LearnPro's weekly batch with TDS
+
+**LearnPro Academy** (the seeded HOST org, `OrganizationPayoutAccount` `VERIFIED`, PAN on file via `taxInfo.panEncrypted`) hosts five panel experts. Say the week's `READY` `OrganizationEarnings` sum to an org pool of **₹40,000** (`orgSharePaise = 4_000_000`) with no refunds. The weekly cron's `createOrgPayoutBatch` does the math (`org-payout-service.ts:365`):
+
+```
+netPayout       = orgShareSum − refundsSum   = 4_000_000 − 0 = 4_000_000 paise
+TDS section     = 194-O          (DEFAULT_SECTION for ECO payouts to host orgs)
+TDS rate        = 0.001          (0.1% — Finance (No.2) Act 2024, w.e.f. 1-Oct-2024)
+tdsAmountPaise  = floor(4_000_000 × 0.001) = floor(4_000.0) = 4_000   (₹40 withheld)
+amountAfterTds  = 4_000_000 − 4_000 = 3_996_000               (₹39,960 wired)
+```
+
+So LearnPro is *owed* ₹40,000, the platform withholds **₹40** TDS (deposited with the government, reported on Form 26Q), and **₹39,960** is what goes through the gateway. The `ORG_PAYOUT` posting on `PROCESSING → COMPLETED` is `Dr ORG_PAYABLE(learnpro) 4_000_000 / Cr CASH 3_996_000 + Cr TDS_PAYABLE 4_000` — note the debit clears the **full** ₹40,000 payable (net + TDS), because the org's obligation is discharged whether the cash went to LearnPro or to the taxman. The TDS section defaults to **194-O at 0.1%** because Familiarise is the e-commerce operator (ECO); a non-resident host would instead carry a DTAA rate and the FEMA fields in §3.
+
+> For a payee with **no PAN on file**, the 194-O no-PAN carve-out withholds **5%** (`NO_PAN_RATE_194O`) instead of 0.1% — on this pool that's ₹2,000, 50× the ₹40 with-PAN figure. That rate cliff is exactly what the `7f7e7d12` war story below was about: the code passed the *encrypted ciphertext* as the PAN, it failed format validation, and the engine over-withheld 50× even when a PAN *was* on file (as LearnPro's is).
+
 ---
 
 ## 2. `PayoutStatus` + the `ORG_PAYOUT` posting
@@ -115,6 +131,19 @@ firceRef          String?
 ## 5. Payment attribution
 
 `Payment.organizationId` is the **sponsoring** org; the **hosting** org is reached via `OrganizationEarnings.paymentId`. They coincide when a HYBRID org sponsors its own expert; independent otherwise. Post-A3, one payment can carry multiple `OrganizationEarnings` (one per collaborator HOST org) — see [booking → earnings §4](05-booking-to-earnings.md).
+
+---
+
+## 6. Design decisions & trade-offs
+
+- **Weekly batch + `idempotencyKey` dedup, not per-earning payout.** Each `READY` earning *could* fire its own transfer the moment its hold elapses, but that means N gateway calls, N TDS computations, and N rows per consultant per week — and TDS thresholds/section logic want the *aggregate*. So the cron rolls a period's `READY` earnings into **one** `OrganizationPayout`, computes TDS once on the pool, and submits one transfer. The dedup is `OrganizationPayout.idempotencyKey @unique`: two overlapping cron workers racing the same period both build a batch, but the loser's insert hits `P2002` and falls through to return the sibling's already-created row (`org-payout-service.ts:456`) — so a cron retry or a replica can't double-pay. The cost is up-to-a-week of settlement latency; the benefit is one auditable payout per period and no N-way gateway fan-out.
+- **`PENDING_TRUST` parks earnings for unverified INVOICE-funded orgs (#687).** An org that's still `PENDING_VERIFICATION` and funds by INVOICE could otherwise accrue real consultant earnings and vanish before paying its first invoice. So those earnings sit in `PENDING_TRUST` until the org goes `ACTIVE` or pays once — the rejected alternative (accrue straight to `PENDING`) trades a fraud hole for a little less state. See §1's state diagram.
+- **The flag freezes submission, not the pipeline.** With `ENABLE_LIVE_PAYOUTS` off, batching + TDS/MSME + the status machine + the (eventual) ledger posting all run; only the gateway call is held. That keeps the whole path exercised in staging/seed and makes go-live a flag flip, not a code path that's never been run. The cost is rows sitting at `PROCESSING` that an operator must read as "held," not "stuck" — hence the explicit "pending platform enablement" UI copy (§2). The alternative — short-circuit the whole pipeline behind the flag — would mean the first real payout runs untested code.
+
+### 🛠️ What this design survived
+
+- **A false-FAILed payout the gateway had already accepted → double disbursement (`8a924d41`, #785 task #24).** `process-payouts`' catch block marked a payout `PROCESSING → FAILED` and **unlinked its earnings** (back to `READY`) on *any* throw — including a DB write that threw *after* RazorpayX/Stripe had already accepted the transfer. The released earnings would then re-batch under a **fresh `idempotencyKey` the gateway won't dedupe** → the same money paid twice. The fix hoists `providerPayoutId` above the `try` (`process-payouts.ts:163`) so the catch can tell a **pre-gateway** failure (no provider id yet — safe to FAIL + release) from a **post-gateway** one (provider id set — money already sent): the latter persists the gateway id and leaves the row `PROCESSING` with earnings *linked* (so `create-payout-batch`'s `payoutId: null` filter can't re-batch them), and `jobs/payouts/handle-stuck-payouts.ts` reconciles it against the gateway. The flag was off, so no prod money was double-paid — this was caught in end-to-end testing before go-live.
+- **TDS over-withholding 50× because the PAN was encrypted (`7f7e7d12`, #785).** Both payout services passed `OrganizationTaxInfo.panEncrypted` *ciphertext* straight into `computeTdsForPayout` as `panNumber`. The ciphertext failed `isValidPan()`'s `[A-Z]{5}[0-9]{4}[A-Z]` regex, so the engine hit the **194-O no-PAN fallback (5%)** instead of the with-PAN **0.1%** — withholding 50× too much from every host-org payout that had a PAN safely on file. The fix added `panOnFile: boolean` to `TdsConsultantInput`: callers now pass `panNumber: null, panOnFile: !!taxInfo.panEncrypted` (`org-payout-service.ts:374`), so "a PAN exists" is signalled without trying to format-check ciphertext that can't be validated until decrypt-at-filing-time. This is why §1.1's with-PAN figure is ₹40, not ₹2,000.
 
 ---
 

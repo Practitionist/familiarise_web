@@ -193,6 +193,47 @@ billed them. Idempotency: `autoRenewedAt` is the claim gate, and
 `supersededByContractId @unique` trips `P2002` if two replicas slip past it
 (caught + skipped cleanly).
 
+### Worked example — Wipro's contract auto-renews
+
+The seeded **Wipro** contract (SPONSOR, INVOICE-funded) carries
+`autoRenew = true` with a 1-year term — so it's the canonical unattended-renewal
+case. Say the term ran `effectiveFrom = 2025-07-01 → effectiveTo = 2026-06-30`.
+On the night of 2026-06-30 the cron picks it up (`status = ACTIVE`,
+`autoRenew = true`, `autoRenewedAt = null`, `effectiveTo <= now`) and, in one
+Serializable tx, writes:
+
+| Row | Field | Before | After |
+|---|---|---|---|
+| **old** `C₁` | `status` | `ACTIVE` | `EXPIRED` |
+| | `autoRenewedAt` | `null` | `2026-06-30T02:30Z` (claim gate) |
+| | `supersededByContractId` | `null` | `C₂.id` |
+| | `supersededAt` | `null` | `2026-06-30T02:30Z` |
+| | `supersessionReason` | `null` | `RENEWAL` |
+| **new** `C₂` | `effectiveFrom` | — | `2026-06-30` (= old `effectiveTo`) |
+| | `effectiveTo` | — | `2027-06-30` (= +same `durationMs`) |
+| | `status` | — | `ACTIVE` |
+| | `autoRenew` / `billingAccountId` / `paymentTermsDays` / `rateCardId` / `purchaseOrderId` | — | carried from `C₁` |
+| **programs** | `contractId` | `C₁.id` | `C₂.id` (re-pointed `updateMany`) |
+
+Then a `CONTRACT_AUTO_RENEWED` audit row lands. Two subtleties worth internalising:
+
+- **The successor's `effectiveFrom` is the old `effectiveTo`, not "now"** — so
+  there's no coverage gap and no double-counted day. `durationMs = oldTo − oldFrom`
+  is preserved verbatim, so a 365-day term renews to another same-length term
+  (`jobs/contracts/auto-renew-contracts.ts`).
+- **Programs move; invoices don't.** The `program.updateMany` re-point is
+  load-bearing: without it the [cycle engine](08-cycle-engine-and-rollover.md)
+  would see a now-`EXPIRED` contract at the next `periodEnd` and CLOSE every
+  assignment instead of rolling. Invoices keep their original `contractId` so
+  each term's billing stays anchored to the term that produced it.
+
+`autoRenewedAt` on the old row is the idempotency gate — a re-fired cron finds it
+non-null and skips; a racing replica that slips past the gate trips
+`supersededByContractId @unique` (`P2002`, caught + skipped). Flip Wipro's
+`autoRenew` to `false` and the same night does nothing here — the expiry cron 30
+min later flips `C₁ → EXPIRED` with no successor, and the cycle engine CLOSEs the
+assignments (`AUTORENEW_OFF`).
+
 ## Expiry cron
 
 `jobs/contracts/expire-contracts.ts` (GitHub Action
@@ -238,6 +279,99 @@ audit row is written.
 
 `DELETE` is DRAFT-only (and only when the contract has no programs): an active
 contract must be terminated via PATCH so the audit timeline keeps continuity.
+
+### Walkthrough — Meridian Consulting cancels mid-term (fictional)
+
+**Meridian Consulting** (a *fictional* SPONSOR org used only for the failure
+path — not seeded) signed a 1-year LICENSED_SEAT contract and now wants out three
+months in, while 40 learners still have live assignments and one ₹2L invoice is
+`ISSUED`. An OWNER hits `PATCH …/contracts/[contractId]` with
+`{ status: "TERMINATED" }`:
+
+```mermaid
+stateDiagram-v2
+  [*] --> Live: ACTIVE contract; 40 live assignments; 1 ISSUED invoice
+  Live --> Refused1: PATCH status=TERMINATED
+  Refused1 --> Live: 409 — 40 active assignments\n(count is in the message)
+  Live --> CancelAssignments: operator cancels assignments\n(assignment PATCH cancel=true)
+  CancelAssignments --> Refused2: PATCH status=TERMINATED (retry)
+  Refused2 --> Live: 409 CONTRACT_HAS_OUTSTANDING_INVOICES\n(counts.outstandingInvoices = 1)
+  Live --> PayOrVoid: settle / void the ISSUED invoice
+  PayOrVoid --> Terminate: PATCH status=TERMINATED (retry)
+  Terminate --> Cascade: in-tx — programs ACTIVE to EXPIRED,\nassignments ACTIVE to CLOSED
+  Cascade --> [*]: TERMINATED + CONTRACT_TERMINATED audit
+```
+
+Two refusals stand between the operator and termination, evaluated in this order
+inside the PATCH transaction:
+
+1. **Live-assignment block.** `programAssignment.count` where the program is on
+   this contract and `periodEnd >= now` returns 40 → `409`, message *"Cannot
+   terminate a contract with 40 active assignment(s) in the current cycle. Cancel
+   the assignments first or wait for the cycle to expire."* (The count is in the
+   message string; unlike the invoice block, this guard doesn't attach a
+   structured `counts` object.) Without it, checkout would later **500** on the
+   now-parentless assignment lookup.
+2. **Outstanding-invoice block.** Any invoice billed under the contract that's
+   `ISSUED` or `OVERDUE` → `409 CONTRACT_HAS_OUTSTANDING_INVOICES` **with**
+   `counts: { outstandingInvoices: 1 }` so the UI can render the wind-down
+   message. `DRAFT` invoices haven't billed, so they don't block.
+
+Once Meridian cancels the 40 assignments and clears the invoice, the retried
+PATCH passes both guards and the **in-tx cascade** fires: `program.updateMany`
+flips this contract's `ACTIVE` programs → `EXPIRED`, `programAssignment.updateMany`
+flips their still-`ACTIVE` rows → `CLOSED`, and a `CONTRACT_TERMINATED` audit row
+records `ACTIVE → TERMINATED`. This is the canonical **dangerous-mutation guard**
+shape — status precondition + count block + in-tx cascade — and note there is no
+`riskLevel` column anywhere; the guard is the count query, not a flag.
+
+## Design decisions & trade-offs
+
+- **End-early guard vs free deletion.** A live contract can't be `DELETE`d at all
+  (DRAFT-only) and can't be `PATCH`ed to `TERMINATED` while it has live
+  assignments or owed invoices. The cost is operator friction — terminating
+  Meridian above took three round-trips. The alternative (let any OWNER nuke a
+  contract) trades that friction for orphaned entitlements (checkout 500s on a
+  parentless assignment) and a severed money trail (an owed invoice with no
+  contract behind it). The friction is deliberate: every wind-down step leaves an
+  audit row, so the *why* of a termination is reconstructable.
+- **`LOCKED_CONTRACT_FIELDS` scope — five locked, one open.** The predicate
+  (`config-lock.ts`) locks `billingAccountId`, `effectiveFrom`, `effectiveTo`,
+  `paymentTermsDays`, `rateCardId` — everything that could retroactively rewrite
+  settled money. `autoRenew` is deliberately **excluded**: it only changes future
+  behaviour, never an already-billed cycle, so an operator can flip it on a live
+  contract freely. Note the PATCH route enforces a narrower runtime subset
+  (`effectiveFrom`/`effectiveTo`/`paymentTermsDays` via `TERM_FIELDS`) —
+  `billingAccountId`/`rateCardId` aren't PATCHable at all, so the broader constant
+  documents intent while the route gates what's actually mutable. To change a
+  locked term you **supersede**, you don't mutate.
+
+### 🛠️ What this design survived
+
+**Config-lock moved from contract-create to first-assignment.** The persistent
+money-config lock (`#779 §B`, commit `4a6c2d76`) deliberately does **not** fire at
+create time — `Program.configLockedAt` is stamped in the transaction that creates
+the *first* `ProgramAssignment` (`assignments/route.ts:161`, an `updateMany` gated
+on `configLockedAt: null` so a re-stamp on an already-locked program is a no-op
+and the original lock instant is preserved). The contract analogue is the
+`isContractTermsLocked` predicate: terms stay editable while the contract is
+`DRAFT` with no invoices and no live assignments. Locking at create would have
+meant a typo on a brand-new contract/program (wrong rate, wrong cap) was
+unfixable except by supersession — heavy machinery for a row nothing has touched
+yet. Locking at first-use keeps the "fix your typo" window open exactly as long as
+it's safe, then slams shut the instant real money rides on the terms.
+
+**Supersede-don't-edit became the only way to change committed terms.** CRUD
+completeness (`#777 §B / #779 §A`, commit `e454d429`) landed the
+`POST …/supersede` route precisely so there's a *legal* path to change locked
+terms without mutating settled history. The decision: an in-place
+`effectiveTo`/rate edit on a contract that's already billed would silently rewrite
+the terms its invoices were issued under — a reconciliation landmine. Instead,
+supersede mints a fresh successor (the new terms), re-points programs, retires the
+old row with the chain recorded, and leaves invoices on their original
+`contractId`. The `supersededByContractId @unique` is the double-run backstop:
+a second supersede on the same row hits `P2002`. Auto-renew is the same machinery
+run unattended.
 
 ## Route table
 

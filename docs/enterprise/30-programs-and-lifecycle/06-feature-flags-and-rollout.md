@@ -26,10 +26,41 @@ Exactly five flags are exported from the module. Each is the literal
 | `ENABLE_TDS_ADMIN_VIEW` | off | Admin TDS dashboard + Form 26Q filing surfaces. | `app/api/admin/tds/route.ts` returns 404 (hides from discovery). TDS data is still captured continuously by the payout pipeline; only the *filing workflow* (mark-as-filed, decrypted-PAN view) is gated. |
 | `ENABLE_BETTERSTACK_TELEMETRY` | off | Better Stack Telemetry log sink for operational events (#776 §K). | `recordSystemEvent`/`recordSystemError` always write the `SystemEvent` table (source of truth); the flag (plus `BETTERSTACK_SOURCE_TOKEN` + `BETTERSTACK_INGEST_URL`) only adds the fire-and-forget side-channel that ships those events so a stuck payout / failed reconcile / HMAC failure can page someone. Never on the critical path. |
 
+`ENABLE_HOST_ORGS` is the broadest of the five — flipping it off doesn't just
+hide a page, it changes the **split math** and dark-fails a whole capability.
+Worth drawing the blast radius so a go-live engineer sees everything one flag
+governs:
+
+```mermaid
+flowchart TD
+  F{"ENABLE_HOST_ORGS<br/>=== 'true'?"}
+  F -- OFF (default) --> OFF["host capability dark"]
+  OFF --> A["POST /organizations rejects canHost=true → 501"]
+  OFF --> B["POST …/members rejects role=EXPERT → 501"]
+  OFF --> C["wizard hides the host checkbox"]
+  OFF --> D["…/{payouts,payout-account,earnings,rate-cards} → 501"]
+  OFF --> E["/experts + /payouts nav hidden"]
+  OFF --> G["earnings-service takes the SPONSOR-only split (no 3-way)"]
+  F -- ON --> ON["hosting orgs live: 3-way split, EXPERT memberships, payout surfaces"]
+```
+
 > 🔒 **`ENABLE_HOST_ORGS` was renamed from `ENABLE_PROVIDER_ORGS`** in the Arch-4
-> terminology purge — "provider" is dead vocabulary; the capability is `canHost`
-> and the kind label is `HOST`. No back-compat shim (pre-launch). This is the
-> only historical alias worth knowing; nothing reads the old name.
+> terminology purge (the rationale is preserved verbatim in the flag's own
+> doc-comment, `lib/feature-flags.ts:39`) — "provider" is dead vocabulary; the
+> capability is `canHost` and the kind label is `HOST`. No back-compat shim
+> (pre-launch). This is the only historical alias worth knowing; nothing reads
+> the old name.
+
+> **What this design survived — the PROVIDER→HOST purge.** "Provider" was the
+> Arch-3 word for a hosting org, and it was load-bearing in a flag name, a
+> capability boolean, an enum label, and a wall of copy. The purge renamed all
+> of it in one sweep with **no compatibility shim** — viable only because the
+> app is pre-launch, so no persisted `ENABLE_PROVIDER_ORGS` value exists in any
+> deployed env to honour. The doc-comment at `lib/feature-flags.ts:39` is the
+> single surviving mention of the old name, kept deliberately so a `git log -S`
+> for "PROVIDER" lands somewhere that explains the rename instead of a silent
+> gap. Post-launch, this rename would have needed a dual-read shim and a
+> migration window.
 
 Each flag's go-live checklist lives in its module doc-comment (and a tracking
 issue: host #646/#662, live-payout `docs/enterprise/50-operations/06-live-payout-go-live-runbook.md`,

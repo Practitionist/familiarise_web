@@ -46,6 +46,33 @@ flowchart LR
 
 **Why one journal beats three logs.** The old logs each answered one question but couldn't cross-check each other without JSON joins and date heuristics. A double-entry journal makes the cross-check structural: because every transaction balances and every balance is a sum of the same rows, a single invariant (`Σdebit == Σcredit`) guarantees the books tie out. Reconciliation went from "compare three logs and hope" to "re-sum one journal."
 
+The difference is the *shape of the reconciliation question itself*, not just the table count:
+
+```mermaid
+flowchart TB
+  subgraph BEFORE["Before #772 — reconcile = cross-join three logs"]
+    direction LR
+    b1["FundingLedgerEntry<br/>balanceAfterPaise"]
+    b2["WalletEntry<br/>signed delta"]
+    b3["SettlementLedgerEntry<br/>signed amount"]
+    b1 -.->|"JSON join +<br/>date heuristic"| b2
+    b2 -.->|"JSON join +<br/>date heuristic"| b3
+    b3 -.->|"does any of this<br/>actually agree?"| bq["🔴 no structural guarantee"]
+  end
+  subgraph AFTER["After #772 — reconcile = re-sum one journal"]
+    direction LR
+    a1["LedgerEntry rows"] -->|"GROUP BY direction"| a2["Σdebit vs Σcredit<br/>per LedgerTransaction"]
+    a2 --> aq["✅ balanced ⇒ books tie out<br/>(LEDGER_TXN_IMBALANCE)"]
+  end
+  BEFORE ==>|"#772 cutover"| AFTER
+```
+
+The "no structural guarantee" box is not rhetorical: three independently-signed logs can each be internally consistent and still disagree with each other, and nothing in the schema forced them to agree. The double-entry rewrite makes "the books are wrong" a *single per-transaction predicate* the reconciler re-proves nightly ([ledger integrity](09-ledger-integrity.md) `LEDGER_TXN_IMBALANCE`).
+
+### 🛠️ What this design survived
+
+- **The cutover itself (`71923ae4` → `2911f450`, #772).** The journal foundation (`postLedgerTxn`, the three `Ledger*` tables, `ledgerBalancePaise`) landed in `71923ae4`; the very next commit `2911f450` re-pointed *every* money writer — booking, top-up, invoice-paid, both payouts, refunds — at it in one move, deleting `FundingLedgerEntry` / `WalletEntry` / `SettlementLedgerEntry` / `SettlementKind`. The empirical gate that justified the deletion was the reconciler returning **`ok: true`, 0 findings, across a full DB reseed** (commit `db7d4649` shipped seeds + reconcile + jobs on the journal) — if the new journal and every reconciled cache hadn't agreed bit-for-bit with the seeded flows, that reseed would have failed and the old logs would have stayed.
+
 > **If you read `FundingLedgerEntry`, `WalletEntry`, `SettlementLedgerEntry`, or `SettlementKind` anywhere outside a historical note like this one — it's stale. File it.** The usage ledger (`UsageLedgerEntry`) is **not** one of the removed logs; it tracks *entitlement consumption*, not money — see [programs](../30-programs-and-lifecycle/02-programs.md).
 
 So today there are **two** ledgers, not three:
@@ -81,6 +108,17 @@ This "reconciled cache" pattern recurs: `ConsultantEarnings`/`OrganizationEarnin
 
 ---
 
+## 4a. Design decisions & trade-offs
+
+The three rules in §1 were choices with alternatives we rejected. Why these, what they cost:
+
+| Decision | Rejected alternative | Why we chose it / what it costs |
+| --- | --- | --- |
+| **Integer paise** | `Decimal`/`numeric` money columns | Integers can't silently round, sort and aggregate at full speed, and serialize across the JS/Prisma/Postgres boundary with no precision class to mishandle. The cost is manual scaling (₹ → paise at every edge) and `BigInt` ceremony on `LedgerEntry.amountPaise`. We pay it because a ledger that rounds is not a ledger. |
+| **Basis points (`bps`, 10000 = 100%)** | float percents (`0.10`) | A split must sum to *exactly* the whole; `platformBps + orgBps + consultantBps === 10000` is an integer equality a float `0.1 + 0.1 + 0.8` can fail. #772 deleted the old `Float sharePercentage` columns for this reason — see [booking → earnings §2](05-booking-to-earnings.md). |
+| **Derived balances + a few checked caches** | a stored, authoritative `balance` column per account | Always-derive is provably correct but can't back an atomic overdraft guard (§4). So balances derive, *except* `walletBalance`, which is a cache the reconciler re-derives nightly. The cost is one reconciliation invariant per cache; the benefit is the hot path stays a single conditional `UPDATE`. |
+| **Idempotency keyed per flow** (`topup:<orderId>`, `booking:<paymentId>`, …) | request-level dedup (one key per HTTP call) | A booking and its refund and its top-up are *different cash events on the same upstream id*; per-flow keys let each post exactly once even when they share a `paymentId`, and survive at-least-once webhooks + cron retries. A request-level key would conflate them. See [ledger & postings §2](03-ledger-and-postings.md). |
+
 ## 5. Where each money flow is documented
 
 | Flow | Journal `kind` | Doc |
@@ -107,6 +145,14 @@ New devs routinely conflate these. They are different flows with different model
 - **Credits** — two senses, don't confuse: (a) an **org's prepaid wallet balance** — the `WALLET` ledger account, cached on `BillingAccount.walletBalance`; (b) a **consultee's referral/promo credits** — `ReferralCredit`, consumed via the `REFERRAL_CREDIT` leg. The first is org money we owe back; the second is a platform-funded discount.
 
 > The old per-row `WalletEntry` with `reason = REFERRAL_BONUS` is gone (#772); referral credits now live as `ReferralCredit` and post to `PLATFORM_PROMO` when consumed.
+
+**Grounded in the seeded orgs**, the five flows are five different actors moving money:
+
+- **Refund** — a learner Wipro sponsored cancels; the booking reverses and the *funding source* (here Wipro's `ORG_RECEIVABLE` accrual) is credited back, with a GST credit note ([invoicing §8](07-invoicing.md)).
+- **Reimbursement** — an IIT Madras member paid out of pocket for sponsored coaching; IIT Madras pays *its own member* back via `OrganizationReimbursement`. The platform is not in this loop.
+- **Payout** — **LearnPro Academy** hosts the expert, so the org-share leg accrues to LearnPro and a weekly `ORG_PAYOUT` pays it out net of TDS ([payout pipeline](06-payout-pipeline.md)). **Arjun** (solo HOST) is the consultant-side mirror: his earnings pay out via `PAYOUT`.
+- **Referral** — a learner books with a `ReferralCredit`; the platform eats it (`PLATFORM_PROMO`), independent of who sponsored the seat.
+- **Credits** — IIT Madras's ₹14,75,000 prepaid pool is the `WALLET` sense (org money we owe back); a consultee's promo balance is the `ReferralCredit` sense (a platform-funded discount). Same English word, opposite direction of obligation.
 
 ---
 

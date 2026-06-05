@@ -6,6 +6,49 @@ integration. The endpoints follow RFC 7643 (schema) and RFC 7644
 (protocol) closely enough that the off-the-shelf SCIM connectors
 work without modification.
 
+## How a seat gets provisioned (and freed)
+
+Picture **Wipro** (a seeded design-partner org; the SCIM wiring below is
+the operator-configured shape, not seeded). Wipro's IT admin connects
+Okta to Familiarise once with a SCIM bearer token. From then on the
+*roster lives in Okta*: assign an employee to the Familiarise app and
+Okta `POST`s them into existence here; offboard them in Okta and Okta
+`DELETE`s them, freeing the seat. No one logs into Familiarise to manage
+membership — the IdP is the source of truth.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant Okta as Okta (Wipro)
+  participant Auth as requireScimAuth
+  participant Op as createOrReprovisionScimUser
+  participant DB as Postgres
+  Note over Okta,DB: ── Onboard: HR assigns the app in Okta ──
+  Okta->>Auth: POST /scim/v2/Users + Bearer <token>
+  Auth->>DB: SHA-256(token) → ScimToken → org = token.organizationId
+  Note over Auth: no ?orgId accepted — token IS the tenant.<br/>scimLimiter 60/min per tokenHash.
+  Auth->>Op: grant { organizationId }
+  Op->>DB: resolve role from group mapping (highest rank; default LEARNER)
+  Op->>DB: upsert User by email + Membership by (org, userId)
+  Note over Op,DB: externalScimId ← Okta externalId.<br/>If User.erasedAt set → 410 Gone (DPDP §12), no create.
+  Op->>DB: audit SCIM_USER_CREATED + webhook member.added
+  Op-->>Okta: 201 User resource
+  Note over Okta,DB: ── Offboard: HR unassigns in Okta ──
+  Okta->>Auth: DELETE /scim/v2/Users/{externalScimId}
+  Auth->>Op: deprovisionScimUser
+  Op->>DB: Membership.status = SUSPENDED (NOT deleted/erased)
+  Op->>DB: audit SCIM_USER_DEPROVISIONED + webhook member.removed
+  Op-->>Okta: 204 No Content
+```
+
+The one subtlety worth internalizing from the diagram: **DELETE
+suspends, it does not erase.** SCIM DELETE means "stop provisioning this
+resource," so `deprovisionScimUser` flips `Membership.status` to
+`SUSPENDED` (verified in `lib/scim/operations.ts`) — the seat is freed
+and the webhook fires, but the user's data is untouched. Purging data is
+a different, user-initiated act (DPDP §12 erasure), and the erasure
+short-circuit below is what makes the two paths refuse to collide.
+
 ## Endpoint inventory
 
 | Verb | Path | Purpose |
@@ -35,6 +78,23 @@ Discovery endpoints (`ServiceProviderConfig`, `ResourceTypes`,
 target hard-code the resource shape and the SCIM-compliance reports
 don't depend on these. They will be added in a follow-up if a target
 IdP starts requiring them.
+
+### Design decision: PATCH is `replace`-only, on purpose
+
+Full RFC 7644 §3.5.2 PATCH lets the IdP send `add` / `remove` against an
+*arbitrary `path`* — `members[value eq "x"].active`, nested filters, the
+lot. Honoring that means turning an attacker-influenced path string into
+a query against our data, which is path-injection surface for a feature
+almost no IdP connector actually exercises. So we ship the 5% that
+matters — `op: "replace"` carrying `active` (Okta's deactivate) or a
+whole-object replace (Azure's "send everything every poll") — and reject
+anything else with `400 invalidSyntax`. The trade-off is explicit: we are
+*not* RFC-complete on PATCH, and an exotic connector that insists on
+`add`/`remove` paths won't work until we extend it. In exchange we keep
+the parser tiny and the attack surface near zero. One guard rail on top:
+a PATCH whose ops we simply don't recognize is treated as a **no-op that
+echoes the current resource** (not a `500`), so a chatty IdP doesn't
+retry-loop on us (verified in `app/scim/v2/Users/[id]/route.ts`).
 
 ## Authentication
 

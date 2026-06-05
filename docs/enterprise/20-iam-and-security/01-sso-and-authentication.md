@@ -79,6 +79,18 @@ model OrganizationSSOSettings {
 - `breakGlassUntil` — time-boxed escape hatch for an IdP outage; see
   [Break-glass](#break-glass--idp-outage-escape-hatch).
 
+> **Two postures, one switch.** `enforceSSO` is what separates a
+> *hard* SSO tenant from a *convenience* one. Hypothetically, **Wipro**
+> (a seeded design-partner org) is the hard case: Okta SAML registered,
+> a verified `wipro.com` claim, `enforceSSO = true` — every `@wipro.com`
+> account *must* come through Okta, and a stray password login is vetoed.
+> **IIT Madras** (also seeded) is the soft case: it can register a
+> provider for the SSO button without setting `enforceSSO`, so campus
+> members keep the option of email login alongside SSO. Same tables, the
+> single boolean is the policy. (Neither posture is wired by the seed —
+> the seeded orgs carry no `ssoProvider` rows; this is the shape an
+> operator would configure.)
+
 Managed via `GET /api/organizations/[orgId]/sso` (MANAGER) and
 `PATCH /api/organizations/[orgId]/sso` (OWNER). The PATCH refuses to
 flip `enforceSSO=true` unless the org has at least one allowed domain
@@ -190,6 +202,65 @@ yourself out:
 5. **Domain claim release is DELETE-by-owner.** Not
    DELETE-by-anyone-with-matching-email.
 
+## Design decisions & trade-offs
+
+**Enforcement is a server-side session *veto*, not a client-side
+redirect.** The naïve way to "enforce SSO" is to make the login page
+notice an enforced domain and bounce the browser to the IdP. That is
+UX, not security: a raw `POST /api/auth/sign-in/email` from `curl`
+never renders the login page, so it sails straight past a redirect and
+mints a session. The gate therefore lives in
+`databaseHooks.session.create.before` → `shouldRejectSession`
+(`lib/sso/enforce-session.ts`), which runs *inside* BetterAuth on every
+auth path **before the cookie is issued** — credential, OAuth, SSO, and
+signup alike. The cost of the veto is one extra DB round-trip per
+session-create (the `lookupEnforcedOrg` read); the alternative — trusting
+the client — was the actual bug (#673). The read-time `customSession`
+`ssoEnforcementFailed` flag is kept as defence-in-depth, but it is the
+backstop, not the gate.
+
+**Domain ownership is proven by DNS-TXT, not by email round-trip.** An
+email-based check ("we sent a code to `admin@acme.com`, paste it back")
+proves you control *one mailbox*, not the *domain* — and the whole point
+of `OrgDomainClaim` is to assert the org is the exclusive home for
+*every* `@acme.com` user. Only the DNS zone owner can publish
+`_familiarise-verify.<domain>`, so a TXT record is the right strength of
+proof for a claim that gates other people's logins. It costs the
+operator a trip to their DNS console (and the propagation wait), but it
+is the difference between "someone with an `@acme.com` inbox" and "the
+party that runs `acme.com`." Until `verifiedAt` is set, the claim is
+recorded for audit but never honored by `lookupEnforcedOrg`.
+
+### What this design survived
+
+- **Raw-POST session minting under `enforceSSO` (#673).** Before the
+  pre-cookie veto, `enforceSSO` was a read-time flag only: a direct
+  `POST /api/auth/sign-in/email` minted a real session and merely got
+  `ssoEnforcementFailed` stamped on it after the fact. The fix moved the
+  primary gate into `session.create.before` and routed both the veto and
+  the read-time flag through the *same* `lookupEnforcedOrg` helper so
+  they can't drift — the comment block at the top of
+  `lib/sso/enforce-session.ts` calls out #673 explicitly.
+- **Garbage SAML certs crashing first sign-in (commit `fb68386c`, audit
+  Phase A.2).** A `z.string().min(1)` cert schema let an operator paste a
+  base64 *fingerprint* (or a body with no PEM markers) and save it. The
+  break came later, deep in BetterAuth's SAML adapter, as an
+  empty-bodied `500` the moment a real user clicked "Sign in with SSO" —
+  with no UI feedback. `validateSamlCert` (`lib/sso/provider-schemas.ts`)
+  now parses the PEM through Node's `X509Certificate` *at registration
+  time* and fails closed with a copy-paste-able error. The same helper is
+  reused by the pre-auth `domain-check` probe and the expiry cron, so a
+  legacy row that predates the validator still gets caught.
+- **Silent cert expiry (`scripts/cleanup/sso-cert-expiry-alert.ts`).**
+  Most "SSO suddenly broke" pages are an expired signing cert nobody was
+  watching. The daily cron parses each SAML provider's `notAfter` and
+  audits `SSO_CERT_EXPIRING` at `WARN` (≤30d), `CRITICAL` (≤7d), and
+  `EXPIRED` (past due) — the 30/7 split is the standard heads-up cadence
+  (`WARN_DAYS = 30`, `CRITICAL_DAYS = 7` in the script), so you get a
+  month's warning and then a louder one inside the danger week. It dedupes
+  within a 20h window so a double-run can't double-alert, and skips OIDC
+  (no stored cert).
+
 ## Break-glass — IdP-outage escape hatch
 
 🔒 `#779 §E`. SSO enforcement closes a door; break-glass is the keypad
@@ -220,6 +291,47 @@ and the read-time `ssoEnforcementFailed` flag stand down for the
 window. No flag is flipped on individual sessions; expiry of the
 timestamp restores enforcement automatically on the next request — no
 second admin action required.
+
+**The story, end to end.** Take **Wipro** (one of the seeded design-partner
+orgs) and suppose — hypothetically; the seed does *not* wire SSO — its
+IT team has enforced Okta SAML for `@wipro.com`. At 02:00 on a release
+night Okta pushes a config change and the SAML metadata goes stale.
+Every `@wipro.com` login now hits the `SSO_REQUIRED` veto: nobody can
+get in, and the one person who *could* fix the Okta side is also locked
+out of Familiarise. An OWNER (`tour-owner@familiarise.dev` in the seed)
+opens a 4-hour break-glass window, logs in with a password, fixes Okta,
+and closes the window early — total blast radius bounded to those four
+hours and one audit row.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor O as OWNER (Wipro)
+  participant API as break-glass route
+  participant DB as Postgres
+  participant Veto as session.create.before veto
+  Note over O,Veto: 02:00 — Okta SAML metadata goes stale.<br/>Every @wipro.com login is rejected SSO_REQUIRED.
+  O->>API: POST .../sso/break-glass { hours: 4, reason }
+  API->>DB: requireOrgOwner + enforceSSO? (404 if not enforced)
+  API->>DB: SET breakGlassUntil = now+4h<br/>+ SETTINGS_CHANGED audit row (reason, hours)
+  API-->>O: 200 { breakGlassUntil }
+  Note over O,Veto: window OPEN — lookupEnforcedOrg returns null
+  O->>Veto: password sign-in on @wipro.com
+  Veto->>DB: lookupEnforcedOrg("wipro.com") → null (break-glass)
+  Veto-->>O: session minted ✅ (no SSO_REQUIRED)
+  Note over O: fix Okta metadata, then close early
+  O->>API: DELETE .../sso/break-glass
+  API->>DB: breakGlassUntil = null + audit "closed"
+  API-->>O: 200 { breakGlassUntil: null }
+  Note over O,Veto: enforcement restored on next request —<br/>no per-session flag to unwind
+```
+
+Two facts the diagram makes load-bearing, both verified in
+`app/api/organizations/[orgId]/sso/break-glass/route.ts`: the route
+`404`s if `enforceSSO` isn't actually on (there is nothing to break), and
+DELETE is *optional* — if the OWNER forgets it, `breakGlassUntil > now`
+simply goes false at the deadline and enforcement resumes on the next
+`lookupEnforcedOrg` call. Closing early just shrinks the window.
 
 **Why no who/why columns.** The actor (`actorMembershipId`) and the
 operator-supplied `reason` live in the `OrgAuditLog` row, not as

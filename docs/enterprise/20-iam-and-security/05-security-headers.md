@@ -1,9 +1,43 @@
 # Security headers
 
+**New here?** HTTP response headers are instructions the server hands
+the browser on every page: *don't let other sites frame me*
+(`X-Frame-Options`), *only talk to me over HTTPS*
+(`Strict-Transport-Security`), *only load scripts from this allow-list*
+(`Content-Security-Policy`, "CSP"). They cost nothing at runtime and are
+the first thing a large-customer security review greps for, so getting
+them right is table stakes for enterprise.
+
 PR #655 adds the two missing headers that block any large-customer
 security review on Familiarise: `Content-Security-Policy` (report-only
 by default) and `Strict-Transport-Security`. The other five were
 already in place; they get a brief mention here for completeness.
+
+**Design decision: ship CSP in report-only first, enforce later.**
+A CSP that's even slightly too strict *breaks the page* — a blocked
+script is a blank dashboard, in production, for everyone. So the policy
+ships as `Content-Security-Policy-Report-Only`: the browser evaluates
+every directive and *reports* what it would have blocked, but blocks
+nothing. Violations POST to `/api/csp-report` and surface as
+`event: "csp_violation"` log lines, giving a real-traffic window to find
+the legitimate origin we forgot before any user hits a wall. Flipping
+`ENABLE_CSP_ENFORCE=true` swaps the header key to
+`Content-Security-Policy` — same directives, now enforced. The trade-off
+is that report-only protects *nothing* while it's on (a real injection
+isn't blocked, only logged); the bet is that a short observation window
+is cheaper than a production breakage, and the §Rollout schedule keeps
+that window bounded.
+
+```mermaid
+flowchart LR
+  B[Browser renders a page] -->|"loads a resource outside the allow-list"| EVAL{"ENABLE_CSP_ENFORCE?"}
+  EVAL -->|"false (report-only)"| ALLOW["resource LOADS + violation reported"]
+  EVAL -->|"true (enforce)"| BLOCK["resource BLOCKED + violation reported"]
+  ALLOW --> POST["POST /api/csp-report"]
+  BLOCK --> POST
+  POST --> LOG[("log line — event: csp_violation")]
+  LOG --> OP["operator scans during rollout, fixes allow-list"]
+```
 
 ## Header inventory (production)
 

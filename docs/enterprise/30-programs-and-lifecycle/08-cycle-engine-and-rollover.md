@@ -147,6 +147,43 @@ back-relation answers "where did this come from?". Reconcile
 ([ledger integrity](../10-money-and-ledger/09-ledger-integrity.md)) asserts no gap/overlap between a
 chained pair's periods.
 
+### Worked example — IIT Madras's credit pool rolls a month
+
+Take a student on the seeded **IIT Madras** `IIT Student Coaching Pool`
+(`CREDIT_POOL`, `MONTHLY`, `creditsPerCycle = 10,000` ⇒ ₹10,000/month) whose
+contract is **ACTIVE + auto-renewing** with a year-out `effectiveTo`. Their
+March assignment (`[2026-03-01, 2026-04-01]`) drew ₹6,300 of credit before the
+month closed. On the night of 2026-04-01 the cron sees `periodEnd <= now`, runs
+`decideCycleTransition` → **ROLL** (contract ACTIVE, autoRenew on, successor end
+`2026-05-01` is within `effectiveTo`), and in one Serializable tx writes:
+
+| | old row `A₁` (March) | successor `A₂` (April) |
+|---|---|---|
+| `id` | `…aaa1` | `…bbb2` (fresh) |
+| `periodStart` | `2026-03-01` | `2026-04-01` (= old `periodEnd`) |
+| `periodEnd` | `2026-04-01` | `2026-05-01` (`nextPeriodEnd`, MONTHLY) |
+| `status` | `ACTIVE → ROLLED` | `ACTIVE` |
+| `consumedPaise` | `630000` (frozen) | `0` (zeroed) |
+| `engagementsUsed` | (its count, frozen) | `0` |
+| `overageCount` | (frozen) | `0` |
+| `rolledAt` | `null → 2026-04-01T02:15Z` | `null` |
+| `rolledToAssignmentId` | `null → …bbb2` | `null` |
+
+Then a `PROGRAM_ASSIGNMENT_ROLLED` audit row lands. The March row's
+`consumedPaise = 630000` is **preserved**, not reset — that's the cycle's
+permanent record, and reconcile still asserts `A₁.consumedPaise == Σ price` of
+A₁'s `UsageLedgerEntry` rows. April starts the student at a clean ₹10,000 of
+headroom. The chain edge `A₁.rolledToAssignmentId = A₂.id` lets history walk
+forward; `A₂.rolledFromAssignment` walks back.
+
+> ⚠️ The seeded IIT contract leaves `autoRenew` at its `false` default, so a
+> literal seed-data run would **CLOSE** (`AUTORENEW_OFF`) rather than ROLL — the
+> example above assumes the auto-renewing variant to show the ROLL path. The
+> seed also seeds a year-long assignment window, not monthly; this walkthrough
+> uses MONTHLY periods (the program's actual `cycle`) to show a real rollover.
+> Both are faithful to the field shapes; only the contract's `autoRenew` toggle
+> differs from the seed.
+
 ## PAUSED / CANCELLED paths (off-engine)
 
 These transitions are driven by CRUD routes, not the cron:
@@ -184,7 +221,45 @@ CREDIT_POOL, `consumedPaise == sum(price)` **per assignment** — i.e. per cycle
 since each cycle is its own row. The `PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT`
 check ([ledger integrity](../10-money-and-ledger/09-ledger-integrity.md)) is the backstop.
 
-## Why this kills zombies (#779 §A/§B)
+## Design decisions & trade-offs
+
+- **Mint-successor vs mutate-in-place.** The engine could have just bumped the
+  existing row's `periodStart`/`periodEnd` and zeroed its counters in place — one
+  row, less storage. It mints a fresh row instead, for two reasons. **Audit
+  trail:** the closed cycle's `consumedPaise`/`engagementsUsed` stay frozen on
+  their own row, so "what did this student burn in March?" is a row lookup, not a
+  reconstruction from the ledger. **Idempotency:** a fresh row keyed by
+  `@@unique([programId, membershipId, periodStart])` plus
+  `rolledToAssignmentId @unique` means a double-fired cron trips `P2002` on the
+  second mint and skips cleanly — whereas an in-place mutation has no natural
+  unique to collide on, so a re-run would silently re-zero a cycle that had
+  already started accumulating usage. The cost is one row per cycle per member;
+  the win is a tamper-evident chain reconcile can assert gap/overlap-freedom
+  across.
+- **`decideCycleTransition` is ordered, and the clamp is the subtle edge.** The
+  four conditions evaluate top-down (`cycle-engine.ts`): contract not ACTIVE →
+  CLOSE; autoRenew off → CLOSE; successor end > `effectiveTo` → CLOSE (`CLAMPED`);
+  else ROLL. The first two are obvious; the **clamp** is the one that bites — a
+  contract that's ACTIVE *and* auto-renewing still CLOSEs the assignment if the
+  next period would end past the contract's hard `effectiveTo`, because rolling
+  would bill a cycle the term doesn't cover. An open-ended contract
+  (`effectiveTo = null`) never clamps. Keeping the function pure (no Prisma, no
+  IO) is what makes these month-end/clamp edges unit-testable without a DB.
+
+### 🛠️ What this design survived — the zombie assignments
+
+Before the cycle engine, an assignment's "is it still live?" was **inferred** at
+every read site from `periodEnd` vs `now`. That left **zombie assignments**: a row
+whose period had ended but which nothing ever advanced or closed. Its `periodEnd`
+was in the past, but its `engagementsUsed`/`consumedPaise` caps still sat there
+stale, its seat still counted toward `activeSeatCount`, and there was no fresh
+period for the member to draw against — the entitlement just silently rotted.
+Every consumer had to re-derive liveness, and any one that forgot the
+`periodEnd < now` check would read a dead row as live.
+
+`#779 §A/§B` (commit `52a6d37f`, whose message is literally *"cycle engine +
+contract auto-renew (kills the zombie assignments)"*) replaced inference with an
+explicit `AssignmentStatus` and a nightly job that *moves* every ended period:
 
 | Before | After |
 |---|---|
@@ -192,6 +267,13 @@ check ([ledger integrity](../10-money-and-ledger/09-ledger-integrity.md)) is the
 | Ended periods lingered as silent `ACTIVE`-by-default | nightly cron ROLLs or CLOSEs every ended period |
 | Contract expiry left assignments untouched | expire/terminate cascade closes them in-tx |
 | No idempotent successor minting | `rolledAt` + `rolledToAssignmentId @unique` |
+
+The subsystem checklist still tracks this as the line item *"Cycle auto-rollover
+at `periodEnd` … (kills zombie assignments)"*
+([90-audits/02-subsystem-checklist.md](../90-audits/02-subsystem-checklist.md)).
+The status column is now the single source of truth: a read site checks
+`status = ACTIVE`, never re-derives liveness from dates, and the cron guarantees
+no ended period stays `ACTIVE` past one nightly tick.
 
 ## Related docs
 

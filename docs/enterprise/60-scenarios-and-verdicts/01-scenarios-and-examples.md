@@ -1,6 +1,6 @@
 # Scenarios & worked examples — every permutation
 
-**What this covers:** the full cross-product of the enterprise axes — **capability** (`canSponsor` × `canHost`), **funding source**, **program type**, **overage behaviour**, **payout recipient** — what each combination means, which are valid, and then **detailed end-to-end playthroughs** (a startup, Wipro, LearnPro, a consulting firm, IIT Madras, a solo consultant) showing every leg, posting, and settlement — followed by the **v2 lifecycle & money-safety scenarios** (§5.11–§5.16: cycle rollover, surcharge + circuit-breaker overage, dunning, wallet floor, contract supersession, SSO break-glass). This is the doc to read once you understand the parts ([organization-types](../00-foundations/02-organization-types.md)–[ledger-integrity](../10-money-and-ledger/09-ledger-integrity.md), plus [contract-lifecycle](../30-programs-and-lifecycle/07-contract-lifecycle.md)/[cycle-engine-and-rollover](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md)) and want to see them compose.
+**What this covers:** the full cross-product of the enterprise axes — **capability** (`canSponsor` × `canHost`), **funding source**, **program type**, **overage behaviour**, **payout recipient** — what each combination means, which are valid, and then **detailed end-to-end playthroughs** (a startup, Wipro, LearnPro, a consulting firm, IIT Madras, a solo consultant, and a product company on the credit-pool money-meter — §5.10a) showing every leg, posting, and settlement — followed by the **v2 lifecycle & money-safety scenarios** (§5.11–§5.16: cycle rollover, surcharge + circuit-breaker overage, dunning, wallet floor, contract supersession, SSO break-glass). This is the doc to read once you understand the parts ([organization-types](../00-foundations/02-organization-types.md)–[ledger-integrity](../10-money-and-ledger/09-ledger-integrity.md), plus [contract-lifecycle](../30-programs-and-lifecycle/07-contract-lifecycle.md)/[cycle-engine-and-rollover](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md)) and want to see them compose.
 
 > Every steady-state example uses the seed cohort (`prisma/seedFiles/15a-create-organizations.ts`) so the numbers are real and reproducible. The v2 scenarios (§5.11–§5.16) are **time-based** — they only fire when a cron advances state past a `periodEnd` / `dueDate`, which the static seed hasn't yet hit; each one says explicitly whether it's seed-grounded or a hypothetical with exact field values. Postings are transcribed from [ledger & postings §4](../10-money-and-ledger/03-ledger-and-postings.md); read that first if a `Dr/Cr` block is unfamiliar. ₹ amounts are paise in code (₹1 = 100 paise).
 
@@ -72,7 +72,7 @@ Two knobs ride on top of the marginal (both per [programs §6](../30-programs-an
 
 ## 5. Worked examples
 
-Each shows **setup → a booking → the leg(s) → the ledger posting → settlement → reconcile**. They build up in capability order — **SPONSOR** (5.1–5.3) → **HOST** (5.4–5.5) → **HYBRID** (5.6, which combines both) → cross-cutting cases (5.7–5.10) → **v2 lifecycle & money-safety** (5.11–5.16: cycle rollover, surcharge + breaker overage, dunning, wallet floor, contract supersession, SSO break-glass).
+Each shows **setup → a booking → the leg(s) → the ledger posting → settlement → reconcile**. They build up in capability order — **SPONSOR** (5.1–5.3) → **HOST** (5.4–5.5) → **HYBRID** (5.6, which combines both) → cross-cutting cases (5.7–5.10, plus the product-company CREDIT_POOL money-meter §5.10a) → **v2 lifecycle & money-safety** (5.11–5.16: cycle rollover, surcharge + breaker overage, dunning, wallet floor, contract supersession, SSO break-glass).
 
 ### 5.1 A startup — SPONSOR · PERSONAL (attribution-only, the simplest)
 
@@ -221,12 +221,12 @@ A webinar co-hosted by two experts at **different** HOST orgs (LearnPro + Acme).
 
 > **Coverage gap (#773):** the per-collaborator HOST-org settlement writes the earnings rows, but the **balanced `BOOKING` journal txn is deferred** for multi-collaborator payments (single-consultant bookings post inline). Reconcile counts these as `earningsPaymentsWithoutBookingTxn` (informational, not a finding) until #773 lands the multi-leg posting. See [booking-to-earnings §3](../10-money-and-ledger/05-booking-to-earnings.md) and [ledger-integrity §2](../10-money-and-ledger/09-ledger-integrity.md).
 
-### 5.9 Rahul (solo consultant) — pure marketplace, the org-layer no-op
+### 5.9 Arjun (solo consultant) — pure marketplace, the org-layer no-op
 
-**Setup (seed):** `canSponsor=false, canHost=true` convenience org, but a booking against Rahul by a marketplace learner (no org context) takes the **marketplace** path:
+**Setup (seed):** `canSponsor=false, canHost=true` convenience org (`arjun-anderson-coaching-…`), but a booking against Arjun by a marketplace learner (no org context) takes the **marketplace** path:
 - `Payment.organizationId = null`; `PaymentLeg(source=CARD)` → `Dr CASH`.
 - `ConsultantEarnings` at the default split; **no `OrganizationEarnings`, no `BookingUtilization`** (no program), no wallet.
-- Rahul's payout runs via the consultant pipeline (`payout:<id>`).
+- Arjun's payout runs via the consultant pipeline (`payout:<id>`).
 
 This scenario exists to assert the **enterprise layer must not interfere with the marketplace flow**: every `lib/` enterprise primitive checks "is there an org?" before writing, and settlement short-circuits at `resolveOrgShare() === null`.
 
@@ -239,6 +239,44 @@ orgSharePaise        = 1000000 * 1000 / 10000 = 100000
 consultantSharePaise = 1000000 * 8000 / 10000 = 800000
 ```
 Integer division; any ±₹0.01 rounding remainder is absorbed in the platform line so the legs always sum to the gross. Splits are **basis points**, never floats ([money-model-overview](../10-money-and-ledger/01-money-model-overview.md)).
+
+### 5.10a Acmeware — SPONSOR · INVOICE · CREDIT_POOL · CHARGE_ORG (the money-meter, product-company shape)
+
+> **Hypothetical — not in the seed.** "Acmeware" is a fictional **product-based** software company (the seed's SPONSOR is the services enterprise Wipro, §5.2; the campus IIT, §5.6, is the only seeded CREDIT_POOL but it's WALLET-funded and never hits its cap). This scenario fills two gaps at once: the persona axis (a product company sponsoring its staff, distinct from a services firm / campus / provider / freelancer) **and** the only untold funding×program diagonal — **INVOICE · CREDIT_POOL** ([§3](#3-funding--program--what-the-program-adds) marks it valid; no worked example existed). Every field below maps to a real schema column; numbers are illustrative.
+
+**Setup.** Acmeware buys a coaching budget for its 60 product engineers, billed monthly in arrears (it has AP, not a prepaid float). `canSponsor=true, canHost=false`. `BillingAccount(fundingSource=INVOICE)`. A `CREDIT_POOL` program *"Acmeware IC Growth Pool"* — `CreditPoolConfig`: **`creditsPerCycle = 50_000`** (1 credit = ₹1, so a **₹50,000/month** budget — the cap is `creditsPerCycle × 100 = 5_000_000` paise), `cycle = MONTHLY`, `overageBehavior = CHARGE_ORG`, `overageSurchargeBps = 1000` (10%), **`maxOveragePerCyclePaise = 1_000_000`** (₹10,000 breaker). Engineers are LEARNERs on one shared pool assignment; the meter is `ProgramAssignment.consumedPaise` against the ₹50,000 cap (CREDIT_POOL burns by **price**, not engagement count — contrast Wipro's `engagementsUsed`).
+
+**A covered booking (within budget).** With `consumedPaise = ₹46,000`, engineer Dev books a ₹3,000 session. `₹46,000 + ₹3,000 = ₹49,000 ≤ ₹50,000` — covered. Unlike a LICENSE seat (§5.3) or a covered LICENSED_SEAT (§5.2) which post **0**, an INVOICE-funded covered booking still **accrues** (the org owes for it at cycle close):
+```
+BOOKING  booking:<paymentId>
+  Dr ORG_RECEIVABLE(acmeware)      300000   (INVOICE_ACCRUAL leg)
+     Cr PLATFORM_FEE                30000   (10%)
+     Cr CONSULTANT_PAYABLE(expert) 270000   (90%, expert settles SELF)
+```
+`recordBookingUtilization` increments `consumedPaise` (₹46,000 → ₹49,000) via the guarded conditional UPDATE (cap-check + increment can't race, [programs §schema](../30-programs-and-lifecycle/02-programs.md)) and writes the `UsageLedgerEntry(priceAtBookingPaise = 300000)` twin. Acmeware is `canHost=false`, so no `ORG_PAYABLE` leg — same collapse as §5.2.
+
+**An over-budget booking (the money-meter exhausts).** `consumedPaise = ₹49,000`; Dev books a **₹5,000** session. `₹49,000 + ₹5,000 = ₹54,000 > ₹50,000` — only ₹1,000 of budget remains, so the booking **straddles** the cap. The shared `computeOverageForBooking` mapper carves it ([booking-to-earnings §6.1](../10-money-and-ledger/05-booking-to-earnings.md)):
+```
+coveredPaise   = ₹1,000 remaining budget                          =  100000
+basePaise      = ₹5,000 − ₹1,000 over-cap pass-through            =  400000   (no priceCap on this config)
+surchargePaise = floor(basePaise × 1000 / 10000)                  =   40000   (10% of ₹4,000)
+marginalPaise  = basePaise + surchargePaise                       =  440000   (₹4,400)
+```
+Invariant holds: `coveredPaise + basePaise == ₹5,000` booking price. Cycle overage-so-far is ₹0, so `₹0 + ₹4,400 ≤ ₹10,000` breaker — clear. CHARGE_ORG carves `basePaise` out of the base accrual leg and writes the marginal as a distinct `OVERAGE_INVOICE_ACCRUAL` leg (distinct `source` dodges the `@@unique([paymentId, source])` clash):
+```
+BOOKING  booking:<paymentId>
+  Dr ORG_RECEIVABLE(acmeware)      100000   (INVOICE_ACCRUAL — the ₹1,000 covered remainder)
+  Dr ORG_RECEIVABLE(acmeware)      440000   (OVERAGE_INVOICE_ACCRUAL — the ₹4,400 marginal)
+     Cr PLATFORM_FEE                54000    (10% of ₹5,400)
+     Cr CONSULTANT_PAYABLE(expert) 486000    (90%)
+```
+`consumedPaise` saturates at the ₹50,000 cap; `BookingUtilization.wasOverage = true`; `OverageEvent(PENDING, basePaise=400000, surchargePaise=40000, marginalPaise=440000)`. At cycle close `settle-invoice-accruals` rolls both legs into one `OrganizationInvoice` and walks the event `PENDING → ACCRUED`; paying that invoice flips it → `CHARGED` ([§5.12](#512-overage-with-surcharge--circuit-breaker-v2) is the LICENSED_SEAT mirror of this exact mechanic).
+
+**The breaker veto (later in the cycle).** Once cumulative `OverageEvent.marginalPaise` this cycle nears ₹10,000, the next over-budget booking trips the circuit breaker: the mapper returns `decision: BLOCK, chargeTo: null` **regardless of `CHARGE_ORG`**, the recorder throws **`PROGRAM_CAP_EXHAUSTED` (402)**, and an `OverageEvent(BLOCKED)` is recorded — nothing books, no money moves ([§4](#4-program--overage--what-happens-at-the-cap) / [§5.12 step 3b](#512-overage-with-surcharge--circuit-breaker-v2)). The dashboard distinguishes "monthly ceiling reached" (cycle breaker) from "budget exhausted" (per-assignment cap).
+
+**Reconcile:** `consumedPaise` == `Σ UsageLedgerEntry.priceAtBookingPaise` for the period (the CREDIT_POOL twin of `PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT`); every `BOOKING` + invoice txn balances; the accrued `ORG_RECEIVABLE` clears on `INVOICE_PAID`.
+
+> **Why CHARGE_ORG and not CHARGE_MEMBER/WALLET here.** Both overage-routing paths carve `basePaise` out of the parent's **`INVOICE_ACCRUAL`** leg, so they presuppose INVOICE funding — a non-invoice (WALLET/PERSONAL) parent has no credit-back path yet and CHARGE_MEMBER **fail-closes** rather than double-charge (#715, [booking-to-earnings §6.3](../10-money-and-ledger/05-booking-to-earnings.md)). That's why the only clean worked CREDIT_POOL-overage shape is INVOICE-funded; a WALLET CREDIT_POOL (IIT, §5.6) runs `overageBehavior = BLOCK`.
 
 ---
 
@@ -395,7 +433,7 @@ sequenceDiagram
 | `wipro` | SPONSOR | INVOICE | LICENSED_SEAT (200 seats, 12/cycle) | PO ₹50,00,000; seat ₹25,000/yr |
 | `iit-madras` | HYBRID | WALLET | CREDIT_POOL (10,000/mo) | wallet ₹14,75,000 (3×₹5L − 5×₹5K) |
 | `learnpro-academy` | HOST | — | — | 10/10/80 rate card |
-| `<rahul>-coaching` | HOST | — | — | solo consultant, dynamic slug |
+| `arjun-anderson-coaching-…` | HOST | — | — | solo consultant, dynamic slug |
 
 Sign in as the seed users (`SEED_PASSWORD`, default `SeedPass123!`) to walk these live — see [design-partner-customer-set](03-design-partner-customer-set.md).
 

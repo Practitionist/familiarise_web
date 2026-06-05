@@ -12,9 +12,42 @@ subsidiary-scoping APIs that would consume them are stubbed 501. The
 columns exist to make the data model future-proof without committing to
 the UX yet.
 
-These columns were dropped in #768 and deliberately re-added in #771 D3
-once a conglomerate buyer became a near-term prospect — the cost of the
-second migration was the lesson that motivated keeping them this time.
+These columns were dropped in #768 (`4f80bac5` —
+_"drop Organization hierarchy (parentId/rootId/depth)"_, which also deleted
+`lib/api/organizations/hierarchy.ts` and the depth column) and deliberately
+re-added in #771 D3 once a conglomerate buyer became a near-term prospect —
+the cost of the **second** migration on a live table was the lesson that
+motivated keeping the columns this time, even with the UI deferred. The
+helpers that the drop removed have **not** come back; only the schema columns
+did (see "What is NOT implemented" below).
+
+## What the tree would look like (hypothetical, UI deferred)
+
+The shape these columns exist to support — a conglomerate parent with
+subsidiary orgs. Nothing below is wired in v1; this is purely what
+`parentOrganizationId` / `rootOrganizationId` would encode once the
+group-billing work (#771) ships:
+
+```mermaid
+flowchart TD
+  ROOT["IIT Madras (root)<br/>parent=null · root=null"]
+  CSE["Dept of CSE<br/>parent=IITM · root=IITM"]
+  EE["Dept of EE<br/>parent=IITM · root=IITM"]
+  CSE_UG["CSE — UG office<br/>parent=CSE · root=IITM"]
+  ROOT --> CSE
+  ROOT --> EE
+  CSE --> CSE_UG
+```
+
+Note the invariant the denormalised `rootOrganizationId` buys: every
+descendant points its `root` at the **group root** (IITM), not its immediate
+parent — so "every session booked by any IITM subsidiary this quarter" is a
+flat `WHERE rootOrganizationId = '<iitm-root-id>'` instead of a recursive CTE.
+The root org leaves both columns `null` rather than self-referencing (v1
+runtime behaviour; see "Creation invariants" below). **This tree cannot be
+created in v1** — `POST /api/organizations` accepts no `parentId` and every
+org it mints is a flat, null-hierarchy root. IIT Madras is used here only
+because it's the seeded campus org; the departments are illustrative.
 
 ## Schema
 

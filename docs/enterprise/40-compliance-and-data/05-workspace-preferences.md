@@ -1,5 +1,12 @@
 # Operator workspace preferences
 
+Plain version: one human can run several orgs (a consultancy with
+multiple client orgs, an M&A operator, a white-label reseller). This doc
+is the small bag of preferences that follows *the person* across all the
+orgs they touch — which org to open first, how loud notifications are,
+and how to format numbers in the cross-org rollup. It is deliberately
+*not* org settings; those follow the org.
+
 Cross-org operators (users who own / manage more than one Organization)
 get a per-account preferences row on `OrgWorkspaceProfile`. The
 preferences back the **Settings** tab on the workspace dashboard
@@ -10,6 +17,18 @@ These are **per-operator**, **cross-org** preferences. Per-organization
 settings (branding, SSO, billing config) live on the org itself at
 `/dashboard/organization/[orgId]/settings` — see
 [dashboard-pages](../30-programs-and-lifecycle/04-dashboard-pages.md).
+
+**Persona.** A consultant-ops operator owns both **Wipro** (a SPONSOR
+enterprise) and a **LearnPro** workspace (a HOST provider co). Their
+`OrgWorkspaceProfile` remembers that Wipro is the
+`defaultLandingOrganizationId` (so the dashboard opens there, not on the
+operator overview), keeps `notificationRoutingMode = EMAIL_ONLY` because
+the bell is noisy across two busy orgs, and pins `currencyDisplayCode =
+INR` so the cross-org "Outstanding" rollup reads in one currency — even
+though each org's own billing pages still render in their own billing
+currency. None of this touches either `Organization` row: swap the
+operator and the same two orgs would remember a different default
+landing and a different routing mode.
 
 ## Schema
 

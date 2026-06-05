@@ -55,6 +55,58 @@ flowchart TD
 
 The counter increment + ledger twin are written atomically in one transaction; see [concurrency & idempotency](01-concurrency-and-idempotency.md). `CREDIT_POOL` programs apply the same shape with the cap denominated in credits (1 credit = ₹1) — the meter is `consumedPaise` against `creditsPerCycle × 100`. The pre-checkout preview (`lib/payments/billing/overage-preview.ts`, route `GET /api/organizations/[orgId]/checkout/overage-preview`) is **advisory only** — it reuses the same `computeOverageForBooking` mapper over the assignment's *current* usage so preview and the checkout recorder can't drift, then the authoritative `OverageEvent` is persisted at checkout. The `base`/`surcharge` split lives on the `OverageEvent` (`marginalPaise == basePaise + surchargePaise`); the CHARGE_MEMBER timeout wall (14 days → `FAILED`) is the [timeout cron](01-concurrency-and-idempotency.md).
 
+### Walkthrough A — Wipro's licensed seats hit the cap (CHARGE_ORG)
+
+The seeded Wipro program (`Wipro Engineer Leadership`, `LICENSED_SEAT`,
+`coveredEngagementsPerCycle = 12`, `overageBehavior = CHARGE_ORG`,
+`priceCapPerEngagementPaise = ₹10,000`, no surcharge, ANNUAL) is the canonical
+"flat-fee with a safety valve" shape. Follow one learner's assignment across the
+cap boundary (the seed starts learner #0 at `engagementsUsed = 3`; here we walk
+the same row up to the edge):
+
+| Booking | `engagementsUsed` before | Price | Outcome | What gets written |
+|---|---|---|---|---|
+| 12th covered engagement | 11 | ₹8,000 | covered (last free seat) | `engagementsUsed → 12`, `BookingUtilization` + `UsageLedgerEntry`, no `OverageEvent` |
+| 13th (1st overage) | 12 | ₹12,000 | **CHARGE_ORG** | `engagementsUsed → 13`, `overageCount → 1`, `OverageEvent` |
+
+The 13th is the interesting one. `remainingSeats = max(0, 12 − 12) = 0`, so the
+whole booking is over-cap. The pass-through marginal would be the real ₹12,000,
+but `priceCapPerEngagementPaise` caps what the program will absorb per overage
+engagement at ₹10,000 — so `basePaise = min(₹12,000, 1 × ₹10,000) = ₹10,000`,
+`surchargePaise = 0` (no bps set), `marginalPaise = ₹10,000`,
+`coveredPaise = ₹2,000`. Because Wipro routes `CHARGE_ORG`, the booking
+**proceeds**: an `OverageEvent` (`PENDING`) is stamped and accrues onto the next
+`OrganizationInvoice` cycle (`PENDING → ACCRUED → CHARGED`). The learner pays
+nothing extra at checkout; their employer's AP sees the ₹10,000 on the invoice.
+Had Wipro set `maxOveragePerCyclePaise`, the same 13th booking would instead
+fall back to `BLOCK` once the cycle's cumulative `OverageEvent.marginalPaise`
+crossed that ceiling — the circuit breaker overrides `CHARGE_ORG`.
+
+### Walkthrough B — IIT Madras drains a credit pool (BLOCK)
+
+IIT's seeded program (`IIT Student Coaching Pool`, `CREDIT_POOL`,
+`creditsPerCycle = 10,000` ⇒ `creditBudgetPaise = 10,000 × 100 = ₹10,000/month`,
+MONTHLY, `overageBehavior` left at its `@default(BLOCK)`) meters in **paise on
+`consumedPaise`**, not engagement count. Same booking helper, different unit:
+
+| Booking | `consumedPaise` before | Price | Remaining budget | Outcome |
+|---|---|---|---|---|
+| early-month session | ₹0 | ₹3,000 | ₹10,000 | covered → `consumedPaise → ₹3,000` |
+| mid-month sessions | ₹7,000 | ₹2,000 | ₹3,000 | covered → `consumedPaise → ₹9,000` |
+| over-budget session | ₹9,000 | ₹3,000 | ₹1,000 | **402** — `ProgramAssignmentLimitError` |
+
+On the third booking `remaining = ₹10,000 − ₹9,000 = ₹1,000`, the ₹3,000 price
+exceeds it, and because the pool is `BLOCK`, `creditsPerCycle` is a **hard** cap:
+the guarded `updateMany WHERE consumedPaise <= budget − price` matches zero rows
+and checkout throws a 402 ([the race, drawn](01-concurrency-and-idempotency.md)).
+Nothing is half-written — the student picks a cheaper session or waits for the
+MONTHLY rollover, which mints a fresh assignment with `consumedPaise = 0` (see
+[cycle engine](08-cycle-engine-and-rollover.md)). Flip the same pool to
+`CHARGE_ORG` and the ₹2,000 over-budget portion would accrue to the invoice
+instead; the `creditsPerCycle` cap becomes *soft*. That single enum value is the
+whole difference between "students get cut off at ₹10,000" and "the dean's
+office eats the overflow."
+
 ## Schema
 
 ```prisma

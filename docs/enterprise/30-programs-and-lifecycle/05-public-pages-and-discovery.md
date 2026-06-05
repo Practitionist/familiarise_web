@@ -59,6 +59,35 @@ they accept `ORG_ONLY` for the viewer's own org by design. Routing every public
 surface through one constant keeps the tenant-private-catalog-leak class (#726)
 auditable.
 
+## The two discovery gates, drawn
+
+Discovery is two independent AND-gates: one decides whether the **org** appears
+at all, the other decides whether a given **plan** is safe to show. They don't
+interact — an `ORG_ONLY` plan stays hidden even on a fully public org, and a
+public plan on a non-public org is unreachable because there's no public org
+page to host it. Drawing both keeps the tenant-leak class (#726) legible:
+
+```mermaid
+flowchart TD
+  ORG["Organization"] --> G1{"isPublic = true<br/>AND canHost = true<br/>AND status = ACTIVE?"}
+  G1 -- no --> HIDE["not on /explore/enterprise/organisations<br/>(SPONSOR-only B2B clients never listed)"]
+  G1 -- yes --> LIST["listed + /[orgSlug] detail page<br/>(revalidate 60)"]
+
+  PLAN["per-type org plan<br/>(Consultation/Subscription/Webinar/Class)"] --> G2{"visibility ∈<br/>MARKETPLACE_VISIBILITY?<br/>{PUBLIC, ORG_AND_PUBLIC}"}
+  G2 -- "ORG_ONLY" --> PHIDE["filtered out of /explore/**<br/>+ public plan-list APIs"]
+  G2 -- yes --> PSHOW["surfaced on marketplace<br/>+ rendered on org detail (≤6/type)"]
+
+  LIST -.->|org page renders only| PSHOW
+  note1["org-internal catalog endpoints<br/>deliberately SKIP the plan filter<br/>(operators see their own ORG_ONLY)"] -.-> G2
+```
+
+The org-gate is hard-coded in `GET /api/organizations/public` (and the
+`[orgSlug]` detail loader); the plan-gate is the single `MARKETPLACE_VISIBILITY`
+constant composed into every public plan-list `where`. Routing all four
+per-type surfaces through one constant is the deliberate choice — a dropped
+filter on any one of them would be a private-catalog leak, so there's exactly
+one place to audit.
+
 ## Public org pages
 
 A HOST/HYBRID org that sets `Organization.isPublic = true` becomes discoverable:

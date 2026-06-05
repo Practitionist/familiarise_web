@@ -4,6 +4,15 @@ This document is the source of truth for every alert, metric, and
 observability signal the enterprise platform emits. Pair it with
 `runbooks` for the response procedures.
 
+> **First on-call? Use it like this.** You get paged → the alert names a
+> **condition** and a **runbook anchor** (the *Alerts* tables below). Open
+> that anchor in [`./03-runbooks.md`](03-runbooks.md) and execute it
+> top-to-bottom — every Critical alert maps to one. If you're staring at a
+> raw `SystemEvent` instead of a tuned alert, its `category` (`PAYOUT` /
+> `RECONCILE` / `WEBHOOK` / `DATA_EXPORT`) tells you which subsystem and
+> therefore which runbook section. Don't tune thresholds mid-incident —
+> the numbers here are 30-day starting points, not gospel.
+
 ---
 
 ## Principles
@@ -212,6 +221,33 @@ dashboard first; promote to warning/critical once you've seen the
 baseline.
 
 ## Alerting sink — Better Stack Telemetry (#776 §K)
+
+How a caught failure becomes a page. The `SystemEvent` row is the source
+of truth (always written, even with the sink off); Better Stack is the
+*delivery* leg that turns a cold row into something an on-call human
+actually sees. The flag `ENABLE_BETTERSTACK_TELEMETRY` is the only switch
+between "rots in a table" and "wakes someone".
+
+```mermaid
+flowchart TD
+  CS["emitter callsites:<br/>jobs/reconcile/reconcile-ledgers.ts<br/>jobs/payouts/handle-stuck-payouts.ts<br/>jobs/cleanup/dispatch-outbound-webhooks.ts<br/>app/api/webhooks/razorpay/route.ts<br/>+ refund / reversal / earnings services"]
+  CS --> REC["recordSystemEvent /<br/>recordSystemError<br/>(lib/enterprise/system-events.ts)"]
+  REC --> DB[("SystemEvent row<br/>(source of truth,<br/>always written)")]
+  REC --> GATE{ENABLE_BETTERSTACK_<br/>TELEMETRY === true<br/>+ token & URL set?}
+  GATE -->|"no"| COLD["cold storage —<br/>queryable via<br/>GET /api/admin/system-events"]
+  GATE -->|"yes (fire-and-forget,<br/>3s timeout, never blocks)"| BS["emitTelemetryLog →<br/>Better Stack Telemetry<br/>(lib/observability/<br/>betterstack-telemetry.ts)"]
+  BS --> SEV{severity}
+  SEV -->|"INFO"| DASH["dashboard / live tail<br/>(breadcrumb)"]
+  SEV -->|"WARN"| BELL["Slack / bell<br/>(no page)"]
+  SEV -->|"ERROR"| ONCALL["page on-call<br/>(reconcile crash,<br/>permanent payout failure,<br/>HMAC failure)"]
+```
+
+> The severity → channel mapping (INFO dashboard / WARN Slack / ERROR
+> page) is **policy you configure in Better Stack**, not something the
+> code enforces — the code only sets `level` from `SystemEventSeverity`
+> (`lib/enterprise/system-events.ts` `severityToTelemetryLevel`). The
+> *Alerts* tables above are the contract for what each severity should
+> route to.
 
 `recordSystemEvent` / `recordSystemError` (`lib/enterprise/system-events.ts`)
 write the `SystemEvent` table (source of truth) and, when

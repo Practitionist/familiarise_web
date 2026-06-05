@@ -1,5 +1,18 @@
 # API reference
 
+> **How to read this table.** Each row is one `path × verb`.
+> **Min role** is the *floor* — `requireOrgAccess(orgId, minRole)` (or
+> `requireOrgOwner`) from `lib/auth-helpers.ts`; higher ranks and
+> platform admins always pass. 🔒 rows gate on
+> `requireOrgBillingAdminOrOwner` (`lib/auth/billing-admin-gate.ts`,
+> OWNER ∨ BILLING_ADMIN) instead; 🔓 marks the one **field-level RBAC**
+> route. **Audit actions** are the exact string literals the handler
+> emits to `OrgAuditLog` on success (`—` = no audit row); the `(CATEGORY)`
+> is the `OrgAuditCategory`. To verify a row against code: open the route
+> file under `app/api/organizations/**`, confirm the gate call at the top
+> and the `AUDIT_ACTIONS.<CAT>.<NAME>` constant at the write site
+> (`lib/enterprise/audit-actions.ts`).
+
 Every enterprise-layer HTTP endpoint, exhaustively. Roles are the
 *minimum* required role — higher-rank roles and platform admins
 always pass. Audit actions are the string literals emitted by the

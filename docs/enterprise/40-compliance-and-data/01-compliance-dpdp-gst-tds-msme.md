@@ -2,7 +2,40 @@
 
 **What this covers:** where the enterprise subsystem *touches* India statutory compliance, and the journal/schema hooks behind each. This is the **enterprise-side map**; the authoritative rules, rates, thresholds, and roadmap live in [`../compliance/`](../../compliance/00-overview.md) — this doc links out rather than restating tax law.
 
+New to this codebase? Four India rails matter for B2B: **GST** (the sales tax we add to invoices), **TDS** (tax withheld *out of* what we pay consultants/host-orgs), **MSME** (a law forcing prompt payment to small suppliers), and **DPDP** (India's GDPR-equivalent privacy law). This doc is the thin "which model/cron implements which rail" index — every rail is one or two columns plus a cron, and the deep rules live one tree over in `docs/compliance/*`.
+
 > **Division of labour.** `docs/compliance/*` owns the regulatory obligation (what the law requires). This doc owns the wiring (which model/posting/cron implements it on the enterprise side). When they disagree, the compliance docs win on *rules*, the code wins on *behaviour*.
+
+```mermaid
+flowchart LR
+    subgraph RAILS["India rail"]
+        GST([GST · output tax])
+        TDS([TDS · withheld at payout])
+        MSME([MSME 43B-h · 15/45-day])
+        DPDP([DPDP 2023 · privacy])
+    end
+    subgraph IMPL["Enterprise model / cron that implements it"]
+        GSTI["OrganizationTaxInfo + GST cols<br/>deriveGstBreakdown · irp-uploader"]
+        TDSI["OrganizationPayout.tds*<br/>computeTdsForPayout · TdsAdjustment"]
+        MSMEI["OrganizationMsmeInfo.mustPayByDate<br/>msme-payment-alerts cron"]
+        DPDPI["ConsentArtifact · ErasureRequest<br/>OrgDataExportJob · DataBreach"]
+    end
+    subgraph OWNS["docs/compliance/* doc that owns the rule"]
+        GSTD["02-gst-overview.md"]
+        TDSD["01-tds-overview.md<br/>05-refund-tax-adjustments.md"]
+        MSMED["03-msme-43b-h.md"]
+        DPDPD["08-dpdp-and-privacy.md"]
+    end
+    GST --> GSTI --> GSTD
+    TDS --> TDSI --> TDSD
+    MSME --> MSMEI --> MSMED
+    DPDP --> DPDPI --> DPDPD
+```
+
+Read the columns left-to-right: *rail → the enterprise schema/cron that
+wires it → the compliance doc that owns the rule*. The four numbered
+sections below expand each row; §5 lists the crons; §6 is the
+everything-else table.
 
 ---
 

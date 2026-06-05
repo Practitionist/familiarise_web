@@ -49,6 +49,42 @@ intuitive ones:
 `isAtLeastRole(actual, minimum)` (`lib/auth/role-ranks.ts`) returns
 `ORG_ROLE_RANK[actual] >= ORG_ROLE_RANK[minimum]`.
 
+### How a request resolves to allow / deny
+
+A new dev's first question is "given a role and a route, what actually
+decides?" Three mechanisms, applied per route family. The flowchart traces an
+org-scoped request through all three:
+
+```mermaid
+flowchart TD
+  REQ["request hits<br/>app/api/organizations/[orgId]/**"] --> AUTH{authenticated<br/>+ ACTIVE member?}
+  AUTH -- no --> D401["401 / 403<br/>(not a live member)"]
+  AUTH -- "yes (or ADMIN stub)" --> KIND{route family?}
+
+  KIND -- "most routes" --> RANK["requireOrgAccess(minRole)<br/>rank: RANK[actual] >= RANK[min]"]
+  RANK --> RANKOK{passes?}
+  RANKOK -- yes --> OK["✅ handler runs"]
+  RANKOK -- no --> D403R["403 INSUFFICIENT_ROLE"]
+
+  KIND -- "whole-surface financial<br/>(billing-account, payouts,<br/>invoices, POs, rate-cards,<br/>webhooks, data-exports)" --> DISJ["requireOrgBillingAdminOrOwner<br/>LEARNER floor → then disjunction"]
+  DISJ --> DISJOK{role == OWNER<br/>OR BILLING_ADMIN?}
+  DISJOK -- yes --> OK
+  DISJOK -- "no (incl. MAINTAINER!)" --> D403B["403 BILLING_ADMIN_OR_OWNER_REQUIRED"]
+
+  KIND -- "org PATCH<br/>(mixed-field row)" --> FIELD["field allowlist per touched key"]
+  FIELD --> FOWNER{role == OWNER?}
+  FOWNER -- yes --> OK
+  FOWNER -- no --> FALLOW{every touched field<br/>in caller's set?<br/>MAINTAINER_FIELDS ∪<br/>BILLING_ADMIN_FIELDS}
+  FALLOW -- yes --> OK
+  FALLOW -- no --> D403F["403 FIELD_RBAC_FORBIDDEN<br/>(names offending fields)"]
+```
+
+The load-bearing subtlety lives in the two right-hand branches: a
+higher-ranked `MAINTAINER` is **denied** on the financial branch (it's not
+`OWNER`/`BILLING_ADMIN`) and **excluded from billing fields** on the PATCH
+branch (`billingEmail` / `paymentTermsDays` aren't in `MAINTAINER_FIELDS`).
+Rank alone never reaches the finance surface.
+
 ### Why BILLING_ADMIN uses a disjunction gate, not a rank gate
 
 A naïve `requireOrgAccess(orgId, { minimumRole: "BILLING_ADMIN" })`
@@ -79,6 +115,47 @@ It deliberately does NOT pass `minimumRole: "BILLING_ADMIN"`, because that
 would let `MAINTAINER` (rank 80) through on the rank comparison. Pin-down
 regression: `__tests__/enterprise/billing-admin-gate.test.ts` asserts that
 `MAINTAINER` is **denied** even though its rank is higher.
+
+### Design story: why rank-70 touches billing that rank-80 cannot
+
+This looks upside-down the first time you see it: `BILLING_ADMIN` (rank 70)
+can PATCH the wallet and cut payouts, while `MAINTAINER` (rank 80) — *higher*
+on the ladder — gets a 403 on those exact routes. It is deliberate, and the
+reasoning is recorded in `lib/auth/billing-admin-gate.ts`:
+
+> _"The two roles are governance-orthogonal: one is the org-admin surface,
+> the other is the finance surface. A rank-based gate would conflate them.
+> Hence the explicit disjunction here."_
+
+The driver (from `MEMBER_ROLE_DESCRIPTION` in `lib/labels/org-labels.ts`):
+large orgs delegate AP/GL to a finance team that needs invoice + payout +
+rate-card + wallet rights **without** the ability to touch SSO, the member
+roster, or org status. So the ladder ranks `BILLING_ADMIN` *above* `MANAGER`
+(it has more financial privilege) but *below* `MAINTAINER` on the org-admin
+axis — and the rank number is then **never used** to gate billing. Billing
+routes use the OWNER ∨ BILLING_ADMIN disjunction; SSO/member routes gate at
+`MAINTAINER`+ and so auto-deny `BILLING_ADMIN`. The two surfaces don't
+overlap by construction.
+
+`BILLING_ADMIN` was added by **PR #655** (the enterprise foundation; the gate
+helper was wired in `f7133eaa`). The regression that pins the counter-intuitive
+half down is `__tests__/enterprise/billing-admin-gate.test.ts`, which asserts
+`MAINTAINER` is denied **despite** its higher rank — if someone "simplifies"
+the gate to `minimumRole: "BILLING_ADMIN"` later, that test goes red.
+
+**Who holds what at Wipro (seeded `wipro` org).** A concrete read of the three
+operator tiers:
+
+| Role | At Wipro | Sees / can do |
+|------|----------|----------------|
+| `OWNER` | the corporate-ops admin who created the org (the seeded `tour-owner@familiarise.dev` is an OWNER of `wipro`) | everything — capability flips, GSTIN/PAN, SSO, member roster, delete, **and** all billing |
+| `BILLING_ADMIN` | a hypothetical AP clerk in Wipro's finance team | the ₹50L PO, the draft `INV-WIP-2026-0001`, NET-60 terms, rate cards, wallet — but **not** the member roster or SSO |
+| `MANAGER` | a hypothetical L&D lead running the Engineer Leadership Program | team analytics, seat management, **read-only** views of invoices/earnings/payouts — no money mutation, no roster changes |
+
+(Wipro is seeded with one OWNER membership + three LEARNERs; the
+BILLING_ADMIN and MANAGER rows above are illustrative — the seed doesn't
+populate every operator tier, but the gate matrix below applies the moment
+one is invited.)
 
 ### Two enforcement shapes: route-level gate vs field-level gate
 

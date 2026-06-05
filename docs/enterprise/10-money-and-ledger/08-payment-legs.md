@@ -96,6 +96,21 @@ sum (excl. LICENSE=0): 200,000  ==  Payment.amount: 200,000
 
 The resulting booking posting debits `PLATFORM_PROMO` 50,000 + `CASH` 150,000 against the fee/payable/GST credits.
 
+### 4.1 A wallet + referral + card stack
+
+The canonical three-source stack the mental model opens with. A learner books a ₹3,000 (300,000 paise) session sponsored by a **WALLET-funded org** (`fundingSource = WALLET`) that has ₹2,000 of wallet balance left; the learner also holds ₹200 of referral credit; the card covers the rest. Checkout allocates **in priority order** — entitlement/wallet first, then platform credits, card last:
+
+```
+price:                 300,000
+  - wallet covers:     200,000  → PaymentLeg(WALLET,          amountPaise=200000)
+  - referral covers:    20,000  → PaymentLeg(REFERRAL_CREDIT, amountPaise=20000)
+  - card covers:        80,000  → PaymentLeg(CARD,            amountPaise=80000)
+
+sum: 300,000  ==  Payment.amount: 300,000
+```
+
+The `walletDebit()` overdraft guard ([wallet & top-ups §4](04-wallet-and-topups.md)) atomically tests-and-decrements the ₹2,000 → ₹0 cache in the same tx the `WALLET` leg is written. The booking posting then debits `WALLET(org) 200,000` + `PLATFORM_PROMO 20,000` (the referral credit the platform eats) + `CASH 80,000`, balanced against the fee/payable/GST credits ([booking → earnings §3](05-booking-to-earnings.md#3-the-booking-posting)). Three sources, three legs, one `Payment` — and the journal's debit side is exactly those three legs summed by source ([ledger & postings §4.2](03-ledger-and-postings.md#42-booking--booking-bookingpaymentid)). Note `Payment.amount` here is the **full** 300,000 because none of these legs is excluded from it — unlike a pure referral-funded booking, where the credit is netted out of `amount` and the `DISCOUNT` plug picks up the gap (the trap behind the [booking → earnings §7 war story](05-booking-to-earnings.md#7-design-decisions--trade-offs)).
+
 ---
 
 ## 5. Refunds
@@ -109,9 +124,15 @@ Refunds are a `Refund` row (not an inverse leg) plus a `REFUND` journal transact
 
 ---
 
-## 6. Why `PaymentLeg`, not N columns on `Payment`
+## 6. Design decisions & trade-offs
 
-Sources are unbounded (already 6, more coming); columns would mean wide, mostly-null rows + a migration per source. The leg table indexes the `(paymentId, source)` join settlement and analytics need, and `sourceRef` avoids a JOIN to the credit/referral table from every settlement query.
+- **Stackable legs, not single-source payments.** The whole reason `PaymentLeg` exists: a real checkout funds *one* booking from *several* pools at once — a sponsor's wallet, the learner's referral credit, and a card top-up, as in §4.1. A single `Payment.fundingSource` enum would force "pick one," which means either refusing a booking the wallet can't fully cover or losing the credit. Modelling each contribution as a leg lets the price be satisfied by any combination, and makes the booking journal's debit side a direct sum-by-source of the legs ([ledger & postings §4.2](03-ledger-and-postings.md#42-booking--booking-bookingpaymentid)). The cost is a child table + the sum-identity invariant (§3); the benefit is funding composes.
+- **`PaymentLeg`, not N columns on `Payment`.** Given legs must exist, the next question is rows vs columns. Sources are unbounded (already 6, more coming); columns would mean wide, mostly-null rows + a migration per new source. The leg table indexes the `(paymentId, source)` join settlement and analytics need, and `sourceRef` avoids a JOIN to the credit/referral table from every settlement query.
+- **`@@unique([paymentId, source])` — one leg per source, dodged by a distinct overage source.** A duplicate-source leg fails on insert (`P2002`) rather than corrupting the sum (§3). This is also *why* `OVERAGE_INVOICE_ACCRUAL` is a separate enum value from `INVOICE_ACCRUAL`: a `CHARGE_ORG` overage needs its own leg on a payment that may already carry a base `INVOICE_ACCRUAL` leg, and a distinct source sidesteps the unique clash without a `legGroupId`. If split-billing across sub-orgs ever becomes real, the trade-off flips — drop the unique and add `legGroupId` (tracked follow-up).
+
+## 7. What this design survived
+
+- **The `CHARGE_ORG` overage that double-billed via an extra leg (`7f7e7d12`, #785 C3).** When an org-charged overage was recorded at checkout, the code **added** an `OVERAGE_INVOICE_ACCRUAL` leg for the marginal *on top of* the base `INVOICE_ACCRUAL` leg — but the base leg already covered the over-cap pass-through (`basePaise`). Because `rollupOrgInvoiceAccruals` sums **both** leg sources into the invoice ([invoicing §9](07-invoicing.md#9-overage-roll-up-into-a-line-item-715--775)), the org was billed `basePaise` **twice**, and `sum(PaymentLeg.amountPaise)` no longer equalled `Payment.amount` — tripping the reconciler's `PAYMENT_LEG_SUM_MISMATCH` ([ledger integrity](09-ledger-integrity.md)). The fix **carves** `basePaise` *out* of the base `INVOICE_ACCRUAL` leg and writes only the genuinely-additional surcharge as the overage leg, so the two legs sum to the price exactly. The symmetric `CHARGE_MEMBER` carve (so `basePaise` isn't collected on both the org's parent leg and the member's side-charge) shipped in the same commit — latent, since no `CHARGE_MEMBER` program is configured yet. This is the invariant in §3 rule 1 doing its job: the leg-sum identity is what made a silent double-bill a *loud* reconcile finding.
 
 ---
 

@@ -25,6 +25,29 @@ The `>= :amountPaise` predicate **is** the lock: Postgres takes a row-level writ
 ## Booking utilization (counter + usage ledger in lock-step)
 `recordBookingUtilization` — one transaction: claim cap headroom with a guarded conditional UPDATE (`updateMany WHERE engagementsUsed <= cap - :n`, so the cap check and the increment can't race), then create `BookingUtilization` + its `UsageLedgerEntry` twin (`consumedPaise` is the CREDIT_POOL twin, metered against `creditsPerCycle × 100`). When the guarded update matches zero rows the booking is over-cap: either checkout refuses (`BLOCK` → `ProgramAssignmentLimitError`) or the overage path bills it (`wasOverage = true`, persists an `OverageEvent`). The reconciler's `PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT` is the backstop ([ledger integrity](../10-money-and-ledger/09-ledger-integrity.md)).
 
+**The race, drawn.** Picture the last covered seat on a Wipro learner's BLOCK assignment (`coveredEngagementsPerCycle - engagementsUsed == 1`) and two browser tabs hitting *Book* in the same millisecond. Both transactions read the same stable config and the same `engagementsUsed`; the correctness hinges entirely on the conditional UPDATE, because Postgres takes a row-level write lock the instant the first `updateMany` touches the row. The second transaction blocks on that lock, and when it unblocks it re-evaluates `WHERE engagementsUsed <= cap - 1` against the *already-incremented* value — which no longer matches — so it gets `count === 0` and throws. There is no read-then-write window to lose:
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant L1 as Learner tab A
+  participant L2 as Learner tab B
+  participant PG as Postgres (ProgramAssignment row)
+  Note over L1,L2: cap=12, engagementsUsed=11 → exactly 1 seat left
+  L1->>PG: BEGIN tx; UPDATE … WHERE engagementsUsed <= 12-1
+  L2->>PG: BEGIN tx; UPDATE … WHERE engagementsUsed <= 12-1
+  PG-->>L1: row-lock acquired → 1 row updated (used 11→12)
+  Note over L2,PG: blocks on L1's write lock
+  L1->>PG: COMMIT (BookingUtilization + UsageLedgerEntry written)
+  PG-->>L1: 200 — booked, covered
+  PG-->>L2: lock released; re-checks WHERE → 0 rows match
+  L2->>L2: count===0 → throw ProgramAssignmentLimitError
+  L2-->>L2: 402 (BLOCK) — "at cap"
+  Note over L1,L2: never two winners; the predicate IS the mutex
+```
+
+Swap `BLOCK` for `CHARGE_ORG` (Wipro's actual seed config) and tab B doesn't 402 — it takes the unconditional `update` branch, reads the post-increment value, sees `engagementsUsedAfter (13) > cap (12)`, flags `wasOverage` and persists an `OverageEvent` instead. Same lock, different verdict: the routing happens *after* the lock decides who crossed the cap, never before.
+
 ## Rate-card bump (two-step in one transaction)
 `bumpRateCard` — close the current card (`effectiveTo = at`) and insert a new one (`effectiveFrom = at`) in one tx. A degenerate same-instant race can overlap, but `findEffective` orders by `effectiveFrom DESC` so the winner's row wins lookups; money impact is nil because earnings already carry bps snapshots ([booking → earnings](../10-money-and-ledger/05-booking-to-earnings.md)).
 
@@ -95,6 +118,27 @@ The nightly lifecycle crons run on GitHub Actions (`.github/workflows/*.yml` →
 | `billing/dunning` stage 2 | `status='OVERDUE' AND lastDunningReminderAt = <value-read> AND dunningReminderCount < 3` → set `lastDunningReminderAt`, `increment dunningReminderCount` | the read-then-match on `lastDunningReminderAt` is the optimistic-lock (concurrent reminder loses) |
 
 The successor-mint chain (`rolledToAssignmentId @unique` + the zeroed-counter `ACTIVE` row) is the rollover idempotency anchor; `autoRenewedAt` is the contract-renewal anchor; `chargeTimedOutAt` is the member-overage-timeout anchor; `markedOverdueAt` / `lastDunningReminderAt` are the dunning anchors. None of these crons writes a `PAUSED` assignment (🟡 designed-not-active). Full state-machine detail: [cycle engine](08-cycle-engine-and-rollover.md), [contract lifecycle](07-contract-lifecycle.md).
+
+**Why "the claim *is* the lock" survives a double-fire.** GitHub Actions can re-run a workflow, and an overlapping replica can pick the same `ProgramAssignment` whose `periodEnd` just passed. Both `advance-program-cycles` instances see the row in their `findMany` candidate set; the safety lives in the per-row `Serializable` `$transaction` that *claims* the row with `updateMany WHERE status='ACTIVE' AND rolledAt IS NULL`. Exactly one claim flips `ACTIVE → ROLLED`; the other gets `count === 0` and returns `skipped` without minting anything. The `rolledToAssignmentId @unique` + successor `@@unique([programId, membershipId, periodStart])` are the belt-and-braces below that — if two runs ever slipped past the claim (they can't, but constraints don't trust prose), the second `create` trips `P2002`, which is caught and skipped:
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant C1 as cron run #1
+  participant C2 as cron run #2 (re-fire / replica)
+  participant PG as Postgres (assignment + successor)
+  Note over C1,C2: both findMany the same ended ACTIVE row
+  C1->>PG: tx1: UPDATE … SET status=ROLLED,rolledAt=now WHERE status='ACTIVE' AND rolledAt IS NULL
+  C2->>PG: tx2: same claim UPDATE
+  PG-->>C1: 1 row claimed
+  Note over C2,PG: serialized behind tx1's write
+  PG-->>C2: 0 rows (status already ROLLED) → return {skipped}
+  C1->>PG: INSERT successor (counters zeroed); link rolledToAssignmentId
+  C1->>PG: COMMIT → {rolled}
+  Note over C1,C2: one successor, one history edge; #2 is a clean no-op
+```
+
+This is the same shape every lifecycle cron in the table above uses (`autoRenewedAt`, `markedOverdueAt`, `chargeTimedOutAt` …) — a timestamp-or-status column that the claim stamps, doubling as the distributed lock, with a unique constraint as the last line of defence.
 
 ## Payment legs
 `PaymentLeg.sourceRef` carries the per-source key: `CARD` → gateway payment id; `REFERRAL_CREDIT` → `referralCreditUsageId`; `INVOICE_ACCRUAL`/`LICENSE` → `programAssignmentId`. `@@unique([paymentId, source])` blocks duplicate-source legs ([payment legs](../10-money-and-ledger/08-payment-legs.md)).

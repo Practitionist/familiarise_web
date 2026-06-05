@@ -5,6 +5,65 @@ external integrations (HRIS, finance ERP, customer-success tools) can
 react to lifecycle events without polling the dashboard or scraping the
 audit-log export.
 
+## Delivery lifecycle at a glance
+
+A "webhook" here is one row in `OutboundWebhookDelivery` — that table
+**is** the queue (no SQS/RabbitMQ; the platform runs on Netlify/Vercel
+where a first-class queue is a paid tier — `worker.ts` header, `4b4ce31`).
+A domain event inserts a `PENDING` row inside the *same* transaction as
+the business mutation, then a 1-minute cron drains it, signs it, POSTs
+it, and walks the backoff schedule on failure. The signature header is
+`t=<unix-seconds>,v1=<sha256-hex>` — Stripe's scheme, so a receiver
+ports its verifier mentally.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Route as Domain event<br/>(e.g. invoice.issued)
+    participant DB as OutboundWebhookDelivery<br/>(the queue)
+    participant Worker as runDispatchTick<br/>(1-min cron)
+    participant Rcv as Receiver endpoint
+
+    Route->>DB: insert row · status=PENDING<br/>(inside the caller's tx)
+    Note over Route,DB: dispatch.ts never HTTPs out — a slow<br/>receiver must not gate the OWNER's click
+    loop every 1 min, MAX_BATCH=50, due rows
+        Worker->>DB: claim row → status=IN_FLIGHT<br/>(soft lock; 2nd tick skips)
+        Worker->>Worker: sign body → t=…,v1=…<br/>(10s REQUEST_TIMEOUT_MS)
+        Worker->>Rcv: POST application/json + X-Familiarise-Signature
+        alt 2xx
+            Rcv-->>Worker: 200
+            Worker->>DB: status=SUCCESS · deliveredAt<br/>endpoint.failureCount=0
+        else 4xx (≠408/429) — malformed
+            Rcv-->>Worker: 400/403/404/410
+            Worker->>DB: status=FAILED (no retry)<br/>re-sending won't change it
+        else 5xx / 408 / 429 / timeout / network
+            Rcv-->>Worker: 503 (or hang → abort)
+            alt attempts < 5
+                Worker->>DB: status=RETRY · nextRetryAt += backoff<br/>(1m → 5m → 30m → 2h → 8h)
+            else attempts == 5
+                Worker->>DB: status=FAILED (terminal)<br/>~10h36m total wall-clock
+            end
+        end
+    end
+```
+
+The `id` on the body is **the** idempotency key — the same `id` lands
+more than once whenever a retry fires, so receivers must dedupe. If the
+operator PAUSEs/DISABLEs the endpoint after a row was queued, the worker
+marks that row `FAILED` (`worker.ts` `row.endpoint.status !== "ACTIVE"`)
+— the explicit pause beats the retry schedule.
+
+> **War story — why fire-and-forget, not a hosted queue.** The obvious
+> design is "POST the webhook from the route handler." It was rejected
+> on three failure modes spelled out in `dispatch.ts` (`4b4ce31`): a
+> slow integrator would leak latency into an OWNER's invoice-issue p99;
+> the open POST would hold the Serializable `$transaction` (and its PO /
+> wallet row locks) for the receiver's full RTT; and a `4xx` can't roll
+> back a `member.added` we already committed. So `dispatchWebhookEvent`
+> does one `SELECT` + N `INSERT`s on the caller's own `tx` and returns —
+> the receiver's health is fully decoupled from ours. The swap-in to SQS
+> later is a single function; everything else stays.
+
 ## Event catalog
 
 The catalog is closed. Adding a new event requires the corresponding
@@ -125,6 +184,63 @@ audit row with `graceWindowHours: 24`); the worker reads those columns
 on every tick and dual-signs accordingly. The new secret is returned
 **once** in the rotate response — the dashboard surfaces a copy-now
 affordance because subsequent GETs redact it.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Owner
+    participant API as POST /rotate-secret<br/>(OWNER-only)
+    participant EP as WebhookEndpoint
+    participant Worker as runDispatchTick
+    participant Rcv as Receiver (Wipro HRIS)
+
+    Note over EP,Rcv: before — both sides hold secret S_old
+    Owner->>API: rotate
+    API->>EP: secret = S_new<br/>previousSecretHash = S_old<br/>secretRotatedAt = now (one tx)
+    Note right of EP: previousSecretHash holds the prior<br/>VALUE, not a hash (legacy name, #768)
+
+    rect rgb(255, 243, 205)
+        Note over Worker,Rcv: GRACE — while now − secretRotatedAt ≤ 24h
+        Worker->>Rcv: POST  t=…, v1=sig(S_new), v1=sig(S_old)
+        Note over Rcv: verifier scans EVERY v1= →<br/>matches whichever secret it has adopted
+        Rcv-->>Worker: 200 (still on S_old? fine. On S_new? fine.)
+    end
+
+    Note over Rcv: Wipro updates its env var S_old → S_new<br/>any time inside the 24h window — zero dropped events
+
+    rect rgb(214, 245, 214)
+        Note over Worker,Rcv: AFTER 24h — single-sign with current
+        Worker->>Rcv: POST  t=…, v1=sig(S_new)
+        Rcv-->>Worker: 200
+    end
+```
+
+> **War story — rotation as a non-event (the Stripe/Svix pattern).** The
+> naive rotate is "overwrite `secret`, done" — which breaks every
+> in-flight receiver the instant it lands, because they're still
+> verifying with the old value. We adopted the
+> sign-with-both-during-an-overlap pattern that Stripe and Svix use
+> (web-validated 2026-06-05: Stripe signs with both old and new secrets
+> during a configurable overlap and its SDK verifiers accept either).
+> The producer side is `signPayload(secret, body, ts, previousSecret)`
+> appending a second `v1=` (`signing.ts`, `WEBHOOK_ROTATION_GRACE_MS =
+> 24h`); the consumer side is the reference verifier already iterating
+> every `v1=`. Shipped in `e542530` as a follow-up to the base subsystem
+> (`4b4ce31`). One stale doc-comment survives on the `WebhookEndpoint`
+> schema model claiming the route "overwrites secret directly" — that
+> comment pre-dates the grace and is wrong; the route + worker do the
+> full dance.
+
+**Persona — Wipro's HRIS endpoint.** Wipro (a SPONSOR enterprise in the
+design-partner set) subscribes its HRIS to `member.added` /
+`member.removed` so its internal directory mirrors who has an active
+seat. Their security team rotates webhook secrets quarterly. Without the
+grace window, every quarterly rotation would drop the deliveries in
+flight at the cutover instant — a `member.added` lost here means an
+engineer who never appears in the HRIS. With the 24h dual-sign, Wipro's
+ops rolls the env var whenever it's convenient inside the day, and not a
+single membership event is dropped: the worker is signing with both
+secrets the whole time.
 
 ## Retry semantics
 
