@@ -50,8 +50,8 @@ everything-else table.
 ## 1. GST (output tax on bookings & invoices)
 
 - **Where it posts.** Every booking credits `GST_PAYABLE` with `Payment.taxAmount` ([ledger & postings](../10-money-and-ledger/03-ledger-and-postings.md) §4.2); a refund reverses the prorated GST share (§4.7). `GST_PAYABLE` is a platform liability — collected, owed to the government until remitted.
-- **Invoice breakdown.** `OrganizationInvoice` carries `igstPaise` / `cgstPaise` / `sgstPaise` / `placeOfSupply`, derived by `deriveGstBreakdown()` (`lib/compliance/gst.ts`) from place-of-supply — intra-state splits CGST+SGST, inter-state is IGST. The org's GST identity lives on the `OrganizationTaxInfo` carve-out (`gstin`, `gstStateCode`, `gstRegStatus`, `hsnDefault` — #768 moved these off the `Organization` God-Model). See [invoicing](../10-money-and-ledger/07-invoicing.md).
-- **Credit notes on refund.** A refund mints a sequential `CreditNote` (per-org, CGST Rule 53) via the idempotent `mintRefundCreditNote` (`lib/payments/operations/refund.ts`; numbering in `lib/payments/billing/credit-note-numbering.ts`). `CreditNote.refundId @unique` makes minting idempotent across webhook redeliveries / cron retries. The invoice-side variant is `mintInvoiceRefundCreditNote`. See [invoicing](../10-money-and-ledger/07-invoicing.md).
+- **Invoice breakdown.** `OrganizationInvoice` carries `igstPaise` / `cgstPaise` / `sgstPaise` / `placeOfSupply`, derived by `deriveGstBreakdown()` (`lib/compliance/gst.ts`) from place-of-supply — intra-state splits CGST+SGST, inter-state is IGST. The org's GST identity lives on the `OrganizationTaxInfo` carve-out (`gstin`, `gstStateCode`, `gstRegStatus`, `hsnDefault` — #768 moved these off the `Organization` God-Model). See [invoicing](../10-money-and-ledger/08-invoicing.md).
+- **Credit notes on refund.** A refund mints a sequential `CreditNote` (per-org, CGST Rule 53) via the idempotent `mintRefundCreditNote` (`lib/payments/operations/refund.ts`; numbering in `lib/payments/billing/credit-note-numbering.ts`). `CreditNote.refundId @unique` makes minting idempotent across webhook redeliveries / cron retries. The invoice-side variant is `mintInvoiceRefundCreditNote`. See [invoicing](../10-money-and-ledger/08-invoicing.md).
 - **GST TCS (u/s 52).** Per-payment collection + per-earning accrual reconcile into one monthly `GstTcsBatch` (GSTR-8); refunds net a `GstTcsAdjustment` into the period's batch. Collection + filing are flag-gated pending CA sign-off.
 - **e-invoice / IRN.** `OrganizationInvoice.{irn, ackNumber, signedQrPayload, irpStatus, irpRetryCount}` are schema-final. The IRP uploader is **body-live but env-gated** behind `ENABLE_IRP_UPLOADER` + ClearTax GSP creds (`jobs/compliance/irp-uploader.ts` → `lib/compliance/irp.ts` `generateIrn`, payload mapper `lib/compliance/irp-payload.ts`); with creds absent `generateIrn` returns `{ status: "FAILED", reason: "STUB" }` and the cron records it as a normal retry. See [cross-cutting integrations](06-cross-cutting-integrations.md) (F.5).
 - **Detail:** [`../compliance/02-gst-overview.md`](../../compliance/02-gst-overview.md).
@@ -100,7 +100,7 @@ Audit-log retention (7y for INVOICE/PAYOUT/WALLET/CONTRACT/CONSENT, 2y otherwise
 ---
 
 ### Related docs
-- [Payout pipeline](../10-money-and-ledger/06-payout-pipeline.md) — TDS/MSME fields in the payout flow.
-- [Invoicing](../10-money-and-ledger/07-invoicing.md) — GST breakdown + IRN.
+- [Payout pipeline](../10-money-and-ledger/07-payout-pipeline.md) — TDS/MSME fields in the payout flow.
+- [Invoicing](../10-money-and-ledger/08-invoicing.md) — GST breakdown + IRN.
 - [Ledger & postings](../10-money-and-ledger/03-ledger-and-postings.md) — `GST_PAYABLE` / `TDS_PAYABLE` legs.
 - [`../compliance/00-overview.md`](../../compliance/00-overview.md) — the compliance index (authoritative).

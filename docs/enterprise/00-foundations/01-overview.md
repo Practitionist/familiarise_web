@@ -101,11 +101,11 @@ Where each hop's full story lives:
   (the `OverageEvent` state machine when this booking is #13, past the cap)
   and [funding-and-programs](03-funding-and-programs.md) (`coveredPlanTypes`,
   `OverageBehavior`).
-- **Payment legs** → [payment-legs](../10-money-and-ledger/08-payment-legs.md)
+- **Payment legs** → [payment-legs](../10-money-and-ledger/09-payment-legs.md)
   (`makeLeg`, the per-source `sourceRef` invariant).
 - **The split + the BOOKING posting** → [booking-to-earnings](../10-money-and-ledger/05-booking-to-earnings.md)
   (`RateCard` resolution, bps snapshot) and [ledger & postings](../10-money-and-ledger/03-ledger-and-postings.md).
-- **(Eventual) payout** → [payout-pipeline](../10-money-and-ledger/06-payout-pipeline.md);
+- **(Eventual) payout** → [payout-pipeline](../10-money-and-ledger/07-payout-pipeline.md);
   the `PENDING` earnings rows are rolled into an `OrganizationPayout` /
   `ConsultantPayout` later — disbursement is a separate cron, gated by
   `ENABLE_LIVE_PAYOUTS`.
@@ -141,7 +141,7 @@ the journey — each entry links to the band doc that carries the full story.
 - **#776 — v1 money core (+ #785 review hardening).** The reversal engine,
   credit notes, refund-cascade unification, idempotency keys, and the
   `LedgerAccountBalance` O(1) snapshot. See [money-model-overview](../10-money-and-ledger/01-money-model-overview.md)
-  and [ledger-integrity](../10-money-and-ledger/09-ledger-integrity.md).
+  and [ledger-integrity](../10-money-and-ledger/13-ledger-integrity.md).
 - **#777 — v2 customer experience (shipped as PR #787).** The state-aware
   `/home` activation + action center, field-level RBAC on org PATCH, and the
   revenue levers (IRN payload mapper, wallet floor, overage-as-expansion).

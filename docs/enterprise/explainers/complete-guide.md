@@ -2667,10 +2667,10 @@ Ledger recon:     reconcile-ledgers         (03:45 UTC)
 | `docs/enterprise/00-foundations/04-roles-and-permissions.md` | Permission matrix |
 | `docs/enterprise/00-foundations/05-organization-lifecycle.md` | Org status state machine |
 | `docs/enterprise/30-programs-and-lifecycle/03-expert-lifecycle.md` | EXPERT joining flow |
-| `docs/enterprise/10-money-and-ledger/06-payout-pipeline.md` | Settlement detail |
+| `docs/enterprise/10-money-and-ledger/07-payout-pipeline.md` | Settlement detail |
 | `docs/enterprise/20-iam-and-security/01-sso-and-authentication.md` | SSO implementation |
 | `docs/enterprise/10-money-and-ledger/04-wallet-and-topups.md` | Wallet + ledger |
-| `docs/enterprise/10-money-and-ledger/07-invoicing.md` | Invoice lifecycle |
+| `docs/enterprise/10-money-and-ledger/08-invoicing.md` | Invoice lifecycle |
 | `docs/enterprise/30-programs-and-lifecycle/05-public-pages-and-discovery.md` | Org marketplace pages |
 | `docs/enterprise/30-programs-and-lifecycle/04-dashboard-pages.md` | Dashboard UX |
 | `docs/enterprise/30-programs-and-lifecycle/06-feature-flags-and-rollout.md` | Env flags |
@@ -2683,9 +2683,9 @@ Ledger recon:     reconcile-ledgers         (03:45 UTC)
 | `docs/enterprise/10-money-and-ledger/01-money-model-overview.md` | Money model overview |
 | `docs/enterprise/10-money-and-ledger/02-chart-of-accounts.md` | Ledger account kinds |
 | `docs/enterprise/10-money-and-ledger/03-ledger-and-postings.md` | Ledger rules + canonical postings |
-| `docs/enterprise/10-money-and-ledger/09-ledger-integrity.md` | Reconciliation + finding codes |
+| `docs/enterprise/10-money-and-ledger/13-ledger-integrity.md` | Reconciliation + finding codes |
 | `docs/enterprise/60-scenarios-and-verdicts/02-harness-verdict.md` | Evaluation harness |
-| `docs/enterprise/10-money-and-ledger/08-payment-legs.md` | PaymentLeg detail |
+| `docs/enterprise/10-money-and-ledger/09-payment-legs.md` | PaymentLeg detail |
 | `docs/enterprise/50-operations/01-api-reference.md` | Every API route |
 | `docs/enterprise/50-operations/02-route-migration-table.md` | Old → new routes |
 | `docs/enterprise/50-operations/03-runbooks.md` | Operations runbooks |
@@ -2758,7 +2758,7 @@ A: Yes. Unused credits can be refunded; pro-rated based on usage.
 A: Contract-specific; typically ₹10L-₹50L initial; raised based on payment history.
 
 **Q17: What happens if a B2B invoice isn't paid by due date?**
-A: Say Meridian Consulting (a fictional customer we use for failure walk-throughs) misses its NET-60 date. The `dunning` cron flips the invoice `ISSUED → OVERDUE` (stamping `markedOverdueAt`) and sends Meridian reminders on a **7-day cadence, capped at 3**. A booking-suspension cascade is **designed but NOT active** (🟡) — `dunningSuspendedAt` is never written today, so an unpaid invoice does **not** currently auto-suspend the org. Don't promise customers automatic suspension. See [invoicing](../10-money-and-ledger/07-invoicing.md).
+A: Say Meridian Consulting (a fictional customer we use for failure walk-throughs) misses its NET-60 date. The `dunning` cron flips the invoice `ISSUED → OVERDUE` (stamping `markedOverdueAt`) and sends Meridian reminders on a **7-day cadence, capped at 3**. A booking-suspension cascade is **designed but NOT active** (🟡) — `dunningSuspendedAt` is never written today, so an unpaid invoice does **not** currently auto-suspend the org. Don't promise customers automatic suspension. See [invoicing](../10-money-and-ledger/08-invoicing.md).
 
 **Q18: Can members book with a different payer (personal card instead of org)?**
 A: Yes. Payer selector at checkout. Member picks.

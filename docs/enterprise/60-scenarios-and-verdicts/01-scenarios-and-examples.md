@@ -8,7 +8,7 @@ last-reviewed: 2026-06-05
 
 # Scenarios & worked examples — every permutation
 
-**What this covers:** the full cross-product of the enterprise axes — **capability** (`canSponsor` × `canHost`), **funding source**, **program type**, **overage behaviour**, **payout recipient** — what each combination means, which are valid, and then **detailed end-to-end playthroughs** (a startup, Wipro, LearnPro, a consulting firm, IIT Madras, a solo consultant, and a product company on the credit-pool money-meter — §5.10a) showing every leg, posting, and settlement — followed by the **v2 lifecycle & money-safety scenarios** (§5.11–§5.16: cycle rollover, surcharge + circuit-breaker overage, dunning, wallet floor, contract supersession, SSO break-glass). This is the doc to read once you understand the parts ([organization-types](../00-foundations/02-organization-types.md)–[ledger-integrity](../10-money-and-ledger/09-ledger-integrity.md), plus [contract-lifecycle](../30-programs-and-lifecycle/07-contract-lifecycle.md)/[cycle-engine-and-rollover](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md)) and want to see them compose.
+**What this covers:** the full cross-product of the enterprise axes — **capability** (`canSponsor` × `canHost`), **funding source**, **program type**, **overage behaviour**, **payout recipient** — what each combination means, which are valid, and then **detailed end-to-end playthroughs** (a startup, Wipro, LearnPro, a consulting firm, IIT Madras, a solo consultant, and a product company on the credit-pool money-meter — §5.10a) showing every leg, posting, and settlement — followed by the **v2 lifecycle & money-safety scenarios** (§5.11–§5.16: cycle rollover, surcharge + circuit-breaker overage, dunning, wallet floor, contract supersession, SSO break-glass). This is the doc to read once you understand the parts ([organization-types](../00-foundations/02-organization-types.md)–[ledger-integrity](../10-money-and-ledger/13-ledger-integrity.md), plus [contract-lifecycle](../30-programs-and-lifecycle/07-contract-lifecycle.md)/[cycle-engine-and-rollover](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md)) and want to see them compose.
 
 > Every steady-state example uses the seed cohort (`prisma/seedFiles/15a-create-organizations.ts`) so the numbers are real and reproducible. The v2 scenarios (§5.11–§5.16) are **time-based** — they only fire when a cron advances state past a `periodEnd` / `dueDate`, which the static seed hasn't yet hit; each one says explicitly whether it's seed-grounded or a hypothetical with exact field values. Postings are transcribed from [ledger & postings §4](../10-money-and-ledger/03-ledger-and-postings.md); read that first if a `Dr/Cr` block is unfamiliar. ₹ amounts are paise in code (₹1 = 100 paise).
 
@@ -100,7 +100,7 @@ BOOKING  booking:<paymentId>
 
 **Setup (seed):** `canSponsor=true, canHost=false`. `BillingAccount(fundingSource=INVOICE, requiresPO=true)`. A `PurchaseOrder` for **₹50,00,000**. A `LICENSED_SEAT` program *"Wipro Engineer Leadership Program"* — **200 seats**, **₹25,000/seat/year**, **`coveredEngagementsPerCycle = 12`**, `overageBehavior = CHARGE_ORG`. Members are LEARNERs; the OWNER is Head of People Ops, with a **BILLING_ADMIN** from finance managing POs/invoices.
 
-**Seat subscription (the recurring money).** The 200 seats × ₹25,000 bill via `BillingSubscription` → `OrganizationInvoice` against the PO. Issuing the invoice decrements `PurchaseOrder.remainingAmountPaise` (atomic compare-and-swap, [invoicing §6](../10-money-and-ledger/07-invoicing.md)); paying it posts:
+**Seat subscription (the recurring money).** The 200 seats × ₹25,000 bill via `BillingSubscription` → `OrganizationInvoice` against the PO. Issuing the invoice decrements `PurchaseOrder.remainingAmountPaise` (atomic compare-and-swap, [invoicing §6](../10-money-and-ledger/08-invoicing.md)); paying it posts:
 ```
 INVOICE_PAID  invoicepaid:<invoiceId>
   Dr CASH(platform)            <invoice total>
@@ -227,7 +227,7 @@ The cap-check + counter increment are atomic ([concurrency-and-idempotency](../3
 
 A webinar co-hosted by two experts at **different** HOST orgs (LearnPro + Acme). Each collaborator's `revenueShareBps` slices the consultant pool; each org accrues its own `OrganizationEarnings` (one row per `(paymentId, organizationId)`).
 
-> **Coverage gap (#773):** the per-collaborator HOST-org settlement writes the earnings rows, but the **balanced `BOOKING` journal txn is deferred** for multi-collaborator payments (single-consultant bookings post inline). Reconcile counts these as `earningsPaymentsWithoutBookingTxn` (informational, not a finding) until #773 lands the multi-leg posting. See [booking-to-earnings §3](../10-money-and-ledger/05-booking-to-earnings.md) and [ledger-integrity §2](../10-money-and-ledger/09-ledger-integrity.md).
+> **Coverage gap (#773):** the per-collaborator HOST-org settlement writes the earnings rows, but the **balanced `BOOKING` journal txn is deferred** for multi-collaborator payments (single-consultant bookings post inline). Reconcile counts these as `earningsPaymentsWithoutBookingTxn` (informational, not a finding) until #773 lands the multi-leg posting. See [booking-to-earnings §3](../10-money-and-ledger/05-booking-to-earnings.md) and [ledger-integrity §2](../10-money-and-ledger/13-ledger-integrity.md).
 
 ### 5.9 Arjun (solo consultant) — pure marketplace, the org-layer no-op
 
@@ -352,7 +352,7 @@ BOOKING  booking:<paymentId>
      Cr PLATFORM_FEE              115000    (10%)
      Cr CONSULTANT_PAYABLE(expert) 1035000  (90%, expert settles SELF)
 ```
-At cycle close, `settle-invoice-accruals` rolls this into an `InvoiceLineItem` and walks the event `PENDING → ACCRUED` (stamping `settledAt` + `invoiceLineItemId`); the terminal `CHARGED` lands only when the invoice is **paid** (`INVOICE_PAID` handler flips `ACCRUED → CHARGED`). See [invoicing §9](../10-money-and-ledger/07-invoicing.md).
+At cycle close, `settle-invoice-accruals` rolls this into an `InvoiceLineItem` and walks the event `PENDING → ACCRUED` (stamping `settledAt` + `invoiceLineItemId`); the terminal `CHARGED` lands only when the invoice is **paid** (`INVOICE_PAID` handler flips `ACCRUED → CHARGED`). See [invoicing §9](../10-money-and-ledger/08-invoicing.md).
 
 **Step 3b — the breaker veto (BLOCKED).** Now say Alice already accrued ₹15,000 of overage this cycle and books another ₹12,000 session (marginal ₹11,500). `₹15,000 + ₹11,500 = ₹26,500 > ₹20,000` ceiling. The mapper returns `decision: BLOCK, chargeTo: null` **regardless of `CHARGE_ORG`**; `recordOverageAtCheckout` throws **`PROGRAM_CAP_EXHAUSTED` (402)** (distinct from the per-allocation `ProgramAssignmentLimitError`), and the `OverageEvent` is recorded `BLOCKED`. Nothing books, no money moves. The dashboard can say "cycle ceiling reached" vs "per-member allocation."
 
@@ -371,7 +371,7 @@ The **`dunning`** cron (`jobs/billing/dunning.ts`, GitHub Action `dunning.yml`, 
 
 Cadence: **7-day intervals, capped at 3 reminders**. Each claim is a conditional `updateMany` on the prior stamp value, so two replicas / a same-day re-run can't double-notify (loser sees `count === 0`). Only **dunnable** orgs are chased (`ACTIVE`/`PENDING_VERIFICATION`/`SUSPENDED`); a `DEACTIVATED` org being torn down is left alone. On the Wipro dashboard the action center shows "N invoices overdue → Pay now" and the invoice renders "OVERDUE · N days late".
 
-> 🟡 **Suspension cascade is designed but NOT active.** `dunningSuspendedAt` exists for a config-gated "suspend bookings once OVERDUE drags past the grace window" stage, but **no code writes it** (`TODO(#779)`). Today dunning is **notify-only** — it marks overdue and sends reminders; it never freezes the org. Don't read booking-suspend-on-overdue as live. See [invoicing §7](../10-money-and-ledger/07-invoicing.md).
+> 🟡 **Suspension cascade is designed but NOT active.** `dunningSuspendedAt` exists for a config-gated "suspend bookings once OVERDUE drags past the grace window" stage, but **no code writes it** (`TODO(#779)`). Today dunning is **notify-only** — it marks overdue and sends reminders; it never freezes the org. Don't read booking-suspend-on-overdue as live. See [invoicing §7](../10-money-and-ledger/08-invoicing.md).
 
 ### 5.14 Wallet auto-top-up — low-balance notify (v2, NOTIFY-ONLY)
 
@@ -450,8 +450,8 @@ Sign in as the seed users (`SEED_PASSWORD`, default `SeedPass123!`) to walk thes
 ### Related docs
 - [organization-types](../00-foundations/02-organization-types.md) · [funding-and-programs](../00-foundations/03-funding-and-programs.md) · [programs](../30-programs-and-lifecycle/02-programs.md) — the axes.
 - [ledger-and-postings](../10-money-and-ledger/03-ledger-and-postings.md) — every posting shown here, in full.
-- [booking-to-earnings](../10-money-and-ledger/05-booking-to-earnings.md) · [payout-pipeline](../10-money-and-ledger/06-payout-pipeline.md) · [invoicing](../10-money-and-ledger/07-invoicing.md) — the settlement paths.
+- [booking-to-earnings](../10-money-and-ledger/05-booking-to-earnings.md) · [payout-pipeline](../10-money-and-ledger/07-payout-pipeline.md) · [invoicing](../10-money-and-ledger/08-invoicing.md) — the settlement paths.
 - [contract-lifecycle](../30-programs-and-lifecycle/07-contract-lifecycle.md) · [cycle-engine-and-rollover](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md) — the lifecycle state machines behind §5.11/§5.15/§5.16.
-- [ledger-integrity](../10-money-and-ledger/09-ledger-integrity.md) — the reconcile checks that prove each scenario ties out.
+- [ledger-integrity](../10-money-and-ledger/13-ledger-integrity.md) — the reconcile checks that prove each scenario ties out.
 - [harness-verdict](02-harness-verdict.md) — the scenario-by-scenario verdict table.
 - [verification-guide](../90-audits/03-verification-guide.md) — the seeded logins + click-through flows that walk these scenarios live.

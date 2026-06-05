@@ -143,5 +143,5 @@ After a booking fully settles and the consultant + org are paid, the platform's 
 ### Related docs
 - [Money model overview](01-money-model-overview.md) — why derived, why integer paise.
 - [Ledger & postings](03-ledger-and-postings.md) — the exact legs each flow posts to these accounts.
-- [Ledger integrity](09-ledger-integrity.md) — the reconciler that re-sums these accounts.
+- [Ledger integrity](13-ledger-integrity.md) — the reconciler that re-sums these accounts.
 - Ground truth: `lib/payments/ledger/post.ts` (`ledgerAccountId`, `AccountRef`), `prisma/schema.prisma` (`LedgerAccountKind`, `LedgerDirection`, `LedgerAccount`).

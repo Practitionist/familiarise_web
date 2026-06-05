@@ -57,7 +57,7 @@ Say **"this is on our roadmap, we're prioritizing customers like you — let's s
 
 | Wait-list reason | Why waitlist | Unblocks when |
 |---|---|---|
-| ₹5 crore+ turnover | IRN uploader is **built but gated** (`buildIrpPayload` mapper + `irp-uploader` cron exist behind `ENABLE_IRP_UPLOADER` + `CLEARTAX_*`); needs the flag on, real ClearTax GSP creds, and accountant signoff before a ₹5cr+ org can claim ITC | [#703 §2.1](https://github.com/Practitionist/familiarise_web/issues/703) / [invoicing §4](../10-money-and-ledger/07-invoicing.md) — flip-on + sandbox proof |
+| ₹5 crore+ turnover | IRN uploader is **built but gated** (`buildIrpPayload` mapper + `irp-uploader` cron exist behind `ENABLE_IRP_UPLOADER` + `CLEARTAX_*`); needs the flag on, real ClearTax GSP creds, and accountant signoff before a ₹5cr+ org can claim ITC | [#703 §2.1](https://github.com/Practitionist/familiarise_web/issues/703) / [invoicing §4](../10-money-and-ledger/08-invoicing.md) — flip-on + sandbox proof |
 | Any non-resident consultant in their pool | Needs FEMA compliance + DTAA TDS derivation | [#703 §2.2 + §2.4](https://github.com/Practitionist/familiarise_web/issues/703) — 1.5 eng-weeks combined |
 | PROVIDER-type org (agency hosting multiple experts) with co-host webinars | Collaborators PROVIDER 3-way revenue split isn't wired | [#703 §4](https://github.com/Practitionist/familiarise_web/issues/703) — 1 eng-week |
 | Milestone-based fixed-price engagements (McKinsey-style) | Programs v2 PROJECT config tables not built | [#703 §1](https://github.com/Practitionist/familiarise_web/issues/703) — 2 eng-weeks |

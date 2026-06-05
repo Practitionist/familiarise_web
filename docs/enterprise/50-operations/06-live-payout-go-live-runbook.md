@@ -11,7 +11,7 @@ last-reviewed: 2026-06-05
 > **Status:** `ENABLE_LIVE_PAYOUTS` is **OFF**. Payouts create rows and post
 > `Dr *_PAYABLE / Cr CASH` but freeze at `PROCESSING` — money does **not**
 > leave the gateway. This runbook makes flipping the flag a de-risked,
-> one-variable operation. Related: [payout-pipeline](../10-money-and-ledger/06-payout-pipeline.md),
+> one-variable operation. Related: [payout-pipeline](../10-money-and-ledger/07-payout-pipeline.md),
 > [runbooks](03-runbooks.md).
 
 The disbursement code is real (`lib/payments/payouts/org-payout-service.ts`

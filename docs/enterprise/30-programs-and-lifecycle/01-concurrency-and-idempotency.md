@@ -31,7 +31,7 @@ The `>= :amountPaise` predicate **is** the lock: Postgres takes a row-level writ
 `lib/api/organizations/program-helpers.ts#claimProgramAssignment` — `@@unique([programId, membershipId, periodStart])` is the lock; two concurrent claims for the same member+period converge on one row via upsert (`ON CONFLICT DO NOTHING` semantics).
 
 ## Booking utilization (counter + usage ledger in lock-step)
-`recordBookingUtilization` — one transaction: claim cap headroom with a guarded conditional UPDATE (`updateMany WHERE engagementsUsed <= cap - :n`, so the cap check and the increment can't race), then create `BookingUtilization` + its `UsageLedgerEntry` twin (`consumedPaise` is the CREDIT_POOL twin, metered against `creditsPerCycle × 100`). When the guarded update matches zero rows the booking is over-cap: either checkout refuses (`BLOCK` → `ProgramAssignmentLimitError`) or the overage path bills it (`wasOverage = true`, persists an `OverageEvent`). The reconciler's `PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT` is the backstop ([ledger integrity](../10-money-and-ledger/09-ledger-integrity.md)).
+`recordBookingUtilization` — one transaction: claim cap headroom with a guarded conditional UPDATE (`updateMany WHERE engagementsUsed <= cap - :n`, so the cap check and the increment can't race), then create `BookingUtilization` + its `UsageLedgerEntry` twin (`consumedPaise` is the CREDIT_POOL twin, metered against `creditsPerCycle × 100`). When the guarded update matches zero rows the booking is over-cap: either checkout refuses (`BLOCK` → `ProgramAssignmentLimitError`) or the overage path bills it (`wasOverage = true`, persists an `OverageEvent`). The reconciler's `PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT` is the backstop ([ledger integrity](../10-money-and-ledger/13-ledger-integrity.md)).
 
 **The race, drawn.** Picture the last covered seat on a Wipro learner's BLOCK assignment (`coveredEngagementsPerCycle - engagementsUsed == 1`) and two browser tabs hitting *Book* in the same millisecond. Both transactions read the same stable config and the same `engagementsUsed`; the correctness hinges entirely on the conditional UPDATE, because Postgres takes a row-level write lock the instant the first `updateMany` touches the row. The second transaction blocks on that lock, and when it unblocks it re-evaluates `WHERE engagementsUsed <= cap - 1` against the *already-incremented* value — which no longer matches — so it gets `count === 0` and throws. There is no read-then-write window to lose:
 
@@ -60,7 +60,7 @@ Swap `BLOCK` for `CHARGE_ORG` (Wipro's actual seed config) and tab B doesn't 402
 `bumpRateCard` — close the current card (`effectiveTo = at`) and insert a new one (`effectiveFrom = at`) in one tx. A degenerate same-instant race can overlap, but `findEffective` orders by `effectiveFrom DESC` so the winner's row wins lookups; money impact is nil because earnings already carry bps snapshots ([booking → earnings](../10-money-and-ledger/05-booking-to-earnings.md)).
 
 ## PO balance (atomic compare-and-swap)
-`updateMany WHERE status='ACTIVE' AND remainingAmountPaise >= amount` decrements in one statement; two POSTs racing for the last ₹1 can't both win ([invoicing §6](../10-money-and-ledger/07-invoicing.md)).
+`updateMany WHERE status='ACTIVE' AND remainingAmountPaise >= amount` decrements in one statement; two POSTs racing for the last ₹1 can't both win ([invoicing §6](../10-money-and-ledger/08-invoicing.md)).
 
 ## Domain-claim uniqueness
 `OrgDomainClaim.domain @unique` (global) — concurrent claims from two orgs resolve to `P2002`; the loser maps it to a 409.
@@ -149,7 +149,7 @@ sequenceDiagram
 This is the same shape every lifecycle cron in the table above uses (`autoRenewedAt`, `markedOverdueAt`, `chargeTimedOutAt` …) — a timestamp-or-status column that the claim stamps, doubling as the distributed lock, with a unique constraint as the last line of defence.
 
 ## Payment legs
-`PaymentLeg.sourceRef` carries the per-source key: `CARD` → gateway payment id; `REFERRAL_CREDIT` → `referralCreditUsageId`; `INVOICE_ACCRUAL`/`LICENSE` → `programAssignmentId`. `@@unique([paymentId, source])` blocks duplicate-source legs ([payment legs](../10-money-and-ledger/08-payment-legs.md)).
+`PaymentLeg.sourceRef` carries the per-source key: `CARD` → gateway payment id; `REFERRAL_CREDIT` → `referralCreditUsageId`; `INVOICE_ACCRUAL`/`LICENSE` → `programAssignmentId`. `@@unique([paymentId, source])` blocks duplicate-source legs ([payment legs](../10-money-and-ledger/09-payment-legs.md)).
 
 ## Emails (Resend)
 `X-Entity-Ref-ID` from `orgId + mustPayByDate` (MSME alert) / `invoiceId` (receipt) / `organizationId + ssoProviderId` (SSO activation) — Resend dedupes automatically.
@@ -183,6 +183,6 @@ it("is idempotent on replay", async () => {
 - [Ledger & postings](../10-money-and-ledger/03-ledger-and-postings.md) — `postLedgerTxn` idempotency.
 - [Programs](02-programs.md) — the assignment-claim flow.
 - [Booking → earnings](../10-money-and-ledger/05-booking-to-earnings.md) — rate-card bump semantics.
-- [Ledger integrity](../10-money-and-ledger/09-ledger-integrity.md) — the drift checks that backstop these guards.
+- [Ledger integrity](../10-money-and-ledger/13-ledger-integrity.md) — the drift checks that backstop these guards.
 - [Cycle engine & rollover](08-cycle-engine-and-rollover.md) — the successor-mint + roll/close claim gates.
 - [Contract lifecycle](07-contract-lifecycle.md) — the auto-renew / expire claim gates.

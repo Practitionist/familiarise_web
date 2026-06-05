@@ -122,7 +122,7 @@ Dr CASH(platform)        amount
 ```
 
 ### 4.2 Booking — `BOOKING` (`booking:<paymentId>`)
-The funding legs of the checkout become debits; the fee/payable/tax split becomes credits. The debit side is assembled from the payment's `PaymentLeg` rows ([payment legs](08-payment-legs.md)):
+The funding legs of the checkout become debits; the fee/payable/tax split becomes credits. The debit side is assembled from the payment's `PaymentLeg` rows ([payment legs](09-payment-legs.md)):
 
 ```
 Dr CASH(platform)            sum of CARD legs
@@ -229,14 +229,14 @@ scanning every entry. `postLedgerTxn` folds each posting's signed delta
 journal write; the idempotency fast-path returns before any mutation, so a
 retried key never double-applies. The append-only `LedgerEntry` journal stays
 the source of truth — the snapshot is a derived cache the reconcile cron
-validates (`LEDGER_BALANCE_SNAPSHOT_DRIFT`, [ledger-integrity](09-ledger-integrity.md)).
+validates (`LEDGER_BALANCE_SNAPSHOT_DRIFT`, [ledger-integrity](13-ledger-integrity.md)).
 `ledgerBalanceFromJournalPaise()` is the authoritative fallback (and the
 reconcile check's ground truth). No backfill — a fresh seed posts through
 `postLedgerTxn`, so snapshots populate as money moves.
 
 ### Related docs
 - [Money model overview](01-money-model-overview.md) · [Chart of accounts](02-chart-of-accounts.md) — the principles and buckets this doc applies.
-- [Wallet & top-ups](04-wallet-and-topups.md) · [Booking → earnings](05-booking-to-earnings.md) · [Payout pipeline](06-payout-pipeline.md) · [Invoicing](07-invoicing.md) — each flow in narrative.
-- [Payment legs](08-payment-legs.md) — how the booking debit side is assembled.
-- [Ledger integrity](09-ledger-integrity.md) — the reconciler.
+- [Wallet & top-ups](04-wallet-and-topups.md) · [Booking → earnings](05-booking-to-earnings.md) · [Payout pipeline](07-payout-pipeline.md) · [Invoicing](08-invoicing.md) — each flow in narrative.
+- [Payment legs](09-payment-legs.md) — how the booking debit side is assembled.
+- [Ledger integrity](13-ledger-integrity.md) — the reconciler.
 - Ground truth: `lib/payments/ledger/post.ts`; posting call sites in `earnings-service.ts`, `wallet.ts`, `org-payout-service.ts`, `payout-service.ts`, `refund.ts`, `app/api/webhooks/utils.ts`.

@@ -66,7 +66,7 @@ This path adds the *why* behind the design and the integrity machinery you must 
 1. Everything in the SDE2 path.
 2. All of [`70-design-decisions/`](70-design-decisions/00-README.md) — the ADRs; read these before proposing structural changes.
 3. [cross-cutting-integrations](40-compliance-and-data/06-cross-cutting-integrations.md) — the wired/partial/skipped map of all eight subsystems.
-4. [ledger-integrity](10-money-and-ledger/09-ledger-integrity.md) — the nightly reconciler and the invariants your change must not break.
+4. [ledger-integrity](10-money-and-ledger/13-ledger-integrity.md) — the nightly reconciler and the invariants your change must not break.
 5. [monitoring](50-operations/04-monitoring.md) and [system-events](50-operations/05-system-events.md) — how a change announces itself in production.
 6. [subsystem-checklist](90-audits/02-subsystem-checklist.md) and [verification-guide](90-audits/03-verification-guide.md) — how shipped work gets verified here.
 
@@ -90,7 +90,7 @@ The table below lists every band in reading order, with the documents each one c
 | Band folder | Section | Docs |
 | --- | --- | --- |
 | `00-foundations/` | **Foundations** | overview, org types, funding & programs, roles, lifecycle, hierarchy |
-| `10-money-and-ledger/` | **Money & ledger** | money model, chart of accounts, postings, wallet, booking→earnings, payouts, invoicing, payment legs, integrity |
+| `10-money-and-ledger/` | **Money & ledger** | money model, chart of accounts, postings, wallet, booking→earnings, earnings lifecycle, payouts, invoicing, payment legs, integrity |
 | `20-iam-and-security/` | **IAM / SSO / security** | SSO, JIT, SCIM, rate-limiting, security headers |
 | `30-programs-and-lifecycle/` | **Programs / dashboard / discovery / lifecycle** | concurrency & idempotency, programs, experts, dashboard, discovery, feature flags, contract lifecycle, cycle engine & rollover |
 | `40-compliance-and-data/` | **Compliance / integrations / data** | compliance map, deletion, data export, outbound webhooks, workspace prefs, cross-cutting integrations |
@@ -127,10 +127,11 @@ This band tells the money story front to back: how value enters (wallet, invoice
 | 03 | [ledger-and-postings](10-money-and-ledger/03-ledger-and-postings.md) | `postLedgerTxn`, the balance invariant, every flow's legs |
 | 04 | [wallet-and-topups](10-money-and-ledger/04-wallet-and-topups.md) | `WalletTopUp` lifecycle, wallet-as-cache |
 | 05 | [booking-to-earnings](10-money-and-ledger/05-booking-to-earnings.md) | booking → earnings → bps split, rate cards |
-| 06 | [payout-pipeline](10-money-and-ledger/06-payout-pipeline.md) | earnings roll-up → payout, TDS/MSME, `ORG_PAYOUT` |
-| 07 | [invoicing](10-money-and-ledger/07-invoicing.md) | GST, IRN, PO match, `ORG_RECEIVABLE`, refunds |
-| 08 | [payment-legs](10-money-and-ledger/08-payment-legs.md) | stackable funding legs → ledger debits |
-| 09 | [ledger-integrity](10-money-and-ledger/09-ledger-integrity.md) | the reconciler: 7 checks + report |
+| 06 | [earnings-lifecycle](10-money-and-ledger/06-earnings-lifecycle.md) | `EarningStatus` machine, holds, `PENDING_TRUST`, refund decrements |
+| 07 | [payout-pipeline](10-money-and-ledger/07-payout-pipeline.md) | earnings roll-up → payout, RazorpayX states, TDS/MSME, `ORG_PAYOUT` |
+| 08 | [invoicing](10-money-and-ledger/08-invoicing.md) | GST, IRN, PO match, `ORG_RECEIVABLE`, refunds |
+| 09 | [payment-legs](10-money-and-ledger/09-payment-legs.md) | stackable funding legs → ledger debits |
+| 13 | [ledger-integrity](10-money-and-ledger/13-ledger-integrity.md) | the reconciler: 7 checks + report |
 
 ### IAM / SSO / security — `20-iam-and-security/`
 

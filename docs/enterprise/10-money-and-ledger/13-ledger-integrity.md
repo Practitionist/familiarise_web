@@ -142,7 +142,7 @@ The cutover (#772) shipped with this auditor returning `ok: true`, **0 findings*
 ### Related docs
 - [Money model overview](01-money-model-overview.md) §4 — the reconciled-cache contract.
 - [Ledger & postings](03-ledger-and-postings.md) — the postings these checks re-sum.
-- [Payment legs](08-payment-legs.md) — the leg-sum invariant (`PAYMENT_LEG_SUM_MISMATCH`).
+- [Payment legs](09-payment-legs.md) — the leg-sum invariant (`PAYMENT_LEG_SUM_MISMATCH`).
 - [Runbooks](../50-operations/03-runbooks.md) — per-finding incident response.
 - [Monitoring](../50-operations/04-monitoring.md) — alerting on report `ok:false`.
 - Ground truth: `scripts/reconcile/reconcile-ledgers.ts`, `jobs/reconcile/reconcile-ledgers.ts`, `LedgerReconciliationReport` in `prisma/schema.prisma`.
