@@ -15,7 +15,7 @@
  */
 
 import type { Prisma } from "@prisma/client";
-import { indianFiscalYear } from "./invoice-numbering";
+import { indianFiscalYear, fitPrefixToRule46 } from "./invoice-numbering";
 
 /**
  * Atomically reserve the next credit-note sequence for (orgId, fiscalYear).
@@ -50,8 +50,17 @@ export async function generateOrgCreditNoteNumber(
 ): Promise<{ creditNoteNumber: string; fiscalYear: number; seq: number }> {
   const fiscalYear = indianFiscalYear(issuedAt);
   const seq = await allocateOrgCreditNoteSeq(tx, org.id, fiscalYear);
-  const prefix = (org.invoiceNumberPrefix ?? org.slug).toUpperCase();
   const padded = seq.toString().padStart(4, "0");
+  // `<PREFIX>-CN-<FY>-<SEQ>`: the `-CN-` infix plus a separator, the fiscal
+  // year, and the sequence sit around the prefix, so the credit-note budget is
+  // three characters tighter than the invoice budget. The prefix is capped
+  // independently of the invoice; Rule 53 ties a credit note to its invoice by
+  // the referenced invoice number in the line items, not by a shared prefix.
+  const nonPrefixLength = "-CN-".length + String(fiscalYear).length + 1 + padded.length;
+  const prefix = fitPrefixToRule46(
+    (org.invoiceNumberPrefix ?? org.slug).toUpperCase(),
+    nonPrefixLength,
+  );
   return {
     creditNoteNumber: `${prefix}-CN-${fiscalYear}-${padded}`,
     fiscalYear,

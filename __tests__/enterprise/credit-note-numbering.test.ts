@@ -52,7 +52,11 @@ describe("generateOrgCreditNoteNumber", () => {
       { id: "org-1", slug: "acme-corp", invoiceNumberPrefix: "ACME" },
       new Date("2026-06-01T00:00:00.000Z"),
     );
-    expect(result.creditNoteNumber).toBe("ACME-CN-2026-0042");
+    // #789 — the credit-note budget is 3 chars tighter than the invoice one
+    // because of the `-CN-` infix, so a 4-char prefix is capped to 3. The old
+    // "ACME-CN-2026-0042" (17 chars) breached CGST Rule 53.
+    expect(result.creditNoteNumber).toBe("ACM-CN-2026-0042");
+    expect(result.creditNoteNumber.length).toBeLessThanOrEqual(16);
     expect(result.fiscalYear).toBe(2026);
     expect(result.seq).toBe(42);
   });
@@ -64,7 +68,9 @@ describe("generateOrgCreditNoteNumber", () => {
       { id: "org-1", slug: "acme-corp", invoiceNumberPrefix: null },
       new Date("2026-06-01T00:00:00.000Z"),
     );
-    expect(result.creditNoteNumber).toBe("ACME-CORP-CN-2026-0001");
+    // "ACME-CORP-CN-2026-0001" (22 chars) was a gross breach; capped to 16.
+    expect(result.creditNoteNumber).toBe("ACM-CN-2026-0001");
+    expect(result.creditNoteNumber.length).toBeLessThanOrEqual(16);
   });
 
   it("March issue date lands in the prior FY (matches the invoice it adjusts)", async () => {
@@ -75,7 +81,8 @@ describe("generateOrgCreditNoteNumber", () => {
       // 17:30 IST on 31 Mar — unambiguously March in IST (#776: FY reckoned in IST).
       new Date("2026-03-31T12:00:00.000Z"),
     );
-    expect(result.creditNoteNumber).toBe("ACME-CN-2025-0005");
+    expect(result.creditNoteNumber).toBe("ACM-CN-2025-0005");
+    expect(result.creditNoteNumber.length).toBeLessThanOrEqual(16);
     expect(result.fiscalYear).toBe(2025);
   });
 });

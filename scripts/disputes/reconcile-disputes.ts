@@ -114,7 +114,11 @@ export async function reconcileDisputes(): Promise<DisputeReconciliationResult> 
         );
       }
 
-      // Razorpay doesn't support dispute API
+      // #789 — Razorpay now exposes a dispute API (GET /v1/disputes/:id,
+      // PATCH /v1/disputes/:id/contest, POST /v1/disputes/:id/accept), so
+      // this gateway could be reconciled programmatically rather than routed
+      // to manual dashboard review. Wiring that fetch is tracked separately;
+      // until then we keep the manual-review fallback.
       if (dispute.paymentGateway === PaymentGateway.RAZORPAY) {
         razorpayManualReviewCount++;
         console.log(
