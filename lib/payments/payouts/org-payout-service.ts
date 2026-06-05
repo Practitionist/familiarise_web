@@ -338,19 +338,23 @@ export async function createOrgPayoutBatch(
         }
 
         // Resolve the org's India statutory metadata in one fetch and
-        // use it for both TDS (PAN, residency) and MSME 43B(h) deadline
-        // (msmeStatus, writtenAgreement).
+        // use it for both TDS (PAN, residency) and the MSME payment
+        // deadline (msmeStatus, writtenAgreement).
         //
-        // TDS: Section 194-O default for ECO payouts to host orgs; 20%
-        // Section 206AA fallback when PAN is missing/malformed. Computed
-        // on `netPayout` (= orgShare − refunds), then deducted from what
-        // we actually send through the gateway. The withheld amount is
-        // deposited with the govt and reported quarterly via Form 26Q
-        // (separate cron — see lib/compliance/tds.ts module docblock).
+        // TDS: the marketplace e-commerce-operator rate (the old §194-O,
+        // now §393 of the Income-tax Act 2025 in force since 1-Apr-2026)
+        // is the default for payouts to host orgs; the no-PAN higher-rate
+        // fallback (old §206AA, now §397(2)) applies when PAN is missing
+        // or malformed. Computed on `netPayout` (= orgShare − refunds),
+        // then deducted from what we send through the gateway. The withheld
+        // amount is deposited with the govt and reported quarterly on the
+        // return that succeeds Form 26Q (separate cron — see
+        // lib/compliance/tds.ts module docblock).
         //
         // MSME: when the host org is MICRO / SMALL we owe payment within
-        // 15 / 45 days per CGST Sec 43B(h); fall through to
-        // contract.paymentTermsDays for MEDIUM / NONE.
+        // 15 / 45 days under MSMED Act §15 (the deduction-disallowance
+        // teeth moved from Income-tax §43B(h) to §37(2)(g) under the 2025
+        // Act); fall through to contract.paymentTermsDays for MEDIUM / NONE.
         //
         // All host orgs are assumed RESIDENT in v1. When the first
         // non-resident host org ships, extend Organization with

@@ -75,7 +75,11 @@ describe("generateOrgInvoiceNumber", () => {
       { id: "org-1", slug: "acme-corp", invoiceNumberPrefix: null },
       new Date("2026-06-01T00:00:00.000Z"),
     );
-    expect(result.invoiceNumber).toBe("ACME-CORP-2026-0001");
+    // #789 — the prefix is capped to keep the number within CGST Rule 46(b)'s
+    // 16 chars; "ACME-CORP-2026-0001" (19 chars) was a breach. Orgs that want a
+    // cleaner number should configure a short invoiceNumberPrefix.
+    expect(result.invoiceNumber).toBe("ACME-C-2026-0001");
+    expect(result.invoiceNumber.length).toBeLessThanOrEqual(16);
   });
 
   it("zero-pads seq to 4 digits", async () => {

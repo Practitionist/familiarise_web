@@ -82,7 +82,10 @@ describe("mintRefundCreditNote", () => {
     expect(data.refundId).toBe("ref1");
     expect(data.invoiceId).toBe("inv1");
     expect(data.totalPaise).toBe(1000);
-    expect(data.creditNoteNumber).toBe("ACME-CN-2026-0001");
+    // #789 — the prefix is capped so the number satisfies CGST Rule 53's
+    // 16-character limit; "ACME-CN-2026-0001" (17 chars) was itself a breach.
+    expect(data.creditNoteNumber).toBe("ACM-CN-2026-0001");
+    expect(data.creditNoteNumber.length).toBeLessThanOrEqual(16);
   });
 
   it("#776 — does NOT mint a credit note against a DRAFT invoice", async () => {

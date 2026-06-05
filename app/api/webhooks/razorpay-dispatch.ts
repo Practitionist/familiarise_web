@@ -260,6 +260,23 @@ export async function processRazorpayWebhookEvent(
         break;
       }
 
+      // #789 — these two were dropped to `default`. under_review carries the
+      // gateway moving evidence into review; action_required is the deadline
+      // signal. Both must advance Dispute.status (mapDisputeStatus already maps
+      // them: under_review → UNDER_REVIEW, action_required → NEEDS_RESPONSE).
+      case "payment.dispute.under_review":
+      case "payment.dispute.action_required": {
+        const disputeProgressEvent = disputeUpdateEntitySchema.parse(
+          event.payload?.dispute?.entity,
+        );
+        await handleDisputeUpdated(
+          disputeProgressEvent.id,
+          disputeProgressEvent.status,
+          null,
+        );
+        break;
+      }
+
       case "payment.dispute.won": {
         const disputeWonEvent = disputeUpdateEntitySchema.parse(
           event.payload?.dispute?.entity,
@@ -292,6 +309,10 @@ export async function processRazorpayWebhookEvent(
       case "payout.processed":
       case "payout.reversed":
       case "payout.rejected":
+      // #789 — payout.failed was dropped to `default` even though
+      // handleRazorpayPayoutWebhook + markOrgPayoutFailed already handle it,
+      // leaving a failed org payout stuck in PROCESSING with earnings unreleased.
+      case "payout.failed":
       case "payout.queued":
       case "payout.pending":
       case "payout.cancelled": {

@@ -9,8 +9,11 @@
  * LIVE IMPLEMENTATION REQUIREMENTS (follow-up PR)
  * ─────────────────────────────────────────────────────────────────────────
  *
- * DPDP Act 2023 + Rules notified 13 Nov 2025 (substantive obligations
- * operational from 14 May 2027) require:
+ * DPDP Act 2023 + Rules notified 13 Nov 2025. The substantive obligations
+ * below are phased: Consent Manager registration opens 13 Nov 2026, and the
+ * operational duties (consent notices, breach reporting, retention/erasure,
+ * data-principal rights) bind eighteen months after notification, i.e.
+ * 13 May 2027 — not 14 May. They require:
  *
  * 1. Consent artifact per purpose:
  *      - User explicitly grants consent for each data-processing purpose.

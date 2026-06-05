@@ -18,6 +18,34 @@
 
 import type { Prisma } from "@prisma/client";
 
+/**
+ * CGST Rule 46(b): a tax-invoice number may not exceed sixteen characters.
+ * Rule 53 imposes the same limit on credit notes. #789 — the prior code
+ * concatenated the org prefix without bound, so `<PREFIX>-CN-<FY>-<SEQ>`
+ * overflowed sixteen characters for any prefix longer than three (e.g.
+ * `WIPRO-CN-2026-0001` = 18 chars, a live Rule 53 breach).
+ */
+export const GST_DOC_NUMBER_MAX_LEN = 16;
+
+/**
+ * Cap an org prefix so the whole document number fits within
+ * {@link GST_DOC_NUMBER_MAX_LEN}. `nonPrefixLength` is the length of every
+ * character the format contributes around the prefix (separators, the fiscal
+ * year, and the zero-padded sequence), so the budget shrinks automatically if
+ * a sequence ever grows past four digits. The truncation is deterministic, and
+ * within-org uniqueness still rests on the sequence, so a shortened prefix
+ * never collides with another number for the same organization.
+ */
+export function fitPrefixToRule46(
+  prefix: string,
+  nonPrefixLength: number,
+): string {
+  const budget = GST_DOC_NUMBER_MAX_LEN - nonPrefixLength;
+  // The non-prefix segments already fit comfortably for both our formats, so
+  // the budget is always positive; guard against an empty prefix regardless.
+  return budget >= 1 ? prefix.slice(0, budget) : prefix.slice(0, 1);
+}
+
 export function indianFiscalYear(d: Date): number {
   // #776 — the Indian FY (Apr–Mar) is reckoned in IST, not UTC. An invoice issued
   // just after midnight IST on Apr 1 (before 05:30 IST) is still Mar 31 in UTC;
@@ -65,8 +93,14 @@ export async function generateOrgInvoiceNumber(
 ): Promise<{ invoiceNumber: string; fiscalYear: number; seq: number }> {
   const fiscalYear = indianFiscalYear(issuedAt);
   const seq = await allocateOrgInvoiceSeq(tx, org.id, fiscalYear);
-  const prefix = (org.invoiceNumberPrefix ?? org.slug).toUpperCase();
   const padded = seq.toString().padStart(4, "0");
+  // `<PREFIX>-<FY>-<SEQ>`: two separators + the fiscal year + the sequence sit
+  // around the prefix.
+  const nonPrefixLength = 2 + String(fiscalYear).length + padded.length;
+  const prefix = fitPrefixToRule46(
+    (org.invoiceNumberPrefix ?? org.slug).toUpperCase(),
+    nonPrefixLength,
+  );
   return {
     invoiceNumber: `${prefix}-${fiscalYear}-${padded}`,
     fiscalYear,
