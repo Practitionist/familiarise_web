@@ -2450,7 +2450,7 @@ export async function handleCheckout(
           }
 
           // Enterprise: every successful Payment must have at least one
-          // PaymentLeg (`docs/enterprise/10-money-and-ledger/08-payment-legs.md`). For non-
+          // PaymentLeg (`docs/enterprise/10-money-and-ledger/09-payment-legs.md`). For non-
           // org-sponsored learner-pays-via-gateway flows that's the CARD
           // leg, written here so the invariant holds whether or not the
           // payment ever transitions to SUCCEEDED. We record the gateway
@@ -2540,7 +2540,7 @@ export async function handleCheckout(
           }
 
           // Invariant sweep: every Payment should have legs that sum to
-          // `Payment.amount` (`docs/enterprise/10-money-and-ledger/08-payment-legs.md`). We
+          // `Payment.amount` (`docs/enterprise/10-money-and-ledger/09-payment-legs.md`). We
           // log-only here rather than throw because the hot checkout
           // path is the worst place to discover a leg-accounting drift
           // — a surprise 500 blocks real bookings. A mismatch signals
