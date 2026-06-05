@@ -208,7 +208,7 @@ export default async function MyProgramPage({
                   <p className="mt-1 text-xs text-muted-foreground">
                     {cap === null
                       ? `${unitLabel} available — no cap this cycle`
-                      : `${unitLabel} ${a.program.type === "CREDIT_POOL" ? "remaining" : "engagements left"} this cycle`}
+                      : `${unitLabel} ${a.program.type === "CREDIT_POOL" ? "remaining" : "left"} this cycle`}
                   </p>
                 </div>
 
