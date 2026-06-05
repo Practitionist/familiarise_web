@@ -8,28 +8,52 @@ last-reviewed: 2026-06-05
 
 # Programs, assignments, and booking utilization
 
-`Program` is the commercial primitive inside the enterprise layer.
-Every sponsored booking **will be** attributed to a `ProgramAssignment`
-(the per-member entitlement row), and every successful booking **will
-leave** a `BookingUtilization` row + a `UsageLedgerEntry` twin.
+`Program` is the commercial primitive inside the enterprise layer. Every sponsored booking is attributed to a `ProgramAssignment`, the per-member entitlement row, and every successful booking leaves a `BookingUtilization` row alongside a `UsageLedgerEntry` twin.
 
-> **Wiring status.** Schema, helpers (`recordBookingUtilization`,
-> `claimProgramAssignment`, `reverseBookingUtilization`), management
-> APIs, and the live checkout path are all wired up. Cap counting is
-> done in **engagement units** — see "Counting model" below.
+The full chain is wired up in code: the schema, the helpers (`recordBookingUtilization`, `claimProgramAssignment`, `reverseBookingUtilization`), the management APIs, and the live checkout path all exist and run. Cap counting is done in engagement units, which the next section explains.
+
+## The programs domain at a glance
+
+Before the field-level detail, the entity-relationship diagram below shows how the six models in this domain relate. A `Program` hangs off one `Contract` and carries exactly one of two sibling config rows (`LicensedSeatConfig` or `CreditPoolConfig`). A member draws against a per-cycle `ProgramAssignment`, each covered booking writes a `BookingUtilization`, and a booking that crosses the cap writes an `OverageEvent`. A `RateCard` supplies the bps split that settlement snapshots onto each utilization.
+
+```mermaid
+erDiagram
+  Contract ||--o{ Program : "has"
+  Contract }o--o| RateCard : "default split"
+  Program ||--o| LicensedSeatConfig : "if LICENSED_SEAT"
+  Program ||--o| CreditPoolConfig : "if CREDIT_POOL"
+  Program ||--o{ ProgramAssignment : "entitles"
+  Membership ||--o{ ProgramAssignment : "holds"
+  ProgramAssignment ||--o{ BookingUtilization : "records"
+  ProgramAssignment ||--o{ OverageEvent : "over-cap"
+  ProgramAssignment ||--o| ProgramAssignment : "rolledTo (successor)"
+  BookingUtilization ||--o| OverageEvent : "may emit"
+  Program {
+    string id PK
+    string contractId FK
+    enum type
+    enum status
+    datetime configLockedAt
+    datetime archivedAt
+  }
+  ProgramAssignment {
+    string id PK
+    int engagementsUsed
+    int consumedPaise
+    int overageCount
+    enum status
+    datetime rolledAt
+  }
+  OverageEvent {
+    string id PK
+    int marginalPaise
+    enum chargeStatus
+  }
+```
 
 ## Counting model — engagements, not bookings, not slots
 
-The cap on a `LicensedSeatConfig` is denominated in **engagements**.
-One engagement = one `Appointment` row = one calendar occurrence,
-regardless of duration. This avoids two failure modes:
-
-- **Counting bookings under-charges multi-session plans.** A 12-call
-  SUBSCRIPTION purchased once at signup would burn 1 cap unit and the
-  remaining 11 would escape — the bug fixed by issue #710.
-- **Counting slots is commercially incoherent.** Orgs can't sell "8
-  slots per cycle"; they sell occurrences. Per-occurrence price is
-  governed separately by `priceCapPerEngagementPaise`.
+The cap on a `LicensedSeatConfig` is denominated in engagements, where one engagement is one `Appointment` row, that is, one calendar occurrence regardless of its duration. Counting this way avoids two failure modes. Counting whole bookings would under-charge multi-session plans, because a 12-call SUBSCRIPTION purchased once at signup would burn a single cap unit and let the remaining eleven escape — the bug that issue #710 fixed. Counting slots, on the other hand, is commercially incoherent, because orgs do not sell "8 slots per cycle", they sell occurrences, and per-occurrence price is governed separately by `priceCapPerEngagementPaise`. The table below shows how each plan type maps onto cap units.
 
 | Plan type             | Cap units consumed                    | Debited at        |
 |-----------------------|---------------------------------------|-------------------|
@@ -62,6 +86,28 @@ flowchart TD
 ```
 
 The counter increment + ledger twin are written atomically in one transaction; see [concurrency & idempotency](01-concurrency-and-idempotency.md). `CREDIT_POOL` programs apply the same shape with the cap denominated in credits (1 credit = ₹1) — the meter is `consumedPaise` against `creditsPerCycle × 100`. The pre-checkout preview (`lib/payments/billing/overage-preview.ts`, route `GET /api/organizations/[orgId]/checkout/overage-preview`) is **advisory only** — it reuses the same `computeOverageForBooking` mapper over the assignment's *current* usage so preview and the checkout recorder can't drift, then the authoritative `OverageEvent` is persisted at checkout. The `base`/`surcharge` split lives on the `OverageEvent` (`marginalPaise == basePaise + surchargePaise`); the CHARGE_MEMBER timeout wall (14 days → `FAILED`) is the [timeout cron](01-concurrency-and-idempotency.md).
+
+### The `OverageEvent` charge-status machine
+
+An `OverageEvent` carries a `chargeStatus` field of type `OverageChargeStatus`, and this band owns that state machine. The enum has six values — `PENDING`, `ACCRUED`, `CHARGED`, `BLOCKED`, `REVERSED`, and `FAILED` — and every transition is a guarded `updateMany` whose `where` clause names the legal source states (the guard in `lib/payments/billing/overage-transitions.ts`), so an illegal move simply matches zero rows. A `CHARGE_ORG` overage walks `PENDING → ACCRUED → CHARGED` as it rolls onto an invoice that is then paid; a `CHARGE_MEMBER` overage settles `PENDING → CHARGED` when the side-payment succeeds, or `PENDING → FAILED` (with a retry edge back to `PENDING`) when the member abandons it; a circuit-breaker veto is recorded as `BLOCKED` at creation and moves nowhere; and a refunded booking drives the event to `REVERSED` while it is still uncollected. `CHARGED` and `REVERSED` are terminal — reversing an already-collected overage needs a real credit note, not a status flip.
+
+```mermaid
+stateDiagram-v2
+  [*] --> PENDING: over-cap booking (CHARGE_MEMBER / CHARGE_ORG)
+  [*] --> BLOCKED: circuit-breaker veto (set at creation only)
+  PENDING --> ACCRUED: CHARGE_ORG rolled onto issued invoice
+  PENDING --> CHARGED: CHARGE_MEMBER side-payment succeeded
+  PENDING --> FAILED: CHARGE_MEMBER abandoned (timeout cron)
+  PENDING --> REVERSED: booking refunded pre-collection
+  ACCRUED --> CHARGED: invoice paid
+  ACCRUED --> REVERSED: booking refunded pre-collection
+  FAILED --> PENDING: member retries the side-charge
+  FAILED --> CHARGED: late capture webhook recovers the charge
+  FAILED --> REVERSED: booking refunded pre-collection
+  CHARGED --> [*]
+  REVERSED --> [*]
+  BLOCKED --> [*]
+```
 
 ### Walkthrough A — Wipro's licensed seats hit the cap (CHARGE_ORG)
 
@@ -354,6 +400,8 @@ credit note, not a silent status flip).
 
 ## `OverageBehavior`
 
+The `overageBehavior` enum on a config row decides what happens when a LICENSED_SEAT assignment exceeds its cap, as the table below sets out.
+
 | Value           | When a LICENSED_SEAT assignment exceeds cap                |
 |-----------------|------------------------------------------------------------|
 | `BLOCK`         | Checkout throws `ProgramAssignmentLimitError` → HTTP 402. |
@@ -401,6 +449,8 @@ are documented in full in
 it reads are in [Contract lifecycle](07-contract-lifecycle.md).
 
 ## API surface
+
+The program and assignment CRUD routes and their role gates are listed below.
 
 | Route | Verbs | Role |
 |-------|-------|------|

@@ -42,7 +42,11 @@ intuitive ones:
 
 ## Rank ladder
 
-`lib/auth/role-ranks.ts` exports `ORG_ROLE_RANK`:
+`lib/auth/role-ranks.ts` exports `ORG_ROLE_RANK`, the numeric ladder reproduced in
+the table below. Each row pairs a role with its rank and a one-line summary of what
+that role is typically responsible for; a higher rank can do everything a lower
+rank can, with the one deliberate exception of the billing surface described
+further down.
 
 | Role            | Rank | Typical responsibility |
 |-----------------|------|-------------------------|
@@ -56,6 +60,57 @@ intuitive ones:
 
 `isAtLeastRole(actual, minimum)` (`lib/auth/role-ranks.ts`) returns
 `ORG_ROLE_RANK[actual] >= ORG_ROLE_RANK[minimum]`.
+
+The class diagram below shows the same ladder as a typed hierarchy: each role
+carries its numeric rank, and the arrows point from each role up to the one
+immediately above it. The ladder is deliberately sparse, in steps of roughly
+twenty, so a future role can slot between two existing rungs without renumbering
+the rest — which is exactly how `BILLING_ADMIN` landed at 70 between `MAINTAINER`
+at 80 and `MANAGER` at 60.
+
+```mermaid
+classDiagram
+  class OWNER {
+    rank = 100
+    everything incl. billing + delete
+  }
+  class MAINTAINER {
+    rank = 80
+    org-admin surface, no billing
+  }
+  class BILLING_ADMIN {
+    rank = 70
+    finance surface only
+  }
+  class MANAGER {
+    rank = 60
+    analytics + read-only finance
+  }
+  class EXPERT {
+    rank = 40
+    delivers services
+  }
+  class SUPPORT {
+    rank = 30
+    support tickets, no billing
+  }
+  class LEARNER {
+    rank = 20
+    consumes services
+  }
+  MAINTAINER --|> OWNER
+  BILLING_ADMIN --|> MAINTAINER
+  MANAGER --|> BILLING_ADMIN
+  EXPERT --|> MANAGER
+  SUPPORT --|> EXPERT
+  LEARNER --|> SUPPORT
+```
+
+The numeric order of the ladder is only a capability partial-order, and it is not
+the gate for the finance surface. As the next sections explain, `BILLING_ADMIN`
+sits below `MAINTAINER` by rank yet reaches billing routes that `MAINTAINER`
+cannot, because billing is gated by an explicit OWNER-or-BILLING_ADMIN disjunction
+rather than by the rank number.
 
 ### How a request resolves to allow / deny
 
@@ -196,6 +251,10 @@ There are two distinct mechanisms, and both are live:
 
 ### BILLING_ADMIN gate matrix
 
+The table below lists every route family whose gate is the OWNER-or-BILLING_ADMIN
+disjunction; for each one it gives the verb and confirms that the whole route is
+behind that single gate.
+
 | Route family | Verb | Gate |
 |---|---|---|
 | `billing-account` | PATCH | OWNER or BILLING_ADMIN |
@@ -244,6 +303,11 @@ admin-initiated writes still produce valid `OrgAuditLog.actorMembershipId`
 values (the stub id is `__admin_stub_<userId>`).
 
 ## Gate matrix — every org-scoped API route
+
+The table below is the exhaustive map of org-scoped routes to the minimum gate each
+verb requires; read a row as "to call this verb on this route, the caller must
+satisfy this gate", where a named role means that rank or higher and "OWNER or
+BILLING_ADMIN" means the disjunction gate rather than a rank comparison.
 
 | Route | Verbs | Gate |
 |-------|-------|------|
@@ -353,30 +417,39 @@ reset; seeded roles use canonical values.
 
 ## Membership status
 
-`MemberStatus` controls whether a role is live:
+`MemberStatus` controls whether a role is live. The table below gives one row per
+enum value and explains what each status means for access; `requireOrgAccess`
+rejects anything that is not `ACTIVE`.
 
 | Value       | Meaning |
 |-------------|---------|
-| `PENDING`   | Invitation accepted or HRIS auto-provisioned but not yet activated (rare). |
+| `PENDING`   | The invitation was accepted or the member was HRIS auto-provisioned but the membership is not yet activated (rare). |
 | `ACTIVE`    | The role is live. |
-| `SUSPENDED` | Temporarily blocked. API returns 403 with `"Membership is suspended"`. |
-| `REMOVED`   | Terminal. Row is retained for audit. |
-
-`requireOrgAccess` rejects anything that isn't `ACTIVE`.
+| `SUSPENDED` | The membership is temporarily blocked, and the API returns a 403 with `"Membership is suspended"`. |
+| `REMOVED`   | Terminal. The row is retained for audit. |
+| `ERASED`    | DPDP §12 tombstone, set by the erasure pipeline when a user exercises right-to-erasure. The row remains for audit and financial-trail integrity, but the user identifiers are scrubbed to pseudonymous values (see `User.erasedAt`). |
 
 ## Zod narrowers for self-service
 
-`lib/labels/org-labels.ts` exposes the subset roles allowed at
-self-service onboarding:
+`lib/labels/org-labels.ts` exposes the subset of roles allowed at self-service
+onboarding:
 
 ```ts
-SelfServiceMemberRoleSchema = z.enum(["OWNER", "MAINTAINER", "MANAGER", "LEARNER"]);
+SelfServiceMemberRoleSchema = z.enum([
+  "OWNER",
+  "MAINTAINER",
+  "BILLING_ADMIN",
+  "MANAGER",
+  "LEARNER",
+]);
 ```
 
-`EXPERT` and `SUPPORT` are deliberately excluded — the first needs
-`canHost=true` plus the invite-driven EXPERT entry (see
-`expert-lifecycle`), the second is an operator role that only an
-existing OWNER can assign from Settings.
+`EXPERT` and `SUPPORT` are deliberately excluded from the self-service set. `EXPERT`
+needs `canHost=true` plus the invite-driven EXPERT entry (see `expert-lifecycle`),
+and `SUPPORT` is an operator role that only an existing OWNER can assign from
+Settings. `BILLING_ADMIN` is in the self-service set because an org that delegates
+its finance surface needs to be able to invite that role through the ordinary
+member flow.
 
 ## LEARNER ↔ EXPERT is disjoint
 
@@ -403,9 +476,9 @@ rule; those columns are gone (see `expert-lifecycle`).
 ## Per-role landing in `/dashboard/organization/[orgId]`
 
 The bare org route is no longer a one-way bounce-to-personal for consumer
-roles. The entry-point router at
-`app/dashboard/organization/[orgId]/page.tsx` chooses the destination
-from the role:
+roles. The entry-point router at `app/dashboard/organization/[orgId]/page.tsx` chooses the
+destination from the role. The table below reads one role per row and gives the
+page it lands on and the reason for that choice.
 
 | Role | Lands on | Why |
 |------|----------|-----|
@@ -423,10 +496,9 @@ hunting for the URL.
 
 ## Related docs
 
-- `organization-lifecycle` — what a membership looks like in
-  each org status.
-- `expert-lifecycle` — how EXPERT gets populated.
-- `sso-and-authentication` — `defaultRoleForAutoJoin` on
-  `OrganizationSSOSettings`.
-- `api-reference` — exhaustive table with the audit actions
-  each route emits.
+The [organization-lifecycle](05-organization-lifecycle.md) doc describes what a
+membership looks like in each org status, and the `expert-lifecycle` doc explains
+how the EXPERT role gets populated. The
+[sso-and-authentication](../20-iam-and-security/01-sso-and-authentication.md) doc
+covers `defaultRoleForAutoJoin` on `OrganizationSSOSettings`, and the API reference
+carries the exhaustive table of the audit actions each route emits.

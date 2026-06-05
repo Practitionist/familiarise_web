@@ -134,6 +134,8 @@ Two real variants of this skeleton:
 
 ### Enterprise billing & lifecycle
 
+Rows are ordered by daily execution time (UTC); pay attention to the ⚠️ markers — three jobs have no active GitHub Actions workflow and must be triggered manually until the gap is closed.
+
 | Workflow | Script | Cron (UTC) | What it does |
 |---|---|---|---|
 | `advance-program-cycles` | `jobs/billing/advance-program-cycles.ts` | `15 2 * * *` | Cycle engine: per ended `ProgramAssignment` ROLL (mint successor, `rolledAt`) or CLOSE. Runs **before** auto-renew so a live contract's assignment rolls first. |
@@ -149,6 +151,8 @@ Two real variants of this skeleton:
 
 ### Webhooks, top-ups & money reconciliation
 
+These cron jobs keep the outbound webhook queue drained, heal stuck inbound events and orphaned top-up captures, cascade refund earnings, and run the nightly ledger integrity audit — they are the operational backbone that guarantees no money side-effect is silently lost.
+
 | Workflow | Script | Cron (UTC) | What it does |
 |---|---|---|---|
 | `dispatch-outbound-webhooks` | `jobs/cleanup/dispatch-outbound-webhooks.ts` | `* * * * *` → **~5 min effective** | Drains the `OutboundWebhookDelivery` queue (PENDING + due RETRY). Emits a `WEBHOOK`/WARN `SystemEvent` when backlog > 200. |
@@ -163,6 +167,8 @@ Two real variants of this skeleton:
 
 ### Payouts & earnings
 
+These jobs assemble and submit the weekly payout batch, reconcile in-flight transfers, release earnings out of the hold gate, and backfill earnings rows — the `ENABLE_LIVE_PAYOUTS` flag gates actual gateway disbursement across all of them.
+
 | Workflow | Script | Cron (UTC) | What it does |
 |---|---|---|---|
 | `create-payout-batch` | `jobs/payouts/create-payout-batch.ts` | `0 20 * * 1` (Mon) | Assembles the weekly payout batch. |
@@ -174,6 +180,8 @@ Two real variants of this skeleton:
 | `sync-payment-earnings` | `jobs/earnings/sync-payment-earnings.ts` | `0 * * * *` (hourly) | Backfills earnings rows from succeeded payments. |
 
 ### Compliance & SSO
+
+Regulatory jobs in this group handle e-invoice IRN generation, DPDP breach-deadline alerting, MSME payment notices, SSO certificate expiry, consent retention, audit-log pruning, and the DPDP §11 data-export worker — note which ones carry a ⚠️ indicating no active workflow file.
 
 | Workflow | Script | Cron (UTC) | What it does |
 |---|---|---|---|

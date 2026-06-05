@@ -191,6 +191,8 @@ archive, and the existing webhook-secret-rotation / data-export rows.
 > ([`expert-lifecycle`](../30-programs-and-lifecycle/03-expert-lifecycle.md)).
 
 ### `MEMBER`
+MEMBER events fire on every change to an organization's human membership roster — from adding or removing a member to role changes and the full invite flow — including the automatic expiry that the `cleanup-stale-invitations` cron emits for 14-day-old pending invites.
+
 | action | Emission point |
 |---|---|
 | `MEMBER_ADDED` / `MEMBER_REACTIVATED` / `MEMBER_REMOVED` | members CRUD routes |
@@ -199,6 +201,8 @@ archive, and the existing webhook-secret-rotation / data-export rows.
 | `INVITE_EXPIRED` | `cleanup-stale-invitations` cron (PENDING invite past 14d) |
 
 ### `CONTRACT`
+CONTRACT events span a contract's entire state machine — creation, countersigning, termination, and natural expiry fired by cron — plus the v2 supersession and auto-renew actions that result from the `advance-program-cycles` / `auto-renew-contracts` jobs.
+
 | action | Emission point |
 |---|---|
 | `CONTRACT_CREATED` / `CONTRACT_SIGNED` / `CONTRACT_TERMINATED` / `CONTRACT_EXPIRED` | contract routes + `expire-contracts` cron |
@@ -206,6 +210,8 @@ archive, and the existing webhook-secret-rotation / data-export rows.
 | `CONTRACT_AUTO_RENEWED` **(v2 #779)** | `auto-renew-contracts` cron (mints RENEWAL successor, EXPIREs old) |
 
 ### `PROGRAM`
+PROGRAM events cover the full entitlement lifecycle — create, pause, archive, delete, and all assignment mutations — plus the cron-driven cycle rollover that mints a successor assignment at each period boundary.
+
 | action | Emission point |
 |---|---|
 | `PROGRAM_CREATED` / `PROGRAM_PAUSED` / `PROGRAM_DELETED` | program CRUD (DELETE no longer reuses `PROGRAM_PAUSED`) |
@@ -215,6 +221,8 @@ archive, and the existing webhook-secret-rotation / data-export rows.
 | `RATE_CARD_BUMPED` | rate-card change |
 
 ### `WALLET`
+Wallet events capture prepaid-balance mutations: a top-up intent (`WALLET_TOPUP`), the confirmed credit once the Razorpay webhook lands, a refund back to the gateway, and any booking-time debit that fails the overdraft guard.
+
 | action | Emission point |
 |---|---|
 | `WALLET_TOPUP` / `WALLET_TOPUP_CONFIRMED` | top-up initiate + webhook confirm |
@@ -222,6 +230,8 @@ archive, and the existing webhook-secret-rotation / data-export rows.
 | `WALLET_DEBIT_FAILED` | debit attempt with insufficient balance |
 
 ### `INVOICE`
+INVOICE events record the full arc of an organization's billing document — from purchase-order creation and invoice generation through payment, overdue escalation, cancellation, and refund — and are the primary audit trail for GST compliance and dunning state.
+
 | action | Emission point |
 |---|---|
 | `PURCHASE_ORDER_CREATED` | PO route |
@@ -239,6 +249,8 @@ archive, and the existing webhook-secret-rotation / data-export rows.
 > (`TODO(#779)`), so no suspend action exists yet.
 
 ### `PAYOUT`
+PAYOUT events trace the full disbursement lifecycle — from batch creation and gateway submission through terminal success, failure, or reversal — as well as the earnings hold/release gate and the manual clawback path when a refund hits an already-completed payout.
+
 | action | Emission point |
 |---|---|
 | `PAYOUT_INITIATED` / `PAYOUT_PROCESSED` / `PAYOUT_COMPLETED` / `PAYOUT_CANCELLED` / `PAYOUT_FAILED` | payout pipeline + webhooks |
@@ -247,6 +259,8 @@ archive, and the existing webhook-secret-rotation / data-export rows.
 | `PAYOUT_REVERSED` | `payout.reversed` webhook (bank rejected a submitted transfer) |
 
 ### `SETTINGS`
+Configuration changes that affect org identity, access control, or compliance posture all land in SETTINGS — from SSO toggling and domain verification to audit-log exports and the SSO-cert expiry warning fired by cron.
+
 | action | Emission point |
 |---|---|
 | `SETTINGS_CHANGED` | org settings PATCH |
@@ -263,12 +277,16 @@ archive, and the existing webhook-secret-rotation / data-export rows.
 > with the break-glass `details` payload, not a distinct action.
 
 ### `CONSENT`
+CONSENT events track the DPDP data-principal lifecycle — a grant when an org records consent on behalf of a user, a withdrawal when that user exercises their §12 erasure right, and a breach report when the platform raises a data-breach incident.
+
 | action | Emission point |
 |---|---|
 | `CONSENT_GRANTED` / `CONSENT_WITHDRAWN` | consent routes (DPDP grant/withdraw) |
 | `DATA_BREACH_REPORTED` | breach intake |
 
 ### `CATALOG`
+Sponsored-plan visibility is managed through CATALOG events, which fire when an org's billing admin adds a plan to or removes one from the sponsored catalog.
+
 | action | Emission point |
 |---|---|
 | `CATALOG_PLAN_CREATED` | `POST …/catalog` (OWNER adds a sponsored plan) |

@@ -8,26 +8,11 @@ last-reviewed: 2026-06-05
 
 # Public pages and discovery
 
-> **What this covers:** how an org and its plans surface on the public
-> marketplace — the `OrgPlanVisibility` gate on per-type plans, the public org
-> list/detail pages, the `PERSONAL`-funding attribution leg, and the explore
-> badge. **Audience:** anyone touching marketplace discovery or org public
-> exposure. Last verified against code 2026-06-05 (#726/#778).
+This document explains how an org and its plans surface on the public marketplace. It covers the `OrgPlanVisibility` gate on per-type plans, the public org list and detail pages, the attribution leg that `PERSONAL` funding leaves on a payment, and the explore-card badge. It is for anyone touching marketplace discovery or org public exposure, and it was last verified against code on 2026-06-05 (#726/#778).
 
-The enterprise layer's public-facing footprint is two things:
+The enterprise layer's public-facing footprint is just two things. The first is per-type org-owned plans that opt into the marketplace via `OrgPlanVisibility`; the org's "catalog" is now simply its visible plans rather than a separate model. The second is public org pages for HOST and HYBRID orgs that opt into discovery by setting `Organization.isPublic = true`.
 
-1. **Per-type org-owned plans** that opt into the marketplace via
-   `OrgPlanVisibility` (the org "catalog" is now just its visible plans, not a
-   separate model).
-2. **Public org pages** for HOST/HYBRID orgs that opt into discovery
-   (`Organization.isPublic = true`).
-
-> The standalone `OrganizationPlan` model **and** the `/catalog` route set were
-> removed (#778 elegance pass): a separate "org catalog" table duplicated the
-> bookable shape of the four per-type plans. The catalog an org exposes is now
-> exactly its `ConsultationPlan` / `SubscriptionPlan` / `WebinarPlan` /
-> `ClassPlan` rows (with `organizationId` set) whose `visibility` is public. Do
-> not reintroduce `OrganizationPlan`.
+The standalone `OrganizationPlan` model and the `/catalog` route set were both removed in the #778 elegance pass, because a separate "org catalog" table duplicated the bookable shape of the four per-type plans. The catalog an org exposes is now exactly its `ConsultationPlan`, `SubscriptionPlan`, `WebinarPlan`, and `ClassPlan` rows (those with `organizationId` set) whose `visibility` is public. Do not reintroduce `OrganizationPlan`.
 
 ## Plan visibility (`OrgPlanVisibility`)
 
@@ -98,17 +83,11 @@ one place to audit.
 
 ## Public org pages
 
-A HOST/HYBRID org that sets `Organization.isPublic = true` becomes discoverable:
+A HOST or HYBRID org that sets `Organization.isPublic = true` becomes discoverable through two surfaces.
 
-- **List:** `app/explore/enterprise/organisations/page.tsx`, backed by
-  `GET /api/organizations/public` (unauthenticated). The query is hard-filtered
-  to `isPublic = true AND canHost = true AND status = "ACTIVE"`, with optional
-  `industry` (case-insensitive contains) + `search` filters and 1-indexed
-  pagination (`limit` default 12, max 50).
-- **Detail:** `app/explore/enterprise/organisations/[orgSlug]/page.tsx`
-  (`revalidate = 60`). Resolves the org by `slug` under the same
-  `isPublic + canHost + ACTIVE` guard and renders branding + up to 6 of each
-  per-type plan filtered to `visibility ∈ {PUBLIC, ORG_AND_PUBLIC}`.
+The list surface is `app/explore/enterprise/organisations/page.tsx`, backed by the unauthenticated `GET /api/organizations/public`. Its query is hard-filtered to `isPublic = true AND canHost = true AND status = "ACTIVE"`, accepts optional `industry` (a case-insensitive contains match) and `search` filters, and uses 1-indexed pagination with a `limit` that defaults to 12 and is capped at 50.
+
+The detail surface is `app/explore/enterprise/organisations/[orgSlug]/page.tsx` (with `revalidate = 60`). It resolves the org by its `slug` under the same `isPublic + canHost + ACTIVE` guard, then renders the org's branding plus up to six of each per-type plan, each filtered to `visibility ∈ {PUBLIC, ORG_AND_PUBLIC}`.
 
 > **SPONSOR-only orgs are never public.** `canHost = false` orgs are B2B clients,
 > not marketplace participants — exposing them would breach the confidentiality

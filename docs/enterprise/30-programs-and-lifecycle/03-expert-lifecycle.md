@@ -135,12 +135,14 @@ Settlement reads `payoutRecipient` at booking time:
   `OrganizationPayout` cycle pays the expert separately through its
   own payroll.
 
-`payoutRecipient` is set at invite time (the invite payload carries
-it, and the accept handler stamps it onto the new Membership), and
-may be flipped later via PATCH on the member row (MAINTAINER-editable).
-Flipping it mid-cycle does not retroactively rewrite already-booked
-earnings (those carry the bps snapshot and their own recipient
-decision).
+`payoutRecipient` defaults to `SELF` when a Membership is created. The accept
+handler and the direct-add path both stamp it from
+`applyMembershipRoleEffects` (`lib/api/organizations/membership-transitions.ts`),
+which returns `SELF` for every role today. An operator then flips it to
+`ORGANIZATION` for an internal expert via `PATCH …/members/[memberId]`
+(MAINTAINER-editable; a role change resets it back to the `SELF` default).
+Flipping it mid-cycle does not retroactively rewrite already-booked earnings,
+because those carry the bps snapshot and their own recipient decision.
 
 ## Rate-card overrides
 
@@ -182,8 +184,7 @@ at the API (`409 ROLE_TRANSITION_BLOCKED`, see
 
 1. `DELETE /api/organizations/[orgId]/members/[memberId]` on the
    existing row (sets `status = REMOVED`, retains the row for audit).
-2. `POST /api/organizations/[orgId]/invitations` with the new role
-   and `payoutRecipient` (if EXPERT).
+2. `POST /api/organizations/[orgId]/invitations` with the new role.
 3. The user accepts the invite. A fresh Membership lands with the
    right profile FKs — `ConsulteeProfile` for LEARNER or a
    placeholder `ConsultantProfile` for EXPERT. Audit rows show the

@@ -8,17 +8,111 @@ last-reviewed: 2026-06-05
 
 # SSO and authentication
 
-SSO for the enterprise layer is a two-table split:
+SSO for the enterprise layer is a two-table split. The
+`OrganizationSSOSettings` model holds the policy columns we own — the
+allowed-domain allowlist, the enforcement switch, and the auto-join role —
+while the `SsoProvider` model holds the BetterAuth-owned SAML and OIDC
+configuration (issuer, entity, certificate, and redirect), with our schema
+carrying a back-reference to the org through `organizationId`. A third
+table, `OrgDomainClaim`, asserts domain ownership at the platform scope so
+that two different orgs cannot both enforce SSO for the same email domain.
 
-- `OrganizationSSOSettings` — policy columns we own (allowed domains,
-  enforcement, auto-join role).
-- `SsoProvider` — BetterAuth-owned SAML/OIDC config (issuer, entity,
-  cert, redirect). Our schema carries a back-reference via
-  `organizationId`.
+## How this band fits together
 
-A third table, `OrgDomainClaim`, asserts domain ownership at the
-platform scope so two different orgs can't both enforce SSO for the
-same email domain.
+This is the first document in the IAM-and-security band, so it is worth
+seeing how its pieces connect before diving into any one of them. The
+flowchart below shows the path an enterprise identity travels: a verified
+domain claim and the org's SSO settings together decide whether a login
+is enforced; first-time SSO logins flow through JIT auto-join into a typed
+`Membership`; an IdP can instead push membership through SCIM; and every
+authenticated request reads the resulting membership through the session
+layer. The remaining four docs in the band each zoom into one of these
+boxes.
+
+```mermaid
+flowchart TD
+  IdP[Enterprise IdP] -->|SAML / OIDC assertion| SSO["SsoProvider rows<br/>this doc 01"]
+  IdP -->|SCIM bearer token| SCIM["SCIM provisioning<br/>doc 03"]
+  CLAIM["OrgDomainClaim<br/>DNS-TXT verified"] --> ENF{"enforceSSO veto<br/>this doc 01"}
+  SETTINGS["OrganizationSSOSettings<br/>this doc 01"] --> ENF
+  SSO --> ENF
+  ENF -->|first SSO sign-in| JIT["JIT auto-join<br/>doc 02"]
+  SCIM -->|Users upsert| MEM[(Membership rows)]
+  JIT --> MEM
+  MEM --> SESSION["customSession + sessionGeneration<br/>doc 02"]
+  SESSION -->|every request| APP[Authenticated app surface]
+  RL["Rate limiting<br/>doc 04"] -.->|guards| SSO
+  RL -.->|guards| SCIM
+  HDR["Security headers<br/>doc 05"] -.->|wraps| APP
+```
+
+The entity-relationship diagram below captures the same surface at the
+schema level, showing how the policy tables this doc owns relate to the
+membership and session rows the session layer reads. The dashed-by-string
+relations through email domain are conventions enforced in code rather
+than foreign keys.
+
+```mermaid
+erDiagram
+  Organization ||--o| OrganizationSSOSettings : has
+  Organization ||--o{ OrgDomainClaim : claims
+  Organization ||--o{ SsoProvider : registers
+  Organization ||--o{ ScimToken : mints
+  Organization ||--o{ Membership : contains
+  User ||--o{ Membership : holds
+  User ||--o{ Session : owns
+  User ||--o| OrgWorkspaceProfile : has
+  User ||--o{ SsoProvider : linked_account
+
+  OrganizationSSOSettings {
+    string organizationId UK
+    string_array allowedEmailDomains
+    boolean enforceSSO
+    MemberRole defaultRoleForAutoJoin
+    DateTime breakGlassUntil
+  }
+  OrgDomainClaim {
+    string domain UK
+    string organizationId FK
+    string verificationToken
+    DateTime verifiedAt
+  }
+  SsoProvider {
+    string providerId UK
+    string organizationId
+    string domain
+    string samlConfig
+    string oidcConfig
+  }
+  ScimToken {
+    string tokenHash UK
+    string organizationId FK
+    ScimTokenStatus status
+    DateTime expiresAt
+  }
+  Membership {
+    string userId FK
+    string organizationId FK
+    MemberRole role
+    MemberStatus status
+    string externalScimId
+  }
+  Session {
+    string userId FK
+    string activeOrganizationId
+  }
+  User {
+    string email UK
+    int sessionGeneration
+    DateTime erasedAt
+  }
+```
+
+## The end-to-end sign-in path
+
+The sequence diagram below traces a single SSO sign-in from the IdP
+assertion through JIT auto-join and the pre-cookie veto down to the
+session payload the app reads.
 
 ```mermaid
 sequenceDiagram

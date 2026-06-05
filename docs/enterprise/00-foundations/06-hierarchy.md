@@ -8,17 +8,21 @@ last-reviewed: 2026-06-05
 
 # Organization hierarchy
 
-> Scope: the schema-only group-hierarchy columns on `Organization`
-> (#771 D3) and what is — and isn't — wired in v1. Updated 2026-06-05.
+This doc covers the schema-only group-hierarchy columns on `Organization` (#771 D3)
+and explains what is, and is not, wired in v1. It was last updated 2026-06-05.
 
-`Organization` carries two self-relation hierarchy columns —
-`parentOrganizationId` and `rootOrganizationId` — so a future
-conglomerate-buyer rollout (Tata/Reliance/Birla-style subsidiary
-groups) lands without a structural migration. Both are **nullable and
-inert** in v1: no code reads or writes them, and the group-billing /
-subsidiary-scoping APIs that would consume them are stubbed 501. The
-columns exist to make the data model future-proof without committing to
-the UX yet.
+> 🟡 **Gap:** the subtree-scoping work that would make these columns live —
+> population on create, the `requireOrgAccess` subtree scope, the helper functions,
+> and the consolidated-reporting roll-up — is deferred to the #771 group-billing
+> epic. The columns are present and inert; nothing reads or writes them yet.
+
+`Organization` carries two self-relation hierarchy columns,
+`parentOrganizationId` and `rootOrganizationId`, so that a future conglomerate-buyer
+rollout for Tata-, Reliance-, or Birla-style subsidiary groups can land without a
+structural migration. Both columns are nullable and inert in v1: no code reads or
+writes them, and the group-billing and subsidiary-scoping APIs that would consume
+them are stubbed to return 501. The columns exist to make the data model
+future-proof without committing to the UX yet.
 
 These columns were dropped in #768 (`4f80bac5` —
 _"drop Organization hierarchy (parentId/rootId/depth)"_, which also deleted
@@ -69,21 +73,21 @@ model Organization {
 }
 ```
 
-- `parentOrganizationId` — direct parent, nullable (root / standalone
-  orgs leave it `null`). `onDelete: SetNull` so deleting a parent
-  orphans rather than cascades its subsidiaries.
-- `rootOrganizationId` — denormalised group-root id, intended for fast
-  subtree scoping. Nullable; **not** self-populated in v1 (a standalone
-  org leaves it `null` rather than pointing at itself).
+`parentOrganizationId` is the direct parent and is nullable, so root and
+standalone orgs leave it `null`. Its relation is declared with `onDelete: SetNull`,
+which means deleting a parent orphans its subsidiaries rather than cascading the
+delete down the tree. `rootOrganizationId` is the denormalised group-root id,
+intended for fast subtree scoping; it too is nullable and is deliberately not
+self-populated in v1, so a standalone org leaves it `null` rather than pointing at
+itself.
 
-There is **no `depth` column** and **no `@@index`** on either field yet
-— both are intentionally deferred until the subsidiary-scoping APIs that
-need them ship. Denormalising the root id (rather than walking
-`parentOrganizationId` recursively) is the chosen shape so a future
-report — "every session booked by any Wipro subsidiary this quarter" —
-runs as a flat `WHERE rootOrganizationId = '<wipro-root-id>'` instead of
-a recursive CTE. That query is not built yet; the column is the
-forward-commitment to it.
+There is no `depth` column and no `@@index` on either field yet, and both are
+intentionally deferred until the subsidiary-scoping APIs that would need them ship.
+Denormalising the root id, rather than walking `parentOrganizationId` recursively,
+is the chosen shape so that a future report such as "every session booked by any
+Wipro subsidiary this quarter" can run as a flat
+`WHERE rootOrganizationId = '<wipro-root-id>'` instead of a recursive CTE. That
+query is not built yet, and the column is the forward commitment to it.
 
 ## What is NOT implemented (everything, in v1)
 
@@ -120,20 +124,17 @@ v1 that sets either hierarchy column; nesting will arrive with the
 
 ## Why keep the columns if there's no UI
 
-Because:
-
-1. The cost of two unused nullable columns is near zero.
-2. The cost of adding them later is a structural migration on a table
-   with uptime-critical relations — exactly the cost #768 incurred when
-   it dropped them and #771 D3 paid again to re-add. (No backfill enters
-   the equation here: the DB is pre-MVP and gets reset, so re-adding the
-   columns is free of historical-row rewriting — the expensive part is
-   purely the schema/relation change against a live table later.)
-3. The cost of *not* having them when a conglomerate buyer asks tomorrow
-   is a feature gap we can't close in a week.
-
-Shipping the columns now lands the schema commitment while keeping both
-the helpers and the UI deferred until a real multi-BU customer lands.
+The decision comes down to three asymmetric costs. The cost of two unused nullable
+columns is near zero. The cost of adding them later is a structural migration on a
+table that carries uptime-critical relations, which is exactly the cost #768
+incurred when it dropped these columns and the cost #771 D3 paid again to re-add
+them. No backfill enters the equation here, because the database is pre-MVP and
+gets reset, so re-adding the columns is free of any historical-row rewriting and
+the expensive part is purely the schema and relation change against a live table
+later. The cost of not having the columns when a conglomerate buyer asks for them
+tomorrow is a feature gap that cannot be closed in a week. Shipping the columns now
+therefore lands the schema commitment while keeping both the helpers and the UI
+deferred until a real multi-business-unit customer arrives.
 
 ## Seed
 
@@ -145,6 +146,7 @@ exercise it with.
 
 ## Related docs
 
-- `organization-types` — the flat capability model the hierarchy
-  sits alongside.
-- `scenarios-and-examples` — Wipro, which motivates the feature.
+The [organization-types](02-organization-types.md) doc describes the flat
+capability model that the hierarchy sits alongside, and
+[scenarios-and-examples](../60-scenarios-and-verdicts/01-scenarios-and-examples.md)
+walks the Wipro case that motivates the feature.

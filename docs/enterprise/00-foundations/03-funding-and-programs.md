@@ -35,6 +35,9 @@ Labels and taglines come from `FUNDING_SOURCE_LABEL` and
 
 ## Mapping from the old billing modes
 
+The table below maps each retired `OrgBillingMode` value in the left column to the
+`FundingSource` that replaced it, with a note on what changed in the move.
+
 | Old `OrgBillingMode`    | New `FundingSource` | Notes |
 |-------------------------|---------------------|-------|
 | `TAG_ONLY`              | `PERSONAL`          | Members pay at checkout; the org is attribution-only. |
@@ -43,6 +46,10 @@ Labels and taglines come from `FUNDING_SOURCE_LABEL` and
 | `PREPAID_UNLIMITED`     | `LICENSE`           | Flat fee contract; `coveredEngagementsPerCycle=null` on the LICENSED_SEAT Program. |
 
 ## Funding-source matrix
+
+The table below reads one funding source per row and shows, across the columns,
+which `BillingAccount` money columns it uses, which `PaymentLeg.source` a single
+booking writes under it, and whether any invoice cron runs on its behalf.
 
 | FundingSource | Wallet column | Credit limit column | Per-booking leg (`PaymentLeg.source`) | Invoice rhythm |
 |---------------|---------------|---------------------|---------------------------------------|----------------|
@@ -205,10 +212,11 @@ terms lock on the same principle — see the deep-dive in
 
 ## `OverageBehavior`
 
-Drives what happens when a program hits its per-cycle cap mid-session.
-It applies to **both** subtypes — `LICENSED_SEAT` (metered by engagement
-count) and `CREDIT_POOL` (metered by `consumedPaise` against
-`creditsPerCycle × 100`):
+`OverageBehavior` drives what happens when a program hits its per-cycle cap in the
+middle of a booking. It applies to both subtypes: `LICENSED_SEAT`, which is metered
+by engagement count, and `CREDIT_POOL`, which is metered by `consumedPaise` against
+`creditsPerCycle × 100`. The table below gives one row per enum value and describes
+the behaviour each one triggers.
 
 | Value           | Behaviour                                                                 |
 |-----------------|---------------------------------------------------------------------------|
@@ -276,13 +284,17 @@ The sell-supported matrix — capability (`canSponsor`/`canHost`, see [organizat
 
 ## Related docs
 
-- `wallet-and-topups` — wallet top-ups, debits, refunds.
-- `invoicing` — invoice generation, GST, PO 3-way match.
-- `programs` — deeper dive into Program / ProgramAssignment /
-  BookingUtilization / OverageEvent.
-- `payment-legs` — the `PaymentLeg` model that carries
-  per-source breakdown of every payment.
-- [contract-lifecycle](../30-programs-and-lifecycle/07-contract-lifecycle.md) — contract terms
-  lock, supersession, auto-renew, expiry cascade.
-- [cycle-engine-and-rollover](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md) —
-  per-cycle ProgramAssignment ROLL/CLOSE engine.
+The [wallet-and-topups](../10-money-and-ledger/04-wallet-and-topups.md) doc covers
+wallet top-ups, debits, and refunds, while
+[invoicing](../10-money-and-ledger/08-invoicing.md) covers invoice generation, GST,
+and the purchase-order three-way match. The
+[programs](../30-programs-and-lifecycle/02-programs.md) doc is the deeper dive into
+`Program`, `ProgramAssignment`, `BookingUtilization`, and `OverageEvent`, and
+[payment-legs](../10-money-and-ledger/09-payment-legs.md) documents the
+`PaymentLeg` model that carries the per-source breakdown of every payment. For the
+commercial lifecycle,
+[contract-lifecycle](../30-programs-and-lifecycle/07-contract-lifecycle.md) explains
+how contract terms lock, the supersession chain, auto-renew, and the expiry
+cascade, and
+[cycle-engine-and-rollover](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md)
+explains the per-cycle `ProgramAssignment` roll-or-close engine.

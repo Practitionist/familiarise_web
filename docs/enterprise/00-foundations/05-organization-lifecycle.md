@@ -39,8 +39,11 @@ stateDiagram-v2
 
 Transitions are gated by `POST /api/admin/organizations/[orgId]/verify`
 (`app/api/admin/organizations/[orgId]/verify/route.ts`). The route
-accepts `action: VERIFY | REJECT | SUSPEND | REACTIVATE | DEACTIVATE`
-(missing/`{}` defaults to `VERIFY` for legacy callers) and enforces:
+accepts `action: VERIFY | REJECT | SUSPEND | REACTIVATE | DEACTIVATE`, where a
+missing action or an empty `{}` body defaults to `VERIFY` so legacy callers keep
+their old behaviour. The route enforces the allowed-action table below; read each
+row as the set of actions permitted from a given starting status, and note that
+`DEACTIVATED` is terminal and admits none.
 
 | From                   | Allowed actions                   |
 |------------------------|-----------------------------------|
@@ -49,9 +52,12 @@ accepts `action: VERIFY | REJECT | SUSPEND | REACTIVATE | DEACTIVATE`
 | `SUSPENDED`            | `REACTIVATE`, `DEACTIVATE`        |
 | `DEACTIVATED`          | none — terminal                   |
 
-Every transition emits an `OrgAuditLog` row in the `SYSTEM` category
-with one of `AUDIT_ACTIONS.SYSTEM.{VERIFIED, SUSPENDED, REACTIVATED,
-DEACTIVATED, VERIFICATION_RESUBMITTED}`.
+Every action through this route emits an `OrgAuditLog` row in the `SYSTEM`
+category. `VERIFY` emits `AUDIT_ACTIONS.SYSTEM.VERIFIED`, `SUSPEND` emits
+`SUSPENDED`, `REACTIVATE` emits `REACTIVATED`, `DEACTIVATE` emits `DEACTIVATED`, and
+`REJECT` emits `VERIFICATION_REJECTED`. The sibling action
+`VERIFICATION_RESUBMITTED` is not emitted here; it is emitted by the separate
+resubmit route described next.
 
 ### Verification reject → resubmit loop
 
@@ -100,19 +106,84 @@ design choice the next section unpacks.
 
 ## What each status allows
 
-- **PENDING_VERIFICATION** — the default on org creation. The org owner
-  can configure settings, BillingAccount, invite members, and sketch
-  contracts. `requireOrgAccess` still lets members in. Payments and
-  payouts are not intended to flow until an admin flips the status to
-  ACTIVE.
-- **ACTIVE** — the only status where every feature is live.
-- **SUSPENDED** — read-only guards are up to each caller; the org
-  record is still accessible. The suspension reason is captured in the
-  `OrgAuditLog.details.reason` field.
-- **DEACTIVATED** — `requireOrgAccess` rejects every caller with a
-  `403 "Organization has been deactivated"`. The row is retained for
-  audit; admins use this instead of `DELETE` when the org has any
-  contracts, invoices, POs, or earnings.
+`PENDING_VERIFICATION` is the default on org creation. In this status the org owner
+can configure settings, set up the `BillingAccount`, invite members, and sketch
+contracts, and `requireOrgAccess` still lets members in. Payments and payouts are
+not intended to flow until an admin flips the status to `ACTIVE`. The matching
+constant in code is `OPERATIONAL_ORG_STATUSES` in `lib/enterprise/org-status.ts`,
+which counts `PENDING_VERIFICATION` and `ACTIVE` as the statuses where the org
+exists and may transact.
+
+`ACTIVE` is the only status in which every feature is live, and it is the sole
+member of `BILLABLE_ORG_STATUSES`.
+
+`SUSPENDED` leaves the org record accessible but expects each caller to enforce its
+own read-only guards, and the suspension reason is captured in the
+`OrgAuditLog.details.reason` field. A suspended org keeps dashboard read access so
+an OWNER can resolve the suspension cause, but it cannot onboard new members.
+
+`DEACTIVATED` is terminal: `requireOrgAccess` rejects every caller with a
+`403 "Organization has been deactivated"`. The row is retained for audit, and
+admins use this status instead of `DELETE` whenever the org has any contracts,
+invoices, purchase orders, or earnings.
+
+## `MemberStatus` state machine
+
+The `Organization` status above governs the org as a whole; each individual
+`Membership` carries its own `MemberStatus`, which governs whether that one member's
+role is live. The enum has five values — `PENDING`, `ACTIVE`, `SUSPENDED`,
+`REMOVED`, and `ERASED` — and `requireOrgAccess` admits a caller only when their
+membership is `ACTIVE`.
+
+```prisma
+enum MemberStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  REMOVED
+  ERASED
+}
+```
+
+```mermaid
+stateDiagram-v2
+  [*] --> PENDING: HRIS auto-provision (rare)
+  [*] --> ACTIVE: invite accepted / SSO auto-join
+  PENDING --> ACTIVE: activated
+  ACTIVE --> SUSPENDED: operator suspend / SCIM deprovision
+  SUSPENDED --> ACTIVE: operator reactivate
+  ACTIVE --> REMOVED: operator remove
+  SUSPENDED --> REMOVED: operator remove
+  REMOVED --> ERASED: DPDP erasure pipeline
+  ACTIVE --> ERASED: DPDP erasure pipeline
+  SUSPENDED --> ERASED: DPDP erasure pipeline
+  REMOVED --> [*]
+  ERASED --> [*]
+```
+
+A membership is born in one of two states. The ordinary invite-accept flow and the
+SSO auto-join flow both create the row directly in `ACTIVE`, so the role is live
+immediately. The rarer `PENDING` entry exists for HRIS auto-provisioning, where a
+directory sync stages the member ahead of activation; the transition to `ACTIVE`
+fires when the membership is activated.
+
+The transition from `ACTIVE` to `SUSPENDED` is triggered either by an operator
+suspending the member or by a SCIM deprovision, which suspends rather than erases so
+the identity stays re-linkable. The reverse, `SUSPENDED` back to `ACTIVE`, is an
+operator reactivation. While suspended, the member's role is inert and the API
+returns a 403.
+
+The transition to `REMOVED` is triggered by an operator removing the member, and it
+can be reached from either `ACTIVE` or `SUSPENDED`. `REMOVED` is terminal for access
+purposes — the row is kept only for the audit trail — and removing a member
+mid-cycle is what cascades the member's `ACTIVE` program assignments to `CANCELLED`
+(see the `AssignmentStatus` section below).
+
+The transition to `ERASED` is triggered by the DPDP §12 erasure pipeline when a user
+exercises their right to erasure. It can be reached from `ACTIVE`, `SUSPENDED`, or
+`REMOVED`, and like `REMOVED` it keeps the row for financial-trail integrity while
+scrubbing the user identifiers to pseudonymous values (the partner timestamp is
+`User.erasedAt`).
 
 ## Deletion
 
@@ -399,8 +470,10 @@ history something else depends on; mint a new row and chain.*
 
 ## Related docs
 
-- `organization-types` — capability flips also gate status
-  mutations (can't disable canSponsor with a non-zero wallet).
-- `sso-and-authentication` — SSO enforcement for
-  PENDING_VERIFICATION orgs.
-- `programs` — the program subtypes behind this lifecycle.
+The [organization-types](02-organization-types.md) doc explains how capability
+flips also gate status mutations, since an org cannot disable `canSponsor` while it
+still holds a non-zero wallet balance. The
+[sso-and-authentication](../20-iam-and-security/01-sso-and-authentication.md) doc
+covers SSO enforcement for `PENDING_VERIFICATION` orgs, and
+[funding-and-programs](03-funding-and-programs.md) describes the program subtypes
+that sit behind this lifecycle.

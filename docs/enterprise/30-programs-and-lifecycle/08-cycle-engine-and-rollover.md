@@ -8,19 +8,9 @@ last-reviewed: 2026-06-05
 
 # Cycle engine and rollover
 
-> **What this covers:** the `ProgramAssignment` lifecycle
-> (`AssignmentStatus`), the nightly cycle-advance cron, the roll-vs-close
-> decision table, successor minting + the rollover chain, the PAUSED/CANCELLED
-> paths, and how cycle-close interplays with overage settlement. **Audience:**
-> engineers touching `advance-program-cycles`, assignment CRUD, or reconcile.
-> Last verified against code 2026-06-05 (#779 §A/§B).
+This document covers the `ProgramAssignment` lifecycle (`AssignmentStatus`), the nightly cycle-advance cron, the roll-vs-close decision table, successor minting and the rollover chain, the PAUSED and CANCELLED paths, and how cycle-close interplays with overage settlement. It is for engineers touching `advance-program-cycles`, assignment CRUD, or reconcile, and it was last verified against code on 2026-06-05 (#779 §A/§B).
 
-A `ProgramAssignment` is a **per-cycle** entitlement row — one per `(Program,
-Membership, periodStart)`. Before #779 an assignment's "is it still live?" was
-*inferred* from `periodEnd` vs now, which left **zombie assignments**: rows
-whose period had ended but which nothing ever advanced or closed, so caps and
-seat counts drifted. This engine is what kills them — it gives every assignment
-an explicit `status` and a nightly job that moves it.
+A `ProgramAssignment` is a per-cycle entitlement row — one per `(Program, Membership, periodStart)`. Before #779 an assignment's liveness was inferred from `periodEnd` versus now, which left zombie assignments: rows whose period had ended but which nothing ever advanced or closed, so caps and seat counts drifted. This engine is what kills them, because it gives every assignment an explicit `status` and a nightly job that moves it.
 
 ## State machine
 
@@ -36,6 +26,8 @@ stateDiagram-v2
   CANCELLED --> [*]
   note right of ROLLED: successor ACTIVE row minted\nfor the next period
 ```
+
+Each `AssignmentStatus` value, what it means, and which code path sets it are summarised in the table below.
 
 | Status | Meaning | Who sets it |
 |---|---|---|
@@ -94,9 +86,7 @@ enum AssignmentStatus {
 assignment whose contract is still ACTIVE rolls into its next period *before*
 any contract-side state moves under it.
 
-**Candidates:** `status = ACTIVE`, `rolledAt = null`, `periodEnd <= now`, on a
-live program (`program.status = ACTIVE`, `archivedAt = null`). Bounded
-`BATCH_SIZE = 500` per run; the next tick drains the remainder.
+A row is a candidate when `status = ACTIVE`, `rolledAt = null`, and `periodEnd <= now`, and its program is still live (`program.status = ACTIVE` with `archivedAt = null`). Each run is bounded to `BATCH_SIZE = 500` candidates, and the next nightly tick drains any remainder.
 
 Per candidate, the engine computes the successor period
 (`successorStart = periodEnd`, `successorEnd = nextPeriodEnd(start, cycle)`),

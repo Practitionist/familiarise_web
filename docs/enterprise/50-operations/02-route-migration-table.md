@@ -31,12 +31,16 @@ _Last reconciled against the filesystem: 2026-06-05 (post v2 mega-audit,
 
 ## Core org record
 
+The org record collapsed `OrganizationProfile` into `Organization`, so the profile route is gone and the main record route's response shape changed.
+
 | Old | Now | Notes |
 |-----|-----|-------|
 | `GET/PATCH/DELETE /api/organizations/[orgId]` | same | Model merged (OrganizationProfile is gone); response shape changed (capability booleans instead of `kind`). |
 | `GET /api/organizations/[orgId]/profile` | **removed** | OrganizationProfile merged into Organization. Use `/api/organizations/[orgId]`. |
 
 ## Billing / wallet / credits
+
+The credit-pool model became the wallet, so every `/credits*` route now resolves to a `/billing-account/wallet*` successor backed by the ledger.
 
 | Old | Now | Notes |
 |-----|-----|-------|
@@ -50,6 +54,8 @@ _Last reconciled against the filesystem: 2026-06-05 (post v2 mega-audit,
 
 ## Invoices + POs
 
+Invoices and purchase orders moved under the `/billing-account` prefix, with paths otherwise unchanged.
+
 | Old | Now | Notes |
 |-----|-----|-------|
 | `GET /api/organizations/[orgId]/invoices` | `GET /api/organizations/[orgId]/billing-account/invoices` | — |
@@ -61,6 +67,8 @@ _Last reconciled against the filesystem: 2026-06-05 (post v2 mega-audit,
 | `GET/PATCH/DELETE /api/organizations/[orgId]/purchase-orders/[poId]` | `GET/PATCH/DELETE /api/organizations/[orgId]/billing-account/purchase-orders/[poId]` | — |
 
 ## Contracts and programs
+
+The single-contract and seats models were replaced by multi-contract collections and the `Program`/`ProgramAssignment` pair, so most rows here are new routes with no old ancestor.
 
 | Old | Now | Notes |
 |-----|-----|-------|
@@ -77,6 +85,8 @@ _Last reconciled against the filesystem: 2026-06-05 (post v2 mega-audit,
 
 ## Members and consultants
 
+The separate consultant and learner collections folded into a role-filtered `/members` endpoint, and the in-org apply-to-deliver approval workflow was removed entirely.
+
 | Old | Now | Notes |
 |-----|-----|-------|
 | `GET/POST /api/organizations/[orgId]/members` | same | Role vocabulary is `OWNER / MAINTAINER / MANAGER / EXPERT / LEARNER / SUPPORT`. Strings crossing the API boundary are narrowed with `MemberRoleSchema` (lib/labels/org-labels.ts); no legacy aliases accepted. |
@@ -87,6 +97,8 @@ _Last reconciled against the filesystem: 2026-06-05 (post v2 mega-audit,
 | `POST /api/organizations/[orgId]/consultants/[consultantId]/reject` | `DELETE /api/organizations/[orgId]/members/[memberId]` | Use member removal (`status = REMOVED`) instead of reject; there is no pending-expert queue anymore. |
 
 ## Earnings / payouts / rate cards
+
+Most earnings and payout paths are unchanged; the rate-card surface went plural and append-only, so a "patch" is now a new card that closes the old one.
 
 | Old | Now | Notes |
 |-----|-----|-------|
@@ -100,6 +112,8 @@ _Last reconciled against the filesystem: 2026-06-05 (post v2 mega-audit,
 | `PATCH /api/organizations/[orgId]/rate-card` | `POST /api/organizations/[orgId]/rate-cards` | "Patching" is now an append (new card with new bps + close old one). |
 
 ## SSO
+
+The SSO routes are largely stable; provider verification moved inline into BetterAuth on first sign-in, and the domain-claims route lost its `/sso` prefix.
 
 | Old | Now | Notes |
 |-----|-----|-------|
@@ -144,6 +158,8 @@ code at a non-existent surface.
 | _(new)_ | `GET/POST /api/organizations/[orgId]/data-exports` + `[exportId]/download` | DPDP §11 export bundles. OWNER ∨ BILLING_ADMIN. |
 
 ## Admin
+
+The platform-admin status route was renamed to `/verify` and now multiplexes the full org status machine, including the REJECT action that feeds the resubmit loop.
 
 | Old | Now | Notes |
 |-----|-----|-------|
