@@ -73,7 +73,40 @@ describe("requireScimAuth", () => {
     expect(result.response?.status).toBe(401);
     expect(mockedPrisma.scimToken.findUnique).toHaveBeenCalledWith({
       where: { tokenHash: hashOf("not-real") },
-      select: { id: true, organizationId: true, status: true },
+      // #789 — expiresAt is now selected so the deadline can be enforced.
+      select: {
+        id: true,
+        organizationId: true,
+        status: true,
+        expiresAt: true,
+      },
+    });
+  });
+
+  it("#789 — 401 when an ACTIVE token is past its expiresAt", async () => {
+    mockedPrisma.scimToken.findUnique.mockResolvedValue({
+      id: "tok-1",
+      organizationId: "org-1",
+      status: "ACTIVE",
+      expiresAt: new Date(Date.now() - 60_000),
+    });
+    const result = await requireScimAuth(makeReq("Bearer expired-token"));
+    expect(result.response?.status).toBe(401);
+    expect(result.grant).toBeUndefined();
+  });
+
+  it("#789 — allows an ACTIVE token whose expiresAt is still in the future", async () => {
+    mockedPrisma.scimToken.findUnique.mockResolvedValue({
+      id: "tok-1",
+      organizationId: "org-1",
+      status: "ACTIVE",
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    mockedApplyRateLimit.mockResolvedValue(null);
+    const result = await requireScimAuth(makeReq("Bearer live-token"));
+    expect(result.grant).toEqual({
+      organizationId: "org-1",
+      tokenId: "tok-1",
     });
   });
 

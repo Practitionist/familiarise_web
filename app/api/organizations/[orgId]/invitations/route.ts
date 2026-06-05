@@ -18,6 +18,7 @@ import crypto from "node:crypto";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { isAtLeastRole } from "@/lib/auth/role-ranks";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   DomainVerificationRequiredError,
@@ -120,6 +121,21 @@ export async function POST(
     );
   }
   const { email, role, expiresInDays } = parsed.data;
+
+  // OWNER role gate (#789): only an OWNER can invite another OWNER. Without it
+  // a MAINTAINER could invite an OWNER and, once accepted, gain the
+  // security-sensitive surface by proxy — the same hole the members PATCH route
+  // already closes. The accept route trusts the invitation's stored role, so
+  // the check has to live here at invite time.
+  if (role === "OWNER" && !isAtLeastRole(access.member.role, "OWNER")) {
+    return NextResponse.json(
+      {
+        error: "Only an OWNER can invite a member as OWNER",
+        code: "OWNER_ROLE_REQUIRES_OWNER",
+      },
+      { status: 403 },
+    );
+  }
 
   // EXPERT is only valid for orgs that host consultants. Sponsor-only
   // orgs have no payout account / RateCard / settlement path for an

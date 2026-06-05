@@ -18,6 +18,7 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import {
   canSeeOperatorSurface,
   canSeeFinanceSurface,
+  isAtLeastRole,
 } from "@/lib/auth/role-ranks";
 import type { MemberRole, MemberStatus } from "@prisma/client";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -211,6 +212,20 @@ export async function POST(
     );
   }
   const { userId: providedUserId, email, role, departmentLabel } = parsed.data;
+
+  // OWNER role gate (#789): only an OWNER can mint another OWNER. This is the
+  // same guard the members PATCH route applies; without it a MAINTAINER could
+  // direct-add an ACTIVE OWNER and grant themselves the security-sensitive
+  // surface (billing, deletion, ownership transfer, SSO/SCIM) by proxy.
+  if (role === "OWNER" && !isAtLeastRole(access.member.role, "OWNER")) {
+    return NextResponse.json(
+      {
+        error: "Only an OWNER can assign the OWNER role",
+        code: "OWNER_ROLE_REQUIRES_OWNER",
+      },
+      { status: 403 },
+    );
+  }
 
   // EXPERT requires the org to actually host consultants — otherwise
   // there's no rate card / payout account to settle their earnings.
