@@ -21,7 +21,10 @@
  */
 
 import type { Prisma, PrismaClient } from "@prisma/client";
-import { applyMembershipRoleEffects } from "@/lib/api/organizations/membership-transitions";
+import {
+  applyMembershipRoleEffects,
+  bumpUserSessionGeneration,
+} from "@/lib/api/organizations/membership-transitions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { resolveRoleFromGroupNames } from "./resource-user";
@@ -151,6 +154,11 @@ export async function createOrReprovisionScimUser(
           payoutRecipient: roleEffects.payoutRecipient,
         },
       });
+      // #789 — an IdP-driven role change or deactivation must invalidate the
+      // user's cached session memberships, same as the in-app member routes;
+      // otherwise a SCIM-suspended user keeps a stale active membership in
+      // their session payload until the cookie cache lapses.
+      await bumpUserSessionGeneration(tx, user.id);
       await tx.orgAuditLog.create({
         data: {
           organizationId,
@@ -245,6 +253,10 @@ export async function deprovisionScimUser(
       where: { id: membership.id },
       data: { status: "SUSPENDED" },
     });
+    // #789 — invalidate the deprovisioned user's cached session memberships so
+    // the suspension takes effect immediately instead of lingering for the
+    // cookie-cache window.
+    await bumpUserSessionGeneration(tx, membership.userId);
     await tx.orgAuditLog.create({
       data: {
         organizationId,

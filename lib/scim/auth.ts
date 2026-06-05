@@ -45,10 +45,16 @@ export async function requireScimAuth(
 
   const token = await prisma.scimToken.findUnique({
     where: { tokenHash },
-    select: { id: true, organizationId: true, status: true },
+    select: { id: true, organizationId: true, status: true, expiresAt: true },
   });
   if (!token) {
     return { response: scimError(401, "Unknown bearer token") };
+  }
+  // #789 — enforce the absolute deadline the schema already records. An ACTIVE
+  // token past its expiresAt must stop authenticating; the row stays ACTIVE so
+  // the operator can see it lapsed rather than having been revoked.
+  if (token.expiresAt && token.expiresAt.getTime() <= Date.now()) {
+    return { response: scimError(401, "Token has expired") };
   }
   if (token.status !== "ACTIVE") {
     // Why we audit the misuse: a REVOKED token still in IdP config is
