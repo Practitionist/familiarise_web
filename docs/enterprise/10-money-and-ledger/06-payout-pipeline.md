@@ -1,3 +1,11 @@
+---
+title: Payout pipeline (host-side)
+band: 10-money-and-ledger
+audience: sde3
+status: partial
+last-reviewed: 2026-06-05
+---
+
 # Payout pipeline (host-side)
 
 **What this covers:** how host-org earnings roll up into an `OrganizationPayout`, the `ORG_PAYOUT` ledger posting that settles the payable, and the India statutory fields (TDS / MSME / FEMA) the payout carries. The consultant-side payout (`PAYOUT`) is the mirror; the split that creates earnings is in [booking → earnings](05-booking-to-earnings.md).

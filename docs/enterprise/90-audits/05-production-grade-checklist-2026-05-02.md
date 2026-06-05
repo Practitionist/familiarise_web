@@ -1,3 +1,11 @@
+---
+title: Enterprise Production-Grade Checklist
+band: 90-audits
+audience: sde4
+status: live
+last-reviewed: 2026-05-02
+---
+
 # Enterprise Production-Grade Checklist
 
 > **Superseded (2026-06-05):** This is a point-in-time Round-2 audit. For the

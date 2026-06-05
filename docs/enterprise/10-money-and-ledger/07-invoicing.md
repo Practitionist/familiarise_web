@@ -1,3 +1,11 @@
+---
+title: Invoicing
+band: 10-money-and-ledger
+audience: sde3
+status: partial
+last-reviewed: 2026-06-05
+---
+
 # Invoicing
 
 **What this covers:** the India-compliant `OrganizationInvoice` — its lifecycle, GST breakdown, IRN/e-invoice fields, CGST Rule 46 numbering, the PO 3-way match, the **dunning** escalation, how a cycle's **overage** rolls into a line item, and how invoice payment clears the `ORG_RECEIVABLE` accrued at booking time — plus the **refund credit-note** machinery (CGST Sec 34 / Rule 53). Funding mechanics are in [payment legs](08-payment-legs.md); the postings are in [ledger & postings](03-ledger-and-postings.md).

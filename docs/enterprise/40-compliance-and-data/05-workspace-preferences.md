@@ -1,3 +1,11 @@
+---
+title: Operator workspace preferences
+band: 40-compliance-and-data
+audience: sde2
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Operator workspace preferences
 
 Plain version: one human can run several orgs (a consultancy with

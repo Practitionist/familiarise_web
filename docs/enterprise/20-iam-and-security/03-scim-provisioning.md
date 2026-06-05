@@ -1,3 +1,11 @@
+---
+title: SCIM 2.0 provisioning
+band: 20-iam-and-security
+audience: sde3
+status: partial
+last-reviewed: 2026-06-05
+---
+
 # SCIM 2.0 provisioning
 
 Familiarise speaks SCIM 2.0 at `/scim/v2/**` so IdPs (Okta, Azure AD,

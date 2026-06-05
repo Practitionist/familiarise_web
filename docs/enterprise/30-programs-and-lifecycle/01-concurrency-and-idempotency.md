@@ -1,3 +1,11 @@
+---
+title: Concurrency & idempotency
+band: 30-programs-and-lifecycle
+audience: sde3
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Concurrency & idempotency
 
 **What this covers:** the atomic patterns that keep enterprise mutations correct under concurrency, and the idempotency keys that let every side-effect survive a duplicate call. (Merges the former concurrency-and-locking + idempotency-keys docs.)

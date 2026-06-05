@@ -1,3 +1,11 @@
+---
+title: Organization hierarchy
+band: 00-foundations
+audience: sde2
+status: partial
+last-reviewed: 2026-06-05
+---
+
 # Organization hierarchy
 
 > Scope: the schema-only group-hierarchy columns on `Organization`

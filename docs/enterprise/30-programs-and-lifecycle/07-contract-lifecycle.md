@@ -1,3 +1,11 @@
+---
+title: Contract lifecycle
+band: 30-programs-and-lifecycle
+audience: sde2
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Contract lifecycle
 
 > **What this covers:** the `Contract` state machine (DRAFT → ACTIVE →

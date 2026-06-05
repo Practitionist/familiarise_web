@@ -1,3 +1,11 @@
+---
+title: Chart of accounts
+band: 10-money-and-ledger
+audience: sde2
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Chart of accounts
 
 **What this covers:** the ten `LedgerAccountKind` buckets every posting touches, which side each is *normal* on (so you can read a balance correctly), and how an account is scoped + addressed deterministically. This is the vocabulary the [postings doc](03-ledger-and-postings.md) speaks.

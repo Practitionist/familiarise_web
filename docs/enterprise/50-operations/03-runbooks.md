@@ -1,3 +1,11 @@
+---
+title: Operational runbooks
+band: 50-operations
+audience: sde4
+status: partial
+last-reviewed: 2026-06-05
+---
+
 # Operational runbooks
 
 This document captures the step-by-step procedures for responding to the

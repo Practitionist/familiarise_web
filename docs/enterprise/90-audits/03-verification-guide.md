@@ -1,3 +1,11 @@
+---
+title: Enterprise verification guide — seeded logins + step-by-step flows
+band: 90-audits
+audience: sde4
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Enterprise verification guide — seeded logins + step-by-step flows
 
 The database was reset and reseeded (`small` mode). This guide gives you **every mock login** and a **click-through flow** to verify the enterprise subsystem across all org archetypes. Pair it with [`subsystem-checklist`](02-subsystem-checklist.md) (what each phase covers + known gaps).

@@ -1,3 +1,11 @@
+---
+title: Wallet & Top-ups
+band: 10-money-and-ledger
+audience: sde2
+status: partial
+last-reviewed: 2026-06-05
+---
+
 # Wallet & Top-ups
 
 **What this covers:** how an organization's prepaid **wallet** works — the `WalletTopUp` lifecycle (initiate → Razorpay checkout → webhook confirm), how money lands in the wallet via the double-entry journal, and how bookings debit it. The wallet is a *prepaid liability we owe the org*; its balance is **derived from the journal**, with `BillingAccount.walletBalance` kept only as a fast cache.

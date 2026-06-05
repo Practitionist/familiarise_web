@@ -1,3 +1,11 @@
+---
+title: Programs, assignments, and booking utilization
+band: 30-programs-and-lifecycle
+audience: sde2
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Programs, assignments, and booking utilization
 
 `Program` is the commercial primitive inside the enterprise layer.

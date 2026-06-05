@@ -1,3 +1,11 @@
+---
+title: Expert lifecycle
+band: 30-programs-and-lifecycle
+audience: sde2
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Expert lifecycle
 
 EXPERT is the `MemberRole` value for anyone who delivers services on

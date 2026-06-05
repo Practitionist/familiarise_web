@@ -1,3 +1,11 @@
+---
+title: Security headers
+band: 20-iam-and-security
+audience: sde2
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Security headers
 
 **New here?** HTTP response headers are instructions the server hands

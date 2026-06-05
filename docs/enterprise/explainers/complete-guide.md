@@ -1,3 +1,11 @@
+---
+title: Familiarise Enterprise — The Complete Guide
+band: index
+audience: sde1
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Familiarise Enterprise — The Complete Guide
 
 > **Last refreshed post-#772 (double-entry ledger cutover):** the money model is now a double-entry journal (`LedgerAccount` / `LedgerTransaction` / `LedgerEntry`). The legacy `WalletEntry` / `FundingLedgerEntry` / `SettlementLedgerEntry` rows and the "three-ledger" framing were removed; see Part IV.

@@ -1,3 +1,11 @@
+---
+title: Organization types — capability-driven
+band: 00-foundations
+audience: sde1
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Organization types — capability-driven
 
 The `OrganizationKind` enum is gone. An organization's "type" is now

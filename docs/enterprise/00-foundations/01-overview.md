@@ -1,3 +1,11 @@
+---
+title: Enterprise layer — overview
+band: 00-foundations
+audience: sde1
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Enterprise layer — overview
 
 > **Scope:** organization primitives, programs, wallets, contracts, invoices,

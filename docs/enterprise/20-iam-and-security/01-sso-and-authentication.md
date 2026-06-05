@@ -1,3 +1,11 @@
+---
+title: SSO and authentication
+band: 20-iam-and-security
+audience: sde3
+status: partial
+last-reviewed: 2026-06-05
+---
+
 # SSO and authentication
 
 SSO for the enterprise layer is a two-table split:

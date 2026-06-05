@@ -1,3 +1,11 @@
+---
+title: Enterprise subsystem — deep phased verification checklist
+band: 90-audits
+audience: sde4
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Enterprise subsystem — deep phased verification checklist
 
 A file-tree-grounded map of **every sub-subsystem** of the enterprise layer, grouped into phases you can verify in order. Each item is annotated with the real code path and a status hint from the audit series.

@@ -1,3 +1,11 @@
+---
+title: Outbound webhooks
+band: 40-compliance-and-data
+audience: sde3
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Outbound webhooks
 
 PR #655 introduces per-organization outbound webhook endpoints so that

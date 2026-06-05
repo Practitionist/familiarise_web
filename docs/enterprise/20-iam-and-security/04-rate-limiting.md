@@ -1,3 +1,11 @@
+---
+title: Rate limiting
+band: 20-iam-and-security
+audience: sde2
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Rate limiting
 
 > **Scope.** Auth + enterprise rate-limit coverage matrix, who enforces

@@ -1,3 +1,11 @@
+---
+title: Roles and permissions
+band: 00-foundations
+audience: sde1
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Roles and permissions
 
 Every membership row carries a typed `MemberRole`. The enum is unified —

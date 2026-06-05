@@ -1,3 +1,11 @@
+---
+title: Payment legs & stackable funding
+band: 10-money-and-ledger
+audience: sde2
+status: live
+last-reviewed: 2026-06-05
+---
+
 # Payment legs & stackable funding
 
 **What this covers:** how one booking can be funded by several sources at once (`PaymentLeg`), and how each leg source maps to a **debit in the `BOOKING` ledger posting**. This is the funding side of [booking → earnings](05-booking-to-earnings.md).
