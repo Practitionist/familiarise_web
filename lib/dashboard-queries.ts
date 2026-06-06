@@ -75,9 +75,11 @@ export const consultantFetchers = {
       "Dashboard fetch failed",
     ),
 
-  appointments: (consultantId: string) =>
+  appointments: (consultantId: string, orgScope?: string | null) =>
     fetchWithErrorHandling<TAppointment[]>(
-      `/api/slots/appointments?consultantProfileId=${consultantId}`,
+      orgScope && orgScope !== "personal"
+        ? `/api/slots/appointments?consultantProfileId=${consultantId}&orgScope=${encodeURIComponent(orgScope)}`
+        : `/api/slots/appointments?consultantProfileId=${consultantId}`,
       "Appointments fetch failed",
     ),
 
@@ -224,8 +226,12 @@ export function createConsultantQueries(
 
     // Appointments with all statuses
     appointments: {
-      queryKey: ["consultant-appointments", consultantId] as const,
-      queryFn: () => consultantFetchers.appointments(consultantId),
+      queryKey: [
+        "consultant-appointments",
+        consultantId,
+        scopeKey,
+      ] as const,
+      queryFn: () => consultantFetchers.appointments(consultantId, orgScope),
       staleTime: STALE_TIMES.SHORT,
       gcTime: GC_TIME,
       retry: 2,

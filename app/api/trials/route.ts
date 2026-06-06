@@ -87,6 +87,10 @@ export async function GET(request: NextRequest) {
       raw: searchParams.get("orgScope"),
       memberships: callerMemberships,
       userRole: session.user.role,
+      // Non-admin callers are already locked to their own
+      // consultant/consulteeProfileId (lines 50-73), so `?orgScope=all`
+      // means "all of MY trials" — safe for any role.
+      allowAllForOwner: true,
     });
     if (!scopeResolution.ok) {
       return NextResponse.json(

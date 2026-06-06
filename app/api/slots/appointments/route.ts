@@ -115,6 +115,10 @@ export async function GET(request: NextRequest) {
     raw: searchParams.get("orgScope"),
     memberships: callerMembershipsForScope,
     userRole: session.user.role,
+    // Self-scoped: non-admin callers are already locked to their own
+    // profileId via `hasOwnFilter` above, so `?orgScope=all` here just
+    // means "all of MY data" — safe for any role.
+    allowAllForOwner: true,
   });
   if (!scopeResolution.ok) {
     return NextResponse.json(
