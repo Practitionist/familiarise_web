@@ -138,12 +138,6 @@ export default function AppointmentsPage({
 
   return (
     <DashboardErrorBoundary>
-      <div className="mb-4 flex justify-end">
-        <OrgContextFilter
-          value={filterValue}
-          onChange={handleFilterChange}
-        />
-      </div>
       <AppointmentsTab
         appointments={appointments || []}
         badgeStyles={BADGE_STYLES}
@@ -151,6 +145,12 @@ export default function AppointmentsPage({
         consultantId={consultantId}
         unscheduledClasses={classEventsData || []}
         unscheduledWebinars={webinarEventsData || []}
+        headerSlot={
+          <OrgContextFilter
+            value={filterValue}
+            onChange={handleFilterChange}
+          />
+        }
       />
     </DashboardErrorBoundary>
   );

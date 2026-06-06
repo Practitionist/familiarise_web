@@ -1,3 +1,4 @@
+import type React from "react";
 import { TConsultantProfile } from "@/types/consultant";
 import { TAppointment } from "@/types/appointment";
 
@@ -170,6 +171,10 @@ export interface AppointmentsTabProps {
   onUpdate?: () => void;
   unscheduledClasses?: UnscheduledClass[];
   unscheduledWebinars?: UnscheduledWebinar[];
+  /** Optional right-aligned element rendered next to the "All Appointments"
+   *  header — used by the page wrapper to mount the OrgContextFilter
+   *  dropdown inline instead of stacking it above the card. */
+  headerSlot?: React.ReactNode;
 }
 
 export interface RequestsTabProps {

@@ -72,6 +72,7 @@ export function AppointmentsTab({
   consultantId,
   unscheduledClasses = [],
   unscheduledWebinars = [],
+  headerSlot,
 }: Readonly<AppointmentsTabProps>) {
   const router = useRouter();
   const client = useStreamVideoClient();
@@ -397,9 +398,12 @@ export function AppointmentsTab({
 
   return (
     <div className="bg-white p-4 sm:p-6 rounded-lg shadow">
-      <h2 className="text-xl font-semibold mb-4 text-gray-800">
-        All Appointments
-      </h2>
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
+        <h2 className="text-xl font-semibold text-gray-800">
+          All Appointments
+        </h2>
+        {headerSlot}
+      </div>
       <div className="space-y-3 mb-4">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
