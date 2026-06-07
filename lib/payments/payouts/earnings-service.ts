@@ -29,7 +29,7 @@ import {
 } from "@prisma/client";
 import { PAYOUT_CONSTANTS, AppointmentType } from "./constants";
 import { calculateRevenueSplit } from "@/lib/collaborators/service";
-import { getIndianFYQuarter } from "@/lib/payments/tax/tds-service";
+import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import type { RevenueSplit } from "@/types/collaborators";
@@ -862,6 +862,12 @@ export async function refundEarnings(
     return true;
   }
 
+  // #813 — integer-paise proportion pair for the shared TDS-reversal helper.
+  // Partial refunds carry explicit paise amounts; a full refund has none, so we
+  // pass an equal pair to express ratio=1 without reintroducing float math.
+  const tdsRefundPaise = isPartialRefund ? options!.refundAmount! : 1;
+  const tdsPaymentPaise = isPartialRefund ? options!.paymentAmount! : 1;
+
   if (isPartialRefund) {
     console.log(
       `Partial refund: ${options!.refundAmount}/${options!.paymentAmount} = ${(refundRatio * 100).toFixed(1)}% reversal for payment ${paymentId}`,
@@ -945,36 +951,18 @@ export async function refundEarnings(
         );
       }
 
-      // Force refund of PAID earnings: create TDS reversal record
+      // #813 — force refund of PAID earnings: record the proportional TDS reversal
+      // via the shared helper (integer proportion + dedup/cap + filed-aware
+      // FY/quarter). Previously this path used float ratio math and no cap, and
+      // it diverged from the gateway/cron cascade (operations/refund.ts).
       if (earnings.payoutId) {
-        const tdsRecord = await db.tDSRecord.findFirst({
-          where: {
-            payoutId: earnings.payoutId,
-            consultantProfileId: earnings.consultantProfileId,
-            isReversal: false,
-          },
+        await recordTdsReversal(db, {
+          payoutId: earnings.payoutId,
+          consultantProfileId: earnings.consultantProfileId,
+          earningsId: earnings.id,
+          refundAmountPaise: tdsRefundPaise,
+          paymentAmountPaise: tdsPaymentPaise,
         });
-
-        if (tdsRecord && tdsRecord.tdsDeducted > 0) {
-          const tdsToReverse = Math.round(tdsRecord.tdsDeducted * refundRatio);
-          await db.tDSRecord.create({
-            data: {
-              consultantProfileId: earnings.consultantProfileId,
-              financialYear: tdsRecord.financialYear,
-              quarter: getIndianFYQuarter(),
-              cumulativeAmountCredited: tdsRecord.cumulativeAmountCredited,
-              tdsDeducted: -tdsToReverse,
-              tdsRate: tdsRecord.tdsRate,
-              payoutId: earnings.payoutId,
-              earningsId: earnings.id,
-              isReversal: true,
-            },
-          });
-
-          console.log(
-            `TDS reversal created for earnings ${earnings.id}: -${tdsToReverse} paise (${isPartialRefund ? "partial" : "full"})`,
-          );
-        }
       }
 
       // Update earnings: always track refundedShareAmount, set REFUNDED when fully exhausted

@@ -51,7 +51,7 @@ import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpe
 import { assertEarningStatusTransitionLegal } from "@/lib/payments/payouts/earning-status";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
-import { getIndianFYQuarter } from "@/lib/payments/tax/tds-service";
+import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { generateOrgCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 
@@ -319,20 +319,10 @@ export async function applyRefundCascade(
     where: { id: input.paymentId },
     include: {
       legs: { orderBy: { createdAt: "asc" } },
-      // #812 — include the consultant payout's TDS fields so a refund of an
-      // already-paid-out earning can record a provisional TdsAdjustment.
-      earnings: {
-        include: {
-          payout: {
-            select: {
-              id: true,
-              tdsDeducted: true,
-              tdsRateApplied: true,
-              tdsFinancialYear: true,
-            },
-          },
-        },
-      },
+      // #813 — the scalar `earnings.payoutId` is all the TDS-reversal helper needs
+      // to find the original TDSRecord; the prior `payout` TDS-field include was
+      // dead (review finding).
+      earnings: true,
       organizationEarnings: { include: { orgPayout: true } },
       bookingUtilization: true,
     },
@@ -537,48 +527,20 @@ export async function applyRefundCascade(
     });
     consultantEarningsReversed++;
 
-    // #812 — refund-driven TDS reversal. If this earning was already paid out
-    // with TDS withheld, the cascade must record the proportional reversal so
-    // the quarterly 26Q nets it out — previously only the admin `forceRefund`
-    // path (earnings-service.ts) did this, so a normal gateway/cron refund of a
-    // paid-out earning silently left the TDS un-reversed. We mirror that proven
-    // pattern exactly: a negative `isReversal` TDSRecord against the original.
-    //
-    // NOTE for review (#812): the schema-only `TdsAdjustment` model that the
-    // audit flagged is intentionally NOT written here — the live mechanism is
-    // TDSRecord-reversal, and `TdsAdjustment` appears redundant with it. Whether
-    // TdsAdjustment is canonical or dead is a model decision left to the team/CA;
-    // the proportional basis and the refund-vs-payout FY/quarter choice here
-    // match the existing forceRefund path and are provisional pending CA sign-off.
-    if (earnings.payoutId && (earnings.payout?.tdsDeducted ?? 0) > 0) {
-      const refundRatio =
-        payment.amount > 0 ? input.amountPaise / payment.amount : 0;
-      const original = await tx.tDSRecord.findFirst({
-        where: {
-          payoutId: earnings.payoutId,
-          consultantProfileId: earnings.consultantProfileId,
-          isReversal: false,
-        },
+    // #813 — refund-driven TDS reversal for an already-paid-out earning, so the
+    // quarterly 26Q nets the withholding back out. Previously only admin
+    // forceRefund (earnings-service.ts) did this; a normal gateway/cron refund
+    // left the TDS un-reversed. The shared helper owns the integer proportion,
+    // the dedup/cap against double-reversal, and the filed-aware FY/quarter
+    // policy (pending CA sign-off).
+    if (earnings.payoutId) {
+      await recordTdsReversal(tx, {
+        payoutId: earnings.payoutId,
+        consultantProfileId: earnings.consultantProfileId,
+        earningsId: earnings.id,
+        refundAmountPaise: input.amountPaise,
+        paymentAmountPaise: payment.amount,
       });
-      if (original && original.tdsDeducted > 0 && refundRatio > 0) {
-        const tdsToReverse = Math.round(original.tdsDeducted * refundRatio);
-        if (tdsToReverse > 0) {
-          await tx.tDSRecord.create({
-            data: {
-              consultantProfileId: earnings.consultantProfileId,
-              financialYear: original.financialYear, // original payout's FY
-              quarter: getIndianFYQuarter(),
-              cumulativeAmountCredited: original.cumulativeAmountCredited,
-              tdsDeducted: -tdsToReverse, // signed: reverses prior withholding
-              tdsRate: original.tdsRate,
-              tdsSection: original.tdsSection,
-              payoutId: earnings.payoutId,
-              earningsId: earnings.id,
-              isReversal: true,
-            },
-          });
-        }
-      }
     }
   }
 

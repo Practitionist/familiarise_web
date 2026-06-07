@@ -79,8 +79,12 @@ export const TDS_RATE_WITHOUT_PAN = 20;
  * e.g., March 2027 → "2026-27", April 2027 → "2027-28"
  */
 export function getIndianFinancialYear(date: Date = new Date()): string {
-  const month = date.getMonth(); // 0-indexed (0=Jan, 3=Apr)
-  const year = date.getFullYear();
+  // #813 — the Indian FY (Apr–Mar) is reckoned in IST, not UTC. Same +5:30 shift
+  // as invoice-numbering.ts:indianFiscalYear; local getMonth/getFullYear mis-file
+  // a near-midnight-IST Apr 1 payout under the prior FY on a UTC runtime.
+  const ist = new Date(date.getTime() + 5.5 * 60 * 60 * 1000);
+  const month = ist.getUTCMonth(); // 0-indexed (0=Jan, 3=Apr)
+  const year = ist.getUTCFullYear();
 
   // If Jan-Mar, FY started previous year
   const fyStartYear = month < 3 ? year - 1 : year;
@@ -94,7 +98,9 @@ export function getIndianFinancialYear(date: Date = new Date()): string {
  * Q1: Apr-Jun, Q2: Jul-Sep, Q3: Oct-Dec, Q4: Jan-Mar
  */
 export function getIndianFYQuarter(date: Date = new Date()): number {
-  const month = date.getMonth(); // 0-indexed
+  // #813 — IST-reckoned like getIndianFinancialYear (see precedent there).
+  const ist = new Date(date.getTime() + 5.5 * 60 * 60 * 1000);
+  const month = ist.getUTCMonth(); // 0-indexed
   if (month >= 3 && month <= 5) return 1; // Apr-Jun
   if (month >= 6 && month <= 8) return 2; // Jul-Sep
   if (month >= 9 && month <= 11) return 3; // Oct-Dec
@@ -284,6 +290,90 @@ export async function recordTDSDeduction(params: {
       tdsSection: params.tdsSection ?? null,
       payoutId: params.payoutId,
       earningsId: params.earningsId,
+    },
+  });
+}
+
+/**
+ * #813 — record a refund-driven TDS reversal as a negative `isReversal` TDSRecord
+ * so the quarterly 26Q nets the withholding back out. Shared by the gateway/cron
+ * refund cascade (operations/refund.ts) and admin forceRefund (earnings-service.ts),
+ * which previously duplicated this with float math + no dedup cap.
+ *
+ * No-op (returns null) when there is nothing to reverse. All reads/writes go
+ * through the passed tx so the reversal commits atomically with the cascade.
+ */
+export async function recordTdsReversal(
+  tx: Prisma.TransactionClient | typeof prisma,
+  params: {
+    payoutId: string;
+    consultantProfileId: string;
+    earningsId?: string;
+    /** Refund slice in paise; proportion basis numerator. */
+    refundAmountPaise: number;
+    /** Original payment amount in paise; proportion basis denominator. */
+    paymentAmountPaise: number;
+  },
+) {
+  if (params.paymentAmountPaise <= 0) return null;
+
+  // Original withholding for this payout/consultant.
+  const original = await tx.tDSRecord.findFirst({
+    where: {
+      payoutId: params.payoutId,
+      consultantProfileId: params.consultantProfileId,
+      isReversal: false,
+    },
+  });
+  if (!original || original.tdsDeducted <= 0) return null;
+
+  // Integer paise proportion (floor — never reverse more than the refund earns).
+  let tdsToReverse = Math.floor(
+    (original.tdsDeducted * params.refundAmountPaise) / params.paymentAmountPaise,
+  );
+  if (tdsToReverse <= 0) return null;
+
+  // Dedup + cap: prior reversals carry negative tdsDeducted, so their sum is the
+  // negation of what's already been reversed. Cap cumulative reversal at the
+  // original — stops a second cascade (app refund THEN lost-dispute chargeback)
+  // from double-reversing, and keeps partial-refund accumulation bounded.
+  const priorReversals = await tx.tDSRecord.findMany({
+    where: {
+      payoutId: params.payoutId,
+      consultantProfileId: params.consultantProfileId,
+      isReversal: true,
+    },
+    select: { tdsDeducted: true },
+  });
+  const alreadyReversed = priorReversals.reduce(
+    (sum, r) => sum - r.tdsDeducted,
+    0,
+  );
+  tdsToReverse = Math.min(tdsToReverse, original.tdsDeducted - alreadyReversed);
+  if (tdsToReverse <= 0) return null;
+
+  // FY/quarter policy (pending CA sign-off): an unfiled original is corrected in
+  // place (copy its FY+quarter); a filed original (reportedInForm26Q) is adjusted
+  // against the current quarter's liability (IST-aware now), since a correction
+  // statement for a filed quarter is a manual CA action, not an automated rewrite.
+  const filed = original.reportedInForm26Q === true;
+  const financialYear = filed
+    ? getIndianFinancialYear()
+    : original.financialYear;
+  const quarter = filed ? getIndianFYQuarter() : original.quarter;
+
+  return tx.tDSRecord.create({
+    data: {
+      consultantProfileId: params.consultantProfileId,
+      financialYear,
+      quarter,
+      cumulativeAmountCredited: original.cumulativeAmountCredited,
+      tdsDeducted: -tdsToReverse, // signed: reverses prior withholding
+      tdsRate: original.tdsRate,
+      tdsSection: original.tdsSection,
+      payoutId: params.payoutId,
+      earningsId: params.earningsId,
+      isReversal: true,
     },
   });
 }
