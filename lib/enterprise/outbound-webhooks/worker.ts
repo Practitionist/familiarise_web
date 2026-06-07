@@ -125,13 +125,11 @@ export async function runDispatchTick(params: {
         { status: "RETRY", nextRetryAt: { lte: nowDate } },
         // #812: A stale IN_FLIGHT row is a crashed-mid-delivery orphan — the
         // worker died after the soft-lock flip but before recording the
-        // outcome. Re-queue it; the receiver-side idempotency keys make a
-        // re-POST safe even if the original request did land. Bounded on
-        // createdAt (the model has no updatedAt/@updatedAt yet); the staleness
-        // floor is so far past the 10s request timeout that createdAt-age is a
-        // safe orphan signal regardless. Switch to updatedAt once the schema
-        // grows an @updatedAt.
-        { status: "IN_FLIGHT", createdAt: { lt: inFlightStaleBefore } },
+        // outcome. Keyed on updatedAt (@updatedAt) so the staleness window
+        // tracks the last soft-lock touch, not enqueue. Re-queue it; the
+        // receiver-side idempotency keys make a re-POST safe even if the
+        // original request did land.
+        { status: "IN_FLIGHT", updatedAt: { lt: inFlightStaleBefore } },
       ],
     },
     orderBy: [{ nextRetryAt: { sort: "asc", nulls: "first" } }],
@@ -167,12 +165,15 @@ export async function runDispatchTick(params: {
       continue;
     }
 
-    // Flip to IN_FLIGHT before issuing the HTTP — protects against two
-    // ticks colliding on the same row if the cron schedule slips.
-    await prisma.outboundWebhookDelivery.update({
-      where: { id: row.id },
+    // #812 — guarded atomic claim: only flip to IN_FLIGHT if the row is STILL
+    // in the status we selected it under. An unguarded update-by-id let the
+    // stale-IN_FLIGHT reaper defeat the soft lock (two ticks re-claiming the
+    // same orphan). count===0 means another tick won the race — skip it.
+    const claim = await prisma.outboundWebhookDelivery.updateMany({
+      where: { id: row.id, status: row.status },
       data: { status: "IN_FLIGHT" },
     });
+    if (claim.count === 0) continue;
 
     const body = JSON.stringify({
       id: row.id,

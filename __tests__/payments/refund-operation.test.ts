@@ -172,6 +172,14 @@ function txStub() {
         return e;
       }),
     },
+    // #813 — recordTdsReversal reads/writes TDSRecord through the tx. Fixtures
+    // here carry no payoutId so the helper is never invoked, but the surface
+    // must exist for the gate to be callable without a TypeError.
+    tDSRecord: {
+      findFirst: jest.fn(async () => null),
+      findMany: jest.fn(async () => []),
+      create: jest.fn(async ({ data }: any) => ({ id: stableUuid(), ...data })),
+    },
     organizationEarnings: {
       update: jest.fn(async ({ where, data }: any) => {
         const e = state.organizationEarnings.get(where.id);
@@ -380,10 +388,47 @@ jest.mock("../../lib/prisma", () => {
     __esModule: true,
     default: {
       ...stub,
-      $transaction: async (fn: any) => fn(stub),
+      // #812 — a real $transaction is atomic: a throw inside the callback MUST
+      // roll back every write. The old `fn(stub)` mutated `state` in place with
+      // no rollback, so a regression dropping refund.ts's `throw err` would still
+      // pass. Snapshot `state` on entry, run the callback, and on throw restore
+      // every collection IN PLACE (tests hold a live `state` reference), then
+      // re-throw — mirroring Postgres rollback semantics.
+      $transaction: async (fn: any) => {
+        const snapshot = snapshotState();
+        try {
+          return await fn(stub);
+        } catch (err) {
+          restoreState(snapshot);
+          throw err;
+        }
+      },
     },
   };
 });
+
+// structuredClone handles the store shape (Maps/arrays of plain objects with
+// Date values — no functions), giving a detached snapshot of every collection.
+function snapshotState(): Store {
+  return structuredClone(state);
+}
+
+// Restore IN PLACE: clear + repopulate the SAME Map/array instances so the
+// test's captured `state` reference still points at the rolled-back data.
+function restoreState(snapshot: Store): void {
+  for (const key of Object.keys(state) as Array<keyof Store>) {
+    const live = state[key];
+    const saved = snapshot[key];
+    if (live instanceof Map) {
+      live.clear();
+      // forEach: tsconfig lacks downlevelIteration, so no for..of over Maps
+      (saved as Map<string, Row>).forEach((v, k) => live.set(k, v));
+    } else if (Array.isArray(live)) {
+      live.length = 0;
+      live.push(...(saved as Row[]));
+    }
+  }
+}
 
 // Audit-actions module is pure constants; no mock needed.
 
@@ -607,6 +652,42 @@ describe("refundPayment — multi-collaborator refund balances the ledger (#813 
     });
     expect(result.amountRefundedPaise).toBe(10000);
     expect(result.consultantEarningsReversed).toBe(3);
+  });
+
+  // #812 — the invariant test: if the ledger posting fails, the WHOLE cascade
+  // must roll back. This is the test that goes RED if anyone reverts refund.ts's
+  // `throw err` in the cascade's catch (half-applied earnings/legs with no
+  // balanced journal). We inject the failure at postLedgerTxn's create call.
+  it("rolls back the entire cascade when the ledger posting throws (atomicity invariant)", async () => {
+    seedMultiCollaborator();
+    // postLedgerTxn: findUnique (miss) → ledgerAccount.upsert → ledgerTransaction.create.
+    // Fail the create exactly once → the cascade's catch re-throws → tx rolls back.
+    (tx.ledgerTransaction.create as jest.Mock).mockRejectedValueOnce(
+      new Error("simulated ledger write failure"),
+    );
+
+    await expect(
+      refundPayment({ paymentId: "pay-mc", reason: "ledger-fail" }),
+    ).rejects.toThrow("simulated ledger write failure");
+
+    // Every cascade write must be undone (TDS path omitted — owned by a
+    // concurrent change; this asserts the ledger/legs/earnings/wallet rollback).
+    // ConsultantEarnings.refundedShareAmount back to 0 for all collaborators.
+    for (const id of ["ce-mc-1", "ce-mc-2", "ce-mc-3"]) {
+      expect(state.consultantEarnings.get(id)?.refundedShareAmount).toBe(0);
+      expect(state.consultantEarnings.get(id)?.status).toBe("PENDING");
+    }
+    // Wallet credit reversed — balance back to the seeded 50000.
+    expect(state.billingAccounts.get("ba-mc")?.walletBalance).toBe(50000);
+    // No wallet-credit entry persisted.
+    expect(state.walletEntries).toHaveLength(0);
+    // No leg reversal persisted — only the original WALLET leg remains.
+    expect(state.paymentLegs).toHaveLength(1);
+    expect(state.paymentLegs[0]?.id).toBe("leg-mc");
+    // No refund row persisted (created PENDING inside the tx, then rolled back).
+    expect(state.refunds).toHaveLength(0);
+    // Payment row untouched (no amountRefundedPaise written by the cascade).
+    expect(state.payments.get("pay-mc")?.amountRefundedPaise).toBeUndefined();
   });
 });
 

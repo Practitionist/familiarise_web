@@ -4634,10 +4634,13 @@ model OutboundWebhookDelivery {
   nextRetryAt       DateTime?
   lastError         String?         @db.Text
   createdAt         DateTime        @default(now())
+  // #812 — the reaper keys stale-IN_FLIGHT detection on last-touch, not enqueue.
+  updatedAt         DateTime        @updatedAt
   deliveredAt       DateTime?
 
   @@index([status, nextRetryAt])
   @@index([webhookEndpointId, createdAt])
+  @@index([status, updatedAt])
 }
 
 enum DeliveryStatus {
