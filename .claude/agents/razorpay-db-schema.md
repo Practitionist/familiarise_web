@@ -20,7 +20,7 @@ Follow these steps in order. Be thorough at each stage before moving to the next
 - **Uses auto-incrementing integer primary keys in examples** — adapt to the project's convention (UUIDs, CUIDs, etc.) when detected
 - **Creates both subscriptions and invoices tables** — invoices are required for Indian businesses (GST)
 - **Multiple subscriptions per user are normal** — when users change plans, both old and new subscriptions coexist in Razorpay until the old one is explicitly cancelled. Never assume one-to-one between users and subscriptions. Access checks should look for ANY active subscription.
-- **Invoices table stores Razorpay Invoice API IDs** — the `razorpay_invoice_id` links to invoices created via `razorpay.invoices.create()`, which is a separate API entity from subscriptions. Subscription payments do NOT auto-generate invoices.
+- **Invoices table stores Razorpay Invoice API IDs** — the `razorpay_invoice_id` links to invoices created via `razorpay.invoices.create()`, which is a separate API entity from subscriptions. Subscription payments do NOT auto-generate invoices. Note: API-created Razorpay invoices are **non-GST** (the Invoice API cannot apply tax rates), so the GST breakout columns below are YOUR computed compliance truth, not Razorpay's.
 
 ---
 
@@ -150,7 +150,7 @@ Adapt the user ID type based on what was detected in Step 1c.
 
 ## Step 3: Generate the GST invoices table
 
-Invoices are a **separate API entity** in Razorpay. Subscription payments do NOT auto-generate invoices. You must create them via `razorpay.invoices.create()` with proper line items. The `razorpayInvoiceId` column stores the ID from the Razorpay Invoice API, and `shortUrl` stores the Razorpay-hosted invoice page URL for customer download.
+Invoices are a **separate API entity** in Razorpay. Subscription payments do NOT auto-generate invoices. Note that API-created Razorpay invoices are **non-GST** (the Invoice API cannot apply tax rates), so this table holds YOUR computed GST breakout as the compliance source of truth. The `razorpayInvoiceId` column stores the ID from the (non-GST) Razorpay Invoice API if you create one as a payment artifact, and `shortUrl` stores the Razorpay-hosted page URL.
 
 ```typescript
 export const gstInvoices = pgTable("gst_invoices", {
@@ -164,8 +164,10 @@ export const gstInvoices = pgTable("gst_invoices", {
   totalAmount: integer("total_amount").notNull(), // paise
   baseAmount: integer("base_amount").notNull(), // paise
   gstAmount: integer("gst_amount").notNull(), // paise
-  cgstAmount: integer("cgst_amount").notNull(), // paise
-  sgstAmount: integer("sgst_amount").notNull(), // paise
+  cgstAmount: integer("cgst_amount"), // paise — null for inter-state (IGST only)
+  sgstAmount: integer("sgst_amount"), // paise — null for inter-state (IGST only)
+  igstAmount: integer("igst_amount"), // paise — set for inter-state, null for intra-state
+  placeOfSupply: text("place_of_supply"), // GST state code of the customer — decides CGST+SGST vs IGST
   gstRate: integer("gst_rate").notNull().default(18),
   sacCode: text("sac_code").notNull().default("998314"),
   currency: text("currency").notNull().default("INR"),
@@ -196,7 +198,7 @@ export const refunds = pgTable("refunds", {
   razorpayRefundId: text("razorpay_refund_id").notNull().unique(),
   razorpayPaymentId: text("razorpay_payment_id").notNull(),
   amount: integer("amount").notNull(), // paise
-  status: text("status").notNull().default("initiated"), // initiated, processed, failed
+  status: text("status").notNull().default("pending"), // pending, processed, failed
   reason: text("reason"),
   notes: jsonb("notes"),
   processedAt: timestamp("processed_at"),
@@ -251,7 +253,11 @@ export const paymentHistory = pgTable("payment_history", {
   amount: integer("amount").notNull(), // paise
   currency: text("currency").notNull().default("INR"),
   status: text("status").notNull(), // captured, failed, refunded
-  method: text("method"), // card, upi, netbanking, wallet
+  method: text("method"), // card, upi, netbanking, wallet, emi
+  fee: integer("fee"), // paise — Razorpay fee on this payment
+  tax: integer("tax"), // paise — GST on the Razorpay fee
+  amountRefunded: integer("amount_refunded").notNull().default(0), // paise — running total refunded
+  refundStatus: text("refund_status"), // null, partial, full
   email: text("email"),
   contact: text("contact"),
   errorCode: text("error_code"),

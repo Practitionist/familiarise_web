@@ -21,7 +21,7 @@ This is a common source of confusion. One-time payments and subscriptions use **
 | **Where it runs** | Inline popup on your page | Separate Razorpay-hosted page |
 | **Key used for HMAC** | `RAZORPAY_KEY_SECRET` (API secret) | `RAZORPAY_WEBHOOK_SECRET` (webhook secret) |
 
-**Do NOT mix these up.** You cannot use `short_url` for one-time orders, and you cannot use the JS SDK popup for subscriptions (it technically works but breaks on mobile/popup blockers).
+**Do NOT mix these up.** You cannot use `short_url` for one-time orders. Subscriptions, however, *are* supported in Standard Checkout — pass `subscription_id` in the options instead of `order_id`. The hosted `short_url` page is just one option; the JS SDK popup is another.
 
 ## Flow 1: Order + JS SDK (Recommended for UX)
 
@@ -93,12 +93,23 @@ const handlePayment = async () => {
       }
     },
     theme: { color: "#3b82f6" },
+    modal: {
+      ondismiss: () => {
+        // User closed the popup without paying — reset loading state here
+      },
+    },
+    // Fallback for popup-blocked / mobile: Razorpay redirects to callback_url
+    // with the payment params instead of firing `handler`.
+    // callback_url: "https://your-app.com/api/billing/verify-payment",
+    // redirect: true,
   });
   rzp.open();
 };
 ```
 
 **Note**: Add `<Script src="https://checkout.razorpay.com/v1/checkout.js" />` to your layout.
+
+**Popup-blocked / mobile fallback**: Use `modal.ondismiss` to reset state when the user closes the popup. If the popup is blocked, set `callback_url` + `redirect: true` so Razorpay posts the result to a server endpoint instead of calling `handler`.
 
 ### Verify Payment (Server)
 
@@ -210,5 +221,5 @@ async function grantDayPass(userId: string, orderId: string, paymentId: string) 
 4. **`timingSafeEqual` requires same length**: Catch errors from length mismatch — treat as invalid.
 5. **Verify key**: Order flow uses `RAZORPAY_KEY_SECRET` (your API key secret), NOT `RAZORPAY_WEBHOOK_SECRET`. These are different secrets for different purposes!
 6. **Race condition**: Check purchase status AFTER signature verification, not before. Prevents double-grant between concurrent requests.
-7. **Razorpay JS SDK script**: Must be loaded via `<Script>` tag, not `import`. It attaches to `window.Razorpay`. This script is ONLY for one-time payments, not subscriptions.
+7. **Razorpay JS SDK script**: Must be loaded via `<Script>` tag, not `import`. It attaches to `window.Razorpay`. The same Standard Checkout script also drives subscriptions (pass `subscription_id` instead of `order_id`).
 8. **Payment confirmation is immediate**: Unlike subscriptions (which rely on async webhooks), one-time payments confirm in the `handler` callback. You verify the HMAC signature server-side and grant access right away.

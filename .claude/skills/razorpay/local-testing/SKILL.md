@@ -83,9 +83,11 @@ ngrok gives you a URL like `https://abc123.ngrok-free.app`. This is your public 
 ### Free tier limitation
 ngrok free tier gives a random URL each time. Paid plans give a stable subdomain. For development, random is fine — just update the webhook URL each session.
 
+> Razorpay's own validate-test guide now demos `zrok` as the tunnel, but ngrok still works fine — use either.
+
 ## Step 4: Register Webhook in Razorpay
 
-1. Go to **Razorpay Dashboard → Settings → Webhooks** (in test mode)
+1. Go to **Razorpay Dashboard → Account & Settings → Webhooks** (in test mode)
 2. Click **Add New Webhook**
 3. Set the URL: `https://abc123.ngrok-free.app/api/billing/webhook`
 4. Set a webhook secret (any strong string) — save it as `RAZORPAY_WEBHOOK_SECRET` in `.env.local`
@@ -102,8 +104,8 @@ ngrok free tier gives a random URL each time. Paid plans give a stable subdomain
    - `subscription.updated`
    - `payment.authorized`
    - `payment.failed`
-   - `payment.refund.created` (if using refunds)
-   - `payment.refund.processed`
+   - `refund.created` (if using refunds)
+   - `refund.processed`
 6. Click **Create Webhook**
 
 **Webhook secret is NOT the same as API secret.** They're separate values.
@@ -123,19 +125,30 @@ ngrok free tier gives a random URL each time. Paid plans give a stable subdomain
 
 ### Test card numbers
 
+Domestic success cards:
+
 | Card | Number | Behavior |
 |------|--------|----------|
-| Success | `4111 1111 1111 1111` | Payment succeeds |
-| Success (Mastercard) | `5267 3181 8797 5449` | Payment succeeds |
-| Failure | `4000 0000 0000 0002` | Payment fails |
+| Success (Visa) | `4100 2800 0000 1007` | Payment succeeds |
+| Success (Mastercard) | `5500 6700 0000 1002` | Payment succeeds |
+| Success (RuPay) | `6527 6589 0000 1005` | Payment succeeds |
+
+Failure / error cards (each forces a specific decline reason):
+
+| Card | Number | Error |
+|------|--------|-------|
+| Card declined | `4100 2800 0006 0003` | `card_declined` |
+| Insufficient funds | `4100 2800 0008 0001` | `insufficient_fund` |
+| Payment timed out | `4100 2800 0009 0000` | `payment_timed_out` |
+| Authentication failed | `4100 2800 0000 0009` | `authentication_failed` |
 
 - **Expiry**: Any future date (e.g., `12/35`)
 - **CVV**: Any 3 digits (e.g., `123`)
 - **Name**: Anything
-- **OTP/3DS**: Use `1234` when prompted in test mode
+- **OTP/3DS**: No fixed OTP — any OTP of 4–10 digits succeeds; fewer than 4 digits fails.
 
 ### Test UPI
-Use any valid format UPI ID like `success@razorpay` for successful payments.
+Use any valid format UPI ID like `success@razorpay` for successful payments, or `failure@razorpay` to test the failure path.
 
 ### Test a refund
 
@@ -147,7 +160,7 @@ curl -u rzp_test_xxxxx:your_test_secret \
   -d '{ "amount": 99900 }'
 ```
 
-Test mode refunds process instantly. Live mode takes 5-7 business days.
+Test mode refunds are typically immediate (not contractually documented). Live mode takes 5-7 business days.
 
 ## Step 6: Inspect Webhook Payloads
 

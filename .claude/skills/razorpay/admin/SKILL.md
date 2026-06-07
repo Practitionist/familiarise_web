@@ -64,7 +64,7 @@ curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_KEY_SECRET \
   https://api.razorpay.com/v1/subscriptions/sub_xxxxx | jq .
 ```
 
-Key fields: `id`, `plan_id`, `status` (`created|authenticated|active|halted|cancelled|completed|paused`), `current_start`, `current_end`, `total_count`, `paid_count`, `remaining_count`, `short_url`, `notes`
+Key fields: `id`, `plan_id`, `status` (`created|authenticated|active|pending|halted|cancelled|completed|expired|paused`), `current_start`, `current_end`, `total_count`, `paid_count`, `remaining_count`, `short_url`, `notes`
 
 ### List all subscriptions
 ```bash
@@ -142,12 +142,12 @@ curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_KEY_SECRET \
   https://api.razorpay.com/v1/refunds/rfnd_xxxxx | jq .
 ```
 
-Key fields: `id`, `payment_id`, `amount` (paise), `status` (`created|processed|failed`), `speed_requested` (`normal|optimized`), `created_at`
+Key fields: `id`, `payment_id`, `amount` (paise), `status` (`pending|processed|failed`), `speed_requested` (`normal|optimum`), `speed_processed` (`normal|instant`), `created_at`
 
 ### List refunds for a payment
 ```bash
 curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_KEY_SECRET \
-  "https://api.razorpay.com/v1/payments/pay_xxxxx/refunds" | jq '.items[] | {id, amount, status, speed_requested, created_at}'
+  "https://api.razorpay.com/v1/payments/pay_xxxxx/refunds" | jq '.items[] | {id, amount, status, speed_requested, speed_processed, created_at}'
 ```
 
 ### Issue a full refund
@@ -231,6 +231,34 @@ curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_KEY_SECRET \
 curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_KEY_SECRET \
   "https://api.razorpay.com/v1/orders/order_xxxxx/payments" | jq '.items[] | {id, amount, status, method}'
 ```
+
+---
+
+## Settlements
+
+Settlements are the actual money transfers from Razorpay to your bank account, net of fees, tax, and adjustments. Default cycle is **T+2 working days** for domestic accounts and **T+7** for international; instant settlements are also available at an extra fee.
+
+### List recent settlements
+```bash
+curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_KEY_SECRET \
+  "https://api.razorpay.com/v1/settlements?count=10" | jq '.items[] | {id, amount, status, fees, tax, created_at}'
+```
+
+### Fetch a specific settlement
+```bash
+curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_KEY_SECRET \
+  https://api.razorpay.com/v1/settlements/setl_xxxxx | jq .
+```
+
+### Settlement reconciliation (per-day / per-month breakdown)
+```bash
+# Recon report for a settlement — itemizes every payment, refund, fee, and adjustment
+curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_KEY_SECRET \
+  "https://api.razorpay.com/v1/settlements/recon/combined?year=2026&month=6&count=100" \
+  | jq '.items[] | {entity_id, type, amount, fee, tax, settled_at}'
+```
+
+Use the recon API for accurate net-revenue figures — it nets fees, tax, and adjustments per settlement, which is more reliable than summing captured payments.
 
 ---
 

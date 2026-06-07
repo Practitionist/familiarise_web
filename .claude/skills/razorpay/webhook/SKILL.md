@@ -10,7 +10,7 @@ Build a webhook handler that survives production chaos: duplicate events, race c
 
 ## Critical Rules
 
-1. **Always return 200** for events you don't handle — Razorpay retries on non-2xx
+1. **Always return 200** for events you don't handle — Razorpay retries on non-2xx, and after 24h of sustained failure it auto-disables the webhook (and emails your Alert Email Address). Only 5xx for genuinely transient errors.
 2. **Verify signature FIRST** before any processing
 3. **Idempotency is mandatory** — Razorpay uses at-least-once delivery
 4. **Never trust event order** — `subscription.charged` may arrive before `subscription.activated`
@@ -86,8 +86,10 @@ export async function POST(request: Request) {
     return new Response("Already processed", { status: 200 });
   }
 
-  // Layer 2: Check processed_events table for this event ID
-  // Razorpay can send the same logical event with different event IDs on retry
+  // Layer 2: Check processed_events table for this event ID.
+  // x-razorpay-event-id is unique per event and STABLE across retries, so this mostly
+  // backstops the subscription-row check (e.g. a row reset/migration loses lastEventId).
+  // Kept as defense-in-depth.
   if (eventId) {
     const alreadyProcessed = await db
       .select()
@@ -114,7 +116,9 @@ export async function POST(request: Request) {
     }
   } catch (error) {
     console.error("Webhook processing error:", error);
-    // Return 5xx for transient failures so Razorpay retries
+    // Return 5xx ONLY for transient failures so Razorpay retries. Do NOT 5xx permanent
+    // errors (bad payload, unknown plan): sustained failure for 24h auto-disables the
+    // webhook and emails your Alert Email Address. Swallow permanent errors and return 200.
     return new Response("Webhook processing failed", { status: 500 });
   }
 
@@ -276,8 +280,9 @@ async function updateSubscriptionStatus(
 ) {
   if (!subscription) return;
 
-  // Extract current period end (Razorpay uses different field names)
-  const periodEnd = entity?.current_period_end || entity?.current_end || entity?.end_at;
+  // Extract current period end. The Razorpay field is `current_end` (Unix seconds).
+  // `end_at` is a fallback; `current_period_end` is NOT a Razorpay field (Stripe-ism) — don't rely on it.
+  const periodEnd = entity?.current_end || entity?.end_at;
   const currentPeriodEnd = periodEnd ? new Date(periodEnd * 1000) : null;
 
   // Optimistic lock: only update if lastEventId matches what we read
@@ -347,7 +352,10 @@ if (!subscription && entity?.notes?.userId && entity?.notes?.planKey) {
     status: "active",
   });
 
-  // Cancel old subscription if noted
+  // Cancel old subscription if noted.
+  // Second arg is the positional boolean cancel_at_cycle_end (true = at cycle end).
+  // On the pinned SDK (2.9.6) DO NOT pass an object: it's truthy regardless of contents,
+  // so { cancel_at_cycle_end: false } silently cancels at cycle end instead of immediately.
   if (entity.notes.replacesSubscription) {
     try {
       await razorpay.subscriptions.cancel(entity.notes.replacesSubscription, true);
@@ -436,6 +444,16 @@ async function createGstInvoice(payment: any, subscription: any) {
 | `subscription.updated` | Plan changed | Detect new plan_id |
 | `payment.failed` | Payment attempt fails | Mark halted if renewal |
 | `payment.authorized` | Late authorization | Fallback activation |
+| `payment.dispute.created` | Customer/bank raises a chargeback | Flag the account, freeze access if warranted, start evidence gathering |
+| `payment.dispute.under_review` | Razorpay/network reviewing submitted evidence | Update dispute state; no money moved yet |
+| `payment.dispute.action_required` | Evidence/response needed before a deadline | Alert ops — missing the deadline forfeits the dispute |
+| `payment.dispute.won` | Dispute resolved in your favour | Funds retained; clear the flag |
+| `payment.dispute.lost` | Dispute resolved against you | Funds debited; reconcile ledger, keep access revoked |
+| `payment.dispute.closed` | Dispute closed (terminal) | Finalize dispute record |
+
+## Recovering Missed Events (Dashboard Replay)
+
+If your endpoint was down or a deploy dropped events, the Razorpay Dashboard can REPLAY individual webhook events that are 15 days old or newer (Account & Settings → Webhooks → the webhook's delivery logs, or Developers → Webhooks). There is no bulk-replay — you select and resend events one at a time. For anything older than 15 days, or for many events at once, fall back to reconciling against the API directly (`razorpay.subscriptions.fetch` / `payments.fetch`) instead of waiting on a replay.
 
 ## Gotchas
 
@@ -443,9 +461,9 @@ async function createGstInvoice(payment: any, subscription: any) {
 2. **Read raw body, not JSON**: Signature is computed on the raw string. Use `request.text()`, not `request.json()`.
 3. **Always return 200**: Even for events you don't handle. Non-2xx triggers retries.
 4. **Event ID sources**: Prefer `x-razorpay-event-id` header over `event.id` in payload.
-5. **`current_period_end` field names**: Try `current_period_end`, then `current_end`, then `end_at`. All are Unix seconds.
+5. **Period-end field is `current_end`**: Read `current_end` (Unix seconds), with `end_at` as a fallback. There is no `current_period_end` on Razorpay — that's a Stripe-ism; don't reach for it.
 6. **Don't downgrade from active**: `subscription.pending` may arrive after `subscription.activated`. Check current status before updating.
 7. **At-least-once delivery**: The same event may be delivered multiple times. Use both `lastEventId` on the subscription AND a `processed_webhook_events` table for belt-and-suspenders idempotency.
 8. **Race conditions are real**: Two events for the same subscription can arrive within milliseconds. Use optimistic locking.
 9. **Subscription ID location varies**: Different event types put it in different places. Check all three paths.
-10. **Idempotency must survive retries**: Razorpay can resend with a different event ID. Your `processedWebhookEvents` table catches this. Without it, the same charge can grant access twice or create duplicate invoices.
+10. **Idempotency must survive retries**: `x-razorpay-event-id` is unique per event and STABLE across retries — a retry carries the SAME event ID, so the `lastEventId` check alone catches most duplicates. Keep the `processedWebhookEvents` table as defense-in-depth: it backstops cases where the subscription row's `lastEventId` is unavailable (e.g. a row was reset/migrated, or two distinct events race), so the same charge can't grant access twice or create duplicate invoices.

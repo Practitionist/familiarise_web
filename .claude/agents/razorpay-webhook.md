@@ -134,7 +134,7 @@ Before processing any event, check if the subscription record's `lastEventId` ma
 
 **2f. Default 200 response**
 
-ALWAYS return a 200 status for events the handler does not recognize. If you return 4xx or 5xx for unhandled events, Razorpay retries them for up to 24 hours, wasting bandwidth and filling logs.
+ALWAYS return a 200 status for events the handler does not recognize. If you return 4xx or 5xx for unhandled events, Razorpay retries them with exponential backoff for up to 24 hours — and after 24 hours of sustained failure it AUTO-DISABLES the webhook entirely and emails the configured Alert Email Address. Re-enabling requires a manual step in the Dashboard. This is the real reason to always return 200: a transient bug in one handler can silently take down delivery for ALL events.
 
 ```typescript
 default:
@@ -323,12 +323,12 @@ async function updateSubscriptionStatus(
 }
 ```
 
-**4b. Handle `current_period_end` field name variants**
+**4b. Read the period-end field (`current_end`)**
 
-Razorpay's API returns `current_end` on the subscription entity, but some SDK wrappers call it `current_period_end`. Handle both:
+Razorpay's API returns `current_end` on the subscription entity (Unix seconds). There is no `current_period_end` field — that is a Stripe-ism, not Razorpay. Read `current_end`:
 
 ```typescript
-const periodEnd = subEntity?.current_end ?? subEntity?.current_period_end;
+const periodEnd = subEntity?.current_end;
 const currentPeriodEnd = periodEnd ? new Date(periodEnd * 1000) : undefined;
 ```
 
@@ -462,7 +462,7 @@ If the user says yes, tell the parent conversation to invoke the razorpay-test-w
 
 For webhook URL configuration, do NOT say "Register webhook URL in Razorpay Dashboard" as a manual step. Instead, explain:
 - **Local testing**: The webhook works automatically with ngrok or similar tunnels. Just point your tunnel to your local port.
-- **Production**: Your webhook URL is simply `https://yourdomain.com/api/billing/webhook` (or whatever path was created). Set this in the Razorpay Dashboard along with `RAZORPAY_WEBHOOK_SECRET`.
+- **Production**: Your webhook URL is simply `https://yourdomain.com/api/billing/webhook` (or whatever path was created). Set this in the Razorpay Dashboard under Account & Settings → Webhooks, along with `RAZORPAY_WEBHOOK_SECRET`. (Delivery logs live separately under Developers → Webhooks.)
 
 If database migration is needed, run it automatically. If it fails, show the error and fix it.
 

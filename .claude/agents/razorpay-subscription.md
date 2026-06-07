@@ -117,17 +117,18 @@ Auth: Required (use project's auth pattern)
 
 2. **Plan validation** — Validate `planKey` against a known set of plans. Do NOT pass user-supplied plan IDs directly to Razorpay. Define a `PLANS` config object that maps plan keys to Razorpay plan IDs and metadata.
 
-3. **Customer upsert** — Create or find the Razorpay customer for this user:
+3. **Customer (optional, undocumented convenience)** — `subscriptions.create()` does NOT take a `customer_id`; Razorpay auto-creates the customer at the authentication transaction and returns `customer_id` on the subscription. Pre-creating a customer is therefore optional. Only do it if you specifically want the customer record up front:
    ```typescript
+   // OPTIONAL — not required for subscriptions
    const customer = await razorpay.customers.create({
      name: user.name || user.email?.split("@")[0] || "Customer",
      email: user.email || undefined,
      contact: normalizePhone(user.phone),
-     fail_existing: 0 as 0 | 1,  // CRITICAL: TypeScript cast required
+     fail_existing: 0 as 0 | 1,  // see note below — cast is SDK-typings-version-dependent
      notes: { userId: user.id },
    });
    ```
-   Note: `fail_existing: 0` returns the existing customer instead of erroring. The `as 0 | 1` cast is required to satisfy the Razorpay SDK types.
+   Note: `fail_existing: 0` returns the existing customer instead of erroring. The `as 0 | 1` cast may or may not be needed depending on your installed Razorpay SDK typings version — add it only if the type checker complains.
 
 4. **Phone normalization** — Create a helper that normalizes phone numbers:
    - Strip all non-digit characters
@@ -140,23 +141,18 @@ Auth: Required (use project's auth pattern)
 
 7. **Subscription creation** — Create the Razorpay subscription:
    ```typescript
-   const notifyInfo: Record<string, string> = {};
-   if (user.phone) notifyInfo.notify_phone = normalizePhone(user.phone)!;
-   if (user.email) notifyInfo.notify_email = user.email;
-
    const subscription = await razorpay.subscriptions.create({
      plan_id: plan.razorpayPlanId,
      total_count: plan.totalCount || 12,
      quantity: 1,
-     customer_id: customer.id,
-     ...(Object.keys(notifyInfo).length > 0 && notifyInfo),
+     customer_notify: true,  // boolean — lets Razorpay notify the customer
      notes: {
        userId: user.id,
        planKey,
      },
    });
    ```
-   Note: `notify_info` fields must only be included if they have valid values. Sending empty strings causes Razorpay API errors.
+   Note: do NOT pass `customer_id` to `create()` — it is not a documented create param; Razorpay auto-creates the customer and returns `customer_id` on the subscription response. `customer_notify` is a boolean (`true`/`false`), not `1`/`0`.
 
 8. **Database record** — Save the subscription to the database with:
    - `razorpaySubscriptionId`: `subscription.id`
@@ -338,8 +334,8 @@ If the database schema is missing, note what columns are needed but do NOT prese
 ## Important Rules
 
 1. **Never create a second Razorpay instance.** Always import from the existing singleton. If none exists, create exactly one and import it everywhere.
-2. **Always use `fail_existing: 0`** when creating customers. In TypeScript projects, add the cast `0 as 0 | 1` to satisfy the SDK type checker. In JavaScript projects, omit the cast.
-3. **Never send empty strings to Razorpay.** Check that phone, email, and notify fields have real values before including them. Use `undefined` instead of `""`.
+2. **Don't pass `customer_id` to `subscriptions.create()`** — Razorpay auto-creates the customer and returns it on the subscription. Pre-creating a customer is optional and undocumented for the subscription flow; if you do it, use `fail_existing: 0` (it returns the existing customer instead of erroring), and add the `0 as 0 | 1` cast only if your installed SDK typings require it.
+3. **Never send empty strings to Razorpay.** Check that phone and email fields have real values before including them. Use `undefined` instead of `""`.
 4. **Always validate planKey server-side.** Never pass user input directly as a Razorpay plan ID.
 5. **Always dedup pending subscriptions.** Creating a new Razorpay subscription for every button click wastes resources and confuses users.
 6. **Match the project's conventions exactly.** Use the same file naming, import style, error handling pattern, response format, and styling approach as existing code.

@@ -61,6 +61,7 @@ Check every discovered file for the following. For each issue found, record the 
 **Idempotency:**
 - Is there a mechanism to track processed webhook event IDs (e.g., storing `event.id` or `X-Razorpay-Event-Id` and checking for duplicates before processing)?
 - If not, flag this as a warning: duplicate webhooks from Razorpay can cause double state transitions.
+- Do mutating Razorpay calls pass an idempotency header where supported? Refund creation supports `X-Refund-Idempotency` and payouts support `X-Payout-Idempotency` (key >=10 chars). Flag refund/payout calls made without one: a network retry can double-refund or double-pay.
 
 **Concurrency:**
 - Are subscription status updates protected with optimistic locking, database transactions, or atomic operations?
@@ -91,6 +92,8 @@ Check every discovered file for the following. For each issue found, record the 
 **Webhook event coverage:**
 - List all webhook event types the handler processes.
 - Flag if any of these important events are missing: `subscription.activated`, `subscription.charged`, `subscription.pending`, `subscription.halted`, `subscription.cancelled`, `payment.captured`, `payment.failed`.
+- If refunds are handled, also expect: `refund.created`, `refund.processed`, `refund.failed`, `refund.speed_changed` (note: these are top-level `refund.*` events, NOT `payment.refund.*`).
+- If invoices are handled, also expect: `invoice.paid`, `invoice.partially_paid`, `invoice.expired`, `invoice.cancelled`.
 
 **Signature format:**
 - For order-based payments, signature = HMAC-SHA256 of `order_id|payment_id`.
@@ -100,7 +103,8 @@ Check every discovered file for the following. For each issue found, record the 
 
 **Amount handling:**
 - All amounts sent to Razorpay must be in paise (integer, INR * 100). Check for common bugs: sending rupees instead of paise, using floating point, or not converting.
-- If GST is calculated, verify: GST is 18% of base amount, total = base + GST, and all three values are integers in paise.
+- If GST is calculated, verify: GST is 18% of base amount, total = base + GST, and all values are integers in paise.
+- Verify there is an inter-state branch driven by place of supply: intra-state -> CGST 9% + SGST 9%; inter-state -> IGST 18%. Flag any code that hardcodes CGST+SGST with no IGST/place-of-supply path — it mis-bills every inter-state customer.
 
 ---
 

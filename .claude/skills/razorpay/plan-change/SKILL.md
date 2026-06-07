@@ -1,17 +1,10 @@
 ---
-description: Implement subscription plan changes with Razorpay — deferred cancellation pattern, no downtime. Use when the user asks to "upgrade plan", "downgrade subscription", "switch plans", "change billing plan", or needs to move users between subscription tiers without service interruption.
+description: Implement subscription plan changes with Razorpay — in-place plan update via the Update Subscription API, with or without proration. Use when the user asks to "upgrade plan", "downgrade subscription", "switch plans", "change billing plan", or needs to move users between subscription tiers.
 ---
 
 # Razorpay Plan Change (Upgrade / Downgrade)
 
-The correct pattern for plan changes is **deferred cancellation** — create the new subscription first, let the webhook cancel the old one after payment succeeds. This prevents downtime if the user abandons checkout.
-
-## Why NOT Cancel-Then-Create
-
-```
-BAD:  Cancel old → Create new → User abandons checkout → No subscription!
-GOOD: Create new (with note) → User pays → Webhook cancels old → Seamless
-```
+The correct pattern for plan changes is an **in-place update** of the existing subscription via the Update Subscription API. You change the `plan_id` on the live subscription and choose when the change applies — immediately (with proration) or at the next cycle boundary (no adjustment). No second subscription, no coordination dance.
 
 ## API Route: Change Plan
 
@@ -21,7 +14,7 @@ export async function POST(request: Request) {
   const user = await getAuthenticatedUser(request);
   if (!user) return new Response("Unauthorized", { status: 401 });
 
-  const { newPlanKey } = await request.json();
+  const { newPlanKey, applyNow } = await request.json();
 
   try {
     // 1. Get current subscription
@@ -35,26 +28,32 @@ export async function POST(request: Request) {
       return Response.json({ error: "Already on this plan" }, { status: 409 });
     }
 
-    // 3. Create NEW subscription with reference to old one
+    // 3. Update the EXISTING subscription in place
+    //    Updates are only allowed in `authenticated` and `active` states.
     const planId = planIdFor(newPlanKey);
-    const subscription = await razorpay.subscriptions.create({
-      plan_id: planId,
-      total_count: totalCountFor(newPlanKey),
-      quantity: 1,
-      customer_notify: 1,
-      notes: {
-        userId: user.id,
-        planKey: newPlanKey,
-        replacesSubscription: current.razorpaySubscriptionId,  // KEY: signals webhook
-      },
+    const subscription = await razorpay.subscriptions.update(
+      current.razorpaySubscriptionId,
+      {
+        plan_id: planId,
+        // "now"      → prorates: charges/refunds the difference immediately
+        // "cycle_end"→ applies at the next renewal, no adjustment
+        schedule_change_at: applyNow ? "now" : "cycle_end",
+        customer_notify: true,
+        // remaining_count?: reset the number of remaining billing cycles
+        // quantity?, offer_id?, start_at? are also accepted
+      }
+    );
+
+    // 4. Reflect the new plan in your DB (webhook subscription.updated also fires)
+    await updateSubscriptionPlan(current.razorpaySubscriptionId, {
+      planKey: newPlanKey,
+      razorpayPlanId: planId,
     });
 
-    // 4. DO NOT cancel old subscription here — webhook handles it
-    // 5. DO NOT create DB row here — webhook auto-creates on activation
-
     return Response.json({
-      shortUrl: subscription.short_url,
       subscriptionId: subscription.id,
+      status: subscription.status,
+      scheduledAtCycleEnd: !applyNow,
     });
   } catch (error) {
     console.error("Failed to change plan:", error);
@@ -63,75 +62,111 @@ export async function POST(request: Request) {
 }
 ```
 
-## Webhook: Handle `replacesSubscription`
+## Update Subscription API
 
-In your `subscription.activated` webhook handler, check for `replacesSubscription` in notes:
+`razorpay.subscriptions.update(id, params)` → `PATCH /v1/subscriptions/:id`. The accepted params:
+
+| Param | Purpose |
+|-------|---------|
+| `plan_id` | The new plan to switch to. |
+| `schedule_change_at` | `"now"` (prorate immediately) or `"cycle_end"` (apply at the boundary). |
+| `customer_notify` | Boolean. `true` to let Razorpay notify the customer. |
+| `quantity` | New quantity (for per-seat plans). |
+| `remaining_count` | Reset the number of remaining billing cycles. |
+| `offer_id` | Apply an offer to the updated subscription. |
+| `start_at` | Future Unix-seconds start for the change. |
+
+**Updates are only allowed while the subscription is in `authenticated` or `active` state.** Trying to update a `halted`, `paused`, `cancelled`, or `completed` subscription will error.
+
+### Proration
+
+- **`schedule_change_at: "now"` PRORATES.** Razorpay charges or refunds the difference between the old and new plan for the remainder of the current cycle. The minimum chargeable/refundable difference is ₹0.50 — smaller differences are not adjusted.
+- **`schedule_change_at: "cycle_end"`** applies the new plan at the next renewal with no mid-cycle adjustment. The current cycle finishes on the old plan.
+
+### Inspecting and Cancelling a Scheduled Change
+
+When you schedule a change for `cycle_end`, it sits pending until the boundary. You can inspect or cancel it before it applies:
 
 ```typescript
-// Inside subscription.activated handler
-const entity = event.payload.subscription.entity;
+// What's pending on this subscription?
+// SDK method is pendingUpdate(); it hits GET /v1/subscriptions/:id/retrieve_scheduled_changes
+const pending = await razorpay.subscriptions.pendingUpdate(
+  current.razorpaySubscriptionId
+);
 
-if (entity.notes?.replacesSubscription) {
-  const oldSubId = entity.notes.replacesSubscription;
-
-  // Cancel old subscription on Razorpay (at cycle end for grace)
-  try {
-    await razorpay.subscriptions.cancel(oldSubId, true);
-  } catch {
-    // Best-effort — may already be cancelled
-  }
-
-  // Mark old subscription as cancelled in DB
-  await markSubscriptionCancelled(oldSubId);
-}
+// Cancel the pending change (verified present in the pinned SDK 2.9.6)
+await razorpay.subscriptions.cancelScheduledChanges(
+  current.razorpaySubscriptionId
+);
 ```
 
 ## Client-Side: Upgrade Confirmation
 
 ```typescript
-const handlePlanChange = async (newPlanKey: string) => {
+const handlePlanChange = async (newPlanKey: string, applyNow: boolean) => {
   const confirmed = window.confirm(
-    "Switching plans will cancel your current subscription after payment. Continue?"
+    applyNow
+      ? "Switching now will charge or refund the prorated difference. Continue?"
+      : "Your new plan will start at the end of your current billing cycle. Continue?"
   );
   if (!confirmed) return;
 
   const res = await fetch("/api/billing/change-plan", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ newPlanKey }),
+    body: JSON.stringify({ newPlanKey, applyNow }),
   });
 
   const data = await res.json();
-  if (data.shortUrl) {
-    window.open(data.shortUrl, "_blank");
+  if (data.subscriptionId) {
+    // Update succeeded — refresh billing UI from /api/billing/status
+    window.location.reload();
+  } else {
+    alert(data.error || "Failed to change plan");
   }
 };
 ```
 
-## Key Rules
+## Upgrade vs Downgrade UX
 
-1. **Never cancel before new payment succeeds** — deferred cancellation only
-2. **`notes.replacesSubscription`** is the coordination signal between route and webhook
-3. **Webhook auto-creates DB row** if subscription not found but `notes.userId` + `notes.planKey` exist
-4. **Old subscription stays active** until webhook confirms new payment
-5. **Cancel with `true`** (at cycle end) — gives grace period for any billing cycle overlap
+| Direction | Recommended timing | Why |
+|-----------|--------------------|-----|
+| **Upgrade** (more value) | `schedule_change_at: "now"` | The user wants the new tier immediately; proration charges the small difference, which is fair and expected. |
+| **Downgrade** (less value) | `schedule_change_at: "cycle_end"` | The user already paid for the current cycle at the higher tier. Let them keep it until renewal, then drop. Avoids an awkward partial refund. |
 
-## Monthly ↔ Yearly: No Proration
+## Immediate vs Cycle-End Decision
 
-Razorpay does NOT prorate. When switching plans:
-- **Monthly → Yearly**: User pays full yearly amount immediately. Old monthly runs until webhook cancels it at cycle end. User briefly overpays (days left on monthly cycle).
-- **Yearly → Monthly**: User pays full monthly amount immediately. Old yearly runs until cycle end. User might have months of unused yearly left.
+| Use `"now"` when | Use `"cycle_end"` when |
+|------------------|------------------------|
+| User is upgrading and wants the new tier right away. | User is downgrading and should keep what they paid for. |
+| You want Razorpay to handle the proration math for you. | You want zero mid-cycle money movement. |
+| The plan difference exceeds ₹0.50. | The plan difference is tiny or you want billing to stay predictable. |
 
-**Recommendations:**
-1. **Switch at cycle end**: Show "Your yearly plan starts when your current monthly cycle ends on [date]." Store the pending switch in your DB, trigger it via a cron or the `subscription.completed` webhook.
-2. **Manual credit**: Calculate unused days on the old plan and issue a partial refund via the Refund skill.
-3. **Keep it simple**: Most SaaS just lets the user switch immediately and eats the small overlap cost. The goodwill is worth more than a few days of proration.
+## Monthly ↔ Yearly
+
+Both directions are a normal `update()` with a different `plan_id`:
+
+- **Monthly → Yearly**: usually `"now"` for an upgrade feel — Razorpay prorates the unused part of the current monthly cycle against the yearly charge.
+- **Yearly → Monthly**: usually `"cycle_end"` — the user has already paid for the year, so let it run and switch at renewal rather than refunding a large prorated chunk.
+
+## Cancelling Instead of Changing
+
+If the user is moving to a free tier, there is no plan to switch to — cancel at cycle end:
+
+```typescript
+// cancel(id, true) → cancel_at_cycle_end = true (cycle end)
+// cancel(id, false) or cancel(id) → immediate
+await razorpay.subscriptions.cancel(current.razorpaySubscriptionId, true);
+```
 
 ## Gotchas
 
-1. **No DB writes in the route**: The plan-change route only creates a Razorpay subscription. DB upsert happens in the webhook.
-2. **Customer ID reuse**: Razorpay auto-links the customer if the same email is used.
-3. **`cancel(id, true)` not `cancel(id, { at_cycle_end: true })`**: Second parameter is boolean, not object. SDK types may be misleading.
-4. **Race window**: Between new subscription creation and old cancellation, user briefly has two subscriptions. Your access-check should handle this (any active = access granted).
-5. **No proration**: Razorpay charges full plan amount. You handle credits/refunds yourself.
-6. **Downgrade to free**: If you have a free tier, just cancel the subscription at cycle end and revoke premium access when the period expires. No new subscription needed.
+1. **State gate**: `update()` only works in `authenticated` / `active`. Guard against other states before calling it.
+2. **₹0.50 floor**: Proration differences below ₹0.50 are ignored — don't promise the user an exact-to-the-paisa refund.
+3. **`cancel(id, true)` not `cancel(id, { cancel_at_cycle_end: true })`**: The second parameter is the boolean `cancel_at_cycle_end` — `true` = cycle end, `false`/omitted = immediate. SDK types may be misleading.
+4. **Scheduled changes are inspectable**: A `cycle_end` change is pending, not applied. Use `pendingUpdate` / `cancelScheduledChanges` if the user changes their mind before the boundary.
+5. **Webhook still fires**: `subscription.updated` fires on the change. Treat the webhook as the source of truth and keep your DB write idempotent.
+
+## Legacy Pattern (pre-Update API)
+
+Older integrations — built before the Update Subscription API existed — handled plan changes by creating a NEW subscription and deferring cancellation of the old one (signalled via a `notes.replacesSubscription` field, with the `subscription.activated` webhook cancelling the old subscription once the new one was paid). This avoided downtime but doubled subscriptions, lost proration, and required webhook coordination. Prefer `update()` for any new work; the deferred-cancellation dance is only worth knowing if you're maintaining an old integration that still relies on it.

@@ -28,11 +28,15 @@ Migrate an existing Stripe integration to Razorpay. Covers concept mapping, code
 | Stripe Event | Razorpay Event | Notes |
 |-------------|----------------|-------|
 | `checkout.session.completed` | `subscription.activated` | Razorpay fires on first successful charge |
+| `customer.subscription.created` | `subscription.authenticated` | Card/mandate authorized; first charge not yet captured |
 | `invoice.paid` | `subscription.charged` | Recurring payment success |
 | `invoice.payment_failed` | `payment.failed` | Check `subscription_id` in payload to link |
+| `invoice.payment_action_required` | `subscription.pending` | Retries ongoing — consider a soft warning |
+| `customer.subscription.paused` | `subscription.paused` | Subscription paused |
+| `customer.subscription.resumed` | `subscription.resumed` | Subscription resumed after pause |
 | `customer.subscription.deleted` | `subscription.cancelled` | Also check `subscription.completed` and `subscription.halted` |
 | `customer.subscription.updated` | `subscription.updated` | Detect plan changes via `plan_id` field |
-| `charge.refunded` | `payment.refund.processed` | Different payload structure |
+| `charge.refunded` | `refund.processed` | No `payment.` prefix — refund events are top-level. Different payload structure |
 
 ## Code Migration Patterns
 
@@ -68,7 +72,7 @@ const subscription = await razorpay.subscriptions.create({
   plan_id: planId,          // Must create plan first (no inline prices)
   total_count: 60,          // Max billing cycles
   quantity: 1,
-  customer_notify: 1,
+  customer_notify: true,    // boolean, not 1
   notes: { userId, planKey },
 });
 // Redirect to subscription.short_url
@@ -98,6 +102,26 @@ const isValid = crypto.timingSafeEqual(
   Buffer.from(signature!, "hex")
 );
 ```
+
+### Checkout Signature (Subscriptions vs Orders)
+
+Distinct from the webhook HMAC above, the client-side checkout callback returns a signature you must verify — and the signed payload differs by flow. The field order for subscriptions is the OPPOSITE of one-time orders:
+
+```typescript
+// One-time orders (Stripe PaymentIntent equivalent): order_id + "|" + payment_id
+const orderExpected = crypto
+  .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET!)
+  .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+  .digest("hex");
+
+// Subscriptions: payment_id + "|" + subscription_id  (payment_id FIRST!)
+const subExpected = crypto
+  .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET!)
+  .update(`${razorpay_payment_id}|${razorpay_subscription_id}`)
+  .digest("hex");
+```
+
+Both HMAC with `RAZORPAY_KEY_SECRET`, but swapping the field order silently fails verification — a classic foot-gun when migrating the Stripe orders flow.
 
 ### Checkout Redirect
 
@@ -180,7 +204,7 @@ Keep both webhook routes active until all Stripe subscriptions have expired.
 3. **Webhook signature header**: Stripe uses `stripe-signature`, Razorpay uses `x-razorpay-signature`.
 4. **SDK types**: Stripe SDK has excellent TypeScript types. Razorpay SDK types have quirks (e.g., `fail_existing` needs `0 as 0 | 1` cast).
 5. **Currency units**: Stripe uses cents (USD smallest unit), Razorpay uses paise (INR smallest unit). Both are smallest-unit integers, but watch currency conversion logic.
-6. **Idempotency keys**: Stripe supports idempotency keys natively on API calls. Razorpay does not — you must implement idempotency yourself (especially for webhooks).
+6. **Idempotency keys**: Stripe has a universal `Idempotency-Key` header on every API call. Razorpay's support is per-API rather than universal — specific endpoints accept their own header (e.g. `X-Refund-Idempotency` on refunds, `X-Payout-Idempotency` on payouts). For everything else (and for webhook processing), keep doing app-level dedup yourself.
 
 ## Gotchas
 

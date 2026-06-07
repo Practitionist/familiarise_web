@@ -20,9 +20,9 @@ Recover revenue from failed payments without alienating users. This covers grace
 
 Razorpay handles payment retries automatically:
 
-- Failed subscription payments are retried **3 times over 3 days** by default
-- You can configure retry count and interval in Dashboard → Settings → Subscriptions
-- After all retries fail, subscription moves to `halted`
+- Failed subscription payments are auto-retried on a **method-dependent schedule** — typically a next-day cadence. For e-mandate and UPI AutoPay, a retry waits for confirmation of the prior attempt and can take longer than 24h, especially across bank holidays. Razorpay does not publish a fixed retry count or interval.
+- Configuring retry count/interval (sometimes referenced under Dashboard → Settings → Subscriptions) is **unverified** — this surface may not exist or may differ by account; do not rely on it.
+- After retries are exhausted, the subscription moves to `halted`
 - You will receive a `payment.failed` webhook for **each** retry attempt
 - When all retries are exhausted, you receive `subscription.halted`
 
@@ -106,8 +106,8 @@ case "payment.failed": {
   if (!subscription) break;
 
   // Don't set grace period here — wait for subscription.halted
-  // Razorpay sends payment.failed for EACH retry attempt (up to 3)
-  // Just log it for debugging
+  // Razorpay sends payment.failed for EACH retry attempt (count is not fixed)
+  // Optionally set a soft warning here on subscription.pending; just log for debugging
   console.log(
     `Payment failed for subscription ${subscriptionId}`,
     `(attempt ${payment?.error_description || "unknown"})`
@@ -234,9 +234,11 @@ export async function sendDunningEmail(
 
 ## Update Payment Method Flow
 
-Razorpay does not support direct card updates for existing subscriptions. Use the **deferred cancellation** pattern (see plan-change skill).
+For a payment-method change you no longer have to cancel and recreate the subscription. The in-place Update Subscription API plus a customer re-authorization flow handle this on the existing subscription — see the `plan-change` skill for the `subscriptions.update()` mechanics.
 
-### Pattern: Cancel Old, Create New with Same Plan
+### Recover via the existing subscription's `short_url`
+
+A halted subscription's `short_url` persists and is returned by `razorpay.subscriptions.fetch(id)` — you don't need to store it at creation. Send the customer back to it to re-authorize and retry payment on the same subscription:
 
 ```typescript
 // app/api/billing/update-payment/route.ts
@@ -250,44 +252,20 @@ export async function POST(request: Request) {
       return Response.json({ error: "No subscription found" }, { status: 400 });
     }
 
-    // Create a NEW subscription with the SAME plan
-    const subscription = await razorpay.subscriptions.create({
-      plan_id: current.razorpayPlanId,
-      total_count: totalCountFor(current.planKey),
-      quantity: 1,
-      customer_notify: 1,
-      notes: {
-        userId: user.id,
-        planKey: current.planKey,
-        replacesSubscription: current.razorpaySubscriptionId, // Signals webhook
-        reason: "payment_method_update",
-      },
-    });
-
-    // DO NOT cancel old subscription here — webhook handles it after payment
-    // This prevents access loss if user abandons the new checkout
+    // short_url persists — fetch it back from Razorpay
+    const rzpSub = await razorpay.subscriptions.fetch(
+      current.razorpaySubscriptionId
+    );
 
     return Response.json({
-      shortUrl: subscription.short_url,
-      subscriptionId: subscription.id,
+      shortUrl: rzpSub.short_url,
+      subscriptionId: current.razorpaySubscriptionId,
     });
   } catch (error) {
-    console.error("Failed to create update-payment subscription:", error);
+    console.error("Failed to fetch update-payment URL:", error);
     return Response.json({ error: "Something went wrong" }, { status: 500 });
   }
 }
-```
-
-### Alternative: Use `short_url` for Retry
-
-If the halted subscription's `short_url` is still valid, the user can retry payment there without creating a new subscription. However, `short_url` is only available at creation time and cannot be retrieved later.
-
-```typescript
-// If you stored the short_url at creation time:
-if (current.shortUrl) {
-  return Response.json({ shortUrl: current.shortUrl });
-}
-// Otherwise, fall back to cancel-and-recreate pattern above
 ```
 
 ## Cron Job: Grace Period Expiry and Email Scheduling
@@ -373,22 +351,22 @@ This runs daily at 9 AM UTC. Adjust timing based on your user base's timezone.
 ## Full Dunning Timeline
 
 ```
-Day -3 to 0:  Razorpay auto-retries (you receive payment.failed for each attempt)
+Before halt: Razorpay auto-retries on a method-dependent schedule (you receive payment.failed for each attempt)
 Day 0:        subscription.halted → Set gracePeriodEnd = now + 7 days → Send "payment failed" email
 Day 0-7:      User has access (grace period) → Show banner in UI
 Day 3:        Cron sends "update your card" email
 Day 5:        Cron sends "last chance" email
 Day 7:        Cron revokes access → Sends "access revoked" email
-Day 7+:       User must resubscribe (update-payment flow creates new subscription)
+Day 7+:       User re-authorizes payment (update-payment flow reuses the existing subscription's short_url)
 ```
 
 ## Gotchas
 
-1. **Don't retry payments yourself**: Razorpay auto-retries 3 times over 3 days. Custom retries on top of this will conflict and may cause duplicate charges.
+1. **Don't retry payments yourself**: Razorpay auto-retries on a method-dependent schedule (no fixed count/interval). Custom retries on top of this will conflict and may cause duplicate charges.
 2. **`subscription.halted` is your signal**: This means ALL Razorpay retries failed. Start your grace period here, not on the first `payment.failed`.
-3. **Multiple `payment.failed` events**: Razorpay sends one per retry attempt (up to 3). Don't start grace period or send emails on each one.
-4. **`subscription.charged` clears everything**: If the user updates their card and payment succeeds, you get `subscription.charged`. Clear grace period and reset dunning state.
+3. **Multiple `payment.failed` events**: Razorpay sends one per retry attempt (count is not fixed). Don't start grace period or send emails on each one.
+4. **`subscription.charged` clears everything**: If the payment recovers (retry succeeds or the user re-authorizes), you get `subscription.charged`. Clear grace period and reset dunning state.
 5. **Track email sends**: Store which dunning emails were sent. The cron job runs daily and will re-process the same subscriptions — dedup prevents spam.
-6. **No direct card update API**: Razorpay subscriptions don't support swapping the payment method. Use the deferred cancellation pattern (cancel old + create new with same plan).
-7. **`short_url` is ephemeral**: You cannot retrieve it after subscription creation. If you want to offer "retry payment" via `short_url`, store it when you first create the subscription.
+6. **Payment-method change is in-place**: Use the Update Subscription API plus a customer re-authorization flow on the existing subscription, or send the customer back to its `short_url`. You don't have to cancel and recreate.
+7. **`short_url` persists**: It is returned again by `razorpay.subscriptions.fetch(id)` — you can offer "retry payment" via `short_url` without having stored it at creation.
 8. **Cron auth is mandatory**: Always verify a secret on your cron endpoint. Without it, anyone can trigger dunning processing by hitting the URL.

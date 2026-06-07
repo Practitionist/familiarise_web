@@ -130,6 +130,8 @@ The route must:
    );
    ```
    **IMPORTANT:** Use `RAZORPAY_KEY_SECRET` for payment verification, NOT the webhook secret. This is the standard Razorpay payment signature format: `order_id|payment_id` signed with the API secret.
+
+   **Optional:** The Node SDK ships `validatePaymentVerification` (and `validateWebhookSignature`) from `razorpay/dist/utils/razorpay-utils` (SDK 2.9.6) as a drop-in alternative to hand-rolling the HMAC. Hand-rolling with `crypto` + `timingSafeEqual` as shown is equally fine.
 4. **If valid**, grant the user their purchase (day pass, credits, etc.) by calling the grant function created in Step 5.
 5. **If invalid**, return 400 with an error message.
 6. **Use `timingSafeEqual`** for signature comparison, never `===`.
@@ -177,11 +179,20 @@ The component must:
         },
         prefill: { email: userEmail, name: userName },
         theme: { color: "#your-brand-color" },
+        modal: {
+          ondismiss: function () {
+            // User closed the popup without paying — reset loading state here
+          },
+        },
+        // Fallback for popup-blocked / mobile browsers: Razorpay redirects to
+        // callback_url with the payment params instead of firing `handler`.
+        // callback_url: "https://your-app.com/api/billing/verify-payment",
+        // redirect: true,
       };
       const paymentObject = new window.Razorpay(options);
       paymentObject.open();
       ```
-   c. Handle errors from both the order creation and the checkout popup.
+   c. Handle errors from both the order creation and the checkout popup. Use `modal.ondismiss` to reset state when the user closes the popup. For popup-blocked or mobile contexts, the `callback_url` + `redirect: true` options route the result to a server endpoint instead of the `handler` callback.
 4. **Show loading state** while the order is being created and while verification is in progress.
 5. **Match the project's styling approach** detected in Step 1.
 6. **Mark as a client component** with `"use client"` directive if using Next.js App Router.
@@ -226,7 +237,7 @@ Then say:
 
 If the user says yes, tell the parent conversation to invoke the razorpay-webhook agent.
 
-Do NOT present a numbered list of manual testing steps. Instead, briefly mention the test card number (4111 1111 1111 1111) and that the flow is ready to test.
+Do NOT present a numbered list of manual testing steps. Instead, briefly mention a test card number (`4100 2800 0000 1007` Visa or `5500 6700 0000 1002` Mastercard) and that the flow is ready to test.
 
 Adapt the file paths and instructions to match the actual project structure. If any step required changes to existing files (not just new files), mention those changes explicitly.
 

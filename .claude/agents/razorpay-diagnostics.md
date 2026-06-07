@@ -100,7 +100,7 @@ Search for signature comparison code. If signatures are compared using `===` or 
 
 **3f. Not returning 200 for unhandled webhook events**
 
-In the webhook handler, check if there is a default case or fallback that returns a 200 status for events the app does not handle. If unhandled events return 400 or 500, Razorpay will keep retrying. Record WARN if no default 200 return is found.
+In the webhook handler, check if there is a default case or fallback that returns a 200 status for events the app does not handle. If unhandled events return 400 or 500, Razorpay retries with exponential backoff for up to 24 hours and then AUTO-DISABLES the webhook entirely, emailing the configured Alert Email Address — manual re-enable required. Record WARN if no default 200 return is found.
 
 **3g. Creating new Razorpay instances per request**
 
@@ -112,11 +112,11 @@ In the webhook handler, check if `x-razorpay-event-id` or `lastEventId` or `last
 
 **3i. cancel() called with object instead of boolean**
 
-Search for `subscriptions.cancel(` and check if the second argument is an object like `{ cancel_at_cycle_end: true }`. The Razorpay SDK expects a boolean, not an object. Record FAIL if found.
+Search for `subscriptions.cancel(` and check the second argument. On the pinned SDK (`razorpay@2.9.6`) this parameter is a POSITIONAL BOOLEAN (`cancelAtCycleEnd`) — `cancel(id, true)` cancels at cycle end, `cancel(id, false)` cancels immediately. If the second argument is an object like `{ cancel_at_cycle_end: false }`, record FAIL: 2.9.6 implements this as `cancelAtCycleEnd && { data: { cancel_at_cycle_end: 1 } }`, so an OBJECT is always truthy and SILENTLY cancels at cycle end. With `{ cancel_at_cycle_end: false }` this is a dangerous silent inversion — the caller asked for immediate cancellation and got cycle-end instead. The object-with-`true` form happens to work by accident, but the object form is still wrong on this SDK. (Version-dependent: newer Razorpay SDK docs show an options-object form — verify against the installed version before "fixing" a boolean to an object.)
 
 **3j. fail_existing without proper cast**
 
-Search for `fail_existing` in the codebase. If it is used without a TypeScript cast (like `as 0 | 1`), record WARN — this will cause TypeScript compilation errors.
+Search for `fail_existing` in the codebase. If it is used without a TypeScript cast (like `as 0 | 1`), record a version-dependent typings note — on some `razorpay` SDK versions the field is typed `0 | 1` and a bare numeric literal trips `tsc`, so a cast may be needed; on others it is typed loosely and no cast is required. Check the installed version's `.d.ts` rather than assuming.
 
 ---
 
@@ -206,8 +206,8 @@ Code Quality
   [WARN] No default 200 response for unhandled webhook events
   [PASS] Razorpay client is a singleton
   [WARN] No idempotency check (lastEventId) in webhook handler
-  [PASS] cancel() uses boolean argument
-  [PASS] fail_existing properly cast
+  [PASS] cancel() uses boolean argument (cancel_at_cycle_end positional)
+  [NOTE] fail_existing cast is version-dependent (check installed .d.ts)
 
 Database Schema
   [PASS] Subscription table found with required columns
@@ -235,7 +235,8 @@ RECOMMENDATIONS:
 
 2. [WARN] Return 200 for unhandled webhook events
    Add a default case in your webhook event switch that returns Response with status 200.
-   Otherwise Razorpay will retry unhandled events for up to 24 hours.
+   Otherwise Razorpay retries unhandled events with exponential backoff for up to 24 hours,
+   then disables the webhook and emails your Alert Email Address (manual re-enable required).
 
 3. [WARN] Switch to live mode before deploying
    Current key prefix: rzp_test_

@@ -11,11 +11,11 @@ Common issues and their solutions, organized by symptom.
 
 **Check these in order:**
 
-1. **Webhook URL registered**: Dashboard → Settings → Webhooks → Verify URL is correct
+1. **Webhook URL registered**: Dashboard → Account & Settings → Webhooks → Verify URL is correct
 2. **HTTPS required**: Razorpay won't call HTTP endpoints (except localhost in test mode)
 3. **Events enabled**: Check which events are checked in webhook settings
 4. **Response timeout**: Razorpay expects 2xx within 5 seconds. If your handler takes longer, it times out and retries.
-5. **Check webhook logs**: Dashboard → Settings → Webhooks → Click on webhook → View delivery attempts
+5. **Check webhook logs**: Dashboard → Developers → Webhooks → select the webhook → View delivery attempts
 
 **Test locally with ngrok:**
 ```bash
@@ -85,7 +85,7 @@ if (existing?.status === "created" && isOlderThan1Hour(existing.createdAt)) {
 
 **Symptom**: TypeScript complains about second parameter type.
 
-**Fix**: The second parameter is a boolean, not an object:
+**Fix**: On the pinned SDK (`razorpay@2.9.6`) the second parameter is a POSITIONAL BOOLEAN (`cancelAtCycleEnd`), not an options object:
 ```typescript
 // WRONG
 await razorpay.subscriptions.cancel(id, { cancel_at_cycle_end: true });
@@ -95,11 +95,13 @@ await razorpay.subscriptions.cancel(id, true);  // cancel at cycle end
 await razorpay.subscriptions.cancel(id, false); // cancel immediately
 ```
 
+**Why the object form is dangerous on 2.9.6**: the implementation is `cancelAtCycleEnd && { data: { cancel_at_cycle_end: 1 } }`. An object is always truthy, so `{ cancel_at_cycle_end: false }` does NOT cancel immediately — it silently cancels at cycle end (a foot-gun inversion of your intent). The object-with-`true` form happens to behave correctly by accident, but the object form is still wrong here. This is version-dependent: newer Razorpay SDK docs show an options-object form, so confirm the installed version before switching shapes.
+
 ## `customers.create()` TypeScript Error with `fail_existing`
 
 **Symptom**: TypeScript expects `0 | 1` but won't accept the number.
 
-**Fix**: Explicit cast:
+**Fix**: Explicit cast (version-dependent):
 ```typescript
 await razorpay.customers.create({
   email: user.email,
@@ -107,17 +109,21 @@ await razorpay.customers.create({
 });
 ```
 
+The cast is only needed on SDK versions whose typings declare `fail_existing` as `0 | 1` (a bare numeric literal then trips `tsc`). Other versions type it loosely and need no cast — check the installed `.d.ts` before adding the cast.
+
 ## Payment Succeeds But Access Not Granted
 
 **This is the #1 production issue. Debug in this order:**
 
 1. **Check auto-capture setting**: Dashboard → Settings → Payments → "Automatic capture delay". If set to manual, payments stay in `authorized` state and `payment.captured` never fires. **Fix: Set to "Auto-capture immediately" in Dashboard.**
 2. **Check event type**: Were you looking at `subscription.authenticated` or `subscription.activated`? Only `activated` means money was charged. `authenticated` just means card was verified — NO payment.
-3. **Check webhook delivery**: Dashboard → Settings → Webhooks → Click webhook → Delivery attempts. See if Razorpay even tried to send.
+3. **Check webhook delivery**: Dashboard → Developers → Webhooks → select the webhook → Delivery attempts. See if Razorpay even tried to send.
 4. **Webhook timeout**: Your handler must return 200 within 5 seconds. If it takes 6 seconds, Razorpay marks it failed and retries. Check your handler latency.
 5. **Check idempotency**: Is `lastEventId` causing a skip? A previous delivery may have succeeded in Razorpay's view but failed to commit in your DB.
 6. **Check signature**: Was 400 returned? Means wrong secret or parsed JSON body.
-7. **Payment succeeded but webhook never arrived**: This happens when your webhook URL is down or DNS fails. Recovery: build a `/api/billing/sync` endpoint that fetches subscription status directly from Razorpay API and reconciles:
+7. **Payment succeeded but webhook never arrived**: This happens when your webhook URL is down or DNS fails. Two recovery paths:
+   - **Dashboard replay** (events ≤15 days old): Dashboard → Developers → Webhooks → select the webhook → delivery logs → replay the individual event. There is no bulk replay — resend one event at a time. Useful right after a brief outage or bad deploy.
+   - **API reconciliation** (any age, or many events): build a `/api/billing/sync` endpoint that fetches subscription status directly from the Razorpay API and reconciles:
    ```typescript
    // Recovery endpoint — call manually or via cron
    const rzpSub = await razorpay.subscriptions.fetch(subscriptionId);
@@ -199,7 +205,7 @@ export const runtime = "nodejs"; // Force Node.js runtime — NOT edge
 | `fail_existing: 0` type mismatch | Cast: `0 as 0 \| 1` |
 | `notify_info` fails with empty object | Only include if fields are present |
 | `contact` field rejects empty string | Omit field entirely if no phone |
-| `current_period_end` vs `current_end` | Try both, plus `end_at` |
+| period-end field name | Use `current_end` (Unix s), `end_at` as fallback; `current_period_end` is a Stripe-ism, not a Razorpay field |
 | Webhook event ID in header vs payload | Prefer `x-razorpay-event-id` header |
 | Error shape varies by endpoint | Check both `.error.code` and `.statusCode` |
 
@@ -240,7 +246,7 @@ Sent when a new subscription is successfully activated after first payment.
         "plan_id": "plan_test456",
         "customer_id": "cust_test789",
         "status": "active",
-        "current_period_end": 1700000000,
+        "current_end": 1700000000,
         "notes": { "userId": "user_123", "planKey": "pro_monthly" }
       }
     },
@@ -270,7 +276,7 @@ Sent on each successful renewal payment.
         "plan_id": "plan_test456",
         "customer_id": "cust_test789",
         "status": "active",
-        "current_period_end": 1702592000,
+        "current_end": 1702592000,
         "paid_count": 2,
         "notes": { "userId": "user_123", "planKey": "pro_monthly" }
       }

@@ -13,7 +13,8 @@ Use this guide before launching a Razorpay integration to production, or to hard
 
 Complete every item before going live:
 
-- [ ] **CRITICAL: Auto-capture is ON** — Dashboard → Settings → Payments → Set to "Auto-capture immediately". If off, payments stay `authorized` and webhook `payment.captured` never fires. Test mode hides this because it auto-captures regardless.
+- [ ] **CRITICAL: Verify auto-capture wasn't disabled** — Auto-capture is **ON by default** ("once your customer completes a payment, it is automatically moved to the captured state"). Confirm at Dashboard → Account & Settings → Payment Capture. The Orders API `payment.capture` field (and per-order capture settings) override this dashboard default, so check both. If capture is off, payments stay `authorized` and webhook `payment.captured` never fires.
+- [ ] **Authorized-but-uncaptured payments are auto-refunded** if not captured within the configured window (default ~3 days, max 5) — don't leave payments sitting in `authorized`.
 - [ ] Switch to live API keys (`rzp_live_` prefix)
 - [ ] Create live plans (separate from test plans — test plan IDs don't work in live mode)
 - [ ] Register webhook with production URL (HTTPS required, port 443)
@@ -21,12 +22,14 @@ Complete every item before going live:
 - [ ] Enable all needed webhook events
 - [ ] Test with a real Rs 1 payment end-to-end
 - [ ] Verify refund flow works in live mode (refunds take 5-7 business days in live, instant in test)
+- [ ] Confirm settlement schedule — default settlement is **T+2 working days** domestic, **T+7** international (T = capture date)
 - [ ] Remove all `console.log` of sensitive data
 - [ ] Verify `.env` is in `.gitignore`
 - [ ] Webhook route uses `runtime = "nodejs"` NOT edge (crypto module required)
 - [ ] Set up error monitoring (Sentry, etc.)
 - [ ] Set up reconciliation cron to catch missed webhooks (every 5-15 min)
 - [ ] Add `processed_webhook_events` table for idempotency
+- [ ] Complete KYC + activation — KYC approval and account activation are required before live payments work (~1–3 business days). International payments require domestic activation first, plus Video KYC (PA-CB / RBI requirement).
 
 
 ## 2. Security Hardening

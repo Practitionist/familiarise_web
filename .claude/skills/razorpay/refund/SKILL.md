@@ -24,12 +24,17 @@ export async function POST(request: Request) {
   }
 
   // Full refund — omit amount to refund the entire payment
-  const refund = await razorpay.payments.refund(paymentId, {
-    notes: {
-      userId: user.id,
-      reason: reason || "Customer requested refund",
+  // X-Refund-Idempotency (key >=10 chars) prevents a double refund on network retry
+  const refund = await razorpay.payments.refund(
+    paymentId,
+    {
+      notes: {
+        userId: user.id,
+        reason: reason || "Customer requested refund",
+      },
     },
-  });
+    { "X-Refund-Idempotency": `refund-${paymentId}` }
+  );
 
   // Store refund record in DB
   await db.insert(refunds).values({
@@ -37,8 +42,9 @@ export async function POST(request: Request) {
     razorpayPaymentId: paymentId,
     userId: user.id,
     amountPaise: refund.amount,
-    status: refund.status, // "created" initially
-    speed: refund.speed_requested, // "normal" or "optimized"
+    status: refund.status, // "pending" initially
+    speedRequested: refund.speed_requested, // "normal" or "optimum"
+    speedProcessed: refund.speed_processed, // "normal" or "instant" — how it actually settled
   });
 
   return Response.json({
@@ -89,13 +95,18 @@ export async function POST(request: Request) {
   }
 
   // Partial refund — pass specific amount in paise
-  const refund = await razorpay.payments.refund(paymentId, {
-    amount: amountPaise, // Amount in paise (e.g., 5000 for Rs 50)
-    notes: {
-      userId: user.id,
-      reason: reason || "Partial refund",
+  // X-Refund-Idempotency (key >=10 chars) prevents a double refund on network retry
+  const refund = await razorpay.payments.refund(
+    paymentId,
+    {
+      amount: amountPaise, // Amount in paise (e.g., 5000 for Rs 50)
+      notes: {
+        userId: user.id,
+        reason: reason || "Partial refund",
+      },
     },
-  });
+    { "X-Refund-Idempotency": `refund-${paymentId}-${amountPaise}` }
+  );
 
   await db.insert(refunds).values({
     razorpayRefundId: refund.id,
@@ -103,7 +114,8 @@ export async function POST(request: Request) {
     userId: user.id,
     amountPaise: refund.amount,
     status: refund.status,
-    speed: refund.speed_requested,
+    speedRequested: refund.speed_requested,
+    speedProcessed: refund.speed_processed,
   });
 
   return Response.json({
@@ -130,20 +142,21 @@ async function handleRefundEvent(eventType: string, event: any) {
 
   switch (eventType) {
     // ── Refund Initiated ────────────────────────────────────
-    case "payment.refund.created": {
+    case "refund.created": {
       // Refund has been created — update or insert record
       await upsertRefund({
         razorpayRefundId: refundEntity.id,
         razorpayPaymentId: refundEntity.payment_id,
         amountPaise: refundEntity.amount,
-        status: "created",
-        speed: refundEntity.speed_requested,
+        status: "pending",
+        speedRequested: refundEntity.speed_requested,
+        speedProcessed: refundEntity.speed_processed,
       });
       break;
     }
 
     // ── Refund Completed (money returned to customer) ───────
-    case "payment.refund.processed": {
+    case "refund.processed": {
       await updateRefundStatus(refundEntity.id, "processed");
 
       // Revoke access if this was a full refund
@@ -157,7 +170,7 @@ async function handleRefundEvent(eventType: string, event: any) {
     }
 
     // ── Refund Failed ───────────────────────────────────────
-    case "payment.refund.failed": {
+    case "refund.failed": {
       await updateRefundStatus(refundEntity.id, "failed");
       // Alert admin — manual intervention may be needed
       await notifyAdmin({
@@ -168,6 +181,16 @@ async function handleRefundEvent(eventType: string, event: any) {
       });
       break;
     }
+
+    // ── Refund Speed Changed (e.g. instant fell back to normal) ──
+    case "refund.speed_changed": {
+      // Razorpay re-evaluated the refund speed — persist the new processed speed
+      await updateRefundSpeedProcessed(
+        refundEntity.id,
+        refundEntity.speed_processed
+      );
+      break;
+    }
   }
 }
 
@@ -176,7 +199,8 @@ async function upsertRefund(data: {
   razorpayPaymentId: string;
   amountPaise: number;
   status: string;
-  speed: string;
+  speedRequested: string;
+  speedProcessed: string;
 }) {
   await db
     .insert(refunds)
@@ -185,13 +209,15 @@ async function upsertRefund(data: {
       razorpayPaymentId: data.razorpayPaymentId,
       amountPaise: data.amountPaise,
       status: data.status,
-      speed: data.speed,
+      speedRequested: data.speedRequested,
+      speedProcessed: data.speedProcessed,
       updatedAt: new Date(),
     })
     .onConflictDoUpdate({
       target: [refunds.razorpayRefundId],
       set: {
         status: data.status,
+        speedProcessed: data.speedProcessed,
         updatedAt: new Date(),
       },
     });
@@ -203,11 +229,21 @@ async function updateRefundStatus(razorpayRefundId: string, status: string) {
     .set({ status, updatedAt: new Date() })
     .where(eq(refunds.razorpayRefundId, razorpayRefundId));
 }
+
+async function updateRefundSpeedProcessed(
+  razorpayRefundId: string,
+  speedProcessed: string
+) {
+  await db
+    .update(refunds)
+    .set({ speedProcessed, updatedAt: new Date() })
+    .where(eq(refunds.razorpayRefundId, razorpayRefundId));
+}
 ```
 
 ## Refund Status Tracking
 
-Refund lifecycle: `created` -> `processed` (success) or `created` -> `failed`
+Refund lifecycle: `pending` -> `processed` (success) or `pending` -> `failed`
 
 ```typescript
 // app/api/billing/refund-status/route.ts
@@ -235,7 +271,7 @@ export async function GET(request: Request) {
   // Optionally fetch latest status from Razorpay API
   // (useful if webhooks are delayed)
   for (const refund of paymentRefunds) {
-    if (refund.status === "created") {
+    if (refund.status === "pending") {
       try {
         const rzpRefund = await razorpay.refunds.fetch(refund.razorpayRefundId);
         if (rzpRefund.status !== refund.status) {
@@ -266,8 +302,9 @@ export const refunds = pgTable(
     razorpayPaymentId: text("razorpay_payment_id").notNull(),
     userId: text("user_id").notNull(),
     amountPaise: integer("amount_paise").notNull(),
-    status: text("status").notNull().default("created"), // created | processed | failed
-    speed: text("speed"), // "normal" | "optimized"
+    status: text("status").notNull().default("pending"), // pending | processed | failed
+    speedRequested: text("speed_requested"), // "normal" | "optimum"
+    speedProcessed: text("speed_processed"), // "normal" | "instant" — how it actually settled
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
@@ -282,17 +319,19 @@ export const refunds = pgTable(
 
 | Event | When | Action |
 |-------|------|--------|
-| `payment.refund.created` | Refund initiated | Store/update refund record |
-| `payment.refund.processed` | Money returned to customer | Mark processed, revoke access if full refund |
-| `payment.refund.failed` | Refund failed | Mark failed, alert admin |
+| `refund.created` | Refund initiated | Store/update refund record |
+| `refund.processed` | Money returned to customer | Mark processed, revoke access if full refund |
+| `refund.failed` | Refund failed | Mark failed, alert admin |
+| `refund.speed_changed` | Razorpay re-evaluated refund speed | Update stored `speed_processed` |
 
 ## Gotchas
 
 1. **API calls use `RAZORPAY_KEY_SECRET`, not webhook secret**: The `razorpay.payments.refund()` call authenticates with `RAZORPAY_KEY_ID` + `RAZORPAY_KEY_SECRET`. The `RAZORPAY_WEBHOOK_SECRET` is only for verifying incoming webhook signatures.
 2. **Partial refund sum limit**: The sum of all refund amounts for a payment cannot exceed the original payment amount. Razorpay will reject the API call if you try to over-refund. Always validate on your side first.
-3. **Refund speed — "optimized" vs "normal"**: `"optimized"` refunds are instant for the customer (money back in minutes) but Razorpay charges an extra fee. `"normal"` refunds take 5-7 business days. Default is `"normal"` unless you request otherwise.
-4. **Test mode vs live mode timing**: Test mode refunds process instantly (`created` -> `processed` immediately). Live mode refunds take 5-7 business days. Do not build flows that assume instant processing.
+3. **Refund speed — "optimum" vs "normal"**: `speed_requested: "optimum"` requests an instant refund for the customer (money back in minutes) but Razorpay charges an extra fee. `"normal"` refunds take 5-7 business days. Default is `"normal"` unless you request otherwise. The response carries `speed_processed` (`normal` | `instant`) telling you how it actually settled — store both, since an `optimum` request can still fall back to `normal`.
+4. **Test mode vs live mode timing**: Test-mode refunds typically process immediately, but this is not a documented guarantee. Live-mode `normal` refunds take 5-7 business days. Do not build flows that assume instant processing — always react to the `refund.processed` webhook.
 5. **6-month refund window**: Razorpay does not allow refunds on payments older than 6 months. The API call will fail. Check payment age before attempting a refund.
 6. **Subscription payment refund does NOT cancel the subscription**: Refunding a subscription charge only returns money — the subscription remains active and will charge again on the next cycle. You must cancel the subscription separately via `razorpay.subscriptions.cancel()`.
 7. **Amount is always in paise**: 100 paise = 1 INR. A refund of Rs 50 requires `amount: 5000`. Forgetting this is the most common billing bug.
 8. **Idempotency on webhooks**: Razorpay may send the same refund webhook multiple times. Use `razorpayRefundId` as the unique key with `onConflictDoUpdate` to handle duplicates.
+9. **Idempotency on refund creation**: Pass the `X-Refund-Idempotency` header (key >=10 chars) on the create-refund call. If a network error causes a retry, Razorpay returns the original refund instead of issuing a second one — without it, a retry can double-refund the customer.

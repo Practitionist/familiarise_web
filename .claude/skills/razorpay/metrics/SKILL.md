@@ -567,6 +567,7 @@ curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_KEY_SECRET \
 2. **Do not count pre-active statuses as revenue**: Subscriptions with status `authenticated` or `created` have not been charged yet. Only `active` subscriptions contribute to MRR.
 3. **Yearly subscriptions and MRR**: Divide yearly plan amounts by 12 to get monthly revenue contribution. Do not count the full yearly amount as MRR.
 4. **Exclude refunded payments**: Payments with `amount_refunded > 0` should be partially or fully excluded from revenue calculations. Check `amount - amount_refunded` for net revenue.
+   - For true net revenue, prefer settlements over summing captured payments. `GET /v1/settlements` (and the settlement recon API, `/v1/settlements/recon/combined?year=&month=`) nets Razorpay fees, GST on fees, refunds, and adjustments — what actually hit your bank. Summing captured payments overstates revenue because it ignores fees/tax. Default settlement cycle is T+2 working days domestic (T+7 international), so recent payments may not be settled yet.
 5. **API pagination**: Razorpay returns max 100 items per request. Use `skip` parameter to paginate: `?count=100&skip=100`. Always loop until `items.length < count`.
 6. **Halted vs cancelled**: `halted` means payment failed (involuntary churn). `cancelled` means explicit cancellation (could be voluntary or admin-initiated). Track both but report them separately for actionable insights.
 7. **Timestamp format**: Razorpay API uses Unix timestamps in seconds. Multiply by 1000 for JavaScript `Date`: `new Date(timestamp * 1000)`.

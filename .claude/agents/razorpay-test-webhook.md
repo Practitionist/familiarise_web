@@ -185,6 +185,8 @@ Use a payload with:
 - `payment.entity.amount`: `49900`
 - `payment.entity.error_code`: `"BAD_REQUEST_ERROR"`
 - `payment.entity.error_description`: `"Payment processing failed because of incorrect OTP"`
+- `payment.entity.error_source`: `"customer"`
+- `payment.entity.error_step`: `"payment_authentication"`
 - `payment.entity.error_reason`: `"payment_failed"`
 - `notes.userId`: `"user_test_001"`
 
@@ -223,7 +225,7 @@ curl -s -w "\nHTTP_STATUS: %{http_code}\n" \
   -d "$PAYLOAD"
 ```
 
-If this returns anything other than 200, flag it as a warning — Razorpay will retry unhandled events indefinitely if the handler returns 4xx/5xx.
+If this returns anything other than 200, flag it as a warning — when the handler returns 4xx/5xx, Razorpay retries with exponential backoff for up to 24 hours, then DISABLES the webhook entirely and emails the configured Alert Email Address. A single unhandled event returning non-200 can therefore take down delivery for all events.
 
 ---
 
