@@ -13,6 +13,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { MemberRoleSchema } from "@/lib/labels/org-labels";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import {
@@ -29,16 +30,8 @@ import {
   bumpUserSessionGeneration,
 } from "@/lib/api/organizations/membership-transitions";
 
-// Canonical MemberRole Zod enum. Mirrors the Prisma enum — if a role
-// is added to the schema, TS fails here until the list is updated.
-const MemberRoleSchema = z.enum([
-  "OWNER",
-  "MAINTAINER",
-  "MANAGER",
-  "EXPERT",
-  "LEARNER",
-  "SUPPORT",
-]);
+// #817 — the canonical full-enum Zod mirror lives in org-labels; the local
+// duplicate here drifted (BILLING_ADMIN went missing), so import it instead.
 
 const MemberStatusSchema = z.enum(["PENDING", "ACTIVE", "SUSPENDED", "REMOVED"]);
 
