@@ -182,11 +182,13 @@ When the refund happens in a different FY than the original payment, **we cannot
 
 ## Acceptance
 
-- A 100% refund of an invoiced consumer payment emits: negative PaymentLeg + CreditNote + TdsAdjustment + GstTcsAdjustment (if applicable), all in one Prisma transaction.
+The criteria below are the target end state for the full consolidation flow. As of #813 the negative `PaymentLeg`, the `CreditNote`, and the income-tax reversal (now landing in a negative `TDSRecord` rather than a `TdsAdjustment`) are met; the `GstTcsAdjustment` leg and the FVU/GSTR machine-export bullets remain pending.
+
+- A 100% refund of an invoiced consumer payment emits, in one Prisma transaction: a negative PaymentLeg, a CreditNote, and a negative `TDSRecord` reversal — plus a GstTcsAdjustment once that leg is wired.
 - A 50% refund emits all of the above with proportional amounts.
-- A lost chargeback emits the same cascade as a 100% refund.
-- The next quarterly 26Q FVU includes negative-line entries for all unreported TdsAdjustments.
-- The next monthly GSTR-8 includes negative-line entries for all unreported GstTcsAdjustments.
+- A lost chargeback emits the same cascade as a 100% refund, and the reversal cap means a prior refund on the same payment is not double-reversed.
+- The next quarterly 26Q FVU includes negative-line entries for all unreported reversals (today the negative `TDSRecord` rows; the `TdsAdjustment`-backed FVU export is the pending consolidation target).
+- The next monthly GSTR-8 includes negative-line entries for all unreported GstTcsAdjustments (pending).
 - The next GSTR-1 (when implemented) includes the CreditNote rows.
 - Cross-FY refund flags admin dashboard, doesn't pollute current-FY return.
 

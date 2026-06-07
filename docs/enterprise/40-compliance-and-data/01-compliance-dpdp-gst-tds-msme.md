@@ -178,7 +178,7 @@ erDiagram
     User ||--o{ ConsentArtifact : "grants consent"
     User ||--o{ ErasureRequest : "requests erasure"
     User ||--o{ ErasureRequest : "processes as admin"
-    ConsultantProfile ||--o{ TdsAdjustment : "refund reversal"
+    ConsultantProfile ||--o{ TdsAdjustment : "refund reversal consolidation (schema-only; reversals land in TDSRecord today)"
     DataBreach }o..o{ User : "affectedUserIds string array, no FK"
 
     OrganizationTaxInfo {

@@ -331,11 +331,11 @@ const urgentDisputes = await prisma.dispute.count({
 
 When a dispute is resolved in the customer's favor (status: `LOST`), the `handle-lost-disputes` cron job now uses the canonical `refundEarnings(paymentId, { forceRefund: true })` path instead of manual inline logic. This ensures:
 
-1. **TDS reversal records** are correctly created for already-paid earnings
+1. **TDS reversal records** are correctly created for already-paid earnings, via the shared `recordTdsReversal` helper, which writes a negative `isReversal` `TDSRecord` (#813)
 2. **`totalRevenue`** is decremented on the consultant profile for PAID earnings
 3. **Consistent behavior** with the refund flow (proportional reversal, `refundedShareAmount` tracking)
 
-Previously, lost-dispute handling used manual logic that could miss TDS reversals and leave `totalRevenue` stale.
+Previously, lost-dispute handling used manual logic that could miss TDS reversals and leave `totalRevenue` stale. Because `recordTdsReversal` caps cumulative reversals at the original withholding, an app-side refund followed by a lost chargeback on the same payment no longer double-reverses the TDS — the second cascade adds nothing once the first has reversed it.
 
 ---
 

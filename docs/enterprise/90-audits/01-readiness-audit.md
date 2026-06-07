@@ -37,7 +37,7 @@ last-reviewed: 2026-06-05
 
 **Still open after v2 (honest gaps):**
 - 🔴 **Live payout disbursement** — `ENABLE_LIVE_PAYOUTS` off; batches sit `PROCESSING` pending sandbox proof + go-live (#776 §B). Unchanged — the Section 4 cap still applies.
-- 🟡 **Dunning suspension cascade** — the 7-day×3 reminder sequence is live, but auto-suspend on terminal non-payment is **designed, not active** (reminders notify; they don't yet freeze the org). (#779 §D)
+- 🟡 **Dunning suspension cascade** — the 7-day×3 reminder sequence is live, and stage 3 now auto-suspends the org 7 days past the last reminder (stamps `dunningSuspendedAt`, claim + audit in one Serializable transaction, blocks new sponsored bookings); it is **config-gated behind `ENABLE_DUNNING_SUSPEND`** and off by default, so with the flag unset reminders notify but the org is not frozen. (#812)
 - 🟡 **TDS admin view** — `ENABLE_TDS_ADMIN_VIEW` off; Form 26Q/16A surfaces + decrypted-PAN admin view are flag-gated pending accountant signoff. (#778)
 
 ---
@@ -537,6 +537,8 @@ GST derivation, MSME deadline calculator, and IRP connector are all live. Cron s
 
 | Cron | Schedule | Status |
 |------|----------|--------|
+| `generate-subscription-invoices.yml` | Daily 01:00 UTC | ✅ *(#813; concurrency group)* |
+| `settle-invoice-accruals.yml` | Monthly 1st 04:00 UTC | ✅ *(#813; `ENABLE_CONSOLIDATED_INVOICE`-gated)* |
 | `expire-contracts.yml` | Daily 03:00 UTC | ✅ |
 | `cleanup-abandoned-org-top-ups.yml` | Daily 02:00 UTC | ✅ |
 | `reconcile-ledgers.yml` | Nightly | ✅ |
@@ -554,7 +556,7 @@ GST derivation, MSME deadline calculator, and IRP connector are all live. Cron s
 
 ### 9.2 Crons Still Needed
 
-- [x] 🔴 `jobs/billing/generate-subscription-invoices.ts` — INVOICE monthly roll-up; body scaffolded; no GH Actions schedule
+- [x] ✅ ~~`jobs/billing/generate-subscription-invoices.ts` — no GH Actions schedule~~ — now scheduled daily (01:00 UTC) with a `concurrency` group; the monthly accrual roll-up (`settle-invoice-accruals.ts`) is also scheduled (1st, 04:00 UTC, `ENABLE_CONSOLIDATED_INVOICE`-gated), absorbing the retired `consolidated-invoice-rollup` job (#813)
 - [x] 🔴 HRIS sync cron — no connector; `HrisConfig.lastSyncedAt` never updated (#701)
 
 ### 9.3 Alerting & Observability
