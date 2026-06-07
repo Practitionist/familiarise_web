@@ -155,12 +155,12 @@ Handle these events in a switch statement:
 | Event | Action |
 |---|---|
 | `subscription.authenticated` | Set status to `authenticated`. This fires when the customer completes authentication but before the first charge. |
-| `subscription.activated` | Set status to `active`. Record `current_period_start` and `current_period_end`. |
-| `subscription.charged` | Set status to `active`. Update `current_period_end` for the new billing cycle. Trigger GST invoice creation (non-blocking). |
+| `subscription.activated` | Set status to `active`. Read `current_start`/`current_end` from the payload (Step 4b) and store them in your period columns (e.g. `current_period_start`/`current_period_end`). |
+| `subscription.charged` | Set status to `active`. Read the payload's `current_end` (Step 4b) and update your period-end column for the new billing cycle. Trigger GST invoice creation (non-blocking). |
 | `subscription.pending` | Set status to `pending` ONLY if current status is NOT `active`. Never downgrade an active subscription to pending — this event can arrive out of order. |
 | `subscription.paused` | Set status to `paused`. |
 | `subscription.resumed` | Set status to `active`. |
-| `subscription.cancelled` | Set status to `cancelled`. Set `cancel_at_period_end` or revoke access immediately based on `ended_at` vs `current_period_end`. |
+| `subscription.cancelled` | Set status to `cancelled`. Set `cancel_at_period_end` or revoke access immediately based on the payload's `ended_at` vs your stored period end. |
 | `subscription.completed` | Set status to `completed`. Revoke access (check for other active subs first). |
 | `subscription.halted` | Set status to `halted`. Revoke access (check for other active subs first). |
 | `subscription.updated` | Detect plan change by comparing `plan_id` in payload vs DB. If plan changed, update `razorpayPlanId` and related fields. Auto-create a new DB row if the subscription ID is unknown (handles plan change via Razorpay Dashboard creating a new sub). |
@@ -221,7 +221,7 @@ void createGstInvoice(subscriptionId, payload.payload?.payment?.entity).catch((e
 });
 ```
 
-Create a `createGstInvoice()` function that calls the Razorpay Invoice API. Subscription payments do NOT auto-generate GST invoices — you must create them yourself via the Invoice API with proper line items (base amount, CGST @ 9%, SGST @ 9% as separate line items). If the project does not need GST invoices, include the function as a stub with a comment explaining how to enable it.
+Create a `createGstInvoice()` function that self-generates the GST invoice record. Subscription cycles auto-mint Razorpay invoice entities, but those are **non-GST** — the API cannot apply tax fields, so the compliant GST invoice is your own record/PDF with a place-of-supply-aware breakout (intra-state: CGST 9% + SGST 9%; inter-state: IGST 18%). See template 5e and the razorpay-invoice agent. If the project does not need GST invoices, include the function as a stub with a comment explaining how to enable it.
 
 **3e. Plan change detection**
 
@@ -358,65 +358,48 @@ As defined in Step 3c. Checks for other active subscriptions before revoking.
 
 **5e. `createGstInvoice(subscriptionId, paymentEntity)`**
 
-Stub or full implementation depending on the project. Razorpay subscription payments do NOT auto-generate GST invoices — you must create them via the Invoice API with separate line items for base amount, CGST, and SGST:
+Stub or full implementation depending on the project. Important: Razorpay's Invoice API creates **non-GST invoices only** — tax-rate fields cannot be applied via API, and faking "CGST @ 9%" line items does not produce a compliant GST invoice. The compliant pattern is to compute the GST breakout yourself (place of supply decides CGST+SGST vs IGST) and persist **your own** invoice record as the tax document (see the razorpay-invoice agent for the full `calculateGST` + invoice-numbering pattern):
 
 ```typescript
+const SUPPLIER_STATE_CODE = "29"; // your registered GST state
+
 async function createGstInvoice(subscriptionId: string, paymentEntity?: any): Promise<void> {
   if (!paymentEntity) return;
 
-  // Fetch subscription to get customer details
-  const razorpay = getRazorpayClient();
-  const subscription = await razorpay.subscriptions.fetch(subscriptionId);
-
-  // Calculate GST breakout (18% for SaaS — SAC code 998314)
+  // GST breakout (18% for SaaS, GST-inclusive pricing). Place of supply decides the split:
+  // same state as supplier -> CGST 9% + SGST 9%; different state -> IGST 18%.
   const amountPaise = paymentEntity.amount;
   const basePaise = Math.round(amountPaise / 1.18);
   const gstPaise = amountPaise - basePaise;
-  const cgstPaise = Math.floor(gstPaise / 2);
-  const sgstPaise = gstPaise - cgstPaise;
+  const placeOfSupply = paymentEntity.notes?.customerStateCode ?? null; // collect at checkout
+  const isInterState = placeOfSupply !== null && placeOfSupply !== SUPPLIER_STATE_CODE;
 
-  // Create invoice via Razorpay Invoice API — subscriptions don't auto-generate GST invoices
-  const invoice = await razorpay.invoices.create({
-    type: "invoice",
-    customer_id: subscription.customer_id,
-    line_items: [
-      {
-        name: "Subscription - Base Amount",
-        amount: basePaise,
-        currency: "INR",
-        quantity: 1,
-      },
-      {
-        name: "CGST @ 9%",
-        amount: cgstPaise,
-        currency: "INR",
-        quantity: 1,
-      },
-      {
-        name: "SGST @ 9%",
-        amount: sgstPaise,
-        currency: "INR",
-        quantity: 1,
-      },
-    ],
-    notes: {
-      paymentId: paymentEntity.id,
-      subscriptionId,
-      sacCode: "998314",
-    },
-  });
+  let cgstPaise: number | null = null;
+  let sgstPaise: number | null = null;
+  let igstPaise: number | null = null;
+  if (isInterState) {
+    igstPaise = gstPaise;
+  } else {
+    cgstPaise = Math.floor(gstPaise / 2);
+    sgstPaise = gstPaise - cgstPaise;
+  }
 
-  // Store in DB with Razorpay invoice ID for later retrieval
+  // YOUR invoice record is the GST document — own numbering series, stored breakout.
   await db.insert(gstInvoices).values({
     userId: paymentEntity.notes?.userId,
-    razorpayInvoiceId: invoice.id,
+    invoiceNumber: await nextInvoiceNumber(), // sequential series, see razorpay-invoice agent
     razorpayPaymentId: paymentEntity.id,
     razorpaySubscriptionId: subscriptionId,
     amountPaise,
     basePaise,
-    cgstPaise,
-    sgstPaise,
+    cgstPaise, // null for inter-state
+    sgstPaise, // null for inter-state
+    igstPaise, // null for intra-state
+    placeOfSupply,
   });
+
+  // Optional: razorpay.invoices.create() with a SINGLE full-amount line item can serve as
+  // a payment-collection/receipt artifact — but it is non-GST and never the tax document.
 }
 ```
 

@@ -16,12 +16,12 @@ This is a common source of confusion. One-time payments and subscriptions use **
 | **API** | Orders API (`razorpay.orders.create`) | Subscriptions API (`razorpay.subscriptions.create`) |
 | **Checkout UI** | JS SDK popup (`new Razorpay({...}).open()`) | Hosted page redirect (`short_url`) |
 | **Client script** | `checkout.js` loaded via `<Script>` tag | No client script needed |
-| **Verification** | Client-side HMAC (`order_id\|payment_id`) | Webhook (`subscription.activated`) |
-| **Payment confirmation** | Immediate — `handler` callback fires | Async — webhook fires minutes later |
-| **Where it runs** | Inline popup on your page | Separate Razorpay-hosted page |
-| **Key used for HMAC** | `RAZORPAY_KEY_SECRET` (API secret) | `RAZORPAY_WEBHOOK_SECRET` (webhook secret) |
+| **Verification** | Callback HMAC (`order_id\|payment_id`) | Hosted `short_url` flow: webhook only. JS-popup flow: callback HMAC (`payment_id\|subscription_id`) **and** webhook |
+| **Payment confirmation** | Immediate — `handler` callback fires | Webhook (`subscription.activated`) is the source of truth either way |
+| **Where it runs** | Inline popup on your page | Hosted page, or inline popup via `subscription_id` |
+| **Key used for HMAC** | `RAZORPAY_KEY_SECRET` (API secret) | Callback HMAC: `RAZORPAY_KEY_SECRET`; webhook: `RAZORPAY_WEBHOOK_SECRET` |
 
-**Do NOT mix these up.** You cannot use `short_url` for one-time orders. Subscriptions, however, *are* supported in Standard Checkout — pass `subscription_id` in the options instead of `order_id`. The hosted `short_url` page is just one option; the JS SDK popup is another.
+**Do NOT mix these up.** You cannot use `short_url` for one-time orders. Subscriptions, however, *are* supported in Standard Checkout — pass `subscription_id` in the options instead of `order_id`. The hosted `short_url` page is just one option; the JS SDK popup is another. **Two distinct subscription verification paths, two distinct secrets**: if you use the JS popup with `subscription_id`, the `handler` callback returns `razorpay_payment_id`/`razorpay_subscription_id`/`razorpay_signature` — verify with `HMAC_SHA256(payment_id + "|" + subscription_id, RAZORPAY_KEY_SECRET)` (note the **reversed field order** vs orders). The webhook (`subscription.activated`, verified with `RAZORPAY_WEBHOOK_SECRET` over the raw body) remains the activation source of truth in both flows.
 
 ## Flow 1: Order + JS SDK (Recommended for UX)
 

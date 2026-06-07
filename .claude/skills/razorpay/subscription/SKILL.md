@@ -182,7 +182,7 @@ export function CheckoutButton({ planKey }: { planKey: string }) {
 
 ### Pending Subscription Dedup
 - Check for existing `created|authenticated|pending` subscriptions
-- If recent (< 1 hour): block duplicate creation (409)
+- If recent (< 1 hour): return 200 with the existing subscription's `short_url` (idempotent re-entry — matches the route example above; don't 409, the user just lost the checkout tab)
 - If stale (> 1 hour): cancel on Razorpay, allow new creation
 - NEVER allow two active subscriptions for the same plan
 

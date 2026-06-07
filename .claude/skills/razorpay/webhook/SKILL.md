@@ -336,9 +336,12 @@ async function revokeAccessIfNoOtherSubs(subscription: Subscription | null) {
 
 Why: Users can have multiple subscriptions (e.g., day pass + monthly). Only revoke when ALL are inactive.
 
-## Auto-Create from Webhook (Plan Changes)
+## Auto-Create from Webhook (Legacy Plan Changes)
 
-When a plan change webhook arrives but the new subscription isn't in the DB yet:
+**Legacy pattern** — pre-Update-API integrations did plan changes by creating a replacement
+subscription with `notes.replacesSubscription`. New integrations should use the in-place
+`subscriptions.update()` flow (see the plan-change skill) and won't need this handler. Keep
+it only if old replacement-style subscriptions can still arrive:
 
 ```typescript
 // Inside subscription.activated handler
@@ -367,60 +370,50 @@ if (!subscription && entity?.notes?.userId && entity?.notes?.planKey) {
 
 ## GST Invoice Creation (Non-Blocking)
 
-Razorpay subscription payments do NOT auto-generate GST invoices. You must create them yourself
-via the Razorpay Invoice API with proper line items (base amount, CGST, SGST as separate items).
+Subscription cycles auto-mint Razorpay invoice entities, but those are **non-GST** — the
+Invoice API cannot apply tax fields, and faking "CGST @ 9%" line items is not a compliant
+GST invoice. Self-generate your own invoice record as the tax document, with place of
+supply deciding the split (intra-state: CGST 9% + SGST 9%; inter-state: IGST 18%). See the
+razorpay-invoice agent for the full `calculateGST` + invoice-numbering pattern.
 
 ```typescript
+const SUPPLIER_STATE_CODE = "29"; // your registered GST state
+
 async function createGstInvoice(payment: any, subscription: any) {
   try {
+    // GST breakout (18% for SaaS, GST-inclusive pricing)
     const amountPaise = payment.amount;
     const basePaise = Math.round(amountPaise / 1.18);
     const gstPaise = amountPaise - basePaise;
-    const cgstPaise = Math.floor(gstPaise / 2);
-    const sgstPaise = gstPaise - cgstPaise;
+    const placeOfSupply = payment.notes?.customerStateCode ?? null; // collect at checkout
+    const isInterState = placeOfSupply !== null && placeOfSupply !== SUPPLIER_STATE_CODE;
 
-    // Create invoice via Razorpay Invoice API — subscriptions don't auto-generate GST invoices
-    const invoice = await razorpay.invoices.create({
-      type: "invoice",
-      customer_id: subscription?.razorpayCustomerId,
-      line_items: [
-        {
-          name: "Subscription - Base Amount",
-          amount: basePaise,
-          currency: "INR",
-          quantity: 1,
-        },
-        {
-          name: "CGST @ 9%",
-          amount: cgstPaise,
-          currency: "INR",
-          quantity: 1,
-        },
-        {
-          name: "SGST @ 9%",
-          amount: sgstPaise,
-          currency: "INR",
-          quantity: 1,
-        },
-      ],
-      notes: {
-        paymentId: payment.id,
-        subscriptionId: payment.subscription_id,
-        sacCode: "998314",
-      },
-    });
+    let cgstPaise: number | null = null;
+    let sgstPaise: number | null = null;
+    let igstPaise: number | null = null;
+    if (isInterState) {
+      igstPaise = gstPaise;
+    } else {
+      cgstPaise = Math.floor(gstPaise / 2);
+      sgstPaise = gstPaise - cgstPaise;
+    }
 
-    // Store in DB with Razorpay invoice ID
+    // YOUR invoice record is the GST document — own numbering series, stored breakout.
     await db.insert(gstInvoices).values({
       userId: payment.notes?.userId,
-      razorpayInvoiceId: invoice.id,
+      invoiceNumber: await nextInvoiceNumber(), // sequential series, see razorpay-invoice agent
       razorpayPaymentId: payment.id,
       razorpaySubscriptionId: payment.subscription_id,
       amountPaise,
       basePaise,
-      cgstPaise,
-      sgstPaise,
+      cgstPaise, // null for inter-state
+      sgstPaise, // null for inter-state
+      igstPaise, // null for intra-state
+      placeOfSupply,
     });
+
+    // Optional: razorpay.invoices.create() with a SINGLE full-amount line item can serve
+    // as a payment-collection/receipt artifact — but it is non-GST, never the tax document.
   } catch (error) {
     // Log but don't block — charge already succeeded
     console.error("GST invoice creation failed:", error);

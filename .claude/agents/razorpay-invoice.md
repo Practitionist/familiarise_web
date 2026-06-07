@@ -85,9 +85,17 @@ export function calculateGST(totalAmountPaise: number, placeOfSupply: string = S
   const gstAmount = totalAmountPaise - baseAmount;
   const isInterState = placeOfSupply !== SUPPLIER_STATE_CODE;
 
-  const cgstAmount = isInterState ? 0 : Math.floor(gstAmount / 2);
-  const sgstAmount = isInterState ? 0 : gstAmount - cgstAmount;
-  const igstAmount = isInterState ? gstAmount : 0;
+  // Non-applicable tax heads are null (not 0) — matches the nullable invoice columns,
+  // so an inter-state row reads CGST=null/SGST=null/IGST=amount, never an ambiguous 0.
+  let cgstAmount: number | null = null;
+  let sgstAmount: number | null = null;
+  let igstAmount: number | null = null;
+  if (isInterState) {
+    igstAmount = gstAmount;
+  } else {
+    cgstAmount = Math.floor(gstAmount / 2);
+    sgstAmount = gstAmount - cgstAmount;
+  }
 
   return {
     totalAmount: totalAmountPaise,
@@ -128,7 +136,7 @@ export function generateInvoiceNumber(sequenceNumber: number): string {
 
 Key rules:
 - All amounts are in paise (integer). Never use floating point for money.
-- SAC code `998314` ("Information Technology Software Services") is acceptable; `998315` (hosting / infrastructure provisioning) is often the better fit for hosted SaaS. Both attract 18%.
+- SAC code `998314` ("Information Technology Software Services") is acceptable; `998315` (hosting / infrastructure provisioning) is often the better fit for hosted SaaS. Both attract 18%. **If the project already defines SAC constants, derive from those instead of hardcoding** (this repo: `TAX_CONSTANTS.SAC_CODE` in `lib/payments/payouts/constants.ts` uses the `999293` family for consulting-service payouts — a different supply than the platform's SaaS invoice, but invoice surfaces must agree with whichever constant covers their supply).
 - The 18% rate for SaaS is valid and survived GST 2.0 (Sept 2025) — it did not move.
 - Place of supply drives the split: intra-state -> CGST 9% + SGST 9%; inter-state -> IGST 18% (single line). Never hardcode CGST+SGST.
 - Use floor/remainder split for CGST/SGST to avoid rounding errors; IGST is the full GST amount on a single line.
@@ -252,9 +260,9 @@ export async function createInvoice({
     totalAmount: gst.totalAmount,
     baseAmount: gst.baseAmount,
     gstAmount: gst.gstAmount,
-    cgstAmount: gst.cgstAmount, // 0/null for inter-state
-    sgstAmount: gst.sgstAmount, // 0/null for inter-state
-    igstAmount: gst.igstAmount, // set for inter-state
+    cgstAmount: gst.cgstAmount, // null for inter-state
+    sgstAmount: gst.sgstAmount, // null for inter-state
+    igstAmount: gst.igstAmount, // null for intra-state
     placeOfSupply: gst.placeOfSupply,
     gstRate: gst.gstRate,
     sacCode: gst.sacCode,

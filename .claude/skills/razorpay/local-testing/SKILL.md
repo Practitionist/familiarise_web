@@ -106,6 +106,8 @@ ngrok free tier gives a random URL each time. Paid plans give a stable subdomain
    - `payment.failed`
    - `refund.created` (if using refunds)
    - `refund.processed`
+   - `refund.failed`
+   - `refund.speed_changed`
 6. Click **Create Webhook**
 
 **Webhook secret is NOT the same as API secret.** They're separate values.

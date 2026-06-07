@@ -356,7 +356,7 @@ export async function POST(request: Request) {
 
 ## 4. Invoice / Receipt Download
 
-Razorpay auto-mints an invoice entity for each billing cycle of a subscription — fetch them with `razorpay.invoices.all({ subscription_id })`, each with its own `short_url` for a Razorpay-hosted invoice page. **However, these are NON-GST invoices.** A GST-compliant invoice is still your responsibility: either self-generate one (via `razorpay.invoices.create()` with proper GST line items — see the webhook handler's `createGstInvoice()` function) or issue it from the Dashboard. If you self-generate, store the `razorpay_invoice_id` and `short_url` in your DB.
+Razorpay auto-mints an invoice entity for each billing cycle of a subscription — fetch them with `razorpay.invoices.all({ subscription_id })`, each with its own `short_url` for a Razorpay-hosted invoice page. **However, these are NON-GST invoices** — the Invoice API cannot apply tax fields. A GST-compliant invoice is still your responsibility: either self-generate your own invoice record/PDF with a place-of-supply-aware GST breakout (see the `createGstInvoice()` pattern in the webhook skill and the razorpay-invoice agent) or issue it from the Dashboard. If you self-generate, store your invoice number and the GST breakout in your DB; the Razorpay `short_url` remains useful as a payment-receipt link only.
 
 ```typescript
 // app/api/billing/invoice/[invoiceId]/route.ts

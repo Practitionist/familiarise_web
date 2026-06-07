@@ -115,7 +115,7 @@ The cast is only needed on SDK versions whose typings declare `fail_existing` as
 
 **This is the #1 production issue. Debug in this order:**
 
-1. **Check auto-capture setting**: Dashboard → Settings → Payments → "Automatic capture delay". If set to manual, payments stay in `authorized` state and `payment.captured` never fires. **Fix: Set to "Auto-capture immediately" in Dashboard.**
+1. **Check auto-capture setting**: Dashboard → Account & Settings → Payment Capture (older dashboards: Settings → Payments → "Automatic capture delay"). If set to manual, payments stay in `authorized` state and `payment.captured` never fires. **Fix: enable automatic capture in Dashboard.** Auto-capture is ON by default for new accounts — check whether it was disabled.
 2. **Check event type**: Were you looking at `subscription.authenticated` or `subscription.activated`? Only `activated` means money was charged. `authenticated` just means card was verified — NO payment.
 3. **Check webhook delivery**: Dashboard → Developers → Webhooks → select the webhook → Delivery attempts. See if Razorpay even tried to send.
 4. **Webhook timeout**: Your handler must return 200 within 5 seconds. If it takes 6 seconds, Razorpay marks it failed and retries. Check your handler latency.
@@ -136,9 +136,9 @@ The cast is only needed on SDK versions whose typings declare `fail_existing` as
 
 **Symptom**: Payments show as `authorized` in Razorpay Dashboard but never move to `captured`. Webhooks like `payment.captured` never fire.
 
-**Root cause**: Dashboard → Settings → Payments → "Automatic capture delay" is set to manual or a delay. New Razorpay accounts sometimes default to manual capture.
+**Root cause**: Dashboard → Account & Settings → Payment Capture (older dashboards: Settings → Payments → "Automatic capture delay") is set to manual or a delay. Auto-capture is ON by default, but it can have been switched off — and authorized-but-uncaptured payments auto-refund after the configured window (default ~3 days).
 
-**Fix**: Set to "Auto-capture immediately" in Dashboard. Or capture manually via API:
+**Fix**: Enable automatic capture in Dashboard. Or capture manually via API:
 ```typescript
 await razorpay.payments.capture(paymentId, amount, "INR");
 ```

@@ -138,7 +138,7 @@ The subscription table/model should have:
 - `razorpay_subscription_id` (or `razorpaySubscriptionId`) — REQUIRED
 - `razorpay_plan_id` (or `razorpayPlanId`) — REQUIRED
 - `status` — REQUIRED
-- `current_period_end` (or `currentPeriodEnd`) — REQUIRED for access control
+- a period-end column — REQUIRED for access control. Any app-side name is fine (`current_period_end`/`currentPeriodEnd`/`currentEnd`); what matters is that it is sourced from the payload's `current_end` (Razorpay's field — `current_period_end` is a Stripe-ism that does not exist in payloads)
 - `last_event_id` (or `lastEventId`) — REQUIRED for idempotency
 - `user_id` (or `userId`) — REQUIRED
 

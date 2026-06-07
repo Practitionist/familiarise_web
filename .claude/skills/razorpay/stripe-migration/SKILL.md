@@ -204,7 +204,7 @@ Keep both webhook routes active until all Stripe subscriptions have expired.
 3. **Webhook signature header**: Stripe uses `stripe-signature`, Razorpay uses `x-razorpay-signature`.
 4. **SDK types**: Stripe SDK has excellent TypeScript types. Razorpay SDK types have quirks (e.g., `fail_existing` needs `0 as 0 | 1` cast).
 5. **Currency units**: Stripe uses cents (USD smallest unit), Razorpay uses paise (INR smallest unit). Both are smallest-unit integers, but watch currency conversion logic.
-6. **Idempotency keys**: Stripe has a universal `Idempotency-Key` header on every API call. Razorpay's support is per-API rather than universal — specific endpoints accept their own header (e.g. `X-Refund-Idempotency` on refunds, `X-Payout-Idempotency` on payouts). For everything else (and for webhook processing), keep doing app-level dedup yourself.
+6. **Idempotency keys**: Stripe has a universal `Idempotency-Key` header on every API call. Razorpay's support is per-API rather than universal — specific endpoints accept their own header (e.g. `X-Refund-Idempotency` on refunds, `X-Payout-Idempotency` on payouts). For everything else (and for webhook processing), keep doing app-level dedup yourself. **SDK caveat**: razorpay-node (<=2.9.6) helper methods cannot send per-request headers — `payments.refund(id, params, x)` treats `x` as a callback and silently drops it. Call the REST endpoint directly (basic auth + the header) when you need an idempotency key.
 
 ## Gotchas
 
@@ -213,5 +213,5 @@ Keep both webhook routes active until all Stripe subscriptions have expired.
 3. **Razorpay webhook secret is separate from API secret**: Stripe uses a webhook signing secret. Razorpay also has a separate webhook secret (configured in Dashboard), distinct from your `key_secret`.
 4. **Test modes are completely isolated**: Test your Razorpay integration separately with test keys. Stripe test mode and Razorpay test mode are independent — do not mix credentials.
 5. **Raw body is critical for both**: Both providers compute webhook signatures on the raw request body. Parsing JSON before verification breaks the signature check.
-6. **No `short_url` retrieval**: Razorpay's hosted checkout URL cannot be fetched after subscription creation. If the URL is lost, you must create a new subscription.
+6. **`short_url` is retrievable**: Razorpay's hosted checkout URL persists — `razorpay.subscriptions.fetch(id)` returns it any time. Recovery runbooks do not need to recreate a subscription just because the URL was lost.
 7. **Transition period database schema**: Add a `provider` column (`"stripe" | "razorpay"`) to your subscriptions table to distinguish which provider manages each subscription.

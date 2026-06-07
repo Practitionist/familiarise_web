@@ -23,18 +23,36 @@ export async function POST(request: Request) {
     return Response.json({ error: "Payment not found" }, { status: 404 });
   }
 
-  // Full refund — omit amount to refund the entire payment
-  // X-Refund-Idempotency (key >=10 chars) prevents a double refund on network retry
-  const refund = await razorpay.payments.refund(
-    paymentId,
+  // Full refund — omit amount to refund the entire payment.
+  // X-Refund-Idempotency (key >=10 chars) prevents a double refund on network retry.
+  // SDK caveat: razorpay-node (<=2.9.6) helper methods CANNOT send per-request headers —
+  // payments.refund(id, params, thirdArg) treats the 3rd argument as a callback and the
+  // header is silently dropped. Call the REST endpoint directly to send the header:
+  const res = await fetch(
+    `https://api.razorpay.com/v1/payments/${paymentId}/refund`,
     {
-      notes: {
-        userId: user.id,
-        reason: reason || "Customer requested refund",
+      method: "POST",
+      headers: {
+        Authorization:
+          "Basic " +
+          Buffer.from(
+            `${process.env.RAZORPAY_KEY_ID}:${process.env.RAZORPAY_KEY_SECRET}`
+          ).toString("base64"),
+        "Content-Type": "application/json",
+        "X-Refund-Idempotency": `refund-${paymentId}`, // >=10 chars, unique per logical refund
       },
-    },
-    { "X-Refund-Idempotency": `refund-${paymentId}` }
+      body: JSON.stringify({
+        notes: {
+          userId: user.id,
+          reason: reason || "Customer requested refund",
+        },
+      }),
+    }
   );
+  if (!res.ok) {
+    return Response.json({ error: "Refund failed" }, { status: 502 });
+  }
+  const refund = await res.json();
 
   // Store refund record in DB
   await db.insert(refunds).values({
@@ -94,19 +112,35 @@ export async function POST(request: Request) {
     );
   }
 
-  // Partial refund — pass specific amount in paise
-  // X-Refund-Idempotency (key >=10 chars) prevents a double refund on network retry
-  const refund = await razorpay.payments.refund(
-    paymentId,
+  // Partial refund — pass specific amount in paise.
+  // Direct REST call (not razorpay.payments.refund) so X-Refund-Idempotency is actually
+  // sent — the SDK (<=2.9.6) silently drops a headers object passed as the 3rd argument.
+  const res = await fetch(
+    `https://api.razorpay.com/v1/payments/${paymentId}/refund`,
     {
-      amount: amountPaise, // Amount in paise (e.g., 5000 for Rs 50)
-      notes: {
-        userId: user.id,
-        reason: reason || "Partial refund",
+      method: "POST",
+      headers: {
+        Authorization:
+          "Basic " +
+          Buffer.from(
+            `${process.env.RAZORPAY_KEY_ID}:${process.env.RAZORPAY_KEY_SECRET}`
+          ).toString("base64"),
+        "Content-Type": "application/json",
+        "X-Refund-Idempotency": `refund-${paymentId}-${amountPaise}`,
       },
-    },
-    { "X-Refund-Idempotency": `refund-${paymentId}-${amountPaise}` }
+      body: JSON.stringify({
+        amount: amountPaise, // Amount in paise (e.g., 5000 for Rs 50)
+        notes: {
+          userId: user.id,
+          reason: reason || "Partial refund",
+        },
+      }),
+    }
   );
+  if (!res.ok) {
+    return Response.json({ error: "Refund failed" }, { status: 502 });
+  }
+  const refund = await res.json();
 
   await db.insert(refunds).values({
     razorpayRefundId: refund.id,
@@ -334,4 +368,4 @@ export const refunds = pgTable(
 6. **Subscription payment refund does NOT cancel the subscription**: Refunding a subscription charge only returns money — the subscription remains active and will charge again on the next cycle. You must cancel the subscription separately via `razorpay.subscriptions.cancel()`.
 7. **Amount is always in paise**: 100 paise = 1 INR. A refund of Rs 50 requires `amount: 5000`. Forgetting this is the most common billing bug.
 8. **Idempotency on webhooks**: Razorpay may send the same refund webhook multiple times. Use `razorpayRefundId` as the unique key with `onConflictDoUpdate` to handle duplicates.
-9. **Idempotency on refund creation**: Pass the `X-Refund-Idempotency` header (key >=10 chars) on the create-refund call. If a network error causes a retry, Razorpay returns the original refund instead of issuing a second one — without it, a retry can double-refund the customer.
+9. **Idempotency on refund creation**: Pass the `X-Refund-Idempotency` header (key >=10 chars) on the create-refund call. If a network error causes a retry, Razorpay returns the original refund instead of issuing a second one — without it, a retry can double-refund the customer. **SDK caveat**: razorpay-node (<=2.9.6) cannot send per-request headers — `payments.refund(id, params, x)` treats `x` as a callback and drops it silently. Use a direct REST call (as in the patterns above) when you need the header.
