@@ -214,14 +214,15 @@ export async function POST(req: NextRequest) {
         return { membership: existing, organization: org, alreadyMember: true };
       }
 
-      // #729 §AC4/AC5 — strict identity gate. `applyMembershipRoleEffects`
-      // lazy-creates a missing profile, which would silently promote
-      // an invited user to consultant / consumer identity. For the
-      // dashboard-driven invitation accept flow we refuse instead:
-      // the invitee must already have the matching profile on
-      // Familiarise. SSO JIT auto-join keeps the lazy-create path
-      // because that is a separate provisioning channel with its own
-      // authorization layer.
+      // #729 §AC4/AC5 + #819 — who-is-acting identity rule. Accepting an
+      // invitation is the USER'S OWN consenting action, so the lightweight
+      // ConsulteeProfile may be lazy-created here (lib/auth.ts names
+      // "invite-accept as LEARNER" as a sanctioned creation point — gating
+      // it broke sponsored-employee onboarding). EXPERT stays strict: a
+      // consultant identity carries domain/rates/verification/payout
+      // prerequisites that no invite click can substitute for. Admin
+      // direct-add (POST /members) stays strict for BOTH roles, and SSO
+      // JIT keeps its own lazy path.
       if (normalizedRole === "EXPERT") {
         const existingConsultant = await tx.consultantProfile.findUnique({
           where: { userId },
@@ -234,32 +235,15 @@ export async function POST(req: NextRequest) {
           );
         }
       }
-      if (normalizedRole === "LEARNER") {
-        const existingConsultee = await tx.consulteeProfile.findUnique({
-          where: { userId },
-          select: { id: true },
-        });
-        if (!existingConsultee) {
-          throw Object.assign(
-            new Error("NOT_A_CONSULTEE"),
-            { httpStatus: 400 },
-          );
-        }
-      }
 
       // Profile FK + payoutRecipient defaults are computed by the
       // shared helper (see lib/api/organizations/membership-transitions.ts).
-      // LEARNER lazy-creates ConsulteeProfile; EXPERT lazy-creates
-      // ConsultantProfile with the "General" placeholder domain +
-      // WEEKLY schedule + PENDING_VERIFICATION (hidden from
-      // /explore/experts until a platform admin reviews). Operator
-      // roles (OWNER/MAINTAINER/MANAGER/SUPPORT) leave both FKs null.
-      //
-      // The EXPERT pre-check above means we'll never reach the
-      // lazy-create branch for EXPERT here — but we keep the call
-      // unchanged so LEARNER's lazy-create stays consistent with
-      // the rest of the flow. Multi-org experts are still
-      // first-class; see docs/enterprise/60-scenarios-and-verdicts/01-scenarios-and-examples.md.
+      // LEARNER lazy-creates ConsulteeProfile (first consumer action).
+      // Operator roles (OWNER/MAINTAINER/MANAGER/SUPPORT) leave both FKs
+      // null. The EXPERT pre-check above means the helper never reaches
+      // its EXPERT lazy-create branch from this surface. Multi-org experts
+      // and learners stay first-class; see
+      // docs/enterprise/60-scenarios-and-verdicts/01-scenarios-and-examples.md.
       const roleEffects = await applyMembershipRoleEffects(tx, {
         userId,
         role: normalizedRole,
