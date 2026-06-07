@@ -74,6 +74,22 @@ const stableUuid = (): string => `uuid-${++uuidCounter}`;
 
 function txStub() {
   return {
+    // #812 — the refund cascade now posts a balanced ledger txn inside the tx and
+    // the ledger BLOCKS on failure, so the stub must satisfy postLedgerTxn:
+    // idempotency miss → upsert accounts → create txn → upsert balance snapshot.
+    // These are no-ops; the ledger journal itself is covered by ledger-specific
+    // tests, not this cascade test.
+    ledgerTransaction: {
+      findUnique: jest.fn(async () => null),
+      create: jest.fn(async () => ({ id: stableUuid() })),
+    },
+    ledgerAccount: {
+      upsert: jest.fn(async ({ where }: any) => ({ id: where.id })),
+    },
+    ledgerAccountBalance: {
+      upsert: jest.fn(async () => ({})),
+    },
+    systemEvent: { create: jest.fn(async () => ({})) },
     payment: {
       findUnique: jest.fn(async ({ where, select, include }: any) => {
         const p = state.payments.get(where.id);
@@ -155,6 +171,14 @@ function txStub() {
         Object.assign(e, data);
         return e;
       }),
+    },
+    // #813 — recordTdsReversal reads/writes TDSRecord through the tx. Fixtures
+    // here carry no payoutId so the helper is never invoked, but the surface
+    // must exist for the gate to be callable without a TypeError.
+    tDSRecord: {
+      findFirst: jest.fn(async () => null),
+      findMany: jest.fn(async () => []),
+      create: jest.fn(async ({ data }: any) => ({ id: stableUuid(), ...data })),
     },
     organizationEarnings: {
       update: jest.fn(async ({ where, data }: any) => {
@@ -364,10 +388,47 @@ jest.mock("../../lib/prisma", () => {
     __esModule: true,
     default: {
       ...stub,
-      $transaction: async (fn: any) => fn(stub),
+      // #812 — a real $transaction is atomic: a throw inside the callback MUST
+      // roll back every write. The old `fn(stub)` mutated `state` in place with
+      // no rollback, so a regression dropping refund.ts's `throw err` would still
+      // pass. Snapshot `state` on entry, run the callback, and on throw restore
+      // every collection IN PLACE (tests hold a live `state` reference), then
+      // re-throw — mirroring Postgres rollback semantics.
+      $transaction: async (fn: any) => {
+        const snapshot = snapshotState();
+        try {
+          return await fn(stub);
+        } catch (err) {
+          restoreState(snapshot);
+          throw err;
+        }
+      },
     },
   };
 });
+
+// structuredClone handles the store shape (Maps/arrays of plain objects with
+// Date values — no functions), giving a detached snapshot of every collection.
+function snapshotState(): Store {
+  return structuredClone(state);
+}
+
+// Restore IN PLACE: clear + repopulate the SAME Map/array instances so the
+// test's captured `state` reference still points at the rolled-back data.
+function restoreState(snapshot: Store): void {
+  for (const key of Object.keys(state) as Array<keyof Store>) {
+    const live = state[key];
+    const saved = snapshot[key];
+    if (live instanceof Map) {
+      live.clear();
+      // forEach: tsconfig lacks downlevelIteration, so no for..of over Maps
+      (saved as Map<string, Row>).forEach((v, k) => live.set(k, v));
+    } else if (Array.isArray(live)) {
+      live.length = 0;
+      live.push(...(saved as Row[]));
+    }
+  }
+}
 
 // Audit-actions module is pure constants; no mock needed.
 
@@ -415,6 +476,9 @@ function seedSinglePartyWalletPayment({
     id: paymentId,
     amount,
     originalAmount: amount,
+    // #812 — realistic payments always carry taxAmount (0 here); omitting it made
+    // the refund posting's gstRev NaN and the (now-blocking) ledger reject it.
+    taxAmount: 0,
     currency: "INR",
     paymentStatus: "SUCCEEDED",
     paymentGateway: "RAZORPAY",
@@ -506,6 +570,127 @@ describe("refundPayment — full single-leg WALLET refund", () => {
   });
 });
 
+describe("refundPayment — multi-collaborator refund balances the ledger (#813 comment)", () => {
+  // Proves the Gemini "rounding imbalance" comment is a false alarm: consRev IS
+  // Σ proportion(consultantSharePaise) (Math.floor), and the per-collaborator
+  // debits are exactly those same floored proportions, so they sum to consRev
+  // and the posting balances — even for awkward shares + an odd partial refund.
+  // The real postLedgerTxn runs here; an imbalance would throw and the cascade
+  // would roll back, so a successful refund == a balanced posting.
+  function seedMultiCollaborator() {
+    state.payments.set("pay-mc", {
+      id: "pay-mc",
+      amount: 10000,
+      originalAmount: 10000,
+      taxAmount: 0,
+      currency: "INR",
+      paymentStatus: "SUCCEEDED",
+      paymentGateway: "RAZORPAY",
+      displayCurrencyAtCheckout: null,
+      exchangeRateAtCheckout: null,
+      organizationId: null,
+      billingAccountId: "ba-mc",
+      billableToOrgInvoiceId: null,
+    });
+    state.paymentLegs.push({
+      id: "leg-mc",
+      paymentId: "pay-mc",
+      source: "WALLET",
+      amountPaise: 10000,
+      sourceRef: "asg-mc",
+      createdAt: new Date(),
+    });
+    // Three collaborators with deliberately awkward shares (sum 8000), platform
+    // fee 2000 → gross 10000.
+    const shares: Array<[string, string, number, string]> = [
+      ["ce-mc-1", "cp-1", 4001, "OWNER"],
+      ["ce-mc-2", "cp-2", 3333, "COLLABORATOR"],
+      ["ce-mc-3", "cp-3", 666, "COLLABORATOR"],
+    ];
+    for (const [id, cp, share, role] of shares) {
+      state.consultantEarnings.set(id, {
+        id,
+        paymentId: "pay-mc",
+        consultantProfileId: cp,
+        consultantSharePaise: share,
+        grossAmount: role === "OWNER" ? 10000 : 0,
+        platformFeePaise: role === "OWNER" ? 2000 : 0,
+        role,
+        refundedShareAmount: 0,
+        status: "PENDING",
+      });
+    }
+    state.billingAccounts.set("ba-mc", {
+      id: "ba-mc",
+      walletBalance: 50000,
+      currency: "INR",
+    });
+  }
+
+  it("an odd partial refund across 3 collaborators completes without LedgerImbalanceError", async () => {
+    seedMultiCollaborator();
+    // 3334/10000 forces a non-clean floor on every collaborator's proportion.
+    const result = await refundPayment({
+      paymentId: "pay-mc",
+      amountPaise: 3334,
+      reason: "multi-collab partial",
+    });
+    // If the posting imbalanced, postLedgerTxn would have thrown and rolled the
+    // cascade back; reaching here with all three reversed proves it balanced.
+    expect(result.amountRefundedPaise).toBe(3334);
+    expect(result.consultantEarningsReversed).toBe(3);
+    expect(state.consultantEarnings.get("ce-mc-1")?.refundedShareAmount).toBeGreaterThan(0);
+    expect(state.consultantEarnings.get("ce-mc-2")?.refundedShareAmount).toBeGreaterThan(0);
+    expect(state.consultantEarnings.get("ce-mc-3")?.refundedShareAmount).toBeGreaterThan(0);
+  });
+
+  it("a full multi-collaborator refund also balances", async () => {
+    seedMultiCollaborator();
+    const result = await refundPayment({
+      paymentId: "pay-mc",
+      reason: "multi-collab full",
+    });
+    expect(result.amountRefundedPaise).toBe(10000);
+    expect(result.consultantEarningsReversed).toBe(3);
+  });
+
+  // #812 — the invariant test: if the ledger posting fails, the WHOLE cascade
+  // must roll back. This is the test that goes RED if anyone reverts refund.ts's
+  // `throw err` in the cascade's catch (half-applied earnings/legs with no
+  // balanced journal). We inject the failure at postLedgerTxn's create call.
+  it("rolls back the entire cascade when the ledger posting throws (atomicity invariant)", async () => {
+    seedMultiCollaborator();
+    // postLedgerTxn: findUnique (miss) → ledgerAccount.upsert → ledgerTransaction.create.
+    // Fail the create exactly once → the cascade's catch re-throws → tx rolls back.
+    (tx.ledgerTransaction.create as jest.Mock).mockRejectedValueOnce(
+      new Error("simulated ledger write failure"),
+    );
+
+    await expect(
+      refundPayment({ paymentId: "pay-mc", reason: "ledger-fail" }),
+    ).rejects.toThrow("simulated ledger write failure");
+
+    // Every cascade write must be undone (TDS path omitted — owned by a
+    // concurrent change; this asserts the ledger/legs/earnings/wallet rollback).
+    // ConsultantEarnings.refundedShareAmount back to 0 for all collaborators.
+    for (const id of ["ce-mc-1", "ce-mc-2", "ce-mc-3"]) {
+      expect(state.consultantEarnings.get(id)?.refundedShareAmount).toBe(0);
+      expect(state.consultantEarnings.get(id)?.status).toBe("PENDING");
+    }
+    // Wallet credit reversed — balance back to the seeded 50000.
+    expect(state.billingAccounts.get("ba-mc")?.walletBalance).toBe(50000);
+    // No wallet-credit entry persisted.
+    expect(state.walletEntries).toHaveLength(0);
+    // No leg reversal persisted — only the original WALLET leg remains.
+    expect(state.paymentLegs).toHaveLength(1);
+    expect(state.paymentLegs[0]?.id).toBe("leg-mc");
+    // No refund row persisted (created PENDING inside the tx, then rolled back).
+    expect(state.refunds).toHaveLength(0);
+    // Payment row untouched (no amountRefundedPaise written by the cascade).
+    expect(state.payments.get("pay-mc")?.amountRefundedPaise).toBeUndefined();
+  });
+});
+
 describe("refundPayment — partial 50% refund proportional split", () => {
   it("splits proportional, leaves earnings non-REFUNDED", async () => {
     seedSinglePartyWalletPayment({ amount: 10000, consultantSharePaise: 8000, orgShare: 1000 });
@@ -536,6 +721,7 @@ describe("refundPayment — multi-leg WALLET + REFERRAL_CREDIT", () => {
       id: "pay-2",
       amount: 10001, // odd amount forces a remainder
       originalAmount: 10001,
+      taxAmount: 0, // #812 — realistic payments carry taxAmount
       currency: "INR",
       paymentStatus: "SUCCEEDED",
       paymentGateway: "RAZORPAY",

@@ -36,6 +36,18 @@ export {
 } from "@/lib/payments/webhooks/handlers";
 
 /**
+ * #813/#812 — defer sentinel for the refund-before-capture race. A handler
+ * returns this (rather than throwing) when an event is processable but the row
+ * it needs hasn't been written yet. The Razorpay dispatcher SKIPS
+ * markWebhookEventProcessed on a defer, leaving the WebhookEvent
+ * processed=false/error=null so the stuck-event sweeper re-drives it; a real
+ * throw still records the error. See handleRefundCreated.
+ */
+export class DeferSignal {
+  constructor(public readonly reason: string) {}
+}
+
+/**
  * Handle org-specific payment success (credit_purchase or invoice_payment).
  * These bypass the standard handlePaymentSuccess flow because they don't
  * involve appointments or booking confirmations.
@@ -548,6 +560,51 @@ export async function verifyWebhookSignature(
   }
 }
 
+/**
+ * #813/#812 — generic HMAC-SHA256 webhook verifier for the hand-rolled
+ * Lemon Squeezy / XFlow routes (they differ only by header name and Lemon's
+ * `sha256=` prefix). Uses the STRICTER hex-decode + fixed-length-64 gate +
+ * timingSafeEqual that verifyWebhookSignature(razorpay) uses, replacing the old
+ * raw-UTF8 Buffer compare. Reads the body once and returns it alongside the
+ * verdict; `missingHeader` lets callers keep their distinct 401-missing /
+ * 400-invalid responses.
+ */
+export async function verifyHmacWebhookSignature(
+  req: Request,
+  secret: string,
+  opts: { header: string; prefix?: string },
+): Promise<{ isValid: boolean; body: string; missingHeader: boolean }> {
+  const body = await req.text();
+  const raw = req.headers.get(opts.header);
+  if (!raw) {
+    return { isValid: false, body, missingHeader: true };
+  }
+  // Strip the gateway's prefix (e.g. Lemon's `sha256=`) before hex-decoding.
+  const signature =
+    opts.prefix && raw.startsWith(opts.prefix)
+      ? raw.slice(opts.prefix.length)
+      : raw;
+  // hex-decode gate: a hex SHA-256 digest is exactly 64 chars; Buffer.from
+  // silently truncates odd/invalid input, so reject anything else outright.
+  if (signature.length !== 64) {
+    return { isValid: false, body, missingHeader: false };
+  }
+  const expected = crypto
+    .createHmac("sha256", secret)
+    .update(body)
+    .digest("hex");
+  const sigBuf = Buffer.from(signature, "hex");
+  const expectedBuf = Buffer.from(expected, "hex");
+  if (sigBuf.length !== expectedBuf.length) {
+    return { isValid: false, body, missingHeader: false };
+  }
+  return {
+    isValid: crypto.timingSafeEqual(sigBuf, expectedBuf),
+    body,
+    missingHeader: false,
+  };
+}
+
 // ============================================================================
 // Refund Webhook Handlers
 // ============================================================================
@@ -764,10 +821,20 @@ export async function handleRefundCreated(
         return;
       }
 
-      console.warn(
-        `Payment not found for refund: ${refundId} (paymentIntent=${paymentIntentId}, providerPaymentId=${providerPaymentId})`,
-      );
-      return;
+      // #813/#812 — the refund references a payment we can't find on ANY path.
+      // The common cause is ordering: `refund.created` arrived before the
+      // `payment.captured` that creates the Payment row. A plain return ACKs the
+      // event (processed=true/error=null) so it never re-runs; a throw stamps
+      // error=true which the sweeper skips (it only re-drives error=null) — both
+      // are permanent death on Razorpay (no redelivery after a 200). Instead
+      // DEFER: on Razorpay the dispatcher skips the mark and the sweeper re-drives
+      // until the payment lands (or the terminal age cap gives up). Stripe retries
+      // natively on a 5xx and doesn't read this return, so keep throwing there.
+      const deferReason = `refund-before-capture: payment not yet recorded for refund ${refundId} (paymentIntent=${paymentIntentId}, providerPaymentId=${providerPaymentId})`;
+      if (gateway === "RAZORPAY") {
+        return new DeferSignal(deferReason);
+      }
+      throw new Error(`${deferReason} — re-driving`);
     }
 
     // Check if refund already exists
@@ -1560,6 +1627,27 @@ export async function handleRazorpayPayoutWebhook(
   };
 
   const status = statusMap[payoutData.status] || "PENDING";
+
+  // #813/#812 — a `payout.reversed` for an ALREADY-COMPLETED consultant payout
+  // must post the inverse journal + re-open earnings, mirroring the org branch.
+  // Attempt the reversal first; it no-ops via its COMPLETED claim if the payout
+  // hasn't settled yet, in which case we fall through to the FAILED mapping
+  // (handlePayoutWebhook only claims non-terminal rows, so no double-handling).
+  if (eventType === "payout.reversed") {
+    const { markConsultantPayoutReversed } = await import(
+      "@/lib/payments/payouts"
+    );
+    const { wasNoOp } = await markConsultantPayoutReversed(
+      payoutData.id,
+      payoutData.failure_reason ?? "RazorpayX reversal",
+    );
+    if (!wasNoOp) {
+      console.log(
+        `✅ RazorpayX consultant payout ${payoutData.id} reversed after completion`,
+      );
+      return;
+    }
+  }
 
   await handlePayoutWebhook(
     PaymentGateway.RAZORPAY,

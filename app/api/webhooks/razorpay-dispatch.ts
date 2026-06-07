@@ -18,6 +18,7 @@ import {
   handleDisputeUpdated,
   markWebhookEventProcessed,
   handleRazorpayPayoutWebhook,
+  DeferSignal,
 } from "./utils";
 import {
   handleOverageMemberSuccess,
@@ -89,6 +90,10 @@ export async function processRazorpayWebhookEvent(
   });
 
   let processingError: string | undefined;
+  // #813/#812 — set when a handler DEFERS (event valid but its row not yet
+  // written). On a defer we skip markWebhookEventProcessed so the row stays
+  // processed=false/error=null for the stuck-event sweeper to re-drive.
+  let deferred = false;
 
   try {
     switch (eventType) {
@@ -185,7 +190,7 @@ export async function processRazorpayWebhookEvent(
           }
         }
 
-        await handleRefundCreated(
+        const refundResult = await handleRefundCreated(
           refundEvent.id,
           paymentIntentId,
           refundEvent.amount,
@@ -194,6 +199,12 @@ export async function processRazorpayWebhookEvent(
           "RAZORPAY",
           refundEvent.payment_id,
         );
+        if (refundResult instanceof DeferSignal) {
+          deferred = true;
+          console.log(
+            `⏳ Deferring refund ${refundEvent.id} for re-drive: ${refundResult.reason}`,
+          );
+        }
         break;
       }
 
@@ -219,7 +230,7 @@ export async function processRazorpayWebhookEvent(
           }
         }
 
-        await handleRefundCreated(
+        const failedRefundResult = await handleRefundCreated(
           failedRefundEvent.id,
           failedPaymentIntentId,
           failedRefundEvent.amount,
@@ -228,6 +239,12 @@ export async function processRazorpayWebhookEvent(
           "RAZORPAY",
           failedRefundEvent.payment_id,
         );
+        if (failedRefundResult instanceof DeferSignal) {
+          deferred = true;
+          console.log(
+            `⏳ Deferring refund ${failedRefundEvent.id} for re-drive: ${failedRefundResult.reason}`,
+          );
+        }
         break;
       }
 
@@ -341,6 +358,10 @@ export async function processRazorpayWebhookEvent(
       handlerError,
     );
   } finally {
-    await markWebhookEventProcessed(eventId, processingError);
+    // #813/#812 — on a defer, leave the row processed=false/error=null so the
+    // stuck-event sweeper re-drives it once the awaited payment lands.
+    if (!deferred) {
+      await markWebhookEventProcessed(eventId, processingError);
+    }
   }
 }

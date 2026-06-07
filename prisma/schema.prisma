@@ -3634,6 +3634,7 @@ enum PayoutStatus {
   COMPLETED // Successfully sent
   FAILED // Provider rejected
   CANCELLED // Manually cancelled
+  REVERSED // #812 — bank returned funds AFTER COMPLETED; ORG_PAYOUT posting reversed, earnings re-opened
 }
 
 enum PayoutMethod {
@@ -4633,10 +4634,13 @@ model OutboundWebhookDelivery {
   nextRetryAt       DateTime?
   lastError         String?         @db.Text
   createdAt         DateTime        @default(now())
+  // #812 — the reaper keys stale-IN_FLIGHT detection on last-touch, not enqueue.
+  updatedAt         DateTime        @updatedAt
   deliveredAt       DateTime?
 
   @@index([status, nextRetryAt])
   @@index([webhookEndpointId, createdAt])
+  @@index([status, updatedAt])
 }
 
 enum DeliveryStatus {

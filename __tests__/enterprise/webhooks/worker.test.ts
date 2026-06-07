@@ -41,13 +41,25 @@ function makeRow(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
-function makePrismaStub(initialRow: ReturnType<typeof makeRow>) {
+// #812 — `claimCount` lets a test simulate another tick winning the guarded
+// atomic claim (updateMany returns {count:0}); the claimed row is then skipped
+// without any dispatch. Default {count:1} = this tick owns the row.
+function makePrismaStub(
+  initialRow: ReturnType<typeof makeRow>,
+  { claimCount = 1 }: { claimCount?: number } = {},
+) {
   const updates: Array<Record<string, unknown>> = [];
+  const claims: Array<Record<string, unknown>> = [];
   const endpointUpdates: Array<Record<string, unknown>> = [];
   return {
     prisma: {
       outboundWebhookDelivery: {
         findMany: jest.fn().mockResolvedValue([initialRow]),
+        // #812 — the IN_FLIGHT soft lock is now a guarded atomic claim.
+        updateMany: jest.fn().mockImplementation((args) => {
+          claims.push(args);
+          return Promise.resolve({ count: claimCount });
+        }),
         update: jest.fn().mockImplementation((args) => {
           updates.push(args);
           return Promise.resolve({ id: initialRow.id });
@@ -61,6 +73,7 @@ function makePrismaStub(initialRow: ReturnType<typeof makeRow>) {
       },
     },
     updates,
+    claims,
     endpointUpdates,
   };
 }
@@ -87,8 +100,13 @@ describe("runDispatchTick — success path", () => {
     });
 
     expect(result.succeeded).toBe(1);
-    // First update flips PENDING → IN_FLIGHT (soft lock); second finalizes.
-    const finalUpdate = stub.updates[1];
+    // The guarded claim (updateMany) flips PENDING → IN_FLIGHT; the lone
+    // `update` then finalizes.
+    expect(stub.claims[0]).toMatchObject({
+      where: { id: "del-1", status: "PENDING" },
+      data: { status: "IN_FLIGHT" },
+    });
+    const finalUpdate = stub.updates[0];
     expect(finalUpdate).toMatchObject({
       where: { id: "del-1" },
       data: expect.objectContaining({
@@ -121,7 +139,7 @@ describe("runDispatchTick — permanent client error", () => {
 
     expect(result.failed).toBe(1);
     expect(result.retried).toBe(0);
-    const finalUpdate = stub.updates[1];
+    const finalUpdate = stub.updates[0];
     expect(finalUpdate.data).toMatchObject({
       status: "FAILED",
       httpStatusCode: 400,
@@ -143,7 +161,7 @@ describe("runDispatchTick — transient error / retry schedule", () => {
       now: () => FROZEN_NOW_MS,
     });
 
-    const finalUpdate = stub.updates[1];
+    const finalUpdate = stub.updates[0];
     expect(finalUpdate.data).toMatchObject({
       status: "RETRY",
       httpStatusCode: 503,
@@ -167,7 +185,7 @@ describe("runDispatchTick — transient error / retry schedule", () => {
       fetchFn,
       now: () => FROZEN_NOW_MS,
     });
-    expect(stub.updates[1].data).toMatchObject({
+    expect(stub.updates[0].data).toMatchObject({
       status: "RETRY",
       httpStatusCode: 429,
     });
@@ -184,7 +202,7 @@ describe("runDispatchTick — transient error / retry schedule", () => {
       fetchFn,
       now: () => FROZEN_NOW_MS,
     });
-    expect(stub.updates[1].data).toMatchObject({
+    expect(stub.updates[0].data).toMatchObject({
       status: "FAILED",
       attempts: 5,
       lastError: expect.stringContaining("Exhausted retries"),
@@ -204,7 +222,7 @@ describe("runDispatchTick — transient error / retry schedule", () => {
       fetchFn,
       now: () => FROZEN_NOW_MS,
     });
-    expect(stub.updates[1].data).toMatchObject({
+    expect(stub.updates[0].data).toMatchObject({
       status: "RETRY",
       lastError: "ECONNREFUSED",
     });
@@ -239,5 +257,35 @@ describe("runDispatchTick — operator pause", () => {
       status: "FAILED",
       lastError: expect.stringContaining("PAUSED"),
     });
+  });
+});
+
+describe("runDispatchTick — guarded atomic claim (#812)", () => {
+  it("skips a row another tick already claimed (updateMany count===0) without dispatching", async () => {
+    const row = makeRow();
+    // Simulate the race: this tick selected the row, but a concurrent tick
+    // flipped it to IN_FLIGHT first, so our guarded claim matches 0 rows.
+    const stub = makePrismaStub(row, { claimCount: 0 });
+    const fetchFn = mockFetch(async () => {
+      throw new Error("fetch should not be called for a lost claim");
+    });
+
+    const result = await runDispatchTick({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      prisma: stub.prisma as any,
+      fetchFn,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    // The row was scanned but the claim was lost → no HTTP, no finalize update.
+    expect(result.scanned).toBe(1);
+    expect(result.succeeded).toBe(0);
+    expect(result.retried).toBe(0);
+    expect(result.failed).toBe(0);
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(stub.claims[0]).toMatchObject({
+      where: { id: "del-1", status: "PENDING" },
+    });
+    expect(stub.updates).toHaveLength(0);
   });
 });

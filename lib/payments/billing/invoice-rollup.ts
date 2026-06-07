@@ -63,70 +63,75 @@ export async function rollupOrgInvoiceAccruals(params: {
   });
   if (!org?.billingAccountId) return EMPTY;
 
-  // Unbilled accrued bookings: org-tagged, succeeded payments carrying an
-  // INVOICE_ACCRUAL leg not yet attached to an invoice.
-  const accrued = await prisma.payment.findMany({
-    where: {
-      organizationId,
-      billableToOrgInvoiceId: null,
-      paymentStatus: "SUCCEEDED",
-      legs: {
-        some: {
-          source: { in: ["INVOICE_ACCRUAL", "OVERAGE_INVOICE_ACCRUAL"] },
-        },
-      },
-    },
-    select: {
-      id: true,
-      // Bill the base accrual AND any CHARGE_ORG overage (#715) on the booking.
-      legs: {
-        where: {
-          source: { in: ["INVOICE_ACCRUAL", "OVERAGE_INVOICE_ACCRUAL"] },
-        },
-        select: { amountPaise: true },
-      },
-    },
-  });
-  if (accrued.length === 0) return EMPTY;
-
-  const lines = accrued.map((p, i) => ({
-    position: i,
-    paymentId: p.id,
-    description: `Sponsored session (booking ${p.id.slice(0, 8)})`,
-    quantity: 1,
-    unitPricePaise: p.legs.reduce((s, l) => s + l.amountPaise, 0),
-  }));
-  const subtotal = lines.reduce((s, l) => s + l.unitPricePaise, 0);
-  if (subtotal <= 0) return EMPTY;
-
-  const gst = deriveGstBreakdown({
-    subtotalPaise: subtotal,
-    supplierStateCode: process.env.SUPPLIER_STATE_CODE ?? "KA",
-    buyerStateCode: org.taxInfo?.gstStateCode ?? null,
-    buyerCountry: org.dataResidencyRegion === "IN" ? "IN" : "US",
-    hsnCode: org.taxInfo?.hsnDefault,
-  });
-
-  // #776 — defensive invariant at issue time: the subtotal must equal the
-  // line-item sum and the GST breakdown must net exactly (total == subtotal +
-  // CGST + SGST + IGST). A mis-totaled GST invoice is a filing defect, so hard-throw
-  // here rather than persist it (catches any future rounding regression upstream).
-  const taxParts = gst.igstPaise + gst.cgstPaise + gst.sgstPaise;
-  if (
-    gst.subtotalPaise !== subtotal ||
-    gst.totalPaise !== gst.subtotalPaise + taxParts
-  ) {
-    throw new Error(
-      `Invoice total mismatch for org ${organizationId}: subtotal=${gst.subtotalPaise} (lineItems=${subtotal}) tax=${taxParts} total=${gst.totalPaise}`,
-    );
-  }
-
-  const issuedAt = new Date();
-  const issueImmediately = params.issueImmediately ?? true;
-  const dueDate = new Date(issuedAt);
-  dueDate.setDate(dueDate.getDate() + (org.paymentTermsDays ?? 60));
-
+  // #813 — Serializable + in-tx read: the accrued read, invoice create and
+  // billableToOrgInvoiceId stamp must be one atomic unit, else two concurrent
+  // runs both read the same unstamped set and each issue a duplicate invoice.
+  // Under Serializable the loser aborts (P2034) or reads the empty set after
+  // the winner stamps; the caller treats P2034 as a benign skip.
   return prisma.$transaction(async (tx) => {
+    // Unbilled accrued bookings: org-tagged, succeeded payments carrying an
+    // INVOICE_ACCRUAL leg not yet attached to an invoice.
+    const accrued = await tx.payment.findMany({
+      where: {
+        organizationId,
+        billableToOrgInvoiceId: null,
+        paymentStatus: "SUCCEEDED",
+        legs: {
+          some: {
+            source: { in: ["INVOICE_ACCRUAL", "OVERAGE_INVOICE_ACCRUAL"] },
+          },
+        },
+      },
+      select: {
+        id: true,
+        // Bill the base accrual AND any CHARGE_ORG overage (#715) on the booking.
+        legs: {
+          where: {
+            source: { in: ["INVOICE_ACCRUAL", "OVERAGE_INVOICE_ACCRUAL"] },
+          },
+          select: { amountPaise: true },
+        },
+      },
+    });
+    if (accrued.length === 0) return EMPTY;
+
+    const lines = accrued.map((p, i) => ({
+      position: i,
+      paymentId: p.id,
+      description: `Sponsored session (booking ${p.id.slice(0, 8)})`,
+      quantity: 1,
+      unitPricePaise: p.legs.reduce((s, l) => s + l.amountPaise, 0),
+    }));
+    const subtotal = lines.reduce((s, l) => s + l.unitPricePaise, 0);
+    if (subtotal <= 0) return EMPTY;
+
+    const gst = deriveGstBreakdown({
+      subtotalPaise: subtotal,
+      supplierStateCode: process.env.SUPPLIER_STATE_CODE ?? "KA",
+      buyerStateCode: org.taxInfo?.gstStateCode ?? null,
+      buyerCountry: org.dataResidencyRegion === "IN" ? "IN" : "US",
+      hsnCode: org.taxInfo?.hsnDefault,
+    });
+
+    // #776 — defensive invariant at issue time: the subtotal must equal the
+    // line-item sum and the GST breakdown must net exactly (total == subtotal +
+    // CGST + SGST + IGST). A mis-totaled GST invoice is a filing defect, so hard-throw
+    // here rather than persist it (catches any future rounding regression upstream).
+    const taxParts = gst.igstPaise + gst.cgstPaise + gst.sgstPaise;
+    if (
+      gst.subtotalPaise !== subtotal ||
+      gst.totalPaise !== gst.subtotalPaise + taxParts
+    ) {
+      throw new Error(
+        `Invoice total mismatch for org ${organizationId}: subtotal=${gst.subtotalPaise} (lineItems=${subtotal}) tax=${taxParts} total=${gst.totalPaise}`,
+      );
+    }
+
+    const issuedAt = new Date();
+    const issueImmediately = params.issueImmediately ?? true;
+    const dueDate = new Date(issuedAt);
+    dueDate.setDate(dueDate.getDate() + (org.paymentTermsDays ?? 60));
+
     const { invoiceNumber, fiscalYear } = await generateOrgInvoiceNumber(
       tx,
       { id: org.id, slug: org.slug, invoiceNumberPrefix: org.invoiceNumberPrefix },
@@ -172,8 +177,9 @@ export async function rollupOrgInvoiceAccruals(params: {
       },
     });
 
-    // Stamp the accrued payments. The `billableToOrgInvoiceId: null` guard makes
-    // a concurrent run a no-op for already-claimed payments.
+    // Stamp the accrued payments. The `billableToOrgInvoiceId: null` guard is the
+    // secondary defence; #813 Serializable above is what stops two runs both
+    // issuing — a concurrent run a no-op for already-claimed payments.
     await tx.payment.updateMany({
       where: {
         id: { in: accrued.map((p) => p.id) },
@@ -225,5 +231,5 @@ export async function rollupOrgInvoiceAccruals(params: {
       subtotalPaise: gst.subtotalPaise,
       totalPaise: gst.totalPaise,
     };
-  });
+  }, { isolationLevel: "Serializable" });
 }

@@ -102,7 +102,7 @@ It is worth stating precisely what the law does and does not demand. Rule 46(b) 
 
 ## 2. TDS (tax withheld at payout)
 
-Both payout flows withhold TDS with the posting `Dr *_PAYABLE (net+TDS) / Cr CASH (net) / Cr TDS_PAYABLE (withheld)` — consultant ([§4.4](../10-money-and-ledger/03-ledger-and-postings.md)) and host-org ([§4.5](../10-money-and-ledger/03-ledger-and-postings.md)). `OrganizationPayout` and `ConsultantPayout` persist `tdsSectionApplied`, `tdsAmountPaise`, and rate snapshots, and `TDSRecord` rows back the quarterly return. Computation is the pure `computeTdsForPayout` (`lib/compliance/tds.ts`, `DEFAULT_SECTION = "194O"`); a refund-driven reversal writes a signed-negative `TdsAdjustment` row (#778 §D) that becomes the negative line in the next quarter's revised return. The TDS admin surface is gated behind `ENABLE_TDS_ADMIN_VIEW`.
+Both payout flows withhold TDS with the posting `Dr *_PAYABLE (net+TDS) / Cr CASH (net) / Cr TDS_PAYABLE (withheld)` — consultant ([§4.4](../10-money-and-ledger/03-ledger-and-postings.md)) and host-org ([§4.5](../10-money-and-ledger/03-ledger-and-postings.md)). `OrganizationPayout` and `ConsultantPayout` persist `tdsSectionApplied`, `tdsAmountPaise`, and rate snapshots, and `TDSRecord` rows back the quarterly return. Computation is the pure `computeTdsForPayout` (`lib/compliance/tds.ts`, `DEFAULT_SECTION = "194O"`); a refund-driven reversal now writes a signed-negative `isReversal` `TDSRecord` via the shared `recordTdsReversal` (`lib/payments/tax/tds-service.ts`, #813) that becomes the negative line in the next quarter's revised return, while the richer `TdsAdjustment` consolidation model (#778 §D) remains schema-only. The TDS admin surface is gated behind `ENABLE_TDS_ADMIN_VIEW`.
 
 ### The current rule — Income-tax Act 2025
 
@@ -116,11 +116,11 @@ The exact numeric payment codes (the 10xx series — for example 194O often cite
 
 ### Refund-after-deduction mechanics
 
-When a payout is refunded after TDS has been withheld and deposited, the excess is adjusted against the deductor's TDS liability in a later quarter of the **same financial year** (CBDT Circular 2/2011, carried forward by the 2025 Act), surfacing as a reduced or negative line in that quarter's Form 140/144. This is exactly the shape of the unwired `TdsAdjustment` model: a signed `amountPaise` stamped with the financial year and quarter of the refund event. If the originally-deducted quarter is already filed, the export must produce a *correction* return for that quarter; an excess discovered after the financial year closes cannot be netted in-return and must route to the Form 26B refund claim, an operator action rather than an automated filing.
+When a payout is refunded after TDS has been withheld and deposited, the excess is adjusted against the deductor's TDS liability in a later quarter of the **same financial year** (CBDT Circular 2/2011, carried forward by the 2025 Act), surfacing as a reduced or negative line in that quarter's Form 140/144. The refund cascade now implements this through `recordTdsReversal` (#813): it writes a negative `isReversal` `TDSRecord` capped at the original withholding, copying the original's FY/quarter when the original is unfiled and stamping the current IST-reckoned quarter when the original is already filed. The correction return for an already-filed quarter, and an excess discovered after the financial year closes (which routes to the Form 26B refund claim), both remain operator actions rather than automated filings; this policy is provisional pending CA sign-off.
 
 > 🟥 **Divergence:** The compliance docs and the `tds.ts` header frame the no-PAN 5% rate as a "194-O internal special carve-out, not the 20% of 206AA." The current law places the 5% itself inside **Section 397(2)** (the consolidated no-PAN provision's e-commerce exception); old Section 206AA no longer exists. The constant value (`NO_PAN_RATE_194O = 0.05`) is economically correct, but the citation in the header docblock and `docs/compliance/01`/`11` should move from "206AA carve-out for 194O" to "§397(2) e-commerce carve-out."
 
-> 🟡 **Gap:** `TdsAdjustment` is unwired (#778 §D), its `reportedInForm26Q` flag is a legacy label (the concept maps to Form 140 for FY 2026-27+), and the FVU/quarterly-return export — where the §393-code translation and Form 140/144/131 naming belong — is deferred (#778 §F). The `194J` rate is a flat 10% and does not model the technical-2% versus professional-10% split that §393 now exposes as distinct payment codes; this is a pre-existing withholding nuance, not a 2025-Act regression. (Tracked under #778; FVU export has no separate issue.)
+> 🟡 **Gap:** the richer `TdsAdjustment` consolidation model is still unwired (#778 §D) — refund reversals land in `TDSRecord` (#813), not `TdsAdjustment`; its `reportedInForm26Q` flag is a legacy label (the concept maps to Form 140 for FY 2026-27+), and the FVU/quarterly-return export — where the §393-code translation and Form 140/144/131 naming belong — is deferred (#778 §F). The `194J` rate is a flat 10% and does not model the technical-2% versus professional-10% split that §393 now exposes as distinct payment codes; this is a pre-existing withholding nuance, not a 2025-Act regression. (Tracked under #778; FVU export has no separate issue.)
 
 **Authoritative:** [docs/compliance/01-tds-overview.md](../../compliance/01-tds-overview.md), [docs/compliance/04-tds-quarterly-filings.md](../../compliance/04-tds-quarterly-filings.md), [docs/compliance/05-refund-and-chargeback-tax-adjustments.md](../../compliance/05-refund-and-chargeback-tax-adjustments.md).
 
@@ -178,7 +178,7 @@ erDiagram
     User ||--o{ ConsentArtifact : "grants consent"
     User ||--o{ ErasureRequest : "requests erasure"
     User ||--o{ ErasureRequest : "processes as admin"
-    ConsultantProfile ||--o{ TdsAdjustment : "refund reversal"
+    ConsultantProfile ||--o{ TdsAdjustment : "refund reversal consolidation (schema-only; reversals land in TDSRecord today)"
     DataBreach }o..o{ User : "affectedUserIds string array, no FK"
 
     OrganizationTaxInfo {

@@ -35,6 +35,15 @@ import { getAppUrl } from "@/lib/url";
 const REMINDER_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_REMINDERS = 3;
 
+// #812 — Stage 3 (config-gated). After the 3rd reminder, if the invoice is
+// still OVERDUE this long past being marked overdue, suspend the org's
+// sponsored bookings by stamping `dunningSuspendedAt`. OFF by default — the
+// cascade only runs when ENABLE_DUNNING_SUSPEND=true, so wiring it changes
+// nothing until explicitly enabled. The booking-side gate lives in checkout.ts
+// behind the SAME flag.
+const SUSPEND_ENABLED = process.env.ENABLE_DUNNING_SUSPEND === "true";
+const SUSPEND_GRACE_MS = 7 * 24 * 60 * 60 * 1000; // 7d past the final reminder
+
 // #779 — only dun orgs that are still reachable. DEACTIVATED orgs are torn
 // down; their invoices don't get chased.
 const DUNNABLE_ORG_STATUSES = [
@@ -48,6 +57,7 @@ interface DunningStats {
   markedOverdue: number;
   scannedStage2: number;
   remindersSent: number;
+  suspended: number;
 }
 
 function daysBetween(from: Date, to: Date): number {
@@ -60,6 +70,7 @@ export async function runDunning(): Promise<DunningStats> {
     markedOverdue: 0,
     scannedStage2: 0,
     remindersSent: 0,
+    suspended: 0,
   };
   const now = new Date();
 
@@ -197,6 +208,71 @@ export async function runDunning(): Promise<DunningStats> {
     }).catch((err) => console.error("[dunning] stage-2 notify failed:", err));
   }
 
+  // ── Stage 3 (#812, config-gated): suspend sponsored bookings ────────────
+  // Once an invoice has had all 3 reminders and is still OVERDUE past the grace
+  // window, stamp dunningSuspendedAt. checkout.ts blocks the org's NEW sponsored
+  // bookings while any such invoice is unpaid (both sides gated on the same
+  // ENABLE_DUNNING_SUSPEND flag). Paying the invoice (status leaves OVERDUE)
+  // lifts the suspension naturally — nothing un-stamps a paid invoice.
+  if (SUSPEND_ENABLED) {
+    const suspendCutoff = new Date(now.getTime() - SUSPEND_GRACE_MS);
+    const toSuspend = await prisma.organizationInvoice.findMany({
+      where: {
+        status: "OVERDUE",
+        dunningReminderCount: { gte: MAX_REMINDERS },
+        dunningSuspendedAt: null,
+        // #812 — grace measured from the LAST reminder, not the overdue stamp:
+        // the cap-3 reminders span ~21d, so gating on markedOverdueAt suspended
+        // the moment the 3rd reminder cleared. lastDunningReminderAt is the
+        // Stage-2 cadence anchor, so suspend only 7d past the final reminder.
+        lastDunningReminderAt: { lt: suspendCutoff },
+        organization: { status: { in: [...DUNNABLE_ORG_STATUSES] } },
+      },
+      select: {
+        id: true,
+        organizationId: true,
+        invoiceNumber: true,
+        totalPaise: true,
+        displayCurrency: true,
+      },
+    });
+    for (const inv of toSuspend) {
+      // #812 — claim + audit in one Serializable tx, mirroring Stage 1, so two
+      // replicas can't both stamp + log. Idempotent claim: only stamp a row
+      // still un-suspended + OVERDUE; loser sees count 0 and skips.
+      const claimed = await prisma.$transaction(
+        async (tx) => {
+          const claim = await tx.organizationInvoice.updateMany({
+            where: { id: inv.id, dunningSuspendedAt: null, status: "OVERDUE" },
+            data: { dunningSuspendedAt: now },
+          });
+          if (claim.count === 0) return false;
+
+          await tx.orgAuditLog.create({
+            data: {
+              organizationId: inv.organizationId,
+              actorMembershipId: null,
+              category: "INVOICE",
+              action: AUDIT_ACTIONS.INVOICE.INVOICE_DUNNING_SUSPENDED,
+              description: `Invoice ${inv.invoiceNumber} unpaid past dunning grace — org sponsored bookings suspended`,
+              details: {
+                invoiceId: inv.id,
+                invoiceNumber: inv.invoiceNumber,
+                totalPaise: inv.totalPaise,
+                currency: inv.displayCurrency,
+              },
+            },
+          });
+          return true;
+        },
+        { isolationLevel: "Serializable" },
+      );
+
+      if (!claimed) continue;
+      stats.suspended += 1;
+    }
+  }
+
   return stats;
 }
 
@@ -204,7 +280,7 @@ async function main() {
   console.log(`[dunning] Starting at ${new Date().toISOString()}`);
   const stats = await runDunning();
   console.log(
-    `[dunning] Done. scannedStage1=${stats.scannedStage1} markedOverdue=${stats.markedOverdue} scannedStage2=${stats.scannedStage2} remindersSent=${stats.remindersSent}`,
+    `[dunning] Done. scannedStage1=${stats.scannedStage1} markedOverdue=${stats.markedOverdue} scannedStage2=${stats.scannedStage2} remindersSent=${stats.remindersSent} suspended=${stats.suspended}`,
   );
 }
 

@@ -116,9 +116,9 @@ Authoritative: `docs/compliance` (CGST Rule 46/53, Section 34); see also the cre
 
 ## 6. TDS on refunds
 
-When a consultant's earnings are reversed by a refund, any TDS that was withheld on the original payout should be reversed too, as a negative line in the revised quarterly TDS return (26Q/27Q). The schema models this with `TdsAdjustment` (`prisma/schema.prisma`), which carries a signed `amountPaise`, the `financialYear`/`quarter`, and the triggering `refundId`.
+When a consultant's earnings are reversed by a refund, any TDS that was withheld on the original payout must be reversed too, as a negative line in the revised quarterly TDS return (26Q/27Q). This is now wired (#813): the refund cascade calls the shared `recordTdsReversal` (`lib/payments/tax/tds-service.ts`), which writes a negative `isReversal` **`TDSRecord`** sized as an integer-paise proportion of the original withholding and capped so cumulative reversals can never exceed it — so a refund-then-chargeback on the same payment cannot double-reverse. The reversal is filed-aware: an unfiled original is corrected in place (its FY and quarter are copied), while a filed original is stamped into the current IST-reckoned FY and quarter (the adjust-against-future-liability convention), with correction statements for filed quarters left to a manual CA action. This policy is provisional pending CA sign-off.
 
-> 🟡 **Gap (#778):** nothing in `lib/`, `app/`, `scripts/`, or `jobs/` ever writes a `TdsAdjustment` row — the model is referenced only in a comment in `lib/compliance/tds.ts`. Refund-driven TDS reversals are therefore **manual today**: a finance operator must hand-adjust the quarterly return. The same is true of the parallel `GstTcsAdjustment` model for refund reversal of collected GST TCS.
+> 🟡 **Remaining gap (#778):** the richer `TdsAdjustment` model (signed `amountPaise`, `financialYear`/`quarter`, triggering `refundId`) is still **schema-only** — it is referenced only in a comment in `lib/compliance/tds.ts` and is the future consolidation target for FVU export. The same is true of the parallel `GstTcsAdjustment` model for refund reversal of collected GST TCS, which remains entirely manual.
 
 ---
 

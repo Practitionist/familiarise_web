@@ -366,16 +366,17 @@ At cycle close, `settle-invoice-accruals` rolls this into an `InvoiceLineItem` a
 
 **Hypothetical (the seed's only invoice is DRAFT).** The seed ships one Wipro `OrganizationInvoice` in **DRAFT** (`INV-WIP-2026-0001`), so the dunning cron skips it (it only chases `ISSUED`/`OVERDUE`). To walk this, issue an invoice (`PATCH … status=ISSUED`) with a `dueDate` in the past.
 
-The **`dunning`** cron (`jobs/billing/dunning.ts`, GitHub Action `dunning.yml`, **23:30 UTC ≈ 05:00 IST**) escalates in two stages — **no new status value**, it rides `OVERDUE` plus three idempotency-gate stamps:
+The **`dunning`** cron (`jobs/billing/dunning.ts`, GitHub Action `dunning.yml`, **23:30 UTC ≈ 05:00 IST**) escalates in three stages — **no new status value**, it rides `OVERDUE` plus three idempotency-gate stamps:
 
 | Stage | Selects | Claims (idempotency gate) | Side-effect |
 | --- | --- | --- | --- |
 | **1 — first notice** | `ISSUED`, `dueDate < now`, `markedOverdueAt = null` | `updateMany … ISSUED → OVERDUE, markedOverdueAt = now` | `notifyOrgInvoiceOverdue` (stage 0) + `INVOICE_OVERDUE` audit |
 | **2 — escalation** | `OVERDUE`, `dunningReminderCount < 3`, last touch (`lastDunningReminderAt ?? markedOverdueAt`) > **7 days** old | `updateMany … lastDunningReminderAt → now, dunningReminderCount += 1` | `notifyOrgInvoiceOverdue` at the next reminder stage |
+| **3 — suspend (`ENABLE_DUNNING_SUSPEND`)** | `OVERDUE`, `dunningReminderCount >= 3`, `dunningSuspendedAt = null`, `lastDunningReminderAt` > **7 days** old | inside a Serializable tx: `updateMany … dunningSuspendedAt = now` + the audit write | `INVOICE_DUNNING_SUSPENDED` audit; `checkout.ts` blocks the org's new sponsored bookings |
 
-Cadence: **7-day intervals, capped at 3 reminders**. Each claim is a conditional `updateMany` on the prior stamp value, so two replicas / a same-day re-run can't double-notify (loser sees `count === 0`). Only **dunnable** orgs are chased (`ACTIVE`/`PENDING_VERIFICATION`/`SUSPENDED`); a `DEACTIVATED` org being torn down is left alone. On the Wipro dashboard the action center shows "N invoices overdue → Pay now" and the invoice renders "OVERDUE · N days late".
+The reminder cadence is **7-day intervals, capped at 3 reminders**, after which (when `ENABLE_DUNNING_SUSPEND` is set) a final stage stamps `dunningSuspendedAt` 7 days past the last reminder. Each claim is a conditional `updateMany` on the prior stamp value, so two replicas / a same-day re-run can't double-notify or double-suspend (loser sees `count === 0`); the suspend stage runs its claim and audit write in one Serializable transaction. Only **dunnable** orgs are chased (`ACTIVE`/`PENDING_VERIFICATION`/`SUSPENDED`); a `DEACTIVATED` org being torn down is left alone. On the Wipro dashboard the action center shows "N invoices overdue → Pay now" and the invoice renders "OVERDUE · N days late".
 
-> 🟡 **Suspension cascade is designed but NOT active.** `dunningSuspendedAt` exists for a config-gated "suspend bookings once OVERDUE drags past the grace window" stage, but **no code writes it** (`TODO(#779)`). Today dunning is **notify-only** — it marks overdue and sends reminders; it never freezes the org. Don't read booking-suspend-on-overdue as live. See [invoicing §7](../10-money-and-ledger/08-invoicing.md).
+> **Suspension stage now ships behind a flag (#812).** Stage 3 writes `dunningSuspendedAt` when `ENABLE_DUNNING_SUSPEND` is set, blocking new sponsored bookings 7 days past the last reminder (measured from `lastDunningReminderAt`, not the overdue stamp). With the flag unset, dunning stays **notify-only** — it marks overdue and sends reminders but never freezes the org — so don't read booking-suspend-on-overdue as on by default; it follows the flag. See [invoicing §7](../10-money-and-ledger/08-invoicing.md).
 
 ### 5.14 Wallet auto-top-up — low-balance notify (v2, NOTIFY-ONLY)
 

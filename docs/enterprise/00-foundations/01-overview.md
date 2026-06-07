@@ -377,7 +377,7 @@ erDiagram
         int              irpRetryCount   "uploader retry telemetry"
         date             markedOverdueAt "dunning lifecycle"
         int              dunningReminderCount
-        date             dunningSuspendedAt "suspend-cascade (config-gated)"
+        date             dunningSuspendedAt "stage-3 suspend (ENABLE_DUNNING_SUSPEND, #812)"
     }
     OrgInvoiceCounter {
         string organizationId PK

@@ -257,7 +257,7 @@ sequenceDiagram
 | PAID            | Yes*        | Via `forceRefund: true` (lost disputes), decrements totalRevenue |
 | REFUNDED        | No          | Already refunded                                   |
 
-> *PAID earnings can now be refunded using `forceRefund: true`, used by the lost-dispute handler. This creates TDS reversal records and decrements `totalRevenue`.
+> *PAID earnings can now be refunded using `forceRefund: true`, used by the lost-dispute handler. This routes through the shared `recordTdsReversal` helper to write a negative `isReversal` `TDSRecord` (capped at the original withholding so a refund-then-chargeback can't double-reverse, #813) and decrements `totalRevenue`.
 
 ---
 
@@ -300,7 +300,7 @@ await refundEarnings(paymentId);
 
 // Lost dispute on already-PAID earnings (Mar 2026)
 await refundEarnings(paymentId, { forceRefund: true });
-// Creates TDS reversal records, decrements totalRevenue
+// Writes a negative isReversal TDSRecord via recordTdsReversal (capped, #813), decrements totalRevenue
 ```
 
 ---

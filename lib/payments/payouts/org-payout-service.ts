@@ -1026,5 +1026,130 @@ export async function markOrgPayoutReversed(
   payoutId: string,
   reason: string,
 ): Promise<{ wasNoOp: boolean; status: PayoutStatus }> {
+  // #812 — a `payout.reversed` can arrive in two states:
+  //   • PROCESSING — the gateway bounced before settlement; no money left, so
+  //     this is the FAILED path (release earnings to READY). Handled by the
+  //     shared internal which claims PROCESSING rows.
+  //   • COMPLETED — the bank returned the funds AFTER the ORG_PAYOUT posting and
+  //     CASH already left. Previously this was a SILENT NO-OP (the internal only
+  //     claims PROCESSING): the payable stayed cleared, the cash stayed out, the
+  //     earnings stayed PAID. We now post a REVERSING ORG_PAYOUT (the exact
+  //     inverse of the original), re-open the earnings, and set REVERSED.
+  const completedResult = await prisma.$transaction(async (tx) => {
+    const claim = await tx.organizationPayout.updateMany({
+      where: { id: payoutId, status: "COMPLETED" },
+      data: {
+        status: "REVERSED",
+        failureReason: reason.slice(0, 500),
+        failedAt: new Date(),
+      },
+    });
+    if (claim.count === 0) return { claimed: false, notify: null };
+
+    const payout = await tx.organizationPayout.findUniqueOrThrow({
+      where: { id: payoutId },
+      select: {
+        id: true,
+        organizationId: true,
+        netPayoutPaise: true,
+        tdsAmountPaise: true,
+        currency: true,
+        organization: { select: { name: true } },
+      },
+    });
+
+    // Re-open the earnings this payout had claimed so a future batch re-pays them.
+    await tx.organizationEarnings.updateMany({
+      where: { orgPayoutId: payoutId, status: "PAID" },
+      data: { status: "READY", orgPayoutId: null },
+    });
+
+    // Reverse the ORG_PAYOUT posting exactly: the original was
+    //   Dr ORG_PAYABLE (net + tds)  Cr CASH (net)  Cr TDS_PAYABLE (tds)
+    // so the reversal brings the cash back and re-opens the payable. (The TDS
+    // *remittance* to the government is a separate flow; reversing TDS_PAYABLE
+    // here only un-does this payout's accrual, which is correct for a bounce.)
+    const orgTds = payout.tdsAmountPaise ?? 0;
+    if (payout.netPayoutPaise > 0) {
+      const reversal: Posting[] = [
+        {
+          account: { kind: "CASH", currency: payout.currency },
+          direction: "DEBIT",
+          amountPaise: payout.netPayoutPaise,
+        },
+        {
+          account: {
+            kind: "ORG_PAYABLE",
+            organizationId: payout.organizationId,
+            currency: payout.currency,
+          },
+          direction: "CREDIT",
+          amountPaise: payout.netPayoutPaise + orgTds,
+        },
+      ];
+      if (orgTds > 0) {
+        reversal.push({
+          account: { kind: "TDS_PAYABLE", currency: payout.currency },
+          direction: "DEBIT",
+          amountPaise: orgTds,
+        });
+      }
+      await postLedgerTxn(tx, {
+        idempotencyKey: `orgpayout-reversal:${payoutId}`,
+        kind: "ORG_PAYOUT",
+        payoutId,
+        postings: reversal,
+      });
+    }
+
+    await tx.orgAuditLog.create({
+      data: {
+        organizationId: payout.organizationId,
+        actorMembershipId: null,
+        category: "PAYOUT",
+        action: AUDIT_ACTIONS.PAYOUT.PAYOUT_REVERSED,
+        description: `Payout ${payoutId} reversed by bank after completion: ${reason.slice(0, 200)}`,
+        details: {
+          payoutId,
+          kind: "REVERSED",
+          reversedFrom: "COMPLETED",
+          reason: reason.slice(0, 500),
+        },
+      },
+    });
+
+    return {
+      claimed: true,
+      notify: {
+        organizationId: payout.organizationId,
+        orgName: payout.organization.name,
+        netPayoutPaise: payout.netPayoutPaise,
+        currency: payout.currency,
+      },
+    };
+  });
+
+  if (completedResult.claimed) {
+    if (completedResult.notify) {
+      const { notifyOrgPayoutFailed } = await import("@/lib/novu/org-workflows");
+      // #813 — fire-and-forget: awaiting let a Novu failure throw out of the
+      // committed tx, failing the webhook delivery whose redelivery then no-ops
+      // (state already REVERSED) → the notification was permanently lost.
+      void notifyOrgPayoutFailed(completedResult.notify.organizationId, {
+        orgName: completedResult.notify.orgName,
+        payoutId,
+        amountPaise: completedResult.notify.netPayoutPaise,
+        currency: completedResult.notify.currency,
+        reason: reason.slice(0, 200),
+        kind: "REVERSED",
+        dashboardUrl: `${getAppUrl()}/dashboard/organization/${completedResult.notify.organizationId}/payouts`,
+      }).catch((e) =>
+        console.error("[org-payout] REVERSED notify failed:", e),
+      );
+    }
+    return { wasNoOp: false, status: "REVERSED" as PayoutStatus };
+  }
+
+  // Not COMPLETED — fall through to the PROCESSING→FAILED path (money never left).
   return markOrgPayoutFailedInternal(payoutId, reason, "REVERSED");
 }

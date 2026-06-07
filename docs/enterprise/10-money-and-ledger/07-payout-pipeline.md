@@ -40,7 +40,7 @@ For a payee with **no PAN on file**, the 194-O no-PAN carve-out withholds **5%**
 
 ## 2. The `PayoutStatus` machine and the `ORG_PAYOUT` posting
 
-`PayoutStatus` (`prisma/schema.prisma`) has six values — `PENDING`, `APPROVED`, `PROCESSING`, `COMPLETED`, `FAILED`, `CANCELLED` — and **no `REVERSED`**. That omission is load-bearing and is discussed in §3. The diagram below is the org-side machine as the code actually drives it.
+`PayoutStatus` (`prisma/schema.prisma`) now has seven values — `PENDING`, `APPROVED`, `PROCESSING`, `COMPLETED`, `FAILED`, `CANCELLED`, and `REVERSED` (added in #812). The `REVERSED` value exists specifically to record a bank bounce that lands **after** the payout already reached `COMPLETED`; the §3 discussion of why it was originally omitted is preserved for context. The diagram below is the org-side machine as the code actually drives it.
 
 ```mermaid
 stateDiagram-v2
@@ -48,8 +48,10 @@ stateDiagram-v2
   PENDING --> PROCESSING: processOrgPayout claims (live flag on)
   PROCESSING --> COMPLETED: markOrgPayoutCompleted (posts ORG_PAYOUT)
   PROCESSING --> FAILED: payout.failed or 4xx submission reject
-  PROCESSING --> FAILED: payout.reversed (collapsed, see §3)
+  PROCESSING --> FAILED: payout.reversed before settlement (no money left)
+  COMPLETED --> REVERSED: payout.reversed after settlement (markOrgPayoutReversed posts the inverse ORG_PAYOUT, re-opens earnings)
   COMPLETED --> [*]
+  REVERSED --> [*]
   FAILED --> [*]
   CANCELLED --> [*]
 ```
@@ -76,7 +78,7 @@ The production payout path uses **RazorpayX Payouts** (Contacts → Fund Account
 
 Crucially, a payout that reaches `processed` is **not** guaranteed to be final. If the beneficiary's bank later returns the funds — a closed, frozen, or name-mismatched account — RazorpayX raises a reversal transaction, credits the full amount plus fees and tax back to our business account, and fires the `payout.reversed` webhook (researched against [RazorpayX states & lifecycle](https://razorpay.com/docs/x/payouts/states-life-cycle/)).
 
-The table below maps each gateway state onto our six-value `PayoutStatus` as `mapPayoutStatus` and the reconcilers actually do it, and flags where the mapping is lossy or inconsistent.
+The table below maps each gateway state onto our `PayoutStatus` as `mapPayoutStatus` and the reconcilers actually do it, and flags where the mapping is lossy or inconsistent. Note that `mapPayoutStatus` (the gateway-poll path) is separate from the `payout.reversed` **webhook** path: the webhook handlers now drive the dedicated `REVERSED` status (§3), but the poller's mapping below is unchanged.
 
 | RazorpayX state | Our `PayoutStatus` | Faithful? | Note |
 |---|---|---|---|
@@ -85,7 +87,7 @@ The table below maps each gateway state onto our six-value `PayoutStatus` as `ma
 | `scheduled` | unmapped | gap | falls through to default; we never schedule |
 | `processing` | `PROCESSING` | yes | the normal in-flight state |
 | `processed` | `COMPLETED` | yes | UTR now available via `payout.updated` |
-| `reversed` | `FAILED` | lossy | money-was-credited-then-returned signal is lost |
+| `reversed` | `FAILED` (poll path) / `REVERSED` (webhook path) | lossy in the poller only | `mapPayoutStatus` still collapses a polled `reversed` to `FAILED`; the `payout.reversed` webhook handler now stamps the dedicated `REVERSED` status and posts the inverse journal (§3, #812) |
 | `rejected` | `FAILED` | lossy | approval/deadline reject indistinguishable from bank failure |
 | `cancelled` | `CANCELLED` | yes | manual cancel of a queued/scheduled payout |
 | `failed` | `FAILED` | yes | Current-Account partner-bank rejection |
@@ -114,7 +116,7 @@ sequenceDiagram
   SV->>L: postLedgerTxn(orgpayout:id) — Dr ORG_PAYABLE / Cr CASH + TDS_PAYABLE
 ```
 
-> 🟡 **Gap — post-completion reversal is a silent no-op (no issue filed yet).** Three facts compound into one go-live risk. (a) Our `PayoutStatus` has **no `REVERSED`** value, so `reversed` and `rejected` both collapse into `FAILED`, erasing the audit signal that real money was credited and then clawed back. (b) `markOrgPayoutReversed` exists and routes through the shared failed-internal path, but it only transitions a row from `PROCESSING` — a payout already at `COMPLETED` is left untouched. (c) The reconciler (`scripts/payouts/reconcile-payout-status.ts`) only re-polls payouts whose status is in `[PENDING, PROCESSING]`, so a `COMPLETED → reversed` transition is **never re-polled** and is caught only if the `payout.reversed` webhook arrives and is handled. A bank reversal after completion is therefore currently invisible to both the webhook landing path and the poller. Filing a `REVERSED` enum plus a `COMPLETED → reversed` reconciliation path is the recommended fast-follow before any high-value (NEFT/RTGS) payouts go live. Operators should meanwhile read the `OrgAuditLog` `PAYOUT_REVERSED` entry to tell a true bank reversal apart from an ordinary gateway failure.
+> **Post-completion reversal is now handled (#812), with one remaining poller caveat.** The two facts that previously made a `COMPLETED → reversed` bounce a silent no-op are fixed. (a) `PayoutStatus` now carries a dedicated `REVERSED` value, so a bank reversal after settlement is no longer collapsed into `FAILED` and the audit signal survives. (b) `markOrgPayoutReversed` now claims a row from **`COMPLETED`** (not only `PROCESSING`): it flips it to `REVERSED`, posts the exact inverse `ORG_PAYOUT` journal (`idempotencyKey = orgpayout-reversal:<id>`), re-opens the linked earnings to `READY`, and writes the `PAYOUT_REVERSED` audit entry — all in one transaction. The consultant rail mirrors this via `markConsultantPayoutReversed` (inverse `PAYOUT` journal, `payout-reversal:<id>`). The nightly `reconcile-ledgers` job also now checks both rails for a missing original `PAYOUT`/`ORG_PAYOUT` posting, keyed on the original posting's idempotencyKey so a reversal row cannot mask a missing original (#812/#813). 🟡 **Remaining caveat:** the gateway **poller** (`scripts/payouts/reconcile-payout-status.ts`) still only re-polls `[PENDING, PROCESSING]` and `mapPayoutStatus` still collapses a polled `reversed` to `FAILED`, so a post-completion reversal is caught by the **webhook** path, not the poller. A poller-side `COMPLETED → reversed` re-poll is still a sensible fast-follow before high-value (NEFT/RTGS) payouts go live.
 
 > 🟡 **Gap — UTR not persisted from `payout.updated` (no issue filed yet).** `OrganizationPayout` has a `gatewayUtr` column, but the reconciler reads only `payout.status` and never writes `payout.utr`, and our handler set does not list `payout.updated` (the event that carries the UTR). Until that is wired we cannot show a host org the bank reference for a completed payout.
 
@@ -145,7 +147,7 @@ TDS is computed by `computeTdsForPayout` (`lib/compliance/tds.ts`). The default 
 
 > 🟡 **Gap — label-to-§393-code mapping at the filing boundary (tracked, existing TDS gap).** For any deduction dated on or after 1 April 2026, the quarterly return and challan must quote the relevant §393 payment code, not the legacy `194O` string; the income-tax portal rejects an upload that carries an old section number with a system-level validation error. The pipeline therefore needs a label-to-code translation when the Form 140 (formerly 26Q) and Form 144 (formerly 27Q) generators are built — forms are renumbered 24Q→138, 26Q→140, 27Q→144, 16A→131. **Do not hard-code the numeric §393 payment codes yet:** research found public sources conflict on the exact 10xx codes (for example 194O is cited as both 1035 and 1010, 194C as 1023/1024 or 1017 or 1002), and several explicitly flag their codes as illustrative pending the final CBDT challan/RPU schema. The §393/§392/§394 section-level split is verified; the specific codes are not, and must be confirmed against the CBDT notification before they are committed.
 
-> 🟡 **Gap — refund-driven TDS reversal unwired (#778 §D/§E).** When a payout is refunded after TDS has been withheld and deposited, the deductor does not chase a cash refund in the ordinary case: under CBDT Circular 2/2011 (carried forward by the 2025 Act) excess TDS discovered within the same financial year is adjusted against the deductor's liability in a later quarter, surfacing as a reduced or negative line in the next quarterly statement (Form 140 / 144). The unwired `TdsAdjustment` model — a signed `amountPaise` stamped with the financial year and quarter — is shaped exactly for that offsetting line, but no code writes it today. If the quarter of the original deduction is already filed, the export must produce a correction return; an excess discovered after the financial year closes cannot be netted in-return at all and must route to the Form 26B refund claim as an operator action.
+> **Refund-driven TDS reversal now wired via `TDSRecord` (#813), richer model still pending.** When a payout is refunded after TDS has been withheld and deposited, the deductor does not chase a cash refund in the ordinary case: under CBDT Circular 2/2011 (carried forward by the 2025 Act) excess TDS discovered within the same financial year is adjusted against the deductor's liability in a later quarter, surfacing as a reduced or negative line in the next quarterly statement (Form 140 / 144). The refund cascade now implements exactly this: `recordTdsReversal` (`lib/payments/tax/tds-service.ts`) writes a negative `isReversal` `TDSRecord` capped at the original withholding, copying the original's FY/quarter when it is unfiled and stamping the current IST-reckoned quarter when it is already filed (the adjust-against-future-liability convention). A correction return for an already-filed quarter, and an excess discovered after the financial year closes (which must route to the Form 26B refund claim), both remain manual operator actions. 🟡 **Still pending:** the richer `TdsAdjustment` model and the FVU export that would emit these as machine-generated negative lines; this policy is provisional pending CA sign-off.
 
 Authoritative: `docs/compliance/01-tds-overview.md`.
 

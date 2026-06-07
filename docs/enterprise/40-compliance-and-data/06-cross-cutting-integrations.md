@@ -218,16 +218,16 @@ Each section also lists:
 - **Why:** Indian enterprise orgs frequently require a PO before an invoice can be issued. The atomic decrement pattern mirrors the wallet-debit `where: { remaining: { gte: amount } }` discipline.
 - **Future work:** none open.
 
-### B.6 BillingSubscription + dunning (LICENSE/INVOICE recurring) — ✅ Wired (suspension cascade 🟡 designed-not-active)
+### B.6 BillingSubscription + dunning (LICENSE/INVOICE recurring) — ✅ Wired (suspension cascade behind `ENABLE_DUNNING_SUSPEND`)
 
 - **Schema:** `BillingSubscription` (linked 1:1 to `Contract`). `BillingSubscription.renewalReminderSentAt` (once-per-cycle gate for renewal-upcoming notification, C.5). Dunning state on `OrganizationInvoice` (`markedOverdueAt`, `dunningReminderCount`, `lastDunningReminderAt`, `dunningSuspendedAt`).
 - **Code paths:**
   - Invoicing: [`jobs/billing/generate-subscription-invoices.ts`](../../../jobs/billing/generate-subscription-invoices.ts) — `sendRenewalReminders()` then cycle-advance + invoice transaction (invoice-paid postings land via `postLedgerTxn` when the payment confirms).
-  - **Dunning** (#779 §A/§D): [`jobs/billing/dunning.ts`](../../../jobs/billing/dunning.ts) — Stage 1 flips past-due ISSUED invoices to OVERDUE; Stage 2 sends escalation reminders on a 7-day cadence, capped at 3 (`MAX_REMINDERS = 3`). DEACTIVATED orgs are skipped.
+  - **Dunning** (#779 §A/§D, #812): [`jobs/billing/dunning.ts`](../../../jobs/billing/dunning.ts) — Stage 1 flips past-due ISSUED invoices to OVERDUE; Stage 2 sends escalation reminders on a 7-day cadence, capped at 3 (`MAX_REMINDERS = 3`); Stage 3 (`ENABLE_DUNNING_SUSPEND`-gated) stamps `dunningSuspendedAt` 7 days past the last reminder, claim + audit in one Serializable transaction. DEACTIVATED orgs are skipped.
 - **Org dashboard surface:** `/billing` (Annual License panel)
 - **Why:** A daily cron handles renewal-upcoming notification (7 days before `nextInvoiceDate`), renewal-day invoice creation, and OVERDUE dunning. Same idempotency pattern (conditional `updateMany` claim) throughout so no row is double-charged or double-reminded.
-- 🟡 **Designed-not-active:** the config-gated **booking-suspend cascade** is NOT live — `dunningSuspendedAt` stays unwritten; TODO(`#779`) wires the suspension once OVERDUE drags past a configurable cliff.
-- **Future work:** Booking-suspend cascade (`#779`); GH Actions schedule for `generate-subscription-invoices` (currently local-only).
+- 🟡 **Config-gated off by default:** the **booking-suspend cascade** (Stage 3) only runs when `ENABLE_DUNNING_SUSPEND` is set (#812); with the flag unset, dunning stays notify-only and `dunningSuspendedAt` is never written.
+- **Future work:** none open on this surface — invoicing now runs on a GitHub Actions schedule (`generate-subscription-invoices` daily, `settle-invoice-accruals` monthly, #813) and the suspend cascade ships behind its flag.
 
 ### B.7 Double-entry ledger discipline — ✅ Wired
 
@@ -352,8 +352,8 @@ See A.4. Recording retention sweeps per-org via `Organization.streamRecordingRet
 
 ### F.2 TDS — ✅ Wired (Section default + reversal)
 
-- **Schema:** TDS columns on `OrganizationPayout` / `ConsultantPayout` (`tdsSectionApplied`, `tdsAmountPaise`, `mustPayByDate`, `form15caPartCRef`, etc.); `TDSRecord` for Form 26Q; `TdsAdjustment` (signed-negative refund reversal, #778 §D).
-- **Code paths:** [`lib/compliance/tds.ts`](../../../lib/compliance/tds.ts) — `computeTdsForPayout` (pure; `DEFAULT_SECTION = "194O"`) + the `TdsAdjustment` reversal path.
+- **Schema:** TDS columns on `OrganizationPayout` / `ConsultantPayout` (`tdsSectionApplied`, `tdsAmountPaise`, `mustPayByDate`, `form15caPartCRef`, etc.); `TDSRecord` for Form 26Q (now also carrying signed `isReversal` rows for refund reversals); the richer `TdsAdjustment` consolidation model is still schema-only (#778 §D).
+- **Code paths:** [`lib/compliance/tds.ts`](../../../lib/compliance/tds.ts) — `computeTdsForPayout` (pure; `DEFAULT_SECTION = "194O"`); refund reversals go through `recordTdsReversal` in [`lib/payments/tax/tds-service.ts`](../../../lib/payments/tax/tds-service.ts), which writes the negative `TDSRecord` (capped, filed-aware FY/quarter, #813).
 - **Why:** Section selection (194J vs 194O vs 194C) currently defaults to 194O, and full derivation including expert-status checks is `#713`; refund reversals write a negative line for the next quarter's revised return, and the admin TDS surface is gated by `ENABLE_TDS_ADMIN_VIEW`. The withholding *rates* are current under the Income-tax Act 2025 (in force 1 April 2026, which consolidated the 194-series and §195 into a single **Section 393**), so the `194O`/`194J`/`194C` labels remain correct as internal classification keys. What changes is the filing boundary: a deduction dated on or after 1 April 2026 must be filed citing the §393 payment code (Form 140 / 144, formerly 26Q / 27Q), not the legacy section string, and the no-PAN 5% rate now derives from §397(2) rather than a 194-O-internal carve-out. Authoritative: [docs/compliance/01-tds-overview.md](../../compliance/01-tds-overview.md).
 - **Future work:** Section selection logic (`#713`); FVU export for `TdsAdjustment` (#778 §F deferred), which is where the §393-code translation and Form 140/144 naming belong — the numeric 10xx codes are not yet reliably published and must not be hard-coded until the CBDT challan/RPU schema is confirmed; Form 140 (formerly 26Q) quarterly filing (parked).
 

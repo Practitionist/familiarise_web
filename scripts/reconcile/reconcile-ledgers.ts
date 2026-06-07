@@ -110,7 +110,15 @@ export type Finding = {
     | "REFUND_BOOKING_COHERENCE"
     // #776 — an OrganizationInvoice whose totalPaise != subtotalPaise + CGST +
     // SGST + IGST (a mis-totaled GST invoice is a filing defect).
-    | "INVOICE_TOTAL_MISMATCH";
+    | "INVOICE_TOTAL_MISMATCH"
+    // #812 — a ConsultantEarnings reversed (refundedShareAmount > 0) with no
+    // REFUND ledger transaction for its payment: the reversal never hit the
+    // journal (the blind spot the blocking-ledger change closes going forward;
+    // this check surfaces any legacy/back-dated drift).
+    | "REVERSED_EARNING_WITHOUT_REFUND_TXN"
+    // #812 — a COMPLETED OrganizationPayout with no ORG_PAYOUT ledger
+    // transaction: the cash left but the payable was never cleared in the journal.
+    | "COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN";
   organizationId?: string;
   billingAccountId?: string;
   billingSubscriptionId?: string;
@@ -783,6 +791,131 @@ export async function runReconcileLedgers(
   const earningsPaymentsWithoutBookingTxn = earningsPaymentRows.filter(
     (e) => e.paymentId && !coveredPaymentIds.has(e.paymentId),
   ).length;
+
+  // #812 — a reversed earning with no REFUND ledger transaction. The new
+  // blocking-ledger behaviour prevents this going forward (a refund that can't
+  // post a balanced journal rolls back), but the check surfaces any legacy or
+  // back-dated divergence the nightly run should page on. #813 — batched into a
+  // single REFUND-txn findMany + Set membership (was a per-row findFirst loop),
+  // matching the (E2) pattern above.
+  const reversedEarnings = await prisma.consultantEarnings.findMany({
+    where: {
+      refundedShareAmount: { gt: 0 },
+      ...(opts.organizationId
+        ? { payment: { organizationId: opts.organizationId } }
+        : {}),
+    },
+    select: {
+      id: true,
+      paymentId: true,
+      refundedShareAmount: true,
+      payment: { select: { organizationId: true } },
+    },
+  });
+  const reversedPaymentIds = reversedEarnings
+    .map((r) => r.paymentId)
+    .filter((p): p is string => !!p);
+  const refundTxns = await prisma.ledgerTransaction.findMany({
+    where: { kind: "REFUND", paymentId: { in: reversedPaymentIds } },
+    select: { paymentId: true },
+  });
+  const refundedPaymentIds = new Set(
+    refundTxns.map((t) => t.paymentId).filter((p): p is string => !!p),
+  );
+  for (const rev of reversedEarnings) {
+    if (!rev.paymentId) continue;
+    if (!refundedPaymentIds.has(rev.paymentId)) {
+      findings.push({
+        kind: "REVERSED_EARNING_WITHOUT_REFUND_TXN",
+        paymentId: rev.paymentId,
+        organizationId: rev.payment?.organizationId ?? undefined,
+        expectedPaise: rev.refundedShareAmount,
+        actualPaise: 0,
+        deltaPaise: rev.refundedShareAmount,
+        details: {
+          consultantEarningsId: rev.id,
+          note: "ConsultantEarnings.refundedShareAmount > 0 but no REFUND ledger transaction for this payment.",
+        },
+      });
+    }
+  }
+
+  // #812 — a COMPLETED OrganizationPayout with no ORG_PAYOUT ledger transaction:
+  // the cash left but the payable was never cleared in the journal. #813 —
+  // batched via a Set keyed on the ORIGINAL posting's idempotencyKey
+  // (`orgpayout:<id>`, matching org-payout-service); a plain {kind,payoutId} would
+  // be satisfied by the #812 REVERSAL posting (`orgpayout-reversal:<id>`), which
+  // shares kind+payoutId and would mask a missing original.
+  const completedPayouts = await prisma.organizationPayout.findMany({
+    where: {
+      status: "COMPLETED",
+      ...(opts.organizationId ? { organizationId: opts.organizationId } : {}),
+    },
+    select: { id: true, organizationId: true, netPayoutPaise: true },
+  });
+  const orgPayoutTxns = await prisma.ledgerTransaction.findMany({
+    where: {
+      idempotencyKey: { in: completedPayouts.map((po) => `orgpayout:${po.id}`) },
+    },
+    select: { idempotencyKey: true },
+  });
+  const orgPayoutTxnKeys = new Set(orgPayoutTxns.map((t) => t.idempotencyKey));
+  for (const po of completedPayouts) {
+    if (!orgPayoutTxnKeys.has(`orgpayout:${po.id}`)) {
+      findings.push({
+        kind: "COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN",
+        organizationId: po.organizationId,
+        payoutId: po.id,
+        expectedPaise: po.netPayoutPaise,
+        actualPaise: 0,
+        deltaPaise: po.netPayoutPaise,
+        details: {
+          scope: "org",
+          note: "OrganizationPayout.status=COMPLETED but no ORG_PAYOUT ledger transaction.",
+        },
+      });
+    }
+  }
+
+  // #813 — parallel coverage for consultant payouts: a COMPLETED ConsultantPayout
+  // must carry its original PAYOUT posting (`payout:<id>`). Same Set-membership
+  // shape; keyed on idempotencyKey so the #813 reversal posting
+  // (`payout-reversal:<id>`) can't mask a missing original. (ConsultantPayout is
+  // not org-scoped, so no organizationId; org-filtered runs skip this check.)
+  if (!opts.organizationId) {
+    // amount>0 only: the completion posting is skipped for a zero-amount payout
+    // (no cash moved), so a zero-amount COMPLETED row legitimately has no txn.
+    const completedConsultantPayouts = await prisma.consultantPayout.findMany({
+      where: { status: "COMPLETED", amount: { gt: 0 } },
+      select: { id: true, amount: true },
+    });
+    const consultantPayoutTxns = await prisma.ledgerTransaction.findMany({
+      where: {
+        idempotencyKey: {
+          in: completedConsultantPayouts.map((p) => `payout:${p.id}`),
+        },
+      },
+      select: { idempotencyKey: true },
+    });
+    const consultantPayoutTxnKeys = new Set(
+      consultantPayoutTxns.map((t) => t.idempotencyKey),
+    );
+    for (const p of completedConsultantPayouts) {
+      if (!consultantPayoutTxnKeys.has(`payout:${p.id}`)) {
+        findings.push({
+          kind: "COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN",
+          payoutId: p.id,
+          expectedPaise: p.amount,
+          actualPaise: 0,
+          deltaPaise: p.amount,
+          details: {
+            scope: "consultant",
+            note: "ConsultantPayout.status=COMPLETED but no PAYOUT ledger transaction.",
+          },
+        });
+      }
+    }
+  }
 
   const durationMs = Date.now() - startedAt;
   const ok = findings.length === 0;

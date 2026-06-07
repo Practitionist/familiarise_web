@@ -997,6 +997,102 @@ export async function handlePayoutWebhook(
 }
 
 /**
+ * #813/#812 — consultant `payout.reversed` arriving AFTER the payout already
+ * COMPLETED. Mirrors markOrgPayoutReversed: handlePayoutWebhook maps `reversed`
+ * to FAILED and claims `status notIn [COMPLETED, CANCELLED]`, so a bounce on an
+ * already-COMPLETED payout was a SILENT no-op — cash had left (Dr
+ * CONSULTANT_PAYABLE / Cr CASH / Cr TDS_PAYABLE, key `payout:<id>`), earnings
+ * stayed PAID, nothing reversed. This atomically claims COMPLETED → REVERSED,
+ * posts the exact inverse journal, and re-opens the earnings to READY. No-ops via
+ * the claim if the payout is not COMPLETED, so the caller can attempt it first and
+ * still fall through to the FAILED path for a pre-settlement bounce.
+ */
+export async function markConsultantPayoutReversed(
+  providerPayoutId: string,
+  reason: string,
+): Promise<{ wasNoOp: boolean }> {
+  const result = await prisma.$transaction(async (tx) => {
+    const payout = await tx.consultantPayout.findFirst({
+      where: { providerPayoutId },
+      select: {
+        id: true,
+        consultantProfileId: true,
+        amount: true,
+        tdsDeducted: true,
+        currency: true,
+      },
+    });
+    if (!payout) {
+      console.warn(
+        `[payouts] markConsultantPayoutReversed: payout not found for provider ID ${providerPayoutId}`,
+      );
+      return { wasNoOp: true, notify: null };
+    }
+
+    // Atomic claim: only a COMPLETED payout has cash to bring back.
+    const claim = await tx.consultantPayout.updateMany({
+      where: { id: payout.id, status: PayoutStatus.COMPLETED },
+      data: {
+        status: PayoutStatus.REVERSED,
+        failureReason: reason.slice(0, 500),
+      },
+    });
+    if (claim.count === 0) return { wasNoOp: true, notify: null };
+
+    // Re-open the earnings this payout had marked PAID so a future batch re-pays
+    // them — the inverse of the completion path's PAID flip. Unlike the FAILED
+    // path we do NOT delete TDS records (mirrors the org reversal, which only
+    // reverses the TDS_PAYABLE accrual in the journal below).
+    await tx.consultantEarnings.updateMany({
+      where: { payoutId: payout.id, status: EarningStatus.PAID },
+      data: { status: EarningStatus.READY, payoutId: null, paidAt: null },
+    });
+
+    // Exact inverse of the completion posting `payout:<id>`:
+    //   original  Dr CONSULTANT_PAYABLE (gross)  Cr CASH (net)  Cr TDS_PAYABLE (tds)
+    //   reversal  Dr CASH (net)  Cr CONSULTANT_PAYABLE (gross)  Dr TDS_PAYABLE (tds)
+    if (payout.amount > 0) {
+      const tdsPaise = payout.tdsDeducted ?? 0;
+      const reversal: Posting[] = [
+        { account: { kind: "CASH" }, direction: "DEBIT", amountPaise: payout.amount },
+        {
+          account: {
+            kind: "CONSULTANT_PAYABLE",
+            consultantProfileId: payout.consultantProfileId,
+          },
+          direction: "CREDIT",
+          amountPaise: payout.amount + tdsPaise,
+        },
+      ];
+      if (tdsPaise > 0) {
+        reversal.push({
+          account: { kind: "TDS_PAYABLE" },
+          direction: "DEBIT",
+          amountPaise: tdsPaise,
+        });
+      }
+      await postLedgerTxn(tx, {
+        idempotencyKey: `payout-reversal:${payout.id}`,
+        kind: "PAYOUT",
+        payoutId: payout.id,
+        postings: reversal,
+      });
+    }
+
+    // No consultant-scoped audit table (OrgAuditLog is org-only) and no
+    // consultant payout-reversal Novu workflow exists — the structured log is the
+    // mirror of the org path's PAYOUT_REVERSED audit entry.
+    console.log(
+      `↩️  Consultant payout ${payout.id} reversed after completion (provider=${providerPayoutId}): ${reason.slice(0, 200)}`,
+    );
+
+    return { wasNoOp: false, notify: null };
+  });
+
+  return { wasNoOp: result.wasNoOp };
+}
+
+/**
  * Get payout statistics for dashboard
  */
 export async function getPayoutStats() {

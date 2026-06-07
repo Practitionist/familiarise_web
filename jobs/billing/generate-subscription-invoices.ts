@@ -28,6 +28,7 @@
  */
 
 import prisma from "@/lib/prisma";
+import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
 import { generateOrgInvoiceNumber } from "@/lib/payments/billing/invoice-numbering";
 import { BILLABLE_ORG_STATUSES } from "@/lib/enterprise/org-status";
@@ -44,6 +45,7 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
   skipped: number;
   remindersSent: number;
 }> {
+  await abortIfMaintenance("generate-subscription-invoices");
   const now = new Date();
   const remindersSent = await sendRenewalReminders(now);
 
@@ -296,4 +298,22 @@ async function sendRenewalReminders(now: Date): Promise<number> {
     }
   }
   return sent;
+}
+
+async function main() {
+  console.log(
+    `[generate-subscription-invoices] Starting at ${new Date().toISOString()}`,
+  );
+  await runGenerateSubscriptionInvoices();
+}
+
+if (require.main === module) {
+  main()
+    .catch((err) => {
+      console.error("[generate-subscription-invoices] Failed:", err);
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      await prisma.$disconnect();
+    });
 }

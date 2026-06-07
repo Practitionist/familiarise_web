@@ -52,6 +52,7 @@ export {
   rejectPayout,
   processApprovedPayouts,
   handlePayoutWebhook,
+  markConsultantPayoutReversed,
   getPayoutStats,
 } from "./payout-service";
 export type {

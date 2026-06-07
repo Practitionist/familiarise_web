@@ -110,4 +110,52 @@ describe("sweepStuckWebhookEvents (#785)", () => {
     expect(r).toMatchObject({ scanned: 0, recovered: 0, stillFailing: 0 });
     expect(mockProcess).not.toHaveBeenCalled();
   });
+
+  // #813 — a defer-sentinel handler (refund-before-capture) leaves the row in
+  // the same processed=false/error=null signature it started with. The sweeper
+  // must NOT count that as recovered, and must NOT terminally mark it until it
+  // ages past the give-up cap.
+  it("a re-drive that stays deferred is counted as deferred, not recovered", async () => {
+    const recent = new Date(Date.now() - 60 * 60_000); // 1h old, under the cap
+    mockWe.findMany.mockResolvedValue([
+      stuckRow({ eventId: "refund.created:rfnd_1", receivedAt: recent }),
+    ]);
+    mockProcess.mockResolvedValue(undefined);
+    // dispatch deferred → it skipped the mark, row unchanged
+    mockWe.findUnique.mockResolvedValue({ error: null, processed: false });
+
+    const r = await sweepStuckWebhookEvents({ staleMinutes: 6 });
+
+    expect(r).toMatchObject({
+      scanned: 1,
+      recovered: 0,
+      stillFailing: 0,
+      deferred: 1,
+      gaveUp: 0,
+    });
+    expect(mockWe.update).not.toHaveBeenCalled();
+  });
+
+  it("a deferred event past the give-up cap is terminally marked + counted", async () => {
+    const old = new Date(Date.now() - 200 * 60 * 60_000); // 200h > 168h cap
+    mockWe.findMany.mockResolvedValue([
+      stuckRow({ eventId: "refund.created:rfnd_2", receivedAt: old }),
+    ]);
+    mockProcess.mockResolvedValue(undefined);
+    mockWe.findUnique.mockResolvedValue({ error: null, processed: false });
+
+    const r = await sweepStuckWebhookEvents({ staleMinutes: 6 });
+
+    expect(r).toMatchObject({ deferred: 0, gaveUp: 1, recovered: 0 });
+    expect(mockWe.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { eventId: "refund.created:rfnd_2" },
+        data: expect.objectContaining({
+          processed: true,
+          error: "gave up: payment never arrived",
+        }),
+      }),
+    );
+    expect(r.errors[0]).toContain("gave up");
+  });
 });

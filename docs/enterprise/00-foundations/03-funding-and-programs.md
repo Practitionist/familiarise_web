@@ -252,14 +252,21 @@ When a Program sits on a subscription billing cadence, a single
 - `currentCycleStart`, `currentCycleEnd`, `nextInvoiceDate`
 
 The job that walks active subscriptions and emits invoices is implemented
-(`jobs/billing/generate-subscription-invoices.ts`, #681 — daily 01:00 IST,
-amount = `flatFeePaise` for FLAT_FEE or `activeSeatCount × ratePerSeatPaise`
-for PER_SEAT, claimed via a conditional `nextInvoiceDate` advance) but is
-NOT yet wired to a GitHub Actions workflow — TODO(#681). The INVOICE-funding
-month-end roll-up is a separate live cron
-(`jobs/cleanup/consolidated-invoice-rollup.ts` →
-`.github/workflows/consolidated-invoice-rollup.yml`; crons are GitHub
-Actions invoking `jobs/**`, not Netlify functions). The hand-rolled
+and scheduled (`jobs/billing/generate-subscription-invoices.ts`, #681 —
+daily at 01:00 UTC / 06:30 IST via
+`.github/workflows/generate-subscription-invoices.yml`, amount =
+`flatFeePaise` for FLAT_FEE or `activeSeatCount × ratePerSeatPaise` for
+PER_SEAT, claimed via a conditional `nextInvoiceDate` advance). The
+workflow carries a `concurrency` group (#813) so two overlapping runs
+queue rather than double-bill. The INVOICE-funding month-end roll-up is a
+separate cron — `jobs/billing/settle-invoice-accruals.ts` runs monthly on
+the 1st at 04:00 UTC / 09:30 IST via
+`.github/workflows/settle-invoice-accruals.yml`, gated by
+`ENABLE_CONSOLIDATED_INVOICE`; it absorbed the retired
+`consolidated-invoice-rollup` job (#813), reads the accrual set inside a
+Serializable transaction so overlapping runs can't double-issue, and is
+itself behind a `concurrency` group. (Crons are GitHub Actions invoking
+`jobs/**`, not Netlify functions.) The hand-rolled
 `POST /api/organizations/[orgId]/billing-account/invoices` still exists as
 an operator escape hatch.
 

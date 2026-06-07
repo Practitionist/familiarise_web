@@ -24,6 +24,7 @@
  */
 
 import prisma from "@/lib/prisma";
+import { abortIfMaintenance } from "@/lib/maintenance-cron";
 
 const DELETE_BATCH_SIZE = 500;
 const MAX_BATCHES_PER_RUN = 40; // caps total work at 20k rows / sweep
@@ -33,6 +34,7 @@ export async function runConsentRetentionSweeper(): Promise<{
   deleted: number;
   deleteMode: boolean;
 }> {
+  await abortIfMaintenance("consent-retention-sweeper");
   const deleteMode = process.env.DPDP_SWEEPER_DELETE === "true";
   const now = new Date();
 
@@ -83,4 +85,25 @@ export async function runConsentRetentionSweeper(): Promise<{
   );
 
   return { expired, deleted, deleteMode: true };
+}
+
+async function main() {
+  console.log(
+    `[consent-retention-sweeper] Starting at ${new Date().toISOString()}`,
+  );
+  const r = await runConsentRetentionSweeper();
+  console.log(
+    `[consent-retention-sweeper] Done. expired=${r.expired} deleted=${r.deleted} deleteMode=${r.deleteMode}`,
+  );
+}
+
+if (require.main === module) {
+  main()
+    .catch((err) => {
+      console.error("[consent-retention-sweeper] Failed:", err);
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      await prisma.$disconnect();
+    });
 }

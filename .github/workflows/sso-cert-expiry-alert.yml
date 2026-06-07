@@ -5,7 +5,7 @@ on:
     # Daily at 08:30 IST (03:00 UTC). Slot picked to avoid overlap
     # with cleanup-abandoned-org-top-ups (07:30 IST / 02:00 UTC),
     # cleanup-stale-invitations (08:00 IST / 02:30 UTC), and
-    # consolidated-invoice-rollup (09:30 IST / 04:00 UTC on day-1).
+    # settle-invoice-accruals (09:30 IST / 04:00 UTC on day-1).
     # GitHub Actions `schedule` interprets the cron expression in UTC.
     - cron: "0 3 * * *"
   workflow_dispatch: # allow manual trigger after rotating a cert

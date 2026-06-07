@@ -51,6 +51,7 @@ import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpe
 import { assertEarningStatusTransitionLegal } from "@/lib/payments/payouts/earning-status";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
+import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { generateOrgCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 
@@ -318,6 +319,9 @@ export async function applyRefundCascade(
     where: { id: input.paymentId },
     include: {
       legs: { orderBy: { createdAt: "asc" } },
+      // #813 — the scalar `earnings.payoutId` is all the TDS-reversal helper needs
+      // to find the original TDSRecord; the prior `payout` TDS-field include was
+      // dead (review finding).
       earnings: true,
       organizationEarnings: { include: { orgPayout: true } },
       bookingUtilization: true,
@@ -522,6 +526,22 @@ export async function applyRefundCascade(
       },
     });
     consultantEarningsReversed++;
+
+    // #813 — refund-driven TDS reversal for an already-paid-out earning, so the
+    // quarterly 26Q nets the withholding back out. Previously only admin
+    // forceRefund (earnings-service.ts) did this; a normal gateway/cron refund
+    // left the TDS un-reversed. The shared helper owns the integer proportion,
+    // the dedup/cap against double-reversal, and the filed-aware FY/quarter
+    // policy (pending CA sign-off).
+    if (earnings.payoutId) {
+      await recordTdsReversal(tx, {
+        payoutId: earnings.payoutId,
+        consultantProfileId: earnings.consultantProfileId,
+        earningsId: earnings.id,
+        refundAmountPaise: input.amountPaise,
+        paymentAmountPaise: payment.amount,
+      });
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -708,7 +728,11 @@ export async function applyRefundCascade(
         (s, o) => s + proportion(o.orgSharePaise),
         0,
       );
-      const gstRev = proportion(payment.taxAmount);
+      // #812 — default a missing taxAmount to 0. A `null`/`undefined` here would
+      // make gstRev NaN → the platform plug NaN → the posting silently lose a leg
+      // and (now that the ledger blocks) roll the whole refund back. taxAmount
+      // defaults to 0 in the schema, but legacy/imported rows may lack it.
+      const gstRev = proportion(payment.taxAmount ?? 0);
       // #776 — PLATFORM_FEE is the residual: on a full refund it equals the
       // booking's fee exactly; on a partial refund it absorbs the ≤3-paise
       // floor remainder of the other shares (the platform absorbs rounding).
@@ -726,18 +750,22 @@ export async function applyRefundCascade(
           amountPaise: platformPlug,
         });
       }
-      if (consRev > 0) {
-        const owner =
-          payment.earnings.find((e) => e.role === "OWNER") ??
-          payment.earnings[0];
-        if (owner) {
+      // #812 — debit each collaborator's own CONSULTANT_PAYABLE by its reversed
+      // share, mirroring the per-collaborator credits the booking journal posts
+      // (earnings-service.ts). The old code summed every share into consRev and
+      // debited it all to the OWNER's account, which balanced the transaction but
+      // left collaborators' payables un-reversed in the ledger — an invisible
+      // per-account divergence on every multi-collaborator refund.
+      for (const earning of payment.earnings) {
+        const earningRev = proportion(earning.consultantSharePaise);
+        if (earningRev > 0) {
           debits.push({
             account: {
               kind: "CONSULTANT_PAYABLE",
-              consultantProfileId: owner.consultantProfileId,
+              consultantProfileId: earning.consultantProfileId,
             },
             direction: "DEBIT",
-            amountPaise: consRev,
+            amountPaise: earningRev,
           });
         }
       }
@@ -788,15 +816,15 @@ export async function applyRefundCascade(
       }
     }
   } catch (err) {
-    // #778 §C — dual-write safety: never block the customer refund on a ledger
-    // bookkeeping failure (gateway money may already have moved). NOT silent:
-    // logged at error level, and the reconcile cron's EARNINGS_LEDGER_DRIFT /
-    // LEDGER_TXN_IMBALANCE invariants detect any resulting divergence.
+    // #812 — the refund cascade runs inside the caller's tx, so a ledger
+    // imbalance must roll the whole cascade back rather than half-applying the
+    // earnings/leg reversals with no balanced journal. Record the drift on its
+    // own connection (survives rollback), then RE-THROW. Callers (the cron / the
+    // gateway webhook) retry the refund, so the customer refund is not lost — it
+    // is re-driven atomically.
     console.error(
-      `[ledger] refund reversal posting FAILED for payment ${payment.id} (reconcile will flag): ${err instanceof Error ? err.message : String(err)}`,
+      `[ledger] refund reversal posting FAILED for payment ${payment.id} — rolling back the cascade: ${err instanceof Error ? err.message : String(err)}`,
     );
-    // #776 — page immediately on dual-write drift; fire-and-forget, never block
-    // the customer refund on a telemetry write.
     void recordSystemError({
       organizationId: payment.organizationId ?? null,
       category: "LEDGER",
@@ -804,6 +832,7 @@ export async function applyRefundCascade(
       err,
       context: { paymentId: payment.id, refundId: input.refundId },
     }).catch(() => {});
+    throw err;
   }
 
   return {
@@ -889,6 +918,7 @@ export async function mintRefundCreditNote(
       id: true,
       status: true,
       issuedAt: true,
+      subtotalPaise: true,
       totalPaise: true,
       igstPaise: true,
       cgstPaise: true,
@@ -910,14 +940,21 @@ export async function mintRefundCreditNote(
     return { creditNoteId: null };
   }
 
-  // Proportional tax: keep the CN's tax fraction equal to the invoice's, then
-  // route it to IGST (inter-state) or CGST+SGST (intra-state) by whichever the
-  // invoice used. CGST takes the odd-paise remainder.
+  // #812 — `invoicedReverse` is the TAX-EXCLUSIVE leg amount being reversed (the
+  // INVOICE_ACCRUAL legs are the invoice's pre-tax subtotal; invoices are built
+  // tax-exclusive: total = subtotal + GST). So the GST rate is the invoice's tax
+  // over its SUBTOTAL, not over its total, and the reversed amount is the credit
+  // note's subtotal with tax added on top — mirroring the invoice's own
+  // structure. Computing the fraction over totalPaise (tax-inclusive) under-
+  // credited the full GST (CGST Sec 34 reverses output tax proportionally). The
+  // sibling mintInvoiceRefundCreditNote takes a tax-INCLUSIVE payment refund, so
+  // it keeps the over-total fraction — do not change it.
   const invoiceTax = invoice.igstPaise + invoice.cgstPaise + invoice.sgstPaise;
   const taxFraction =
-    invoice.totalPaise > 0 ? invoiceTax / invoice.totalPaise : 0;
+    invoice.subtotalPaise > 0 ? invoiceTax / invoice.subtotalPaise : 0;
+  const cnSubtotal = invoicedReverse;
   const cnTax = Math.round(invoicedReverse * taxFraction);
-  const cnSubtotal = invoicedReverse - cnTax;
+  const cnTotal = cnSubtotal + cnTax;
   const interState = invoice.igstPaise > 0;
   const cnIgst = interState ? cnTax : 0;
   const cnSgst = interState ? 0 : Math.floor(cnTax / 2);
@@ -941,7 +978,7 @@ export async function mintRefundCreditNote(
       igstPaise: cnIgst,
       cgstPaise: cnCgst,
       sgstPaise: cnSgst,
-      totalPaise: invoicedReverse,
+      totalPaise: cnTotal,
       status: "ISSUED",
       issuedAt: new Date(),
     },

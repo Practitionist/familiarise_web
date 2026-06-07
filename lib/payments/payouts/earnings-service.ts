@@ -29,7 +29,7 @@ import {
 } from "@prisma/client";
 import { PAYOUT_CONSTANTS, AppointmentType } from "./constants";
 import { calculateRevenueSplit } from "@/lib/collaborators/service";
-import { getIndianFYQuarter } from "@/lib/payments/tax/tds-service";
+import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import type { RevenueSplit } from "@/types/collaborators";
@@ -298,13 +298,26 @@ export async function createEarningsFromPayment({
       let ownerId: string | null = null;
 
       if (splits.length > 0) {
+        // #812 — floor every collaborator's shareBps and let the LAST split
+        // absorb the remainder, so the cached bps sum to exactly 10000. Rounding
+        // each independently (Math.round) could overshoot or undershoot 10000 by
+        // a few bps across collaborators, the same floor-then-absorb discipline
+        // the rest of the money math uses.
+        const shareBpsList = splits.map((s) =>
+          totalConsultantPool > 0
+            ? Math.floor((s.share / totalConsultantPool) * 10_000)
+            : 0,
+        );
+        if (totalConsultantPool > 0) {
+          const assigned = shareBpsList.reduce((a, b) => a + b, 0);
+          shareBpsList[shareBpsList.length - 1] += 10_000 - assigned;
+        }
+
         // Multi-party payment: create earnings for owner and each collaborator
-        for (const split of splits) {
+        for (let i = 0; i < splits.length; i++) {
+          const split = splits[i];
           const isOwner = split.role === "OWNER";
-          const shareBps =
-            totalConsultantPool > 0
-              ? Math.round((split.share / totalConsultantPool) * 10_000)
-              : 0;
+          const shareBps = shareBpsList[i];
 
           const earnings = await tx.consultantEarnings.create({
             data: {
@@ -470,7 +483,7 @@ export async function createEarningsFromPayment({
             { kind: "DISCOUNT" },
             Math.max(
               0,
-              payment.originalAmount + payment.taxAmount - fundingDebitTotal,
+              payment.originalAmount + (payment.taxAmount ?? 0) - fundingDebitTotal,
             ),
           );
 
@@ -504,7 +517,10 @@ export async function createEarningsFromPayment({
               orgSplit.orgShare,
             );
           }
-          pushCredit({ kind: "GST_PAYABLE" }, payment.taxAmount);
+          // #812 — guard a missing taxAmount (NaN would imbalance the now-blocking
+          // posting and roll back the booking). Defaults to 0 in-schema, but
+          // legacy/imported rows may lack it.
+          pushCredit({ kind: "GST_PAYABLE" }, payment.taxAmount ?? 0);
 
           await postLedgerTxn(tx, {
             idempotencyKey: `booking:${payment.id}`,
@@ -513,12 +529,13 @@ export async function createEarningsFromPayment({
             postings: [...debits, ...credits],
           });
         } catch (err) {
-          console.warn(
-            `[ledger] booking posting skipped for payment ${payment.id}: ${err instanceof Error ? err.message : String(err)}`,
+          console.error(
+            `[ledger] booking posting FAILED for payment ${payment.id} — rolling back the booking: ${err instanceof Error ? err.message : String(err)}`,
           );
-          // #776 — surface the dual-write drift immediately instead of waiting for
-          // the nightly reconcile. Fire-and-forget on its own connection; never
-          // block or fail the booking on a telemetry write.
+          // #812 — record the drift on its own connection (survives the rollback),
+          // then RE-THROW so the imbalance rolls back the whole booking
+          // transaction. The ledger is the source of truth: a booking that can't
+          // post a balanced journal must not be allowed to half-commit and drift.
           void recordSystemError({
             organizationId: payment.organizationId ?? null,
             category: "LEDGER",
@@ -526,6 +543,7 @@ export async function createEarningsFromPayment({
             err,
             context: { paymentId: payment.id },
           }).catch(() => {});
+          throw err;
         }
       }
 
@@ -844,6 +862,12 @@ export async function refundEarnings(
     return true;
   }
 
+  // #813 — integer-paise proportion pair for the shared TDS-reversal helper.
+  // Partial refunds carry explicit paise amounts; a full refund has none, so we
+  // pass an equal pair to express ratio=1 without reintroducing float math.
+  const tdsRefundPaise = isPartialRefund ? options!.refundAmount! : 1;
+  const tdsPaymentPaise = isPartialRefund ? options!.paymentAmount! : 1;
+
   if (isPartialRefund) {
     console.log(
       `Partial refund: ${options!.refundAmount}/${options!.paymentAmount} = ${(refundRatio * 100).toFixed(1)}% reversal for payment ${paymentId}`,
@@ -927,36 +951,18 @@ export async function refundEarnings(
         );
       }
 
-      // Force refund of PAID earnings: create TDS reversal record
+      // #813 — force refund of PAID earnings: record the proportional TDS reversal
+      // via the shared helper (integer proportion + dedup/cap + filed-aware
+      // FY/quarter). Previously this path used float ratio math and no cap, and
+      // it diverged from the gateway/cron cascade (operations/refund.ts).
       if (earnings.payoutId) {
-        const tdsRecord = await db.tDSRecord.findFirst({
-          where: {
-            payoutId: earnings.payoutId,
-            consultantProfileId: earnings.consultantProfileId,
-            isReversal: false,
-          },
+        await recordTdsReversal(db, {
+          payoutId: earnings.payoutId,
+          consultantProfileId: earnings.consultantProfileId,
+          earningsId: earnings.id,
+          refundAmountPaise: tdsRefundPaise,
+          paymentAmountPaise: tdsPaymentPaise,
         });
-
-        if (tdsRecord && tdsRecord.tdsDeducted > 0) {
-          const tdsToReverse = Math.round(tdsRecord.tdsDeducted * refundRatio);
-          await db.tDSRecord.create({
-            data: {
-              consultantProfileId: earnings.consultantProfileId,
-              financialYear: tdsRecord.financialYear,
-              quarter: getIndianFYQuarter(),
-              cumulativeAmountCredited: tdsRecord.cumulativeAmountCredited,
-              tdsDeducted: -tdsToReverse,
-              tdsRate: tdsRecord.tdsRate,
-              payoutId: earnings.payoutId,
-              earningsId: earnings.id,
-              isReversal: true,
-            },
-          });
-
-          console.log(
-            `TDS reversal created for earnings ${earnings.id}: -${tdsToReverse} paise (${isPartialRefund ? "partial" : "full"})`,
-          );
-        }
       }
 
       // Update earnings: always track refundedShareAmount, set REFUNDED when fully exhausted
