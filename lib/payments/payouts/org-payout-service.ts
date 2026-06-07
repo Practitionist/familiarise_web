@@ -1132,7 +1132,10 @@ export async function markOrgPayoutReversed(
   if (completedResult.claimed) {
     if (completedResult.notify) {
       const { notifyOrgPayoutFailed } = await import("@/lib/novu/org-workflows");
-      await notifyOrgPayoutFailed(completedResult.notify.organizationId, {
+      // #813 — fire-and-forget: awaiting let a Novu failure throw out of the
+      // committed tx, failing the webhook delivery whose redelivery then no-ops
+      // (state already REVERSED) → the notification was permanently lost.
+      void notifyOrgPayoutFailed(completedResult.notify.organizationId, {
         orgName: completedResult.notify.orgName,
         payoutId,
         amountPaise: completedResult.notify.netPayoutPaise,
@@ -1140,7 +1143,9 @@ export async function markOrgPayoutReversed(
         reason: reason.slice(0, 200),
         kind: "REVERSED",
         dashboardUrl: `${getAppUrl()}/dashboard/organization/${completedResult.notify.organizationId}/payouts`,
-      });
+      }).catch((e) =>
+        console.error("[org-payout] REVERSED notify failed:", e),
+      );
     }
     return { wasNoOp: false, status: "REVERSED" as PayoutStatus };
   }

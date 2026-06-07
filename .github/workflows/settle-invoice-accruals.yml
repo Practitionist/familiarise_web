@@ -1,16 +1,24 @@
 name: Settle Invoice Accruals
 
-# #771 / #749 — cycle-close cron: rolls each org's unbilled INVOICE_ACCRUAL
-# / OVERAGE_INVOICE_ACCRUAL bookings into an OrganizationInvoice. Financial
-# cron (see FINANCIAL_JOB_NAMES) — skipped in DEGRADED maintenance.
+# #771 / #749 — monthly consolidated rollup cron: rolls each org's unbilled
+# INVOICE_ACCRUAL / OVERAGE_INVOICE_ACCRUAL bookings into one OrganizationInvoice.
+# Financial cron (see FINANCIAL_JOB_NAMES) — skipped in DEGRADED maintenance.
 
 on:
   schedule:
-    # 01:30 UTC = 07:00 IST. GitHub Actions `schedule` interprets cron in
-    # UTC. Runs 30 min after generate-subscription-invoices (01:00 UTC) so
-    # the accrual rollup reads after subscription invoices have settled.
-    - cron: "30 1 * * *"
+    # 04:00 UTC = 09:30 IST on the 1st of every month. GitHub Actions `schedule`
+    # interprets cron in UTC. Monthly because rolling up the same ISSUED invoices
+    # twice would create duplicate parent invoices (the cron is a one-shot per
+    # cycle); runs well after generate-subscription-invoices (01:00 UTC).
+    - cron: "0 4 1 * *"
   workflow_dispatch: # Allow manual triggering
+
+# #813 — never let two rollup runs overlap. Queue a new run behind an in-flight
+# one (do NOT cancel — a mid-flight invoice issue must finish) so the find-then-stamp
+# can't double-bill. Belt to the in-code Serializable in-tx read's suspenders.
+concurrency:
+  group: settle-invoice-accruals
+  cancel-in-progress: false
 
 jobs:
   settle-invoice-accruals:
@@ -22,6 +30,9 @@ jobs:
       DIRECT_URL: ${{ secrets.DIRECT_URL }}
       UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
       UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+      # The cron is a no-op when this flag is unset / "false". GH Actions
+      # secrets store the live value per-environment (prod / staging).
+      ENABLE_CONSOLIDATED_INVOICE: ${{ secrets.ENABLE_CONSOLIDATED_INVOICE }}
 
     steps:
       - name: Checkout code

@@ -12,6 +12,13 @@ on:
     - cron: "0 1 * * *"
   workflow_dispatch: # Allow manual triggering
 
+# #813 — never let two invoice-gen runs overlap. Queue a new run behind an
+# in-flight one (do NOT cancel — a mid-flight invoice issue must finish) so the
+# find-then-claim can't double-bill. Belt to the in-code atomic claim's suspenders.
+concurrency:
+  group: generate-subscription-invoices
+  cancel-in-progress: false
+
 jobs:
   generate-subscription-invoices:
     runs-on: ubuntu-latest

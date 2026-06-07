@@ -35,7 +35,6 @@ const FINANCIAL_JOB_NAMES = new Set([
   "sync-payment-earnings",
   "generate-subscription-invoices",
   "settle-invoice-accruals",
-  "consolidated-invoice-rollup",
 ]);
 
 /**

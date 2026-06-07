@@ -221,7 +221,11 @@ export async function runDunning(): Promise<DunningStats> {
         status: "OVERDUE",
         dunningReminderCount: { gte: MAX_REMINDERS },
         dunningSuspendedAt: null,
-        markedOverdueAt: { lt: suspendCutoff },
+        // #812 — grace measured from the LAST reminder, not the overdue stamp:
+        // the cap-3 reminders span ~21d, so gating on markedOverdueAt suspended
+        // the moment the 3rd reminder cleared. lastDunningReminderAt is the
+        // Stage-2 cadence anchor, so suspend only 7d past the final reminder.
+        lastDunningReminderAt: { lt: suspendCutoff },
         organization: { status: { in: [...DUNNABLE_ORG_STATUSES] } },
       },
       select: {
@@ -233,28 +237,39 @@ export async function runDunning(): Promise<DunningStats> {
       },
     });
     for (const inv of toSuspend) {
-      // Idempotent claim: only stamp a row still un-suspended + OVERDUE.
-      const claimed = await prisma.organizationInvoice.updateMany({
-        where: { id: inv.id, dunningSuspendedAt: null, status: "OVERDUE" },
-        data: { dunningSuspendedAt: now },
-      });
-      if (claimed.count === 0) continue;
-      stats.suspended += 1;
-      await prisma.orgAuditLog.create({
-        data: {
-          organizationId: inv.organizationId,
-          actorMembershipId: null,
-          category: "INVOICE",
-          action: AUDIT_ACTIONS.INVOICE.INVOICE_DUNNING_SUSPENDED,
-          description: `Invoice ${inv.invoiceNumber} unpaid past dunning grace — org sponsored bookings suspended`,
-          details: {
-            invoiceId: inv.id,
-            invoiceNumber: inv.invoiceNumber,
-            totalPaise: inv.totalPaise,
-            currency: inv.displayCurrency,
-          },
+      // #812 — claim + audit in one Serializable tx, mirroring Stage 1, so two
+      // replicas can't both stamp + log. Idempotent claim: only stamp a row
+      // still un-suspended + OVERDUE; loser sees count 0 and skips.
+      const claimed = await prisma.$transaction(
+        async (tx) => {
+          const claim = await tx.organizationInvoice.updateMany({
+            where: { id: inv.id, dunningSuspendedAt: null, status: "OVERDUE" },
+            data: { dunningSuspendedAt: now },
+          });
+          if (claim.count === 0) return false;
+
+          await tx.orgAuditLog.create({
+            data: {
+              organizationId: inv.organizationId,
+              actorMembershipId: null,
+              category: "INVOICE",
+              action: AUDIT_ACTIONS.INVOICE.INVOICE_DUNNING_SUSPENDED,
+              description: `Invoice ${inv.invoiceNumber} unpaid past dunning grace — org sponsored bookings suspended`,
+              details: {
+                invoiceId: inv.id,
+                invoiceNumber: inv.invoiceNumber,
+                totalPaise: inv.totalPaise,
+                currency: inv.displayCurrency,
+              },
+            },
+          });
+          return true;
         },
-      });
+        { isolationLevel: "Serializable" },
+      );
+
+      if (!claimed) continue;
+      stats.suspended += 1;
     }
   }
 
