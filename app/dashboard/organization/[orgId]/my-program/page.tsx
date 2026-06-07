@@ -104,20 +104,20 @@ export default async function MyProgramPage({
       {upcomingSessions.length > 0 && (
         <section>
           <h2 className="text-lg font-medium mb-3">Upcoming sessions</h2>
-          <div className="overflow-hidden rounded-lg border bg-card">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto rounded-lg border bg-card">
+            <table className="w-full min-w-[520px] text-sm">
               <thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground">
                 <tr>
-                  <th className="px-4 py-2 font-medium">When</th>
-                  <th className="px-4 py-2 font-medium">Session</th>
-                  <th className="px-4 py-2 font-medium">Type</th>
-                  <th className="px-4 py-2 font-medium text-right">Join</th>
+                  <th className="px-4 py-2 font-medium whitespace-nowrap">When</th>
+                  <th className="px-4 py-2 font-medium whitespace-nowrap">Session</th>
+                  <th className="px-4 py-2 font-medium whitespace-nowrap">Type</th>
+                  <th className="px-4 py-2 font-medium text-right whitespace-nowrap">Join</th>
                 </tr>
               </thead>
               <tbody>
                 {upcomingSessions.map((s) => (
                   <tr key={s.id} className="border-t">
-                    <td className="px-4 py-2">
+                    <td className="px-4 py-2 whitespace-nowrap">
                       {s.startsAt.toLocaleString("en-IN", {
                         timeZone: "Asia/Kolkata", // RSC renders in UTC otherwise
                         day: "2-digit",
@@ -127,8 +127,8 @@ export default async function MyProgramPage({
                       })}
                     </td>
                     <td className="px-4 py-2">{s.title}</td>
-                    <td className="px-4 py-2 lowercase">{s.type}</td>
-                    <td className="px-4 py-2 text-right">
+                    <td className="px-4 py-2 lowercase whitespace-nowrap">{s.type}</td>
+                    <td className="px-4 py-2 text-right whitespace-nowrap">
                       {/* Real join needs the Stream client (consultee
                           dashboard). Gate the link to the 10-min window. */}
                       {s.joinable ? (
@@ -294,21 +294,21 @@ export default async function MyProgramPage({
       {utilizations.length > 0 && (
         <section>
           <h2 className="text-lg font-medium mb-3">Recent activity</h2>
-          <div className="overflow-hidden rounded-lg border bg-card">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto rounded-lg border bg-card">
+            <table className="w-full min-w-[640px] text-sm">
               <thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground">
                 <tr>
-                  <th className="px-4 py-2 font-medium">When</th>
-                  <th className="px-4 py-2 font-medium">Type</th>
-                  <th className="px-4 py-2 font-medium text-right">Consumed</th>
-                  <th className="px-4 py-2 font-medium text-right">Price</th>
-                  <th className="px-4 py-2 font-medium">Status</th>
+                  <th className="px-4 py-2 font-medium whitespace-nowrap">When</th>
+                  <th className="px-4 py-2 font-medium whitespace-nowrap">Type</th>
+                  <th className="px-4 py-2 font-medium text-right whitespace-nowrap">Consumed</th>
+                  <th className="px-4 py-2 font-medium text-right whitespace-nowrap">Price</th>
+                  <th className="px-4 py-2 font-medium whitespace-nowrap">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {utilizations.map((u) => (
                   <tr key={u.id} className="border-t">
-                    <td className="px-4 py-2">
+                    <td className="px-4 py-2 whitespace-nowrap">
                       {u.createdAt.toLocaleDateString("en-IN", {
                         timeZone: "Asia/Kolkata",
                         day: "2-digit",
@@ -316,16 +316,16 @@ export default async function MyProgramPage({
                         year: "numeric",
                       })}
                     </td>
-                    <td className="px-4 py-2 lowercase">
+                    <td className="px-4 py-2 lowercase whitespace-nowrap">
                       {u.payment.appointment?.appointmentType ?? "—"}
                     </td>
-                    <td className="px-4 py-2 text-right">
+                    <td className="px-4 py-2 text-right whitespace-nowrap">
                       {u.engagementsConsumed}
                     </td>
-                    <td className="px-4 py-2 text-right">
+                    <td className="px-4 py-2 text-right whitespace-nowrap">
                       {formatCurrencyAmount(u.priceAtBookingPaise, "INR")}
                     </td>
-                    <td className="px-4 py-2 text-xs">
+                    <td className="px-4 py-2 text-xs whitespace-nowrap">
                       {u.reversedAt
                         ? "Reversed"
                         : u.wasOverage
