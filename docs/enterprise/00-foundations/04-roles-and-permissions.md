@@ -501,6 +501,22 @@ at all. The following table states what is allowed across those layers.
 | EXPERT and LEARNER inside the same org | No — by decision (2026-06-07) | `@@unique([userId, organizationId])` allows one role per org, and the LEARNER↔EXPERT transition is blocked. Allowing a dual-side membership would make `ProgramAssignment` attribution ambiguous and open self-dealing (an expert consuming their own org's sponsored budget). The remediation is remove + re-invite, or a second org for genuinely separate capacities. |
 | Operator role plus sponsored consumption in the same org | No | Same single-role constraint; operators have no consumer profile linkage. An operator who needs sponsored sessions takes a LEARNER membership in a different org or books personally funded sessions. |
 
+### Who creates the identity: the who-is-acting rule
+
+Identity creation follows one rule, settled in #819: **creating a profile
+requires the user's own action, while an admin acting on someone else's
+behalf requires the identity to already exist.** Concretely, the admin
+direct-add surface (`POST /members`) refuses both roles when the matching
+profile is missing (`NOT_A_CONSULTANT` / `NOT_A_CONSULTEE`), because an
+org admin's click must never mint a platform identity for somebody else.
+Invitation accept is the user's own consenting click, so it lazy-creates
+the lightweight `ConsulteeProfile` for LEARNER (this is one of the
+sanctioned creation points named in `lib/auth.ts`) but still refuses
+EXPERT when no `ConsultantProfile` exists, because a consultant identity
+carries domain, rate, verification, and payout prerequisites that no
+invite click can substitute for. SSO JIT auto-join keeps its own
+lazy-create path as a separately authorized provisioning channel.
+
 ## Per-role landing in `/dashboard/organization/[orgId]`
 
 The bare org route is no longer a one-way bounce-to-personal for consumer
