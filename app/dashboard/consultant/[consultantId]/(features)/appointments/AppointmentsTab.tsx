@@ -23,7 +23,9 @@ import {
   Video,
   Loader2,
   Search,
+  Building2,
 } from "lucide-react";
+import { useSession } from "@/lib/auth-client";
 import {
   AppointmentsTabProps,
   ScheduledTrial,
@@ -77,6 +79,21 @@ export function AppointmentsTab({
   const router = useRouter();
   const client = useStreamVideoClient();
   const { toast } = useToast();
+  const { data: session } = useSession();
+  // Memberships used to resolve an appointment's `organizationId` to a
+  // displayable org name for the "Sponsored · <Org>" badge. Mirrors the
+  // consultee dashboard convention so a panel expert can tell at a
+  // glance which sessions came through which org.
+  const orgMemberships = session?.user?.organizationMemberships ?? [];
+  const resolveSponsoringOrgName = (
+    orgId: string | null | undefined,
+  ): string | null => {
+    if (!orgId) return null;
+    return (
+      orgMemberships.find((m) => m.organizationId === orgId)?.organizationName ??
+      "the organization"
+    );
+  };
   const [joiningTrialId, setJoiningTrialId] = useState<string | null>(null);
   const searchParams = useSearchParams();
   const [selectedAppointment, setSelectedAppointment] =
@@ -872,10 +889,28 @@ export function AppointmentsTab({
                                         <div className="min-w-0">
                                           {!isRecurring && (
                                             <>
-                                              <div className="flex items-center gap-2">
+                                              <div className="flex items-center gap-2 flex-wrap">
                                                 <h3 className="font-semibold text-gray-800">
                                                   {getConsumeeName(appointment)}
                                                 </h3>
+                                                {(() => {
+                                                  const sponsoringOrgName =
+                                                    resolveSponsoringOrgName(
+                                                      appointment.organizationId,
+                                                    );
+                                                  return sponsoringOrgName ? (
+                                                    <Badge
+                                                      className="text-[10px] font-semibold px-2 py-0.5 bg-indigo-50 text-indigo-700 border-0 rounded-md inline-flex items-center gap-1 max-w-[200px]"
+                                                      title={`Sponsored by ${sponsoringOrgName}`}
+                                                    >
+                                                      <Building2 className="h-3 w-3 shrink-0" />
+                                                      <span className="truncate">
+                                                        Sponsored ·{" "}
+                                                        {sponsoringOrgName}
+                                                      </span>
+                                                    </Badge>
+                                                  ) : null;
+                                                })()}
                                                 {consultantId &&
                                                   (() => {
                                                     const role =

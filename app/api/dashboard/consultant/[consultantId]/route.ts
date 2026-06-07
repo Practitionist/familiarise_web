@@ -517,6 +517,10 @@ export async function GET(
       (appointment: DashboardAppointment) => ({
         id: appointment.id,
         appointmentType: appointment.appointmentType,
+        // Org-funding marker — drives the "Sponsored · <Org>" badge on
+        // the consultant Home + Appointments surfaces. Previously dropped
+        // by this manual field-mapping transform.
+        organizationId: appointment.organizationId,
         slotsOfAppointment: appointment.slotsOfAppointment.map((slot) => ({
           id: slot.id,
           startsAt: slot.startsAt,
