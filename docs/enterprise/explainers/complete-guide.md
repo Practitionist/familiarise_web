@@ -2067,7 +2067,9 @@ These aren't platform cron entries — they're **GitHub Actions workflows** in `
 | Workflow → job | UTC / IST | Purpose |
 |---|---|---|
 | `advance-program-cycles` → `jobs/billing/advance-program-cycles.ts` | 02:15 / 07:45 | Cycle engine: ROLL or CLOSE ended assignments (§ 8.8) |
-| `dunning` → `jobs/billing/dunning.ts` | 23:30 / 05:00⁺ | ISSUED→OVERDUE, 7-day reminders ≤3 (§ 12 / invoicing doc) |
+| `generate-subscription-invoices` → `jobs/billing/generate-subscription-invoices.ts` | 01:00 / 06:30 | Daily subscription invoice generation; `concurrency` group guards overlap (§ 12 / invoicing doc) |
+| `settle-invoice-accruals` → `jobs/billing/settle-invoice-accruals.ts` | 1st of month 04:00 / 09:30 | Monthly accrual + overage rollup; `ENABLE_CONSOLIDATED_INVOICE`-gated, Serializable in-tx read (§ 36) |
+| `dunning` → `jobs/billing/dunning.ts` | 23:30 / 05:00⁺ | ISSUED→OVERDUE, 7-day reminders ≤3, then `ENABLE_DUNNING_SUSPEND`-gated suspend (§ 12 / invoicing doc) |
 | `wallet-low-balance` → `jobs/billing/wallet-low-balance.ts` | 23:45 / 05:15⁺ | Wallet-floor watch — **notify-only today** (see § 29.4) |
 | `timeout-member-overages` → `jobs/billing/timeout-member-overages.ts` | 23:00 / 04:30⁺ | 14-day CHARGE_MEMBER timeout → FAILED |
 
@@ -2084,9 +2086,9 @@ These aren't platform cron entries — they're **GitHub Actions workflows** in `
 |---|---|---|
 | `sweep-abandoned-overage-charges` → `jobs/cleanup/sweep-abandoned-overage-charges.ts` | 02:30 / 08:00 | Reap stale overage charges |
 | `process-data-exports` → `jobs/cleanup/process-data-exports.ts` | every 10 min | Drain DPDP §11 export jobs |
-| `dispatch-outbound-webhooks` → `jobs/cleanup/dispatch-outbound-webhooks.ts` | every 1 min | Deliver queued outbound webhooks |
+| `dispatch-outbound-webhooks` → `jobs/cleanup/dispatch-outbound-webhooks.ts` | every 1 min | Deliver queued outbound webhooks; re-queues stale `IN_FLIGHT` rows by `updatedAt` and claims atomically so overlapping ticks can't double-deliver (#812) |
 | `archive-webhook-events` → `jobs/cleanup/archive-webhook-events.ts` | Sun 00:00 | Roll off old webhook events |
-| `sweep-stuck-webhook-events` → `jobs/cleanup/sweep-stuck-webhook-events.ts` | every 10 min | Un-stick in-flight webhook deliveries |
+| `sweep-stuck-webhook-events` → `jobs/cleanup/sweep-stuck-webhook-events.ts` | every 10 min | Re-drives stuck inbound `WebhookEvent` rows, including Razorpay refunds deferred because they arrived before capture (7-day give-up cap, #813) |
 | `sso-cert-expiry-alert` → `jobs/cleanup/sso-cert-expiry-alert.ts` | 03:00 / 08:30 | Parse SAML X.509 `notAfter`, emit audit |
 | `prune-audit-logs` → `jobs/cleanup/prune-audit-logs.ts` | 03:15 / 08:45 | Retention prune of `OrgAuditLog` |
 | `release-pending-trust-earnings` → `jobs/cleanup/release-pending-trust-earnings.ts` | hourly :30 | Release `PENDING_TRUST` earnings |
@@ -2113,11 +2115,11 @@ These aren't platform cron entries — they're **GitHub Actions workflows** in `
 | `reconcile-payout-status` → `jobs/payouts/reconcile-payout-status.ts` | every 6h | Reconcile payout status |
 | `handle-stuck-payouts` → `jobs/payouts/handle-stuck-payouts.ts` | every 4h | Un-stick stalled payouts |
 
-### 29.3 Honesty flags (workflow ↔ script mismatches as of 2026-06-05)
+### 29.3 Honesty flags (workflow ↔ script mismatches)
 
-- `jobs/billing/generate-subscription-invoices.ts` and `jobs/billing/settle-invoice-accruals.ts` **exist but have no workflow** scheduling them — they don't run on a timer today.
-- `consolidated-invoice-rollup.yml` **workflow exists** but it points at `jobs/cleanup/consolidated-invoice-rollup.ts`, which **does not exist** — the scheduled run would fail. (Part VII § 36's "shipped behind flag" claim is aspirational; treat parent-child rollup as not-actually-running.)
-- `jobs/compliance/consent-retention-sweeper.ts` exists with no workflow (above).
+- `jobs/billing/generate-subscription-invoices.ts` and `jobs/billing/settle-invoice-accruals.ts` now **both have workflows** (#813): the first runs daily at 01:00 UTC, the second monthly on the 1st at 04:00 UTC, each behind a `concurrency` group.
+- The old `consolidated-invoice-rollup.yml` workflow + its missing `jobs/cleanup/consolidated-invoice-rollup.ts` script were **retired into `settle-invoice-accruals`** (#813), so the parent-child rollup runs there now (gated by `ENABLE_CONSOLIDATED_INVOICE`).
+- `jobs/compliance/consent-retention-sweeper.ts` still exists with no workflow (above) — this one remains an open gap as of 2026-06-05.
 
 ### 29.4 Wallet floor / auto-top-up — notify-only today (#777 §C)
 
@@ -2411,7 +2413,7 @@ Today: INR-centric. Orgs whose `contractCurrency` is USD/EUR/GBP route through S
 
 Schema ready: hierarchy is `Organization.parentOrganizationId` + the denormalized `rootOrganizationId` (group root for fast subsidiary scoping). **There is no `depth` column and no hierarchy helper lib** — scoping is done with the two FK columns directly. See [hierarchy](../00-foundations/06-hierarchy.md).
 
-🟡 **Not actually running.** A `consolidated-invoice-rollup.yml` workflow exists, but the script it invokes (`jobs/cleanup/consolidated-invoice-rollup.ts`) **does not exist in the tree** (§ 29.3), so the scheduled rollup would fail. There is no `ENABLE_CONSOLIDATED_INVOICE` flag. Treat parent-child rollup as designed-and-scaffolded, not live — it needs the job script before any first parent-child tenant.
+**Wired behind a flag (#813).** The parent-child rollup now runs as part of `jobs/billing/settle-invoice-accruals.ts` (the standalone `consolidated-invoice-rollup` job was retired into it, § 29.3), scheduled monthly on the 1st at 04:00 UTC and gated by `ENABLE_CONSOLIDATED_INVOICE` — so it is a no-op until that flag is set for a parent-child tenant. The rollup reads its accrual set inside a Serializable transaction, so two overlapping runs can't double-issue the parent invoice.
 
 ### 36.2 Use case
 
@@ -2848,7 +2850,7 @@ A: Yes. Unused credits can be refunded; pro-rated based on usage.
 A: Contract-specific; typically ₹10L-₹50L initial; raised based on payment history.
 
 **Q17: What happens if a B2B invoice isn't paid by due date?**
-A: Say Meridian Consulting (a fictional customer we use for failure walk-throughs) misses its NET-60 date. The `dunning` cron flips the invoice `ISSUED → OVERDUE` (stamping `markedOverdueAt`) and sends Meridian reminders on a **7-day cadence, capped at 3**. A booking-suspension cascade is **designed but NOT active** (🟡) — `dunningSuspendedAt` is never written today, so an unpaid invoice does **not** currently auto-suspend the org. Don't promise customers automatic suspension. See [invoicing](../10-money-and-ledger/08-invoicing.md).
+A: Say Meridian Consulting (a fictional customer we use for failure walk-throughs) misses its NET-60 date. The `dunning` cron flips the invoice `ISSUED → OVERDUE` (stamping `markedOverdueAt`) and sends Meridian reminders on a **7-day cadence, capped at 3**. After the reminders are exhausted there is now a booking-suspension stage (#812) that stamps `dunningSuspendedAt` 7 days past the last reminder and blocks the org's new sponsored bookings — but it only fires when `ENABLE_DUNNING_SUSPEND` is set. With that flag unset, dunning stays notify-only and an unpaid invoice does **not** auto-suspend the org, so don't promise customers automatic suspension unless the flag is on. See [invoicing](../10-money-and-ledger/08-invoicing.md).
 
 **Q18: Can members book with a different payer (personal card instead of org)?**
 A: Yes. Payer selector at checkout. Member picks.

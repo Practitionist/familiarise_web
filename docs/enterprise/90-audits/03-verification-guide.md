@@ -110,7 +110,7 @@ These exercise the surfaces the v2 mega-audit added. Most are **full dashboard U
 
 ### Flow I — Dunning visibility on overdue invoices (SPONSOR, INVOICE org)
 **Login:** `tour-owner@familiarise.dev` (Wipro) → **Billing → Invoices**.
-- An **OVERDUE** invoice renders with its lateness quantified ("OVERDUE · N days late"), not an undated alarm. The `dunning` cron marks ISSUED→OVERDUE past `dueDate` and sends 7-day × 3 reminders (`notifyOrgInvoiceOverdue`); the home action center shows "N invoices overdue → Pay now". *(Phase 9, #779 §A.)* **Note:** booking-suspend on terminal non-payment is **designed-not-active** — reminders fire, the org is not yet frozen.
+- An **OVERDUE** invoice renders with its lateness quantified ("OVERDUE · N days late"), not an undated alarm. The `dunning` cron marks ISSUED→OVERDUE past `dueDate` and sends 7-day × 3 reminders (`notifyOrgInvoiceOverdue`); the home action center shows "N invoices overdue → Pay now". *(Phase 9, #779 §A.)* **Note:** booking-suspend on terminal non-payment now ships behind `ENABLE_DUNNING_SUSPEND` (#812) — with the flag set, stage 3 stamps `dunningSuspendedAt` 7 days past the last reminder and blocks new sponsored bookings; with the flag unset, reminders fire but the org is not frozen.
 
 ### Flow J — Contract terminate + cascade / supersede (SPONSOR org)
 **Login:** `tour-owner@familiarise.dev` (Wipro) → **Contracts**.
@@ -170,7 +170,7 @@ npm run db:studio   # Prisma Studio
 ## ⚠️ What's intentionally incomplete (don't be alarmed)
 These are **known, tracked gaps** — verifying them as "not there" is correct. Full list + audit refs in [`subsystem-checklist`](02-subsystem-checklist.md). *(Updated 2026-06-05 post-v2 — several former gaps now ship; see the v2 flows above.)*
 - **Payout disbursement** sits at PROCESSING (gated `ENABLE_LIVE_PAYOUTS`, #776 §B) — money doesn't leave the gateway yet.
-- **Dunning suspension cascade** is **designed-not-active** (#779 §A) — overdue reminders fire (7-day × 3) but the org is not yet auto-suspended on terminal non-payment.
+- **Dunning suspension cascade** is **config-gated off by default** (#812) — overdue reminders fire (7-day × 3), and stage 3 auto-suspends the org 7 days past the last reminder only when `ENABLE_DUNNING_SUSPEND` is set; with the flag unset there is no auto-suspend.
 - **Add-EXPERT UI** (#729), **expert appointment view** (#754) — not built.
 - **Contract supersede/renew + SSO break-glass** exist as **routes/crons, not dashboard buttons** yet (#777 §B / #779 §E) — drive them via the route (Flows J/K).
 - IRN/e-invoice (`ENABLE_IRP_UPLOADER` off), GST TCS, Form 26Q/16A (`ENABLE_TDS_ADMIN_VIEW` off) — schema present, filing deferred (#778). Credit notes on refund **do** mint (#776).

@@ -75,15 +75,19 @@ The first edge is **post-completion reversal**. A RazorpayX payout that
 reaches `processed` is not guaranteed to be final: if the beneficiary's
 bank later returns the funds — a closed, frozen, or name-mismatched
 account — RazorpayX credits the amount back to our business account and
-fires a `payout.reversed` webhook. Our `PayoutStatus` has no `REVERSED`
-value today, so `reversed` collapses into `FAILED`, and the reconciler
-only re-polls rows in `PENDING`/`PROCESSING`, which means a
-`COMPLETED → reversed` transition is invisible to the poller. At go-live,
-the canary and the first production batches must therefore be reconciled
-by reading the `OrgAuditLog` `PAYOUT_REVERSED` row rather than relying on
-the status column, and a `REVERSED` enum plus a `COMPLETED → reversed`
-reconciliation path is the recommended fast-follow before NEFT/RTGS
-payouts go live.
+fires a `payout.reversed` webhook. This is now handled (#812): `PayoutStatus`
+carries a dedicated `REVERSED` value, and `markOrgPayoutReversed` claims a
+`COMPLETED` row into `REVERSED`, posts the exact inverse `ORG_PAYOUT`
+journal, re-opens the linked earnings to `READY`, and writes the
+`PAYOUT_REVERSED` audit entry in one transaction (the consultant rail
+mirrors this via `markConsultantPayoutReversed`). The one remaining caveat
+is that the gateway **poller** still only re-polls `PENDING`/`PROCESSING`
+and `mapPayoutStatus` collapses a polled `reversed` to `FAILED`, so a
+post-completion reversal is caught by the **webhook** path rather than the
+poller. At go-live, confirm the `payout.reversed` webhook is delivering and
+read the `OrgAuditLog` `PAYOUT_REVERSED` row to distinguish a true bank
+reversal from an ordinary failure; a poller-side `COMPLETED → reversed`
+re-poll remains a sensible fast-follow before NEFT/RTGS payouts go live.
 
 The second edge is the **UTR, which arrives on `payout.updated`**. The
 Unique Transaction Reference is the bank-rail receipt a host org uses to

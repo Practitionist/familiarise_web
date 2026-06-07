@@ -44,7 +44,7 @@ flowchart TD
 
   Q -->|"refund not landing"| RF[🗓️ reconcile-pending-<br/>refunds + cascade-<br/>refund-earnings]
 
-  Q -->|"invoice never<br/>generated"| INV[🗓️ generate-subscription-<br/>invoices ⚠️ NO WORKFLOW<br/>— run manually]
+  Q -->|"invoice never<br/>generated"| INV[🗓️ generate-subscription-<br/>invoices — daily 01:00 UTC]
 
   Q -->|"new cycle didn't<br/>bill / counters stale"| AS{assignment<br/>or contract?}
   AS -->|"assignment ACTIVE,<br/>rolledAt null"| CE[🚨 Cycle-engine<br/>rollover failed]
@@ -56,10 +56,11 @@ flowchart TD
 Three of those leaves (orphaned top-up captures, stuck payouts, pending
 refunds) have **no dedicated 🚨 section** — the cron *is* the runbook:
 force a run from the 🗓️ catalogue below and read its summary line. The
-two ⚠️ honestly-broken paths (`generate-subscription-invoices` has no
-workflow; `consolidated-invoice-rollup` references a missing script) are
-flagged inline in the catalogue — for those, "run it manually" is the
-current answer.
+two invoice-generation jobs that earlier lacked workflows now both fire
+on schedule (`generate-subscription-invoices` daily, `settle-invoice-accruals`
+monthly), and the `consolidated-invoice-rollup` job that referenced a
+missing script was retired into `settle-invoice-accruals` (#813), so the
+formerly-broken invoice paths are wired.
 
 ---
 
@@ -134,17 +135,16 @@ Two real variants of this skeleton:
 
 ### Enterprise billing & lifecycle
 
-Rows are ordered by daily execution time (UTC); pay attention to the ⚠️ markers — three jobs have no active GitHub Actions workflow and must be triggered manually until the gap is closed.
+Rows are ordered by daily execution time (UTC); pay attention to the ⚠️ markers — the jobs flagged there have no active GitHub Actions workflow and must be triggered manually until the gap is closed.
 
 | Workflow | Script | Cron (UTC) | What it does |
 |---|---|---|---|
 | `advance-program-cycles` | `jobs/billing/advance-program-cycles.ts` | `15 2 * * *` | Cycle engine: per ended `ProgramAssignment` ROLL (mint successor, `rolledAt`) or CLOSE. Runs **before** auto-renew so a live contract's assignment rolls first. |
 | `auto-renew-contracts` | `jobs/contracts/auto-renew-contracts.ts` | `30 2 * * *` | Mints RENEWAL successor + EXPIREs old (`autoRenewedAt` gate). Re-points programs to successor so the cycle engine keeps rolling. Runs 30 min **before** expire. |
 | `expire-contracts` | `jobs/contracts/expire-contracts.ts` | `0 3 * * *` | Flips ACTIVE contracts past `effectiveTo` → EXPIRED. Auto-renew already moved the renewable ones, so this catches only the non-renewing. |
-| `generate-subscription-invoices` | `jobs/billing/generate-subscription-invoices.ts` ⚠️ | **NO WORKFLOW** | One invoice per `BillingSubscription` with `nextInvoiceDate <= now`; claim = advance `nextInvoiceDate`. ⚠️ **No `.github/workflows` file invokes this as of 2026-06-05** — the job exists and its docstring claims "daily 01:00 IST", but nothing schedules it. Run manually until a workflow is added. (Inverse of `consolidated-invoice-rollup`: there the workflow exists but the script doesn't.) |
-| `settle-invoice-accruals` | `jobs/billing/settle-invoice-accruals.ts` ⚠️ | **NO WORKFLOW** | Rolls each org's unbilled `INVOICE_ACCRUAL` + `OVERAGE_INVOICE_ACCRUAL` bookings into one invoice (thin wrapper over `rollupOrgInvoiceAccruals`). ⚠️ Same gap — docstring says "monthly alongside generate-subscription-invoices" but **no workflow fires it**. Run manually until wired. |
-| `consolidated-invoice-rollup` | `jobs/cleanup/consolidated-invoice-rollup.ts` ⚠️ | `0 4 1 * *` (monthly, day-1) | Parent-org child-invoice rollup (`INVOICE_ROLLED_UP`). Gated by `ENABLE_CONSOLIDATED_INVOICE` (workflow no-ops when unset). ⚠️ **The referenced script is absent from the repo as of 2026-06-05** — the workflow will fail at `tsx` if the flag is ever set. Treat as not-yet-wired; do not rely on monthly parent rollups until the script lands. |
-| `dunning` | `jobs/billing/dunning.ts` | `30 23 * * *` (05:00 IST) | Stage 1 ISSUED→OVERDUE (`markedOverdueAt`, `INVOICE_OVERDUE`); stage 2 escalation reminders, 7-day cadence × max 3 (`dunningReminderCount`). Booking-suspend (`dunningSuspendedAt`) is 🟡 designed-not-active. |
+| `generate-subscription-invoices` | `jobs/billing/generate-subscription-invoices.ts` | `0 1 * * *` (01:00 UTC = 06:30 IST) | One invoice per `BillingSubscription` with `nextInvoiceDate <= now`; claim = advance `nextInvoiceDate`. The workflow carries a `concurrency` group (#813) so two overlapping runs queue rather than race the find-then-claim. |
+| `settle-invoice-accruals` | `jobs/billing/settle-invoice-accruals.ts` | `0 4 1 * *` (monthly, 1st, 04:00 UTC = 09:30 IST) | Rolls each org's unbilled `INVOICE_ACCRUAL` + `OVERAGE_INVOICE_ACCRUAL` bookings into one invoice (thin wrapper over `rollupOrgInvoiceAccruals`). Gated by `ENABLE_CONSOLIDATED_INVOICE` (no-ops when unset). Monthly because rolling up the same ISSUED invoices twice would duplicate parent invoices; the workflow also has a `concurrency` group (#813) and `rollupOrgInvoiceAccruals` now reads the accrual set inside a Serializable transaction, so a second overlapping run aborts with a benign P2034 serialization skip instead of double-billing. Absorbed the retired `consolidated-invoice-rollup` job (#813). |
+| `dunning` | `jobs/billing/dunning.ts` | `30 23 * * *` (05:00 IST) | Stage 1 ISSUED→OVERDUE (`markedOverdueAt`, `INVOICE_OVERDUE`); stage 2 escalation reminders, 7-day cadence × max 3 (`dunningReminderCount`); stage 3 (#812, `ENABLE_DUNNING_SUSPEND`-gated) stamps `dunningSuspendedAt` 7 days past the **last** reminder (`lastDunningReminderAt`), claimed + audit-logged in one Serializable transaction. |
 | `timeout-member-overages` | `jobs/billing/timeout-member-overages.ts` | `0 23 * * *` (04:30 IST per docstring) | Hard 14-day wall: never-settled `CHARGE_MEMBER` `OverageEvent` PENDING→FAILED (`chargeTimedOutAt`), frees the per-cycle ceiling, notifies the member. |
 | `sweep-abandoned-overage-charges` | `jobs/cleanup/sweep-abandoned-overage-charges.ts` | `30 2 * * *` | Sibling sweep (#785): FAILs never-*started* side-charges at 7d to free the ceiling **silently** (no member notify). Idempotent against the 14-day timeout cron. |
 | `wallet-low-balance` | `jobs/billing/wallet-low-balance.ts` | `45 23 * * *` (05:15 IST) | **NOTIFY-ONLY** floor: WALLET `BillingAccount`s below `minBalancePaise` → alert finance, stamp `autoTopUpLastFiredAt` (24h cooldown). No money moves; gateway-mandate auto-charge is `TODO(#777)`. |
@@ -157,7 +157,7 @@ These cron jobs keep the outbound webhook queue drained, heal stuck inbound even
 |---|---|---|---|
 | `dispatch-outbound-webhooks` | `jobs/cleanup/dispatch-outbound-webhooks.ts` | `* * * * *` → **~5 min effective** | Drains the `OutboundWebhookDelivery` queue (PENDING + due RETRY). Emits a `WEBHOOK`/WARN `SystemEvent` when backlog > 200. |
 | `archive-webhook-events` | `jobs/cleanup/archive-webhook-events.ts` | `0 0 * * 0` (weekly Sun) | Ages out processed inbound `WebhookEvent` rows. |
-| `sweep-stuck-webhook-events` | `jobs/cleanup/sweep-stuck-webhook-events.ts` | `*/10 * * * *` | Re-drives inbound `WebhookEvent` rows left `processed=false` after an `after()` callback crash, so money side-effects land without a gateway redelivery. |
+| `sweep-stuck-webhook-events` | `jobs/cleanup/sweep-stuck-webhook-events.ts` | `*/10 * * * *` | Re-drives inbound `WebhookEvent` rows left `processed=false` after an `after()` callback crash, so money side-effects land without a gateway redelivery. Also re-drives Razorpay refund webhooks that arrived before the payment was captured (the handler defers them by leaving the row unprocessed), terminally capping a deferred event at `giveUpAfterHours` (7 days) so an unknown payment can't churn forever. |
 | `sweep-orphaned-topup-captures` | `jobs/cleanup/sweep-orphaned-topup-captures.ts` | `*/30 * * * *` | Re-credits gateway-captured top-ups whose confirm/ledger post rolled back (`capturedAt` set, still PENDING). |
 | `cleanup-abandoned-org-top-ups` | `jobs/cleanup/cleanup-abandoned-org-top-ups.ts` | `0 2 * * *` | Reaps never-completed org wallet top-up intents past the grace window. |
 | `cascade-refund-earnings` | `jobs/refunds/cascade-refund-earnings.ts` | `*/15 * * * *` | Idempotent refund→earnings cascade (`mintRefundCreditNote`; `Refund.cascadedAt` gate). |
@@ -203,15 +203,16 @@ empty-folder / tentative-slot cleanups all live under the same
 `.github/workflows` + `jobs/**` convention but are outside the
 enterprise billing/compliance surface this doc owns.
 
-> 🔬 **How the ⚠️ gaps surfaced.** The four mismatches flagged above
-> (`generate-subscription-invoices` / `settle-invoice-accruals` /
-> `consent-retention-sweeper` exist with no workflow; `consolidated-
-> invoice-rollup` has a workflow targeting a missing script) were caught
-> in the 2026-06-05 docs refresh by diffing the `jobs/**` tree against
-> `.github/workflows/*.yml` both ways — a job with no matching `npx tsx`
-> line in any workflow, and a workflow whose `tsx` target doesn't exist
-> on disk. Re-run that diff after adding or moving any cron; a docstring
-> that *claims* a cadence is not proof a workflow fires it.
+> 🔬 **How the ⚠️ gaps surfaced.** The 2026-06-05 docs refresh caught four
+> mismatches by diffing the `jobs/**` tree against `.github/workflows/*.yml`
+> both ways — a job with no matching `npx tsx` line in any workflow, and a
+> workflow whose `tsx` target doesn't exist on disk. Three of those are now
+> closed (#813): `generate-subscription-invoices` and `settle-invoice-accruals`
+> have workflows, and the `consolidated-invoice-rollup` workflow + missing
+> script were retired into `settle-invoice-accruals`. Only
+> `consent-retention-sweeper` still exists with no workflow. Re-run that diff
+> after adding or moving any cron; a docstring that *claims* a cadence is not
+> proof a workflow fires it.
 
 ---
 
@@ -437,11 +438,16 @@ invoice-gen + expire so it reads invoices in their final state.
 - **Stage 2:** OVERDUE rows with `dunningReminderCount < 3` whose last
   reminder (`lastDunningReminderAt`, else `markedOverdueAt`) is **>7 days**
   old → bump count, re-notify at the next stage.
+- **Stage 3 (#812, `ENABLE_DUNNING_SUSPEND`-gated):** once all 3 reminders
+  have gone out and the invoice is still OVERDUE **7 days past the last
+  reminder** (`lastDunningReminderAt`, not `markedOverdueAt`, since the
+  three reminders already span ~21 days), stamp `dunningSuspendedAt`. The
+  claim and its `INVOICE_DUNNING_SUSPENDED` audit row commit together in a
+  single Serializable transaction so two replicas can't both stamp + log.
+  `checkout.ts` blocks the org's new sponsored bookings while any such
+  invoice is unpaid; paying the invoice lifts the suspension naturally.
 - Only orgs in `ACTIVE` / `PENDING_VERIFICATION` / `SUSPENDED` are dunned;
   `DEACTIVATED` orgs are not chased.
-- Booking-suspend (`dunningSuspendedAt`) is 🟡 **designed-not-active**
-  (`TODO(#779)`) — if someone expects an overdue org to get
-  booking-suspended automatically, that has **not** shipped.
 
 **Response:**
 

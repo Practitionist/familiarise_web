@@ -112,7 +112,8 @@ Source: `.github/workflows/`. Times in **UTC** (add 5h 30m for IST).
 | Daily | 04:30 | `msme-payment-alerts.yml` | [03](./03-msme-43b-h.md) |
 | Weekly | Mon 20:00 | `create-payout-batch.yml` | (payouts) |
 | Weekly | Mon 21:00 | `process-payouts.yml` | (payouts) |
-| Monthly | 1st of month, 04:00 | `consolidated-invoice-rollup.yml` | (B2B billing) |
+| Daily | 01:00 | `generate-subscription-invoices.yml` | (B2B billing) |
+| Monthly | 1st of month, 04:00 | `settle-invoice-accruals.yml` (absorbed the retired `consolidated-invoice-rollup.yml`, #813; `ENABLE_CONSOLIDATED_INVOICE`-gated) | (B2B billing) |
 
 **Crons to add (per #738):**
 

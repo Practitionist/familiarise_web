@@ -1,8 +1,8 @@
 # 05 — Refund & chargeback tax adjustments
 
-> **Status:** 🟡 schema now landed, wiring still missing. The tax-adjustment **models** (`CreditNote`, `TdsAdjustment`, `GstTcsAdjustment`) are **present in `prisma/schema.prisma`** as of #776/#778 (verified 2026-06-05) — but the refund cascade (`lib/payments/operations/refund.ts`) still emits **no tax-adjustment rows**, so every refund still silently corrupts the next 26Q (→Form 140) / GSTR-8 filing period until the cascade is wired.
+> **Status:** 🟡 partially wired. The tax-adjustment **models** (`CreditNote`, `TdsAdjustment`, `GstTcsAdjustment`) are **present in `prisma/schema.prisma`** as of #776/#778. Two of the three hooks are now live: the refund cascade (`lib/payments/operations/refund.ts`) mints a `CreditNote` for the GST reversal, and as of #813 it also calls the shared `recordTdsReversal` (`lib/payments/tax/tds-service.ts`) to write a negative `isReversal` **`TDSRecord`** so the next 26Q (→Form 140) nets the withholding back out. What remains missing is the richer **`TdsAdjustment`** consolidation model + its FVU export, and the entire **GST TCS (`GstTcsAdjustment`)** path — so a refund of a TCS-bearing B2C supply still corrupts the next GSTR-8 period until that leg is wired.
 > **Audience:** payment / refund / dispute code; finance ops.
-> **Last reviewed:** 2026-06-05 (regulatory facts web-verified as of 2026-06-05; prior review 2026-05-02)
+> **Last reviewed:** 2026-06-07 (refund-driven TDS reversal via `TDSRecord` wired in #813; regulatory facts web-verified 2026-06-05; prior review 2026-05-02)
 > **Linked issues:** [#738 Items A, B, H](https://github.com/Practitionist/familiarise_web/issues/738) (this is the largest gap added in #738).
 
 ## What it is
@@ -11,28 +11,28 @@ When a payment is refunded (or a chargeback is lost), the **money already moved*
 
 | Hook | What was deposited | Adjustment required |
 |---|---|---|
-| **Income-tax TDS (Sec 194O / 195; §393 under the 2025 Act from 1-Apr-2026)** | Already deposited to govt by 7th of following month | Reverse-credit in **next** 26Q→Form 140 / 27Q→Form 144 quarterly return as a negative adjustment line. Cross-FY adjustments require an income-tax refund claim by the consultant — NOT something we can self-adjust. |
+| **Income-tax TDS (Sec 194O / 195; §393 under the 2025 Act from 1-Apr-2026)** | Already deposited to govt by 7th of following month | Reverse-credit in **next** 26Q→Form 140 / 27Q→Form 144 quarterly return as a negative adjustment line. **Now wired (#813):** `recordTdsReversal` writes a negative `TDSRecord` capped at the original withholding; if the original record is unfiled the reversal copies its FY/quarter, if already filed it stamps the current IST-reckoned FY/quarter (the adjust-against-future-liability convention). Cross-FY adjustments that exceed the consultant's current-quarter liability still ultimately require an income-tax refund claim by the consultant, and correction statements for already-filed quarters remain a manual CA action; the policy is provisional pending CA sign-off. |
 | **GST output liability** (the GST charged on the original invoice) | Already discharged in GSTR-3B for the month of supply | Issue a **GST credit note** under CGST **Sec 34** (Rule 53 content/format), link to original invoice, and net it off in the next month's GSTR-1 / 3B. *(Sec 34/GSTR mechanics unaffected by GST 2.0 — verified 2026-06-05.)* |
 | **GST TCS (Sec 52)** — B2C only | Already collected from consultant + deposited via GSTR-8 | Reduce the next-month GSTR-8 by the refunded TCS, OR file a GSTR-8 amendment if the supply month already passed. (TCS rate is 0.5% since 10-Jul-2024 — see [doc 02](./02-gst-overview.md).) |
 | **Consultant earnings ledger** | Already credited to consultant's earnings | Reverse via the existing PaymentLeg negative-leg cascade. ✅ already works. |
 | **Org earnings ledger** (B2B) | Already credited to org's earnings + accrued in the next invoice | Reverse via existing cascade. ✅ already works. |
 | **Org payout / consultant payout** (already disbursed) | Money is gone | **Clawback** flow needed — see #715/#716 epics. |
 
-The **first three rows** are entirely unimplemented. Without them, every refund causes the next quarterly TDS return + the next monthly GSTR-8 to be **wrong by the refunded amount**, which is a Sec 234E / Sec 122 penalty risk.
+Of the first three rows, the **GST credit note** and the **income-tax TDS reversal** are now wired (the latter via a negative `TDSRecord`, #813); the **GST TCS (Sec 52)** reversal is still entirely unimplemented. Until the TCS leg lands, a refund of a TCS-bearing B2C supply leaves the next monthly GSTR-8 **wrong by the refunded amount**, which is a Sec 234E / Sec 122 penalty risk.
 
 ## When it applies
 
 ### B2B (org-sponsored)
 
 - Refund of an org-sponsored booking → reduce the org's invoice (or issue a credit note if invoice already issued).
-- TDS reversal: applies if the refund causes the consultant's per-FY total to drop back below the threshold. Edge case but real.
+- TDS reversal: now emitted by the refund cascade as a negative `TDSRecord` proportional to the refund (#813), so the next 26Q nets it out; it also covers the case where the refund drops the consultant's per-FY total back below the threshold.
 - GST credit note: applies if the org invoice was already issued. Issued to the org under their GSTIN.
 - GST TCS: N/A for B2B (no TCS collected on org leg).
 
 ### B2C (consumer marketplace)
 
 - Refund of a consumer payment → reduce consultant earnings + reverse the negative `PaymentLeg`. Already works.
-- TDS reversal: same logic as B2B; affects per-FY consultant aggregate.
+- TDS reversal: same logic as B2B; the negative `TDSRecord` affects the per-FY consultant aggregate (#813).
 - GST credit note: applies if the consumer invoice was already issued. Issued to the consumer (or the consultant supplier per Sec 34, depending on who's the deemed supplier — for facilitator marketplace like ours, the consultant issues, but the platform generates on their behalf).
 - GST TCS: applies if the consultant is GST-registered. Reduce next month's GSTR-8 batch.
 
@@ -40,6 +40,7 @@ The **first three rows** are entirely unimplemented. Without them, every refund 
 
 - Same cascade as refund, but triggered by the gateway, not by us. Razorpay/Stripe debits us; consumer never went through our refund flow.
 - Currently `app/api/webhooks/utils.ts:955–1104` (dispute auto-hold) holds consultant earnings but does NOT emit any tax adjustment.
+- A refund **then** a lost chargeback on the same payment can no longer double-reverse the TDS: `recordTdsReversal` caps cumulative reversals at the original withholding, so the second cascade adds nothing once the first has already reversed it (#813).
 
 ### Partial refund
 
@@ -50,7 +51,9 @@ The **first three rows** are entirely unimplemented. Without them, every refund 
 | File | What it does | State |
 |---|---|---|
 | `lib/payments/operations/refund.ts:336–388` | Refund cascade — negative `PaymentLeg`, wallet credit, ConsultantEarnings refundedShareAmount update | ✅ ledger-side OK |
-| Refund tax-adjustment hook (writes the rows below) | **Missing** (schema is ready; the cascade doesn't call it) | 🔴 |
+| `recordTdsReversal` (`lib/payments/tax/tds-service.ts`), called from `refund.ts` + `payouts/earnings-service.ts` | Writes a negative `isReversal` `TDSRecord` on refund (integer-paise proportion, capped at the original, filed-aware FY/quarter) | ✅ TDS reversal wired (#813) |
+| `mintRefundCreditNote` (called from the cascade + the gateway-refund webhook) | Mints the Sec 34 GST credit note, idempotent on `refundId` | ✅ GST credit note wired |
+| `TdsAdjustment` + `GstTcsAdjustment` write hook (the rows below) | **Missing** (schema is ready; the cascade writes `TDSRecord`/`CreditNote` but not these consolidation models) | 🔴 |
 | `CreditNote` model (schema) | **Present** — per-org `creditNoteNumber` + `fiscalYear`, `@@unique([organizationId, creditNoteNumber])`, `refundId @unique` (idempotent minting, #776), Sec 34 invoice FK | ✅ schema-final |
 | `TdsAdjustment` model (schema) | **Present** — signed `amountPaise`, `financialYear`/`quarter`, `reportedInForm26Q` | ✅ schema-final |
 | `GstTcsAdjustment` model (schema) | **Present** — signed `amountPaise`, FK to `GstTcsBatch` | ✅ schema-final |
@@ -171,11 +174,11 @@ await applyTaxAdjustments({
 
 ### E. Cross-FY edge case
 
-When the refund happens in a different FY than the original payment, **we cannot adjust the previous FY's 26Q/27Q** — that return is closed. Instead:
+When the refund happens in a different FY than the original payment, **we cannot rewrite the previous FY's 26Q/27Q** — that return is closed. The proposed `TdsAdjustment` flow below was to skip the record entirely; the now-shipped `TDSRecord` reversal (#813) instead follows the **adjust-against-future-liability** convention — if the original record is already reported in Form 26Q, the reversal is stamped into the current IST-reckoned FY and quarter rather than the closed one. The two are not in conflict: the future FVU export must still treat a cross-FY reversal as a current-quarter negative line and surface the manual-correction path below; this policy is provisional pending CA sign-off.
 
 1. Surface this in admin dashboard as "Cross-FY refund — consultant refund-claim required".
 2. Generate a Form 16A correction for the consultant showing that ₹X TDS was deposited but the underlying income was reversed; consultant claims a refund from IT dept directly.
-3. Skip the 26Q adjustment record (don't pollute the current FY's return with a previous FY's reversal).
+3. For the closed FY's already-filed return, the correction statement is a manual CA action — the automated `TDSRecord` reversal lands in the current quarter, not the closed one.
 
 ## Acceptance
 

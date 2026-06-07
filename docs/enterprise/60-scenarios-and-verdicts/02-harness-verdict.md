@@ -11,7 +11,7 @@ last-reviewed: 2026-06-05
 The evaluation harness exercises four representative org scenarios plus a
 set of cross-cutting checks — **36 line items**, **re-derived against
 current code** after the v2 mega-audit (#777/#778/#779) shipped.
-Current verdict: **30 ✅ / 6 🟡 / 0 🔴** as of **2026-06-05**.
+Current verdict: **31 ✅ / 5 🟡 / 0 🔴** as of **2026-06-07**.
 
 **How to read this verdict.** Each row is one capability the harness asserts, scored from the customer's POV: **✅** means a seed user can drive it end-to-end *today* and get the right money/state; **🟡** means the schema is final and the happy path is correct, but a follow-on (a gateway call, a cron schedule, a cascade) is deliberately gated **off** — it stops short, it isn't wrong. The **evidence** for each row lives in three places, named in its Notes cell: the **code path** (`lib/…` / route / `jobs/…`), the **worked Dr/Cr** in [scenarios-and-examples](01-scenarios-and-examples.md) (linked per row), and the **click-through** to see it live in [verification-guide](../90-audits/03-verification-guide.md). A row is only ✅ if all three line up on a fresh reseed.
 
@@ -24,8 +24,8 @@ Current verdict: **30 ✅ / 6 🟡 / 0 🔴** as of **2026-06-05**.
 
 Every 🟡 is a row where the **schema is final and the happy path works**,
 but a populator (a cron schedule), a gateway integration (live payouts,
-recurring mandates), or a downstream cascade (dunning suspend, TDS
-adjustment) is deliberately **not wired** this wave. No 🔴 outstanding —
+recurring mandates), or a downstream cascade (the `TdsAdjustment` model) is
+deliberately **not wired** this wave. No 🔴 outstanding —
 nothing in scope produces a wrong result; the gaps are *missing follow-on
 automation*, not incorrect behaviour.
 
@@ -48,7 +48,7 @@ Items 1–7 exercise the postpaid invoice path end-to-end — contract creation 
 | 2 | `LICENSED_SEAT` Program with per-cycle cap + `overageBehavior=CHARGE_ORG` | ✅ | `POST /programs`, discriminated-union Zod body. Money config **locks 🔒** on the first assignment (`configLockedAt`, #779 §B). |
 | 3 | Booking accrues a `PaymentLeg(source=INVOICE_ACCRUAL)` + `BookingUtilization` | ✅ | `lib/payments/operations/checkout.ts` calls `recordBookingUtilization` and writes the accrual leg in the same Serializable TX as the Payment. |
 | 4 | Cap exhaustion → CHARGE_ORG overage with surcharge + circuit breaker | ✅ | `recordOverageAtCheckout` → `OverageEvent PENDING`; `overageSurchargeBps` markup; `maxOveragePerCyclePaise` breaker falls back to `BLOCK` (`PROGRAM_CAP_EXHAUSTED`). Pre-checkout preview at `/checkout/overage-preview` (#777 §C). See [scenarios-and-examples §5.12](01-scenarios-and-examples.md). |
-| 5 | Cycle close rolls accrued bookings + overage into one `OrganizationInvoice` | 🟡 | `settle-invoice-accruals.ts` + `generate-subscription-invoices.ts` bodies are live (and walk `OverageEvent PENDING→ACCRUED`); **neither has a GitHub Actions schedule** (operational hole, see Summary). Manual `POST /invoices` + the daily `nextInvoiceDate` sweep work today. |
+| 5 | Cycle close rolls accrued bookings + overage into one `OrganizationInvoice` | ✅ | `settle-invoice-accruals.ts` (monthly, 1st, 04:00 UTC) + `generate-subscription-invoices.ts` (daily, 01:00 UTC) are now both **scheduled** with `concurrency` groups (#813); they walk `OverageEvent PENDING→ACCRUED`, and the accrual rollup reads inside a Serializable transaction so overlapping runs can't double-issue. Manual `POST /invoices` still works as an escape hatch. |
 | 6 | Contract terminate / supersede + cascade (no zombie assignments) | ✅ | Terminate PATCH is guarded (live-assignment + outstanding-invoice blocks) then cascades programs→EXPIRED, assignments→CLOSED in one tx. Supersede route mints successor + re-points programs (#779 §A). Route-level only — no dashboard button (see Summary). |
 | 7 | E-invoice (IRN) mapper + uploader | 🟡 | `buildIrpPayload` (NIC schema v1.1) + `irp-uploader.ts` cron are real and env-gated behind `ENABLE_IRP_UPLOADER` (off) + `CLEARTAX_*` creds; flag-off default is correct for sub-₹5cr (#778). |
 
@@ -104,46 +104,39 @@ Each row covers a capability that spans all four org shapes — RBAC, audit trai
 | 30 | Refund credit note (CGST Sec 34 / Rule 53) on invoiced refund | ✅ | `mintRefundCreditNote` (unified across cascade + webhook), proportional tax split, gapless per-org `<PREFIX>-CN-<FY>-<SEQ>`, `refundId @unique` idempotency (#776/#778 §D). |
 | 31 | Refund-failed notification | ✅ | `reconcile-pending-refunds.ts` (every 15 min) pages the payer on a gateway-rejected `Refund` via `notifyFailedRefunds`, once (`failedNotifiedAt` gate) (#779 §A). |
 | 32 | CHARGE_MEMBER overage timeout → FAILED | ✅ | `timeout-member-overages.ts` (23:00 UTC, scheduled, 14-day wall) stamps `chargeTimedOutAt`, flips `OverageEvent → FAILED`, frees the breaker ceiling, notifies the member (#779 §A). |
-| 33 | Refund-driven TDS adjustment (`TdsAdjustment`) | 🟡 | **Schema-only.** The refund cascade reverses earnings + posts the ledger reversal, but **no code writes a `TdsAdjustment` row** — blocked on the consultant-payout TDS unification + FVU export (#778 §E/§F). Don't read refund-driven 26Q/27Q reversal as live. |
+| 33 | Refund-driven TDS reversal | 🟡 | **Reversal ✅, richer model schema-only.** The refund cascade now calls the shared `recordTdsReversal` (`tax/tds-service.ts`), which writes a negative `isReversal` `TDSRecord` so the quarterly 26Q nets the withholding back out — integer-paise proportion, capped at the original (refund-then-chargeback can't double-reverse), filed-aware FY/quarter stamping, IST-aware (#813). The richer `TdsAdjustment` model is still **schema-only** (the consolidation target, #778 §D/§F), which is why this stays 🟡. |
 | 34 | Nightly reconciliation over the journal + derived caches | ✅ | `runReconcileLedgers` emits `WALLET_BALANCE_DRIFT`, `LEDGER_TXN_IMBALANCE`, `EARNINGS_LEDGER_DRIFT`, `PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT`, `ACTIVE_SEAT_COUNT_DRIFT`, `PAYMENT_LEG_SUM_MISMATCH`, `ORG_PAYOUT_TOTAL_MISMATCH`, plus v1 `LEDGER_BALANCE_SNAPSHOT_DRIFT` / `REFUND_BOOKING_COHERENCE` (#776). `ok:true` on a fresh reseed. Wired `reconcile-ledgers.yml` (nightly 03:45 UTC) + admin route. |
 | 35 | LICENSED_SEAT cap counts engagements across plan types | ✅ | One `Appointment` = one engagement (#710). CONSULTATION/WEBINAR debit 1 at checkout; CLASS debits N at enrolment; SUBSCRIPTION debits 1 per allocation lazily. Counter increment is a guarded conditional UPDATE (cap-check + increment can't race). |
 
 ## Summary
 
-- **30 ✅** — core capability / funding / program / rate-card / wallet, the
+- **31 ✅** — core capability / funding / program / rate-card / wallet, the
   live checkout-leg wiring (rows 3, 9, 15), HYBRID self-deal (13), the
   credit money-meter (14), engagement-cap counting (35), reconciliation
-  (34), and the **v2 lifecycle surfaces that ship complete**: cycle
-  rollover (18) + auto-renew (19) + their crons, contract terminate/
-  supersede + cascade (6), config lock + archive (25, 26), the
-  OverageEvent system with surcharge + breaker + member-timeout (4, 32),
-  field-level RBAC (24), SSO break-glass (17), verification resubmit (27),
-  webhook rotation grace (28), data export (29), refund credit notes (30),
-  refund-failed notify (31).
-- **6 🟡** — schema-final, happy-path-correct, but each stops short by
+  (34), the now-scheduled cycle-close invoicing (5), and the **v2 lifecycle
+  surfaces that ship complete**: cycle rollover (18) + auto-renew (19) +
+  their crons, contract terminate/ supersede + cascade (6), config lock +
+  archive (25, 26), the OverageEvent system with surcharge + breaker +
+  member-timeout (4, 32), field-level RBAC (24), SSO break-glass (17),
+  verification resubmit (27), webhook rotation grace (28), data export (29),
+  refund credit notes (30), refund-failed notify (31).
+- **5 🟡** — schema-final, happy-path-correct, but each stops short by
   design (one row each):
   1. **Live payouts OFF** (row 12) — `ENABLE_LIVE_PAYOUTS=false`; org +
      consultant payouts freeze at `PROCESSING`, money never leaves the
      gateway. The full posting + TDS is computed; only the disbursement
      call is gated.
-  2. **Dunning suspension cascade designed-not-active** (row 36) —
-     `dunningSuspendedAt` exists, but **no code writes it** (`TODO(#779)`);
-     dunning is notify-only (mark OVERDUE + 7-day × ≤3 reminders), never
-     freezes the org.
+  2. **Dunning suspension config-gated off by default** (row 36) — stage 3
+     now writes `dunningSuspendedAt` and blocks new sponsored bookings, but
+     only when `ENABLE_DUNNING_SUSPEND` is set (#812); with the flag unset,
+     dunning stays notify-only (mark OVERDUE + 7-day × ≤3 reminders).
   3. **Wallet auto-top-up notify-only** (row 20) — detects the dip and
      alerts; no recurring mandate, no auto-charge, no `WalletTopUp`.
-  4. **`TdsAdjustment` schema-only** (row 33) — refund cascade reverses
-     earnings + ledger but writes no tax-adjustment row.
+  4. **`TdsAdjustment` model schema-only** (row 33) — the refund-driven
+     reversal itself is now live via a negative `TDSRecord` (`recordTdsReversal`,
+     #813); only the richer `TdsAdjustment` consolidation model is unwired.
   5. **IRP uploader gated off** (row 7) — mapper + cron are real but
      behind `ENABLE_IRP_UPLOADER` + `CLEARTAX_*`; correct for sub-₹5cr.
-  6. **`generate-subscription-invoices` + `settle-invoice-accruals` have
-     NO scheduling workflow** (row 5) — both job bodies are live, but
-     **neither `.github/workflows/*.yml` exists**, so the explicit
-     month-end roll-up / accrual-settle cron never fires on a timer. The
-     daily `BillingSubscription.nextInvoiceDate <= now` sweep + manual
-     `POST /invoices` cover billing today; the cron-on-cron is the
-     operational hole. **This is the one 🟡 that is a wiring miss rather
-     than an intentional gate** — flag it to ops.
 - **Caveat on two ✅ rows — route-level only, no dashboard UI:** contract
   **supersede/renew** (row 6) and **SSO break-glass** (row 17) work
   end-to-end via the route/cron and are counted ✅, but neither has a
@@ -156,15 +149,17 @@ Each row covers a capability that spans all four org shapes — RBAC, audit trai
 
 | # | Item | Verdict | Notes |
 |---|------|---------|-------|
-| 36 | ISSUED invoice past `dueDate` → OVERDUE + 7-day × ≤3 reminders | 🟡 | Reminders **✅**: the `dunning.ts` cron (23:30 UTC ≈ 05:00 IST, **scheduled**) marks `ISSUED → OVERDUE` (`markedOverdueAt`) and sends `notifyOrgInvoiceOverdue` on a 7-day cadence capped at 3 (`dunningReminderCount`), each claim idempotency-gated. **🟡 overall** because the booking-suspend cascade on terminal non-payment is **designed-not-active** (`dunningSuspendedAt`, `TODO(#779)`) — it never freezes the org. See [scenarios-and-examples §5.13](01-scenarios-and-examples.md) / [invoicing §7](../10-money-and-ledger/08-invoicing.md). |
+| 36 | ISSUED invoice past `dueDate` → OVERDUE + 7-day × ≤3 reminders → optional suspend | 🟡 | Reminders **✅**: the `dunning.ts` cron (23:30 UTC ≈ 05:00 IST, **scheduled**) marks `ISSUED → OVERDUE` (`markedOverdueAt`) and sends `notifyOrgInvoiceOverdue` on a 7-day cadence capped at 3 (`dunningReminderCount`), each claim idempotency-gated. Stage 3 now stamps `dunningSuspendedAt` 7 days past the last reminder, writes `INVOICE_DUNNING_SUSPENDED`, and blocks new sponsored bookings (claim + audit in one Serializable tx, #812) — but it is **`ENABLE_DUNNING_SUSPEND`-gated and off by default**, which keeps the row **🟡**. See [scenarios-and-examples §5.13](01-scenarios-and-examples.md) / [invoicing §7](../10-money-and-ledger/08-invoicing.md). |
 
 > **Cron schedule cross-check** (GitHub Actions → `jobs/**`, verified
-> 2026-06-05): `advance-program-cycles` 02:15 · `auto-renew-contracts`
-> 02:30 · `expire-contracts` 03:00 · `reconcile-ledgers` 03:45 ·
+> 2026-06-07): `generate-subscription-invoices` 01:00 (daily) ·
+> `advance-program-cycles` 02:15 · `auto-renew-contracts` 02:30 ·
+> `expire-contracts` 03:00 · `reconcile-ledgers` 03:45 ·
+> `settle-invoice-accruals` 04:00 (monthly, 1st, `ENABLE_CONSOLIDATED_INVOICE`-gated) ·
 > `timeout-member-overages` 23:00 · `dunning` 23:30 · `wallet-low-balance`
-> 23:45 (all UTC). `irp-uploader` 02:30 (gated `ENABLE_IRP_UPLOADER`).
-> **Unscheduled:** `generate-subscription-invoices`,
-> `settle-invoice-accruals` (job files exist, no workflow — row 5).
+> 23:45 (all UTC). `irp-uploader` 02:30 (gated `ENABLE_IRP_UPLOADER`). The
+> two invoice jobs flagged unscheduled in the prior verdict now both have
+> workflows with `concurrency` groups (#813 — row 5).
 
 ### Related docs
 

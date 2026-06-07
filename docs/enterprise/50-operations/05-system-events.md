@@ -235,18 +235,20 @@ INVOICE events record the full arc of an organization's billing document — fro
 | action | Emission point |
 |---|---|
 | `PURCHASE_ORDER_CREATED` | PO route |
-| `INVOICE_GENERATED` / `INVOICE_ISSUED` | `generate-subscription-invoices` + accrual rollup |
+| `INVOICE_GENERATED` / `INVOICE_ISSUED` | `generate-subscription-invoices` (daily) + accrual rollup (`settle-invoice-accruals`, monthly) |
 | `INVOICE_OVERDUE` **(v2 #779)** | `dunning` cron stage 1 (ISSUED→OVERDUE, stamps `markedOverdueAt`) |
+| `INVOICE_DUNNING_SUSPENDED` **(#812)** | `dunning` cron stage 3 (`ENABLE_DUNNING_SUSPEND`-gated) when an OVERDUE invoice stays unpaid 7 days past the last reminder; stamps `dunningSuspendedAt` |
 | `INVOICE_PAYMENT_INITIATED` / `INVOICE_PAID` | invoice pay flow |
 | `INVOICE_CANCELLED` / `INVOICE_VOIDED` / `INVOICE_REFUNDED` / `REFUND_DENIED` | invoice admin actions |
-| `INVOICE_ROLLED_UP` | `consolidated-invoice-rollup` cron (parent rolls up child invoices) — see ⚠️ in `runbooks`: the workflow currently targets a missing script |
+| `INVOICE_ROLLED_UP` | accrual rollup in `settle-invoice-accruals` (parent rolls up child invoices), which absorbed the retired `consolidated-invoice-rollup` job (#813) |
 
 > Dunning **stage 2** (escalation reminders, 7d cadence × max 3) does
 > **not** emit a distinct audit action — it bumps
 > `dunningReminderCount` + `lastDunningReminderAt` and re-notifies; only
-> the stage-1 ISSUED→OVERDUE flip writes `INVOICE_OVERDUE`. The
-> `dunningSuspendedAt` booking-suspend cascade is 🟡 designed-not-active
-> (`TODO(#779)`), so no suspend action exists yet.
+> the stage-1 ISSUED→OVERDUE flip writes `INVOICE_OVERDUE`. Stage 3
+> (`ENABLE_DUNNING_SUSPEND`-gated, #812) now writes `INVOICE_DUNNING_SUSPENDED`
+> when it stamps `dunningSuspendedAt`; the claim and that audit row commit
+> together in one Serializable transaction.
 
 ### `PAYOUT`
 PAYOUT events trace the full disbursement lifecycle — from batch creation and gateway submission through terminal success, failure, or reversal — as well as the earnings hold/release gate and the manual clawback path when a refund hits an already-completed payout.
@@ -256,7 +258,7 @@ PAYOUT events trace the full disbursement lifecycle — from batch creation and 
 | `PAYOUT_INITIATED` / `PAYOUT_PROCESSED` / `PAYOUT_COMPLETED` / `PAYOUT_CANCELLED` / `PAYOUT_FAILED` | payout pipeline + webhooks |
 | `EARNINGS_HELD` / `EARNINGS_RELEASED` | hold gate + release cron |
 | `PAYOUT_CLAWBACK` | `applyRefundCascade` when a refund hits an already-COMPLETED payout (manual recovery v1) |
-| `PAYOUT_REVERSED` | `payout.reversed` webhook (bank rejected a submitted transfer) |
+| `PAYOUT_REVERSED` | `payout.reversed` webhook (bank rejected a submitted transfer). On the org side `markOrgPayoutReversed` writes this audit action; the consultant side `markConsultantPayoutReversed` claims COMPLETED→REVERSED, posts the inverse PAYOUT journal, and re-opens its earnings to READY but has no consultant-scoped audit table, so it logs the equivalent as structured output (#812). |
 
 ### `SETTINGS`
 Configuration changes that affect org identity, access control, or compliance posture all land in SETTINGS — from SSO toggling and domain verification to audit-log exports and the SSO-cert expiry warning fired by cron.

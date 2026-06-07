@@ -101,7 +101,7 @@ per-row log). Know what each prints so you can build the alert:
 | Cycle engine | `advance-program-cycles` | `scanned / rolled / closed / skipped` | `PROGRAM_ASSIGNMENT_ROLLED` audit row per ROLL/CLOSE |
 | Contract auto-renew | `auto-renew-contracts` | `scanned / renewed / skipped` | `CONTRACT_AUTO_RENEWED` audit row |
 | Contract expiry | `expire-contracts` | (expired count) | `CONTRACT_EXPIRED` audit row |
-| Dunning | `dunning` | `scannedStage1 / markedOverdue / scannedStage2 / remindersSent` | `INVOICE_OVERDUE` (stage 1 only) |
+| Dunning | `dunning` | `scannedStage1 / markedOverdue / scannedStage2 / remindersSent / suspended` | `INVOICE_OVERDUE` (stage 1), `INVOICE_DUNNING_SUSPENDED` (stage 3, `ENABLE_DUNNING_SUSPEND`) |
 | Overage timeout | `timeout-member-overages` | `scanned / timedOut` | — (member notify) |
 | Overage abandon sweep | `sweep-abandoned-overage-charges` | `scanned / failed` + `::notice::` | — (silent) |
 | Wallet floor (notify-only) | `wallet-low-balance` | `scanned / notified` | — (finance notify) |

@@ -298,6 +298,16 @@ the operator's explicit pause wins over the retry schedule.
 a second tick observing IN_FLIGHT skips the row) → `SUCCESS` | `RETRY`
 | `FAILED`.
 
+The soft lock is hardened against two failure modes (#812). A worker that
+crashes mid-POST would otherwise leave a row stuck in `IN_FLIGHT` forever,
+because nothing re-selects that status; the worker now treats an `IN_FLIGHT`
+row whose `updatedAt` is older than the stale window as a crashed-mid-delivery
+orphan and re-queues it. And because two ticks could both read a `PENDING`
+(or stale-`IN_FLIGHT`) row before either flips it, the flip to `IN_FLIGHT`
+is a guarded atomic claim — an `updateMany` that only succeeds if the row is
+still in the expected state — so a `count === 0` loser skips the row and
+overlapping ticks can no longer double-deliver.
+
 ## API gate matrix
 
 See `docs/enterprise/00-foundations/04-roles-and-permissions.md` for the canonical

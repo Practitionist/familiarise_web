@@ -195,8 +195,8 @@ __tests__/enterprise/   cap, overage, credit-pool, reachable-paths, billing-admi
 - [ ] Atomic gapless numbering `<prefix>-<FY>-<seq>` (Rule 46) `✅` — `invoice-numbering.ts`
 - [ ] Invoice pay (Razorpay) ISSUED→PAID + ledger `✅` — `invoices/[invoiceId]/pay`
 - [ ] Invoice PDF `✅ (verify post react-pdf #707)` — `invoices/[invoiceId]/pdf`
-- [ ] Subscription-invoice cron + accrual settle `✅` — `generate-subscription-invoices.ts`, `settle-invoice-accruals.ts`
-- [ ] Dunning / overdue / suspension `🟡` #779 §A — `jobs/billing/dunning.ts` marks OVERDUE + sends 7-day×3 reminders (`notifyOrgInvoiceOverdue`); booking-suspend cascade is **designed-not-active** (`dunningSuspendedAt` stays unwritten)
+- [ ] Subscription-invoice cron + accrual settle `✅` — `generate-subscription-invoices.ts` (daily) + `settle-invoice-accruals.ts` (monthly), both now scheduled with `concurrency` groups; the accrual rollup reads inside a Serializable transaction so overlapping runs can't double-issue (#813)
+- [ ] Dunning / overdue / suspension `✅` #812 — `jobs/billing/dunning.ts` marks OVERDUE + sends 7-day×3 reminders (`notifyOrgInvoiceOverdue`), then a stage-3 booking-suspend (`ENABLE_DUNNING_SUSPEND`-gated) stamps `dunningSuspendedAt` 7 days past the last reminder and writes `INVOICE_DUNNING_SUSPENDED`, claim + audit in one Serializable transaction
 - [ ] Credit notes on refund (GST Sec 34/Rule 53) `✅` #776 — `mintRefundCreditNote` (idempotent on refundId) shared by BOTH the app/cron cascade AND the gateway-refund webhook, so real Razorpay/Stripe refunds of invoiced bookings mint a CN; FY-sequential `<PREFIX>-CN-<FY>-<seq>` — `credit-note-numbering.ts`, `refund.ts`, `webhooks/utils.ts`
 
 ## Phase 10 — Wallet & top-ups
@@ -265,6 +265,7 @@ __tests__/enterprise/   cap, overage, credit-pool, reachable-paths, billing-admi
 - [ ] `overageCount` reconcile invariant `❌` #778 §G
 - [ ] `LEDGER_BALANCE_SNAPSHOT_DRIFT` (maintained `LedgerAccountBalance` vs journal) `✅` #776 — O(1) balance reads replace the O(n) groupBy scan
 - [ ] `REFUND_BOOKING_COHERENCE` (refund ↔ utilization-reversal coherence) `✅` #776
+- [ ] `COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN` (a COMPLETED payout with no original `PAYOUT`/`ORG_PAYOUT` posting) `✅` #812/#813 — covers **both** org and consultant payouts, keyed on the original posting's idempotencyKey so a reversal row can't mask a missing original
 - [ ] Money type Int32→BigInt (₹2.14cr overflow) `❌` #780 (v0-blocker)
 - [ ] Reconcile run → `ok:true`, 0 findings on fresh reseed `✅`
 
@@ -292,13 +293,14 @@ __tests__/enterprise/   cap, overage, credit-pool, reachable-paths, billing-admi
 - [ ] `Refund.failureReason` + REFUND_FAILED notification `❌` #779 §D
 - [ ] Disputes: created/lost handlers + deadline alerts `✅` — `jobs/disputes/{reconcile-disputes,handle-lost-disputes,alert-dispute-deadlines}.ts`
 - [ ] Per-org dispute surface + chargeback money-path `🟡` #776 — read surface (`[orgId]/disputes`) + org-wallet-first chargeback (`applyOrgChargeback`) shipped; org Novu notification still pending #779 §D
-- [ ] Payout reversal / clawback (gateway-side) `❌` #716
+- [ ] Payout reversal / clawback (gateway-side) `🟡` #716/#812 — the COMPLETED-then-bank-bounced `payout.reversed` path now reverses cleanly on **both** sides: `markOrgPayoutReversed` and `markConsultantPayoutReversed` each claim COMPLETED→REVERSED, post the inverse PAYOUT journal (idempotencyKey `payout-reversal:<id>`), and re-open the linked earnings to READY; the broader refund-driven clawback against an already-paid payout is still the manual `PAYOUT_CLAWBACK` v1
 
 ## Phase 18 — Compliance & tax
 **Code:** `lib/compliance/*`, `[orgId]/{consent,data-exports}/*`, `jobs/compliance/*`
 - [ ] GST breakdown (CGST/SGST/IGST, place of supply, HSN, RCM, export zero-rate) `✅` — `gst.ts`
 - [ ] IRN / e-invoice (ClearTax) `🟡` env-gated — `irp.ts`, `jobs/compliance/irp-uploader.ts`
 - [ ] TDS 194-O (0.1%, no-PAN 5%, 206AA, DTAA) `✅` — `tds.ts` (+ divergent `tax/tds-service.ts` 194J `❌` #778 §E)
+- [ ] Refund-driven TDS reversal `✅` #813 — shared `recordTdsReversal` (`tax/tds-service.ts`) writes a negative `isReversal` `TDSRecord` (integer-paise proportion, capped at the original so refund-then-chargeback can't double-reverse); filed-aware FY/quarter stamping (unfiled → original's FY/quarter, filed → current IST-reckoned FY/quarter), provisional pending CA sign-off; `getIndianFinancialYear`/`getIndianFYQuarter` are now IST-aware
 - [ ] MSME 43B(h) deadline `✅` — `msme.ts`, `jobs/compliance/msme-payment-alerts.ts`
 - [ ] DPDP consent grant/withdraw `✅` — `dpdp.ts`, `[orgId]/consent`
 - [ ] DPDP erasure + financial-record retention `✅` — `lib/compliance/erasure/`
@@ -314,7 +316,7 @@ __tests__/enterprise/   cap, overage, credit-pool, reachable-paths, billing-admi
 **Code:** `[orgId]/webhooks/*`, `lib/enterprise/outbound-webhooks/*`, `jobs/cleanup/{dispatch-outbound-webhooks,archive-webhook-events}.ts`
 - [ ] Endpoint CRUD + 8-event catalog `✅` — `event-types.ts`
 - [ ] HMAC-SHA256 signing + 24h dual-sign rotation grace `✅` — `signing.ts`
-- [ ] Delivery worker: retry schedule + replay window `✅` — `worker.ts`, `dispatch.ts`
+- [ ] Delivery worker: retry schedule + replay window `✅` — `worker.ts`, `dispatch.ts`; re-queues stale `IN_FLIGHT` rows by `updatedAt` and claims rows atomically, so overlapping ticks can't double-deliver (#812)
 - [ ] Delivery log + redeliver `✅` — `[endpointId]/deliveries/[deliveryId]/redeliver`
 - [ ] Dispatch + archive crons `✅` — `dispatch-outbound-webhooks.ts`, `archive-webhook-events.ts`
 
