@@ -28,6 +28,21 @@ export const ORG_ERROR_COPY: Record<string, string> = {
     "No user account found with that email. They need to sign up at Familiarise first, or use the Invitations page to send them an invite.",
   EXPERT_REQUIRES_CANHOST:
     "Expert can only be assigned on host-capable organizations. Enable hosting under Settings → Capabilities first.",
+  // Why: #729 strict acceptance criterion #5. Adding a user as Expert
+  // is a roster-membership action, not an identity-grant — the target
+  // must already have opted into being a consultant on Familiarise.
+  // Previously the route lazy-created a ConsultantProfile for any
+  // user added as Expert, which silently promoted strangers to
+  // consultants. The dashboard now refuses with this message.
+  NOT_A_CONSULTANT:
+    "This user is not a consultant on Familiarise yet. They need to sign up as an Expert first before they can be added to an organization as one.",
+  // Symmetric to NOT_A_CONSULTANT — the org dashboard refuses to
+  // lazy-create a ConsulteeProfile for a stranger being added as
+  // Learner. The target must already have a consumer-side identity on
+  // Familiarise (most users do by default, but consultant-only or SSO-
+  // provisioned accounts may not).
+  NOT_A_CONSULTEE:
+    "This user does not have a learner profile on Familiarise yet. They need to sign up or complete onboarding before they can be added to an organization as a Learner.",
   LEARNER_REQUIRES_CANSPONSOR:
     "Learner can only be assigned on sponsor-capable organizations. Enable sponsorship under Settings → Capabilities first.",
 // Why: PO balance enforcement (see docs/enterprise/10-money-and-ledger/08-invoicing.md

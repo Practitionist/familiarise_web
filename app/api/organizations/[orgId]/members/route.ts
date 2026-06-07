@@ -272,6 +272,40 @@ export async function POST(
   }
   const userId = user.id;
 
+  // #729 §AC4/AC5 — strict identity gate. The shared
+  // `applyMembershipRoleEffects` helper lazy-creates the matching
+  // profile when one is missing, which silently promotes strangers
+  // to consultant / consumer identities. For the dashboard
+  // add-member surface we want the safer interpretation: the target
+  // must already have the correct profile before being added under
+  // that role. SSO JIT auto-join keeps the lazy-create path because
+  // that is a separate provisioning channel with its own
+  // authorization layer.
+  if (role === "EXPERT") {
+    const existingConsultant = await prisma.consultantProfile.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+    if (!existingConsultant) {
+      return NextResponse.json(
+        { error: "NOT_A_CONSULTANT" },
+        { status: 400 },
+      );
+    }
+  }
+  if (role === "LEARNER") {
+    const existingConsultee = await prisma.consulteeProfile.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+    if (!existingConsultee) {
+      return NextResponse.json(
+        { error: "NOT_A_CONSULTEE" },
+        { status: 400 },
+      );
+    }
+  }
+
   // Idempotency: a duplicate POST for a currently-active (or pending/
   // suspended) member is a conflict. A REMOVED row is *not* a conflict —
   // that path flips the existing row back to ACTIVE instead of 409'ing

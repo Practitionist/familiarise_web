@@ -214,6 +214,39 @@ export async function POST(req: NextRequest) {
         return { membership: existing, organization: org, alreadyMember: true };
       }
 
+      // #729 §AC4/AC5 — strict identity gate. `applyMembershipRoleEffects`
+      // lazy-creates a missing profile, which would silently promote
+      // an invited user to consultant / consumer identity. For the
+      // dashboard-driven invitation accept flow we refuse instead:
+      // the invitee must already have the matching profile on
+      // Familiarise. SSO JIT auto-join keeps the lazy-create path
+      // because that is a separate provisioning channel with its own
+      // authorization layer.
+      if (normalizedRole === "EXPERT") {
+        const existingConsultant = await tx.consultantProfile.findUnique({
+          where: { userId },
+          select: { id: true },
+        });
+        if (!existingConsultant) {
+          throw Object.assign(
+            new Error("NOT_A_CONSULTANT"),
+            { httpStatus: 400 },
+          );
+        }
+      }
+      if (normalizedRole === "LEARNER") {
+        const existingConsultee = await tx.consulteeProfile.findUnique({
+          where: { userId },
+          select: { id: true },
+        });
+        if (!existingConsultee) {
+          throw Object.assign(
+            new Error("NOT_A_CONSULTEE"),
+            { httpStatus: 400 },
+          );
+        }
+      }
+
       // Profile FK + payoutRecipient defaults are computed by the
       // shared helper (see lib/api/organizations/membership-transitions.ts).
       // LEARNER lazy-creates ConsulteeProfile; EXPERT lazy-creates
@@ -222,10 +255,11 @@ export async function POST(req: NextRequest) {
       // /explore/experts until a platform admin reviews). Operator
       // roles (OWNER/MAINTAINER/MANAGER/SUPPORT) leave both FKs null.
       //
-      // The same profile may be linked to memberships at several orgs
-      // concurrently; the schema is deliberately many-to-many and
-      // docs/enterprise/60-scenarios-and-verdicts/01-scenarios-and-examples.md lists multi-org
-      // experts and learners as first-class cases.
+      // The EXPERT pre-check above means we'll never reach the
+      // lazy-create branch for EXPERT here — but we keep the call
+      // unchanged so LEARNER's lazy-create stays consistent with
+      // the rest of the flow. Multi-org experts are still
+      // first-class; see docs/enterprise/60-scenarios-and-verdicts/01-scenarios-and-examples.md.
       const roleEffects = await applyMembershipRoleEffects(tx, {
         userId,
         role: normalizedRole,
