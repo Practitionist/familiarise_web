@@ -291,7 +291,7 @@ export function narrowFundingSource(
 
 /**
  * Narrow an untyped value to a self-service member role, falling back to
- * MEMBER if unrecognized.
+ * LEARNER if unrecognized.
  */
 export function narrowSelfServiceRole(
   v: unknown,
