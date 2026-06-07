@@ -25,6 +25,12 @@ export interface SweepResult {
   scanned: number;
   recovered: number;
   stillFailing: number;
+  // #813 — re-driven but still DEFERRED (row left processed=false/error=null by
+  // a defer-sentinel handler, e.g. refund-before-capture): will retry next sweep.
+  deferred: number;
+  // #813 — deferred events that aged past giveUpAfterHours and were terminally
+  // capped (processed=true, error='gave up: payment never arrived').
+  gaveUp: number;
   errors: string[];
 }
 
@@ -39,6 +45,13 @@ export interface SweepOptions {
    * stuck between 72h and 90d (no actor). Defaults to the old 72h.
    */
   maxAgeHours?: number;
+  /**
+   * #813 — terminal cap for events a defer-sentinel handler keeps deferring (the
+   * awaited row never arrives, e.g. a refund whose payment was never captured).
+   * Past this age the sweeper force-marks them processed so they stop churning.
+   * Defaults to 168h (7 days).
+   */
+  giveUpAfterHours?: number;
   limit?: number;
 }
 
@@ -47,10 +60,12 @@ export async function sweepStuckWebhookEvents(
 ): Promise<SweepResult> {
   const staleMinutes = opts.staleMinutes ?? 6;
   const warnAgeHours = opts.maxAgeHours ?? 72;
+  const giveUpAfterHours = opts.giveUpAfterHours ?? 168;
   const limit = opts.limit ?? 200;
   const now = Date.now();
   const staleBefore = new Date(now - staleMinutes * 60_000);
   const warnOlderThan = new Date(now - warnAgeHours * 3_600_000);
+  const giveUpOlderThan = new Date(now - giveUpAfterHours * 3_600_000);
 
   // Stuck = after() crashed before markWebhookEventProcessed ran. Only razorpay
   // for now (stripe dispatch not yet extracted — tracked separately).
@@ -83,6 +98,8 @@ export async function sweepStuckWebhookEvents(
   const errors: string[] = [];
   let recovered = 0;
   let stillFailing = 0;
+  let deferred = 0;
+  let gaveUp = 0;
 
   for (const ev of stuck) {
     // WebhookEvent.payload stores only `event.payload`; the per-event schemas
@@ -113,6 +130,29 @@ export async function sweepStuckWebhookEvents(
       if (after?.error) {
         stillFailing++;
         errors.push(`${ev.eventId}: ${after.error}`);
+      } else if (after && !after.processed) {
+        // #813 — still the defer signature (processed=false/error=null): a
+        // defer-sentinel handler left it for the next sweep. Terminally cap once
+        // it ages past giveUpAfterHours so an unknown payment can't churn forever.
+        if (ev.receivedAt < giveUpOlderThan) {
+          await prisma.webhookEvent
+            .update({
+              where: { eventId: ev.eventId },
+              data: {
+                processed: true,
+                error: "gave up: payment never arrived",
+              },
+            })
+            .catch(() => {});
+          gaveUp++;
+          errors.push(`${ev.eventId}: gave up: payment never arrived`);
+          console.warn(
+            `🛑 Gave up on stuck webhook ${ev.eventId} (deferred since ${ev.receivedAt.toISOString()}, past ${giveUpAfterHours}h cap)`,
+          );
+        } else {
+          deferred++;
+          console.log(`⏳ Stuck webhook ${ev.eventId} still deferred — will retry`);
+        }
       } else {
         recovered++;
         console.log(`✅ Re-drove stuck webhook ${ev.eventId}`);
@@ -132,7 +172,15 @@ export async function sweepStuckWebhookEvents(
     }
   }
 
-  return { success: true, scanned: stuck.length, recovered, stillFailing, errors };
+  return {
+    success: true,
+    scanned: stuck.length,
+    recovered,
+    stillFailing,
+    deferred,
+    gaveUp,
+    errors,
+  };
 }
 
 export async function disconnectDatabase(): Promise<void> {

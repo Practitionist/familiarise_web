@@ -1,17 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import crypto from "crypto";
 import prisma from "@/lib/prisma";
 import { Prisma, PaymentStatus, RequestStatus } from "@prisma/client";
-import { isDbHealthy } from "@/app/api/webhooks/utils";
+import {
+  isDbHealthy,
+  verifyHmacWebhookSignature,
+} from "@/app/api/webhooks/utils";
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.text();
-    const signature = req.headers.get("x-signature");
-
-    // #813 — capture the secret once. The 500 guard already prevents the
-    // unhandled createHmac TypeError, but passing the narrowed const (rather
-    // than re-reading process.env at the createHmac call) makes that explicit.
+    // #813 — capture the secret once before verification.
     const secret = process.env.LEMON_SQUEEZY_WEBHOOK_SECRET;
     if (!secret) {
       console.error("LEMON_SQUEEZY_WEBHOOK_SECRET not configured");
@@ -21,27 +18,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Verify webhook signature for Lemon Squeezy
-    // #812: REJECT a missing header — previously an unsigned request skipped
-    // verification entirely, so a forged unsigned POST was accepted.
-    if (!signature) {
+    // #813/#812 — shared strict HMAC verify (hex-decode + length-64 gate +
+    // timingSafeEqual). REJECT a missing header (a forged unsigned POST used to
+    // skip verification). Lemon prefixes the digest with `sha256=`.
+    const { isValid, body, missingHeader } = await verifyHmacWebhookSignature(
+      req,
+      secret,
+      { header: "x-signature", prefix: "sha256=" },
+    );
+    if (missingHeader) {
       console.error("Lemon Squeezy webhook missing signature header");
       return NextResponse.json({ error: "Missing signature" }, { status: 401 });
     }
-
-    const expectedSignature = `sha256=${crypto
-      .createHmac("sha256", secret)
-      .update(body)
-      .digest("hex")}`;
-
-    // #812: Constant-time compare to avoid HMAC timing attacks. timingSafeEqual
-    // throws on unequal-length Buffers, so length-gate first.
-    const sigBuf = Buffer.from(signature);
-    const expectedBuf = Buffer.from(expectedSignature);
-    if (
-      sigBuf.length !== expectedBuf.length ||
-      !crypto.timingSafeEqual(sigBuf, expectedBuf)
-    ) {
+    if (!isValid) {
       console.error("Lemon Squeezy webhook signature verification failed");
       return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
     }
