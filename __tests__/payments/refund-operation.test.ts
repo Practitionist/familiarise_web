@@ -525,6 +525,91 @@ describe("refundPayment — full single-leg WALLET refund", () => {
   });
 });
 
+describe("refundPayment — multi-collaborator refund balances the ledger (#813 comment)", () => {
+  // Proves the Gemini "rounding imbalance" comment is a false alarm: consRev IS
+  // Σ proportion(consultantSharePaise) (Math.floor), and the per-collaborator
+  // debits are exactly those same floored proportions, so they sum to consRev
+  // and the posting balances — even for awkward shares + an odd partial refund.
+  // The real postLedgerTxn runs here; an imbalance would throw and the cascade
+  // would roll back, so a successful refund == a balanced posting.
+  function seedMultiCollaborator() {
+    state.payments.set("pay-mc", {
+      id: "pay-mc",
+      amount: 10000,
+      originalAmount: 10000,
+      taxAmount: 0,
+      currency: "INR",
+      paymentStatus: "SUCCEEDED",
+      paymentGateway: "RAZORPAY",
+      displayCurrencyAtCheckout: null,
+      exchangeRateAtCheckout: null,
+      organizationId: null,
+      billingAccountId: "ba-mc",
+      billableToOrgInvoiceId: null,
+    });
+    state.paymentLegs.push({
+      id: "leg-mc",
+      paymentId: "pay-mc",
+      source: "WALLET",
+      amountPaise: 10000,
+      sourceRef: "asg-mc",
+      createdAt: new Date(),
+    });
+    // Three collaborators with deliberately awkward shares (sum 8000), platform
+    // fee 2000 → gross 10000.
+    const shares: Array<[string, string, number, string]> = [
+      ["ce-mc-1", "cp-1", 4001, "OWNER"],
+      ["ce-mc-2", "cp-2", 3333, "COLLABORATOR"],
+      ["ce-mc-3", "cp-3", 666, "COLLABORATOR"],
+    ];
+    for (const [id, cp, share, role] of shares) {
+      state.consultantEarnings.set(id, {
+        id,
+        paymentId: "pay-mc",
+        consultantProfileId: cp,
+        consultantSharePaise: share,
+        grossAmount: role === "OWNER" ? 10000 : 0,
+        platformFeePaise: role === "OWNER" ? 2000 : 0,
+        role,
+        refundedShareAmount: 0,
+        status: "PENDING",
+      });
+    }
+    state.billingAccounts.set("ba-mc", {
+      id: "ba-mc",
+      walletBalance: 50000,
+      currency: "INR",
+    });
+  }
+
+  it("an odd partial refund across 3 collaborators completes without LedgerImbalanceError", async () => {
+    seedMultiCollaborator();
+    // 3334/10000 forces a non-clean floor on every collaborator's proportion.
+    const result = await refundPayment({
+      paymentId: "pay-mc",
+      amountPaise: 3334,
+      reason: "multi-collab partial",
+    });
+    // If the posting imbalanced, postLedgerTxn would have thrown and rolled the
+    // cascade back; reaching here with all three reversed proves it balanced.
+    expect(result.amountRefundedPaise).toBe(3334);
+    expect(result.consultantEarningsReversed).toBe(3);
+    expect(state.consultantEarnings.get("ce-mc-1")?.refundedShareAmount).toBeGreaterThan(0);
+    expect(state.consultantEarnings.get("ce-mc-2")?.refundedShareAmount).toBeGreaterThan(0);
+    expect(state.consultantEarnings.get("ce-mc-3")?.refundedShareAmount).toBeGreaterThan(0);
+  });
+
+  it("a full multi-collaborator refund also balances", async () => {
+    seedMultiCollaborator();
+    const result = await refundPayment({
+      paymentId: "pay-mc",
+      reason: "multi-collab full",
+    });
+    expect(result.amountRefundedPaise).toBe(10000);
+    expect(result.consultantEarningsReversed).toBe(3);
+  });
+});
+
 describe("refundPayment — partial 50% refund proportional split", () => {
   it("splits proportional, leaves earnings non-REFUNDED", async () => {
     seedSinglePartyWalletPayment({ amount: 10000, consultantSharePaise: 8000, orgShare: 1000 });

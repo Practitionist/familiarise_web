@@ -9,7 +9,11 @@ export async function POST(req: NextRequest) {
     const body = await req.text();
     const signature = req.headers.get("x-xflow-signature");
 
-    if (!process.env.XFLOW_WEBHOOK_SECRET) {
+    // #813 — capture the secret once. The 500 guard already prevents the
+    // unhandled createHmac TypeError, but passing the narrowed const (rather
+    // than re-reading process.env at the createHmac call) makes that explicit.
+    const secret = process.env.XFLOW_WEBHOOK_SECRET;
+    if (!secret) {
       console.error("XFLOW_WEBHOOK_SECRET not configured");
       return NextResponse.json(
         { error: "Webhook secret not configured" },
@@ -26,7 +30,7 @@ export async function POST(req: NextRequest) {
     }
 
     const expectedSignature = crypto
-      .createHmac("sha256", process.env.XFLOW_WEBHOOK_SECRET)
+      .createHmac("sha256", secret)
       .update(body)
       .digest("hex");
 
