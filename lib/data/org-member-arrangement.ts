@@ -71,7 +71,16 @@ export async function getMyArrangementData(params: {
                 id: true,
                 createdAt: true,
                 currency: true,
-                appointment: { select: { id: true, appointmentType: true } },
+                appointment: {
+                  select: {
+                    id: true,
+                    appointmentType: true,
+                    // Sponsorship marker — distinguishes org-sponsored
+                    // bookings from direct/personal panel earnings in the
+                    // Recent panel earnings table.
+                    organizationId: true,
+                  },
+                },
               },
             },
           },

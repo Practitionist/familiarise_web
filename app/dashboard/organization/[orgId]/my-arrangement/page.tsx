@@ -17,6 +17,7 @@
 
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
+import { Building2 } from "lucide-react";
 
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
@@ -96,17 +97,24 @@ export default async function MyArrangementPage({
       {/* #754 — upcoming org-hosted sessions */}
       {member.consultantProfileId && upcomingSessions.length > 0 && (
         <section>
-          <h2 className="text-lg font-medium mb-3">Upcoming sessions</h2>
-          <div className="overflow-hidden rounded-lg border bg-card">
-            <table className="w-full text-sm">
+          <div className="mb-3">
+            <h2 className="text-lg font-medium">Upcoming sponsored sessions</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Bookings {access.org.name} sponsored for you to host. Personal
+              bookings you take from learners outside this org appear on your
+              consultant dashboard.
+            </p>
+          </div>
+          <div className="overflow-x-auto rounded-lg border bg-card">
+            <table className="w-full min-w-[640px] text-sm">
               <thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground">
                 <tr>
-                  <th className="px-4 py-2 font-medium">When</th>
-                  <th className="px-4 py-2 font-medium">Learner</th>
-                  <th className="px-4 py-2 font-medium">Type</th>
-                  <th className="px-4 py-2 font-medium">Status</th>
-                  <th className="px-4 py-2 font-medium text-right">Your share</th>
-                  <th className="px-4 py-2 font-medium text-right">Join</th>
+                  <th className="px-4 py-2 font-medium whitespace-nowrap">When</th>
+                  <th className="px-4 py-2 font-medium whitespace-nowrap">Learner</th>
+                  <th className="px-4 py-2 font-medium whitespace-nowrap">Type</th>
+                  <th className="px-4 py-2 font-medium whitespace-nowrap">Status</th>
+                  <th className="px-4 py-2 font-medium text-right whitespace-nowrap">Your share</th>
+                  <th className="px-4 py-2 font-medium text-right whitespace-nowrap">Join</th>
                 </tr>
               </thead>
               <tbody>
@@ -229,7 +237,7 @@ export default async function MyArrangementPage({
               })}
               .
             </p>
-            <div className="mt-4 grid grid-cols-3 gap-3 text-center">
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-center">
               <SplitCard
                 label="Platform"
                 bps={orgDefaultCard.platformBps}
@@ -239,7 +247,7 @@ export default async function MyArrangementPage({
                 bps={orgDefaultCard.orgBps}
               />
               <SplitCard
-                label="You (consultant)"
+                label="Your share"
                 bps={orgDefaultCard.consultantBps}
                 emphasised
               />
@@ -274,45 +282,72 @@ export default async function MyArrangementPage({
       {/* Recent earnings */}
       {earnings.length > 0 && (
         <section>
-          <h2 className="text-lg font-medium mb-3">Recent earnings on this org</h2>
-          <div className="overflow-hidden rounded-lg border bg-card">
-            <table className="w-full text-sm">
+          <div className="mb-3">
+            <h2 className="text-lg font-medium">Recent panel earnings</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Your share from every session hosted under {access.org.name}'s
+              panel — includes both org-sponsored bookings and direct/personal
+              bookings learners made with you (per the rate-card panel cut).
+            </p>
+          </div>
+          <div className="overflow-x-auto rounded-lg border bg-card">
+            <table className="w-full min-w-[720px] text-sm">
               <thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground">
                 <tr>
-                  <th className="px-4 py-2 font-medium">When</th>
-                  <th className="px-4 py-2 font-medium">Type</th>
-                  <th className="px-4 py-2 font-medium text-right">Gross</th>
-                  <th className="px-4 py-2 font-medium text-right">
+                  <th className="px-4 py-2 font-medium whitespace-nowrap">When</th>
+                  <th className="px-4 py-2 font-medium whitespace-nowrap">Type</th>
+                  <th className="px-4 py-2 font-medium whitespace-nowrap">Source</th>
+                  <th className="px-4 py-2 font-medium text-right whitespace-nowrap">Gross</th>
+                  <th className="px-4 py-2 font-medium text-right whitespace-nowrap">
                     Your share
                   </th>
-                  <th className="px-4 py-2 font-medium">Status</th>
+                  <th className="px-4 py-2 font-medium whitespace-nowrap">Status</th>
                 </tr>
               </thead>
               <tbody>
-                {earnings.map((e) => (
-                  <tr key={e.id} className="border-t">
-                    <td className="px-4 py-2">
-                      {e.payment.createdAt.toLocaleDateString("en-IN", {
-                        timeZone: "Asia/Kolkata",
-                        day: "2-digit",
-                        month: "short",
-                        year: "numeric",
-                      })}
-                    </td>
-                    <td className="px-4 py-2 lowercase">
-                      {e.payment.appointment?.appointmentType ?? "—"}
-                    </td>
-                    <td className="px-4 py-2 text-right">
-                      {formatCurrencyAmount(e.grossAmount, "INR")}
-                    </td>
-                    <td className="px-4 py-2 text-right">
-                      {formatCurrencyAmount(e.consultantSharePaise, "INR")}
-                    </td>
-                    <td className="px-4 py-2 text-xs">
-                      {EARNING_STATUS_LABEL[e.status] ?? e.status}
-                    </td>
-                  </tr>
-                ))}
+                {earnings.map((e) => {
+                  const isSponsored =
+                    e.payment.appointment?.organizationId === orgId;
+                  return (
+                    <tr key={e.id} className="border-t">
+                      <td className="px-4 py-2 whitespace-nowrap">
+                        {e.payment.createdAt.toLocaleDateString("en-IN", {
+                          timeZone: "Asia/Kolkata",
+                          day: "2-digit",
+                          month: "short",
+                          year: "numeric",
+                        })}
+                      </td>
+                      <td className="px-4 py-2 lowercase whitespace-nowrap">
+                        {e.payment.appointment?.appointmentType ?? "—"}
+                      </td>
+                      <td className="px-4 py-2">
+                        {isSponsored ? (
+                          <span
+                            className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-700"
+                            title={`Sponsored by ${access.org.name}`}
+                          >
+                            <Building2 className="h-3 w-3 shrink-0" />
+                            Sponsored
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">
+                            Direct booking
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 text-right whitespace-nowrap">
+                        {formatCurrencyAmount(e.grossAmount, "INR")}
+                      </td>
+                      <td className="px-4 py-2 text-right whitespace-nowrap">
+                        {formatCurrencyAmount(e.consultantSharePaise, "INR")}
+                      </td>
+                      <td className="px-4 py-2 text-xs whitespace-nowrap">
+                        {EARNING_STATUS_LABEL[e.status] ?? e.status}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
