@@ -58,21 +58,21 @@ export function StatusBadgeGroup({
 
   return (
     <div className="flex items-center gap-2 flex-wrap">
+      {sponsoringOrgName && (
+        <Badge
+          className="text-[10px] font-semibold px-2 py-0.5 bg-indigo-50 text-indigo-700 border-0 rounded-md inline-flex items-center gap-1 max-w-[200px]"
+          title={`Sponsored by ${sponsoringOrgName}`}
+        >
+          <Building2 className="h-3 w-3 shrink-0" />
+          <span className="truncate">Sponsored · {sponsoringOrgName}</span>
+        </Badge>
+      )}
       <Badge className="text-[10px] font-medium px-2 py-0.5 bg-transparent border border-zinc-300 text-zinc-600 rounded-md">
         {eventType === "Trial" ? "Subscription" : eventType}
       </Badge>
       {eventType === "Trial" && (
         <Badge className="text-[10px] font-semibold px-2 py-0.5 bg-emerald-50 text-emerald-700 border-0 rounded-md">
           Free Trial
-        </Badge>
-      )}
-      {sponsoringOrgName && (
-        <Badge
-          className="text-[10px] font-semibold px-2 py-0.5 bg-indigo-50 text-indigo-700 border-0 rounded-md flex items-center gap-1"
-          title="This session is sponsored by your organization"
-        >
-          <Building2 className="h-3 w-3" />
-          Sponsored · {sponsoringOrgName}
         </Badge>
       )}
       {showWaitlistBadge ? (

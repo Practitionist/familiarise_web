@@ -46,6 +46,10 @@ export interface ProcessedEvent {
   waitlistPosition?: number;
   // Collaborators (co-hosts) for webinars/classes
   collaborators?: ProcessedCollaborator[];
+  // Org sponsorship — `Appointment.organizationId` (null = personal).
+  // Drives the "Sponsored by <Org>" pill on the Home card so org-funded
+  // sessions are visually distinct from personal bookings.
+  organizationId?: string | null;
 }
 
 /**
@@ -139,6 +143,7 @@ export function processConsultation(
     appointmentId,
     joinableAppointment,
     joinableSlot,
+    organizationId: consultation.appointment?.organizationId ?? null,
   };
 }
 
@@ -216,6 +221,7 @@ export function processSubscription(
     appointmentId: nextSlot.appointmentId,
     joinableAppointment,
     joinableSlot: nextSlot.rawSlot,
+    organizationId: nextAppointment?.organizationId ?? null,
   };
 }
 
@@ -315,6 +321,7 @@ export function processWebinar(
     bookingStatus,
     waitlistPosition,
     collaborators,
+    organizationId: webinar.appointment?.organizationId ?? null,
   };
 }
 
@@ -421,6 +428,7 @@ export function processClass(
     bookingStatus,
     waitlistPosition,
     collaborators,
+    organizationId: nextAppointment?.organizationId ?? null,
   };
 }
 
