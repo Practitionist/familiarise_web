@@ -12,7 +12,10 @@ import {
   FileText,
   Tag,
   ArrowUpDown,
+  Building2,
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { useSession } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -39,6 +42,7 @@ interface PaymentItem {
   paymentGateway: string;
   appointmentType: string | null;
   planTitle: string;
+  organizationId: string | null;
   discount: {
     code: string;
     type: string;
@@ -211,6 +215,20 @@ function StatusBadge({ status }: { status: string }) {
 
 export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
   const { formatPrice } = useCurrency();
+  const { data: session } = useSession();
+  // Resolve a payment's `organizationId` to a displayable org name for
+  // the "Sponsored · <Org>" badge — same convention as the appointments
+  // / home surfaces.
+  const orgMemberships = session?.user?.organizationMemberships ?? [];
+  const resolveSponsoringOrgName = (
+    orgId: string | null | undefined,
+  ): string | null => {
+    if (!orgId) return null;
+    return (
+      orgMemberships.find((m) => m.organizationId === orgId)?.organizationName ??
+      "the organization"
+    );
+  };
 
   // Build a map from paymentId → invoice for quick lookup
   const invoiceByPaymentId = useMemo(() => {
@@ -422,8 +440,23 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                               <span className="text-zinc-300">—</span>
                             )}
                           </td>
-                          <td className="px-4 py-3 text-zinc-900 font-medium max-w-[200px] truncate">
-                            {payment.planTitle}
+                          <td className="px-4 py-3 text-zinc-900 font-medium max-w-[220px]">
+                            <div className="truncate">{payment.planTitle}</div>
+                            {(() => {
+                              const sponsoringOrgName =
+                                resolveSponsoringOrgName(payment.organizationId);
+                              return sponsoringOrgName ? (
+                                <Badge
+                                  className="mt-1 text-[10px] font-semibold px-2 py-0.5 bg-indigo-50 text-indigo-700 border-0 rounded-md inline-flex items-center gap-1 max-w-full"
+                                  title={`Sponsored by ${sponsoringOrgName}`}
+                                >
+                                  <Building2 className="h-3 w-3 shrink-0" />
+                                  <span className="truncate">
+                                    Sponsored · {sponsoringOrgName}
+                                  </span>
+                                </Badge>
+                              ) : null;
+                            })()}
                           </td>
                           <td className="px-4 py-3 text-zinc-600 whitespace-nowrap capitalize">
                             {payment.appointmentType?.toLowerCase() || "—"}

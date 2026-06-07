@@ -167,6 +167,10 @@ export async function GET(
         paymentGateway: p.paymentGateway,
         appointmentType: apt?.appointmentType || null,
         planTitle,
+        // Org-funding marker — drives the "Sponsored · <Org>" badge on
+        // the consultee payments table row. Same convention as the
+        // appointments + home surfaces. Populated by the #674 backfill.
+        organizationId: p.organizationId,
         discount: p.discountCode
           ? {
               code: p.discountCode.code,
