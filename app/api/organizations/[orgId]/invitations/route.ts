@@ -14,6 +14,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { HostInvitableMemberRoleSchema } from "@/lib/labels/org-labels";
 import crypto from "node:crypto";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
@@ -28,23 +29,13 @@ import {
 import { notifyOrgInviteSent } from "@/lib/novu/org-workflows";
 import { applyRateLimit, orgInviteLimiter } from "@/lib/rate-limit";
 
-// Roles a self-service inviter can assign. EXPERT is included in the
-// canHost-aware widening below; the rest mirror SELF_SERVICE_MEMBER_ROLES
-// in lib/labels/org-labels.ts — kept in two places because this is the
-// server-side enforcement and the UI subset must never drift from the
-// API subset. SUPPORT remains owner-only and is assigned from Settings,
-// not the invitations form.
-const InvitableRoleSchema = z.enum([
-  "OWNER",
-  "MAINTAINER",
-  "MANAGER",
-  "LEARNER",
-  "EXPERT",
-]);
+// #817 — the canonical invitable set lives in org-labels; a local duplicate
+// here drifted (BILLING_ADMIN went missing) so the route now imports it.
+// EXPERT is gated by canHost below; SUPPORT stays owner-only (Settings).
 
 const InviteBodySchema = z.object({
   email: z.string().email(),
-  role: InvitableRoleSchema,
+  role: HostInvitableMemberRoleSchema,
   // Default expiry: 14 days. Overridable up to 30 to avoid long-lived
   // invite tokens sitting in inboxes indefinitely.
   expiresInDays: z.coerce.number().int().min(1).max(30).default(14),
