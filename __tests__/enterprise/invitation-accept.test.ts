@@ -54,8 +54,9 @@ describe("invitation-accept guards", () => {
 // lightweight ConsulteeProfile there (lib/auth.ts sanctions exactly this)
 // while EXPERT stays strict. Admin direct-add is strict for BOTH roles.
 describe("who-is-acting identity gates (#819)", () => {
+  // __dirname-relative so the pins survive jest being invoked from any cwd.
   const read = (p: string) =>
-    readFileSync(join(process.cwd(), p), "utf8");
+    readFileSync(join(__dirname, "..", "..", p), "utf8");
 
   it("invitation-accept keeps the EXPERT strict gate but NOT a LEARNER gate", () => {
     const src = read("app/api/organizations/invitations/accept/route.ts");
