@@ -1,15 +1,33 @@
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { Prisma as PrismaNamespace } from "@prisma/client";
-import type {
+import type { ReferralCode, Referral, ReferralCredit } from "@prisma/client";
+import { sumPaise } from "@/lib/payments/utils/money";
+import { QUALIFICATION_WINDOW_DAYS, CREDIT_EXPIRY_MONTHS } from "./constants";
+
+// #780 — bare model types still say bigint; the extended client returns number
+export type ReferralCodeRow = Omit<
   ReferralCode,
+  "referrerReward" | "refereeReward" | "totalEarned"
+> & {
+  referrerReward: number | null;
+  refereeReward: number | null;
+  totalEarned: number;
+};
+export type ReferralRow = Omit<
   Referral,
+  "referrerRewardAmount" | "refereeRewardAmount"
+> & {
+  referrerRewardAmount: number | null;
+  refereeRewardAmount: number | null;
+};
+export type ReferralCreditRow = Omit<
   ReferralCredit,
-  Prisma,
-} from "@prisma/client";
-import {
-  QUALIFICATION_WINDOW_DAYS,
-  CREDIT_EXPIRY_MONTHS,
-} from "./constants";
+  "amount" | "usedAmount" | "remainingAmount"
+> & {
+  amount: number;
+  usedAmount: number;
+  remainingAmount: number;
+};
 
 // Re-export so existing server-side consumers can still import from service
 export { QUALIFICATION_WINDOW_DAYS, CREDIT_EXPIRY_MONTHS };
@@ -53,7 +71,7 @@ async function withSerializableRetry<T>(
  */
 export async function createReferralCode(
   userId: string,
-): Promise<ReferralCode> {
+): Promise<ReferralCodeRow> {
   const existing = await prisma.referralCode.findUnique({
     where: { userId },
   });
@@ -162,8 +180,8 @@ export async function generateUniqueCode(
  */
 export async function validateReferralCode(
   code: string,
-  db: Prisma.TransactionClient | typeof prisma = prisma,
-): Promise<ReferralCode | null> {
+  db: Tx | typeof prisma = prisma,
+): Promise<ReferralCodeRow | null> {
   return db.referralCode.findFirst({
     where: {
       OR: [{ code: code.toUpperCase() }, { customCode: code.toUpperCase() }],
@@ -183,7 +201,7 @@ export async function validateReferralCode(
 export async function applyReferralCode(
   newUserId: string,
   code: string,
-): Promise<Referral | null> {
+): Promise<ReferralRow | null> {
   return withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
@@ -349,10 +367,10 @@ export async function processQualifyingAction(
  */
 export async function getUserCredits(
   userId: string,
-  db: Prisma.TransactionClient | typeof prisma = prisma,
+  db: Tx | typeof prisma = prisma,
 ): Promise<{
   totalAvailable: number;
-  credits: ReferralCredit[];
+  credits: ReferralCreditRow[];
 }> {
   const credits = await db.referralCredit.findMany({
     where: {
@@ -378,7 +396,7 @@ export async function getUserCredits(
 export async function applyCreditsToPayment(
   userId: string,
   paymentAmount: number,
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   paymentId?: string,
 ): Promise<{ creditsUsed: number; remainingToPay: number }> {
   const { credits } = await getUserCredits(userId, tx);
@@ -450,7 +468,7 @@ export async function applyCreditsToPayment(
  */
 export async function reverseCreditsForPayment(
   paymentId: string,
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   refundAmount?: number,
   originalPaymentAmount?: number,
 ): Promise<number> {
@@ -479,7 +497,10 @@ export async function reverseCreditsForPayment(
       where: { paymentId, status: "SUCCEEDED" },
       _sum: { amountPaise: true },
     });
-    cumulativeRefunded = aggregate._sum?.amountPaise ?? refundAmount ?? 0;
+    // #780 — aggregates bypass the result extension and still return bigint
+    const refundedSum = aggregate._sum?.amountPaise;
+    cumulativeRefunded =
+      refundedSum == null ? (refundAmount ?? 0) : sumPaise(refundedSum);
   }
 
   let totalRestored = 0;
@@ -551,7 +572,7 @@ export async function reverseCreditsForPayment(
 export async function setCustomCode(
   userId: string,
   customCode: string,
-): Promise<ReferralCode | null> {
+): Promise<ReferralCodeRow | null> {
   const referralCode = await prisma.referralCode.findUnique({
     where: { userId },
   });
@@ -581,7 +602,7 @@ export async function setCustomCode(
  */
 export async function getReferralCode(
   userId: string,
-): Promise<ReferralCode | null> {
+): Promise<ReferralCodeRow | null> {
   return prisma.referralCode.findUnique({
     where: { userId },
   });
@@ -593,7 +614,7 @@ export async function getReferralCode(
 export async function getUserReferrals(
   userId: string,
 ): Promise<
-  (Referral & { referredUser: { name: string; image: string | null } })[]
+  (ReferralRow & { referredUser: { name: string; image: string | null } })[]
 > {
   const referralCode = await prisma.referralCode.findUnique({
     where: { userId },
@@ -618,7 +639,7 @@ export async function getUserReferrals(
  */
 export async function getCreditHistory(
   userId: string,
-): Promise<ReferralCredit[]> {
+): Promise<ReferralCreditRow[]> {
   return prisma.referralCredit.findMany({
     where: { userId },
     orderBy: { createdAt: "desc" },

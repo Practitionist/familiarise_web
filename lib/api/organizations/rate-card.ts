@@ -1,3 +1,4 @@
+import type { Tx } from "@/lib/prisma";
 /**
  * RateCard resolver — time-scoped rate lookup.
  *
@@ -23,6 +24,13 @@
 
 import type { Prisma, CoveredPlanType, RateCard } from "@prisma/client";
 
+// #780 — reads come through the extended client (money as number); the raw
+// model type still says bigint.
+type RateCardRow = Omit<RateCard, "minGrossPaise" | "maxGrossPaise"> & {
+  minGrossPaise: number | null;
+  maxGrossPaise: number | null;
+};
+
 export interface ResolvedRateCard {
   rateCardId: string | null; // null → hardcoded default
   platformBps: number;
@@ -37,9 +45,7 @@ export const DEFAULT_RATE_CARD: ResolvedRateCard = {
   consultantBps: 8000, // 80%
 };
 
-type Tx = Prisma.TransactionClient;
-
-function toResolved(card: RateCard): ResolvedRateCard {
+function toResolved(card: RateCardRow): ResolvedRateCard {
   return {
     rateCardId: card.id,
     platformBps: card.platformBps,
@@ -56,7 +62,7 @@ async function findEffective(
   tx: Tx,
   where: Prisma.RateCardWhereInput,
   at: Date,
-): Promise<RateCard | null> {
+): Promise<RateCardRow | null> {
   return tx.rateCard.findFirst({
     where: {
       ...where,
@@ -123,7 +129,11 @@ export async function resolveEffectiveRateCard(
     if (params.contractId) {
       const card = await findEffective(
         tx,
-        { ownerContractId: params.contractId, planType: params.planType, planId: null },
+        {
+          ownerContractId: params.contractId,
+          planType: params.planType,
+          planId: null,
+        },
         at,
       );
       if (card) return toResolved(card);
@@ -183,7 +193,7 @@ export async function bumpRateCard(
     effectiveAt?: Date;
     reason?: string;
   },
-): Promise<RateCard> {
+): Promise<RateCardRow> {
   const at = params.effectiveAt ?? new Date();
   const current = await findEffective(
     tx,

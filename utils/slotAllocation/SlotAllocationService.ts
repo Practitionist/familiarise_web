@@ -5,7 +5,7 @@
  * Handles auto, manual, and requested slot allocation.
  */
 
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import {
   Appointment,
   AppointmentsType,
@@ -20,7 +20,6 @@ import {
   AllocationRequest,
   AllocationResult,
   EventType,
-  PrismaTransaction,
   ConsultantAllocationData,
   EventConfig,
   isRecurringEventType,
@@ -887,7 +886,7 @@ export class SlotAllocationService {
    * Find available consecutive slots for auto-allocation
    */
   private static async findAvailableSlots(
-    tx: PrismaTransaction,
+    tx: Tx,
     consultant: ConsultantAllocationData,
     totalSlotsNeeded: number,
     slotsPerCall: number,
@@ -1335,7 +1334,7 @@ export class SlotAllocationService {
    * by the caller, but we verify again to prevent data corruption.
    */
   private static async createAppointments(
-    tx: PrismaTransaction,
+    tx: Tx,
     eventType: EventType,
     eventId: string,
     slots: Date[],
@@ -1455,7 +1454,7 @@ export class SlotAllocationService {
    * be exceeded — the surrounding transaction rolls back the new slots.
    */
   private static async recordSubscriptionAllocationCap(
-    tx: PrismaTransaction,
+    tx: Tx,
     subscriptionId: string,
     consulteeUserId: string,
     newAppointmentIds: string[],
@@ -1566,7 +1565,7 @@ export class SlotAllocationService {
    * M2M links are lost. This restores them on the new slots.
    */
   private static async reconnectEnrolledUsers(
-    tx: PrismaTransaction,
+    tx: Tx,
     appointments: AppointmentWithSlots[],
     enrolledUserIds: string[],
     consultantUserId: string,
@@ -1602,7 +1601,7 @@ export class SlotAllocationService {
    * @returns enrolledUserIds - User IDs connected to deleted future slots (for reconnection).
    */
   private static async deleteExistingAppointments(
-    tx: PrismaTransaction,
+    tx: Tx,
     eventType: EventType,
     eventId: string,
     onlyTentative: boolean = false,
@@ -1732,7 +1731,7 @@ export class SlotAllocationService {
    * Update event status after allocation
    */
   private static async updateEventStatus(
-    tx: PrismaTransaction,
+    tx: Tx,
     eventType: EventType,
     eventId: string,
     firstSlot: Date,
@@ -1806,7 +1805,7 @@ export class SlotAllocationService {
    * Fetch event data including consultant and config
    */
   private static async fetchEventData(
-    tx: PrismaTransaction,
+    tx: Tx,
     eventType: EventType,
     eventId: string,
   ): Promise<{
@@ -1905,8 +1904,9 @@ export class SlotAllocationService {
         // tag. New lazy-allocated slots inherit it.
         organizationId =
           event.appointments?.find((a) => a.organizationId)?.organizationId ??
-          event.appointments?.flatMap((a) => a.payment).find((p) => p?.organizationId)
-            ?.organizationId ??
+          event.appointments
+            ?.flatMap((a) => a.payment)
+            .find((p) => p?.organizationId)?.organizationId ??
           null;
         break;
       }

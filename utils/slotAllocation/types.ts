@@ -163,11 +163,3 @@ export interface EventConfig {
   schedulingPeriodStartsAt?: Date; // For subscriptions/classes
   schedulingPeriodEndsAt?: Date; // For subscriptions/classes
 }
-
-/**
- * Prisma transaction client type
- */
-export type PrismaTransaction = Omit<
-  Prisma.TransactionClient,
-  "$connect" | "$disconnect" | "$on" | "$transaction" | "$use"
->;

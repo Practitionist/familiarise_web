@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { Prisma, PaymentStatus, RequestStatus } from "@prisma/client";
 import {
   isDbHealthy,
@@ -239,7 +239,7 @@ async function handleLemonSqueezyPaymentFailure(paymentIdentifier: string) {
 }
 
 // Helper function to create appointment from payment record
-async function createAppointmentFromPayment(_tx: Prisma.TransactionClient, _payment: unknown) {
+async function createAppointmentFromPayment(_tx: Tx, _payment: unknown) {
   // For Lemon Squeezy, like Razorpay, we need to store appointment metadata
   // in the payment record or use custom_data from the webhook
   console.log(
@@ -256,7 +256,7 @@ async function createAppointmentFromPayment(_tx: Prisma.TransactionClient, _paym
 }
 
 // Helper function to confirm existing appointment
-async function confirmExistingAppointment(tx: Prisma.TransactionClient, appointmentId: string) {
+async function confirmExistingAppointment(tx: Tx, appointmentId: string) {
   // Make slots non-tentative
   await tx.slotOfAppointment.updateMany({
     where: { appointmentId },
@@ -304,7 +304,7 @@ async function confirmExistingAppointment(tx: Prisma.TransactionClient, appointm
 }
 
 // Helper function to cleanup failed payment appointments
-async function cleanupFailedPaymentAppointment(tx: Prisma.TransactionClient, appointmentId: string) {
+async function cleanupFailedPaymentAppointment(tx: Tx, appointmentId: string) {
   const appointment = await tx.appointment.findUnique({
     where: { id: appointmentId },
     include: {

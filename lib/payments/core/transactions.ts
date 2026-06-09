@@ -1,5 +1,5 @@
-import { PrismaClient, Prisma } from "@prisma/client";
-import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
+import prisma, { type Tx } from "@/lib/prisma";
 
 /**
  * Prisma transaction helpers for payment operations
@@ -10,14 +10,7 @@ import prisma from "@/lib/prisma";
 // Transaction Types
 // ============================================================================
 
-export type TransactionClient = Omit<
-  PrismaClient,
-  "$connect" | "$disconnect" | "$on" | "$transaction" | "$use" | "$extends"
->;
-
-export type PaymentTransactionCallback<T> = (
-  tx: TransactionClient,
-) => Promise<T>;
+export type PaymentTransactionCallback<T> = (tx: Tx) => Promise<T>;
 
 // ============================================================================
 // Transaction Wrapper
@@ -50,7 +43,7 @@ export async function withPaymentTransaction<T>(
  * Create a payment record within a transaction
  */
 export async function createPaymentRecord(
-  tx: TransactionClient,
+  tx: Tx,
   data: Prisma.PaymentCreateInput,
 ) {
   return tx.payment.create({
@@ -77,7 +70,7 @@ export async function createPaymentRecord(
  * Update a payment status within a transaction
  */
 export async function updatePaymentStatus(
-  tx: TransactionClient,
+  tx: Tx,
   paymentId: string,
   status: "PENDING" | "SUCCEEDED" | "FAILED",
   receiptUrl?: string,
@@ -95,10 +88,7 @@ export async function updatePaymentStatus(
 /**
  * Get payment by payment intent ID
  */
-export async function getPaymentByIntent(
-  tx: TransactionClient,
-  paymentIntent: string,
-) {
+export async function getPaymentByIntent(tx: Tx, paymentIntent: string) {
   return tx.payment.findUnique({
     where: { paymentIntent },
     include: {
@@ -125,7 +115,7 @@ export async function getPaymentByIntent(
  * Create a refund record within a transaction
  */
 export async function createRefundRecord(
-  tx: TransactionClient,
+  tx: Tx,
   data: Prisma.RefundCreateInput,
 ) {
   return tx.refund.create({
@@ -145,7 +135,7 @@ export async function createRefundRecord(
  * Update refund status within a transaction
  */
 export async function updateRefundStatus(
-  tx: TransactionClient,
+  tx: Tx,
   refundId: string,
   status: "PENDING" | "SUCCEEDED" | "FAILED" | "CANCELLED",
 ) {
@@ -161,10 +151,7 @@ export async function updateRefundStatus(
 /**
  * Get refund by refund ID
  */
-export async function getRefundByRefundId(
-  tx: TransactionClient,
-  refundId: string,
-) {
+export async function getRefundByRefundId(tx: Tx, refundId: string) {
   return tx.refund.findUnique({
     where: { refundId },
     include: {
@@ -186,7 +173,7 @@ export async function getRefundByRefundId(
  * Create a dispute record within a transaction
  */
 export async function createDisputeRecord(
-  tx: TransactionClient,
+  tx: Tx,
   data: Prisma.DisputeCreateInput,
 ) {
   return tx.dispute.create({
@@ -206,7 +193,7 @@ export async function createDisputeRecord(
  * Update dispute status and evidence within a transaction
  */
 export async function updateDisputeStatus(
-  tx: TransactionClient,
+  tx: Tx,
   disputeId: string,
   status:
     | "WARNING_NEEDS_RESPONSE"
@@ -232,10 +219,7 @@ export async function updateDisputeStatus(
 /**
  * Get dispute by dispute ID
  */
-export async function getDisputeByDisputeId(
-  tx: TransactionClient,
-  disputeId: string,
-) {
+export async function getDisputeByDisputeId(tx: Tx, disputeId: string) {
   return tx.dispute.findUnique({
     where: { disputeId },
     include: {
@@ -256,10 +240,7 @@ export async function getDisputeByDisputeId(
 /**
  * Delete expired pending payments within a transaction
  */
-export async function deleteExpiredPayments(
-  tx: TransactionClient,
-  beforeDate: Date,
-) {
+export async function deleteExpiredPayments(tx: Tx, beforeDate: Date) {
   return tx.payment.deleteMany({
     where: {
       paymentStatus: "PENDING",
@@ -274,7 +255,7 @@ export async function deleteExpiredPayments(
  * Cancel payment intent and mark as failed
  */
 export async function cancelAndMarkPaymentFailed(
-  tx: TransactionClient,
+  tx: Tx,
   paymentId: string,
   reason: string,
 ) {

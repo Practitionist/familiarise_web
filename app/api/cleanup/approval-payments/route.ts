@@ -18,7 +18,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { PaymentStatus, Prisma, RequestStatus } from "@prisma/client";
 
 /**
@@ -29,7 +29,7 @@ import { PaymentStatus, Prisma, RequestStatus } from "@prisma/client";
  * user completes payment between initial query and transaction execution.
  */
 async function revertApprovalStatus(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   entityType: "consultation" | "subscription",
   entityId: string,
 ): Promise<boolean> {

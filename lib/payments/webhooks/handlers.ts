@@ -4,7 +4,7 @@
  * Can be used by both webhook API routes and direct checkout flows
  */
 
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import {
   AppointmentsType,
   PaymentStatus,
@@ -38,17 +38,32 @@ import { getAppUrl } from "@/lib/url";
 // Type Definitions
 // ============================================================================
 
+// #780 — the extended client converts EVERY BigInt column to number on read,
+// but GetPayload (incl. nested includes) still says bigint. Deep-map to match
+// runtime; Date/Bytes/Decimal pass through untouched.
+type MoneyAsNumber<T> = T extends bigint
+  ? number
+  : T extends Date | Uint8Array | Prisma.Decimal
+    ? T
+    : T extends Array<infer U>
+      ? Array<MoneyAsNumber<U>>
+      : T extends object
+        ? { [K in keyof T]: MoneyAsNumber<T[K]> }
+        : T;
+
 /**
  * Payment type with user and consultee profile included
  * Matches the Prisma query includes used in handlePaymentSuccess
  */
-type PaymentWithUser = Prisma.PaymentGetPayload<{
-  include: {
-    user: {
-      include: { consulteeProfile: true };
+type PaymentWithUser = MoneyAsNumber<
+  Prisma.PaymentGetPayload<{
+    include: {
+      user: {
+        include: { consulteeProfile: true };
+      };
     };
-  };
-}>;
+  }>
+>;
 
 /**
  * Data required to create a consultation appointment
@@ -285,7 +300,10 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       );
     }
   } catch (emailError) {
-    console.error("Failed to send payment success email (Phase 2):", emailError);
+    console.error(
+      "Failed to send payment success email (Phase 2):",
+      emailError,
+    );
   }
 
   const { paymentId, appointmentId, userId, userName, amount, currency } =
@@ -585,18 +603,10 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         const classEvent = appointmentForChannel.class;
 
         if (eventType === "CONSULTATION" && consultation) {
-          await addUserToEventChannel(
-            "consultation",
-            consultation.id,
-            userId,
-          );
+          await addUserToEventChannel("consultation", consultation.id, userId);
           await createDirectMessageChannel(consultantUserId, userId);
         } else if (eventType === "SUBSCRIPTION" && subscription) {
-          await addUserToEventChannel(
-            "subscription",
-            subscription.id,
-            userId,
-          );
+          await addUserToEventChannel("subscription", subscription.id, userId);
           await createDirectMessageChannel(consultantUserId, userId);
         } else if (eventType === "WEBINAR" && webinar) {
           await addUserToEventChannel("webinar", webinar.id, userId);
@@ -749,7 +759,7 @@ export async function handlePaymentFailure(paymentIntentId: string) {
  * Create appointment from webhook metadata based on appointment type
  */
 async function createAppointmentFromWebhook(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   metadata: Record<string, string>,
   payment: PaymentWithUser,
 ) {
@@ -830,10 +840,7 @@ async function createAppointmentFromWebhook(
 // Appointment Type-Specific Creation Functions
 // ============================================================================
 
-async function createConsultation(
-  tx: Prisma.TransactionClient,
-  data: ConsultationData,
-) {
+async function createConsultation(tx: Tx, data: ConsultationData) {
   const consultation = await tx.consultation.create({
     data: {
       consultationPlanId: data.planId,
@@ -863,10 +870,7 @@ async function createConsultation(
   });
 }
 
-async function createSubscription(
-  tx: Prisma.TransactionClient,
-  data: SubscriptionData,
-) {
+async function createSubscription(tx: Tx, data: SubscriptionData) {
   const plan = await tx.subscriptionPlan.findUnique({
     where: { id: data.planId },
   });
@@ -932,7 +936,7 @@ async function createSubscription(
   });
 }
 
-async function createWebinar(tx: Prisma.TransactionClient, data: EventData) {
+async function createWebinar(tx: Tx, data: EventData) {
   const webinar = await tx.webinar.findUnique({
     where: { id: data.eventId },
     include: { appointment: { include: { slotsOfAppointment: true } } },
@@ -966,7 +970,7 @@ async function createWebinar(tx: Prisma.TransactionClient, data: EventData) {
   return createdAppointment;
 }
 
-async function createClass(tx: Prisma.TransactionClient, data: EventData) {
+async function createClass(tx: Tx, data: EventData) {
   const classInstance = await tx.class.findUnique({
     where: { id: data.eventId },
     include: { classPlan: true },
@@ -1007,7 +1011,7 @@ async function createClass(tx: Prisma.TransactionClient, data: EventData) {
  * Transitions APPROVED_PENDING_PAYMENT → APPROVED
  */
 async function confirmApprovalStatus(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   entityType: "consultation" | "subscription",
   entityId: string,
 ): Promise<void> {
@@ -1076,7 +1080,7 @@ async function confirmApprovalStatus(
  * @param userId - The paying user's ID (required for WEBINAR/CLASS to prevent confirming other users' slots)
  */
 async function confirmExistingAppointment(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   appointmentId: string,
   userId?: string,
 ) {
@@ -1181,10 +1185,7 @@ async function confirmExistingAppointment(
 /**
  * Clean up tentative appointments for failed payments
  */
-async function cleanupFailedPaymentAppointment(
-  tx: Prisma.TransactionClient,
-  appointmentId: string,
-) {
+async function cleanupFailedPaymentAppointment(tx: Tx, appointmentId: string) {
   const appointment = await tx.appointment.findUnique({
     where: { id: appointmentId },
     include: {
@@ -1237,7 +1238,7 @@ async function cleanupFailedPaymentAppointment(
  * Send payment success email notification
  */
 async function sendPaymentSuccessNotification(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   payment: PaymentWithUser,
   appointmentId: string,
   appointmentType: string,
@@ -1319,18 +1320,13 @@ async function sendPaymentSuccessNotification(
       consultantName =
         appointment.subscription.subscriptionPlan.consultantProfile.user.name ||
         "Consultant";
-    } else if (
-      appointment.webinar?.webinarPlan?.consultantProfile?.user
-    ) {
+    } else if (appointment.webinar?.webinarPlan?.consultantProfile?.user) {
       consultantName =
         appointment.webinar.webinarPlan.consultantProfile.user.name ||
         "Consultant";
-    } else if (
-      appointment.class?.classPlan?.consultantProfile?.user
-    ) {
+    } else if (appointment.class?.classPlan?.consultantProfile?.user) {
       consultantName =
-        appointment.class.classPlan.consultantProfile.user.name ||
-        "Consultant";
+        appointment.class.classPlan.consultantProfile.user.name || "Consultant";
     }
 
     // Send email
@@ -1361,32 +1357,34 @@ async function sendPaymentSuccessNotification(
  * Send payment failure email notification
  */
 async function sendPaymentFailureNotification(
-  tx: Prisma.TransactionClient,
-  payment: Prisma.PaymentGetPayload<{
-    include: {
-      user: true;
-      appointment: {
-        include: {
-          consultation: {
-            include: {
-              consultationPlan: {
-                include: {
-                  consultantProfile: {
-                    include: {
-                      user: true;
+  tx: Tx,
+  payment: MoneyAsNumber<
+    Prisma.PaymentGetPayload<{
+      include: {
+        user: true;
+        appointment: {
+          include: {
+            consultation: {
+              include: {
+                consultationPlan: {
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: true;
+                      };
                     };
                   };
                 };
               };
             };
-          };
-          subscription: {
-            include: {
-              subscriptionPlan: {
-                include: {
-                  consultantProfile: {
-                    include: {
-                      user: true;
+            subscription: {
+              include: {
+                subscriptionPlan: {
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: true;
+                      };
                     };
                   };
                 };
@@ -1395,8 +1393,8 @@ async function sendPaymentFailureNotification(
           };
         };
       };
-    };
-  }>,
+    }>
+  >,
 ) {
   try {
     const appointment = await tx.appointment.findUnique({

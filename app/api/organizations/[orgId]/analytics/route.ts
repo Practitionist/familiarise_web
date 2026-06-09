@@ -21,6 +21,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { ledgerAccountId } from "@/lib/payments/ledger/post";
+import { sumPaise } from "@/lib/payments/utils/money";
 import { resolveActivationSignals } from "@/lib/enterprise/org-activation-signals";
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
@@ -101,7 +102,7 @@ export async function GET(
     baId &&
     org.billingAccount.currency
       ? (async (): Promise<
-          Array<{ reason: string; count: bigint; deltaPaise: bigint | null }>
+          Array<{ reason: string; count: number; deltaPaise: number | null }>
         > => {
           const entries = await prisma.ledgerEntry.findMany({
             where: {
@@ -118,10 +119,11 @@ export async function GET(
               transaction: { select: { kind: true } },
             },
           });
-          const byKind = new Map<string, { count: number; delta: bigint }>();
+          // #780 — extended-client reads surface amountPaise as number.
+          const byKind = new Map<string, { count: number; delta: number }>();
           for (const e of entries) {
             const kind = e.transaction.kind;
-            const cur = byKind.get(kind) ?? { count: 0, delta: BigInt(0) };
+            const cur = byKind.get(kind) ?? { count: 0, delta: 0 };
             cur.count += 1;
             cur.delta +=
               e.direction === "CREDIT" ? e.amountPaise : -e.amountPaise;
@@ -129,15 +131,15 @@ export async function GET(
           }
           return Array.from(byKind.entries()).map(([reason, v]) => ({
             reason,
-            count: BigInt(v.count),
-            deltaPaise: v.delta as bigint | null,
+            count: v.count,
+            deltaPaise: v.delta,
           }));
         })()
       : Promise.resolve(
           [] as Array<{
             reason: string;
-            count: bigint;
-            deltaPaise: bigint | null;
+            count: number;
+            deltaPaise: number | null;
           }>,
         ),
     org.billingAccount?.fundingSource === "INVOICE" && baId
@@ -259,10 +261,11 @@ export async function GET(
       org.billingAccount?.fundingSource === "INVOICE"
         ? {
             outstandingCount: outstandingInvoiceAgg?._count._all ?? 0,
-            outstandingPaise: outstandingInvoiceAgg?._sum.totalPaise ?? 0,
+            // #780 — _sum bypasses the result extension: bigint until sumPaise'd.
+            outstandingPaise: sumPaise(outstandingInvoiceAgg?._sum.totalPaise),
             pastDueCount: pastDueInvoiceCount,
             paidLast30dCount: paidInvoiceAgg?._count._all ?? 0,
-            paidLast30dPaise: paidInvoiceAgg?._sum.totalPaise ?? 0,
+            paidLast30dPaise: sumPaise(paidInvoiceAgg?._sum.totalPaise),
           }
         : null,
     subscription: licenseSubscription
@@ -275,15 +278,15 @@ export async function GET(
     reimbursements: reimbursementAgg
       ? {
           last30dCount: reimbursementAgg._count._all,
-          last30dPaise: reimbursementAgg._sum.amount ?? 0,
+          last30dPaise: sumPaise(reimbursementAgg._sum.amount),
         }
       : null,
     earnings: org.canHost
       ? earningsAggregate.map((e) => ({
           status: e.status,
           count: e._count._all,
-          orgSharePaise: e._sum.orgSharePaise ?? 0,
-          refundedPaise: e._sum.refundedAmountPaise ?? 0,
+          orgSharePaise: sumPaise(e._sum.orgSharePaise),
+          refundedPaise: sumPaise(e._sum.refundedAmountPaise),
         }))
       : null,
   });

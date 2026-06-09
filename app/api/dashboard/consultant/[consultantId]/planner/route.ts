@@ -47,11 +47,18 @@ const classInclude = {
   appointments: true,
 } satisfies Prisma.ClassInclude;
 
-// Derive types from the include objects
-type PlannerWebinar = Prisma.WebinarGetPayload<{
-  include: typeof webinarInclude;
-}>;
-type PlannerClass = Prisma.ClassGetPayload<{ include: typeof classInclude }>;
+// Derive types from the include objects via the extended client — raw
+// GetPayload would re-introduce bigint money fields (#780).
+type PlannerWebinar = Prisma.Result<
+  typeof prisma.webinar,
+  { include: typeof webinarInclude },
+  "findFirstOrThrow"
+>;
+type PlannerClass = Prisma.Result<
+  typeof prisma.class,
+  { include: typeof classInclude },
+  "findFirstOrThrow"
+>;
 
 // Response types with discriminators and role annotations
 type WebinarEvent = PlannerWebinar & {
@@ -239,7 +246,11 @@ export async function GET(
             ],
           }
         : scopeResolution.scope.kind === "org"
-          ? { appointment: { is: { organizationId: scopeResolution.scope.orgId } } }
+          ? {
+              appointment: {
+                is: { organizationId: scopeResolution.scope.orgId },
+              },
+            }
           : undefined;
     const classApptOrg: Prisma.ClassWhereInput | undefined =
       scopeResolution.scope.kind === "personal"

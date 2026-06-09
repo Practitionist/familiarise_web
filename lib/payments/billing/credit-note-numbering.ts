@@ -1,3 +1,4 @@
+import type { Tx } from "@/lib/prisma";
 /**
  * Per-org credit-note numbering — CGST Rule 53 sequential rule (#776 / #778 §D).
  *
@@ -22,7 +23,7 @@ import { indianFiscalYear, fitPrefixToRule46 } from "./invoice-numbering";
  * Caller must be inside a Prisma $transaction.
  */
 export async function allocateOrgCreditNoteSeq(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   organizationId: string,
   fiscalYear: number,
 ): Promise<number> {
@@ -44,7 +45,7 @@ export interface OrgCreditNoteNumberInput {
 }
 
 export async function generateOrgCreditNoteNumber(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   org: OrgCreditNoteNumberInput,
   issuedAt: Date,
 ): Promise<{ creditNoteNumber: string; fiscalYear: number; seq: number }> {
@@ -56,7 +57,8 @@ export async function generateOrgCreditNoteNumber(
   // three characters tighter than the invoice budget. The prefix is capped
   // independently of the invoice; Rule 53 ties a credit note to its invoice by
   // the referenced invoice number in the line items, not by a shared prefix.
-  const nonPrefixLength = "-CN-".length + String(fiscalYear).length + 1 + padded.length;
+  const nonPrefixLength =
+    "-CN-".length + String(fiscalYear).length + 1 + padded.length;
   const prefix = fitPrefixToRule46(
     (org.invoiceNumberPrefix ?? org.slug).toUpperCase(),
     nonPrefixLength,

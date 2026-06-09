@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { UserRole } from "@prisma/client";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 export async function GET() {
   try {
@@ -122,7 +123,7 @@ export async function GET() {
       }),
     ]);
 
-    const totalRevenue = paymentStats._sum.amount ?? 0;
+    const totalRevenue = sumPaise(paymentStats._sum.amount);
     const avgSessionValue =
       paymentStats._count > 0 ? totalRevenue / paymentStats._count : 0;
 
@@ -144,7 +145,7 @@ export async function GET() {
 
       // Revenue stats
       totalRevenue,
-      revenueThisMonth: revenueThisMonth._sum.amount ?? 0,
+      revenueThisMonth: sumPaise(revenueThisMonth._sum.amount),
       avgSessionValue,
       totalRefunds: refundTotal._sum?.amountPaise ?? 0,
 

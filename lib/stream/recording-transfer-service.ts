@@ -4,7 +4,8 @@
  */
 
 import prisma from "@/lib/prisma";
-import { Recording, RecordingStatus } from "@prisma/client";
+import { RecordingStatus } from "@prisma/client";
+import type { RecordingRow } from "./recording-types";
 import { streamLogger } from "@/lib/stream-logger";
 import supabase, {
   ensureBucketExists,
@@ -108,7 +109,7 @@ export class RecordingTransferService {
   static async transferRecordingToSupabase(
     recordingId: string,
   ): Promise<{ success: boolean; error?: string }> {
-    let recording: Recording | null = null;
+    let recording: RecordingRow | null = null;
 
     try {
       // Get the recording
@@ -366,7 +367,12 @@ export class RecordingTransferService {
   static async getExpiringStreamOnlyRecordings(
     daysBeforeExpiry: number = 3,
   ): Promise<
-    { recordingId: string; title: string; consultantUserId: string; expiresAt: Date }[]
+    {
+      recordingId: string;
+      title: string;
+      consultantUserId: string;
+      expiresAt: Date;
+    }[]
   > {
     const expiryThreshold = new Date();
     expiryThreshold.setDate(expiryThreshold.getDate() + daysBeforeExpiry);
@@ -581,12 +587,9 @@ export class RecordingTransferService {
    * For Stream S3: returns the temporary URL directly.
    */
   static async getBestRecordingUrl(
-    recording: Recording,
+    recording: RecordingRow,
   ): Promise<string | null> {
-    if (
-      recording.status === "AVAILABLE" &&
-      recording.supabasePath
-    ) {
+    if (recording.status === "AVAILABLE" && recording.supabasePath) {
       return this.generateSignedUrl(recording.supabasePath);
     }
 

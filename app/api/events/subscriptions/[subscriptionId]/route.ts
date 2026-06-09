@@ -1,4 +1,4 @@
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import {
   PaymentGateway,
   PaymentStatus,
@@ -33,35 +33,41 @@ import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action
 import { streamLogger } from "@/lib/stream-logger";
 
 /**
- * Type for subscription with all related details needed for payment processing
+ * Type for subscription with all related details needed for payment processing.
+ * Derived via the extended client — raw GetPayload would re-introduce bigint
+ * money fields (#780).
  */
-type SubscriptionWithDetails = Prisma.SubscriptionGetPayload<{
-  include: {
-    subscriptionPlan: {
-      include: {
-        consultantProfile: {
-          include: {
-            user: true;
+type SubscriptionWithDetails = Prisma.Result<
+  typeof prisma.subscription,
+  {
+    include: {
+      subscriptionPlan: {
+        include: {
+          consultantProfile: {
+            include: {
+              user: true;
+            };
+          };
+        };
+      };
+      requestedBy: {
+        include: {
+          user: true;
+        };
+      };
+      appointments: {
+        include: {
+          slotsOfAppointment: {
+            include: {
+              user: true;
+            };
           };
         };
       };
     };
-    requestedBy: {
-      include: {
-        user: true;
-      };
-    };
-    appointments: {
-      include: {
-        slotsOfAppointment: {
-          include: {
-            user: true;
-          };
-        };
-      };
-    };
-  };
-}>;
+  },
+  "findFirstOrThrow"
+>;
 
 export async function GET(
   _request: NextRequest,
@@ -743,9 +749,7 @@ export async function PATCH(
                 image: session.user.image,
               },
               subData.subscriptionPlan?.title || "Subscription",
-              session.user.id === consultantUserId
-                ? "consultant"
-                : "consultee",
+              session.user.id === consultantUserId ? "consultant" : "consultee",
             );
           }
         }
@@ -818,7 +822,7 @@ export async function PATCH(
  * Uses transaction client to maintain serializable isolation
  */
 async function checkSubscriptionPayment(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   subscriptionId: string,
 ): Promise<boolean> {
   const subscription = await tx.subscription.findUnique({

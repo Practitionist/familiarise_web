@@ -37,7 +37,7 @@
  * the paise.
  */
 
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import {
   EarningStatus,
   type LedgerAccountKind,
@@ -54,6 +54,7 @@ import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { generateOrgCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
 import { recordSystemError } from "@/lib/enterprise/system-events";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 // ============================================================================
 // Public types
@@ -157,7 +158,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     },
     _sum: { amountPaise: true },
   });
-  const chargedBack = chargedBackAgg._sum.amountPaise ?? 0;
+  const chargedBack = sumPaise(chargedBackAgg._sum.amountPaise);
   const alreadyRefunded = refundedSoFar + chargedBack;
 
   const refundable = payment.amount - alreadyRefunded;
@@ -210,7 +211,9 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
         _sum: { amountPaise: true },
       });
       const remainingNow =
-        payment.amount - refundedNow - (chargedBackNow._sum.amountPaise ?? 0);
+        payment.amount -
+        refundedNow -
+        sumPaise(chargedBackNow._sum.amountPaise);
       if (requested > remainingNow) {
         throw new RefundValidationError(
           `Race-loss: refund amount ${requested} exceeds refundable ${remainingNow} on payment ${input.paymentId}`,
@@ -293,7 +296,7 @@ export type ApplyRefundCascadeResult = {
  * race-safety).
  */
 export async function applyRefundCascade(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   input: ApplyRefundCascadeInput,
 ): Promise<ApplyRefundCascadeResult> {
   // #776 — atomic idempotency claim. Exactly one caller flips `cascadedAt`
@@ -863,7 +866,7 @@ export async function applyRefundCascade(
  * No-op (returns null) for non-invoiced payments. Must run inside a tx.
  */
 export async function mintRefundCreditNote(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   params: {
     paymentId: string;
     refundId: string;
@@ -996,7 +999,7 @@ export async function mintRefundCreditNote(
  * invoice — never a DRAFT. Must run inside a tx.
  */
 export async function mintInvoiceRefundCreditNote(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   params: {
     invoiceId: string;
     refundId: string;

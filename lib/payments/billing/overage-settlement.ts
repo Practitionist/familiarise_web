@@ -14,8 +14,8 @@ import {
 } from "@prisma/client";
 import { computeOverageForBooking } from "@/lib/payments/billing/overage";
 import { notifyOrgProgramOverageDue } from "@/lib/novu/org-workflows";
-
-type Tx = Prisma.TransactionClient;
+import type { Tx } from "@/lib/prisma";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 export interface RecordOverageInput {
   tx: Tx;
@@ -99,7 +99,7 @@ export async function recordOverageAtCheckout(
     },
     _sum: { marginalPaise: true },
   });
-  const cycleOverageSoFarPaise = soFarAgg._sum.marginalPaise ?? 0;
+  const cycleOverageSoFarPaise = sumPaise(soFarAgg._sum.marginalPaise);
 
   // Drive the decision through the shared computeOverageForBooking() mapper.
   // For LICENSED_SEAT the PRE-booking engagement count is needed (the meter
@@ -271,8 +271,7 @@ export async function recordOverageAtCheckout(
       where: { paymentId_source: { paymentId, source: "INVOICE_ACCRUAL" } },
       select: { amountPaise: true },
     });
-    const carved =
-      baseLeg && baseLeg.amountPaise >= basePaise ? basePaise : 0;
+    const carved = baseLeg && baseLeg.amountPaise >= basePaise ? basePaise : 0;
     if (carved > 0) {
       await tx.paymentLeg.update({
         where: { paymentId_source: { paymentId, source: "INVOICE_ACCRUAL" } },

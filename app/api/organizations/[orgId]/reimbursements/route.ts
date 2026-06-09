@@ -19,6 +19,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { parsePagination } from "@/lib/enterprise/validators";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 const QuerySchema = z.object({
   from: z.string().datetime().optional(),
@@ -117,7 +118,7 @@ export async function GET(
     total,
     page: pagination.page,
     perPage: pagination.pageSize,
-    totalPaise: totalPaiseAgg._sum.amount ?? 0,
+    totalPaise: sumPaise(totalPaiseAgg._sum.amount),
     byMember: byMember.map((b) => ({
       userId: b.userId,
       name: userMap.get(b.userId)?.name ?? null,
@@ -125,7 +126,7 @@ export async function GET(
       totalPaise: b._sum?.amount ?? 0,
       paymentCount:
         typeof b._count === "object" && b._count
-          ? (b._count as { _all?: number })._all ?? 0
+          ? ((b._count as { _all?: number })._all ?? 0)
           : 0,
     })),
   });

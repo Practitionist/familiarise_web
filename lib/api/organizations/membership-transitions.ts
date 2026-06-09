@@ -32,10 +32,8 @@
  * transition is already known to be allowed.
  */
 
-import type { Prisma, PrismaClient } from "@prisma/client";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
-
-export type PrismaLike = PrismaClient | Prisma.TransactionClient;
+import type { PrismaLike } from "@/lib/prisma";
 
 export type RoleEffectInput = {
   userId: string;

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { Prisma, PaymentStatus, RequestStatus } from "@prisma/client";
 import {
   isDbHealthy,
@@ -247,9 +247,16 @@ async function handleXFlowPaymentFailure(paymentId: string) {
 
 // Helper function to create appointment from payment record
 async function createAppointmentFromPayment(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   payment: { id: string; userId: string; [key: string]: unknown },
-  metadata: { type?: string; planId?: string; eventId?: string; slotIds?: string; title?: string; description?: string },
+  metadata: {
+    type?: string;
+    planId?: string;
+    eventId?: string;
+    slotIds?: string;
+    title?: string;
+    description?: string;
+  },
 ) {
   // For XFlow, we can use metadata like Stripe to store appointment details
   const { type, planId, eventId, slotIds, title, description } = metadata;
@@ -383,7 +390,7 @@ async function createAppointmentFromPayment(
 }
 
 // Helper function to confirm existing appointment
-async function confirmExistingAppointment(tx: Prisma.TransactionClient, appointmentId: string) {
+async function confirmExistingAppointment(tx: Tx, appointmentId: string) {
   // Make slots non-tentative
   await tx.slotOfAppointment.updateMany({
     where: { appointmentId },
@@ -431,7 +438,7 @@ async function confirmExistingAppointment(tx: Prisma.TransactionClient, appointm
 }
 
 // Helper function to cleanup failed payment appointments
-async function cleanupFailedPaymentAppointment(tx: Prisma.TransactionClient, appointmentId: string) {
+async function cleanupFailedPaymentAppointment(tx: Tx, appointmentId: string) {
   const appointment = await tx.appointment.findUnique({
     where: { id: appointmentId },
     include: {

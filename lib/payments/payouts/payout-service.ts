@@ -33,6 +33,7 @@ import {
 import { computeTdsForPayout } from "@/lib/compliance/tds";
 import { notifyPayoutProcessed } from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 // ============================================
 // Types
@@ -155,8 +156,8 @@ export async function checkPayoutEligibility(
   });
 
   const readyAmount =
-    (readyEarningsAgg._sum.consultantSharePaise || 0) -
-    (readyEarningsAgg._sum.refundedShareAmount || 0);
+    sumPaise(readyEarningsAgg._sum.consultantSharePaise) -
+    sumPaise(readyEarningsAgg._sum.refundedShareAmount);
 
   // Get default payout account
   const defaultAccount = await prisma.payoutAccount.findFirst({
@@ -278,7 +279,11 @@ export async function createPayoutBatch(
             status: EarningStatus.READY,
             payoutId: null,
           },
-          select: { id: true, consultantSharePaise: true, refundedShareAmount: true },
+          select: {
+            id: true,
+            consultantSharePaise: true,
+            refundedShareAmount: true,
+          },
         });
 
         if (readyEarnings.length === 0) return;
@@ -758,7 +763,8 @@ async function processRazorpayPayout(
     // #771 P1-6 — use the deterministic key helper (not Date.now(), which
     // defeats RazorpayX idempotency on retry when payout.idempotencyKey is null).
     idempotencyKey:
-      payout.idempotencyKey || razorpayPayouts.generateIdempotencyKey(payout.id),
+      payout.idempotencyKey ||
+      razorpayPayouts.generateIdempotencyKey(payout.id),
     notes: {
       payoutId: payout.id,
       source: "familiarise_platform",
@@ -885,7 +891,7 @@ export async function handlePayoutWebhook(
         _sum: { amount: true },
       });
       const cumulativeCreditedPayments =
-        (previousCompletedPayouts._sum.amount || 0) + payout.amount;
+        sumPaise(previousCompletedPayouts._sum.amount) + payout.amount;
 
       // Update earnings to PAID
       await tx.consultantEarnings.updateMany({
@@ -911,7 +917,11 @@ export async function handlePayoutWebhook(
             direction: "DEBIT",
             amountPaise: payout.amount + tdsPaise,
           },
-          { account: { kind: "CASH" }, direction: "CREDIT", amountPaise: payout.amount },
+          {
+            account: { kind: "CASH" },
+            direction: "CREDIT",
+            amountPaise: payout.amount,
+          },
         ];
         if (tdsPaise > 0) {
           payoutPostings.push({
@@ -1054,7 +1064,11 @@ export async function markConsultantPayoutReversed(
     if (payout.amount > 0) {
       const tdsPaise = payout.tdsDeducted ?? 0;
       const reversal: Posting[] = [
-        { account: { kind: "CASH" }, direction: "DEBIT", amountPaise: payout.amount },
+        {
+          account: { kind: "CASH" },
+          direction: "DEBIT",
+          amountPaise: payout.amount,
+        },
         {
           account: {
             kind: "CONSULTANT_PAYABLE",
@@ -1122,19 +1136,19 @@ export async function getPayoutStats() {
   return {
     pending: {
       count: pending._count,
-      amount: pending._sum.amount || 0,
+      amount: sumPaise(pending._sum.amount),
     },
     processing: {
       count: processing._count,
-      amount: processing._sum.amount || 0,
+      amount: sumPaise(processing._sum.amount),
     },
     completed: {
       count: completed._count,
-      amount: completed._sum.amount || 0,
+      amount: sumPaise(completed._sum.amount),
     },
     failed: {
       count: failed._count,
-      amount: failed._sum.amount || 0,
+      amount: sumPaise(failed._sum.amount),
     },
   };
 }

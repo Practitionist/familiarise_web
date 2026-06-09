@@ -58,6 +58,7 @@ import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { notifyOrgPayoutCompleted } from "@/lib/novu/org-workflows";
 import { getAppUrl } from "@/lib/url";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 export class PayoutLockError extends Error {
   readonly code = "PAYOUT_LOCK_CONFLICT" as const;
@@ -154,8 +155,8 @@ export async function getOrgPayoutEligibility(
     _count: true,
   });
 
-  const orgShareSum = ready._sum.orgSharePaise ?? 0;
-  const refundsSum = ready._sum.refundedAmountPaise ?? 0;
+  const orgShareSum = sumPaise(ready._sum.orgSharePaise);
+  const refundsSum = sumPaise(ready._sum.refundedAmountPaise);
   const readyAmount = orgShareSum - refundsSum;
 
   if (ready._count === 0 || readyAmount <= 0) {
@@ -194,10 +195,7 @@ export async function createOrgPayoutBatch(
   opts: CreateOrgPayoutBatchOptions = {},
 ): Promise<OrgPayoutBatchResult> {
   if (periodEnd.getTime() <= periodStart.getTime()) {
-    throw new PayoutValidationError(
-      "periodEnd must be after periodStart",
-      400,
-    );
+    throw new PayoutValidationError("periodEnd must be after periodStart", 400);
   }
 
   // Idempotency short-circuit: cheaper than acquiring the lock just to
@@ -363,7 +361,9 @@ export async function createOrgPayoutBatch(
           where: { id: orgId },
           select: {
             taxInfo: { select: { panEncrypted: true } },
-            msmeInfo: { select: { msmeStatus: true, msmeWrittenAgreementOnFile: true } },
+            msmeInfo: {
+              select: { msmeStatus: true, msmeWrittenAgreementOnFile: true },
+            },
           },
         });
         const tds = computeTdsForPayout({
@@ -387,7 +387,8 @@ export async function createOrgPayoutBatch(
         const amountAfterTds = netPayout - tds.tdsAmountPaise;
         const mustPayByDate = computeMsmePaymentDeadline({
           invoiceDate: new Date(),
-          counterpartyMsmeStatus: orgForCompliance?.msmeInfo?.msmeStatus ?? "NONE",
+          counterpartyMsmeStatus:
+            orgForCompliance?.msmeInfo?.msmeStatus ?? "NONE",
           writtenAgreement:
             orgForCompliance?.msmeInfo?.msmeWrittenAgreementOnFile ?? false,
         });
@@ -505,124 +506,126 @@ export async function processOrgPayout(
 ): Promise<{ status: PayoutStatus; submittedToGateway: boolean }> {
   const liveEnabled = process.env.ENABLE_LIVE_PAYOUTS === "true";
 
-  return prisma.$transaction(async (tx) => {
-    // #785 — when live payouts are gated OFF there is no gateway submission and
-    // no webhook to advance or roll back the row, so claiming PENDING→PROCESSING
-    // here would zombie it in PROCESSING forever (handle-stuck-payouts only
-    // queries ConsultantPayout). Leave it PENDING until the flag flips on; the
-    // cron re-attempts then.
-    if (!liveEnabled) {
-      const current = await tx.organizationPayout.findUnique({
-        where: { id: payoutId },
-        select: { status: true },
-      });
-      if (!current) {
-        throw new PayoutValidationError(`Payout ${payoutId} not found`, 404);
+  return prisma
+    .$transaction(async (tx) => {
+      // #785 — when live payouts are gated OFF there is no gateway submission and
+      // no webhook to advance or roll back the row, so claiming PENDING→PROCESSING
+      // here would zombie it in PROCESSING forever (handle-stuck-payouts only
+      // queries ConsultantPayout). Leave it PENDING until the flag flips on; the
+      // cron re-attempts then.
+      if (!liveEnabled) {
+        const current = await tx.organizationPayout.findUnique({
+          where: { id: payoutId },
+          select: { status: true },
+        });
+        if (!current) {
+          throw new PayoutValidationError(`Payout ${payoutId} not found`, 404);
+        }
+        return {
+          status: current.status,
+          submittedToGateway: false,
+          claimed: false,
+        };
       }
-      return {
-        status: current.status,
-        submittedToGateway: false,
-        claimed: false,
-      };
-    }
 
-    const claim = await tx.organizationPayout.updateMany({
-      where: { id: payoutId, status: "PENDING" },
-      data: { status: "PROCESSING" },
-    });
-    if (claim.count === 0) {
-      const current = await tx.organizationPayout.findUnique({
-        where: { id: payoutId },
-        select: { status: true },
+      const claim = await tx.organizationPayout.updateMany({
+        where: { id: payoutId, status: "PENDING" },
+        data: { status: "PROCESSING" },
       });
-      if (!current) {
-        throw new PayoutValidationError(
-          `Payout ${payoutId} not found`,
-          404,
+      if (claim.count === 0) {
+        const current = await tx.organizationPayout.findUnique({
+          where: { id: payoutId },
+          select: { status: true },
+        });
+        if (!current) {
+          throw new PayoutValidationError(`Payout ${payoutId} not found`, 404);
+        }
+        console.log(
+          `[OrgPayoutService] processOrgPayout no-op: payout ${payoutId} status=${current.status}`,
         );
+        // claimed: false — we did NOT advance the row, so the post-tx
+        // submission must NOT fire (preventing double-submit on cron retry
+        // of an already-PROCESSING row).
+        return {
+          status: current.status,
+          submittedToGateway: false,
+          claimed: false,
+        };
       }
-      console.log(
-        `[OrgPayoutService] processOrgPayout no-op: payout ${payoutId} status=${current.status}`,
-      );
-      // claimed: false — we did NOT advance the row, so the post-tx
-      // submission must NOT fire (preventing double-submit on cron retry
-      // of an already-PROCESSING row).
-      return {
-        status: current.status,
-        submittedToGateway: false,
-        claimed: false,
-      };
-    }
 
-    const payout = await tx.organizationPayout.findUniqueOrThrow({
-      where: { id: payoutId },
-      select: {
-        id: true,
-        organizationId: true,
-        amountPaise: true,
-        currency: true,
-      },
-    });
-
-    await tx.orgAuditLog.create({
-      data: {
-        organizationId: payout.organizationId,
-        actorMembershipId: null,
-        category: "PAYOUT",
-        action: AUDIT_ACTIONS.PAYOUT.PAYOUT_PROCESSED,
-        description: `Payout ${payoutId} moved PENDING → PROCESSING`,
-        details: {
-          payoutId,
-          amountPaise: payout.amountPaise,
-          currency: payout.currency,
-          liveSubmissionEnabled: liveEnabled,
+      const payout = await tx.organizationPayout.findUniqueOrThrow({
+        where: { id: payoutId },
+        select: {
+          id: true,
+          organizationId: true,
+          amountPaise: true,
+          currency: true,
         },
-      },
-    });
+      });
 
-    // Live gateway submission gated on env flag. The actual RazorpayX
-    // `payouts.create` call happens AFTER the tx commits — we don't want
-    // the gateway side-effect inside a serializable tx (long network
-    // call, possibility of double-submit on retry). Returning here marks
-    // the row PROCESSING; the post-tx submission either persists the
-    // gatewayPayoutId on success or rolls the row to FAILED on a 4xx.
-    return {
-      status: "PROCESSING" as const,
-      submittedToGateway: false,
-      claimed: true,
-    };
-  }).then(async (result) => {
-    if (!liveEnabled || !result.claimed || result.status !== "PROCESSING") {
-      // Either live disabled, or this caller didn't claim the row, or
-      // the row is no longer PROCESSING — skip submission.
-      return { status: result.status, submittedToGateway: result.submittedToGateway };
-    }
+      await tx.orgAuditLog.create({
+        data: {
+          organizationId: payout.organizationId,
+          actorMembershipId: null,
+          category: "PAYOUT",
+          action: AUDIT_ACTIONS.PAYOUT.PAYOUT_PROCESSED,
+          description: `Payout ${payoutId} moved PENDING → PROCESSING`,
+          details: {
+            payoutId,
+            amountPaise: payout.amountPaise,
+            currency: payout.currency,
+            liveSubmissionEnabled: liveEnabled,
+          },
+        },
+      });
 
-    // Post-tx submission: actual RazorpayX call. Idempotency key is
-    // deterministic (`payout_<id>`) so a cron retry of the same payout
-    // never creates a second gateway transfer (mandatory since
-    // 2025-03-15 per RazorpayX). 4xx → mark FAILED + release earnings.
-    // 5xx / network error → throw so the cron retries with the same key.
-    try {
-      await submitOrgPayoutToGateway(payoutId);
-      return { status: "PROCESSING" as const, submittedToGateway: true };
-    } catch (err) {
-      const cls = classifyGatewaySubmissionError(err);
-      if (cls === "PERMANENT_4XX") {
-        await markPayoutFailedFromSubmission(
-          payoutId,
-          err instanceof Error ? err.message : String(err),
-        );
-        // Set true because we DID submit to the gateway — the rejection
-        // is recorded on the row. False would imply we early-returned
-        // before any gateway call, which isn't the case.
-        return { status: "FAILED" as PayoutStatus, submittedToGateway: true };
+      // Live gateway submission gated on env flag. The actual RazorpayX
+      // `payouts.create` call happens AFTER the tx commits — we don't want
+      // the gateway side-effect inside a serializable tx (long network
+      // call, possibility of double-submit on retry). Returning here marks
+      // the row PROCESSING; the post-tx submission either persists the
+      // gatewayPayoutId on success or rolls the row to FAILED on a 4xx.
+      return {
+        status: "PROCESSING" as const,
+        submittedToGateway: false,
+        claimed: true,
+      };
+    })
+    .then(async (result) => {
+      if (!liveEnabled || !result.claimed || result.status !== "PROCESSING") {
+        // Either live disabled, or this caller didn't claim the row, or
+        // the row is no longer PROCESSING — skip submission.
+        return {
+          status: result.status,
+          submittedToGateway: result.submittedToGateway,
+        };
       }
-      // Transient — leave row in PROCESSING and re-throw so the cron
-      // retries with the same idempotency key.
-      throw err;
-    }
-  });
+
+      // Post-tx submission: actual RazorpayX call. Idempotency key is
+      // deterministic (`payout_<id>`) so a cron retry of the same payout
+      // never creates a second gateway transfer (mandatory since
+      // 2025-03-15 per RazorpayX). 4xx → mark FAILED + release earnings.
+      // 5xx / network error → throw so the cron retries with the same key.
+      try {
+        await submitOrgPayoutToGateway(payoutId);
+        return { status: "PROCESSING" as const, submittedToGateway: true };
+      } catch (err) {
+        const cls = classifyGatewaySubmissionError(err);
+        if (cls === "PERMANENT_4XX") {
+          await markPayoutFailedFromSubmission(
+            payoutId,
+            err instanceof Error ? err.message : String(err),
+          );
+          // Set true because we DID submit to the gateway — the rejection
+          // is recorded on the row. False would imply we early-returned
+          // before any gateway call, which isn't the case.
+          return { status: "FAILED" as PayoutStatus, submittedToGateway: true };
+        }
+        // Transient — leave row in PROCESSING and re-throw so the cron
+        // retries with the same idempotency key.
+        throw err;
+      }
+    });
 }
 
 /**
@@ -804,10 +807,7 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
         select: { status: true },
       });
       if (!current) {
-        throw new PayoutValidationError(
-          `Payout ${payoutId} not found`,
-          404,
-        );
+        throw new PayoutValidationError(`Payout ${payoutId} not found`, 404);
       }
       console.log(
         `[OrgPayoutService] markOrgPayoutCompleted no-op: payout ${payoutId} status=${current.status}`,
@@ -929,10 +929,7 @@ async function markOrgPayoutFailedInternal(
         select: { status: true },
       });
       if (!current) {
-        throw new PayoutValidationError(
-          `Payout ${payoutId} not found`,
-          404,
-        );
+        throw new PayoutValidationError(`Payout ${payoutId} not found`, 404);
       }
       console.log(
         `[OrgPayoutService] markOrgPayoutFailedInternal no-op: payout ${payoutId} status=${current.status}`,
@@ -1131,7 +1128,8 @@ export async function markOrgPayoutReversed(
 
   if (completedResult.claimed) {
     if (completedResult.notify) {
-      const { notifyOrgPayoutFailed } = await import("@/lib/novu/org-workflows");
+      const { notifyOrgPayoutFailed } =
+        await import("@/lib/novu/org-workflows");
       // #813 — fire-and-forget: awaiting let a Novu failure throw out of the
       // committed tx, failing the webhook delivery whose redelivery then no-ops
       // (state already REVERSED) → the notification was permanently lost.
@@ -1143,9 +1141,7 @@ export async function markOrgPayoutReversed(
         reason: reason.slice(0, 200),
         kind: "REVERSED",
         dashboardUrl: `${getAppUrl()}/dashboard/organization/${completedResult.notify.organizationId}/payouts`,
-      }).catch((e) =>
-        console.error("[org-payout] REVERSED notify failed:", e),
-      );
+      }).catch((e) => console.error("[org-payout] REVERSED notify failed:", e));
     }
     return { wasNoOp: false, status: "REVERSED" as PayoutStatus };
   }

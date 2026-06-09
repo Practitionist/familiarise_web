@@ -1,6 +1,7 @@
 import { faker } from "@faker-js/faker";
 import { Prisma } from "@prisma/client";
 import prisma from "../../lib/prisma";
+import { sumPaise } from "../../lib/payments/utils/money";
 import {
   calculatePlatformFee,
   calculateConsultantShare,
@@ -9,35 +10,24 @@ import {
   EARNING_STATUS_WEIGHTS,
 } from "./utils";
 
-// Type for payment with appointment data
-type PaymentWithAppointment = Prisma.PaymentGetPayload<{
-  include: {
-    appointment: {
-      include: {
-        consultation: {
-          include: {
-            consultationPlan: true;
-          };
-        };
-        subscription: {
-          include: {
-            subscriptionPlan: true;
-          };
-        };
-        webinar: {
-          include: {
-            webinarPlan: true;
-          };
-        };
-        class: {
-          include: {
-            classPlan: true;
-          };
-        };
-      };
-    };
-  };
-}>;
+const paymentInclude = {
+  appointment: {
+    include: {
+      consultation: { include: { consultationPlan: true } },
+      subscription: { include: { subscriptionPlan: true } },
+      webinar: { include: { webinarPlan: true } },
+      class: { include: { classPlan: true } },
+    },
+  },
+} satisfies Prisma.PaymentInclude;
+
+// #780 — Prisma.Result, not GetPayload: money fields are number through the
+// extended client; the raw payload type still says bigint.
+type PaymentWithAppointment = Prisma.Result<
+  typeof prisma.payment,
+  { include: typeof paymentInclude },
+  "findFirstOrThrow"
+>;
 
 /**
  * Extract consultant profile ID from payment's appointment
@@ -88,32 +78,7 @@ export async function createConsultantEarnings(): Promise<void> {
         isNot: null, // Must have an appointment
       },
     },
-    include: {
-      appointment: {
-        include: {
-          consultation: {
-            include: {
-              consultationPlan: true,
-            },
-          },
-          subscription: {
-            include: {
-              subscriptionPlan: true,
-            },
-          },
-          webinar: {
-            include: {
-              webinarPlan: true,
-            },
-          },
-          class: {
-            include: {
-              classPlan: true,
-            },
-          },
-        },
-      },
-    },
+    include: paymentInclude,
   });
 
   console.log(
@@ -196,7 +161,8 @@ export async function createConsultantEarnings(): Promise<void> {
 
   console.log("\nEarnings by Status:");
   for (const item of statusSummary) {
-    const totalAmount = item._sum.consultantSharePaise || 0;
+    // #780 — groupBy _sum bypasses the result extension: bigint at runtime.
+    const totalAmount = sumPaise(item._sum.consultantSharePaise);
     console.log(
       `  ${item.status}: ${item._count} records (Total Share: ${(totalAmount / 100).toFixed(2)} INR)`,
     );

@@ -23,6 +23,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 export async function GET(
   _req: NextRequest,
@@ -106,7 +107,7 @@ export async function GET(
       row.billingAccountId,
       {
         outstandingCount: row._count._all,
-        outstandingPaise: row._sum.totalPaise ?? 0,
+        outstandingPaise: sumPaise(row._sum.totalPaise),
       },
     ]),
   );
@@ -134,7 +135,10 @@ export async function GET(
   const summary = {
     orgsOwned: ownedMemberships.length,
     totalActiveMembers: perOrg.reduce((sum, o) => sum + o.activeMembers, 0),
-    totalOutstandingPaise: perOrg.reduce((sum, o) => sum + o.outstandingPaise, 0),
+    totalOutstandingPaise: perOrg.reduce(
+      (sum, o) => sum + o.outstandingPaise,
+      0,
+    ),
     totalWalletPaise: perOrg.reduce((sum, o) => sum + o.walletBalancePaise, 0),
   };
 

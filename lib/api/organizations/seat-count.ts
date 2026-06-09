@@ -1,3 +1,4 @@
+import type { Tx } from "@/lib/prisma";
 /**
  * BillingSubscription.activeSeatCount writer.
  *
@@ -46,7 +47,7 @@ export class SeatCountUnderflowError extends Error {
  * subscription (e.g. CREDIT_POOL programs, or unbundled contracts).
  */
 export async function adjustActiveSeatCount(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   params: {
     programId: string;
     delta: number; // +1 on assignment, -1 on un-assignment

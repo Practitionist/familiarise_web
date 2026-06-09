@@ -47,8 +47,10 @@ import type {
   WebinarPlan,
 } from "@prisma/client";
 
-// Define a type for the fetched WebinarPlan data
-export type CheckoutWebinarPlanData = WebinarPlan & {
+// Define a type for the fetched WebinarPlan data.
+// price arrives as number: extended client + JSON serialization (#780)
+export type CheckoutWebinarPlanData = Omit<WebinarPlan, "price"> & {
+  price: number;
   consultantProfile:
     | (ConsultantProfile & {
         user: User & {
@@ -109,7 +111,9 @@ export default function WebinarCheckoutPage({
   const [isApplyingDiscount, setIsApplyingDiscount] = useState(false);
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [useReferralCredits, setUseReferralCredits] = useState(false);
-  const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null);
+  const [selectedOrganizationId, setSelectedOrganizationId] = useState<
+    string | null
+  >(null);
   const [availableCredits, setAvailableCredits] = useState(0);
   const [isLoadingCredits, setIsLoadingCredits] = useState(true);
 
@@ -192,7 +196,10 @@ export default function WebinarCheckoutPage({
 
   // Create utility functions using the toast instance
   const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);
-  const handleCheckoutSuccess = useMemo(() => createHandleCheckoutSuccess(toast, "WEBINAR"), [toast]);
+  const handleCheckoutSuccess = useMemo(
+    () => createHandleCheckoutSuccess(toast, "WEBINAR"),
+    [toast],
+  );
   const stripeHandlers = createStripeCheckoutHandlers(toast);
   const razorpayHandlers = createRazorpayCheckoutHandlers(toast);
 
@@ -256,7 +263,9 @@ export default function WebinarCheckoutPage({
           paymentGateway: gateway,
           displayCurrency: currency,
           fromWaitlist,
-          useReferralCredits: selectedOrganizationId ? false : useReferralCredits,
+          useReferralCredits: selectedOrganizationId
+            ? false
+            : useReferralCredits,
           organizationId: selectedOrganizationId ?? undefined,
         });
 
@@ -421,9 +430,7 @@ export default function WebinarCheckoutPage({
           ].endsAt,
         );
         if (firstSlotEnd.getTime() < Date.now()) {
-          setError(
-            "This webinar session has already ended. Please go back.",
-          );
+          setError("This webinar session has already ended. Please go back.");
         }
       }
     };
@@ -800,7 +807,8 @@ export default function WebinarCheckoutPage({
                   </div>
                   {gateway.isActive ? (
                     <div className="flex gap-2">
-                      {validatedSearchParams && gateway.gateway === "RAZORPAY" ? (
+                      {validatedSearchParams &&
+                      gateway.gateway === "RAZORPAY" ? (
                         <RazorpayCheckout
                           checkoutData={createCheckoutData({
                             appointmentType: "WEBINAR",
@@ -809,14 +817,17 @@ export default function WebinarCheckoutPage({
                             paymentGateway: "RAZORPAY",
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
-                            useReferralCredits: selectedOrganizationId ? false : useReferralCredits,
+                            useReferralCredits: selectedOrganizationId
+                              ? false
+                              : useReferralCredits,
                             organizationId: selectedOrganizationId ?? undefined,
                           })}
                           onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
                           onPaymentError={razorpayHandlers.onPaymentError}
                           disabled={isMaintenanceBlocked}
                         />
-                      ) : validatedSearchParams && gateway.gateway === "STRIPE" ? (
+                      ) : validatedSearchParams &&
+                        gateway.gateway === "STRIPE" ? (
                         <StripeCheckout
                           checkoutData={createCheckoutData({
                             appointmentType: "WEBINAR",
@@ -825,7 +836,9 @@ export default function WebinarCheckoutPage({
                             paymentGateway: "STRIPE",
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
-                            useReferralCredits: selectedOrganizationId ? false : useReferralCredits,
+                            useReferralCredits: selectedOrganizationId
+                              ? false
+                              : useReferralCredits,
                             organizationId: selectedOrganizationId ?? undefined,
                           })}
                           onPaymentSuccess={stripeHandlers.onPaymentSuccess}
@@ -837,7 +850,9 @@ export default function WebinarCheckoutPage({
                         <Button
                           variant="secondary"
                           onClick={() => handleCheckout(gateway.gateway, true)}
-                          disabled={isCheckoutProcessing || isMaintenanceBlocked}
+                          disabled={
+                            isCheckoutProcessing || isMaintenanceBlocked
+                          }
                         >
                           {isCheckoutProcessing &&
                           processingGateway === `${gateway.gateway}-mock` ? (

@@ -15,18 +15,13 @@
  * consultant's personal payout for that booking is zero.
  */
 
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import {
   postLedgerTxn,
   type AccountRef,
   type Posting,
 } from "@/lib/payments/ledger/post";
-import {
-  EarningRole,
-  EarningStatus,
-  Payment,
-  Prisma,
-} from "@prisma/client";
+import { EarningRole, EarningStatus, Payment, Prisma } from "@prisma/client";
 import { PAYOUT_CONSTANTS, AppointmentType } from "./constants";
 import { calculateRevenueSplit } from "@/lib/collaborators/service";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
@@ -70,8 +65,20 @@ export interface OrgEarningsSummary {
   heldEarnings: number;
 }
 
+// #780 — payments arrive via the extended client (money as number); the raw
+// Payment model type still says bigint.
+type PaymentRow = Omit<
+  Payment,
+  "amount" | "originalAmount" | "taxAmount" | "gstTcsCollectedPaise"
+> & {
+  amount: number;
+  originalAmount: number;
+  taxAmount: number;
+  gstTcsCollectedPaise: number | null;
+};
+
 export interface CreateEarningsParams {
-  payment: Payment & {
+  payment: PaymentRow & {
     appointment?: {
       consultantProfile?: {
         id: string;
@@ -99,12 +106,11 @@ export {
   assertEarningStatusTransitionLegal,
 } from "./earning-status";
 import { assertEarningStatusTransitionLegal } from "./earning-status";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 // ============================================
 // Org Split Resolution
 // ============================================
-
-type PrismaTransaction = Prisma.TransactionClient;
 
 /**
  * Determine if a consultant's payment should use a 3-way org split.
@@ -117,7 +123,7 @@ type PrismaTransaction = Prisma.TransactionClient;
  * (Future: allow consultant to select which org gets credit per-booking.)
  */
 async function resolveOrgSplit(
-  tx: PrismaTransaction,
+  tx: Tx,
   consultantProfileId: string,
   grossAmount: number,
   /** Point in time at which the rate card is resolved. Default = now(),
@@ -151,7 +157,8 @@ async function resolveOrgSplit(
   const orgId = membership.organization.id;
   const payoutRecipient = membership.payoutRecipient;
 
-  const { resolveEffectiveRateCard } = await import("@/lib/api/organizations/rate-card");
+  const { resolveEffectiveRateCard } =
+    await import("@/lib/api/organizations/rate-card");
   const resolved = await resolveEffectiveRateCard(tx, {
     orgId,
     membershipOverrideId: membership.rateCardOverrideId,
@@ -159,8 +166,12 @@ async function resolveOrgSplit(
   });
 
   // Integer paise × basis-point math, no float drift.
-  const platformFeePaise = Math.floor((grossAmount * resolved.platformBps) / 10_000);
-  const consultantSharePaise = Math.floor((grossAmount * resolved.consultantBps) / 10_000);
+  const platformFeePaise = Math.floor(
+    (grossAmount * resolved.platformBps) / 10_000,
+  );
+  const consultantSharePaise = Math.floor(
+    (grossAmount * resolved.consultantBps) / 10_000,
+  );
   const orgShare = grossAmount - platformFeePaise - consultantSharePaise;
 
   const base = {
@@ -465,7 +476,10 @@ export async function createEarningsFromPayment({
             }
             pushDebit({ kind: "CASH" }, card);
             pushDebit({ kind: "WALLET", organizationId: orgId }, wallet);
-            pushDebit({ kind: "ORG_RECEIVABLE", organizationId: orgId }, receivable);
+            pushDebit(
+              { kind: "ORG_RECEIVABLE", organizationId: orgId },
+              receivable,
+            );
             pushDebit({ kind: "PLATFORM_PROMO" }, promo);
           } else {
             // Back-compat: legacy single-source payments carry no legs.
@@ -478,12 +492,17 @@ export async function createEarningsFromPayment({
           // payment.amount (post-credit). Using `amount` double-counted the credit
           // (PROMO + DISCOUNT), imbalancing the posting so it was silently dropped —
           // every fully-credit-funded booking went un-journaled.
-          const fundingDebitTotal = debits.reduce((s, d) => s + d.amountPaise, 0);
+          const fundingDebitTotal = debits.reduce(
+            (s, d) => s + d.amountPaise,
+            0,
+          );
           pushDebit(
             { kind: "DISCOUNT" },
             Math.max(
               0,
-              payment.originalAmount + (payment.taxAmount ?? 0) - fundingDebitTotal,
+              payment.originalAmount +
+                (payment.taxAmount ?? 0) -
+                fundingDebitTotal,
             ),
           );
 
@@ -731,10 +750,10 @@ export async function getConsultantEarningsSummary(
     }),
   ]);
 
-  const pendingEarnings = pending._sum.consultantSharePaise || 0;
-  const readyEarnings = ready._sum.consultantSharePaise || 0;
-  const paidEarnings = paid._sum.consultantSharePaise || 0;
-  const heldEarnings = held._sum.consultantSharePaise || 0;
+  const pendingEarnings = sumPaise(pending._sum.consultantSharePaise);
+  const readyEarnings = sumPaise(ready._sum.consultantSharePaise);
+  const paidEarnings = sumPaise(paid._sum.consultantSharePaise);
+  const heldEarnings = sumPaise(held._sum.consultantSharePaise);
 
   return {
     consultantProfileId,
@@ -828,7 +847,7 @@ export async function refundEarnings(
     /** For partial refunds: the original payment amount in smallest currency unit */
     paymentAmount?: number;
     /** Optional Prisma transaction client; see function docblock. */
-    tx?: Prisma.TransactionClient;
+    tx?: Tx;
   },
 ): Promise<boolean> {
   const db = options?.tx ?? prisma;
@@ -858,7 +877,9 @@ export async function refundEarnings(
       : 1;
 
   if (refundRatio === 0) {
-    console.log(`Zero-amount refund for payment ${paymentId}, no earnings reversal needed`);
+    console.log(
+      `Zero-amount refund for payment ${paymentId}, no earnings reversal needed`,
+    );
     return true;
   }
 
@@ -883,7 +904,10 @@ export async function refundEarnings(
     if (orgEarning.status === EarningStatus.REFUNDED) continue;
 
     const alreadyRefunded = orgEarning.refundedAmountPaise ?? 0;
-    const maxReversible = Math.max(0, orgEarning.orgSharePaise - alreadyRefunded);
+    const maxReversible = Math.max(
+      0,
+      orgEarning.orgSharePaise - alreadyRefunded,
+    );
     const rawOrgRefund = Math.round(orgEarning.orgSharePaise * refundRatio);
     const orgRefundAmount = Math.min(rawOrgRefund, maxReversible);
 
@@ -918,7 +942,10 @@ export async function refundEarnings(
     // Cap shareToReverse against remaining reversible balance to prevent
     // over-refunding on duplicate webhooks or sequential partial refunds.
     const alreadyRefunded = earnings.refundedShareAmount ?? 0;
-    const maxReversible = Math.max(0, earnings.consultantSharePaise - alreadyRefunded);
+    const maxReversible = Math.max(
+      0,
+      earnings.consultantSharePaise - alreadyRefunded,
+    );
     const rawShare = Math.round(earnings.consultantSharePaise * refundRatio);
     const shareToReverse = Math.min(rawShare, maxReversible);
 
@@ -930,7 +957,8 @@ export async function refundEarnings(
     }
 
     // Determine if this reversal fully exhausts the earning
-    const isFullyRefunded = alreadyRefunded + shareToReverse >= earnings.consultantSharePaise;
+    const isFullyRefunded =
+      alreadyRefunded + shareToReverse >= earnings.consultantSharePaise;
 
     // Handle already-paid earnings (payout completed)
     if (earnings.status === EarningStatus.PAID) {
@@ -1090,31 +1118,32 @@ export async function getEarningsStats() {
   return {
     pending: {
       count: pending._count,
-      consultantSharePaise: pending._sum.consultantSharePaise || 0,
-      platformFeePaise: pending._sum.platformFeePaise || 0,
+      consultantSharePaise: sumPaise(pending._sum.consultantSharePaise),
+      platformFeePaise: sumPaise(pending._sum.platformFeePaise),
     },
     ready: {
       count: ready._count,
-      consultantSharePaise: ready._sum.consultantSharePaise || 0,
-      platformFeePaise: ready._sum.platformFeePaise || 0,
+      consultantSharePaise: sumPaise(ready._sum.consultantSharePaise),
+      platformFeePaise: sumPaise(ready._sum.platformFeePaise),
     },
     paid: {
       count: paid._count,
-      consultantSharePaise: paid._sum.consultantSharePaise || 0,
-      platformFeePaise: paid._sum.platformFeePaise || 0,
+      consultantSharePaise: sumPaise(paid._sum.consultantSharePaise),
+      platformFeePaise: sumPaise(paid._sum.platformFeePaise),
     },
     held: {
       count: held._count,
-      consultantSharePaise: held._sum.consultantSharePaise || 0,
-      platformFeePaise: held._sum.platformFeePaise || 0,
+      consultantSharePaise: sumPaise(held._sum.consultantSharePaise),
+      platformFeePaise: sumPaise(held._sum.platformFeePaise),
     },
     refunded: {
       count: refunded._count,
-      consultantSharePaise: refunded._sum.consultantSharePaise || 0,
-      platformFeePaise: refunded._sum.platformFeePaise || 0,
+      consultantSharePaise: sumPaise(refunded._sum.consultantSharePaise),
+      platformFeePaise: sumPaise(refunded._sum.platformFeePaise),
     },
     totalPlatformRevenue:
-      (paid._sum.platformFeePaise || 0) + (ready._sum.platformFeePaise || 0),
+      sumPaise(paid._sum.platformFeePaise) +
+      sumPaise(ready._sum.platformFeePaise),
   };
 }
 
@@ -1147,10 +1176,10 @@ export async function getOrgEarningsSummary(
     }),
   ]);
 
-  const pendingEarnings = pending._sum.orgSharePaise ?? 0;
-  const readyEarnings = ready._sum.orgSharePaise ?? 0;
-  const paidEarnings = paid._sum.orgSharePaise ?? 0;
-  const heldEarnings = held._sum.orgSharePaise ?? 0;
+  const pendingEarnings = sumPaise(pending._sum.orgSharePaise);
+  const readyEarnings = sumPaise(ready._sum.orgSharePaise);
+  const paidEarnings = sumPaise(paid._sum.orgSharePaise);
+  const heldEarnings = sumPaise(held._sum.orgSharePaise);
 
   return {
     organizationId,

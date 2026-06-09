@@ -1,7 +1,7 @@
 import "server-only";
 import { Prisma } from "@prisma/client";
 import { UserRole, ScheduleType } from "@prisma/client";
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { isValidTimeRange } from "@/utils/timeSlotValidation";
 import {
   validateWeeklySlotTimeOrder,
@@ -9,10 +9,7 @@ import {
   getTimezoneOffsetMinutes,
 } from "@/utils/slotAllocation/slotTimeUtils";
 import { notifyNewConsultantApplication } from "@/lib/novu";
-import type {
-  OnboardingData,
-  ConsultantProfileCreateData,
-} from "./onboarding";
+import type { OnboardingData, ConsultantProfileCreateData } from "./onboarding";
 import {
   buildUserUpdateData,
   buildConsultantScalarData,
@@ -62,7 +59,7 @@ async function assertUserExists(id: string) {
 async function upsertConsultantProfile(
   userId: string,
   profileData: ConsultantProfileCreateData,
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   timezone?: string,
 ) {
   const scalarData = buildConsultantScalarData(profileData);
@@ -70,14 +67,17 @@ async function upsertConsultantProfile(
 
   // Validate domain/subdomain/tag consistency
   const tagIds = profileData.tags?.connect?.map((t) => t.id) ?? [];
-  const subDomainIds = profileData.subDomains?.connect?.map((sd) => sd.id) ?? [];
+  const subDomainIds =
+    profileData.subDomains?.connect?.map((sd) => sd.id) ?? [];
 
   if (tagIds.length > 0) {
     const validTags = await tx.tag.count({
       where: { id: { in: tagIds }, domainId },
     });
     if (validTags !== tagIds.length) {
-      throw new Error("One or more selected skills do not belong to the chosen domain");
+      throw new Error(
+        "One or more selected skills do not belong to the chosen domain",
+      );
     }
   }
 
@@ -86,7 +86,9 @@ async function upsertConsultantProfile(
       where: { id: { in: subDomainIds }, domainId },
     });
     if (validSubDomains !== subDomainIds.length) {
-      throw new Error("One or more selected sub-domains do not belong to the chosen domain");
+      throw new Error(
+        "One or more selected sub-domains do not belong to the chosen domain",
+      );
     }
   }
 
@@ -131,12 +133,10 @@ async function syncAvailabilitySlots(
   consultantProfileId: string,
   scheduleType: ScheduleType,
   profileData: ConsultantProfileCreateData,
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   timezone?: string,
 ) {
-  const utcOffsetMinutes = timezone
-    ? getTimezoneOffsetMinutes(timezone)
-    : 0;
+  const utcOffsetMinutes = timezone ? getTimezoneOffsetMinutes(timezone) : 0;
   if (scheduleType === ScheduleType.WEEKLY) {
     await tx.slotOfAvailabilityCustom.deleteMany({
       where: { consultantProfileId },
@@ -175,9 +175,7 @@ async function syncAvailabilitySlots(
 
       for (let i = 0; i < weeklySlotsToCreate.length; i++) {
         for (let j = i + 1; j < weeklySlotsToCreate.length; j++) {
-          if (
-            slotsOverlap(weeklySlotsToCreate[i], weeklySlotsToCreate[j])
-          ) {
+          if (slotsOverlap(weeklySlotsToCreate[i], weeklySlotsToCreate[j])) {
             throw new Error(
               "Weekly availability slots contain overlapping time ranges",
             );
@@ -212,11 +210,15 @@ async function syncAvailabilitySlots(
         const startMs = new Date(slot.startsAt).getTime();
         const endMs = new Date(slot.endsAt).getTime();
         if (startMs >= endMs) {
-          throw new Error(`Custom slot ${i + 1}: start time must be before end time`);
+          throw new Error(
+            `Custom slot ${i + 1}: start time must be before end time`,
+          );
         }
         const durationMin = (endMs - startMs) / 60_000;
         if (durationMin < 30 || durationMin > 720) {
-          throw new Error(`Custom slot ${i + 1}: duration must be between 30 minutes and 12 hours`);
+          throw new Error(
+            `Custom slot ${i + 1}: duration must be between 30 minutes and 12 hours`,
+          );
         }
       }
 
@@ -249,7 +251,7 @@ async function syncAvailabilitySlots(
 async function upsertConsulteeProfile(
   userId: string,
   profileData: Parameters<typeof buildConsulteeScalarData>[0],
-  tx: Prisma.TransactionClient,
+  tx: Tx,
 ) {
   const scalarData = buildConsulteeScalarData(profileData);
   const profile = await tx.consulteeProfile.upsert({
@@ -263,7 +265,7 @@ async function upsertConsulteeProfile(
 async function upsertStaffProfile(
   userId: string,
   profileData: Parameters<typeof buildStaffScalarData>[0],
-  tx: Prisma.TransactionClient,
+  tx: Tx,
 ) {
   const scalarData = buildStaffScalarData(profileData);
   const profile = await tx.staffProfile.upsert({
@@ -277,7 +279,7 @@ async function upsertStaffProfile(
 async function upsertAdminProfile(
   userId: string,
   profileData: Parameters<typeof buildAdminScalarData>[0],
-  tx: Prisma.TransactionClient,
+  tx: Tx,
 ) {
   const scalarData = buildAdminScalarData(profileData);
   const profile = await tx.adminProfile.upsert({
@@ -291,7 +293,7 @@ async function upsertAdminProfile(
 async function upsertProfileByRole(
   userId: string,
   validatedBody: OnboardingData,
-  tx: Prisma.TransactionClient,
+  tx: Tx,
 ): Promise<{
   consultantProfileId?: string;
   consulteeProfileId?: string;
@@ -313,11 +315,7 @@ async function upsertProfileByRole(
         tx,
       );
     case UserRole.STAFF:
-      return upsertStaffProfile(
-        userId,
-        validatedBody.staffProfile.create,
-        tx,
-      );
+      return upsertStaffProfile(userId, validatedBody.staffProfile.create, tx);
     case UserRole.ADMIN:
       if (validatedBody.adminProfile?.create) {
         return upsertAdminProfile(
@@ -347,7 +345,7 @@ export async function persistProfessionalBackground(
   userId: string,
   consultantProfileId: string | undefined,
   body: Record<string, unknown>,
-  tx: Prisma.TransactionClient,
+  tx: Tx,
 ) {
   const {
     workExperiences,
@@ -486,7 +484,9 @@ async function submitVerificationRequest(
     if (existingDocuments.length > 0) {
       await prisma.profileVerificationDocument.updateMany({
         where: {
-          id: { in: existingDocuments.map((d) => d.id).filter(Boolean) as string[] },
+          id: {
+            in: existingDocuments.map((d) => d.id).filter(Boolean) as string[],
+          },
         },
         data: { verificationId: verification.id },
       });
@@ -553,7 +553,12 @@ export async function processOnboardingData(
   // (consultantProfile, consulteeProfile, slots, domain, etc.). Typing it
   // precisely would require a shared Prisma payload type across server/action/client
   // layers — not worth the coupling. Callers only read a few string IDs from it.
-): Promise<{ success: boolean; user?: Record<string, unknown>; error?: string; verificationWarning?: string }> {
+): Promise<{
+  success: boolean;
+  user?: Record<string, unknown>;
+  error?: string;
+  verificationWarning?: string;
+}> {
   const { validateOnboardingData } = await import("./onboarding");
 
   try {
@@ -677,4 +682,3 @@ export async function processOnboardingData(
     return { success: false, error: errorMessage };
   }
 }
-

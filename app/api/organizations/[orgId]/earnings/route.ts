@@ -21,6 +21,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 const EarningStatusSchema = z.enum([
   "PENDING",
@@ -116,7 +117,7 @@ export async function GET(
 
   const hasMore = earnings.length > q.limit;
   const rows = hasMore ? earnings.slice(0, q.limit) : earnings;
-  const nextCursor = hasMore ? rows[rows.length - 1]?.id ?? null : null;
+  const nextCursor = hasMore ? (rows[rows.length - 1]?.id ?? null) : null;
 
   return NextResponse.json({
     data: rows,
@@ -124,10 +125,10 @@ export async function GET(
     aggregates: aggregates.map((g) => ({
       status: g.status,
       count: g._count._all,
-      orgSharePaise: g._sum.orgSharePaise ?? 0,
-      platformFeePaise: g._sum.platformFeePaise ?? 0,
-      consultantSharePaise: g._sum.consultantSharePaise ?? 0,
-      refundedAmountPaise: g._sum.refundedAmountPaise ?? 0,
+      orgSharePaise: sumPaise(g._sum.orgSharePaise),
+      platformFeePaise: sumPaise(g._sum.platformFeePaise),
+      consultantSharePaise: sumPaise(g._sum.consultantSharePaise),
+      refundedAmountPaise: sumPaise(g._sum.refundedAmountPaise),
     })),
   });
 }

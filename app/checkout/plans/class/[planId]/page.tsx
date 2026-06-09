@@ -9,7 +9,11 @@ import { Switch } from "@/components/ui/switch";
 import { useMaintenanceGuard } from "@/hooks/useMaintenanceGuard";
 import { useToast } from "@/hooks/use-toast";
 import { fetchReviews } from "@/lib/user";
-import { SearchParams, searchParamsSchema, createCheckoutData } from "@/schemas/checkout";
+import {
+  SearchParams,
+  searchParamsSchema,
+  createCheckoutData,
+} from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { CompanyLogo } from "@/components/ui/company-logo";
@@ -44,7 +48,9 @@ import type {
   User,
 } from "@prisma/client";
 
-export type CheckoutClassPlanData = ClassPlan & {
+// price arrives as number: extended client + JSON serialization (#780)
+export type CheckoutClassPlanData = Omit<ClassPlan, "price"> & {
+  price: number;
   consultantProfile:
     | (ConsultantProfile & {
         user: User & {
@@ -103,7 +109,9 @@ export default function ClassCheckoutPage({
   const [isApplyingDiscount, setIsApplyingDiscount] = useState(false);
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [useReferralCredits, setUseReferralCredits] = useState(false);
-  const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null);
+  const [selectedOrganizationId, setSelectedOrganizationId] = useState<
+    string | null
+  >(null);
   const [availableCredits, setAvailableCredits] = useState(0);
   const [isLoadingCredits, setIsLoadingCredits] = useState(true);
 
@@ -193,7 +201,10 @@ export default function ClassCheckoutPage({
   }, []);
 
   const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);
-  const handleCheckoutSuccess = useMemo(() => createHandleCheckoutSuccess(toast, "CLASS"), [toast]);
+  const handleCheckoutSuccess = useMemo(
+    () => createHandleCheckoutSuccess(toast, "CLASS"),
+    [toast],
+  );
   const stripeHandlers = createStripeCheckoutHandlers(toast);
   const razorpayHandlers = createRazorpayCheckoutHandlers(toast);
 
@@ -246,7 +257,9 @@ export default function ClassCheckoutPage({
           displayCurrency: currency,
           paymentGateway: gateway,
           fromWaitlist,
-          useReferralCredits: selectedOrganizationId ? false : useReferralCredits,
+          useReferralCredits: selectedOrganizationId
+            ? false
+            : useReferralCredits,
           organizationId: selectedOrganizationId ?? undefined,
         });
 
@@ -801,7 +814,9 @@ export default function ClassCheckoutPage({
                             paymentGateway: "RAZORPAY",
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
-                            useReferralCredits: selectedOrganizationId ? false : useReferralCredits,
+                            useReferralCredits: selectedOrganizationId
+                              ? false
+                              : useReferralCredits,
                             organizationId: selectedOrganizationId ?? undefined,
                           })}
                           onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
@@ -817,7 +832,9 @@ export default function ClassCheckoutPage({
                             paymentGateway: "STRIPE",
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
-                            useReferralCredits: selectedOrganizationId ? false : useReferralCredits,
+                            useReferralCredits: selectedOrganizationId
+                              ? false
+                              : useReferralCredits,
                             organizationId: selectedOrganizationId ?? undefined,
                           })}
                           onPaymentSuccess={stripeHandlers.onPaymentSuccess}
@@ -829,7 +846,9 @@ export default function ClassCheckoutPage({
                         <Button
                           variant="secondary"
                           onClick={() => handleCheckout(gateway.gateway, true)}
-                          disabled={isCheckoutProcessing || isMaintenanceBlocked}
+                          disabled={
+                            isCheckoutProcessing || isMaintenanceBlocked
+                          }
                         >
                           {isCheckoutProcessing &&
                           processingGateway === `${gateway.gateway}-mock` ? (
