@@ -569,7 +569,7 @@ model Organization {
 
   // Per-org invoice number counters — one row per (org, fiscal year).
   // See `OrgInvoiceCounter` for the atomic increment semantics.
-  invoiceCounters OrgInvoiceCounter[]
+  invoiceCounters    OrgInvoiceCounter[]
   // Per-org credit-note counters (#776) — independent CN sequence (Rule 53).
   creditNoteCounters OrgCreditNoteCounter[]
 
@@ -882,7 +882,6 @@ model OrgKybVerification {
   sumsubApplicantId String?
 }
 
-
 model BillingAccount {
   id           String        @id @default(uuid())
   ownerOrgId   String        @unique
@@ -893,18 +892,18 @@ model BillingAccount {
   fundingSource FundingSource
 
   // WALLET funding (GLG-style)
-  walletBalance Int? // paise
+  walletBalance BigInt? // paise
   walletTopUps  WalletTopUp[]
 
   // INVOICE funding
-  creditLimit Int? // paise; null = unlimited
+  creditLimit BigInt? // paise; null = unlimited
 
   /// #777 §C — wallet minimum-balance + auto-top-up. When walletBalance drops
   /// below minBalancePaise the auto-top-up cron charges autoTopUpMandateId for
   /// autoTopUpAmountPaise. All-null = manual top-up only (current behavior).
-  minBalancePaise      Int?
+  minBalancePaise      BigInt?
   autoTopUpEnabled     Boolean   @default(false)
-  autoTopUpAmountPaise Int?
+  autoTopUpAmountPaise BigInt?
   autoTopUpMandateId   String? // gateway recurring-payment token
   autoTopUpLastFiredAt DateTime? // idempotency: rate-limit the cron per account
 
@@ -956,13 +955,13 @@ model Contract {
 
   /// #779 §A — amendment/renewal/supersession chain. The OLD row points forward
   /// here; the new row is a fresh Contract. Self-join answers "what replaced X?".
-  supersededByContractId String?    @unique
-  supersededByContract   Contract?  @relation("ContractSupersession", fields: [supersededByContractId], references: [id], onDelete: SetNull)
-  supersededContract     Contract?  @relation("ContractSupersession")
+  supersededByContractId String?                     @unique
+  supersededByContract   Contract?                   @relation("ContractSupersession", fields: [supersededByContractId], references: [id], onDelete: SetNull)
+  supersededContract     Contract?                   @relation("ContractSupersession")
   supersededAt           DateTime?
   supersessionReason     ContractSupersessionReason?
   /// #779 §A — set by the auto-renew cron so renewal is idempotent (claim gate).
-  autoRenewedAt DateTime?
+  autoRenewedAt          DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -993,8 +992,8 @@ model BillingSubscription {
 
   model            SubscriptionModel
   cycle            BillingCycle
-  ratePerSeatPaise Int?
-  flatFeePaise     Int?
+  ratePerSeatPaise BigInt?
+  flatFeePaise     BigInt?
   activeSeatCount  Int               @default(0)
 
   currentCycleStart DateTime
@@ -1050,7 +1049,7 @@ model WalletTopUp {
   // double-POST can't double-credit the wallet.
   providerOrderId   String            @unique
   providerPaymentId String? // gateway payment id, set on confirm
-  amountPaise       Int
+  amountPaise       BigInt
   status            WalletTopUpStatus @default(PENDING)
   notes             String?
 
@@ -1121,7 +1120,7 @@ model Program {
 model LicensedSeatConfig {
   programId                  String          @id
   program                    Program         @relation(fields: [programId], references: [id], onDelete: Cascade)
-  ratePerSeatPaise           Int
+  ratePerSeatPaise           BigInt
   cycle                      BillingCycle
   /// Per-assignment cap, counted in *engagements* — one engagement is one
   /// calendar occurrence (one Appointment row), regardless of duration.
@@ -1136,7 +1135,7 @@ model LicensedSeatConfig {
   coveredEngagementsPerCycle Int?
   overageBehavior            OverageBehavior @default(BLOCK)
   activeSeatCount            Int             @default(0)
-  priceCapPerEngagementPaise Int?
+  priceCapPerEngagementPaise BigInt?
   /// #775 — bps markup applied to the pass-through overage marginal, after
   /// `priceCapPerEngagementPaise`. Null = no markup (marginal == price). Our
   /// model passes through the real engagement price (consulting rates are
@@ -1146,7 +1145,7 @@ model LicensedSeatConfig {
   /// no ceiling. Non-null = cumulative OverageEvent.marginalPaise within
   /// the current cycle cannot exceed this; subsequent bookings fall back
   /// to BLOCK regardless of overageBehavior.
-  maxOveragePerCyclePaise    Int?
+  maxOveragePerCyclePaise    BigInt?
 }
 
 // 1 credit = ₹1 = 100 paise. Fixed; no per-pool override. Per-tier
@@ -1180,7 +1179,7 @@ model CreditPoolConfig {
   /// #775 — bps markup on the over-budget marginal (see LicensedSeatConfig).
   overageSurchargeBps     Int?
   /// #768 lockdown #14/#15 — circuit breaker (see LicensedSeatConfig).
-  maxOveragePerCyclePaise Int?
+  maxOveragePerCyclePaise BigInt?
 }
 
 model ProgramAssignment {
@@ -1197,13 +1196,13 @@ model ProgramAssignment {
   /// Atomically incremented by recordBookingUtilization, decremented by
   /// reverseBookingUtilization on refund. Reconcile cron asserts this
   /// equals sum(UsageLedgerEntry.engagementsConsumed) for the period.
-  engagementsUsed Int @default(0)
+  engagementsUsed Int    @default(0)
   /// #775/#753 — CREDIT_POOL money-meter: paise consumed this cycle (1 credit
   /// = ₹1 = 100 paise). LICENSED_SEAT leaves it 0 (meters by engagement count
   /// instead). Reconcile asserts this equals sum(UsageLedgerEntry price) for
   /// the period on CREDIT_POOL assignments.
-  consumedPaise   Int @default(0)
-  overageCount    Int @default(0)
+  consumedPaise   BigInt @default(0)
+  overageCount    Int    @default(0)
 
   /// #779 §A — explicit assignment lifecycle (was inferred from periodEnd vs
   /// now). ACTIVE = drawing from cap; ROLLED = cycle advanced, successor minted;
@@ -1218,7 +1217,7 @@ model ProgramAssignment {
   rolledToAssignment   ProgramAssignment? @relation("AssignmentRollover", fields: [rolledToAssignmentId], references: [id], onDelete: SetNull)
   rolledFromAssignment ProgramAssignment? @relation("AssignmentRollover")
   /// #779 §A — set when the cycle engine processed this row (idempotency gate).
-  rolledAt DateTime?
+  rolledAt             DateTime?
 
   utilizations BookingUtilization[]
 
@@ -1249,7 +1248,7 @@ model BookingUtilization {
   ///     subscription checkout itself does NOT write a utilization row.
   /// Reversal is the negative of this value via reverseBookingUtilization.
   engagementsConsumed Int               @default(1)
-  priceAtBookingPaise Int
+  priceAtBookingPaise BigInt
   wasOverage          Boolean           @default(false)
 
   // Rate-card snapshot at booking time. Settlement reads these values,
@@ -1304,7 +1303,6 @@ enum AssignmentStatus {
   CLOSED
   CANCELLED
 }
-
 
 enum OverageBehavior {
   BLOCK // cap hit → checkout blocked
@@ -1363,8 +1361,8 @@ model RateCard {
   planType        CoveredPlanType?
   planId          String?
 
-  minGrossPaise Int?
-  maxGrossPaise Int?
+  minGrossPaise BigInt?
+  maxGrossPaise BigInt?
 
   // Basis points (sum = 10000). Integer math; no float drift.
   platformBps   Int
@@ -1434,11 +1432,11 @@ model OrganizationEarnings {
   paymentId String
   payment   Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
 
-  grossAmountPaise     Int
-  platformFeePaise     Int
-  orgSharePaise        Int
-  consultantSharePaise Int
-  refundedAmountPaise  Int      @default(0)
+  grossAmountPaise     BigInt
+  platformFeePaise     BigInt
+  orgSharePaise        BigInt
+  consultantSharePaise BigInt
+  refundedAmountPaise  BigInt   @default(0)
   currency             Currency @default(INR)
 
   // Rate-card snapshot applied at earnings creation. We persist both the
@@ -1470,7 +1468,7 @@ model OrganizationPayout {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  amountPaise    Int
+  amountPaise    BigInt
   currency       Currency       @default(INR)
   status         PayoutStatus
   paymentGateway PaymentGateway
@@ -1478,14 +1476,14 @@ model OrganizationPayout {
   periodStart DateTime
   periodEnd   DateTime
 
-  grossRevenuePaise Int
-  platformFeePaise  Int
-  refundsPaise      Int @default(0)
-  netPayoutPaise    Int
+  grossRevenuePaise BigInt
+  platformFeePaise  BigInt
+  refundsPaise      BigInt @default(0)
+  netPayoutPaise    BigInt
 
   // India statutory (fields final; cron + derivation stubbed in v1)
   tdsSectionApplied String? // "194J" | "194O" | "194C"
-  tdsAmountPaise    Int?
+  tdsAmountPaise    BigInt?
   mustPayByDate     DateTime? // derived from MSME 15/45-day rule
   paRouteProvider   String? // "RAZORPAYX" | "CASHFREE_PAYOUTS"
   paReferenceId     String?
@@ -1513,7 +1511,7 @@ model OrganizationPayout {
   /// C1 (PR-4) refund clawback — when an OrganizationEarnings already
   /// rolled into this payout is later refunded. Manual recovery only
   /// in v1; admin sees this in the payout-detail page.
-  clawbackAmountPaise Int       @default(0)
+  clawbackAmountPaise BigInt    @default(0)
   clawbackInitiatedAt DateTime?
 
   /// Cron-driven duplicate-guard key. The weekly batch cron derives a
@@ -1574,12 +1572,12 @@ model OrganizationInvoice {
   // Money
   displayCurrency    Currency
   fxRateUsed         Decimal?
-  inrEquivalentPaise Int // always captured for GST filings
-  subtotalPaise      Int
-  igstPaise          Int      @default(0)
-  cgstPaise          Int      @default(0)
-  sgstPaise          Int      @default(0)
-  totalPaise         Int
+  inrEquivalentPaise BigInt // always captured for GST filings
+  subtotalPaise      BigInt
+  igstPaise          BigInt   @default(0)
+  cgstPaise          BigInt   @default(0)
+  sgstPaise          BigInt   @default(0)
+  totalPaise         BigInt
   taxRate            Decimal?
 
   // Typed line items (was Json `items`). One row per line; HSN code,
@@ -1676,11 +1674,11 @@ model InvoiceLineItem {
   position       Int                 @default(0)
   description    String              @db.VarChar(500)
   quantity       Int
-  unitPricePaise Int
+  unitPricePaise BigInt
   // Per-line tax. Null when GST is computed only at invoice level
   // (current state); cron migration will distribute totalTaxPaise across
   // lines once per-line rates ship.
-  taxPaise       Int?
+  taxPaise       BigInt?
   // Per-line HSN. Falls back to invoice.hsnCode at render time.
   hsnCode        String?
   // Optional Payment link for INVOICE rollups (one Payment per line on
@@ -1733,8 +1731,8 @@ model PurchaseOrder {
   poNumber             String
   poDate               DateTime
   validUntil           DateTime?
-  totalAmountPaise     Int
-  remainingAmountPaise Int
+  totalAmountPaise     BigInt
+  remainingAmountPaise BigInt
   currency             Currency  @default(INR)
   uploadedDocUrl       String?
   status               PoStatus  @default(ACTIVE)
@@ -1880,7 +1878,7 @@ model UsageLedgerEntry {
   /// reconcile cron asserts this invariant nightly.
   engagementsConsumed Int
   minutesConsumed     Int?
-  priceAtBookingPaise Int
+  priceAtBookingPaise BigInt
   wasOverage          Boolean @default(false)
   notes               String?
 
@@ -1929,13 +1927,13 @@ model LedgerAccount {
   // Deterministic id: "<kind>|<orgId|_>|<membershipId|_>|<currency>" so
   // resolveAccountId() upserts dedupe per scope without the Postgres
   // nullable-unique gotcha (a unique index doesn't dedupe NULLs).
-  id                  String            @id
+  id                  String                @id
   // Scope: platform-wide accounts leave both owners null; org / consultant
   // sub-ledgers set the relevant owner. One account per (owner, kind, currency).
   organizationId      String?
   consultantProfileId String?
   kind                LedgerAccountKind
-  currency            Currency          @default(INR)
+  currency            Currency              @default(INR)
   entries             LedgerEntry[]
   balance             LedgerAccountBalance?
 
@@ -2517,7 +2515,7 @@ model ConsultationPlan {
   title            String
   description      String?  @db.Text
   durationInHours  Float    @default(1)
-  price            Int // in paise (smallest currency unit, e.g. 50000 = ₹500)
+  price            BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
   priceCurrency    String   @default("INR")
   language         String   @default("English")
   level            String   @default("Beginner")
@@ -2588,7 +2586,7 @@ model SubscriptionPlan {
   title                  String
   description            String?          @db.Text
   durationInMonths       Int              @default(1)
-  price                  Int // in paise (smallest currency unit, e.g. 50000 = ₹500)
+  price                  BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
   priceCurrency          String           @default("INR")
   callsPerWeek           Int              @default(1)
   sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
@@ -2794,7 +2792,7 @@ model WebinarPlan {
   title                  String
   topics                 Topic[]                @relation("TopicToWebinarPlan")
   description            String?                @db.Text
-  price                  Int // in paise (smallest currency unit, e.g. 50000 = ₹500)
+  price                  BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
   priceCurrency          String                 @default("INR")
   certificateProvided    Boolean                @default(false)
   recordingEnabled       Boolean                @default(false) // Allow consultant to record sessions
@@ -2863,7 +2861,7 @@ model ClassPlan {
   description            String                 @db.Text
   topics                 Topic[]                @relation("TopicToClassPlan")
   classContents          ClassContent[]
-  price                  Int // in paise (smallest currency unit, e.g. 50000 = ₹500)
+  price                  BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
   priceCurrency          String                 @default("INR")
   certificateProvided    Boolean                @default(false)
   recordingEnabled       Boolean                @default(false) // Allow consultant to record sessions
@@ -3363,9 +3361,9 @@ enum Platform {
 
 model Payment {
   id             String         @id @default(uuid())
-  amount         Int // in paise — final amount charged to gateway (after discounts + tax - credits)
-  originalAmount Int // in paise — original plan price before discounts/credits/tax (for earnings)
-  taxAmount      Int            @default(0) // in paise — GST amount charged
+  amount         BigInt // in paise — final amount charged to gateway (after discounts + tax - credits)
+  originalAmount BigInt // in paise — original plan price before discounts/credits/tax (for earnings)
+  taxAmount      BigInt         @default(0) // in paise — GST amount charged
   currency       String
   description    String?
   receiptUrl     String?
@@ -3388,7 +3386,7 @@ model Payment {
   // #778 §D — GST TCS u/s 52 collected on this payment (we're likely an e-commerce
   // operator owing 1% on registered consultants). paise; #780 widens to BigInt.
   // Collection + GSTR-8 filing flag-gated/deferred pending CA signoff.
-  gstTcsCollectedPaise Int?
+  gstTcsCollectedPaise BigInt?
 
   user           User          @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId         String
@@ -3486,7 +3484,7 @@ model PaymentLeg {
   paymentId   String
   payment     Payment          @relation(fields: [paymentId], references: [id], onDelete: Cascade)
   source      PaymentLegSource
-  amountPaise Int
+  amountPaise BigInt
   sourceRef   String? // see header — kind depends on `source`
   createdAt   DateTime         @default(now())
 
@@ -3529,7 +3527,7 @@ enum PaymentStatus {
 
 model Refund {
   id                   String         @id @default(uuid())
-  amountPaise          Int // Amount refunded in paise
+  amountPaise          BigInt // Amount refunded in paise
   currency             String
   reason               String? // Reason for refund
   status               RefundStatus
@@ -3576,7 +3574,7 @@ enum RefundStatus {
 
 model Dispute {
   id                 String         @id @default(uuid())
-  amountPaise        Int // Disputed amount in paise
+  amountPaise        BigInt // Disputed amount in paise
   currency           String
   reason             String // Dispute reason from gateway
   status             DisputeStatus
@@ -3656,13 +3654,13 @@ model ConsultantEarnings {
   payoutId            String?
 
   // Revenue breakdown (paise)
-  grossAmount          Int // Total sale price (paise)
-  platformFeePaise     Int // Platform cut (20%)
-  consultantSharePaise Int // Consultant cut (80%)
-  refundedShareAmount  Int  @default(0) // Cumulative refunded amount in paise
+  grossAmount          BigInt // Total sale price (paise)
+  platformFeePaise     BigInt // Platform cut (20%)
+  consultantSharePaise BigInt // Consultant cut (80%)
+  refundedShareAmount  BigInt  @default(0) // Cumulative refunded amount in paise
   // #778 §D — GST TCS u/s 52 accrued against this consultant's supply (owed to
   // govt, reconciled into GstTcsBatch). paise; #780 widens to BigInt. Impl deferred.
-  gstTcsAccruedPaise   Int?
+  gstTcsAccruedPaise   BigInt?
 
   // Collaborator support
   role     EarningRole @default(OWNER)
@@ -3701,15 +3699,15 @@ model ConsultantPayout {
   consultantProfileId String
   provider            PaymentGateway
   providerPayoutId    String?        @unique
-  amount              Int
+  amount              BigInt
   currency            String         @default("INR")
   status              PayoutStatus   @default(PENDING)
   method              PayoutMethod
   batchId             String?
 
   // TDS (Tax Deducted at Source) — Section 194J
-  tdsDeducted      Int     @default(0) // TDS amount deducted from this payout, in paise
-  netAmount        Int? // Amount after TDS deduction (amount - tdsDeducted), sent to gateway
+  tdsDeducted      BigInt  @default(0) // TDS amount deducted from this payout, in paise
+  netAmount        BigInt? // Amount after TDS deduction (amount - tdsDeducted), sent to gateway
   tdsRateApplied   Float? // TDS rate reserved for this payout, used when creating the final audit record
   tdsFinancialYear String? // FY when TDS was calculated (e.g. "2026-27"). Persisted to avoid FY-boundary drift.
 
@@ -3807,8 +3805,8 @@ model TDSRecord {
   quarter             Int // 1=Apr-Jun, 2=Jul-Sep, 3=Oct-Dec, 4=Jan-Mar
 
   // Amounts in paise
-  cumulativeAmountCredited Int // FY cumulative of amounts credited/paid to consultant (sum of completed payouts)
-  tdsDeducted              Int // TDS amount deducted this record
+  cumulativeAmountCredited BigInt // FY cumulative of amounts credited/paid to consultant (sum of completed payouts)
+  tdsDeducted              BigInt // TDS amount deducted this record
   tdsRate                  Float // Rate at time of deduction
   // #776 — statutory section applied ("194O" | "194J" | "195" | …) for forensic
   // audit + Form 26Q/27Q line classification. Consultant payouts are 194-O (ECO)
@@ -3872,16 +3870,16 @@ model CreditNote {
   // refund-driven minting idempotent: one credit note per refund, so a webhook
   // redelivery / cron retry / app re-run can't mint a duplicate or burn a
   // gapless sequence number. Postgres allows many NULLs, so manual CNs are fine.
-  refundId       String? @unique
+  refundId       String?              @unique
   reason         String?
 
   // Money (paise; #780 widens to BigInt). Mirror the invoice tax split so the
   // CN nets cleanly against it.
-  subtotalPaise Int
-  igstPaise     Int @default(0)
-  cgstPaise     Int @default(0)
-  sgstPaise     Int @default(0)
-  totalPaise    Int
+  subtotalPaise BigInt
+  igstPaise     BigInt @default(0)
+  cgstPaise     BigInt @default(0)
+  sgstPaise     BigInt @default(0)
+  totalPaise    BigInt
 
   status   CreditNoteStatus @default(DRAFT)
   issuedAt DateTime?
@@ -3909,7 +3907,7 @@ model TdsAdjustment {
   financialYear String // "2026-27"
   quarter       Int // 1-4
   // Signed paise; negative reverses prior withholding (#780 widens to BigInt).
-  amountPaise   Int
+  amountPaise   BigInt
   reason        String?
 
   reportedInForm26Q Boolean @default(false)
@@ -3936,8 +3934,8 @@ model GstTcsBatch {
   month         Int // 1-12 (GSTR-8 is monthly)
 
   // Aggregates for the period (paise; #780 widens to BigInt).
-  netSupplyPaise    Int @default(0)
-  tcsCollectedPaise Int @default(0)
+  netSupplyPaise    BigInt @default(0)
+  tcsCollectedPaise BigInt @default(0)
 
   status         GstTcsBatchStatus @default(OPEN)
   filedAt        DateTime?
@@ -3962,7 +3960,7 @@ model GstTcsAdjustment {
   paymentId   String? // original payment
   refundId    String? // triggering refund
   // Signed paise; negative reverses TCS on refund (#780 widens to BigInt).
-  amountPaise Int
+  amountPaise BigInt
   reason      String?
 
   createdAt DateTime @default(now())
@@ -4000,7 +3998,7 @@ model DiscountCode {
   expiresAt     DateTime?
   maxUses       Int?
   currentUses   Int          @default(0)
-  maxDiscount   Int? // in paise (cap for FIXED_AMOUNT discounts)
+  maxDiscount   BigInt? // in paise (cap for FIXED_AMOUNT discounts)
 
   Payment Payment[]
 
@@ -4024,11 +4022,11 @@ model ReferralCode {
   userId              String  @unique
   code                String  @unique
   customCode          String? @unique
-  referrerReward      Int? // Reward for referrer in smallest currency unit (paise)
-  refereeReward       Int? // Reward for new user in smallest currency unit (paise)
+  referrerReward      BigInt? // Reward for referrer in smallest currency unit (paise)
+  refereeReward       BigInt? // Reward for new user in smallest currency unit (paise)
   totalReferrals      Int     @default(0)
   successfulReferrals Int     @default(0)
-  totalEarned         Int     @default(0)
+  totalEarned         BigInt  @default(0)
   maxReferrals        Int     @default(50) // Maximum referrals allowed per code
   isActive            Boolean @default(true)
 
@@ -4047,8 +4045,8 @@ model Referral {
   referralCodeId       String
   referredUserId       String         @unique
   status               ReferralStatus @default(SIGNED_UP)
-  referrerRewardAmount Int?
-  refereeRewardAmount  Int?
+  referrerRewardAmount BigInt?
+  refereeRewardAmount  BigInt?
   referrerRewardPaidAt DateTime?
   refereeRewardPaidAt  DateTime?
   signedUpAt           DateTime       @default(now())
@@ -4068,12 +4066,12 @@ model Referral {
 model ReferralCredit {
   id              String       @id @default(cuid())
   userId          String
-  amount          Int // Credit amount in smallest currency unit (paise)
+  amount          BigInt // Credit amount in smallest currency unit (paise)
   currency        String       @default("INR")
   source          CreditSource
   referralId      String?
-  usedAmount      Int          @default(0)
-  remainingAmount Int // amount - usedAmount
+  usedAmount      BigInt       @default(0)
+  remainingAmount BigInt // amount - usedAmount
   expiresAt       DateTime?
   usedAt          DateTime?
 
@@ -4096,9 +4094,9 @@ model ReferralCreditUsage {
   id             String   @id @default(cuid())
   creditId       String
   paymentId      String
-  amount         Int // Current remaining usage (decremented on partial refund restores)
-  originalAmount Int // Original amount at creation (never changes, used for ratio calculations)
-  restoredAmount Int      @default(0) // Cumulative amount restored across partial refunds (drift-free tracking)
+  amount         BigInt // Current remaining usage (decremented on partial refund restores)
+  originalAmount BigInt // Original amount at creation (never changes, used for ratio calculations)
+  restoredAmount BigInt   @default(0) // Cumulative amount restored across partial refunds (drift-free tracking)
   createdAt      DateTime @default(now())
 
   credit  ReferralCredit @relation(fields: [creditId], references: [id], onUpdate: Cascade, onDelete: Cascade)
@@ -4806,9 +4804,9 @@ model OverageEvent {
   /// `surchargePaise` is the `overageSurchargeBps` markup on top. Invariant:
   /// `marginalPaise == basePaise + surchargePaise`, and (covered) + basePaise ==
   /// booking price. `marginalPaise` stays the authoritative charged total.
-  basePaise            Int                 @default(0)
-  surchargePaise       Int                 @default(0)
-  marginalPaise        Int
+  basePaise            BigInt              @default(0)
+  surchargePaise       BigInt              @default(0)
+  marginalPaise        BigInt
   currency             Currency            @default(INR)
   chargeStatus         OverageChargeStatus @default(PENDING)
   /// CHARGE_MEMBER: Payment row for the instant overage charge.
