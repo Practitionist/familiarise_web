@@ -75,6 +75,7 @@ import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { checkPaymentLegsSumToAmount } from "@/lib/payments/payment-legs";
 import { ledgerBalancePaise } from "@/lib/payments/ledger/post";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 export type ReconcileScope = {
   /** Human-readable scope tag, e.g. "full" or "org:<orgId>". */
@@ -118,7 +119,12 @@ export type Finding = {
     | "REVERSED_EARNING_WITHOUT_REFUND_TXN"
     // #812 — a COMPLETED OrganizationPayout with no ORG_PAYOUT ledger
     // transaction: the cash left but the payable was never cleared in the journal.
-    | "COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN";
+    | "COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN"
+    // #780 — a stored money value approaching/beyond Number.MAX_SAFE_INTEGER.
+    // The JS boundary converts BigInt → number; past 2^53−1 that conversion
+    // loses precision (and sumPaise() starts throwing mid-flight). This
+    // surfaces the approach before anything crashes.
+    | "MONEY_VALUE_WITHIN_SAFE_RANGE";
   organizationId?: string;
   billingAccountId?: string;
   billingSubscriptionId?: string;
@@ -273,7 +279,8 @@ export async function runReconcileLedgers(
     // CREDIT_POOL assignments carry a money-meter (LICENSED_SEAT leaves
     // consumedPaise at 0).
     if (a.program.type === "CREDIT_POOL") {
-      const priceTotal = ledgerSum._sum?.priceAtBookingPaise ?? 0;
+      // #780 — aggregate _sum bypasses the result extension: bigint at runtime.
+      const priceTotal = sumPaise(ledgerSum._sum?.priceAtBookingPaise);
       if (priceTotal !== a.consumedPaise) {
         findings.push({
           kind: "CREDIT_POOL_CONSUMED_DRIFT",
@@ -357,7 +364,9 @@ export async function runReconcileLedgers(
       programAssignment: {
         select: {
           id: true,
-          program: { select: { contract: { select: { organizationId: true } } } },
+          program: {
+            select: { contract: { select: { organizationId: true } } },
+          },
         },
       },
     },
@@ -457,9 +466,7 @@ export async function runReconcileLedgers(
   // assertion in invoice-rollup.ts prevents new drift; this is the retroactive
   // sweep for legacy / manually-edited rows.
   const invoicesToCheck = await prisma.organizationInvoice.findMany({
-    where: opts.organizationId
-      ? { organizationId: opts.organizationId }
-      : {},
+    where: opts.organizationId ? { organizationId: opts.organizationId } : {},
     select: {
       id: true,
       organizationId: true,
@@ -587,13 +594,10 @@ export async function runReconcileLedgers(
       by: ["transactionId", "direction"],
       _sum: { amountPaise: true },
     });
-    const perTxn = new Map<string, { debit: bigint; credit: bigint }>();
+    const perTxn = new Map<string, { debit: number; credit: number }>();
     for (const row of ledgerSums) {
-      const cur = perTxn.get(row.transactionId) ?? {
-        debit: BigInt(0),
-        credit: BigInt(0),
-      };
-      const amt = row._sum.amountPaise ?? BigInt(0);
+      const cur = perTxn.get(row.transactionId) ?? { debit: 0, credit: 0 };
+      const amt = sumPaise(row._sum.amountPaise);
       if (row.direction === "DEBIT") cur.debit += amt;
       else cur.credit += amt;
       perTxn.set(row.transactionId, cur);
@@ -602,9 +606,9 @@ export async function runReconcileLedgers(
       if (sums.debit !== sums.credit) {
         findings.push({
           kind: "LEDGER_TXN_IMBALANCE",
-          expectedPaise: Number(sums.debit),
-          actualPaise: Number(sums.credit),
-          deltaPaise: Number(sums.debit - sums.credit),
+          expectedPaise: sums.debit,
+          actualPaise: sums.credit,
+          deltaPaise: sums.debit - sums.credit,
           details: {
             transactionId,
             unit: "paise",
@@ -624,10 +628,10 @@ export async function runReconcileLedgers(
       by: ["accountId", "direction"],
       _sum: { amountPaise: true },
     });
-    const journalByAccount = new Map<string, bigint>();
+    const journalByAccount = new Map<string, number>();
     for (const row of entrySums) {
-      const amt = row._sum.amountPaise ?? BigInt(0);
-      const cur = journalByAccount.get(row.accountId) ?? BigInt(0);
+      const amt = sumPaise(row._sum.amountPaise);
+      const cur = journalByAccount.get(row.accountId) ?? 0;
       journalByAccount.set(
         row.accountId,
         row.direction === "DEBIT" ? cur + amt : cur - amt,
@@ -636,7 +640,7 @@ export async function runReconcileLedgers(
     const snapshots = await prisma.ledgerAccountBalance.findMany({
       select: { accountId: true, balancePaise: true },
     });
-    const snapshotByAccount = new Map<string, bigint>(
+    const snapshotByAccount = new Map<string, number>(
       snapshots.map((s) => [s.accountId, s.balancePaise]),
     );
     const allAccountIds = new Set<string>(
@@ -645,16 +649,16 @@ export async function runReconcileLedgers(
       ),
     );
     for (const accountId of Array.from(allAccountIds)) {
-      const journal = journalByAccount.get(accountId) ?? BigInt(0);
+      const journal = journalByAccount.get(accountId) ?? 0;
       const snapshot = snapshotByAccount.get(accountId);
       // A missing snapshot for an account with no entries nets to 0 — fine.
-      const snapshotVal = snapshot ?? BigInt(0);
+      const snapshotVal = snapshot ?? 0;
       if (snapshotVal !== journal) {
         findings.push({
           kind: "LEDGER_BALANCE_SNAPSHOT_DRIFT",
-          expectedPaise: Number(journal),
-          actualPaise: Number(snapshotVal),
-          deltaPaise: Number(snapshotVal - journal),
+          expectedPaise: journal,
+          actualPaise: snapshotVal,
+          deltaPaise: snapshotVal - journal,
           details: {
             ledgerAccountId: accountId,
             unit: "paise",
@@ -764,9 +768,9 @@ export async function runReconcileLedgers(
       }),
     ]);
     const cacheEarnings =
-      (ce._sum.platformFeePaise ?? 0) +
-      (ce._sum.consultantSharePaise ?? 0) +
-      (oe._sum.orgSharePaise ?? 0);
+      sumPaise(ce._sum.platformFeePaise) +
+      sumPaise(ce._sum.consultantSharePaise) +
+      sumPaise(oe._sum.orgSharePaise);
     if (journalEarnings !== cacheEarnings) {
       findings.push({
         kind: "EARNINGS_LEDGER_DRIFT",
@@ -855,7 +859,9 @@ export async function runReconcileLedgers(
   });
   const orgPayoutTxns = await prisma.ledgerTransaction.findMany({
     where: {
-      idempotencyKey: { in: completedPayouts.map((po) => `orgpayout:${po.id}`) },
+      idempotencyKey: {
+        in: completedPayouts.map((po) => `orgpayout:${po.id}`),
+      },
     },
     select: { idempotencyKey: true },
   });
@@ -911,6 +917,72 @@ export async function runReconcileLedgers(
           details: {
             scope: "consultant",
             note: "ConsultantPayout.status=COMPLETED but no PAYOUT ledger transaction.",
+          },
+        });
+      }
+    }
+  }
+
+  // --- (M) #780 — money values within Number safe range. Aggregate _max reads
+  // bypass the boundary extension, so compare as bigint — sumPaise() would
+  // throw on exactly the values this check exists to report.
+  {
+    const SAFE_MAX = BigInt(Number.MAX_SAFE_INTEGER);
+    const maxima: Array<[string, bigint | number | null]> = [
+      [
+        "Payment.amount",
+        (await prisma.payment.aggregate({ _max: { amount: true } }))._max
+          .amount,
+      ],
+      [
+        "LedgerEntry.amountPaise",
+        (await prisma.ledgerEntry.aggregate({ _max: { amountPaise: true } }))
+          ._max.amountPaise,
+      ],
+      [
+        "OrganizationInvoice.totalPaise",
+        (
+          await prisma.organizationInvoice.aggregate({
+            _max: { totalPaise: true },
+          })
+        )._max.totalPaise,
+      ],
+      [
+        "OrganizationPayout.amountPaise",
+        (
+          await prisma.organizationPayout.aggregate({
+            _max: { amountPaise: true },
+          })
+        )._max.amountPaise,
+      ],
+      [
+        "ConsultantPayout.amount",
+        (await prisma.consultantPayout.aggregate({ _max: { amount: true } }))
+          ._max.amount,
+      ],
+      [
+        "BillingAccount.walletBalance",
+        (
+          await prisma.billingAccount.aggregate({
+            _max: { walletBalance: true },
+          })
+        )._max.walletBalance,
+      ],
+    ];
+    for (const [column, raw] of maxima) {
+      if (raw === null || raw === undefined) continue;
+      const v = typeof raw === "bigint" ? raw : BigInt(Math.trunc(raw));
+      if (v > SAFE_MAX) {
+        findings.push({
+          kind: "MONEY_VALUE_WITHIN_SAFE_RANGE",
+          expectedPaise: Number.MAX_SAFE_INTEGER,
+          actualPaise: Number(v), // imprecise past 2^53 — exact value in details
+          deltaPaise: Number(v - SAFE_MAX),
+          details: {
+            column,
+            rawValue: v.toString(),
+            unit: "paise",
+            note: "Money value exceeds Number.MAX_SAFE_INTEGER — the bigint→number boundary loses precision here.",
           },
         });
       }

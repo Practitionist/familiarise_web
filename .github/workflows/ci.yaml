@@ -109,6 +109,12 @@ jobs:
         # for per-check rationale.
         run: bash scripts/verify-sso-invariants.sh
 
+      - name: Money-column guard
+        # #780 — no money column may be declared Int (int4 overflows at
+        # ₹2.14cr). BigInt columns must also be in the lib/prisma.ts
+        # boundary map; that half is enforced by the extension drift test.
+        run: npx tsx scripts/ci/check-money-columns.ts
+
       - name: Unit Tests
         run: npm run test
 
