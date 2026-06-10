@@ -129,7 +129,20 @@ export type Finding = {
     // with overlapping periods double-count caps/seats. The app-level guard
     // in claimProgramAssignment prevents new ones; this is the retroactive
     // detector (exclusion constraints aren't Prisma-expressible).
-    | "ASSIGNMENT_PERIOD_OVERLAP";
+    | "ASSIGNMENT_PERIOD_OVERLAP"
+    // #773/#778 §G — earnings-bearing payments missing a BOOKING journal txn
+    // beyond the allowed threshold (default 0 now that the splits path posts).
+    | "EARNINGS_WITHOUT_BOOKING_TXN"
+    // #778 §C/§G — per earnings-bearing payment, the recorded split must sum
+    // back to the funded amount to the paise (proves the floor+residual
+    // policy holds end-to-end).
+    | "SPLIT_SUM_MISMATCH"
+    // #775/#782 — CHARGE_MEMBER settlement coherence: a CHARGED event must
+    // have its side-payment SUCCEEDED and the overage:<sidePaymentId> txn
+    // posted; PENDING/FAILED events must have none. The capture-raced-
+    // reversal case (REVERSED + no txn) self-reports via system error and
+    // is deliberately not flagged here.
+    | "OVERAGE_SETTLEMENT_MISMATCH";
   organizationId?: string;
   billingAccountId?: string;
   billingSubscriptionId?: string;
@@ -791,15 +804,33 @@ export async function runReconcileLedgers(
     }
   }
 
-  // Coverage metric (informational, NOT a finding): earnings-bearing payments
-  // with no booking journal txn yet — the multi-collaborator + seed gap (#773).
+  // #773/#778 §G — earnings-bearing payments with no booking journal txn.
+  // Now that the multi-collaborator path posts its own balanced booking txn,
+  // this count must be ZERO: any excess over RECONCILE_UNJOURNALED_MAX
+  // (env, default 0) is a finding, not an info metric — the platform must
+  // never silently run partially-journaled again.
   const earningsPaymentRows = await prisma.consultantEarnings.findMany({
     select: { paymentId: true },
     distinct: ["paymentId"],
   });
-  const earningsPaymentsWithoutBookingTxn = earningsPaymentRows.filter(
+  const unjournaled = earningsPaymentRows.filter(
     (e) => e.paymentId && !coveredPaymentIds.has(e.paymentId),
-  ).length;
+  );
+  const earningsPaymentsWithoutBookingTxn = unjournaled.length;
+  const unjournaledMax = Number(process.env.RECONCILE_UNJOURNALED_MAX ?? 0);
+  if (earningsPaymentsWithoutBookingTxn > unjournaledMax) {
+    findings.push({
+      kind: "EARNINGS_WITHOUT_BOOKING_TXN",
+      expectedPaise: unjournaledMax,
+      actualPaise: earningsPaymentsWithoutBookingTxn,
+      deltaPaise: earningsPaymentsWithoutBookingTxn - unjournaledMax,
+      details: {
+        unit: "payments",
+        samplePaymentIds: unjournaled.slice(0, 10).map((e) => e.paymentId),
+        note: "Earnings-bearing payments missing a BOOKING ledger transaction exceed the allowed threshold (#773).",
+      },
+    });
+  }
 
   // #812 — a reversed earning with no REFUND ledger transaction. The new
   // blocking-ledger behaviour prevents this going forward (a refund that can't
@@ -928,6 +959,133 @@ export async function runReconcileLedgers(
     }
   }
 
+  // --- (P) #778 §C/§G — split-sums-to-the-paise. Per earnings-bearing
+  // payment: Σ CE.platformFee + Σ CE.consultantShare + Σ OE.orgShare ==
+  // payment.originalAmount exactly (#773 netting model: settled collaborators
+  // store NET share + their org-card fee slice, so the allocation columns
+  // partition the gross with no overlap). Allocation columns never change on
+  // refund (refundedShareAmount is separate), so this holds for refunded
+  // payments too.
+  {
+    const ceAgg = await prisma.consultantEarnings.groupBy({
+      by: ["paymentId"],
+      _sum: { platformFeePaise: true, consultantSharePaise: true },
+      ...(opts.organizationId
+        ? { where: { payment: { organizationId: opts.organizationId } } }
+        : {}),
+    });
+    const paymentIdsWithCe = ceAgg
+      .map((r) => r.paymentId)
+      .filter((p): p is string => !!p);
+    const oeAgg = await prisma.organizationEarnings.groupBy({
+      by: ["paymentId"],
+      where: { paymentId: { in: paymentIdsWithCe } },
+      _sum: { orgSharePaise: true },
+    });
+    const oeByPayment = new Map(
+      oeAgg.map((r) => [r.paymentId, sumPaise(r._sum.orgSharePaise)]),
+    );
+    const grossRows = await prisma.payment.findMany({
+      where: { id: { in: paymentIdsWithCe } },
+      select: { id: true, originalAmount: true, organizationId: true },
+    });
+    const grossById = new Map(grossRows.map((p) => [p.id, p]));
+    for (const row of ceAgg) {
+      if (!row.paymentId) continue;
+      const p = grossById.get(row.paymentId);
+      if (!p) continue;
+      const splitSum =
+        sumPaise(row._sum.platformFeePaise) +
+        sumPaise(row._sum.consultantSharePaise) +
+        (oeByPayment.get(row.paymentId) ?? 0);
+      if (splitSum !== p.originalAmount) {
+        findings.push({
+          kind: "SPLIT_SUM_MISMATCH",
+          paymentId: p.id,
+          organizationId: p.organizationId ?? undefined,
+          expectedPaise: p.originalAmount,
+          actualPaise: splitSum,
+          deltaPaise: splitSum - p.originalAmount,
+          details: {
+            unit: "paise",
+            note: "Σ(platform fee + consultant shares + org shares) diverges from Payment.originalAmount — a split leaked or minted paise (#778 §C).",
+          },
+        });
+      }
+    }
+  }
+
+  // --- (Q) #775/#782 — CHARGE_MEMBER overage settlement coherence (the
+  // exact semantics from the 2026-06-10 overage audit). settledAt is the
+  // "first settlement milestone", which differs per behavior — CHARGE_ORG
+  // stamps at ACCRUED (issued invoice), CHARGE_MEMBER at CHARGED (collected).
+  {
+    const memberEvents = await prisma.overageEvent.findMany({
+      where: { overageBehavior: "CHARGE_MEMBER" },
+      select: {
+        id: true,
+        chargeStatus: true,
+        marginalPaise: true,
+        paymentId: true,
+        settledAt: true,
+        payment: {
+          select: {
+            paymentStatus: true,
+            amount: true,
+            parentPaymentId: true,
+            organizationId: true,
+          },
+        },
+      },
+    });
+    const sideIds = memberEvents
+      .map((e) => e.paymentId)
+      .filter((p): p is string => !!p);
+    const overageTxns = await prisma.ledgerTransaction.findMany({
+      where: { idempotencyKey: { in: sideIds.map((id) => `overage:${id}`) } },
+      select: { idempotencyKey: true },
+    });
+    const txnKeys = new Set(overageTxns.map((t) => t.idempotencyKey));
+    for (const ev of memberEvents) {
+      const hasTxn = !!ev.paymentId && txnKeys.has(`overage:${ev.paymentId}`);
+      const flag = (note: string) =>
+        findings.push({
+          kind: "OVERAGE_SETTLEMENT_MISMATCH",
+          paymentId: ev.paymentId ?? undefined,
+          organizationId: ev.payment?.organizationId ?? undefined,
+          expectedPaise: ev.marginalPaise,
+          actualPaise: ev.payment?.amount ?? 0,
+          deltaPaise: (ev.payment?.amount ?? 0) - ev.marginalPaise,
+          details: {
+            overageEventId: ev.id,
+            chargeStatus: ev.chargeStatus,
+            unit: "paise",
+            note,
+          },
+        });
+      if (ev.chargeStatus === "CHARGED") {
+        if (!ev.paymentId || ev.payment?.paymentStatus !== "SUCCEEDED") {
+          flag("CHARGED member overage without a SUCCEEDED side-payment.");
+        } else if (!hasTxn) {
+          flag(
+            "CHARGED member overage but no overage:<sidePaymentId> ledger txn — ORG_PAYABLE was never credited.",
+          );
+        } else if (ev.payment.amount !== ev.marginalPaise) {
+          flag("Side-payment amount diverges from the event's marginalPaise.");
+        } else if (!ev.settledAt) {
+          flag("CHARGED member overage missing settledAt.");
+        }
+      } else if (
+        (ev.chargeStatus === "PENDING" || ev.chargeStatus === "FAILED") &&
+        hasTxn
+      ) {
+        flag(
+          "Un-collected member overage has an overage ledger txn — money posted without a CHARGED event.",
+        );
+      }
+    }
+  }
+
   // --- (O) #778 §B — no two ACTIVE assignments for the same (program,
   // membership) may overlap in period. Sort-then-sweep per group; the row
   // count is bounded by live assignments so the in-memory pass is cheap.
@@ -941,7 +1099,11 @@ export async function runReconcileLedgers(
         periodStart: true,
         periodEnd: true,
       },
-      orderBy: [{ programId: "asc" }, { membershipId: "asc" }, { periodStart: "asc" }],
+      orderBy: [
+        { programId: "asc" },
+        { membershipId: "asc" },
+        { periodStart: "asc" },
+      ],
     });
     let prev: (typeof active)[number] | null = null;
     for (const a of active) {
