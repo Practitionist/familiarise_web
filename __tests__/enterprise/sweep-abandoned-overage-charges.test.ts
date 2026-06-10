@@ -8,12 +8,24 @@
  * (cycleOverageSoFarPaise excludes only REVERSED/BLOCKED/FAILED). This job FAILs
  * the abandoned ones so they stop blocking legit bookings.
  */
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: { overageEvent: { findMany: jest.fn() } },
-}));
+jest.mock("../../lib/prisma", () => {
+  const client = {
+    overageEvent: { findMany: jest.fn() },
+    // #812 — the sweep claims per-event in a tx (FAIL + basePaise restore).
+    $transaction: jest.fn(
+      (fn: (tx: unknown) => Promise<unknown>): Promise<unknown> => fn(client),
+    ),
+  };
+  return { __esModule: true, default: client };
+});
 jest.mock("../../lib/payments/billing/overage-transitions", () => ({
   transitionOverage: jest.fn(),
+}));
+jest.mock("../../lib/payments/billing/overage-base-carve", () => ({
+  restoreOverageBaseCarve: jest.fn().mockResolvedValue("restored"),
+}));
+jest.mock("../../lib/enterprise/system-events", () => ({
+  recordSystemError: jest.fn().mockResolvedValue(undefined),
 }));
 
 
@@ -68,14 +80,18 @@ describe("sweepAbandonedOverageCharges (#785)", () => {
         },
       ]),
     );
-    // PENDING→FAILED by id (transitionOverage appends the legal-from guard),
+    // #812 — per-event tx now: PENDING→FAILED claim (transitionOverage
+    // appends the legal-from guard) + basePaise restore land together,
     // stamping an auditable write-off reason (#779 §A).
-    expect(mockTransition).toHaveBeenCalledWith(
-      expect.anything(),
-      { id: { in: ["ov_1", "ov_2"] } },
-      "FAILED",
-      { chargeFailureReason: expect.stringContaining("swept at 7d") },
-    );
+    expect(mockTransition).toHaveBeenCalledTimes(2);
+    for (const id of ["ov_1", "ov_2"]) {
+      expect(mockTransition).toHaveBeenCalledWith(
+        expect.anything(),
+        { id },
+        "FAILED",
+        { chargeFailureReason: expect.stringContaining("swept at 7d") },
+      );
+    }
   });
 
   it("empty scan → no transition", async () => {

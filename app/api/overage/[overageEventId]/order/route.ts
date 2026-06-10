@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createRazorpayOrder } from "@/lib/payments/core/razorpay";
 import { PaymentStatus } from "@prisma/client";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
+import { recarveOverageBase } from "@/lib/payments/billing/overage-base-carve";
 
 /**
  * #775 — resume-checkout for a CHARGE_MEMBER overage side-charge.
@@ -60,6 +61,39 @@ export async function POST(
     return NextResponse.json({ error: "Nothing to pay" }, { status: 400 });
   }
 
+  // Retry edge BEFORE minting the order: a FAILED charge had its basePaise
+  // restored to the org's parent accrual (#812 §P0), so resuming must carve it
+  // back out atomically with the FAILED→PENDING flip — otherwise the member's
+  // payment double-collects with the org's invoice. If the parent was already
+  // rolled onto an invoice while FAILED, the retry is refused (the org has
+  // been billed for the base; collecting it from the member too is wrong).
+  // No-op when already PENDING (still carved). If the mint below fails after
+  // this commits, the event sits PENDING/recarved until the abandoned-sweep
+  // re-FAILs it and restores — self-healing.
+  const retryBlocked = await prisma.$transaction(async (tx) => {
+    const moved = await transitionOverage(tx, { id: event.id }, "PENDING");
+    if (moved === 0) return false;
+    const recarve = await recarveOverageBase(tx, { overageEventId: event.id });
+    if (recarve === "invoiced") {
+      throw Object.assign(new Error("OVERAGE_RETRY_AFTER_INVOICE"), {
+        httpStatus: 409,
+      });
+    }
+    return false;
+  }).catch((err) => {
+    if (err instanceof Error && "httpStatus" in err) return true;
+    throw err;
+  });
+  if (retryBlocked) {
+    return NextResponse.json(
+      {
+        error:
+          "This charge can no longer be paid — your organization has already been billed for it. Contact support if you believe this is wrong.",
+      },
+      { status: 409 },
+    );
+  }
+
   const order = await createRazorpayOrder({
     amount: event.marginalPaise,
     currency: event.payment.currency,
@@ -82,9 +116,6 @@ export async function POST(
     where: { id: event.payment.id },
     data: { paymentIntent: order.id, paymentStatus: PaymentStatus.PENDING },
   });
-  // Guarded FAILED → PENDING only (no-op if already PENDING); CHARGED/REVERSED
-  // were already rejected above.
-  await transitionOverage(prisma, { id: event.id }, "PENDING");
 
   return NextResponse.json({
     orderId: order.id,

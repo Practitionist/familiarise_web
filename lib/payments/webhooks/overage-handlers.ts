@@ -23,6 +23,10 @@ import prisma from "@/lib/prisma";
 import { PaymentStatus } from "@prisma/client";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
+import {
+  recarveOverageBase,
+  restoreOverageBaseCarve,
+} from "@/lib/payments/billing/overage-base-carve";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 
 /**
@@ -71,14 +75,43 @@ export async function handleOverageMemberSuccess(
 
     // Transition FIRST so the journal below mirrors the state machine: the
     // org-relief credit posts only for an event that actually became CHARGED.
-    const moved = await transitionOverage(
+    // Two-step CAS (#812): which edge fired matters — FAILED→CHARGED is a
+    // late capture whose basePaise was restored to the org accrual when the
+    // sweep FAILed it, so it must be carved back out; PENDING/ACCRUED→CHARGED
+    // is still carved. A read-then-check would race the sweeps.
+    const settledAt = new Date();
+    let moved = await transitionOverage(
       tx,
       { paymentId: side.id },
       "CHARGED",
-      {
-        settledAt: new Date(),
-      },
+      { settledAt },
+      { fromIn: ["PENDING", "ACCRUED"] },
     );
+    if (moved === 0) {
+      moved = await transitionOverage(
+        tx,
+        { paymentId: side.id },
+        "CHARGED",
+        { settledAt },
+        { fromIn: ["FAILED"] },
+      );
+      if (moved > 0) {
+        const recarve = await recarveOverageBase(tx, { sidePaymentId: side.id });
+        if (recarve === "invoiced") {
+          // The org was already invoiced for the restored base while the
+          // charge sat FAILED; the member's capture now over-relieves the org
+          // by basePaise. Money already moved — flag for a manual adjustment
+          // rather than refusing the capture.
+          void recordSystemError({
+            organizationId: side.organizationId,
+            category: "OVERAGE",
+            summary: `Late capture of overage side-payment ${side.id} after the parent was invoiced — basePaise double-collected; manual billing adjustment needed`,
+            err: new Error("OVERAGE_RECARVE_AFTER_INVOICE"),
+            context: { sidePaymentId: side.id, paymentIntentId },
+          }).catch(() => {});
+        }
+      }
+    }
 
     if (moved === 0) {
       // Capture raced a reversal: the booking refunded (event → REVERSED)
@@ -138,6 +171,24 @@ export async function handleOverageMemberFailure(
       where: { id: side.id },
       data: { paymentStatus: PaymentStatus.FAILED },
     });
-    await transitionOverage(tx, { paymentId: side.id }, "FAILED");
+    const moved = await transitionOverage(tx, { paymentId: side.id }, "FAILED");
+    if (moved > 0) {
+      // #812 §P0 — the member isn't paying basePaise; return it to the org's
+      // parent accrual in the same tx. "invoiced" (parent already rolled onto
+      // an invoice) is surfaced by the sweeps when they re-FAIL; here the
+      // charge stays retryable so a recarve on recovery rebalances it.
+      const restore = await restoreOverageBaseCarve(tx, {
+        sidePaymentId: side.id,
+      });
+      if (restore === "invoiced") {
+        void recordSystemError({
+          organizationId: null,
+          category: "OVERAGE",
+          summary: `Failed overage side-payment ${side.id}: basePaise not restorable — parent already invoiced; manual billing adjustment needed`,
+          err: new Error("OVERAGE_BASE_RESTORE_AFTER_INVOICE"),
+          context: { sidePaymentId: side.id, paymentIntentId },
+        }).catch(() => {});
+      }
+    }
   });
 }

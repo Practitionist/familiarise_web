@@ -32,6 +32,10 @@ jest.mock("../../lib/payments/ledger/post", () => ({
 jest.mock("../../lib/payments/billing/overage-transitions", () => ({
   transitionOverage: jest.fn(),
 }));
+jest.mock("../../lib/payments/billing/overage-base-carve", () => ({
+  restoreOverageBaseCarve: jest.fn().mockResolvedValue("restored"),
+  recarveOverageBase: jest.fn().mockResolvedValue("recarved"),
+}));
 jest.mock("../../lib/enterprise/system-events", () => ({
   recordSystemError: jest.fn().mockResolvedValue(undefined),
 }));
@@ -85,11 +89,13 @@ describe("handleOverageMemberSuccess", () => {
         update: {},
       }),
     );
+    // #812 — two-step CAS: the still-carved edge is tried first.
     expect(mockTransition).toHaveBeenCalledWith(
       tx,
       { paymentId: "side1" },
       "CHARGED",
       { settledAt: expect.any(Date) },
+      { fromIn: ["PENDING", "ACCRUED"] },
     );
     // the journal the CHARGE_MEMBER reconcile invariant joins on
     expect(mockPost).toHaveBeenCalledWith(tx, {

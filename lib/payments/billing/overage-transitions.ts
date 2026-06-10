@@ -50,9 +50,21 @@ export async function transitionOverage(
     /** #779 §A telemetry — why a FAILED write-off happened (sweep/timeout). */
     chargeFailureReason?: string | null;
   },
+  opts?: {
+    /**
+     * #812 — narrow the guard to a subset of the legal from-states
+     * (intersected with ALLOWED_FROM, never widened). Lets a caller learn
+     * WHICH edge fired: FAILED→CHARGED must re-carve basePaise, while
+     * PENDING→CHARGED must not — and a read-then-check would race.
+     */
+    fromIn?: OverageChargeStatus[];
+  },
 ): Promise<number> {
+  const allowedFrom = opts?.fromIn
+    ? opts.fromIn.filter((s) => ALLOWED_FROM[to].includes(s))
+    : ALLOWED_FROM[to];
   const res = await tx.overageEvent.updateMany({
-    where: { ...where, chargeStatus: { in: ALLOWED_FROM[to] } },
+    where: { ...where, chargeStatus: { in: allowedFrom } },
     data: { chargeStatus: to, ...data },
   });
   return res.count;
