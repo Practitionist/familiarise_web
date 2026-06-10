@@ -2,6 +2,7 @@ import { faker } from "@faker-js/faker";
 import { Prisma } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { sumPaise } from "../../lib/payments/utils/money";
+import { postLedgerTxn, type Posting } from "../../lib/payments/ledger/post";
 import {
   calculatePlatformFee,
   calculateConsultantShare,
@@ -106,10 +107,20 @@ export async function createConsultantEarnings(): Promise<void> {
         continue;
       }
 
-      // Calculate revenue breakdown
-      const grossAmount = payment.amount;
+      // Calculate revenue breakdown. #773 — gross is originalAmount (the
+      // pre-discount plan price), the same basis createEarningsFromPayment
+      // splits on; fee + share == gross by construction (floor + complement).
+      const grossAmount = payment.originalAmount;
       const platformFeePaise = calculatePlatformFee(grossAmount);
       const consultantSharePaise = calculateConsultantShare(grossAmount);
+
+      // #773 — a 0-gross payment can't post a balanced journal (no postings),
+      // so skip it entirely; an earnings row without a booking txn would keep
+      // reconcile's earningsPaymentsWithoutBookingTxn above zero.
+      if (grossAmount <= 0) {
+        skipped++;
+        continue;
+      }
 
       // Assign status based on weighted distribution
       const status = weightedRandom(EARNING_STATUS_WEIGHTS);
@@ -120,17 +131,65 @@ export async function createConsultantEarnings(): Promise<void> {
       // Set paidAt only for PAID status
       const paidAt = status === "PAID" ? generatePaidAtDate(holdUntil) : null;
 
-      await prisma.consultantEarnings.create({
-        data: {
-          consultantProfileId,
+      // #773 — post the balanced booking journal alongside the earnings row,
+      // the same shape (and idempotencyKey) createEarningsFromPayment posts,
+      // so a fresh seed reconciles with earningsPaymentsWithoutBookingTxn == 0
+      // and zero EARNINGS_LEDGER_DRIFT. Seeded payments carry no PaymentLegs →
+      // legacy CASH funding of payment.amount; the DISCOUNT plug absorbs the
+      // seeded discount gap (gross + tax − amount), mirroring the service.
+      // One tx — a row without its journal (or vice versa) would be drift.
+      const taxPaise = payment.taxAmount ?? 0;
+      const fundingPaise = payment.amount;
+      const discountPaise = Math.max(0, grossAmount + taxPaise - fundingPaise);
+      const postings: Posting[] = [];
+      const push = (p: Posting) => {
+        if (p.amountPaise > 0) postings.push(p);
+      };
+      push({
+        account: { kind: "CASH" },
+        direction: "DEBIT",
+        amountPaise: fundingPaise,
+      });
+      push({
+        account: { kind: "DISCOUNT" },
+        direction: "DEBIT",
+        amountPaise: discountPaise,
+      });
+      push({
+        account: { kind: "PLATFORM_FEE" },
+        direction: "CREDIT",
+        amountPaise: platformFeePaise,
+      });
+      push({
+        account: { kind: "CONSULTANT_PAYABLE", consultantProfileId },
+        direction: "CREDIT",
+        amountPaise: consultantSharePaise,
+      });
+      push({
+        account: { kind: "GST_PAYABLE" },
+        direction: "CREDIT",
+        amountPaise: taxPaise,
+      });
+
+      await prisma.$transaction(async (tx) => {
+        await tx.consultantEarnings.create({
+          data: {
+            consultantProfileId,
+            paymentId: payment.id,
+            grossAmount,
+            platformFeePaise,
+            consultantSharePaise,
+            status,
+            holdUntil,
+            paidAt,
+          },
+        });
+        await postLedgerTxn(tx, {
+          idempotencyKey: `booking:${payment.id}`,
+          kind: "BOOKING",
           paymentId: payment.id,
-          grossAmount,
-          platformFeePaise,
-          consultantSharePaise,
-          status,
-          holdUntil,
-          paidAt,
-        },
+          postings,
+        });
       });
 
       created++;

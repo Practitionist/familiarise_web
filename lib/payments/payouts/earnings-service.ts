@@ -65,16 +65,21 @@ export interface OrgEarningsSummary {
   heldEarnings: number;
 }
 
-// #780 — payments arrive via the extended client (money as number); the raw
-// Payment model type still says bigint.
+// #780/#781 — payments arrive via the extended client (money as number, FX
+// Decimal as number); the raw Payment model type still says bigint/Decimal.
 type PaymentRow = Omit<
   Payment,
-  "amount" | "originalAmount" | "taxAmount" | "gstTcsCollectedPaise"
+  | "amount"
+  | "originalAmount"
+  | "taxAmount"
+  | "gstTcsCollectedPaise"
+  | "exchangeRateAtCheckout"
 > & {
   amount: number;
   originalAmount: number;
   taxAmount: number;
   gstTcsCollectedPaise: number | null;
+  exchangeRateAtCheckout: number | null;
 };
 
 export interface CreateEarningsParams {
@@ -106,7 +111,7 @@ export {
   assertEarningStatusTransitionLegal,
 } from "./earning-status";
 import { assertEarningStatusTransitionLegal } from "./earning-status";
-import { sumPaise } from "@/lib/payments/utils/money";
+import { prorate, sumPaise } from "@/lib/payments/utils/money";
 
 // ============================================
 // Org Split Resolution
@@ -286,12 +291,12 @@ export async function createEarningsFromPayment({
         payment.createdAt,
       );
 
-      // Determine platform fee and consultant pool based on whether org split applies
+      // Determine platform fee and consultant pool based on whether org split applies.
+      // #778 §C-2 — floor the marketplace fee (was Math.round); the shaved paisa
+      // stays in the consultant pool (gross − fee), the pool's residual party.
       const platformFeePaise = orgSplit
         ? orgSplit.platformFeePaise
-        : Math.round(
-            (grossAmount * PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE) / 100,
-          );
+        : prorate(grossAmount, PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE, 100);
       const totalConsultantPool = orgSplit
         ? orgSplit.consultantSharePaise
         : grossAmount - platformFeePaise;
@@ -307,6 +312,52 @@ export async function createEarningsFromPayment({
       }
 
       let ownerId: string | null = null;
+
+      // #773 — resolve every collaborator's HOST-org settlement UP FRONT so
+      // the ConsultantEarnings rows, the OrganizationEarnings rows and the
+      // booking journal are all built from one set of numbers. A settled
+      // collaborator is paid the NET of their org's rate card (floors per
+      // #778 §C; the org leg absorbs the remainder inside resolveOrgSplit);
+      // the org keeps its cut, the card's fee slice is platform revenue.
+      // Same-org collisions against @@unique([paymentId, organizationId]) are
+      // detected here deterministically instead of via a P2002 catch — v1
+      // semantics kept: the colliding collaborator stays unsettled (full
+      // share on ConsultantEarnings, no org accrual).
+      const collabSettlements = new Map<
+        string,
+        { sharePaise: number; orgSplit: OrgEarningsSplit }
+      >();
+      if (splits.length > 0) {
+        const plannedOrgRows = new Set<string>(
+          orgSplit && orgSplit.orgShare > 0 ? [orgSplit.organizationId] : [],
+        );
+        for (const split of splits) {
+          if (split.role === "OWNER" || split.share <= 0) continue;
+          const collabOrgSplit = await resolveOrgSplit(
+            tx,
+            split.consultantProfileId,
+            split.share,
+            payment.createdAt,
+          );
+          if (!collabOrgSplit) continue; // independent collaborator
+          if (
+            collabOrgSplit.orgShare > 0 &&
+            plannedOrgRows.has(collabOrgSplit.organizationId)
+          ) {
+            console.warn(
+              `[Earnings] Skipping collaborator org earnings for ${collabOrgSplit.organizationId} on payment ${payment.id}: row already exists for this (payment, org) pair (collab ${split.consultantProfileId}). Their personal share is unaffected.`,
+            );
+            continue;
+          }
+          if (collabOrgSplit.orgShare > 0) {
+            plannedOrgRows.add(collabOrgSplit.organizationId);
+          }
+          collabSettlements.set(split.consultantProfileId, {
+            sharePaise: split.share,
+            orgSplit: collabOrgSplit,
+          });
+        }
+      }
 
       if (splits.length > 0) {
         // #812 — floor every collaborator's shareBps and let the LAST split
@@ -329,14 +380,26 @@ export async function createEarningsFromPayment({
           const split = splits[i];
           const isOwner = split.role === "OWNER";
           const shareBps = shareBpsList[i];
+          const settlement = isOwner
+            ? undefined
+            : collabSettlements.get(split.consultantProfileId);
 
+          // #773 — a settled collaborator's row carries their org card's fee
+          // slice and the NET share (what the payout pipeline disburses); the
+          // org's cut lives on its OrganizationEarnings row. The cache must
+          // mirror the journal's legs or EARNINGS_LEDGER_DRIFT fires.
+          const creditedShare = settlement
+            ? settlement.orgSplit.consultantSharePaise
+            : split.share;
           const earnings = await tx.consultantEarnings.create({
             data: {
               consultantProfileId: split.consultantProfileId,
               paymentId: payment.id,
               grossAmount: isOwner ? grossAmount : 0,
-              platformFeePaise: isOwner ? platformFeePaise : 0,
-              consultantSharePaise: split.share,
+              platformFeePaise: isOwner
+                ? platformFeePaise
+                : (settlement?.orgSplit.platformFeePaise ?? 0),
+              consultantSharePaise: creditedShare,
               role: isOwner ? EarningRole.OWNER : EarningRole.COLLABORATOR,
               shareBps,
               status: EarningStatus.PENDING,
@@ -350,7 +413,7 @@ export async function createEarningsFromPayment({
           }
 
           console.log(
-            `Earnings created for ${split.role} (${split.consultantProfileId}): ${split.share / 100} from payment ${payment.id}${orgSplit ? " [HOST 3-way split]" : ""}`,
+            `Earnings created for ${split.role} (${split.consultantProfileId}): ${creditedShare / 100} from payment ${payment.id}${orgSplit ? " [HOST 3-way split]" : ""}${settlement ? " [collab org-settled]" : ""}`,
           );
         }
       } else {
@@ -427,16 +490,84 @@ export async function createEarningsFromPayment({
         );
       }
 
+      // ============================================
+      // A3 (Q3) / #773: per-collaborator HOST-org settlement
+      // ============================================
+      // Each ACCEPTED collaborator at a HOST org settles to *their own* org
+      // independently of the primary expert's org: the collaborator's pool
+      // share is the "gross" their org's rate card splits. Independent
+      // collaborators (no active EXPERT membership at a HOST org) get no row —
+      // their full share sits on ConsultantEarnings and pays out via the
+      // personal payout pipeline. Rows are written BEFORE the booking journal
+      // below so the posting can mirror every accrual it covers. Platform-only
+      // cards (orgShare == 0) still settle (fee + net) but write no 0-value
+      // org row. Same-org collisions were already resolved upstream (see
+      // collabSettlements), so every entry here inserts cleanly.
+      for (const [collabProfileId, s] of Array.from(
+        collabSettlements.entries(),
+      )) {
+        if (s.orgSplit.orgShare <= 0) {
+          console.log(
+            `Platform-only mode for collaborator org ${s.orgSplit.organizationId}: skipping 0-value org earnings for payment ${payment.id}`,
+          );
+          continue;
+        }
+
+        // PR-1d / #687 — same PENDING_TRUST gate as the primary org above.
+        const collabSponsorOrg = await tx.organization.findUnique({
+          where: { id: s.orgSplit.organizationId },
+          select: { status: true },
+        });
+        let collabInitialStatus: EarningStatus = EarningStatus.PENDING;
+        if (collabSponsorOrg?.status === "PENDING_VERIFICATION") {
+          const paidInvoiceCount = await tx.organizationInvoice.count({
+            where: {
+              organizationId: s.orgSplit.organizationId,
+              status: "PAID",
+            },
+          });
+          if (paidInvoiceCount === 0) {
+            collabInitialStatus = EarningStatus.PENDING_TRUST;
+          }
+        }
+
+        await tx.organizationEarnings.create({
+          data: {
+            organizationId: s.orgSplit.organizationId,
+            paymentId: payment.id,
+            // The collaborator's share is the "gross" that this org is
+            // splitting — NOT the booking's full gross. Persist it verbatim
+            // so reconciliation sees a consistent picture.
+            grossAmountPaise: s.sharePaise,
+            platformFeePaise: s.orgSplit.platformFeePaise,
+            orgSharePaise: s.orgSplit.orgShare,
+            consultantSharePaise: s.orgSplit.consultantSharePaise,
+            refundedAmountPaise: 0,
+            status: collabInitialStatus,
+            holdUntil,
+            currency: "INR",
+            rateCardIdApplied: s.orgSplit.rateCardIdApplied,
+            platformBpsApplied: s.orgSplit.platformBps,
+            orgBpsApplied: s.orgSplit.orgBps,
+            consultantBpsApplied: s.orgSplit.consultantBps,
+          },
+        });
+        console.log(
+          `Collaborator org earnings created for ${s.orgSplit.organizationId} (collab ${collabProfileId}): org=${s.orgSplit.orgShare / 100} consultant=${s.orgSplit.consultantSharePaise / 100} from payment ${payment.id}`,
+        );
+      }
+
       // #771 D1/D5 / AF-3 — double-entry booking posting (full accrual, dual-write).
       //   Dr funding legs (CASH/WALLET/ORG_RECEIVABLE) + PLATFORM_PROMO (referral
       //   credits) + DISCOUNT  ==  Cr PLATFORM_FEE + CONSULTANT_PAYABLE(per party) +
-      //   ORG_PAYABLE + GST_PAYABLE.
+      //   ORG_PAYABLE(per org) + GST_PAYABLE.
       // #776 — posted for BOTH the single-consultant AND multi-collaborator cases.
-      // Multi-collaborator webinars/classes used to be deferred (logged), so the
-      // journal silently omitted an entire booking class and reconcile's
-      // EARNINGS_LEDGER_DRIFT couldn't cover them. Now each collaborator gets its
-      // own CONSULTANT_PAYABLE credit (shares sum to totalConsultantPool). Wrapped
-      // so a ledger imbalance can never break the real booking during dual-write.
+      // #773 — the multi-collaborator posting now also covers the per-collab
+      // HOST-org settlements written above: each settled collaborator's
+      // CONSULTANT_PAYABLE is their NET share, their org gets its own
+      // ORG_PAYABLE leg, and the org-card fee slices fold into PLATFORM_FEE —
+      // so the journal's earnings-relevant credits equal the cached Earnings
+      // rows exactly (EARNINGS_LEDGER_DRIFT contract).
       {
         try {
           const legs = await tx.paymentLeg.findMany({
@@ -472,6 +603,12 @@ export async function createEarningsFromPayment({
                   break;
                 case "LICENSE":
                   break; // 0 — no money moves
+                case "INVOICE_ACCRUAL_REVERSAL":
+                case "OVERAGE_INVOICE_ACCRUAL_REVERSAL":
+                  // #786 — negative refund counter-entries; they cannot exist
+                  // at booking time and are never funding. Skip explicitly
+                  // (the <= 0 guard above already drops them defensively).
+                  break;
               }
             }
             pushDebit({ kind: "CASH" }, card);
@@ -511,17 +648,33 @@ export async function createEarningsFromPayment({
             if (amountPaise > 0)
               credits.push({ account, direction: "CREDIT", amountPaise });
           };
-          pushCredit({ kind: "PLATFORM_FEE" }, platformFeePaise);
+          // #773 — the platform's total cut is the primary fee PLUS each
+          // settled collaborator's org-card fee slice, as one summed leg.
+          let platformFeeCreditPaise = platformFeePaise;
+          for (const s of Array.from(collabSettlements.values())) {
+            platformFeeCreditPaise += s.orgSplit.platformFeePaise;
+          }
+          pushCredit({ kind: "PLATFORM_FEE" }, platformFeeCreditPaise);
           if (splits.length > 0) {
-            // Multi-party: one payable per collaborator (Σ split.share ===
-            // totalConsultantPool), so the journal mirrors the ConsultantEarnings rows.
+            // Multi-party: one payable per party, mirroring the
+            // ConsultantEarnings rows. Settled collaborators are credited NET
+            // of their org's cut; each settled share decomposes exactly into
+            // fee + org + net (resolveOrgSplit), so Σ(payables + org legs +
+            // fee slices) === totalConsultantPool and the txn balances to the
+            // paise.
             for (const split of splits) {
+              const settlement =
+                split.role === "OWNER"
+                  ? undefined
+                  : collabSettlements.get(split.consultantProfileId);
               pushCredit(
                 {
                   kind: "CONSULTANT_PAYABLE",
                   consultantProfileId: split.consultantProfileId,
                 },
-                split.share,
+                settlement
+                  ? settlement.orgSplit.consultantSharePaise
+                  : split.share,
               );
             }
           } else {
@@ -535,6 +688,19 @@ export async function createEarningsFromPayment({
               { kind: "ORG_PAYABLE", organizationId: orgSplit.organizationId },
               orgSplit.orgShare,
             );
+          }
+          // #773 — one ORG_PAYABLE per collaborator host org, mirroring the
+          // OrganizationEarnings rows written above.
+          for (const s of Array.from(collabSettlements.values())) {
+            if (s.orgSplit.orgShare > 0) {
+              pushCredit(
+                {
+                  kind: "ORG_PAYABLE",
+                  organizationId: s.orgSplit.organizationId,
+                },
+                s.orgSplit.orgShare,
+              );
+            }
           }
           // #812 — guard a missing taxAmount (NaN would imbalance the now-blocking
           // posting and roll back the booking). Defaults to 0 in-schema, but
@@ -562,109 +728,6 @@ export async function createEarningsFromPayment({
             err,
             context: { paymentId: payment.id },
           }).catch(() => {});
-          throw err;
-        }
-      }
-
-      // ============================================
-      // A3 (Q3): per-collaborator HOST-org settlement
-      // ============================================
-      // Each ACCEPTED collaborator at a HOST org settles to *their own*
-      // org independently of the primary expert's org. The collaborator's
-      // share (computed by `calculateRevenueSplit` against the
-      // already-org-split consultant pool) becomes the "gross" that flows
-      // through their own org's rate card.
-      //
-      // Independent collaborators (no active EXPERT membership at any
-      // HOST org) do not get an OrganizationEarnings row — their share
-      // sits on `ConsultantEarnings` only and pays out via the personal
-      // payout pipeline.
-      //
-      // Same-org collision (e.g. primary expert AND collaborator both at
-      // LearnPro): the @@unique([paymentId, organizationId]) constraint
-      // rejects the second insert. v1 simplification — log + skip; the
-      // collaborator's share already lives on `ConsultantEarnings` so
-      // their personal payout is unaffected, only the org-side accrual
-      // for that share is dropped (the org already gets its cut of the
-      // primary expert's gross via the OWNER row above). A v2 could roll
-      // the collaborator's slice into the existing row, but that
-      // requires a more invasive refactor of OrganizationEarnings'
-      // single-consultant assumption.
-      //
-      // Runs in the SAME transaction as the OWNER earnings — atomicity
-      // preserved across all per-collab org rows.
-      const collaboratorSplits = splits.filter((s) => s.role !== "OWNER");
-      for (const collab of collaboratorSplits) {
-        if (collab.share <= 0) continue;
-        const collabOrgSplit = await resolveOrgSplit(
-          tx,
-          collab.consultantProfileId,
-          collab.share,
-          payment.createdAt,
-        );
-        if (!collabOrgSplit) continue; // independent collaborator
-        if (collabOrgSplit.orgShare <= 0) {
-          console.log(
-            `Platform-only mode for collaborator org ${collabOrgSplit.organizationId}: skipping 0-value org earnings for payment ${payment.id}`,
-          );
-          continue;
-        }
-
-        const collabSponsorOrg = await tx.organization.findUnique({
-          where: { id: collabOrgSplit.organizationId },
-          select: { status: true },
-        });
-        let collabInitialStatus: EarningStatus = EarningStatus.PENDING;
-        if (collabSponsorOrg?.status === "PENDING_VERIFICATION") {
-          const paidInvoiceCount = await tx.organizationInvoice.count({
-            where: {
-              organizationId: collabOrgSplit.organizationId,
-              status: "PAID",
-            },
-          });
-          if (paidInvoiceCount === 0) {
-            collabInitialStatus = EarningStatus.PENDING_TRUST;
-          }
-        }
-
-        try {
-          await tx.organizationEarnings.create({
-            data: {
-              organizationId: collabOrgSplit.organizationId,
-              paymentId: payment.id,
-              // The collaborator's share is the "gross" that this org
-              // is splitting — NOT the booking's full gross. Persist it
-              // verbatim so reconciliation sees a consistent picture.
-              grossAmountPaise: collab.share,
-              platformFeePaise: collabOrgSplit.platformFeePaise,
-              orgSharePaise: collabOrgSplit.orgShare,
-              consultantSharePaise: collabOrgSplit.consultantSharePaise,
-              refundedAmountPaise: 0,
-              status: collabInitialStatus,
-              holdUntil,
-              currency: "INR",
-              rateCardIdApplied: collabOrgSplit.rateCardIdApplied,
-              platformBpsApplied: collabOrgSplit.platformBps,
-              orgBpsApplied: collabOrgSplit.orgBps,
-              consultantBpsApplied: collabOrgSplit.consultantBps,
-            },
-          });
-          console.log(
-            `Collaborator org earnings created for ${collabOrgSplit.organizationId} (collab ${collab.consultantProfileId}): org=${collabOrgSplit.orgShare / 100} consultant=${collabOrgSplit.consultantSharePaise / 100} from payment ${payment.id}`,
-          );
-        } catch (err) {
-          if (
-            err instanceof Prisma.PrismaClientKnownRequestError &&
-            err.code === "P2002"
-          ) {
-            // Same-org collision with primary expert (or another
-            // collaborator that already wrote a row). v1 strategy: skip.
-            // See the block-level comment above for rationale.
-            console.warn(
-              `[Earnings] Skipping collaborator org earnings for ${collabOrgSplit.organizationId} on payment ${payment.id}: row already exists for this (payment, org) pair (collab ${collab.consultantProfileId}). Their personal share is unaffected.`,
-            );
-            continue;
-          }
           throw err;
         }
       }
@@ -883,11 +946,18 @@ export async function refundEarnings(
     return true;
   }
 
-  // #813 — integer-paise proportion pair for the shared TDS-reversal helper.
-  // Partial refunds carry explicit paise amounts; a full refund has none, so we
-  // pass an equal pair to express ratio=1 without reintroducing float math.
-  const tdsRefundPaise = isPartialRefund ? options!.refundAmount! : 1;
-  const tdsPaymentPaise = isPartialRefund ? options!.paymentAmount! : 1;
+  // #813 — integer-paise proportion pair shared by the TDS-reversal helper and
+  // the proration floors below. Partial refunds carry explicit paise amounts; a
+  // full refund has none, so we pass an equal pair to express ratio=1 without
+  // reintroducing float math.
+  const refundNumPaise = isPartialRefund ? options!.refundAmount! : 1;
+  const refundDenPaise = isPartialRefund ? options!.paymentAmount! : 1;
+  // #778 §C-2 — floor each party's clawback (was Math.round; same plug policy
+  // as operations/refund.ts): the buyer is made whole in full, so the shaved
+  // paise are absorbed by the PLATFORM — never over-clawed from a consultant
+  // or an org.
+  const prorateRefundPaise = (paise: number) =>
+    prorate(paise, refundNumPaise, refundDenPaise);
 
   if (isPartialRefund) {
     console.log(
@@ -908,7 +978,7 @@ export async function refundEarnings(
       0,
       orgEarning.orgSharePaise - alreadyRefunded,
     );
-    const rawOrgRefund = Math.round(orgEarning.orgSharePaise * refundRatio);
+    const rawOrgRefund = prorateRefundPaise(orgEarning.orgSharePaise);
     const orgRefundAmount = Math.min(rawOrgRefund, maxReversible);
 
     if (orgRefundAmount <= 0) continue;
@@ -946,7 +1016,7 @@ export async function refundEarnings(
       0,
       earnings.consultantSharePaise - alreadyRefunded,
     );
-    const rawShare = Math.round(earnings.consultantSharePaise * refundRatio);
+    const rawShare = prorateRefundPaise(earnings.consultantSharePaise);
     const shareToReverse = Math.min(rawShare, maxReversible);
 
     if (shareToReverse <= 0) {
@@ -988,8 +1058,8 @@ export async function refundEarnings(
           payoutId: earnings.payoutId,
           consultantProfileId: earnings.consultantProfileId,
           earningsId: earnings.id,
-          refundAmountPaise: tdsRefundPaise,
-          paymentAmountPaise: tdsPaymentPaise,
+          refundAmountPaise: refundNumPaise,
+          paymentAmountPaise: refundDenPaise,
         });
       }
 
