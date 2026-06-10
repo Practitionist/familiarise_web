@@ -37,6 +37,6 @@ jobs:
 
       - name: Notify on failure
         if: failure()
-        run: |
-          echo "Refund-earning cascade failed"
-          # Add notification logic here (Slack, email, etc.)
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "cascade-refund-earnings"
