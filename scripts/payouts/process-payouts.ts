@@ -53,7 +53,11 @@ async function createRazorpayPayout(
   payoutId: string,
 ): Promise<{ id: string }> {
   const keyId = process.env.RAZORPAY_KEY_ID;
-  const keySecret = process.env.RAZORPAY_KEY_SECRET;
+  // #677 PM-1 — prod env defines RAZORPAY_SECRET (the canonical name the
+  // core lib reads); reading only RAZORPAY_KEY_SECRET silently disabled
+  // this reconciliation in production while it looked green.
+  const keySecret =
+    process.env.RAZORPAY_SECRET ?? process.env.RAZORPAY_KEY_SECRET;
 
   if (!keyId || !keySecret) {
     throw new Error("RazorpayX credentials not configured");
