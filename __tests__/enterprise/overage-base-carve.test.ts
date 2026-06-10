@@ -20,6 +20,7 @@ interface MockOpts {
   event?: object | null;
   parent?: object | null;
   legUpdateManyCount?: number;
+  parentUpdateManyCount?: number;
 }
 
 function mockTx(opts: MockOpts = {}) {
@@ -41,10 +42,14 @@ function mockTx(opts: MockOpts = {}) {
     .fn()
     .mockResolvedValue({ count: opts.legUpdateManyCount ?? 1 });
   const paymentUpdate = jest.fn().mockResolvedValue({});
+  const paymentUpdateMany = jest
+    .fn()
+    .mockResolvedValue({ count: opts.parentUpdateManyCount ?? 1 });
   return {
     legUpdate,
     legUpdateMany,
     paymentUpdate,
+    paymentUpdateMany,
     tx: {
       overageEvent: {
         findFirst: jest.fn().mockResolvedValue(event),
@@ -53,6 +58,7 @@ function mockTx(opts: MockOpts = {}) {
       payment: {
         findUnique: jest.fn().mockResolvedValue(parent),
         update: paymentUpdate,
+        updateMany: paymentUpdateMany,
       },
       paymentLeg: { update: legUpdate, updateMany: legUpdateMany },
     } as never,
@@ -60,32 +66,33 @@ function mockTx(opts: MockOpts = {}) {
 }
 
 describe("restoreOverageBaseCarve", () => {
-  it("increments the parent INVOICE_ACCRUAL leg and amount by basePaise", async () => {
+  it("increments the parent (guarded on uninvoiced) and the leg by basePaise", async () => {
     const m = mockTx();
     await expect(
       restoreOverageBaseCarve(m.tx, { overageEventId: "ov1" }),
     ).resolves.toBe("restored");
+    // TOCTOU guard: the invoiced check rides the parent UPDATE's WHERE.
+    expect(m.paymentUpdateMany).toHaveBeenCalledWith({
+      where: { id: "parent1", billableToOrgInvoiceId: null },
+      data: { amount: { increment: 300 } },
+    });
     expect(m.legUpdate).toHaveBeenCalledWith({
       where: {
         paymentId_source: { paymentId: "parent1", source: "INVOICE_ACCRUAL" },
       },
       data: { amountPaise: { increment: 300 } },
     });
-    expect(m.paymentUpdate).toHaveBeenCalledWith({
-      where: { id: "parent1" },
-      data: { amount: { increment: 300 } },
-    });
   });
 
-  it("returns invoiced (no leg writes) when the parent is already on an invoice", async () => {
+  it("returns invoiced (no leg writes) when the guarded parent update matches no row", async () => {
     const m = mockTx({
       parent: { id: "parent1", billableToOrgInvoiceId: "inv1" },
+      parentUpdateManyCount: 0,
     });
     await expect(
       restoreOverageBaseCarve(m.tx, { overageEventId: "ov1" }),
     ).resolves.toBe("invoiced");
     expect(m.legUpdate).not.toHaveBeenCalled();
-    expect(m.paymentUpdate).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -114,11 +121,15 @@ describe("restoreOverageBaseCarve", () => {
 });
 
 describe("recarveOverageBase", () => {
-  it("decrements the leg (guarded) and parent amount", async () => {
+  it("decrements the parent (guarded on uninvoiced) then the leg (guarded)", async () => {
     const m = mockTx();
     await expect(
       recarveOverageBase(m.tx, { overageEventId: "ov1" }),
     ).resolves.toBe("recarved");
+    expect(m.paymentUpdateMany).toHaveBeenCalledWith({
+      where: { id: "parent1", billableToOrgInvoiceId: null },
+      data: { amount: { decrement: 300 } },
+    });
     expect(m.legUpdateMany).toHaveBeenCalledWith({
       where: {
         paymentId: "parent1",
@@ -127,15 +138,12 @@ describe("recarveOverageBase", () => {
       },
       data: { amountPaise: { decrement: 300 } },
     });
-    expect(m.paymentUpdate).toHaveBeenCalledWith({
-      where: { id: "parent1" },
-      data: { amount: { decrement: 300 } },
-    });
   });
 
-  it("returns invoiced when the parent is already on an invoice", async () => {
+  it("returns invoiced when the guarded parent update matches no row", async () => {
     const m = mockTx({
       parent: { id: "parent1", billableToOrgInvoiceId: "inv1" },
+      parentUpdateManyCount: 0,
     });
     await expect(
       recarveOverageBase(m.tx, { overageEventId: "ov1" }),
@@ -143,12 +151,11 @@ describe("recarveOverageBase", () => {
     expect(m.legUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("returns invoiced (and leaves amount untouched) when the guarded decrement matches no leg", async () => {
+  it("throws (rolling the tx back) when the leg lacks the restored base on an uninvoiced parent", async () => {
     const m = mockTx({ legUpdateManyCount: 0 });
     await expect(
       recarveOverageBase(m.tx, { overageEventId: "ov1" }),
-    ).resolves.toBe("invoiced");
-    expect(m.paymentUpdate).not.toHaveBeenCalled();
+    ).rejects.toThrow(/missing the restored basePaise/);
   });
 });
 
