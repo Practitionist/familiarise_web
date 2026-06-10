@@ -1095,7 +1095,8 @@ async function confirmApprovalStatus(
  * @param appointmentId - The appointment ID to confirm
  * @param userId - The paying user's ID (required for WEBINAR/CLASS to prevent confirming other users' slots)
  */
-async function confirmExistingAppointment(
+// Exported for the #827 regression tests; only handlePaymentSuccess calls it in prod.
+export async function confirmExistingAppointment(
   tx: Tx,
   appointmentId: string,
   userId?: string,
