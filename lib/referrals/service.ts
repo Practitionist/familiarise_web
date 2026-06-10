@@ -1,4 +1,5 @@
 import prisma, { type Tx } from "@/lib/prisma";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { Prisma as PrismaNamespace } from "@prisma/client";
 import type { ReferralCode, Referral, ReferralCredit } from "@prisma/client";
 import { sumPaise } from "@/lib/payments/utils/money";
@@ -35,36 +36,6 @@ export { QUALIFICATION_WINDOW_DAYS, CREDIT_EXPIRY_MONTHS };
 // Constants
 const DEFAULT_REFERRER_REWARD = 50000; // ₹500 in paise
 const DEFAULT_REFEREE_REWARD = 20000; // ₹200 in paise
-const SERIALIZABLE_MAX_RETRIES = 3;
-
-/**
- * Retries a function that may fail due to Prisma serialization conflicts (P2034).
- * Applies exponential backoff between retries.
- */
-async function withSerializableRetry<T>(
-  fn: () => Promise<T>,
-  maxRetries = SERIALIZABLE_MAX_RETRIES,
-): Promise<T> {
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      return await fn();
-    } catch (error) {
-      const isSerializationFailure =
-        error instanceof PrismaNamespace.PrismaClientKnownRequestError &&
-        error.code === "P2034";
-
-      if (!isSerializationFailure || attempt === maxRetries) {
-        throw error;
-      }
-
-      const backoffMs = 50 * 2 ** attempt; // 50ms, 100ms, 200ms
-      await new Promise((resolve) => setTimeout(resolve, backoffMs));
-    }
-  }
-
-  // Unreachable, but satisfies TypeScript
-  throw new Error("withSerializableRetry: exhausted retries");
-}
 
 /**
  * Creates or returns an existing referral code for a user.
