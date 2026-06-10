@@ -10,7 +10,8 @@
  *   - 2xx → SUCCESS with deliveredAt + endpoint.lastSuccessAt.
  *   - Permanent 4xx (400/403/404/...) → FAILED with no retry slot.
  *   - 5xx / 408 / 429 / network error → RETRY with the next backoff
- *     unless we just used attempt #5, in which case → FAILED.
+ *     unless we just used attempt #5, in which case → DEAD_LETTER
+ *     (delivery-starved, operator-replayable; FAILED stays receiver-rejected).
  *   - Endpoint flipped to PAUSED/DISABLED after enqueue → row marked
  *     FAILED with an explicit reason (operator pause wins).
  */
@@ -191,7 +192,7 @@ describe("runDispatchTick — transient error / retry schedule", () => {
     });
   });
 
-  it("after attempt 5 fails, flips to FAILED instead of scheduling attempt 6", async () => {
+  it("after attempt 5 fails, flips to DEAD_LETTER instead of scheduling attempt 6", async () => {
     const row = makeRow({ attempts: 4 });
     const stub = makePrismaStub(row);
     const fetchFn = mockFetch(async () => new Response("", { status: 502 }));
@@ -203,7 +204,7 @@ describe("runDispatchTick — transient error / retry schedule", () => {
       now: () => FROZEN_NOW_MS,
     });
     expect(stub.updates[0].data).toMatchObject({
-      status: "FAILED",
+      status: "DEAD_LETTER",
       attempts: 5,
       lastError: expect.stringContaining("Exhausted retries"),
     });

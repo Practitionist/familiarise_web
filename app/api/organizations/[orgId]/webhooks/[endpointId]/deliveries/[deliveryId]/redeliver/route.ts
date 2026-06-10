@@ -68,8 +68,14 @@ export async function POST(
           { httpStatus: 409 },
         );
       }
-      const next = await tx.outboundWebhookDelivery.update({
-        where: { id: deliveryId },
+      // CAS — only settled rows may be replayed. PENDING is already queued,
+      // RETRY already has a slot, and resetting an IN_FLIGHT row mid-delivery
+      // would double-send and orphan the worker's claim.
+      const requeued = await tx.outboundWebhookDelivery.updateMany({
+        where: {
+          id: deliveryId,
+          status: { in: ["SUCCESS", "FAILED", "DEAD_LETTER"] },
+        },
         // Reset attempt counters + clear retry slot so the worker
         // treats this as a fresh PENDING row at the next tick.
         data: {
@@ -81,6 +87,17 @@ export async function POST(
           signature: null,
           deliveredAt: null,
         },
+      });
+      if (requeued.count === 0) {
+        throw Object.assign(
+          new Error(
+            "Delivery is already queued or in flight — only settled (success/failed/dead-letter) deliveries can be replayed.",
+          ),
+          { httpStatus: 409 },
+        );
+      }
+      const next = await tx.outboundWebhookDelivery.findUniqueOrThrow({
+        where: { id: deliveryId },
       });
       await tx.orgAuditLog.create({
         data: {
