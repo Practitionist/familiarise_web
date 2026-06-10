@@ -8,6 +8,7 @@ import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
 import {
   AppointmentsType,
+  type Currency,
   PaymentGateway,
   PaymentStatus,
   Prisma,
@@ -227,7 +228,7 @@ export async function calculateAmountAndValidate(
   return await prisma.$transaction(async (tx) => {
     let amount = 0;
     let plan;
-    let priceCurrency = "INR";
+    let priceCurrency: Currency = "INR";
 
     // Lazy-create ConsulteeProfile if this is the user's first
     // consumer action. ORG_WORKSPACE / CONSULTANT users who also book

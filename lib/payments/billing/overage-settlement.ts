@@ -8,6 +8,7 @@
 import prisma from "@/lib/prisma";
 import {
   PaymentStatus,
+  type Currency,
   type Prisma,
   type PaymentGateway,
   type ProgramType,
@@ -29,7 +30,7 @@ export interface RecordOverageInput {
     creditBudgetPaise: number | null;
   };
   bookingPricePaise: number;
-  currency: string;
+  currency: Currency;
   paymentId: string;
   userId: string;
   organizationId: string | null;

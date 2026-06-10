@@ -1050,6 +1050,8 @@ model WalletTopUp {
   providerOrderId   String            @unique
   providerPaymentId String? // gateway payment id, set on confirm
   amountPaise       BigInt
+  // #781 §A — money rows carry their currency explicitly; INR-only until #783.
+  currency          Currency          @default(INR)
   status            WalletTopUpStatus @default(PENDING)
   notes             String?
 
@@ -1485,7 +1487,8 @@ model OrganizationPayout {
   tdsSectionApplied String? // "194J" | "194O" | "194C"
   tdsAmountPaise    BigInt?
   mustPayByDate     DateTime? // derived from MSME 15/45-day rule
-  paRouteProvider   String? // "RAZORPAYX" | "CASHFREE_PAYOUTS"
+  // #781 §A — rail the batch was (or will be) submitted on.
+  paRouteProvider   PayoutRailProvider?
   paReferenceId     String?
   form15caPartCRef  String?
   form15cbRef       String?
@@ -1528,6 +1531,12 @@ model OrganizationPayout {
 
   @@index([organizationId, status])
   @@index([periodStart, periodEnd])
+}
+
+// #781 §A — closed set of payout rails (was a free-string code bag).
+enum PayoutRailProvider {
+  RAZORPAYX
+  CASHFREE_PAYOUTS
 }
 
 enum ResidencyStatus {
@@ -2516,7 +2525,7 @@ model ConsultationPlan {
   description      String?  @db.Text
   durationInHours  Float    @default(1)
   price            BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
-  priceCurrency    String   @default("INR")
+  priceCurrency    Currency @default(INR)
   language         String   @default("English")
   level            String   @default("Beginner")
   prerequisites    String?  @default("None")
@@ -2587,7 +2596,7 @@ model SubscriptionPlan {
   description            String?          @db.Text
   durationInMonths       Int              @default(1)
   price                  BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
-  priceCurrency          String           @default("INR")
+  priceCurrency          Currency         @default(INR)
   callsPerWeek           Int              @default(1)
   sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
   totalSessions          Int              @default(4) // callsPerWeek × durationInMonths × 4
@@ -2793,7 +2802,7 @@ model WebinarPlan {
   topics                 Topic[]                @relation("TopicToWebinarPlan")
   description            String?                @db.Text
   price                  BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
-  priceCurrency          String                 @default("INR")
+  priceCurrency          Currency               @default(INR)
   certificateProvided    Boolean                @default(false)
   recordingEnabled       Boolean                @default(false) // Allow consultant to record sessions
   recordingStoragePolicy RecordingStoragePolicy @default(STREAM_ONLY)
@@ -2862,7 +2871,7 @@ model ClassPlan {
   topics                 Topic[]                @relation("TopicToClassPlan")
   classContents          ClassContent[]
   price                  BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
-  priceCurrency          String                 @default("INR")
+  priceCurrency          Currency               @default(INR)
   certificateProvided    Boolean                @default(false)
   recordingEnabled       Boolean                @default(false) // Allow consultant to record sessions
   recordingStoragePolicy RecordingStoragePolicy @default(STREAM_ONLY)
@@ -3364,7 +3373,7 @@ model Payment {
   amount         BigInt // in paise — final amount charged to gateway (after discounts + tax - credits)
   originalAmount BigInt // in paise — original plan price before discounts/credits/tax (for earnings)
   taxAmount      BigInt         @default(0) // in paise — GST amount charged
-  currency       String
+  currency       Currency       @default(INR)
   description    String?
   receiptUrl     String?
   paymentMethod  String
@@ -3528,7 +3537,7 @@ enum PaymentStatus {
 model Refund {
   id                   String         @id @default(uuid())
   amountPaise          BigInt // Amount refunded in paise
-  currency             String
+  currency             Currency       @default(INR)
   reason               String? // Reason for refund
   status               RefundStatus
   refundId             String         @unique // Gateway-specific refund ID (Stripe/Razorpay)
@@ -3575,7 +3584,7 @@ enum RefundStatus {
 model Dispute {
   id                 String         @id @default(uuid())
   amountPaise        BigInt // Disputed amount in paise
-  currency           String
+  currency           Currency       @default(INR)
   reason             String // Dispute reason from gateway
   status             DisputeStatus
   disputeId          String         @unique // Gateway-specific dispute ID
@@ -3674,7 +3683,7 @@ model ConsultantEarnings {
   paidAt    DateTime?
 
   // Currency (always INR for MVP, extensible for multi-currency)
-  currency String @default("INR")
+  currency Currency @default(INR)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3700,7 +3709,7 @@ model ConsultantPayout {
   provider            PaymentGateway
   providerPayoutId    String?        @unique
   amount              BigInt
-  currency            String         @default("INR")
+  currency            Currency       @default(INR)
   status              PayoutStatus   @default(PENDING)
   method              PayoutMethod
   batchId             String?
@@ -3993,7 +4002,7 @@ model DiscountCode {
   description   String
   discountType  DiscountType
   discountValue Int // For PERCENTAGE: whole number (10 = 10%). For FIXED_AMOUNT: in paise
-  currency      String       @default("INR") // Currency for FIXED_AMOUNT discounts
+  currency      Currency     @default(INR) // Currency for FIXED_AMOUNT discounts
   isActive      Boolean      @default(true)
   expiresAt     DateTime?
   maxUses       Int?
@@ -4067,7 +4076,7 @@ model ReferralCredit {
   id              String       @id @default(cuid())
   userId          String
   amount          BigInt // Credit amount in smallest currency unit (paise)
-  currency        String       @default("INR")
+  currency        Currency     @default(INR)
   source          CreditSource
   referralId      String?
   usedAmount      BigInt       @default(0)
