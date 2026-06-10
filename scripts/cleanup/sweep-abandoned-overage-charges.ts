@@ -11,6 +11,8 @@
  */
 import prisma from "@/lib/prisma";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
+import { restoreOverageBaseCarve } from "@/lib/payments/billing/overage-base-carve";
+import { recordSystemError } from "@/lib/enterprise/system-events";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 export interface OverageSweepResult {
@@ -75,21 +77,45 @@ async function sweepAbandonedOverageChargesUnlocked(
     return { success: true, scanned: 0, failed: 0 };
   }
 
-  // PENDING→FAILED is the only legal target; transitionOverage appends the guard,
-  // so a side-charge that paid (→CHARGED) between the read and here is skipped.
-  // chargeFailureReason makes the silent write-off auditable (#779 §A) — the
-  // 14d timeout cron distinguishes its own FAILs via chargeTimedOutAt.
-  const failed = await transitionOverage(
-    prisma,
-    { id: { in: abandoned.map((a) => a.id) } },
-    "FAILED",
-    {
-      chargeFailureReason: `Abandoned before payment started (swept at ${ageDays}d)`,
-    },
-  );
+  // Per-event tx: the PENDING→FAILED claim (CAS — a side-charge that paid
+  // (→CHARGED) between the read and here matches zero rows) and the basePaise
+  // restore (#812 §P0) must land together. chargeFailureReason makes the
+  // silent write-off auditable (#779 §A) — the 14d timeout cron distinguishes
+  // its own FAILs via chargeTimedOutAt.
+  let failed = 0;
+  let invoicedSkips = 0;
+  for (const a of abandoned) {
+    const outcome = await prisma.$transaction(async (tx) => {
+      const moved = await transitionOverage(tx, { id: a.id }, "FAILED", {
+        chargeFailureReason: `Abandoned before payment started (swept at ${ageDays}d)`,
+      });
+      if (moved === 0) return null;
+      // FAILing the side-charge means the member never pays basePaise — give
+      // it back to the org's parent accrual so the next rollup bills it.
+      return restoreOverageBaseCarve(tx, { overageEventId: a.id });
+    });
+    if (outcome === null) continue;
+    failed += 1;
+    if (outcome === "invoiced") {
+      // Parent already rolled onto an issued invoice with the carved (smaller)
+      // base — the org was under-billed for this session. Needs a manual
+      // billing adjustment; surface it instead of silently diverging the leg.
+      invoicedSkips += 1;
+      void recordSystemError({
+        organizationId: null,
+        category: "OVERAGE",
+        summary: `Abandoned overage ${a.id}: basePaise not restorable — parent already invoiced; manual billing adjustment needed`,
+        err: new Error("OVERAGE_BASE_RESTORE_AFTER_INVOICE"),
+        context: { overageEventId: a.id },
+      }).catch(() => {});
+    }
+  }
 
   console.log(
-    `🧹 Failed ${failed} abandoned CHARGE_MEMBER overage charge(s) — circuit-breaker ceiling freed`,
+    `🧹 Failed ${failed} abandoned CHARGE_MEMBER overage charge(s) — circuit-breaker ceiling freed` +
+      (invoicedSkips > 0
+        ? ` (${invoicedSkips} need manual billing adjustment — parent already invoiced)`
+        : ""),
   );
   return { success: true, scanned: abandoned.length, failed };
 }

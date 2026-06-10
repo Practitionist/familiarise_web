@@ -39,6 +39,10 @@ function mockTx(opts: {
           // #776 — credit notes only mint against an issued invoice.
           status: "ISSUED",
           issuedAt: new Date("2026-05-01T00:00:00.000Z"),
+          // #812 — subtotalPaise drives the gross-up (tax over SUBTOTAL, not
+          // total); omitting it silently zeroed taxFraction and the test
+          // affirmed the old under-credit bug.
+          subtotalPaise: 1000,
           totalPaise: 1180,
           igstPaise: 0,
           cgstPaise: 90,
@@ -81,7 +85,14 @@ describe("mintRefundCreditNote", () => {
     const data = tx._creditNoteCreate.mock.calls[0][0].data;
     expect(data.refundId).toBe("ref1");
     expect(data.invoiceId).toBe("inv1");
-    expect(data.totalPaise).toBe(1000);
+    // #812 — a full refund of a ₹1180 invoice (₹1000 + 18% GST) must mint a
+    // ₹1180 credit note: the reversed accrual legs are tax-EXCLUSIVE, so GST
+    // is grossed up on top (CGST Sec 34 reverses output tax proportionally).
+    expect(data.subtotalPaise).toBe(1000);
+    expect(data.cgstPaise).toBe(90);
+    expect(data.sgstPaise).toBe(90);
+    expect(data.igstPaise).toBe(0);
+    expect(data.totalPaise).toBe(1180);
     // #789 — the prefix is capped so the number satisfies CGST Rule 53's
     // 16-character limit; "ACME-CN-2026-0001" (17 chars) was itself a breach.
     expect(data.creditNoteNumber).toBe("ACM-CN-2026-0001");

@@ -23,6 +23,8 @@
 import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { notifyMemberOverageTimedOut } from "@/lib/novu/org-workflows";
+import { restoreOverageBaseCarve } from "@/lib/payments/billing/overage-base-carve";
+import { recordSystemError } from "@/lib/enterprise/system-events";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
 
@@ -84,13 +86,25 @@ export async function runTimeoutMemberOverages(): Promise<TimeoutStats> {
             chargeFailureReason: TIMEOUT_REASON,
           },
         });
-        return claim.count > 0;
+        if (claim.count === 0) return null;
+        // #812 §P0 — the member never pays basePaise on a timed-out charge;
+        // return it to the org's parent accrual in the same tx.
+        return restoreOverageBaseCarve(tx, { overageEventId: ev.id });
       },
       { isolationLevel: "Serializable" },
     );
 
-    if (!claimed) continue;
+    if (claimed === null) continue;
     stats.timedOut += 1;
+    if (claimed === "invoiced") {
+      void recordSystemError({
+        organizationId: null,
+        category: "OVERAGE",
+        summary: `Timed-out overage ${ev.id}: basePaise not restorable — parent already invoiced; manual billing adjustment needed`,
+        err: new Error("OVERAGE_BASE_RESTORE_AFTER_INVOICE"),
+        context: { overageEventId: ev.id },
+      }).catch(() => {});
+    }
 
     // Fire-and-forget — committed state, no DB writes in the notify path.
     void notifyMemberOverageTimedOut(ev.programAssignment.membership.userId, {
