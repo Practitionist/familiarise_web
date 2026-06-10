@@ -25,7 +25,14 @@
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    contract: { findFirst: jest.fn(), update: jest.fn() },
+    contract: {
+      findFirst: jest.fn(),
+      update: jest.fn(),
+      // Status moves go through the CAS helper: guarded updateMany +
+      // in-tx findUniqueOrThrow re-read.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      findUniqueOrThrow: jest.fn().mockResolvedValue({ id: "c-1" }),
+    },
     program: {
       findFirst: jest.fn(),
       delete: jest.fn(),
@@ -76,7 +83,12 @@ import { PATCH as contractPATCH } from "@/app/api/organizations/[orgId]/contract
 import { DELETE as programDELETE } from "@/app/api/organizations/[orgId]/programs/[programId]/route";
 
 const mockedPrisma = prisma as unknown as {
-  contract: { findFirst: jest.Mock; update: jest.Mock };
+  contract: {
+    findFirst: jest.Mock;
+    update: jest.Mock;
+    updateMany: jest.Mock;
+    findUniqueOrThrow: jest.Mock;
+  };
   program: { findFirst: jest.Mock; delete: jest.Mock; updateMany: jest.Mock };
   programAssignment: { count: jest.Mock; updateMany: jest.Mock };
   bookingUtilization: { findFirst: jest.Mock };
@@ -197,7 +209,15 @@ describe("PATCH /api/organizations/[orgId]/contracts/[contractId] — terminatio
     )) as Response;
 
     expect(res.status).toBe(200);
-    expect(mockedPrisma.contract.update).toHaveBeenCalled();
+    // Status moves are CAS-guarded updateMany now, not a plain update.
+    expect(mockedPrisma.contract.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: { in: ["ACTIVE"] },
+        }),
+        data: expect.objectContaining({ status: "TERMINATED" }),
+      }),
+    );
   });
 
   it("does not run the assignment guard for non-TERMINATED transitions", async () => {

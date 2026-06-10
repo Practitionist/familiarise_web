@@ -15,6 +15,8 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 // BILLING_ADMIN alongside OWNER while still excluding MAINTAINER. See
 // `lib/auth/billing-admin-gate.ts`.
 import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
+import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { transitionPurchaseOrder } from "@/lib/enterprise/transitions";
 
 const PoStatusSchema = z.enum(["ACTIVE", "CLOSED", "CANCELLED"]);
 
@@ -92,30 +94,77 @@ export async function PATCH(
           httpStatus: 404,
         });
       }
-      return tx.purchaseOrder.update({
-        where: { id: poId },
-        data: {
-          ...(body.status !== undefined && { status: body.status }),
-          ...(body.poDate !== undefined && { poDate: body.poDate }),
-          ...(body.validUntil !== undefined && { validUntil: body.validUntil }),
-          ...(body.totalAmountPaise !== undefined && {
-            totalAmountPaise: body.totalAmountPaise,
-          }),
-          ...(body.remainingAmountPaise !== undefined && {
-            remainingAmountPaise: body.remainingAmountPaise,
-          }),
-          ...(body.uploadedDocUrl !== undefined && {
-            uploadedDocUrl: body.uploadedDocUrl,
-          }),
-        },
-      });
+      // Money/term fields are only meaningful on an ACTIVE PO — editing them
+      // on a CLOSED/CANCELLED row is the same class of bug as terminal-state
+      // re-entry, so they share the CAS guard. The doc attachment is plain
+      // paperwork and stays editable in any state.
+      const moneyOrTermData = {
+        ...(body.poDate !== undefined && { poDate: body.poDate }),
+        ...(body.validUntil !== undefined && { validUntil: body.validUntil }),
+        ...(body.totalAmountPaise !== undefined && {
+          totalAmountPaise: body.totalAmountPaise,
+        }),
+        ...(body.remainingAmountPaise !== undefined && {
+          remainingAmountPaise: body.remainingAmountPaise,
+        }),
+      };
+      const docData = {
+        ...(body.uploadedDocUrl !== undefined && {
+          uploadedDocUrl: body.uploadedDocUrl,
+        }),
+      };
+
+      if (body.status !== undefined && body.status !== current.status) {
+        await transitionPurchaseOrder(tx, {
+          where: { id: poId, organizationId: orgId },
+          to: body.status,
+          data: { ...moneyOrTermData, ...docData },
+          audit: {
+            organizationId: orgId,
+            actorMembershipId: access.member.id,
+            category: "INVOICE", // PO lifecycle rides the INVOICE category (see OrgAuditCategory)
+            action:
+              body.status === "CLOSED"
+                ? AUDIT_ACTIONS.INVOICE.PURCHASE_ORDER_CLOSED
+                : AUDIT_ACTIONS.INVOICE.PURCHASE_ORDER_CANCELLED,
+            description: `PurchaseOrder ${poId}: ${current.status} → ${body.status}`,
+            details: { poId, from: current.status, to: body.status },
+          },
+        });
+      } else {
+        if (Object.keys(moneyOrTermData).length > 0) {
+          const res = await tx.purchaseOrder.updateMany({
+            where: { id: poId, organizationId: orgId, status: "ACTIVE" },
+            data: moneyOrTermData,
+          });
+          if (res.count === 0) {
+            throw Object.assign(
+              new Error(
+                "PO amounts and dates are immutable once the PO is closed or cancelled",
+              ),
+              { httpStatus: 409, code: "PO_NOT_ACTIVE" },
+            );
+          }
+        }
+        if (Object.keys(docData).length > 0) {
+          await tx.purchaseOrder.update({ where: { id: poId }, data: docData });
+        }
+      }
+
+      // updateMany returns no row — re-read in-tx for the response body.
+      return tx.purchaseOrder.findUniqueOrThrow({ where: { id: poId } });
     });
     return NextResponse.json({ purchaseOrder: updated });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
       const status =
         typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      return NextResponse.json({ error: err.message }, { status });
+      const code =
+        "code" in err && typeof err.code === "string" ? err.code : undefined;
+      return NextResponse.json(
+        { error: err.message, ...(code && { code }) },
+        { status },
+      );
     }
     throw err;
   }

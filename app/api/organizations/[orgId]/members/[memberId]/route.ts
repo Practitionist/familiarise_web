@@ -19,6 +19,7 @@ import { isAtLeastRole } from "@/lib/auth/role-ranks";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { isBlockedRoleTransition } from "@/lib/enterprise/role-transitions";
+import { transitionMembership } from "@/lib/enterprise/transitions";
 import {
   applyMembershipRoleEffects,
   bumpUserSessionGeneration,
@@ -210,24 +211,52 @@ export async function PATCH(
           ? patch.payoutRecipient
           : undefined;
 
-      const updated = await tx.membership.update({
-        where: { id: memberId },
-        data: {
-          ...(patch.role !== undefined && { role: patch.role }),
-          ...(patch.status !== undefined && { status: patch.status }),
-          ...(patch.departmentLabel !== undefined && {
-            departmentLabel: patch.departmentLabel,
-          }),
-          ...(roleEffects && {
-            consulteeProfileId: roleEffects.consulteeProfileId,
-            consultantProfileId: roleEffects.consultantProfileId,
-            payoutRecipient: roleEffects.payoutRecipient,
-          }),
-          ...(explicitPayoutRecipient !== undefined && {
-            payoutRecipient: explicitPayoutRecipient,
-          }),
-        },
-      });
+      // Status moves are CAS-guarded (a concurrent REMOVE/ERASE landing first
+      // matches zero rows and 409s instead of being resurrected); the
+      // remaining fields ride a plain update in the same tx.
+      if (patch.status !== undefined && patch.status !== current.status) {
+        await transitionMembership(tx, {
+          where: { id: memberId, organizationId: orgId },
+          to: patch.status,
+        });
+
+        // PATCH → REMOVED is the same operation as DELETE — run the same
+        // assignment cascade so the member's slot frees up (see the DELETE
+        // handler's rationale).
+        if (patch.status === "REMOVED") {
+          const now = new Date();
+          await tx.programAssignment.updateMany({
+            where: {
+              membershipId: memberId,
+              periodEnd: { gte: now },
+              status: { in: ["ACTIVE", "PAUSED"] },
+            },
+            data: { periodEnd: now, status: "CANCELLED" },
+          });
+        }
+      }
+
+      const otherData = {
+        ...(patch.role !== undefined && { role: patch.role }),
+        ...(patch.departmentLabel !== undefined && {
+          departmentLabel: patch.departmentLabel,
+        }),
+        ...(roleEffects && {
+          consulteeProfileId: roleEffects.consulteeProfileId,
+          consultantProfileId: roleEffects.consultantProfileId,
+          payoutRecipient: roleEffects.payoutRecipient,
+        }),
+        ...(explicitPayoutRecipient !== undefined && {
+          payoutRecipient: explicitPayoutRecipient,
+        }),
+      };
+      const updated =
+        Object.keys(otherData).length > 0
+          ? await tx.membership.update({
+              where: { id: memberId },
+              data: otherData,
+            })
+          : await tx.membership.findUniqueOrThrow({ where: { id: memberId } });
 
       // Bump the user's session-generation marker so the customSession
       // hook picks up the role / status change on their next request
@@ -438,10 +467,11 @@ export async function DELETE(
       // payouts, earnings, and wallet entries do too. A hard delete
       // would cascade across half the compliance tables. REMOVED is a
       // tombstone — it hides the row from all listing endpoints, blocks
-      // login attempts, but keeps the history queryable.
-      await tx.membership.update({
-        where: { id: memberId },
-        data: { status: "REMOVED" },
+      // login attempts, but keeps the history queryable. The CAS makes a
+      // concurrent double-DELETE 409 instead of re-running the cascade.
+      await transitionMembership(tx, {
+        where: { id: memberId, organizationId: orgId },
+        to: "REMOVED",
       });
 
       // Bump the user's session-generation marker so their next
@@ -483,9 +513,15 @@ export async function DELETE(
       // #779 §A — close the period AND stamp status=CANCELLED (member
       // removed mid-cycle) so the assignment lifecycle is explicit, not
       // inferred from periodEnd alone.
+      // Status guard: only live allocations cascade — a ROLLED/CLOSED row
+      // must never be re-stamped CANCELLED by a (forced) re-removal.
       const now = new Date();
       const terminated = await tx.programAssignment.updateMany({
-        where: { membershipId: memberId, periodEnd: { gte: now } },
+        where: {
+          membershipId: memberId,
+          periodEnd: { gte: now },
+          status: { in: ["ACTIVE", "PAUSED"] },
+        },
         data: { periodEnd: now, status: "CANCELLED" },
       });
 

@@ -48,6 +48,12 @@ export const AUDIT_ACTIONS = {
   PROGRAM: {
     PROGRAM_CREATED: "PROGRAM_CREATED",
     PROGRAM_PAUSED: "PROGRAM_PAUSED",
+    // Lifecycle actions for the remaining ProgramStatus edges — the PATCH
+    // route previously fell back to PROGRAM_CREATED for resume/cancel/expire,
+    // which corrupted the timeline signal.
+    PROGRAM_RESUMED: "PROGRAM_RESUMED",
+    PROGRAM_CANCELLED: "PROGRAM_CANCELLED",
+    PROGRAM_EXPIRED: "PROGRAM_EXPIRED",
     // #779 — cycle engine rolled an assignment to its next period.
     PROGRAM_ASSIGNMENT_ROLLED: "PROGRAM_ASSIGNMENT_ROLLED",
     // #777 §B — archive/unarchive (soft-hide; financial history preserved).
@@ -70,6 +76,9 @@ export const AUDIT_ACTIONS = {
   },
   INVOICE: {
     PURCHASE_ORDER_CREATED: "PURCHASE_ORDER_CREATED",
+    // PO lifecycle — the PATCH route previously wrote no audit row at all.
+    PURCHASE_ORDER_CLOSED: "PURCHASE_ORDER_CLOSED",
+    PURCHASE_ORDER_CANCELLED: "PURCHASE_ORDER_CANCELLED",
     INVOICE_GENERATED: "INVOICE_GENERATED",
     INVOICE_ISSUED: "INVOICE_ISSUED",
     // #779 — dunning cron flipped ISSUED → OVERDUE.

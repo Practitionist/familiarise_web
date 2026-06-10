@@ -43,6 +43,10 @@ jest.mock("../../lib/prisma", () => ({
       findUnique: jest.fn(),
       findFirst: jest.fn(),
       update: jest.fn(),
+      // Status moves now go through the CAS helper (#476 audit): guarded
+      // updateMany + in-tx findUniqueOrThrow re-read for the response body.
+      updateMany: jest.fn(),
+      findUniqueOrThrow: jest.fn(),
     },
     settlementLedgerEntry: { create: jest.fn() },
     orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
@@ -115,6 +119,8 @@ const mockedPrisma = prisma as unknown as {
     findUnique: jest.Mock;
     findFirst: jest.Mock;
     update: jest.Mock;
+    updateMany: jest.Mock;
+    findUniqueOrThrow: jest.Mock;
   };
   settlementLedgerEntry: { create: jest.Mock };
   orgAuditLog: { create: jest.Mock };
@@ -331,8 +337,12 @@ describe("PATCH /api/organizations/[orgId]/billing-account/invoices/[invoiceId] 
       invoiceNumber: "ACME-2026-00001",
       pdfStoragePath: null,
     });
-    mockedPrisma.organizationInvoice.update.mockResolvedValue({
+    mockedPrisma.organizationInvoice.updateMany.mockResolvedValue({
+      count: 1,
+    });
+    mockedPrisma.organizationInvoice.findUniqueOrThrow.mockResolvedValue({
       id: "inv-1",
+      status: "VOID",
     });
     mockedPrisma.purchaseOrder.update.mockResolvedValue({ id: "po-1" });
 
@@ -366,7 +376,13 @@ describe("PATCH /api/organizations/[orgId]/billing-account/invoices/[invoiceId] 
       invoiceNumber: "ACME-2026-00002",
       pdfStoragePath: null,
     });
-    mockedPrisma.organizationInvoice.update.mockResolvedValue({ id: "inv-2" });
+    mockedPrisma.organizationInvoice.updateMany.mockResolvedValue({
+      count: 1,
+    });
+    mockedPrisma.organizationInvoice.findUniqueOrThrow.mockResolvedValue({
+      id: "inv-2",
+      status: "VOID",
+    });
 
     const req = new NextRequest(
       "http://localhost/api/organizations/org-1/billing-account/invoices/inv-2",

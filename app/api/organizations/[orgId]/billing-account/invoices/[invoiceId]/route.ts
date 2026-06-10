@@ -22,6 +22,7 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 // which are finance-team mutations; allow BILLING_ADMIN alongside OWNER.
 import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { transitionOrgInvoice } from "@/lib/enterprise/transitions";
 
 const PatchStatusSchema = z.enum(["ISSUED", "CANCELLED", "VOID"]);
 
@@ -97,8 +98,10 @@ export async function PATCH(
         });
       }
 
-      // Status transitions — reject invalid combinations explicitly
-      // so the audit trail never has a misleading transition recorded.
+      // Route policy — narrower than the global INVOICE_ALLOWED_FROM on
+      // purpose: PAID/OVERDUE/REFUNDED are webhook- and cron-owned moves, not
+      // manual ones. This pre-check is the friendly error; the CAS below is
+      // the race-safe enforcement.
       if (body.status) {
         const allowed: Record<string, string[]> = {
           DRAFT: ["ISSUED", "CANCELLED"],
@@ -128,49 +131,30 @@ export async function PATCH(
         body.status !== undefined &&
         (body.status === "CANCELLED" || body.status === "VOID");
 
-      const next = await tx.organizationInvoice.update({
-        where: { id: invoiceId },
-        data: {
-          ...(body.status !== undefined && {
-            status: body.status,
-            ...(body.status === "ISSUED" && current.status === "DRAFT"
-              ? { issuedAt: new Date() }
-              : {}),
-          }),
-          ...(body.dueDate !== undefined && { dueDate: body.dueDate }),
-          ...(body.pdfUrl !== undefined && { pdfUrl: body.pdfUrl }),
-          ...(invalidatePdfCache && {
-            pdfStoragePath: null,
-            pdfGeneratedAt: null,
-          }),
-        },
-      });
-
-      // PO balance restoration on VOID / CANCELLED. The invoice POST
-      // route atomically decremented `PurchaseOrder.remainingAmountPaise`
-      // at issue time; when the invoice is now being voided or cancelled,
-      // atomically increment the PO balance back so the consumed budget
-      // is released. Unbounded increment is safe — we can never overshoot
-      // `totalAmountPaise` because we only restore amounts we previously
-      // took. The transition is already guarded by the allow-list above.
       const restorePoBalance =
         body.status &&
         body.status !== current.status &&
         (body.status === "VOID" || body.status === "CANCELLED") &&
         current.purchaseOrderId !== null;
 
-      if (restorePoBalance && current.purchaseOrderId) {
-        await tx.purchaseOrder.update({
-          where: { id: current.purchaseOrderId },
+      if (body.status) {
+        // CAS — a concurrent transition (e.g. the dunning cron flipping
+        // ISSUED → OVERDUE, or the payment webhook landing PAID) between the
+        // pre-check read and this write matches zero rows and 409s instead
+        // of voiding a paid invoice.
+        await transitionOrgInvoice(tx, {
+          where: { id: invoiceId, organizationId: orgId },
+          to: body.status,
           data: {
-            remainingAmountPaise: { increment: current.totalPaise },
+            ...(body.status === "ISSUED" ? { issuedAt: new Date() } : {}),
+            ...(body.dueDate !== undefined && { dueDate: body.dueDate }),
+            ...(body.pdfUrl !== undefined && { pdfUrl: body.pdfUrl }),
+            ...(invalidatePdfCache && {
+              pdfStoragePath: null,
+              pdfGeneratedAt: null,
+            }),
           },
-        });
-      }
-
-      if (body.status && body.status !== current.status) {
-        await tx.orgAuditLog.create({
-          data: {
+          audit: {
             organizationId: orgId,
             actorMembershipId: access.member.id,
             category: "INVOICE",
@@ -193,9 +177,39 @@ export async function PATCH(
           },
         });
 
+        // PO balance restoration on VOID / CANCELLED. The invoice POST
+        // route atomically decremented `PurchaseOrder.remainingAmountPaise`
+        // at issue time; when the invoice is now being voided or cancelled,
+        // atomically increment the PO balance back so the consumed budget
+        // is released. Unbounded increment is safe — we can never overshoot
+        // `totalAmountPaise` because we only restore amounts we previously
+        // took, and the CAS above guarantees this runs at most once per
+        // invoice (VOID/CANCELLED are terminal).
+        if (restorePoBalance && current.purchaseOrderId) {
+          await tx.purchaseOrder.update({
+            where: { id: current.purchaseOrderId },
+            data: {
+              remainingAmountPaise: { increment: current.totalPaise },
+            },
+          });
+        }
+      } else {
+        const scalarData = {
+          ...(body.dueDate !== undefined && { dueDate: body.dueDate }),
+          ...(body.pdfUrl !== undefined && { pdfUrl: body.pdfUrl }),
+        };
+        if (Object.keys(scalarData).length > 0) {
+          await tx.organizationInvoice.update({
+            where: { id: invoiceId },
+            data: scalarData,
+          });
+        }
       }
 
-      return next;
+      // updateMany returns no row — re-read in-tx for the response body.
+      return tx.organizationInvoice.findUniqueOrThrow({
+        where: { id: invoiceId },
+      });
     });
 
     return NextResponse.json({ invoice: updated });
