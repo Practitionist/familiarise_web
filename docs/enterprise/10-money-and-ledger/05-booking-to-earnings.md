@@ -30,7 +30,7 @@ sequenceDiagram
   ES->>DB: ConsultantEarnings (+ OrganizationEarnings if HOST) — bps snapshot
   ES->>L: postLedgerTxn(booking:<paymentId>)
   L->>DB: Dr funding legs == Cr PLATFORM_FEE + CONSULTANT_PAYABLE + ORG_PAYABLE + GST_PAYABLE
-  Note over ES,L: single-consultant booking posts inline,<br/>multi-collaborator defers the journal (#773)
+  Note over ES,L: every earnings-bearing booking posts inline —<br/>multi-collaborator included (#773 closed)
 ```
 
 The `walletDebit` in step 2 moves only the **cache** ([wallet & top-ups](04-wallet-and-topups.md)); the authoritative `Dr WALLET` leg is posted later, inside the booking transaction, where the full split is known.
@@ -114,7 +114,7 @@ Dr DISCOUNT            max(0, originalAmount + taxAmount − Σ(funding-leg debi
    Cr GST_PAYABLE              tax amount
 ```
 
-See [ledger & postings §4.2](03-ledger-and-postings.md) for the exact leg-to-account mapping. **Single-consultant bookings post inline; multi-collaborator bookings defer the journal** (tracked gap **#773**) — their per-collaborator HOST-org settlement still writes `OrganizationEarnings`, but the balanced booking transaction is posted later.
+See [ledger & postings §4.2](03-ledger-and-postings.md) for the exact leg-to-account mapping. **Every earnings-bearing booking now posts inline — multi-collaborator included** (#773, closed in the #778 finance-correctness PR). The splits path resolves each collaborator's HOST-org settlement up front and posts one balanced `booking:<paymentId>` transaction: funding debits by leg source, then credits of `PLATFORM_FEE` (the primary fee plus the settled collaborators' fee slices), one `CONSULTANT_PAYABLE` per party (a settled collaborator's earnings row stores the share **net** of the host-org cut, so cache equals journal credit exactly), one `ORG_PAYABLE` per host org, and `GST_PAYABLE`. A posting failure rolls the whole earnings creation back, and the reconciler's `EARNINGS_WITHOUT_BOOKING_TXN` finding (threshold 0) enforces that the platform never again runs partially journaled. One related standing pattern: a member-paid overage capture credits `ORG_PAYABLE` without an earnings row, so that account legitimately carries an overage-relief credit until the payout batch drains ledger payables — reconcile treats it as expected, not as drift.
 
 ---
 
