@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { CheckoutInput, checkoutResponseSchema } from "@/schemas/checkout";
+import { mintClientIdempotencyKey } from "@/app/checkout/plans/utils";
 
 interface LemonSqueezyCheckoutProps {
   input: CheckoutInput;
@@ -35,6 +36,8 @@ const LemonSqueezyCheckout: React.FC<LemonSqueezyCheckoutProps> = ({
   onError,
 }) => {
   const [isProcessing, setIsProcessing] = useState(false);
+  // #828 — stable per-mount; the server dedupes retries on this key.
+  const idempotencyKeyRef = useRef(mintClientIdempotencyKey());
   const { toast } = useToast();
 
   const loadLemonSqueezyScript = (): Promise<boolean> => {
@@ -70,6 +73,7 @@ const LemonSqueezyCheckout: React.FC<LemonSqueezyCheckoutProps> = ({
         body: JSON.stringify({
           ...input,
           paymentGateway: "LEMON_SQUEEZY",
+          clientIdempotencyKey: idempotencyKeyRef.current,
         }),
       });
 

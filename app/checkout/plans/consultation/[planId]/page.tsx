@@ -37,6 +37,7 @@ import StripeCheckout from "../../../components/StripeCheckout";
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
+import { mintClientIdempotencyKey } from "@/app/checkout/plans/utils";
 
 // price arrives as number: extended client + JSON serialization (#780)
 type ConsultationPlanWithConsultant = Omit<ConsultationPlan, "price"> & {
@@ -83,6 +84,7 @@ export default function ConsultationCheckoutPage({
   const [error, setError] = useState<string | null>(null);
   const [_reviews, setReviews] = useState<ConsultantReview[]>([]);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
+  const idempotencyKeyRef = useRef(mintClientIdempotencyKey());
   const isProcessingRef = useRef(false);
   const [processingGateway, setProcessingGateway] = useState<string | null>(
     null,
@@ -288,7 +290,12 @@ export default function ConsultationCheckoutPage({
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ ...checkoutData, isMockPayment }),
+        body: JSON.stringify({
+          ...checkoutData,
+          isMockPayment,
+          // #828 — stable per-mount; the server dedupes retries on this key.
+          clientIdempotencyKey: idempotencyKeyRef.current,
+        }),
       });
     },
     [],

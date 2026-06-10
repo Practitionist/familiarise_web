@@ -84,6 +84,9 @@ export const checkoutSchema = z
     schedulingPeriodStartsAt: z.string().datetime().optional(),
     schedulingPeriodEndsAt: z.string().datetime().optional(),
     discountCode: z.string().optional(),
+    // #828 — one key per logical checkout attempt; the server replays the
+    // original response for a duplicate instead of minting a second order.
+    clientIdempotencyKey: z.string().min(8).max(128).optional(),
     paymentGateway: paymentGatewaySchema.default("RAZORPAY"), // Server auto-routes; client hint only
     displayCurrency: z.string().length(3).optional(), // Currency shown in the checkout UI
     notes: z.string().optional(),

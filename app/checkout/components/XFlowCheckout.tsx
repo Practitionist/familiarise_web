@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { CheckoutInput, checkoutResponseSchema } from "@/schemas/checkout";
+import { mintClientIdempotencyKey } from "@/app/checkout/plans/utils";
 
 interface XFlowCheckoutProps {
   input: CheckoutInput;
@@ -38,6 +39,8 @@ const XFlowCheckout: React.FC<XFlowCheckoutProps> = ({
   onError,
 }) => {
   const [isProcessing, setIsProcessing] = useState(false);
+  // #828 — stable per-mount; the server dedupes retries on this key.
+  const idempotencyKeyRef = useRef(mintClientIdempotencyKey());
   const { toast } = useToast();
 
   // Load XFlow script dynamically
@@ -84,6 +87,7 @@ const XFlowCheckout: React.FC<XFlowCheckoutProps> = ({
         body: JSON.stringify({
           ...input,
           gateway: "XFLOW",
+          clientIdempotencyKey: idempotencyKeyRef.current,
         }),
       });
 
