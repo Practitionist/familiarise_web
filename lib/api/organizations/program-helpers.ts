@@ -78,6 +78,19 @@ export async function resolveActiveAssignment(
  * The unique constraint (programId, membershipId, periodStart) enforces
  * idempotency.
  */
+export class ProgramAssignmentOverlapError extends Error {
+  readonly httpStatus = 409;
+  constructor(
+    public programId: string,
+    public membershipId: string,
+  ) {
+    super(
+      `An assignment for this member already covers an overlapping period on program=${programId}`,
+    );
+    this.name = "ProgramAssignmentOverlapError";
+  }
+}
+
 export async function claimProgramAssignment(
   tx: Tx,
   params: {
@@ -87,6 +100,28 @@ export async function claimProgramAssignment(
     periodEnd: Date;
   },
 ): Promise<{ assignment: ProgramAssignmentRow; created: boolean }> {
+  // #778 §B — the @@unique on (programId, membershipId, periodStart) can't
+  // stop two OVERLAPPING cycles with different starts, and Postgres exclusion
+  // constraints aren't Prisma-expressible. Overlap double-counts caps/seats in
+  // reconcile, so reject here; the exact-same-periodStart re-claim stays
+  // idempotent via the createMany path below.
+  const overlapping = await tx.programAssignment.findFirst({
+    where: {
+      programId: params.programId,
+      membershipId: params.membershipId,
+      status: "ACTIVE",
+      periodStart: { lt: params.periodEnd, not: params.periodStart },
+      periodEnd: { gt: params.periodStart },
+    },
+    select: { id: true },
+  });
+  if (overlapping) {
+    throw new ProgramAssignmentOverlapError(
+      params.programId,
+      params.membershipId,
+    );
+  }
+
   // #785 — report whether THIS call created the row so the caller can
   // increment activeSeatCount exactly once. `createMany({ skipDuplicates })`
   // is INSERT … ON CONFLICT DO NOTHING: it returns count===1 for the single

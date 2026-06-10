@@ -124,7 +124,12 @@ export type Finding = {
     // The JS boundary converts BigInt → number; past 2^53−1 that conversion
     // loses precision (and sumPaise() starts throwing mid-flight). This
     // surfaces the approach before anything crashes.
-    | "MONEY_VALUE_WITHIN_SAFE_RANGE";
+    | "MONEY_VALUE_WITHIN_SAFE_RANGE"
+    // #778 §B — two ACTIVE assignments for the same (program, membership)
+    // with overlapping periods double-count caps/seats. The app-level guard
+    // in claimProgramAssignment prevents new ones; this is the retroactive
+    // detector (exclusion constraints aren't Prisma-expressible).
+    | "ASSIGNMENT_PERIOD_OVERLAP";
   organizationId?: string;
   billingAccountId?: string;
   billingSubscriptionId?: string;
@@ -920,6 +925,48 @@ export async function runReconcileLedgers(
           },
         });
       }
+    }
+  }
+
+  // --- (O) #778 §B — no two ACTIVE assignments for the same (program,
+  // membership) may overlap in period. Sort-then-sweep per group; the row
+  // count is bounded by live assignments so the in-memory pass is cheap.
+  {
+    const active = await prisma.programAssignment.findMany({
+      where: { status: "ACTIVE" },
+      select: {
+        id: true,
+        programId: true,
+        membershipId: true,
+        periodStart: true,
+        periodEnd: true,
+      },
+      orderBy: [{ programId: "asc" }, { membershipId: "asc" }, { periodStart: "asc" }],
+    });
+    let prev: (typeof active)[number] | null = null;
+    for (const a of active) {
+      if (
+        prev &&
+        prev.programId === a.programId &&
+        prev.membershipId === a.membershipId &&
+        prev.periodEnd.getTime() > a.periodStart.getTime()
+      ) {
+        findings.push({
+          kind: "ASSIGNMENT_PERIOD_OVERLAP",
+          programAssignmentId: a.id,
+          expectedPaise: 0,
+          actualPaise: 0,
+          deltaPaise: 0,
+          details: {
+            unit: "none",
+            overlapsAssignmentId: prev.id,
+            programId: a.programId,
+            membershipId: a.membershipId,
+            note: "Two ACTIVE assignments overlap for the same (program, membership) — caps/seats double-count.",
+          },
+        });
+      }
+      prev = a;
     }
   }
 

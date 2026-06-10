@@ -564,7 +564,6 @@ async function seedIit(params: {
         create: {
           cycle: "MONTHLY",
           creditsPerCycle: 10_000, // 10k credits = ₹10k / month
-          minimumCreditsPerPeriod: 10_000,
         },
       },
     },

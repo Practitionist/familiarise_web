@@ -16,6 +16,7 @@ type MockTx = {
   programAssignment: {
     createMany: jest.Mock;
     findUniqueOrThrow: jest.Mock;
+    findFirst: jest.Mock;
   };
 };
 
@@ -26,13 +27,15 @@ const params = {
   periodEnd: new Date("2026-05-01"),
 };
 
-function makeTx(insertedCount: number): MockTx {
+function makeTx(insertedCount: number, overlapping: { id: string } | null = null): MockTx {
   return {
     programAssignment: {
       createMany: jest.fn().mockResolvedValue({ count: insertedCount }),
       findUniqueOrThrow: jest
         .fn()
         .mockResolvedValue({ id: "assign_1", ...params }),
+      // #778 §B overlap guard probe — null = no overlapping ACTIVE cycle.
+      findFirst: jest.fn().mockResolvedValue(overlapping),
     },
   };
 }
@@ -55,5 +58,13 @@ describe("claimProgramAssignment (#785 seat double-count guard)", () => {
     expect(r.created).toBe(false);
     // still returns the existing row so the caller can respond 201/200 uniformly
     expect(r.assignment.id).toBe("assign_1");
+  });
+
+  it("rejects an overlapping ACTIVE cycle (#778 §B) before inserting", async () => {
+    const tx = makeTx(1, { id: "assign_other_cycle" });
+    await expect(claimProgramAssignment(tx as never, params)).rejects.toThrow(
+      /overlapping period/,
+    );
+    expect(tx.programAssignment.createMany).not.toHaveBeenCalled();
   });
 });

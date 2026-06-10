@@ -152,6 +152,7 @@ function makeClient() {
         cumulativeAmountCredited: f("cumulativeAmountCredited"),
         tdsDeducted: f("tdsDeducted"),
       },
+      tdsRate: { thresholdPaise: fn("thresholdPaise") },
       creditNote: {
         subtotalPaise: f("subtotalPaise"),
         igstPaise: f("igstPaise"),

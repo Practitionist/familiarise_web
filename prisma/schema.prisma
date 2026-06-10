@@ -446,8 +446,9 @@ model Verification {
 //
 // India compliance: fields are schema-final, implementations in
 // lib/compliance/** are stubbed (see docs/compliance/india/07-stubs-and-
-// implementation-plan.md). PROJECT + RETAINER program types and the
-// ConsultingFirm tier are reserved for v2 (no sub-config tables ship now).
+// implementation-plan.md). PROJECT / RETAINER program types and the
+// RESELLER/ConsultingFirm tier are MOST-LIKELY-NEVER (decision 2026-06-10,
+// #703/#706): do not re-propose them; nothing in the schema reserves them.
 ////////////////////////////////////////////////////
 
 model Organization {
@@ -849,7 +850,8 @@ enum PayoutRecipient {
 //////////////////////////////////////////////////// COMMERCIAL / SETTLEMENT ////////////////////////////////////////////////////
 // BillingAccount is the funding surface — a single row per sponsor org.
 // FundingSource distinguishes PERSONAL (tag-only), LICENSE (flat enterprise),
-// WALLET (GLG credit pool), INVOICE (NET-X postpaid), PROJECT (v2 placeholder).
+// WALLET (GLG credit pool), INVOICE (NET-X postpaid). PROJECT-style funding
+// is most-likely-never (decision 2026-06-10) — deliberately absent.
 // Contract links the org to one or more Programs with negotiated terms.
 
 // #771 D10 — Organization tax identity (1:1 satellite; mirrors ConsultantTaxInfo).
@@ -1078,8 +1080,10 @@ enum WalletTopUpStatus {
 
 //////////////////////////////////////////////////// PROGRAMS ////////////////////////////////////////////////////
 // Program is the commercial primitive; subtypes declared by `type`. v1 ships
-// LICENSED_SEAT + CREDIT_POOL. PROJECT + RETAINER enum values are reserved so
-// v2 adds them without a migration; sub-config tables NOT created for v2 types.
+// LICENSED_SEAT + CREDIT_POOL — the complete set. PROJECT/RETAINER are
+// most-likely-never (decision 2026-06-10, #703/#706): the enum deliberately
+// does not reserve them; adding an enum value later is a cheap migration if
+// the business ever truly changes its mind.
 //
 // CreditPoolConfig was simplified post-Arch-4: 1 credit is fixed at ₹1 (100
 // paise), and the dormant `premiumMultiplier` was dropped. The pool now
@@ -1159,9 +1163,9 @@ model LicensedSeatConfig {
 // (credits ↔ rupees, no translation layer).
 //
 // `creditsPerCycle` is the hard cap when overageBehavior=BLOCK and
-// the soft cap (with overage routing) otherwise. `minimumCreditsPerPeriod`
-// is an optional commitment minimum — rolls into the next invoice if
-// the org didn't consume it.
+// the soft cap (with overage routing) otherwise. (#753/#784 — the dead
+// `minimumCreditsPerPeriod` commitment-minimum was dropped in the freeze;
+// nothing ever read it.)
 //
 // Bogus combo: CREDIT_POOL programs under a LICENSE-funded contract
 // don't model a real customer arrangement (a flat-fee license already
@@ -1176,7 +1180,6 @@ model CreditPoolConfig {
   program                 Program         @relation(fields: [programId], references: [id], onDelete: Cascade)
   cycle                   BillingCycle
   creditsPerCycle         Int
-  minimumCreditsPerPeriod Int?
   /// #775 — over-budget routing for the money-meter (parity with
   /// LicensedSeatConfig). The cap is `creditsPerCycle × 100` paise; bookings
   /// past it BLOCK, CHARGE_MEMBER, or CHARGE_ORG per this value.
@@ -1464,7 +1467,8 @@ model OrganizationEarnings {
   updatedAt DateTime @updatedAt
 
   @@unique([paymentId, organizationId])
-  @@index([organizationId, status])
+  // #781 §D — createdAt-ordered finance reads (payout batching, statements)
+  @@index([organizationId, status, createdAt])
   @@index([orgPayoutId])
 }
 
@@ -2093,10 +2097,17 @@ model ConsentArtifact {
 model DataBreach {
   id              String    @id @default(uuid())
   detectedAt      DateTime
-  reportedAt      DateTime? // must be <=72h after detectedAt
+  reportedAt      DateTime? // Board leg — must be <=72h after detectedAt
   affectedUserIds String[]
   rootCause       String    @db.Text
   dpbReference    String?
+
+  // #778 §D — DPDP requires notifying affected data principals as well as the
+  // Board (dual 72-hour duty under the 2025 Rules). reportedAt alone only
+  // proves the Board leg; these prove the principal leg.
+  principalsNotifiedAt         DateTime?
+  principalNotificationChannel String? // EMAIL | IN_APP | SMS — free-form until a channel enum earns its keep
+  principalNotificationNote    String?   @db.Text
 
   @@index([detectedAt])
 }
@@ -2192,6 +2203,12 @@ model ConsultantProfile {
   // and the same convention as every revenue-split *Bps field.
   tdsRateBps                      Int?
   tdsLowerRateCert                String? // Section 197 cert reference
+  // #778 §D — a 197 certificate is rate-and-period-scoped; the engine must
+  // stop honouring it outside [validFrom, validTo] and use the cert's own
+  // rate rather than re-purposing the consultant default.
+  tdsLowerRateCertValidFrom       DateTime?
+  tdsLowerRateCertValidTo         DateTime?
+  tdsLowerRateCertRateBps         Int?
   msmeStatus                      MsmeStatus      @default(NONE)
   udyamNumber                     String?         @db.VarChar(19)
   writtenAgreementWithFamiliarise Boolean         @default(false)
@@ -3860,6 +3877,36 @@ model TDSRecord {
   @@index([reportedInForm26Q])
 }
 
+// #778 §D / #784 — effective-dated TDS rate lookup, law-aware. The Income-tax
+// Act 2025 renumbered the TDS sections (194-O → §393 Sl. 8(v)) and re-keyed
+// challans to payment codes (1001–1092) from 2026-04-01; forms 26Q/27Q become
+// 140/144. Sections own rates and thresholds that change by law, so this is a
+// lookup table, not an enum (#784 decision): the engine selects by
+// (section, at-date); filing exports map through lawCode + paymentCode.
+// Rows are append-only — a rate change is a new row with a fresh
+// effectiveFrom, never an update to history.
+model TdsRate {
+  id             String     @id @default(cuid())
+  lawCode        TdsLawCode
+  section        String // "194O" | "194J" | "194C" | "393-8(v)" …
+  paymentCode    String? // IT2025 challan payment code (1001–1092); null for IT1961 rows
+  rateBps        Int
+  noPanRateBps   Int? // 206AA punitive rate where it differs from rateBps
+  thresholdPaise BigInt? // FY threshold below which no withholding (null = none)
+  effectiveFrom  DateTime
+  effectiveTo    DateTime?
+  createdAt      DateTime   @default(now())
+
+  @@unique([lawCode, section, effectiveFrom])
+  @@index([section, effectiveFrom])
+}
+
+// #778 §D — which Act a TdsRate row belongs to; IT2025 took effect 2026-04-01.
+enum TdsLawCode {
+  IT1961
+  IT2025
+}
+
 // #778 §D — payee entity type. TDS thresholds + section differ by type; the
 // ₹50K/194J threshold path (deferred, §F) keys off this.
 enum TaxEntityType {
@@ -3896,7 +3943,14 @@ model CreditNote {
   // redelivery / cron retry / app re-run can't mint a duplicate or burn a
   // gapless sequence number. Postgres allows many NULLs, so manual CNs are fine.
   refundId       String?              @unique
+  // #738-B — triggering dispute (chargeback LOST), when the CN arises from one.
+  // Same idempotency discipline as refundId: one credit note per dispute.
+  disputeId      String?              @unique
   reason         String?
+
+  // #778 §D — IRP reports credit/debit notes as their own document types for
+  // in-scope (AATO ≥ ₹5cr) taxpayers; ≥ ₹10cr adds a 30-day reporting window.
+  docType CreditNoteDocType @default(CRN)
 
   // Money (paise; #780 widens to BigInt). Mirror the invoice tax split so the
   // CN nets cleanly against it.
@@ -3909,12 +3963,31 @@ model CreditNote {
   status   CreditNoteStatus @default(DRAFT)
   issuedAt DateTime?
 
+  // E-invoice (IRN) — schema final per the freeze; live IRP upload of CRN/DBN
+  // stays stubbed with the invoice uploader (#778 §D / ENABLE_IRP_UPLOADER).
+  irn              String?   @db.VarChar(64)
+  ackNumber        String?
+  ackDate          DateTime?
+  signedQrPayload  String?   @db.Text
+  irpStatus        IrpStatus @default(PENDING)
+  irpUploadedAt    DateTime?
+  irpLastError     String?   @db.VarChar(500)
+  irpLastAttemptAt DateTime?
+  irpRetryCount    Int       @default(0)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([organizationId, creditNoteNumber])
   @@index([organizationId, fiscalYear])
   @@index([invoiceId])
+}
+
+// #778 §D — IRP document type for the note. DBN reserved for supplementary
+// (upward) adjustments; refund/chargeback notes are CRN.
+enum CreditNoteDocType {
+  CRN
+  DBN
 }
 
 // #778 §D — refund-driven TDS reversal: a negative line in the revised 26Q/27Q
@@ -4858,7 +4931,8 @@ model OverageEvent {
 
   @@index([programAssignmentId, createdAt])
   @@index([settledAt])
-  @@index([chargeStatus])
+  // #781 §D — per-assignment settlement/reconcile scans
+  @@index([programAssignmentId, chargeStatus, createdAt])
   @@index([chargeStatus, lastChargeAttemptAt])
 }
 
