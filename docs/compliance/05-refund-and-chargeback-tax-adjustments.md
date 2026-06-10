@@ -1,8 +1,8 @@
 # 05 — Refund & chargeback tax adjustments
 
-> **Status:** 🟡 partially wired. The tax-adjustment **models** (`CreditNote`, `TdsAdjustment`, `GstTcsAdjustment`) are **present in `prisma/schema.prisma`** as of #776/#778. Two of the three hooks are now live: the refund cascade (`lib/payments/operations/refund.ts`) mints a `CreditNote` for the GST reversal, and as of #813 it also calls the shared `recordTdsReversal` (`lib/payments/tax/tds-service.ts`) to write a negative `isReversal` **`TDSRecord`** so the next 26Q (→Form 140) nets the withholding back out. What remains missing is the richer **`TdsAdjustment`** consolidation model + its FVU export, and the entire **GST TCS (`GstTcsAdjustment`)** path — so a refund of a TCS-bearing B2C supply still corrupts the next GSTR-8 period until that leg is wired.
+> **Status:** 🟢 adjustment hooks fully wired; the filing EXPORTS remain deferred (#778 §F). Every statutory adjustment row is now written at event time: the refund cascade mints the Sec 34 `CreditNote`, calls `recordTdsReversal` (negative `TDSRecord` **and** a `TdsAdjustment` filing artifact), and emits `GstTcsAdjustment` when TCS was collected; the lost-chargeback handler has full parity (#738-B) — TDS reversal for paid-out earnings, a credit note idempotent on `CreditNote.disputeId`, and the TCS adjustment. The TCS rows stay inert until Sec 52 collection itself ships (see [doc 02](./02-gst-overview.md)). What remains deferred is reading these rows out: the GSTR-1/3B/8 exports and the Form 140/144 FVU generation.
 > **Audience:** payment / refund / dispute code; finance ops.
-> **Last reviewed:** 2026-06-07 (refund-driven TDS reversal via `TDSRecord` wired in #813; regulatory facts web-verified 2026-06-05; prior review 2026-05-02)
+> **Last reviewed:** 2026-06-10 (chargeback parity + TdsAdjustment/GstTcsAdjustment write hooks wired in the #778 finance-correctness PR; prior review 2026-06-07)
 > **Linked issues:** [#738 Items A, B, H](https://github.com/Practitionist/familiarise_web/issues/738) (this is the largest gap added in #738).
 
 ## What it is
@@ -53,7 +53,8 @@ Of the first three rows, the **GST credit note** and the **income-tax TDS revers
 | `lib/payments/operations/refund.ts:336–388` | Refund cascade — negative `PaymentLeg`, wallet credit, ConsultantEarnings refundedShareAmount update | ✅ ledger-side OK |
 | `recordTdsReversal` (`lib/payments/tax/tds-service.ts`), called from `refund.ts` + `payouts/earnings-service.ts` | Writes a negative `isReversal` `TDSRecord` on refund (integer-paise proportion, capped at the original, filed-aware FY/quarter) | ✅ TDS reversal wired (#813) |
 | `mintRefundCreditNote` (called from the cascade + the gateway-refund webhook) | Mints the Sec 34 GST credit note, idempotent on `refundId` | ✅ GST credit note wired |
-| `TdsAdjustment` + `GstTcsAdjustment` write hook (the rows below) | **Missing** (schema is ready; the cascade writes `TDSRecord`/`CreditNote` but not these consolidation models) | 🔴 |
+| `TdsAdjustment` write hook | ✅ wired (#778 §D) — `recordTdsReversal` now also emits a `TdsAdjustment` row (the filing artifact for the Form 140/144 export) alongside the negative `TDSRecord` (which stays the YTD/dedup source) | ✅ |
+| `GstTcsAdjustment` write hook | ✅ wired (#738) — both the refund cascade and the lost-dispute handler emit a signed-negative row when `Payment.gstTcsCollectedPaise` is set; inert until Sec 52 collection ships (see [doc 02](./02-gst-overview.md)) | ✅ |
 | `CreditNote` model (schema) | **Present** — per-org `creditNoteNumber` + `fiscalYear`, `@@unique([organizationId, creditNoteNumber])`, `refundId @unique` (idempotent minting, #776), Sec 34 invoice FK | ✅ schema-final |
 | `TdsAdjustment` model (schema) | **Present** — signed `amountPaise`, `financialYear`/`quarter`, `reportedInForm26Q` | ✅ schema-final |
 | `GstTcsAdjustment` model (schema) | **Present** — signed `amountPaise`, FK to `GstTcsBatch` | ✅ schema-final |
@@ -61,17 +62,18 @@ Of the first three rows, the **GST credit note** and the **income-tax TDS revers
 | 26Q→140 / 27Q→144 negative-adjustment line (FVU reads `TdsAdjustment`) | **Missing** | 🔴 |
 | Monthly GSTR-8 amendment for TCS reversal (reads `GstTcsAdjustment`) | **Missing** (Sec 52 collection itself stubbed — see [doc 02](./02-gst-overview.md)) | 🔴 |
 | `app/api/webhooks/utils.ts:955–1104` | Dispute auto-hold of consultant earnings | ✅ holds money correctly |
-| Chargeback tax-adjustment trigger on dispute LOST | **Missing** | 🔴 |
+| Chargeback tax-adjustment trigger on dispute LOST | ✅ wired (#738-B) — the LOST/CHARGE_REFUNDED branch reverses TDS for paid-out earnings via `recordTdsReversal` (the cap prevents double-reversal after a prior refund), mints the Sec 34 credit note idempotently on `CreditNote.disputeId`, and emits `GstTcsAdjustment` when TCS was collected | ✅ |
 
 ## Gap
 
 | Gap | Severity |
 |---|---|
-| Refund emits no GST credit note (CGST Sec 34) | 🔴 |
-| Refund emits no TDS adjustment record for next quarterly return | 🔴 |
-| Refund emits no TCS adjustment for next GSTR-8 (depends on doc 02 first) | 🔴 |
-| Chargeback (dispute LOST) emits no tax adjustments at all | 🔴 |
-| No proportional logic for partial refunds | 🟡 |
+| ~~Refund emits no GST credit note (CGST Sec 34)~~ wired (#776/#785) | ✅ |
+| ~~Refund emits no TDS adjustment record~~ wired — negative `TDSRecord` (#813) + `TdsAdjustment` filing artifact (#778 §D) | ✅ |
+| ~~Refund emits no TCS adjustment~~ write hook wired; rows stay inert until Sec 52 collection ships (doc 02) | ✅ |
+| ~~Chargeback (dispute LOST) emits no tax adjustments~~ full parity wired (#738-B) | ✅ |
+| ~~No proportional logic for partial refunds~~ integer-paise proportions throughout, reversal-capped | ✅ |
+| Filing exports that READ the adjustment rows (GSTR-1/3B/8, Form 140/144 FVU) are deferred (#778 §F) — manual filing from the rows until then | 🟡 |
 | Cross-FY refunds (refund this April for an invoice from March) — TDS adjustment isn't possible same-system; needs consultant refund-claim flow | 🟡 |
 
 ## Required

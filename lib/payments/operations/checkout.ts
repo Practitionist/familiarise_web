@@ -1839,6 +1839,9 @@ export async function handleCheckout(
           dunningSuspendedAt: { not: null },
         },
         select: { invoiceNumber: true },
+        // #750 — cite the OLDEST overdue invoice in the block message, not an
+        // arbitrary one.
+        orderBy: { dueDate: "asc" },
       });
       if (suspended) {
         throw new Error(

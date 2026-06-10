@@ -52,6 +52,6 @@ jobs:
 
       - name: Notify on failure
         if: failure()
-        run: |
-          echo "Generate subscription invoices cron failed"
-          # TODO: wire to #ops-alerts Slack channel.
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "generate-subscription-invoices"

@@ -21,7 +21,9 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     contract: { findUnique: jest.fn() },
-    program: { create: jest.fn() },
+    // #751 — the overlap guard probes ACTIVE siblings before creating; none
+    // exist in these fixtures.
+    program: { create: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
     orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
     $transaction: jest.fn(),
     $disconnect: jest.fn(),

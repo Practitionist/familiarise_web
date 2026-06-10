@@ -36,30 +36,89 @@ const BillingCycleSchema = z.enum(["MONTHLY", "QUARTERLY", "ANNUAL"]);
 // two is selected so operators don't ship a silent under-charge.
 const OverageBehaviorSchema = z.enum(["BLOCK", "CHARGE_MEMBER", "CHARGE_ORG"]);
 
+// #768 #14/#15 — overage-combo guards shared by both config schemas:
+//   - CHARGE_* without a positive maxOveragePerCyclePaise = unbounded
+//     runaway liability (the breaker is the only hard stop);
+//   - surcharge with BLOCK = dead knob (nothing is ever charged).
+const refineOverageCombo = (
+  v: {
+    overageBehavior: "BLOCK" | "CHARGE_MEMBER" | "CHARGE_ORG";
+    overageSurchargeBps?: number | null;
+    maxOveragePerCyclePaise?: number | null;
+  },
+  ctx: z.RefinementCtx,
+) => {
+  if (v.overageBehavior !== "BLOCK") {
+    if (v.maxOveragePerCyclePaise == null || v.maxOveragePerCyclePaise < 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["maxOveragePerCyclePaise"],
+        message: `overageBehavior=${v.overageBehavior} requires a positive maxOveragePerCyclePaise circuit-breaker ceiling`,
+      });
+    }
+  } else if ((v.overageSurchargeBps ?? 0) > 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["overageSurchargeBps"],
+      message:
+        "overageSurchargeBps has no effect with overageBehavior=BLOCK — remove it or pick CHARGE_MEMBER/CHARGE_ORG",
+    });
+  }
+};
+
 // Create bodies are discriminated by `type` so the nested config schema
 // only accepts the right shape for each subtype. A LICENSED_SEAT body
 // with creditPoolConfig fails validation at the edge, not at the DB.
-const LicensedSeatConfigSchema = z.object({
-  ratePerSeatPaise: z.coerce.number().int().min(0),
-  cycle: BillingCycleSchema,
-  coveredEngagementsPerCycle: z.coerce
-    .number()
-    .int()
-    .min(0)
-    .nullable()
-    .optional(),
-  overageBehavior: OverageBehaviorSchema.default("BLOCK"),
-  priceCapPerEngagementPaise: z.coerce
-    .number()
-    .int()
-    .min(0)
-    .nullable()
-    .optional(),
-  // #775 — bps markup on the pass-through overage marginal (null = no markup).
-  overageSurchargeBps: z.coerce.number().int().min(0).nullable().optional(),
-  // #768 #14/#15 — per-cycle overage ceiling (circuit breaker; null = none).
-  maxOveragePerCyclePaise: z.coerce.number().int().min(0).nullable().optional(),
-});
+const LicensedSeatConfigSchema = z
+  .object({
+    ratePerSeatPaise: z.coerce.number().int().min(0),
+    cycle: BillingCycleSchema,
+    coveredEngagementsPerCycle: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .nullable()
+      .optional(),
+    overageBehavior: OverageBehaviorSchema.default("BLOCK"),
+    priceCapPerEngagementPaise: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .nullable()
+      .optional(),
+    // #775 — bps markup on the pass-through overage marginal (null = no markup).
+    overageSurchargeBps: z.coerce.number().int().min(0).nullable().optional(),
+    // #768 #14/#15 — per-cycle overage ceiling (circuit breaker; null = none).
+    maxOveragePerCyclePaise: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .nullable()
+      .optional(),
+  })
+  .superRefine((v, ctx) => {
+    // Unlimited coverage (null cap) never produces an overage — every overage
+    // knob is dead config; reject rather than persist a misleading program.
+    if (v.coveredEngagementsPerCycle == null) {
+      const deadKnobs: Array<[string, boolean]> = [
+        ["overageBehavior", v.overageBehavior !== "BLOCK"],
+        ["overageSurchargeBps", (v.overageSurchargeBps ?? 0) > 0],
+        ["maxOveragePerCyclePaise", v.maxOveragePerCyclePaise != null],
+        ["priceCapPerEngagementPaise", v.priceCapPerEngagementPaise != null],
+      ];
+      for (const [field, isDead] of deadKnobs) {
+        if (isDead) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [field],
+            message: `${field} has no effect when coveredEngagementsPerCycle is unlimited (null)`,
+          });
+        }
+      }
+      return;
+    }
+    refineOverageCombo(v, ctx);
+  });
 
 // 1 credit = ₹1 = 100 paise (fixed; see schema.prisma). The pool resets
 // every `cycle`. Premium-tier multipliers were dropped from v1 — bespoke
@@ -71,14 +130,23 @@ const LicensedSeatConfigSchema = z.object({
 // against a finance-grade tenant yet. The wizard surfaces a WIP banner
 // when CREDIT_POOL is picked so operators see the soak status before
 // committing a real customer to it.
-const CreditPoolConfigSchema = z.object({
-  cycle: BillingCycleSchema,
-  creditsPerCycle: z.coerce.number().int().min(1),
-  // #775 — over-budget routing + markup + ceiling (parity with LICENSED_SEAT).
-  overageBehavior: OverageBehaviorSchema.default("BLOCK"),
-  overageSurchargeBps: z.coerce.number().int().min(0).nullable().optional(),
-  maxOveragePerCyclePaise: z.coerce.number().int().min(0).nullable().optional(),
-});
+const CreditPoolConfigSchema = z
+  .object({
+    cycle: BillingCycleSchema,
+    creditsPerCycle: z.coerce.number().int().min(1),
+    // #775 — over-budget routing + markup + ceiling (parity with LICENSED_SEAT).
+    overageBehavior: OverageBehaviorSchema.default("BLOCK"),
+    overageSurchargeBps: z.coerce.number().int().min(0).nullable().optional(),
+    maxOveragePerCyclePaise: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .nullable()
+      .optional(),
+  })
+  // Pool budgets are always finite (creditsPerCycle ≥ 1), so only the shared
+  // combo guards apply here.
+  .superRefine(refineOverageCombo);
 
 const CreateBodySchema = z.discriminatedUnion("type", [
   z.object({
@@ -88,6 +156,8 @@ const CreateBodySchema = z.discriminatedUnion("type", [
     coveredPlanTypes: z.array(CoveredPlanTypeSchema).default([]),
     allowedCategories: z.array(z.string()).default([]),
     licensedSeatConfig: LicensedSeatConfigSchema,
+    // #751 — explicit operator acknowledgement of overlapping coverage.
+    forceOverlap: z.boolean().default(false),
   }),
   z.object({
     type: z.literal("CREDIT_POOL"),
@@ -96,6 +166,7 @@ const CreateBodySchema = z.discriminatedUnion("type", [
     coveredPlanTypes: z.array(CoveredPlanTypeSchema).default([]),
     allowedCategories: z.array(z.string()).default([]),
     creditPoolConfig: CreditPoolConfigSchema,
+    forceOverlap: z.boolean().default(false),
   }),
 ]);
 
@@ -242,6 +313,43 @@ export async function POST(
       },
       { status: 400 },
     );
+  }
+
+  // #751 — two ACTIVE programs on the same contract with intersecting
+  // coveredPlanTypes make checkout's program resolution ambiguous (the
+  // booking lands on whichever resolves first) and can double-entitle a
+  // member. An empty coveredPlanTypes covers everything, so it intersects
+  // any other program. Refuse unless the operator explicitly forces it.
+  if (!body.forceOverlap) {
+    const siblings = await prisma.program.findMany({
+      where: {
+        contractId: body.contractId,
+        status: "ACTIVE",
+        archivedAt: null,
+      },
+      select: { id: true, name: true, coveredPlanTypes: true },
+    });
+    const coversAll = body.coveredPlanTypes.length === 0;
+    const overlapping = siblings.filter(
+      (s) =>
+        coversAll ||
+        s.coveredPlanTypes.length === 0 ||
+        s.coveredPlanTypes.some((t) => body.coveredPlanTypes.includes(t)),
+    );
+    if (overlapping.length > 0) {
+      return NextResponse.json(
+        {
+          error: `Coverage overlaps ${overlapping.length} active program(s) on this contract: ${overlapping
+            .map((p) => p.name)
+            .join(
+              ", ",
+            )}. Bookings matching both resolve unpredictably. Pass forceOverlap: true to create it anyway.`,
+          code: "PROGRAM_COVERAGE_OVERLAP",
+          overlappingProgramIds: overlapping.map((p) => p.id),
+        },
+        { status: 409 },
+      );
+    }
   }
 
   const program = await prisma.$transaction(async (tx) => {

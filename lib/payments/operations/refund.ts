@@ -564,6 +564,7 @@ export async function applyRefundCascade(
         earningsId: earnings.id,
         refundAmountPaise: input.amountPaise,
         paymentAmountPaise: payment.amount,
+        refundId: input.refundId,
       });
     }
   }
@@ -677,6 +678,27 @@ export async function applyRefundCascade(
     reason: input.reason,
   });
 
+  // #738-A — TCS u/s 52 parity: if collection ever stamped this payment
+  // (flag-gated, schema-live), the refund must net it out of the next GSTR-8.
+  // Inert while gstTcsCollectedPaise stays null. Idempotency rides on the
+  // cascade's own exactly-once discipline (cascadedAt), not a unique here —
+  // partial refunds legitimately produce one adjustment per refund.
+  if ((payment.gstTcsCollectedPaise ?? 0) > 0) {
+    const tcsReverse = Math.floor(
+      (payment.gstTcsCollectedPaise! * input.amountPaise) / payment.amount,
+    );
+    if (tcsReverse > 0) {
+      await tx.gstTcsAdjustment.create({
+        data: {
+          paymentId: payment.id,
+          refundId: input.refundId,
+          amountPaise: -tcsReverse,
+          reason: `refund (${input.reason})`,
+        },
+      });
+    }
+  }
+
   // -----------------------------------------------------------------------
   // Step 8: General audit row (only when we did NOT already write a
   // clawback row above for the same org — keeps the audit log focused).
@@ -757,6 +779,18 @@ export async function applyRefundCascade(
       // and (now that the ledger blocks) roll the whole refund back. taxAmount
       // defaults to 0 in the schema, but legacy/imported rows may lack it.
       const gstRev = proportion(payment.taxAmount ?? 0);
+      // #775 — a CHARGE_MEMBER side-payment refund: the member's capture
+      // credited ORG_PAYABLE (overage:<paymentId> txn), so refunding it must
+      // pull that relief credit BACK from the org — not bill the platform.
+      // Without this branch the side-payment has no earnings, the whole
+      // fundingTotal lands in platformPlug, and the org keeps money that
+      // belongs to the member.
+      const overageCapture = payment.parentPaymentId
+        ? await tx.ledgerTransaction.findUnique({
+            where: { idempotencyKey: `overage:${payment.id}` },
+            select: { id: true },
+          })
+        : null;
       // #776 — PLATFORM_FEE is the residual: on a full refund it equals the
       // booking's fee exactly; on a partial refund it absorbs the ≤3-paise
       // floor remainder of the other shares (the platform absorbs rounding).
@@ -766,13 +800,21 @@ export async function applyRefundCascade(
       const platformPlug = fundingTotal - consRev - orgRev - gstRev;
       const debits: Posting[] = [];
       if (platformPlug > 0) {
-        // Funding returned exceeds the reversed shares → platform gives back its
-        // fee portion.
-        debits.push({
-          account: { kind: "PLATFORM_FEE" },
-          direction: "DEBIT",
-          amountPaise: platformPlug,
-        });
+        if (overageCapture && orgId) {
+          debits.push({
+            account: { kind: "ORG_PAYABLE", organizationId: orgId },
+            direction: "DEBIT",
+            amountPaise: platformPlug,
+          });
+        } else {
+          // Funding returned exceeds the reversed shares → platform gives back
+          // its fee portion.
+          debits.push({
+            account: { kind: "PLATFORM_FEE" },
+            direction: "DEBIT",
+            amountPaise: platformPlug,
+          });
+        }
       }
       // #812 — debit each collaborator's own CONSULTANT_PAYABLE by its reversed
       // share, mirroring the per-collaborator credits the booking journal posts
@@ -890,11 +932,20 @@ export async function mintRefundCreditNote(
   tx: Tx,
   params: {
     paymentId: string;
-    refundId: string;
     amountPaise: number;
     reason: string;
+    // #738-B — exactly one trigger keys the note: a Refund (app/gateway
+    // refund) or a Dispute (chargeback LOST). Both are @unique on
+    // CreditNote, so each path is idempotent independently.
+    refundId?: string;
+    disputeId?: string;
   },
 ): Promise<{ creditNoteId: string | null }> {
+  if (!params.refundId === !params.disputeId) {
+    throw new Error(
+      "mintRefundCreditNote: exactly one of refundId/disputeId must be set",
+    );
+  }
   const payment = await tx.payment.findUnique({
     where: { id: params.paymentId },
     select: {
@@ -914,11 +965,13 @@ export async function mintRefundCreditNote(
     return { creditNoteId: null };
   }
 
-  // Idempotency: one credit note per refund (refundId is @unique). Probe first
-  // so a replay returns the existing note instead of throwing on the constraint
-  // (and never burns a gapless sequence number).
+  // Idempotency: one credit note per trigger (refundId/disputeId @unique).
+  // Probe first so a replay returns the existing note instead of throwing on
+  // the constraint (and never burns a gapless sequence number).
   const existing = await tx.creditNote.findUnique({
-    where: { refundId: params.refundId },
+    where: params.refundId
+      ? { refundId: params.refundId }
+      : { disputeId: params.disputeId! },
     select: { id: true },
   });
   if (existing) return { creditNoteId: existing.id };
@@ -1005,6 +1058,8 @@ export async function mintRefundCreditNote(
       totalPaise: cnTotal,
       status: "ISSUED",
       issuedAt: new Date(),
+      // #738-B — chargeback-minted notes link the dispute for the audit trail.
+      disputeId: params.disputeId ?? null,
     },
     select: { id: true },
   });

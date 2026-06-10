@@ -135,6 +135,12 @@ function mapGatewayStatus(
         return PayoutStatus.CANCELLED;
       case "failed":
         return PayoutStatus.FAILED;
+      // This poller only walks PENDING/PROCESSING payouts, where the PAYOUT
+      // ledger txn was never posted — a gateway "reversed" here is a net-zero
+      // round trip, so FAILED handling (unlink earnings, reverse TDS) is the
+      // correct accounting. Post-COMPLETED reversals arrive via the
+      // payout.reversed webhook → markConsultantPayoutReversed (#812), which
+      // does post the counter-txn. The failureReason records the distinction.
       case "reversed":
         return PayoutStatus.FAILED;
       default:
@@ -199,9 +205,13 @@ export async function reconcilePayoutStatus(): Promise<PayoutReconciliationResul
     orderBy: { updatedAt: "asc" },
   });
 
-  const razorpayConfigured = !!(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET);
+  const razorpayConfigured = !!(
+    process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET
+  );
   if (!razorpayConfigured) {
-    console.warn("⚠️ Razorpay credentials not configured — Razorpay records will be skipped");
+    console.warn(
+      "⚠️ Razorpay credentials not configured — Razorpay records will be skipped",
+    );
   }
 
   console.log(
@@ -283,7 +293,12 @@ export async function reconcilePayoutStatus(): Promise<PayoutReconciliationResul
           status: mappedStatus,
           failureReason:
             mappedStatus === PayoutStatus.FAILED
-              ? gatewayStatus.failureMessage || gatewayStatus.failureReason
+              ? (gatewayStatus.status.toLowerCase() === "reversed"
+                  ? "gateway reversed pre-completion (net-zero round trip): "
+                  : "") +
+                (gatewayStatus.failureMessage ||
+                  gatewayStatus.failureReason ||
+                  gatewayStatus.status)
               : undefined,
           processedAt:
             mappedStatus === PayoutStatus.COMPLETED ? new Date() : undefined,

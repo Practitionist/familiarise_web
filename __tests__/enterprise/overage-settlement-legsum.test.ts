@@ -13,6 +13,7 @@
  */
 
 import { recordOverageAtCheckout } from "@/lib/payments/billing/overage-settlement";
+import type { Tx } from "@/lib/prisma";
 
 // jest.mock resolves via jest's resolver (no `@/` path mapping) — use relative
 // paths that resolve to the same module files the SUT imports as `@/…`.
@@ -37,9 +38,7 @@ function makeTx(opts: {
   priceCap?: number | null;
   overageBehavior?: "CHARGE_ORG" | "CHARGE_MEMBER";
 }) {
-  const legs: Leg[] = [
-    { source: "INVOICE_ACCRUAL", amountPaise: opts.price },
-  ];
+  const legs: Leg[] = [{ source: "INVOICE_ACCRUAL", amountPaise: opts.price }];
   const payment = { amount: opts.price };
   const children: { amount: number }[] = [];
   let childSeq = 0;
@@ -209,5 +208,33 @@ describe("recordOverageAtCheckout — CHARGE_MEMBER parent carve (#785)", () => 
     expect(state.children).toEqual([{ amount: 40_000 }]); // member pays the overage
     // org(60_000) + member(40_000) == price(100_000), no double-collect.
     expect(sum(state.legs) + state.children[0].amount).toBe(100_000);
+  });
+
+  it("OverageEvent + side-Payment mirror the booking currency (no hardcoded INR)", async () => {
+    const { tx } = makeTx({
+      price: 100_000,
+      cap: 5,
+      used: 5,
+      overageBehavior: "CHARGE_MEMBER",
+    });
+    await recordOverageAtCheckout({
+      tx: tx as unknown as Tx,
+      ...callArgs(100_000),
+      currency: "USD" as const,
+    });
+
+    expect(tx.payment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ currency: "USD" }),
+      }),
+    );
+    expect(tx.overageEvent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          currency: "USD",
+          overageBehavior: "CHARGE_MEMBER",
+        }),
+      }),
+    );
   });
 });

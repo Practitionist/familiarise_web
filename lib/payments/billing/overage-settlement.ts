@@ -185,7 +185,9 @@ export async function recordOverageAtCheckout(
         basePaise,
         surchargePaise,
         marginalPaise,
-        currency: "INR",
+        // Mirrors the booking currency (the side-Payment + timeout notify
+        // read it back); hardcoding INR mislabels a non-INR booking.
+        currency,
         chargeStatus: "PENDING",
         paymentId: sideCharge.id,
       },
@@ -305,7 +307,7 @@ export async function recordOverageAtCheckout(
         basePaise,
         surchargePaise,
         marginalPaise,
-        currency: "INR",
+        currency,
         chargeStatus: "PENDING",
         // paymentId / invoiceLineItemId / settledAt stamped by the rollup.
       },

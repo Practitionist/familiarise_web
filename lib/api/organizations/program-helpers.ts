@@ -67,6 +67,10 @@ export async function resolveActiveAssignment(
       periodStart: { lte: at },
       periodEnd: { gte: at },
     },
+    // #750 — boundary instants (periodEnd == next periodStart) match two
+    // rows; without an order the pick is arbitrary. Latest cycle wins,
+    // consistent with checkout's resolver.
+    orderBy: { periodEnd: "desc" },
   });
 }
 

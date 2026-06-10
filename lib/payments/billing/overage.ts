@@ -153,7 +153,15 @@ export function computeOverage(input: OverageInput): OverageResult {
       marginalPaise = 0;
     } else {
       const used = input.engagementsUsed ?? 0;
-      const sessions = Math.max(1, Math.floor(input.sessionsConsumed));
+      // #710/#713 — defensive lower bound only. Callers MUST pass the true
+      // engagement count (CLASS debits N): a 0/garbage input floors to 1 and
+      // UNDER-counts the over-cap split for multi-session bookings. The
+      // recorder passes max(1, meter delta) and the meter never flags overage
+      // on a 0 delta, so 1 is unreachable-wrong in practice; NaN is normalized
+      // so the split can't poison every downstream paise field.
+      const sessions = Number.isFinite(input.sessionsConsumed)
+        ? Math.max(1, Math.floor(input.sessionsConsumed))
+        : 1;
       const remainingSeats = Math.max(0, cap - used);
       if (remainingSeats >= sessions) {
         coveredPaise = price;
