@@ -163,6 +163,26 @@ function txStub() {
         state.paymentLegs.push(created);
         return created;
       }),
+      // #786 — mirrors @@unique([paymentId, source]): one reversal leg per
+      // source; partials net via decrement.
+      upsert: jest.fn(async ({ where, create, update }: any) => {
+        const key = where.paymentId_source;
+        const existing = state.paymentLegs.find(
+          (l) => l.paymentId === key.paymentId && l.source === key.source,
+        );
+        if (existing) {
+          if (update.amountPaise?.decrement !== undefined) {
+            existing.amountPaise =
+              (existing.amountPaise as number) - update.amountPaise.decrement;
+          } else if (update.amountPaise !== undefined) {
+            existing.amountPaise = update.amountPaise;
+          }
+          return existing;
+        }
+        const created = { id: stableUuid(), createdAt: new Date(), ...create };
+        state.paymentLegs.push(created);
+        return created;
+      }),
     },
     consultantEarnings: {
       update: jest.fn(async ({ where, data }: any) => {
@@ -880,6 +900,134 @@ describe("refundPayment — validation guards", () => {
     await expect(
       refundPayment({ paymentId: "pay-1", reason: "x" }),
     ).rejects.toBeInstanceOf(RefundValidationError);
+  });
+});
+
+describe("applyRefundCascade — #786 reversal legs for unbilled accruals", () => {
+  function seedInvoiceFundedPayment(amount = 10000) {
+    state.payments.set("pay-inv", {
+      id: "pay-inv",
+      amount,
+      originalAmount: amount,
+      taxAmount: 0,
+      currency: "INR",
+      paymentStatus: "SUCCEEDED",
+      paymentGateway: "RAZORPAY",
+      displayCurrencyAtCheckout: null,
+      exchangeRateAtCheckout: null,
+      organizationId: "org-1",
+      billingAccountId: "ba-1",
+      billableToOrgInvoiceId: null, // unbilled — the #786 case
+    });
+    state.paymentLegs.push({
+      id: "leg-inv-1",
+      paymentId: "pay-inv",
+      source: "INVOICE_ACCRUAL",
+      amountPaise: amount,
+      sourceRef: "asg-1",
+      createdAt: new Date(),
+    });
+    state.consultantEarnings.set("ce-inv", {
+      id: "ce-inv",
+      paymentId: "pay-inv",
+      consultantProfileId: "cp-1",
+      consultantSharePaise: 8000,
+      grossAmount: amount,
+      platformFeePaise: 1000,
+      refundedShareAmount: 0,
+      status: "PENDING",
+    });
+    state.organizationEarnings.set("oe-inv", {
+      id: "oe-inv",
+      paymentId: "pay-inv",
+      organizationId: "org-1",
+      grossAmountPaise: amount,
+      platformFeePaise: 1000,
+      orgSharePaise: 1000,
+      consultantSharePaise: 8000,
+      refundedAmountPaise: 0,
+      status: "PENDING",
+      orgPayoutId: null,
+    });
+    state.billingAccounts.set("ba-1", {
+      id: "ba-1",
+      walletBalance: 0,
+      currency: "INR",
+    });
+  }
+
+  it("appends ONE negative reversal sibling and never mutates the original leg", async () => {
+    seedInvoiceFundedPayment(10000);
+    state.refunds.push({
+      id: "r-1",
+      paymentId: "pay-inv",
+      amount: 4000,
+      status: "SUCCEEDED",
+      refundId: "rfnd_1",
+    });
+
+    await applyRefundCascade(tx, {
+      paymentId: "pay-inv",
+      refundId: "r-1",
+      amountPaise: 4000,
+      reason: "partial-1",
+    });
+
+    const original = state.paymentLegs.find(
+      (l) => l.paymentId === "pay-inv" && l.source === "INVOICE_ACCRUAL",
+    );
+    const reversals = state.paymentLegs.filter(
+      (l) =>
+        l.paymentId === "pay-inv" && l.source === "INVOICE_ACCRUAL_REVERSAL",
+    );
+    expect(original?.amountPaise).toBe(10000); // immutable
+    expect(reversals).toHaveLength(1);
+    expect(reversals[0]?.amountPaise).toBe(-4000);
+    expect(reversals[0]?.sourceRef).toBe("asg-1"); // pairs with the original
+  });
+
+  it("second partial refund nets into the existing reversal leg (no P2002 second row)", async () => {
+    seedInvoiceFundedPayment(10000);
+    state.refunds.push(
+      {
+        id: "r-1",
+        paymentId: "pay-inv",
+        amount: 4000,
+        status: "SUCCEEDED",
+        refundId: "rfnd_1",
+      },
+      {
+        id: "r-2",
+        paymentId: "pay-inv",
+        amount: 6000,
+        status: "SUCCEEDED",
+        refundId: "rfnd_2",
+      },
+    );
+
+    await applyRefundCascade(tx, {
+      paymentId: "pay-inv",
+      refundId: "r-1",
+      amountPaise: 4000,
+      reason: "partial-1",
+    });
+    await applyRefundCascade(tx, {
+      paymentId: "pay-inv",
+      refundId: "r-2",
+      amountPaise: 6000,
+      reason: "partial-2",
+    });
+
+    const original = state.paymentLegs.find(
+      (l) => l.paymentId === "pay-inv" && l.source === "INVOICE_ACCRUAL",
+    );
+    const reversals = state.paymentLegs.filter(
+      (l) =>
+        l.paymentId === "pay-inv" && l.source === "INVOICE_ACCRUAL_REVERSAL",
+    );
+    expect(original?.amountPaise).toBe(10000); // still immutable
+    expect(reversals).toHaveLength(1); // netted, not duplicated
+    expect(reversals[0]?.amountPaise).toBe(-10000); // -(4000 + 6000)
   });
 });
 

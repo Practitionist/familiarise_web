@@ -3494,8 +3494,10 @@ model Payment {
 //   { source: REFERRAL_CREDIT, amountPaise:  50000, sourceRef: <ReferralCreditUsage.id> }
 //   { source: WALLET,          amountPaise: 100000, sourceRef: <ProgramAssignment.id> }
 //
-// Invariant: sum(legs.amountPaise) == Payment.amount when legs are
-// present (LICENSE legs contribute 0 so they don't skew the total).
+// Invariant: sum(non-reversal legs.amountPaise) == Payment.amount when legs
+// are present (LICENSE legs contribute 0 so they don't skew the total).
+// *_REVERSAL legs are negative refund counter-entries netting against their
+// original sibling — |reversal| never exceeds the original (#786).
 model PaymentLeg {
   id          String           @id @default(uuid())
   paymentId   String
@@ -3525,6 +3527,12 @@ enum PaymentLegSource {
   INVOICE_ACCRUAL // rolled into an OrganizationInvoice at month-end
   OVERAGE_INVOICE_ACCRUAL // marginal charge beyond a LICENSED_SEAT cap (CHARGE_ORG path); distinct source prevents @@unique([paymentId, source]) collision with the base INVOICE_ACCRUAL leg
   LICENSE // absorbed by a LICENSED_SEAT program (no money moves)
+  // #786/#781 — refund counter-entries for unbilled accruals. Funding legs are
+  // append-only: a refund never mutates the original leg, it nets through a
+  // negative reversal sibling (one per source — @@unique still holds;
+  // subsequent partial refunds decrement the existing reversal leg).
+  INVOICE_ACCRUAL_REVERSAL
+  OVERAGE_INVOICE_ACCRUAL_REVERSAL
 }
 
 enum PaymentGateway {

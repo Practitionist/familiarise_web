@@ -406,13 +406,14 @@ export async function applyRefundCascade(
         // semantics: if the invoice is already PAID, clawback is handled
         // at the OrganizationEarnings level below (mutating the leg of a
         // settled invoice would diverge from the issued document).
-        // If still unbilled, NET DOWN the existing accrual leg so the
-        // monthly rollup picks up the corrected amount.
         //
-        // #776 / PR#785 review — must NOT create a second leg of the same
-        // source: PaymentLeg has @@unique([paymentId, source]), so a negative
-        // sibling INVOICE_ACCRUAL/OVERAGE_INVOICE_ACCRUAL leg throws P2002 and
-        // crashes the refund. Decrement the original leg in place instead.
+        // #786/#781 §B — funding legs are append-only: the original leg is
+        // never mutated; the refund nets through a negative *_REVERSAL
+        // sibling. One reversal leg per source keeps @@unique([paymentId,
+        // source]) intact; subsequent partial refunds decrement the
+        // existing reversal leg. The monthly rollup sums original +
+        // reversal so it bills the net — and the full funding history
+        // stays readable from the legs.
         const billable = payment.billableToOrgInvoiceId
           ? await tx.organizationInvoice.findUnique({
               where: { id: payment.billableToOrgInvoiceId },
@@ -421,11 +422,24 @@ export async function applyRefundCascade(
           : null;
         const alreadyBilled = billable?.status === "PAID";
         if (!alreadyBilled) {
-          await tx.paymentLeg.update({
+          const reversalSource =
+            leg.source === "INVOICE_ACCRUAL"
+              ? ("INVOICE_ACCRUAL_REVERSAL" as const)
+              : ("OVERAGE_INVOICE_ACCRUAL_REVERSAL" as const);
+          await tx.paymentLeg.upsert({
             where: {
-              paymentId_source: { paymentId: payment.id, source: leg.source },
+              paymentId_source: {
+                paymentId: payment.id,
+                source: reversalSource,
+              },
             },
-            data: { amountPaise: { decrement: reverse } },
+            create: {
+              paymentId: payment.id,
+              source: reversalSource,
+              amountPaise: -reverse,
+              sourceRef: leg.sourceRef,
+            },
+            update: { amountPaise: { decrement: reverse } },
           });
         }
         // else: clawback handled below in OrganizationEarnings step.
@@ -446,6 +460,13 @@ export async function applyRefundCascade(
         // REFERRAL_CREDIT: TODO (v2) — referral credits do not
         // auto-restore on refund. Manual support intervention only;
         // tracking issue for the v2 referral ledger.
+        break;
+      }
+
+      case "INVOICE_ACCRUAL_REVERSAL":
+      case "OVERAGE_INVOICE_ACCRUAL_REVERSAL": {
+        // Unreachable: reversal legs are negative and legAmounts filters
+        // on amountPaise > 0. Cases exist for switch exhaustiveness.
         break;
       }
 
