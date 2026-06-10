@@ -115,6 +115,24 @@ async function addMember(
   });
   const body = await res.json().catch(() => null);
   if (!res.ok) {
+    // Same field-level Zod surfacing as updateMember below — see comment
+    // there for rationale. Both POST and PATCH share the "Invalid body"
+    // string on schema parse failure, so both share the friendlier
+    // fallback.
+    const fieldErrors = body?.detail?.fieldErrors as
+      | Record<string, string[] | undefined>
+      | undefined;
+    if (fieldErrors) {
+      const offending = Object.keys(fieldErrors).filter(
+        (k) => fieldErrors[k]?.length,
+      );
+      if (offending.length > 0) {
+        throw new Error(
+          `Couldn't add member — invalid ${offending.join(", ")}. ` +
+            `Refresh the page and try again, or contact support if this persists.`,
+        );
+      }
+    }
     const raw = errorMessageFromBody(body, "Failed to add member");
     throw new Error(humanizeOrgError(raw));
   }
@@ -146,6 +164,27 @@ async function updateMember(
   );
   const body = await res.json().catch(() => null);
   if (!res.ok) {
+    // Zod field-level surfacing. The server returns `error: "Invalid body"`
+    // for any schema parse failure, with the offending field names in
+    // `detail.fieldErrors`. Showing the field name turns an opaque
+    // "Invalid body" toast into something a user can actually act on
+    // ("we don't recognize that role — refresh and try again"). Surfaced
+    // when MAINTAINER→BILLING_ADMIN promotion failed because the PATCH
+    // route's local Zod role enum was stale relative to the Prisma enum.
+    const fieldErrors = body?.detail?.fieldErrors as
+      | Record<string, string[] | undefined>
+      | undefined;
+    if (fieldErrors) {
+      const offending = Object.keys(fieldErrors).filter(
+        (k) => fieldErrors[k]?.length,
+      );
+      if (offending.length > 0) {
+        throw new Error(
+          `Couldn't save changes — invalid ${offending.join(", ")}. ` +
+            `Refresh the page and try again, or contact support if this persists.`,
+        );
+      }
+    }
     const raw = errorMessageFromBody(body, "Failed to update member");
     throw new Error(humanizeOrgError(raw));
   }

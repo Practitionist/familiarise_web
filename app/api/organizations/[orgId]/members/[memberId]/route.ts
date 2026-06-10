@@ -27,9 +27,18 @@ import {
 } from "@/lib/api/organizations/membership-transitions";
 import { notifyOrgExpertRemoved } from "@/lib/novu/service";
 
+// Mirror the full Prisma MemberRole enum. The earlier hand-rolled list
+// omitted BILLING_ADMIN — invitable via POST /members but un-PATCH-able
+// here, so OWNERs couldn't promote a MAINTAINER to BILLING_ADMIN via
+// the dashboard ("Invalid body" 400). Caught during the 2026-06 role
+// audit. We could import lib/labels/org-labels.ts:MemberRoleSchema to
+// share the source — kept local for now to avoid cross-cutting churn,
+// but the values MUST stay in sync with the Prisma enum + the shared
+// schema or we re-introduce the same drift bug.
 const MemberRoleSchema = z.enum([
   "OWNER",
   "MAINTAINER",
+  "BILLING_ADMIN",
   "MANAGER",
   "EXPERT",
   "LEARNER",
