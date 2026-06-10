@@ -263,6 +263,11 @@ export async function calculateAmountAndValidate(
           throw new Error("Consultation plan not found");
         }
 
+        // #781 §B — soft-deleted expert is not bookable
+        if (plan.consultantProfile.deletedAt) {
+          throw new Error("Consultation plan not found");
+        }
+
         await validateSlotAvailability(
           tx,
           validatedData,
@@ -284,6 +289,11 @@ export async function calculateAmountAndValidate(
         });
 
         if (!plan) {
+          throw new Error("Subscription plan not found");
+        }
+
+        // #781 §B — soft-deleted expert is not bookable
+        if (plan.consultantProfile.deletedAt) {
           throw new Error("Subscription plan not found");
         }
 
@@ -326,6 +336,12 @@ export async function calculateAmountAndValidate(
         }
 
         plan = webinar.webinarPlan;
+
+        // #781 §B — soft-deleted expert is not bookable
+        if (plan.consultantProfile?.deletedAt) {
+          throw new Error("Webinar not found");
+        }
+
         const consultantUserId = plan.consultantProfile?.userId;
         const currentWebinarParticipants = countWebinarParticipants(
           webinar.appointment,
@@ -368,6 +384,12 @@ export async function calculateAmountAndValidate(
         }
 
         plan = classInstance.classPlan;
+
+        // #781 §B — soft-deleted expert is not bookable
+        if (plan.consultantProfile?.deletedAt) {
+          throw new Error("Class not found");
+        }
+
         const classConsultantUserId = plan.consultantProfile?.userId;
         // FIX: Count unique participants, not total slots
         // A user enrolled in a class with 8 sessions should count as 1 participant, not 8

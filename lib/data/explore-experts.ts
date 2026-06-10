@@ -109,11 +109,12 @@ export async function fetchExpertsMetadata() {
       select: { id: true, name: true, domainId: true },
     }),
     // Consultant metadata (counts, domain breakdown, avg rating)
+    // #781 §B — soft-deleted profiles leave public surfaces
     (async () => {
       const [totalConsultants, consultantsByDomain, averageRating] =
         await Promise.all([
           prisma.consultantProfile.count({
-            where: { verificationStatus: "VERIFIED" },
+            where: { verificationStatus: "VERIFIED", deletedAt: null },
           }),
           prisma.domain.findMany({
             select: {
@@ -122,14 +123,14 @@ export async function fetchExpertsMetadata() {
               _count: {
                 select: {
                   consultantProfiles: {
-                    where: { verificationStatus: "VERIFIED" },
+                    where: { verificationStatus: "VERIFIED", deletedAt: null },
                   },
                 },
               },
             },
           }),
           prisma.consultantProfile.aggregate({
-            where: { verificationStatus: "VERIFIED" },
+            where: { verificationStatus: "VERIFIED", deletedAt: null },
             _avg: { rating: true },
           }),
         ]);
@@ -150,7 +151,7 @@ export async function fetchExpertsMetadata() {
     // that this is cheaper than it looks and avoids a Postgres `unnest`.
     prisma.consultantProfile
       .findMany({
-        where: { verificationStatus: "VERIFIED" },
+        where: { verificationStatus: "VERIFIED", deletedAt: null },
         select: { languages: true },
       })
       .then((rows) =>
@@ -161,7 +162,7 @@ export async function fetchExpertsMetadata() {
       where: {
         company: { not: "" },
         user: {
-          consultantProfile: { verificationStatus: "VERIFIED" },
+          consultantProfile: { verificationStatus: "VERIFIED", deletedAt: null },
         },
       },
       select: { company: true },
@@ -200,7 +201,8 @@ export const getExpertsMetadata = cache(fetchExpertsMetadata);
 /** Fetch recent high-quality reviews for social proof sections. */
 export const getRecentReviews = cache(async (limit: number = 6) => {
   return prisma.consultantReview.findMany({
-    where: { rating: { gte: 4 } },
+    // #781 §B — soft-deleted profiles leave public surfaces
+    where: { rating: { gte: 4 }, consultantProfile: { deletedAt: null } },
     orderBy: { createdAt: "desc" },
     take: limit,
     include: {
@@ -239,7 +241,8 @@ export const getCuratedExperts = cache(
     }
 
     const rows = await prisma.consultantProfile.findMany({
-      where: { verificationStatus: "VERIFIED" },
+      // #781 §B — soft-deleted profiles leave public surfaces
+      where: { verificationStatus: "VERIFIED", deletedAt: null },
       orderBy,
       take: limit,
       include: { ...consultantListInclude, ...orgMembershipInclude },

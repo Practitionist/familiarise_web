@@ -18,6 +18,8 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
     where: {
       id: consultantId,
       verificationStatus: "VERIFIED",
+      // #781 §B — soft-deleted profiles leave public surfaces (treated as not-found)
+      deletedAt: null,
     },
     select: {
       id: true,
