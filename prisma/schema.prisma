@@ -3421,6 +3421,10 @@ model Payment {
   paymentIntent  String         @unique
   paymentGateway PaymentGateway
   paymentStatus  PaymentStatus
+  /// #828 — client-minted key, one per logical checkout attempt. The unique
+  /// constraint is the race-proof dedupe: a double-click/retry that slips
+  /// past the route's replay lookup dies on P2002 and replays the original.
+  clientIdempotencyKey String? @unique
   // #781 §B — financial rows Restrict their parents; removal = soft-delete.
   // Hard delete remains possible only while no money row references this.
   deletedAt      DateTime?

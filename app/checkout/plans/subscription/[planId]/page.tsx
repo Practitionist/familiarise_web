@@ -37,6 +37,7 @@ import {
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
+import { mintClientIdempotencyKey } from "@/app/checkout/plans/utils";
 
 // price arrives as number: extended client + JSON serialization (#780)
 type SubscriptionPlanWithConsultant = Omit<SubscriptionPlan, "price"> & {
@@ -80,6 +81,8 @@ export default function SubscriptionCheckoutPage({
   const [error, setError] = useState<string | null>(null);
   const [_reviews, setReviews] = useState<ConsultantReview[]>([]);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
+  // #828 — useState's lazy initializer runs once per mount.
+  const [idempotencyKey] = useState(mintClientIdempotencyKey);
   const isProcessingRef = useRef(false);
   const [processingGateway, setProcessingGateway] = useState<string | null>(
     null,
@@ -187,10 +190,15 @@ export default function SubscriptionCheckoutPage({
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ ...checkoutData, isMockPayment }),
+        body: JSON.stringify({
+          ...checkoutData,
+          isMockPayment,
+          // #828 — stable per-mount; the server dedupes retries on this key.
+          clientIdempotencyKey: idempotencyKey,
+        }),
       });
     },
-    [],
+    [idempotencyKey],
   );
 
   const handleCheckout = useCallback(

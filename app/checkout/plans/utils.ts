@@ -39,17 +39,33 @@ export function createHandleApiError(
   };
 }
 
+
+// #828 — one key per logical checkout attempt (stable across double-clicks
+// and network retries within a mount; a fresh mount = a fresh attempt). The
+// server CASes on Payment.clientIdempotencyKey and replays the original
+// response instead of minting a duplicate order.
+export function mintClientIdempotencyKey(): string {
+  return globalThis.crypto?.randomUUID
+    ? `ck_${globalThis.crypto.randomUUID().replace(/-/g, "")}`
+    : `ck_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+}
+
 // Common API request logic for checkout
 export async function makeCheckoutRequest(
   checkoutData: CheckoutInput,
   isMockPayment: boolean = false,
+  clientIdempotencyKey?: string,
 ): Promise<Response> {
   return fetch("/api/checkout", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ ...checkoutData, isMockPayment }),
+    body: JSON.stringify({
+      ...checkoutData,
+      isMockPayment,
+      ...(clientIdempotencyKey && { clientIdempotencyKey }),
+    }),
   });
 }
 
