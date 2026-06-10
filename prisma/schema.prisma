@@ -1183,10 +1183,14 @@ model CreditPoolConfig {
   programId               String          @id
   program                 Program         @relation(fields: [programId], references: [id], onDelete: Cascade)
   cycle                   BillingCycle
-  creditsPerCycle         Int
-  /// #775 — over-budget routing for the money-meter (parity with
-  /// LicensedSeatConfig). The cap is `creditsPerCycle × 100` paise; bookings
-  /// past it BLOCK, CHARGE_MEMBER, or CHARGE_ORG per this value.
+  /// #753 option B — the meter counts ENGAGEMENTS (bookings), not money.
+  /// Renamed from creditsPerCycle: "credits" implied a paise-denominated
+  /// meter the code never implemented (the dead creditValuePaise fields fell
+  /// in #768 lockdown #14/#15). Commercial framing is "N engagements per
+  /// cycle"; wallet exhaustion remains the money backstop.
+  engagementsPerCycle     Int
+  /// #775 — over-budget routing (parity with LicensedSeatConfig); bookings
+  /// past the cap BLOCK, CHARGE_MEMBER, or CHARGE_ORG per this value.
   overageBehavior         OverageBehavior @default(BLOCK)
   /// #775 — bps markup on the over-budget marginal (see LicensedSeatConfig).
   overageSurchargeBps     Int?
@@ -2514,12 +2518,20 @@ model Achievement {
 //////////////////////////////////////////////////// AVAILABILITY SLOTS ////////////////////////////////////////////////////
 
 model SlotOfAvailabilityWeekly {
-  id               String    @id @default(uuid())
-  startDay         DayOfWeek
-  startTimeUtc     Int       @db.SmallInt // Minutes since midnight UTC (0-1439)
-  endDay           DayOfWeek
-  endTimeUtc       Int       @db.SmallInt // Minutes since midnight UTC (0-1439)
-  utcOffsetMinutes Int       @default(0) @db.SmallInt // UTC offset in minutes at slot creation (e.g. 330 for IST, -300 for EST)
+  id                String    @id @default(uuid())
+  startDay          DayOfWeek
+  startTimeUtc      Int       @db.SmallInt // Minutes since midnight UTC (0-1439)
+  endDay            DayOfWeek
+  endTimeUtc        Int       @db.SmallInt // Minutes since midnight UTC (0-1439)
+  utcOffsetMinutes  Int       @default(0) @db.SmallInt // UTC offset in minutes at slot creation (e.g. 330 for IST, -300 for EST)
+  /// #503 — DST-proof source of truth: the consultant's LOCAL wall-clock
+  /// window plus the IANA zone. The frozen utcOffsetMinutes above breaks for
+  /// any DST zone (the offset at creation is wrong half the year). Write-side
+  /// populated now; the slot math migrates read-side in #503's follow-up,
+  /// then the offset column retires. Nullable until backfilled.
+  timezone          String?   @db.VarChar(64)
+  localStartMinutes Int?      @db.SmallInt
+  localEndMinutes   Int?      @db.SmallInt
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
@@ -3109,6 +3121,13 @@ model Waitlist {
 // Generic Appointment Model
 
 model Appointment {
+  /// Refund-policy snapshot taken at booking (2026-06-10 decision): tiered
+  /// time-based windows (e.g. [{hoursBefore:24,refundPct:100},...]) resolved
+  /// from org/platform defaults at checkout, so later policy edits never
+  /// retroactively change a buyer's terms. Read by the cancel flow; null =
+  /// pre-snapshot booking (platform default tiers apply).
+  cancellationPolicySnapshot Json?
+
   id                 String              @id @default(uuid())
   appointmentType    AppointmentsType
   slotsOfAppointment SlotOfAppointment[]
@@ -3256,6 +3275,13 @@ model SlotOfAppointment {
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   appointmentId String
 
+  /// #440 — denormalized consultant for the DB-level overlap guard. The
+  /// exclusion constraint itself (btree_gist on (consultantProfileId,
+  /// tstzrange(startsAt, endsAt)) WHERE NOT isTentative) needs raw SQL and
+  /// lands with prisma-migrate adoption; the COLUMN is schema-freeze-gated
+  /// and checkout populates it from booking onward. Nullable for pre-#440 rows.
+  consultantProfileId String?
+
   meetingSession MeetingSession?
 
   createdAt DateTime @default(now()) @db.Timestamptz
@@ -3263,6 +3289,8 @@ model SlotOfAppointment {
 
   // OPT-3: Additional indexes for time range queries in validateSlotAvailability
   @@index([appointmentId])
+  // #440 — serves the overlap recheck + the future exclusion constraint.
+  @@index([consultantProfileId, startsAt, endsAt])
   @@index([isTentative, appointmentId])
   @@index([startsAt, endsAt])
   @@index([isTentative, startsAt, endsAt])
@@ -3275,7 +3303,10 @@ enum SlotCompletionStatus {
   COMPLETED // Session held (MeetingSession.endedAt OR manual mark)
   UNVERIFIED // Past + no MeetingSession record (may be offline session)
   CANCELLED // Explicitly cancelled before it occurred
-  RESCHEDULED // Replaced by a later slot (via in-progress reallocation)
+  /// KEEP + WIRE decision (2026-06-10 audit): reschedule historically rode
+  /// the isTentative boolean and never wrote this value; the reschedule flow
+  /// now stamps replaced slots RESCHEDULED so lifecycle is explicit.
+  RESCHEDULED // Replaced by a later slot (via reschedule/reallocation)
 }
 
 ////////////////////////////////////////////// MEETINGS FOR STREAM ////////////////////////////////////////////////////
@@ -3410,26 +3441,26 @@ enum Platform {
 ////////////////////////////////////////////// PAYMENT STUFF ////////////////////////////////////////////////////
 
 model Payment {
-  id             String         @id @default(uuid())
-  amount         BigInt // in paise — final amount charged to gateway (after discounts + tax - credits)
-  originalAmount BigInt // in paise — original plan price before discounts/credits/tax (for earnings)
-  taxAmount      BigInt         @default(0) // in paise — GST amount charged
-  currency       Currency       @default(INR)
-  description    String?
-  receiptUrl     String?
-  paymentMethod  String
-  paymentIntent  String         @unique
-  paymentGateway PaymentGateway
-  paymentStatus  PaymentStatus
+  id                   String         @id @default(uuid())
+  amount               BigInt // in paise — final amount charged to gateway (after discounts + tax - credits)
+  originalAmount       BigInt // in paise — original plan price before discounts/credits/tax (for earnings)
+  taxAmount            BigInt         @default(0) // in paise — GST amount charged
+  currency             Currency       @default(INR)
+  description          String?
+  receiptUrl           String?
+  paymentMethod        String
+  paymentIntent        String         @unique
+  paymentGateway       PaymentGateway
+  paymentStatus        PaymentStatus
   /// #828 — client-minted key, one per logical checkout attempt. The unique
   /// constraint is the race-proof dedupe: a double-click/retry that slips
   /// past the route's replay lookup dies on P2002 and replays the original.
-  clientIdempotencyKey String? @unique
+  clientIdempotencyKey String?        @unique
   // #781 §B — financial rows Restrict their parents; removal = soft-delete.
   // Hard delete remains possible only while no money row references this.
-  deletedAt      DateTime?
-  expiresAt      DateTime? // For tracking payment intent expiration
-  isMockPayment  Boolean        @default(false) // For development: mock payments skip gateway calls
+  deletedAt            DateTime?
+  expiresAt            DateTime? // For tracking payment intent expiration
+  isMockPayment        Boolean        @default(false) // For development: mock payments skip gateway calls
 
   // International payment tracking
   buyerCountry              String? // ISO 3166-1 alpha-2 code detected at checkout

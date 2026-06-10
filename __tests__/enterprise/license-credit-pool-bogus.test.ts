@@ -106,7 +106,7 @@ describe("POST /api/organizations/[orgId]/programs — LICENSE × CREDIT_POOL gu
         allowedCategories: [],
         creditPoolConfig: {
           cycle: "MONTHLY",
-          creditsPerCycle: 1000,
+          engagementsPerCycle: 1000,
         },
       }) as any,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -144,7 +144,7 @@ describe("POST /api/organizations/[orgId]/programs — LICENSE × CREDIT_POOL gu
         allowedCategories: [],
         creditPoolConfig: {
           cycle: "MONTHLY",
-          creditsPerCycle: 1000,
+          engagementsPerCycle: 1000,
         },
       }) as any,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

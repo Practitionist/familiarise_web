@@ -6,7 +6,7 @@
  * #775/#753 — CREDIT_POOL money-meter in recordBookingUtilization.
  *
  * LICENSED_SEAT meters by engagement COUNT; CREDIT_POOL meters by PAISE against
- * `creditsPerCycle × 100`. This pins that a credit pool:
+ * `engagementsPerCycle × 100`. This pins that a credit pool:
  *   - BLOCKs when consumedPaise + price would exceed the budget,
  *   - flags overage (wasOverage) under CHARGE_* when over budget,
  *   - returns the money-meter post values for the caller.
@@ -25,7 +25,7 @@ type MockTx = {
 };
 
 function makeCreditTx(opts: {
-  creditsPerCycle: number;
+  engagementsPerCycle: number;
   behavior: "BLOCK" | "CHARGE_MEMBER" | "CHARGE_ORG";
   consumedPaise: number;
   blockUpdateRows?: number;
@@ -42,7 +42,7 @@ function makeCreditTx(opts: {
           type: "CREDIT_POOL",
           licensedSeatConfig: null,
           creditPoolConfig: {
-            creditsPerCycle: opts.creditsPerCycle,
+            engagementsPerCycle: opts.engagementsPerCycle,
             overageBehavior: opts.behavior,
           },
         },
@@ -66,7 +66,7 @@ function makeCreditTx(opts: {
 describe("recordBookingUtilization — CREDIT_POOL money-meter", () => {
   it("BLOCK: within budget proceeds and debits paise", async () => {
     const tx = makeCreditTx({
-      creditsPerCycle: 1000, // budget = 100_000 paise
+      engagementsPerCycle: 1000, // budget = 100_000 paise
       behavior: "BLOCK",
       consumedPaise: 50_000,
       blockUpdateRows: 1, // 50_000 + 30_000 <= 100_000
@@ -86,7 +86,7 @@ describe("recordBookingUtilization — CREDIT_POOL money-meter", () => {
 
   it("BLOCK: over budget rejects (0 rows touched → throws)", async () => {
     const tx = makeCreditTx({
-      creditsPerCycle: 1000,
+      engagementsPerCycle: 1000,
       behavior: "BLOCK",
       consumedPaise: 90_000,
       blockUpdateRows: 0, // 90_000 + 30_000 > 100_000 → guard fails
@@ -104,7 +104,7 @@ describe("recordBookingUtilization — CREDIT_POOL money-meter", () => {
 
   it("CHARGE_ORG: over budget flags overage + returns post consumedPaise", async () => {
     const tx = makeCreditTx({
-      creditsPerCycle: 1000,
+      engagementsPerCycle: 1000,
       behavior: "CHARGE_ORG",
       consumedPaise: 90_000,
       chargeReturning: [{ engagementsUsed: 1, consumedPaise: 120_000 }],

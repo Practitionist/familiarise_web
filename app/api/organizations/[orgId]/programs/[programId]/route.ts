@@ -50,7 +50,7 @@ const PatchBodySchema = z
       .min(1)
       .nullable()
       .optional(),
-    creditsPerCycle: z.coerce.number().int().min(1).optional(),
+    engagementsPerCycle: z.coerce.number().int().min(1).optional(),
     overageBehavior: OverageBehaviorSchema.optional(),
     overageSurchargeBps: z.coerce.number().int().min(0).nullable().optional(),
     priceCapPerEngagementPaise: z.coerce
@@ -76,7 +76,7 @@ const MONEY_FIELDS = [
   "coveredPlanTypes",
   "ratePerSeatPaise",
   "coveredEngagementsPerCycle",
-  "creditsPerCycle",
+  "engagementsPerCycle",
   "overageBehavior",
   "overageSurchargeBps",
   "priceCapPerEngagementPaise",
@@ -376,8 +376,8 @@ export async function PATCH(
         }
       } else if (current.type === "CREDIT_POOL") {
         const poolData = {
-          ...(body.creditsPerCycle !== undefined && {
-            creditsPerCycle: body.creditsPerCycle,
+          ...(body.engagementsPerCycle !== undefined && {
+            engagementsPerCycle: body.engagementsPerCycle,
           }),
           ...(body.overageBehavior !== undefined && {
             overageBehavior: body.overageBehavior,

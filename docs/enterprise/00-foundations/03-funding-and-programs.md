@@ -162,7 +162,7 @@ model LicensedSeatConfig {
 model CreditPoolConfig {
   programId               String          @id
   cycle                   BillingCycle    // when does the pool reset?
-  creditsPerCycle         Int             // hard cap (1 credit = ₹1)
+  engagementsPerCycle         Int             // hard cap (1 credit = ₹1)
   minimumCreditsPerPeriod Int?            // optional commitment minimum
   overageBehavior         OverageBehavior @default(BLOCK) // #775 parity with LicensedSeatConfig
   overageSurchargeBps     Int?            // #775 bps markup on the over-budget marginal
@@ -172,7 +172,7 @@ model CreditPoolConfig {
 
 `CreditPoolConfig` gained the same overage trio as `LicensedSeatConfig`
 (#775): `overageBehavior` + `overageSurchargeBps` + `maxOveragePerCyclePaise`.
-The pool's money cap is `creditsPerCycle × 100` paise; bookings past it
+The pool's money cap is `engagementsPerCycle × 100` paise; bookings past it
 route per `overageBehavior` (BLOCK / CHARGE_MEMBER / CHARGE_ORG), with the
 optional bps surcharge and a cumulative-overage ceiling that falls back to
 BLOCK once exceeded. The surcharge is applied to the real pass-through
@@ -194,7 +194,7 @@ the **first** `ProgramAssignment` (not at program-create, so a typo on a
 brand-new program is still fixable). Once non-null, the
 `LOCKED_PROGRAM_FIELDS` set in `lib/enterprise/config-lock.ts` —
 `type`, `coveredPlanTypes`, `ratePerSeatPaise`,
-`coveredEngagementsPerCycle`, `creditsPerCycle`, `overageBehavior`,
+`coveredEngagementsPerCycle`, `engagementsPerCycle`, `overageBehavior`,
 `overageSurchargeBps`, `priceCapPerEngagementPaise`,
 `maxOveragePerCyclePaise` — is read-only. A retroactive money edit would
 rewrite bookings already settled at the old terms, so the rule is: locked
@@ -215,7 +215,7 @@ terms lock on the same principle — see the deep-dive in
 `OverageBehavior` drives what happens when a program hits its per-cycle cap in the
 middle of a booking. It applies to both subtypes: `LICENSED_SEAT`, which is metered
 by engagement count, and `CREDIT_POOL`, which is metered by `consumedPaise` against
-`creditsPerCycle × 100`. The table below gives one row per enum value and describes
+`engagementsPerCycle × 100`. The table below gives one row per enum value and describes
 the behaviour each one triggers.
 
 | Value           | Behaviour                                                                 |
