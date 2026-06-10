@@ -77,7 +77,8 @@ export function deriveGstBreakdown(params: {
   hsnCode?: string;
 }): GstBreakdown {
   const hsnCode = params.hsnCode ?? "999293";
-  const placeOfSupply = params.buyerStateCode ?? params.supplierStateCode ?? null;
+  const placeOfSupply =
+    params.buyerStateCode ?? params.supplierStateCode ?? null;
 
   // Zero-rated export
   if (params.buyerCountry !== "IN") {
@@ -94,6 +95,11 @@ export function deriveGstBreakdown(params: {
     };
   }
 
+  // #778 §C — deliberate exemption from the floor-everywhere policy: this is
+  // a statutory LEVY computation, not a split. Flooring would systematically
+  // under-collect output tax; nearest-rounding matches invoice practice
+  // (Sec 170 rounds to the rupee at the document level). The CGST/SGST halves
+  // below still floor+remainder so the parts sum exactly.
   const taxPaise = Math.round(params.subtotalPaise * GST_RATE);
 
   // Intra-state: CGST + SGST split 50/50

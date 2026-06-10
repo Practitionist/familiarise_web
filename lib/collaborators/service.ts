@@ -811,9 +811,19 @@ export async function calculateRevenueSplit(
 
   const splits: RevenueSplit[] = [];
 
+  // #778 §C-2 — floor each collaborator share (Math.round could overshoot the
+  // total and push the owner's remainder NEGATIVE); the owner absorbs every
+  // floored paisa as the pool's designated residual party. Σbps > 10000 is a
+  // mis-configured plan: refuse rather than mint money.
+  const bpsSum = acceptedCollabs.reduce((a, c) => a + c.revenueShareBps, 0);
+  if (bpsSum > 10_000) {
+    throw new Error(
+      `calculateRevenueSplit: collaborator shares sum to ${bpsSum} bps (> 10000) on ${planType} plan ${planId}`,
+    );
+  }
   let collaboratorTotal = 0;
   for (const collab of acceptedCollabs) {
-    const share = Math.round((totalAmount * collab.revenueShareBps) / 10_000);
+    const share = Math.floor((totalAmount * collab.revenueShareBps) / 10_000);
     collaboratorTotal += share;
     splits.push({
       consultantProfileId: collab.consultantProfileId,
@@ -822,7 +832,7 @@ export async function calculateRevenueSplit(
     });
   }
 
-  // Owner gets the remainder
+  // Owner gets the remainder (≥ 0 by the floors + bps guard above)
   const ownerShare = totalAmount - collaboratorTotal;
 
   // Get plan's owner consultant profile

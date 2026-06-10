@@ -109,7 +109,8 @@ function txStub() {
       findMany: jest.fn(async ({ where, select }: any) => {
         const rows = state.refunds.filter((r) => {
           if (where.paymentId && r.paymentId !== where.paymentId) return false;
-          if (where.status?.in && !where.status.in.includes(r.status)) return false;
+          if (where.status?.in && !where.status.in.includes(r.status))
+            return false;
           return true;
         });
         if (select) return rows.map((r) => projectSelect(r, select));
@@ -372,7 +373,10 @@ function hydratePayment(p: Row): Row {
     ...p,
     legs: state.paymentLegs
       .filter((l) => l.paymentId === p.id)
-      .sort((a, b) => (a.createdAt as Date).getTime() - (b.createdAt as Date).getTime()),
+      .sort(
+        (a, b) =>
+          (a.createdAt as Date).getTime() - (b.createdAt as Date).getTime(),
+      ),
     earnings: Array.from(state.consultantEarnings.values()).filter(
       (e) => e.paymentId === p.id,
     ),
@@ -381,7 +385,7 @@ function hydratePayment(p: Row): Row {
       .map((e) => ({
         ...e,
         orgPayout: e.orgPayoutId
-          ? state.organizationPayouts.get(e.orgPayoutId as string) ?? null
+          ? (state.organizationPayouts.get(e.orgPayoutId as string) ?? null)
           : null,
       })),
     bookingUtilization: state.bookingUtilizations.get(p.id as string) ?? null,
@@ -659,9 +663,15 @@ describe("refundPayment — multi-collaborator refund balances the ledger (#813 
     // cascade back; reaching here with all three reversed proves it balanced.
     expect(result.amountRefundedPaise).toBe(3334);
     expect(result.consultantEarningsReversed).toBe(3);
-    expect(state.consultantEarnings.get("ce-mc-1")?.refundedShareAmount).toBeGreaterThan(0);
-    expect(state.consultantEarnings.get("ce-mc-2")?.refundedShareAmount).toBeGreaterThan(0);
-    expect(state.consultantEarnings.get("ce-mc-3")?.refundedShareAmount).toBeGreaterThan(0);
+    expect(
+      state.consultantEarnings.get("ce-mc-1")?.refundedShareAmount,
+    ).toBeGreaterThan(0);
+    expect(
+      state.consultantEarnings.get("ce-mc-2")?.refundedShareAmount,
+    ).toBeGreaterThan(0);
+    expect(
+      state.consultantEarnings.get("ce-mc-3")?.refundedShareAmount,
+    ).toBeGreaterThan(0);
   });
 
   it("a full multi-collaborator refund also balances", async () => {
@@ -713,7 +723,11 @@ describe("refundPayment — multi-collaborator refund balances the ledger (#813 
 
 describe("refundPayment — partial 50% refund proportional split", () => {
   it("splits proportional, leaves earnings non-REFUNDED", async () => {
-    seedSinglePartyWalletPayment({ amount: 10000, consultantSharePaise: 8000, orgShare: 1000 });
+    seedSinglePartyWalletPayment({
+      amount: 10000,
+      consultantSharePaise: 8000,
+      orgShare: 1000,
+    });
 
     const result = await refundPayment({
       paymentId: "pay-1",
@@ -815,10 +829,14 @@ describe("refundPayment — clawback when payout already COMPLETED", () => {
     const op = state.organizationPayouts.get("op-1")!;
     expect(op.clawbackAmountPaise).toBe(1000); // = orgShare
     expect(op.clawbackInitiatedAt).toBeInstanceOf(Date);
-    expect((op.clawbackInitiatedAt as Date).getTime()).toBeGreaterThanOrEqual(before);
+    expect((op.clawbackInitiatedAt as Date).getTime()).toBeGreaterThanOrEqual(
+      before,
+    );
 
     // PAYOUT_CLAWBACK audit row written.
-    const audit = state.orgAuditLogs.find((l) => l.action === "PAYOUT_CLAWBACK");
+    const audit = state.orgAuditLogs.find(
+      (l) => l.action === "PAYOUT_CLAWBACK",
+    );
     expect(audit).toBeDefined();
     expect((audit?.details as any)?.clawbackAmountPaise).toBe(1000);
   });
@@ -835,7 +853,11 @@ describe("refundPayment — clawback when payout already COMPLETED", () => {
     });
     state.organizationEarnings.get("oe-1")!.orgPayoutId = "op-1";
 
-    await refundPayment({ paymentId: "pay-1", amountPaise: 5000, reason: "second-clawback" });
+    await refundPayment({
+      paymentId: "pay-1",
+      amountPaise: 5000,
+      reason: "second-clawback",
+    });
 
     const op = state.organizationPayouts.get("op-1")!;
     expect(op.clawbackAmountPaise).toBe(200 + 500); // 50% of orgShare
@@ -854,15 +876,27 @@ describe("refundPayment — validation guards", () => {
   it("#785 rejects a refund after a lost chargeback already pulled the full amount", async () => {
     seedSinglePartyWalletPayment({ amount: 10000 });
     // a lost chargeback already reversed the whole payment via the dispute path
-    state.disputes.push({ paymentId: "pay-1", amountPaise: 10000, status: "LOST" });
+    state.disputes.push({
+      paymentId: "pay-1",
+      amountPaise: 10000,
+      status: "LOST",
+    });
     await expect(
-      refundPayment({ paymentId: "pay-1", amountPaise: 10000, reason: "double" }),
+      refundPayment({
+        paymentId: "pay-1",
+        amountPaise: 10000,
+        reason: "double",
+      }),
     ).rejects.toBeInstanceOf(RefundValidationError);
   });
 
   it("#785 allows a refund up to the un-charged-back remainder", async () => {
     seedSinglePartyWalletPayment({ amount: 10000 });
-    state.disputes.push({ paymentId: "pay-1", amountPaise: 6000, status: "LOST" });
+    state.disputes.push({
+      paymentId: "pay-1",
+      amountPaise: 6000,
+      status: "LOST",
+    });
     // refundable = 10000 − 6000 chargeback = 4000
     const result = await refundPayment({
       paymentId: "pay-1",
@@ -900,6 +934,84 @@ describe("refundPayment — validation guards", () => {
     await expect(
       refundPayment({ paymentId: "pay-1", reason: "x" }),
     ).rejects.toBeInstanceOf(RefundValidationError);
+  });
+});
+
+describe("refundPayment — #778 §C-1 negative platform plug posts, never skips", () => {
+  // Referral-credit shape: earnings were allocated off originalAmount (10000)
+  // while funding legs carry the post-credit amount (8000). On a full refund
+  // the reversed shares (8500) exceed the funding credits (8000) → plug −500.
+  // The pre-#812 code silently SKIPPED the journal here (EARNINGS_LEDGER_DRIFT
+  // the reconciler could not repair); the fix posts a balancing PLATFORM_FEE
+  // CREDIT and a failure rolls the cascade back. This test pins the posting.
+  it("posts a balanced txn with a PLATFORM_FEE credit absorbing the negative plug", async () => {
+    state.payments.set("pay-neg", {
+      id: "pay-neg",
+      amount: 8000,
+      originalAmount: 10000,
+      taxAmount: 0,
+      currency: "INR",
+      paymentStatus: "SUCCEEDED",
+      paymentGateway: "RAZORPAY",
+      displayCurrencyAtCheckout: null,
+      exchangeRateAtCheckout: null,
+      organizationId: null,
+      billingAccountId: "ba-neg",
+      billableToOrgInvoiceId: null,
+    });
+    state.paymentLegs.push({
+      id: "leg-neg",
+      paymentId: "pay-neg",
+      source: "WALLET",
+      amountPaise: 8000,
+      sourceRef: "asg-neg",
+      createdAt: new Date(),
+    });
+    state.consultantEarnings.set("ce-neg", {
+      id: "ce-neg",
+      paymentId: "pay-neg",
+      consultantProfileId: "cp-neg",
+      consultantSharePaise: 8500, // allocated off originalAmount
+      grossAmount: 10000,
+      platformFeePaise: 1500,
+      refundedShareAmount: 0,
+      status: "PENDING",
+    });
+    state.billingAccounts.set("ba-neg", {
+      id: "ba-neg",
+      walletBalance: 50000,
+      currency: "INR",
+    });
+
+    const result = await refundPayment({
+      paymentId: "pay-neg",
+      reason: "negative-plug full refund",
+    });
+    expect(result.amountRefundedPaise).toBe(8000);
+
+    // The journal was POSTED (not skipped) and balances including the plug:
+    // Cr WALLET 8000 + Cr PLATFORM_FEE 500 vs Dr CONSULTANT_PAYABLE 8500.
+    const txnCreates = (tx.ledgerTransaction.create as jest.Mock).mock.calls;
+    expect(txnCreates.length).toBeGreaterThan(0);
+    const refundTxn = txnCreates
+      .map((c: any[]) => c[0]?.data)
+      .find((d: any) => d?.idempotencyKey?.startsWith("refund:"));
+    expect(refundTxn).toBeDefined();
+    const entries: Array<{
+      accountId: string;
+      direction: string;
+      amountPaise: number | bigint;
+    }> = refundTxn.entries.create;
+    const plugEntry = entries.find(
+      (e) => e.accountId.includes("PLATFORM_FEE") && e.direction === "CREDIT",
+    );
+    expect(plugEntry).toBeDefined();
+    expect(Number(plugEntry!.amountPaise)).toBe(500);
+    const total = (dir: string) =>
+      entries
+        .filter((e) => e.direction === dir)
+        .reduce((s, e) => s + Number(e.amountPaise), 0);
+    expect(total("DEBIT")).toBe(total("CREDIT"));
   });
 });
 
