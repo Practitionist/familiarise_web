@@ -224,7 +224,7 @@ export async function authorizeEventAccess(
       isAuthorized =
         consultantProfileId === event.webinarPlan.consultantProfileId;
       if (!isAuthorized && consultantProfileId) {
-        const collab = await prisma.webinarCollaborator.findFirst({
+        const collab = await prisma.collaborator.findFirst({
           where: {
             webinarPlanId: event.webinarPlan.id,
             consultantProfileId,
@@ -245,7 +245,7 @@ export async function authorizeEventAccess(
       isAuthorized =
         consultantProfileId === event.classPlan.consultantProfileId;
       if (!isAuthorized && consultantProfileId) {
-        const collab = await prisma.classCollaborator.findFirst({
+        const collab = await prisma.collaborator.findFirst({
           where: {
             classPlanId: event.classPlan.id,
             consultantProfileId,

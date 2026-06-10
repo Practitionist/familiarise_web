@@ -2155,10 +2155,8 @@ model ConsultantProfile {
   classPlans        ClassPlan[]
 
   // Collaborator relations
-  webinarCollaborations WebinarCollaborator[] @relation("WebinarCollaborator")
-  classCollaborations   ClassCollaborator[]   @relation("ClassCollaborator")
-  invitedWebinarCollabs WebinarCollaborator[] @relation("WebinarCollaboratorInvitedBy")
-  invitedClassCollabs   ClassCollaborator[]   @relation("ClassCollaboratorInvitedBy")
+  collaborations        Collaborator[] @relation("Collaborator")
+  invitedCollaborations Collaborator[] @relation("CollaboratorInvitedBy")
 
   // Trial sessions and activity logs
   trialSessions TrialSession[]
@@ -2849,7 +2847,7 @@ model WebinarPlan {
 
   webinars      Webinar[]
   materials     PlanMaterial[]
-  collaborators WebinarCollaborator[]
+  collaborators Collaborator[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2929,7 +2927,7 @@ model ClassPlan {
 
   classes       Class[]
   materials     PlanMaterial[]
-  collaborators ClassCollaborator[]
+  collaborators Collaborator[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4234,60 +4232,46 @@ enum CreditSource {
 
 //////////////////////////////////////////////////// COLLABORATOR SYSTEM ////////////////////////////////////////////////////
 
-model WebinarCollaborator {
-  id                  String                  @id @default(cuid())
+// #784 — WebinarCollaborator + ClassCollaborator merged into one model.
+// Exactly one of webinarPlanId/classPlanId is set; XOR is app-enforced
+// (Postgres CHECKs aren't Prisma-expressible).
+model Collaborator {
+  id                  String             @id @default(cuid())
   consultantProfileId String
-  webinarPlanId       String
-  role                WebinarCollaboratorRole @default(CO_HOST)
+  collaboratorType    CollaboratorType
+  webinarPlanId       String?
+  classPlanId         String?
+  role                CollaboratorRole
   // #768 lockdown #12 — replaced permissions Json with typed booleans.
-  canApprovePayment   Boolean                 @default(false)
-  canViewAnalytics    Boolean                 @default(false)
-  canEditEvent        Boolean                 @default(false)
-  canSeeAttendees     Boolean                 @default(false)
+  canApprovePayment   Boolean            @default(false)
+  canViewAnalytics    Boolean            @default(false)
+  canEditEvent        Boolean            @default(false)
+  canSeeAttendees     Boolean            @default(false)
   // #772 B5 — basis points (e.g. 3000 = 30%) for integer money math.
   revenueShareBps     Int
-  status              CollaboratorStatus      @default(PENDING)
+  status              CollaboratorStatus @default(PENDING)
   invitedById         String
   respondedAt         DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  consultantProfile ConsultantProfile @relation("WebinarCollaborator", fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  webinarPlan       WebinarPlan       @relation(fields: [webinarPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  invitedBy         ConsultantProfile @relation("WebinarCollaboratorInvitedBy", fields: [invitedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultantProfile ConsultantProfile @relation("Collaborator", fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  webinarPlan       WebinarPlan?      @relation(fields: [webinarPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  classPlan         ClassPlan?        @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  invitedBy         ConsultantProfile @relation("CollaboratorInvitedBy", fields: [invitedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
 
+  // Postgres treats NULLs as distinct, so each unique only bites for its own plan type.
   @@unique([consultantProfileId, webinarPlanId])
+  @@unique([consultantProfileId, classPlanId])
   @@index([webinarPlanId])
+  @@index([classPlanId])
   @@index([status])
 }
 
-model ClassCollaborator {
-  id                  String                @id @default(cuid())
-  consultantProfileId String
-  classPlanId         String
-  role                ClassCollaboratorRole @default(CO_INSTRUCTOR)
-  // #768 lockdown #12 — replaced permissions Json with typed booleans.
-  canApprovePayment   Boolean               @default(false)
-  canViewAnalytics    Boolean               @default(false)
-  canEditEvent        Boolean               @default(false)
-  canSeeAttendees     Boolean               @default(false)
-  // #772 B5 — basis points (e.g. 3000 = 30%) for integer money math.
-  revenueShareBps     Int
-  status              CollaboratorStatus    @default(PENDING)
-  invitedById         String
-  respondedAt         DateTime?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  consultantProfile ConsultantProfile @relation("ClassCollaborator", fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  classPlan         ClassPlan         @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  invitedBy         ConsultantProfile @relation("ClassCollaboratorInvitedBy", fields: [invitedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
-
-  @@unique([consultantProfileId, classPlanId])
-  @@index([classPlanId])
-  @@index([status])
+enum CollaboratorType {
+  WEBINAR
+  CLASS
 }
 
 enum CollaboratorStatus {
@@ -4297,14 +4281,12 @@ enum CollaboratorStatus {
   REMOVED
 }
 
-enum WebinarCollaboratorRole {
+// #784 — union of the old WebinarCollaboratorRole + ClassCollaboratorRole values.
+enum CollaboratorRole {
   CO_HOST
   MODERATOR
   GUEST_SPEAKER
   TECHNICAL_SUPPORT
-}
-
-enum ClassCollaboratorRole {
   CO_INSTRUCTOR
   TEACHING_ASSISTANT
   GUEST_LECTURER

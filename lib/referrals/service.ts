@@ -760,7 +760,7 @@ export async function processConsultantBookingReferral(
   const collaboratorUserIds: string[] = [];
 
   if (webinarPlanId) {
-    const collabs = await prisma.webinarCollaborator.findMany({
+    const collabs = await prisma.collaborator.findMany({
       where: { webinarPlanId, status: "ACCEPTED" },
       select: { consultantProfile: { select: { userId: true } } },
     });
@@ -768,7 +768,7 @@ export async function processConsultantBookingReferral(
   }
 
   if (classPlanId) {
-    const collabs = await prisma.classCollaborator.findMany({
+    const collabs = await prisma.collaborator.findMany({
       where: { classPlanId, status: "ACCEPTED" },
       select: { consultantProfile: { select: { userId: true } } },
     });

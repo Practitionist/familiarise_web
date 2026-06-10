@@ -274,8 +274,7 @@ export async function GET(
       ownedClassesRaw,
       collabWebinarsRaw,
       collabClassesRaw,
-      webinarCollabRoles,
-      classCollabRoles,
+      collabRoles,
     ] = await Promise.all([
       // Owned plans
       prisma.webinar.findMany({
@@ -315,24 +314,20 @@ export async function GET(
         },
         include: classInclude,
       }),
-      // Collaborator role lookups
-      prisma.webinarCollaborator.findMany({
+      // Collaborator role lookups (#784 — one merged model for both plan types)
+      prisma.collaborator.findMany({
         where: { consultantProfileId: consultantId, status: "ACCEPTED" },
-        select: { webinarPlanId: true, role: true },
-      }),
-      prisma.classCollaborator.findMany({
-        where: { consultantProfileId: consultantId, status: "ACCEPTED" },
-        select: { classPlanId: true, role: true },
+        select: { webinarPlanId: true, classPlanId: true, role: true },
       }),
     ]);
 
-    // Build role lookup maps
-    const webinarRoleMap = Object.fromEntries(
-      webinarCollabRoles.map((c) => [c.webinarPlanId, c.role]),
-    );
-    const classRoleMap = Object.fromEntries(
-      classCollabRoles.map((c) => [c.classPlanId, c.role]),
-    );
+    // Build role lookup maps — exactly one plan FK is set per record (#784)
+    const webinarRoleMap: Record<string, string> = {};
+    const classRoleMap: Record<string, string> = {};
+    for (const c of collabRoles) {
+      if (c.webinarPlanId) webinarRoleMap[c.webinarPlanId] = c.role;
+      else if (c.classPlanId) classRoleMap[c.classPlanId] = c.role;
+    }
 
     // Collect owned IDs for deduplication
     const ownedWebinarIds = new Set(ownedWebinarsRaw.map((w) => w.id));
