@@ -268,7 +268,18 @@ export const getCuratedExperts = cache(
         subDomains: c.subDomains,
         tags: c.tags,
         reviews: c.reviews,
-        subscriptionPlans: c.subscriptionPlans,
+        subscriptionPlans: c.subscriptionPlans.map((p) => ({
+          id: p.id,
+          title: p.title,
+          // BigInt (paise) is non-serializable across Server→Client.
+          // Paise comfortably fits Number.MAX_SAFE_INTEGER.
+          price: Number(p.price),
+          priceCurrency: p.priceCurrency,
+          durationInMonths: p.durationInMonths,
+          callsPerWeek: p.callsPerWeek,
+          emailSupport: p.emailSupport,
+          totalSessions: p.totalSessions,
+        })),
         organizationBadge: firstOrg
           ? {
               name: firstOrg.name,
