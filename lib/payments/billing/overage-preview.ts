@@ -23,7 +23,7 @@ export interface OveragePreviewParams {
   coveredPlanType: CoveredPlanType;
   bookingPricePaise: number;
   /** Engagements this booking consumes (1 for CONSULTATION/WEBINAR). */
-  sessionsConsumed?: number;
+  engagementsConsumed?: number;
 }
 
 export interface OveragePreviewResult {
@@ -63,9 +63,9 @@ export async function previewOverageForBooking(
 ): Promise<OveragePreviewResult> {
   const { organizationId, membershipId, coveredPlanType } = params;
   const bookingPricePaise = Math.max(0, Math.floor(params.bookingPricePaise));
-  const sessionsConsumed = Math.max(
+  const engagementsConsumed = Math.max(
     1,
-    Math.floor(params.sessionsConsumed ?? 1),
+    Math.floor(params.engagementsConsumed ?? 1),
   );
 
   // PERSONAL funding never meters against a program → no overage concept.
@@ -167,7 +167,7 @@ export async function previewOverageForBooking(
 
   const result = computeOverageForBooking(ctx, {
     bookingPricePaise,
-    sessionsConsumed,
+    engagementsConsumed,
   });
 
   return {

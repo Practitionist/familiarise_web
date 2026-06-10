@@ -94,7 +94,6 @@ export type TWebinar = Prisma.WebinarGetPayload<{
       };
     };
     waitlist: true;
-    meetingRoom: true;
   };
 }>;
 
@@ -131,7 +130,6 @@ export type TClass = Prisma.ClassGetPayload<{
         payment: true;
       };
     };
-    meetingRoom: true;
   };
 }>;
 

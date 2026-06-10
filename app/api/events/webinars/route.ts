@@ -175,7 +175,6 @@ export async function GET(request: NextRequest) {
               payment: true,
             },
           },
-          // meetingRoom: true,
           waitlist: {
             where: {
               user: {
@@ -237,7 +236,6 @@ export async function GET(request: NextRequest) {
               },
             },
           },
-          // meetingRoom: true,
           waitlist: true,
         },
       });
@@ -263,7 +261,6 @@ export async function GET(request: NextRequest) {
               },
             },
           },
-          // meetingRoom: true,
           waitlist: true,
         },
       });
@@ -342,7 +339,6 @@ export async function POST(request: Request) {
             },
           },
         },
-        // meetingRoom: true,
         waitlist: true,
       },
     });
