@@ -24,6 +24,7 @@ import {
 } from "@/lib/fetch-helpers";
 import { humanizeOrgError } from "@/lib/labels/org-errors";
 import { isBlockedRoleTransition } from "@/lib/enterprise/role-transitions";
+import { useSession } from "@/lib/auth-client";
 import {
   DashboardHeader,
   DashboardContent,
@@ -167,6 +168,8 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
   // canSponsor/canHost drive the capability-aware role options (LEARNER
   // requires canSponsor, EXPERT requires canHost — symmetric server gates).
   const { isAtLeast, canSponsor, canHost } = useOrgRole(orgId);
+  const { data: session } = useSession();
+  const viewerUserId = session?.user?.id;
   // #777 FDE Group B P1 — operator read floor (OWNER/MAINTAINER/MANAGER/
   // SUPPORT). SUPPORT gets the roster READ-ONLY for ticket investigation,
   // so the sidebar Members entry isn't a dead redirect. Mutation controls
@@ -237,13 +240,16 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
   // dashboard styling, and (b) it gives us room to show the target
   // member's name + email so the user can't mis-click on the wrong row.
   const [memberToRemove, setMemberToRemove] = useState<MemberRow | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
 
   const removeMutation = useMutation({
     mutationFn: (memberId: string) => removeMember(orgId, memberId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["org-members", orgId] });
       setMemberToRemove(null);
+      setRemoveError(null);
     },
+    onError: (err: Error) => setRemoveError(err.message),
   });
 
   // Edit member state. We narrow to the MemberRole / MemberStatus unions
@@ -371,12 +377,36 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
                             >
                               <Pencil className="h-4 w-4 text-zinc-500" />
                             </Button>
+                            {/* Trash is disabled in two cases:
+                                 1. Self-delete — a MAINTAINER clicking their
+                                    own trash would self-fire and need another
+                                    OWNER to restore them. "Leave org" belongs
+                                    to a dedicated confirmation flow.
+                                 2. Non-OWNER removing an OWNER — same gate as
+                                    PATCH role-change, since deletion is
+                                    functionally identical to revoking the
+                                    OWNER role.
+                                 Both rules are also enforced server-side as
+                                 defense-in-depth. */}
                             <Button
                               variant="ghost"
                               size="icon"
                               aria-label="Remove member"
+                              title={
+                                viewerUserId !== undefined &&
+                                m.user.id === viewerUserId
+                                  ? "You cannot remove yourself"
+                                  : m.role === "OWNER" && !isAtLeast("OWNER")
+                                    ? "Only an OWNER can remove an OWNER"
+                                    : undefined
+                              }
                               onClick={() => setMemberToRemove(m)}
-                              disabled={removeMutation.isPending}
+                              disabled={
+                                removeMutation.isPending ||
+                                (viewerUserId !== undefined &&
+                                  m.user.id === viewerUserId) ||
+                                (m.role === "OWNER" && !isAtLeast("OWNER"))
+                              }
                             >
                               <Trash2 className="h-4 w-4 text-red-500" />
                             </Button>
@@ -513,9 +543,24 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
           <div className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="edit-role">Role</Label>
+              {/* Role dropdown is disabled when editing your own row.
+                  The server's PATCH route rejects self-role-changes with
+                  403 ("ask another operator to do it") — the rule lives
+                  there because role transitions belong to a peer-or-
+                  superior review path. UI mirrors so the dropdown isn't
+                  a footgun: a MAINTAINER could otherwise self-demote to
+                  LEARNER (lose admin) or to EXPERT (lazy-creates a
+                  ConsultantProfile, bypassing #729's strict identity
+                  gate that POST enforces). Status-only self-edits stay
+                  allowed; only role changes are blocked. */}
               <Select
                 value={editRole}
                 onValueChange={(v) => setEditRole(v as MemberRole)}
+                disabled={
+                  editMember !== null &&
+                  viewerUserId !== undefined &&
+                  editMember.user.id === viewerUserId
+                }
               >
                 <SelectTrigger id="edit-role">
                   <SelectValue />
@@ -528,6 +573,14 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
                   ))}
                 </SelectContent>
               </Select>
+              {editMember !== null &&
+                viewerUserId !== undefined &&
+                editMember.user.id === viewerUserId && (
+                  <p className="text-xs text-zinc-500">
+                    You cannot change your own role. Ask another operator
+                    to do it for you.
+                  </p>
+                )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="edit-status">Status</Label>
@@ -579,6 +632,13 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
                   instead.
                 </p>
               )}
+            {editMember &&
+              !isAtLeast("OWNER") &&
+              (editMember.role === "OWNER" || editRole === "OWNER") && (
+                <p className="text-sm text-red-600">
+                  Only an OWNER can assign or revoke the OWNER role.
+                </p>
+              )}
             {editError && <p className="text-sm text-red-600">{editError}</p>}
           </div>
           <DialogFooter>
@@ -590,7 +650,9 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
               disabled={
                 editMutation.isPending ||
                 (editMember !== null &&
-                  isBlockedRoleTransition(editMember.role, editRole))
+                  (isBlockedRoleTransition(editMember.role, editRole) ||
+                    (!isAtLeast("OWNER") &&
+                      (editMember.role === "OWNER" || editRole === "OWNER"))))
               }
             >
               {editMutation.isPending ? "Saving…" : "Save changes"}
@@ -604,7 +666,12 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
           which row they're about to destroy. */}
       <Dialog
         open={!!memberToRemove}
-        onOpenChange={(open) => !open && setMemberToRemove(null)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setMemberToRemove(null);
+            setRemoveError(null);
+          }
+        }}
       >
         <DialogContent>
           <DialogHeader>
@@ -616,6 +683,9 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
               re-invite them later.
             </DialogDescription>
           </DialogHeader>
+          {removeError && (
+            <p className="text-sm text-red-600">{removeError}</p>
+          )}
           <DialogFooter>
             <Button
               variant="outline"
