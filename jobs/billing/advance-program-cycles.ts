@@ -37,6 +37,7 @@ import {
   resolveProgramCycle,
 } from "@/lib/enterprise/cycle-engine";
 import { Prisma } from "@prisma/client";
+import { withCronLock, CronLockHeldError, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 
 // Bounded scan — one batch per run; the next tick drains the remainder.
 const BATCH_SIZE = 500;
@@ -214,7 +215,11 @@ async function main() {
   console.log(
     `[advance-program-cycles] Starting at ${new Date().toISOString()}`,
   );
-  const stats = await runAdvanceProgramCycles();
+  const stats = await withCronLock(
+    "advance-program-cycles",
+    { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
+    () => runAdvanceProgramCycles(),
+  );
   console.log(
     `[advance-program-cycles] Done. scanned=${stats.scanned} rolled=${stats.rolled} closed=${stats.closed} skipped=${stats.skipped}`,
   );
@@ -224,6 +229,11 @@ async function main() {
 if (require.main === module) {
   main()
     .catch((err) => {
+      // #476 — lock held = another run is live; skip cleanly (exit 0).
+      if (err instanceof CronLockHeldError) {
+        console.log(`⏭️  ${err.message}`);
+        return;
+      }
       console.error("[advance-program-cycles] Failed:", err);
       process.exitCode = 1;
     })

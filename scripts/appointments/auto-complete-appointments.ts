@@ -27,6 +27,7 @@ import {
 } from "@prisma/client";
 import { notifyAppointmentCompleted } from "../../lib/novu/service";
 import { getAppUrl } from "../../lib/url";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 // Only complete appointments that ended at least 1 hour ago
 // This gives buffer time for any post-session activities
@@ -609,7 +610,15 @@ async function completeIndividualSlots(): Promise<{
 /**
  * Main function to auto-complete all eligible appointments
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function autoCompleteAppointments(): Promise<AutoCompleteResult> {
+  return withCronLock("auto-complete-appointments", { failMode: "open" }, () =>
+    autoCompleteAppointmentsUnlocked(),
+  );
+}
+
+async function autoCompleteAppointmentsUnlocked(): Promise<AutoCompleteResult> {
   const allErrors: string[] = [];
 
   console.log("🔄 Starting auto-complete appointments scan...");

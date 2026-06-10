@@ -19,6 +19,7 @@
 
 import prisma from "../../lib/prisma";
 import { PaymentStatus } from "@prisma/client";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 // Release tentative slots older than 7 days with no successful payment
 const TENTATIVE_EXPIRATION_DAYS = 7;
@@ -34,7 +35,15 @@ export interface TentativeSlotCleanupResult {
 /**
  * Find and release stale tentative slots
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function cleanupTentativeSlots(): Promise<TentativeSlotCleanupResult> {
+  return withCronLock("cleanup-tentative-slots", { failMode: "open" }, () =>
+    cleanupTentativeSlotsUnlocked(),
+  );
+}
+
+async function cleanupTentativeSlotsUnlocked(): Promise<TentativeSlotCleanupResult> {
   const errors: string[] = [];
   let slotsReleased = 0;
   const appointmentsAffected = new Set<string>();

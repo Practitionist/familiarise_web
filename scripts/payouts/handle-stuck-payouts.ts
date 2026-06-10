@@ -20,6 +20,7 @@
 
 import prisma from "../../lib/prisma";
 import { PayoutStatus, PaymentGateway } from "@prisma/client";
+import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 
 // Consider payouts stuck if in PROCESSING for more than 24 hours
 const STUCK_THRESHOLD_HOURS = 24;
@@ -167,7 +168,15 @@ function mapGatewayStatus(
 /**
  * Find and handle stuck payouts
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function handleStuckPayouts(): Promise<StuckPayoutsResult> {
+  return withCronLock("handle-stuck-payouts", { failMode: "closed", ttlMs: LONG_JOB_TTL_MS }, () =>
+    handleStuckPayoutsUnlocked(),
+  );
+}
+
+async function handleStuckPayoutsUnlocked(): Promise<StuckPayoutsResult> {
   const errors: string[] = [];
   let reconciledCount = 0;
   let retriedCount = 0;

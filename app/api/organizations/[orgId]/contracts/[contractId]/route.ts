@@ -14,6 +14,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { transitionContract } from "@/lib/enterprise/transitions";
 import { getContractLockState } from "@/lib/enterprise/config-lock";
 
 // Term fields that lock once the contract leaves DRAFT or starts billing
@@ -205,48 +206,31 @@ export async function PATCH(
         }
       }
 
-      const next = await tx.contract.update({
-        where: { id: contractId },
-        data: {
-          ...(body.status !== undefined && { status: body.status }),
-          ...(body.signedAt !== undefined && { signedAt: body.signedAt }),
-          ...(body.effectiveFrom !== undefined && {
-            effectiveFrom: body.effectiveFrom,
-          }),
-          ...(body.effectiveTo !== undefined && {
-            effectiveTo: body.effectiveTo,
-          }),
-          ...(body.paymentTermsDays !== undefined && {
-            paymentTermsDays: body.paymentTermsDays,
-          }),
-          ...(body.autoRenew !== undefined && { autoRenew: body.autoRenew }),
-          ...(body.terms !== undefined && {
-            terms: JSON.parse(JSON.stringify(body.terms)),
-          }),
-          ...(body.purchaseOrderId !== undefined && {
-            purchaseOrderId: body.purchaseOrderId,
-          }),
-        },
-      });
+      const scalarData = {
+        ...(body.signedAt !== undefined && { signedAt: body.signedAt }),
+        ...(body.effectiveFrom !== undefined && {
+          effectiveFrom: body.effectiveFrom,
+        }),
+        ...(body.effectiveTo !== undefined && {
+          effectiveTo: body.effectiveTo,
+        }),
+        ...(body.paymentTermsDays !== undefined && {
+          paymentTermsDays: body.paymentTermsDays,
+        }),
+        ...(body.autoRenew !== undefined && { autoRenew: body.autoRenew }),
+        ...(body.terms !== undefined && {
+          terms: JSON.parse(JSON.stringify(body.terms)),
+        }),
+        ...(body.purchaseOrderId !== undefined && {
+          purchaseOrderId: body.purchaseOrderId,
+        }),
+      };
 
-      // #779 §A — TERMINATED cascade: a terminated contract takes its
-      // programs (ACTIVE → EXPIRED) and their still-ACTIVE assignments
-      // (→ CLOSED) down with it, in this same tx, so nothing is left
-      // drawing against a dead contract.
-      if (body.status === "TERMINATED" && current.status !== "TERMINATED") {
-        await tx.program.updateMany({
-          where: { contractId, status: "ACTIVE" },
-          data: { status: "EXPIRED" },
-        });
-        await tx.programAssignment.updateMany({
-          where: { program: { contractId }, status: "ACTIVE" },
-          data: { status: "CLOSED" },
-        });
-      }
-
-      // Status transitions get dedicated audit actions so the timeline
-      // reads cleanly; a plain "updated" line loses the lifecycle signal.
-      if (body.status && body.status !== current.status) {
+      if (body.status !== undefined && body.status !== current.status) {
+        // CAS — the allowed-from guard rides the WHERE, so a concurrent
+        // transition (or a stale tab re-activating a TERMINATED contract)
+        // matches zero rows and 409s. Status transitions get dedicated audit
+        // actions so the timeline reads cleanly.
         const action =
           body.status === "ACTIVE"
             ? AUDIT_ACTIONS.CONTRACT.CONTRACT_SIGNED
@@ -255,8 +239,11 @@ export async function PATCH(
               : body.status === "EXPIRED"
                 ? AUDIT_ACTIONS.CONTRACT.CONTRACT_EXPIRED
                 : AUDIT_ACTIONS.CONTRACT.CONTRACT_CREATED;
-        await tx.orgAuditLog.create({
-          data: {
+        await transitionContract(tx, {
+          where: { id: contractId, organizationId: orgId },
+          to: body.status,
+          data: scalarData,
+          audit: {
             organizationId: orgId,
             actorMembershipId: access.member.id,
             category: "CONTRACT",
@@ -269,9 +256,30 @@ export async function PATCH(
             },
           },
         });
+
+        // #779 §A — TERMINATED cascade: a terminated contract takes its
+        // programs (ACTIVE → EXPIRED) and their still-ACTIVE assignments
+        // (→ CLOSED) down with it, in this same tx, so nothing is left
+        // drawing against a dead contract.
+        if (body.status === "TERMINATED") {
+          await tx.program.updateMany({
+            where: { contractId, status: "ACTIVE" },
+            data: { status: "EXPIRED" },
+          });
+          await tx.programAssignment.updateMany({
+            where: { program: { contractId }, status: "ACTIVE" },
+            data: { status: "CLOSED" },
+          });
+        }
+      } else if (Object.keys(scalarData).length > 0) {
+        await tx.contract.update({
+          where: { id: contractId },
+          data: scalarData,
+        });
       }
 
-      return next;
+      // updateMany returns no row — re-read in-tx for the response body.
+      return tx.contract.findUniqueOrThrow({ where: { id: contractId } });
     });
 
     return NextResponse.json({ contract: updated });

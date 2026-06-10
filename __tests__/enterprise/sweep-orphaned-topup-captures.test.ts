@@ -16,6 +16,17 @@ jest.mock("../../lib/api/organizations/wallet", () => ({
   confirmTopUp: jest.fn(),
 }));
 
+
+// #476 — the sweep cores are now wrapped in withCronLock; pass through so
+// these unit tests exercise the sweep logic, not the lock (covered in
+// with-cron-lock.test.ts).
+jest.mock("../../lib/cron/with-cron-lock", () => ({
+  withCronLock: jest.fn((_job: string, _opts: unknown, fn: () => unknown) => fn()),
+  CronLockHeldError: class CronLockHeldError extends Error {},
+  CronLockUnavailableError: class CronLockUnavailableError extends Error {},
+  LONG_JOB_TTL_MS: 35 * 60 * 1000,
+}));
+
 import prisma from "../../lib/prisma";
 import { confirmTopUp } from "../../lib/api/organizations/wallet";
 import { sweepOrphanedTopupCaptures } from "../../scripts/cleanup/sweep-orphaned-topup-captures";

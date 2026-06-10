@@ -16,6 +16,7 @@
 import prisma from "../../lib/prisma";
 import { DisputeStatus, PaymentGateway, Prisma } from "@prisma/client";
 import { getDispute } from "../../lib/payments";
+import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 
 // Prioritize disputes with approaching deadlines (7 days)
 const APPROACHING_DEADLINE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -65,7 +66,15 @@ function mapGatewayDisputeStatus(status: string): DisputeStatus {
 /**
  * Find and reconcile disputes that may have stale status
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function reconcileDisputes(): Promise<DisputeReconciliationResult> {
+  return withCronLock("reconcile-disputes", { failMode: "closed", ttlMs: LONG_JOB_TTL_MS }, () =>
+    reconcileDisputesUnlocked(),
+  );
+}
+
+async function reconcileDisputesUnlocked(): Promise<DisputeReconciliationResult> {
   const approachingDeadline = new Date(Date.now() + APPROACHING_DEADLINE_MS);
   const staleThreshold = new Date(Date.now() - STALE_THRESHOLD_MS);
   const urgentThreshold = new Date(Date.now() + 48 * 60 * 60 * 1000);

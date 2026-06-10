@@ -13,6 +13,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { transitionProgram } from "@/lib/enterprise/transitions";
 import { getProgramLockState } from "@/lib/enterprise/config-lock";
 
 const ProgramStatusSchema = z.enum([
@@ -272,21 +273,74 @@ export async function PATCH(
         }
       }
 
-      const next = await tx.program.update({
+      const programData = {
+        ...(body.name !== undefined && { name: body.name }),
+        ...(body.archived !== undefined && {
+          archivedAt: body.archived ? new Date() : null,
+        }),
+        ...(body.coveredPlanTypes !== undefined && {
+          coveredPlanTypes: body.coveredPlanTypes,
+        }),
+        ...(body.allowedCategories !== undefined && {
+          allowedCategories: body.allowedCategories,
+        }),
+      };
+
+      if (body.status !== undefined && body.status !== current.status) {
+        // CAS — allowed-from rides the WHERE (tenancy via the contract
+        // relation), so a concurrent transition or a stale tab reactivating a
+        // CANCELLED/EXPIRED program matches zero rows and 409s.
+        await transitionProgram(tx, {
+          where: { id: programId, contract: { organizationId: orgId } },
+          to: body.status,
+          data: programData,
+        });
+
+        // Cancelling must take the live assignments down in the same tx —
+        // otherwise members keep drawing entitlements from a dead program
+        // (checkout honors ACTIVE assignments). periodEnd: now mirrors the
+        // member-removal cascade so the periodEnd>=now filter dies with the
+        // status, not after it.
+        let assignmentsCancelled = 0;
+        if (body.status === "CANCELLED") {
+          const cascaded = await tx.programAssignment.updateMany({
+            where: { programId, status: { in: ["ACTIVE", "PAUSED"] } },
+            data: { status: "CANCELLED", periodEnd: new Date() },
+          });
+          assignmentsCancelled = cascaded.count;
+        }
+
+        await tx.orgAuditLog.create({
+          data: {
+            organizationId: orgId,
+            actorMembershipId: access.member.id,
+            category: "PROGRAM",
+            action:
+              body.status === "PAUSED"
+                ? AUDIT_ACTIONS.PROGRAM.PROGRAM_PAUSED
+                : body.status === "ACTIVE"
+                  ? AUDIT_ACTIONS.PROGRAM.PROGRAM_RESUMED
+                  : body.status === "CANCELLED"
+                    ? AUDIT_ACTIONS.PROGRAM.PROGRAM_CANCELLED
+                    : AUDIT_ACTIONS.PROGRAM.PROGRAM_EXPIRED,
+            description: `Program ${programId}: ${current.status} → ${body.status}`,
+            details: {
+              programId,
+              from: current.status,
+              to: body.status,
+              ...(body.status === "CANCELLED" && { assignmentsCancelled }),
+            },
+          },
+        });
+      } else if (Object.keys(programData).length > 0) {
+        await tx.program.update({
+          where: { id: programId },
+          data: programData,
+        });
+      }
+
+      const next = await tx.program.findUniqueOrThrow({
         where: { id: programId },
-        data: {
-          ...(body.name !== undefined && { name: body.name }),
-          ...(body.status !== undefined && { status: body.status }),
-          ...(body.archived !== undefined && {
-            archivedAt: body.archived ? new Date() : null,
-          }),
-          ...(body.coveredPlanTypes !== undefined && {
-            coveredPlanTypes: body.coveredPlanTypes,
-          }),
-          ...(body.allowedCategories !== undefined && {
-            allowedCategories: body.allowedCategories,
-          }),
-        },
       });
 
       // Per-type money fields route to the live config table. `type` is
@@ -356,29 +410,6 @@ export async function PATCH(
             action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ARCHIVED,
             description: `Program ${programId} ${body.archived ? "archived" : "unarchived"}`,
             details: { programId, archived: body.archived },
-          },
-        });
-      }
-
-      // Status transitions get the dedicated PROGRAM_PAUSED action so
-      // the audit timeline shows the lifecycle event separately from a
-      // plain rename.
-      if (body.status && body.status !== current.status) {
-        await tx.orgAuditLog.create({
-          data: {
-            organizationId: orgId,
-            actorMembershipId: access.member.id,
-            category: "PROGRAM",
-            action:
-              body.status === "PAUSED"
-                ? AUDIT_ACTIONS.PROGRAM.PROGRAM_PAUSED
-                : AUDIT_ACTIONS.PROGRAM.PROGRAM_CREATED,
-            description: `Program ${programId}: ${current.status} → ${body.status}`,
-            details: {
-              programId,
-              from: current.status,
-              to: body.status,
-            },
           },
         });
       }

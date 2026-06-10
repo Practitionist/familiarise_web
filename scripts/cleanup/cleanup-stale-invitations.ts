@@ -31,6 +31,7 @@
 
 import prisma from "../../lib/prisma";
 import { AUDIT_ACTIONS } from "../../lib/enterprise/audit-actions";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 export interface StaleInvitationsCleanupResult {
   success: boolean;
@@ -39,7 +40,15 @@ export interface StaleInvitationsCleanupResult {
   timestamp: string;
 }
 
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function cleanupStaleInvitations(): Promise<StaleInvitationsCleanupResult> {
+  return withCronLock("cleanup-stale-invitations", { failMode: "open" }, () =>
+    cleanupStaleInvitationsUnlocked(),
+  );
+}
+
+async function cleanupStaleInvitationsUnlocked(): Promise<StaleInvitationsCleanupResult> {
   const now = new Date();
   const errors: string[] = [];
   let expired = 0;

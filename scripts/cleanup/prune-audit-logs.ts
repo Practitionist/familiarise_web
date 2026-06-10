@@ -28,6 +28,7 @@
 import prisma from "../../lib/prisma";
 import type { OrgAuditCategory } from "@prisma/client";
 import { AUDIT_ACTIONS } from "../../lib/enterprise/audit-actions";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 const KEEP_7Y_CATEGORIES: OrgAuditCategory[] = [
   "INVOICE",
@@ -57,7 +58,15 @@ export interface AuditPruneResult {
   errors: string[];
 }
 
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function pruneAuditLogs(): Promise<AuditPruneResult> {
+  return withCronLock("prune-audit-logs", { failMode: "open" }, () =>
+    pruneAuditLogsUnlocked(),
+  );
+}
+
+async function pruneAuditLogsUnlocked(): Promise<AuditPruneResult> {
   const now = Date.now();
   const ms7y = 7 * 365 * 24 * 60 * 60 * 1000;
   const ms2y = 2 * 365 * 24 * 60 * 60 * 1000;

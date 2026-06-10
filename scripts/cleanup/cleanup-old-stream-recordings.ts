@@ -20,6 +20,7 @@
 
 import prisma from "../../lib/prisma";
 import { AUDIT_ACTIONS } from "../../lib/enterprise/audit-actions";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 export interface StreamRetentionResult {
   scanned: number;
@@ -29,7 +30,15 @@ export interface StreamRetentionResult {
   errors: string[];
 }
 
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function cleanupOldStreamRecordings(): Promise<StreamRetentionResult> {
+  return withCronLock("cleanup-old-stream-recordings", { failMode: "open" }, () =>
+    cleanupOldStreamRecordingsUnlocked(),
+  );
+}
+
+async function cleanupOldStreamRecordingsUnlocked(): Promise<StreamRetentionResult> {
   const result: StreamRetentionResult = {
     scanned: 0,
     expired: 0,

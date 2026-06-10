@@ -19,6 +19,7 @@
 import prisma from "@/lib/prisma";
 import { processRazorpayWebhookEvent } from "@/app/api/webhooks/razorpay-dispatch";
 import type { RazorpayWebhookEnvelope } from "@/schemas/webhooks/razorpay";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 export interface SweepResult {
   success: boolean;
@@ -55,7 +56,17 @@ export interface SweepOptions {
   limit?: number;
 }
 
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function sweepStuckWebhookEvents(
+  opts: SweepOptions = {},
+): Promise<SweepResult> {
+  return withCronLock("sweep-stuck-webhook-events", { failMode: "closed" }, () =>
+    sweepStuckWebhookEventsUnlocked(opts),
+  );
+}
+
+async function sweepStuckWebhookEventsUnlocked(
   opts: SweepOptions = {},
 ): Promise<SweepResult> {
   const staleMinutes = opts.staleMinutes ?? 6;

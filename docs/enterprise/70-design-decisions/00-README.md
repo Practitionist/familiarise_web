@@ -37,3 +37,4 @@ All twelve ADRs below are written and live (#793); this index is the authoritati
 | 10 | [Session-generation clock](10-session-generation-clock.md) | Role changes bump `User.sessionGeneration` to force a membership refetch instead of revoking sessions. |
 | 11 | [Live-payout submission freeze](11-live-payout-submission-freeze.md) | `ENABLE_LIVE_PAYOUTS` freezes only the gateway submission step; the whole pipeline upstream of it runs for real. |
 | 12 | [PENDING_TRUST earnings parking](12-pending-trust-earnings-parking.md) | Earnings for unverified INVOICE-funded orgs park in `PENDING_TRUST` until the org verifies or pays, closing the ghost-org fraud hole (#687). |
+| 13 | [Postgres-native concurrency](13-postgres-native-concurrency.md) | State transitions are guarded by CAS WHERE clauses, Serializable retries, version columns, and Redis cron locks — no Kafka, RabbitMQ, Temporal, or Inngest at this stage. |

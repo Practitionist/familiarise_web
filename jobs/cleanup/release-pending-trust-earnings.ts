@@ -27,6 +27,7 @@
 import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { EarningStatus } from "@prisma/client";
+import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
 
 export interface ReleasePendingTrustResult {
   scanned: number;
@@ -34,7 +35,17 @@ export interface ReleasePendingTrustResult {
   errors: string[];
 }
 
+// #476 — fail-closed: the CAS updateMany below is the correctness layer; this
+// lock is entry-level mutual exclusion for schedule overlap / manual re-runs.
 export async function runReleasePendingTrustEarnings(): Promise<ReleasePendingTrustResult> {
+  return withCronLock(
+    "release-pending-trust-earnings",
+    { failMode: "closed" },
+    () => runReleasePendingTrustEarningsUnlocked(),
+  );
+}
+
+async function runReleasePendingTrustEarningsUnlocked(): Promise<ReleasePendingTrustResult> {
   const result: ReleasePendingTrustResult = {
     scanned: 0,
     released: 0,
@@ -107,6 +118,11 @@ if (require.main === module) {
       process.exit(0);
     })
     .catch((err) => {
+      // #476 — lock held = another run is live; skip cleanly (exit 0).
+      if (err instanceof CronLockHeldError) {
+        console.log(`⏭️  ${err.message}`);
+        process.exit(0);
+      }
       console.error("Fatal:", err);
       process.exit(1);
     })

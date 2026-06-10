@@ -140,6 +140,18 @@ export async function scrubUser(
         where: { userId, status: { in: ["PENDING", "ACTIVE", "SUSPENDED"] } },
         data: { status: "ERASED" },
       });
+      // ERASED is terminal — without this, an erased member's live
+      // allocations keep counting against program caps and entitlements,
+      // same as the member-removal cascade (members route). Status-guarded
+      // so ROLLED/CLOSED history is never re-stamped.
+      await tx.programAssignment.updateMany({
+        where: {
+          membershipId: { in: memberships.map((m) => m.id) },
+          periodEnd: { gte: now },
+          status: { in: ["ACTIVE", "PAUSED"] },
+        },
+        data: { periodEnd: now, status: "CANCELLED" },
+      });
     }
 
     // Free-text PII on profiles (best-effort — fields may or may not

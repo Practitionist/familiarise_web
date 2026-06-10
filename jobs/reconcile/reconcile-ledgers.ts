@@ -23,6 +23,7 @@ import {
   recordSystemEvent,
   recordSystemError,
 } from "../../lib/enterprise/system-events";
+import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 
 async function main(): Promise<void> {
   await abortIfMaintenance("reconcile-ledgers");
@@ -79,6 +80,11 @@ async function main(): Promise<void> {
       process.exit(2);
     }
   } catch (error) {
+    // #476 — lock held = another run is live; skip cleanly (exit 0).
+    if (error instanceof CronLockHeldError) {
+      console.log(`⏭️  ${error.message}`);
+      return;
+    }
     console.error("❌ Fatal error in ledger reconciliation:", error);
     // #776 §K — a crashed auditor means we're flying blind on money integrity.
     await recordSystemError({

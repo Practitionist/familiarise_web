@@ -9,6 +9,10 @@
 
 import { RecordingTransferService } from "../../lib/stream/recording-transfer-service";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import {
+  withCronLock,
+  CronLockHeldError,
+} from "../../lib/cron/with-cron-lock";
 import fs from "fs";
 
 async function main(): Promise<void> {
@@ -18,16 +22,25 @@ async function main(): Promise<void> {
   console.log(`   Timestamp: ${new Date().toISOString()}`);
 
   try {
-    // Auto-transfer SUPABASE_PERMANENT recordings expiring in 5 days
-    const result = await RecordingTransferService.processExpiringRecordings(
-      5,
-      10,
-      "SUPABASE_PERMANENT",
-    );
+    // #476 — both steps under one entry-level lock; fail-open.
+    const { result, expiringStreamOnly } = await withCronLock(
+      "transfer-expiring-recordings",
+      { failMode: "open" },
+      async () => {
+        // Auto-transfer SUPABASE_PERMANENT recordings expiring in 5 days
+        const result =
+          await RecordingTransferService.processExpiringRecordings(
+            5,
+            10,
+            "SUPABASE_PERMANENT",
+          );
 
-    // Find STREAM_ONLY recordings expiring in 3 days (for warnings)
-    const expiringStreamOnly =
-      await RecordingTransferService.getExpiringStreamOnlyRecordings(3);
+        // Find STREAM_ONLY recordings expiring in 3 days (for warnings)
+        const expiringStreamOnly =
+          await RecordingTransferService.getExpiringStreamOnlyRecordings(3);
+        return { result, expiringStreamOnly };
+      },
+    );
 
     const duration = (Date.now() - startTime) / 1000;
     console.log(`\n⏱️ Job completed in ${duration.toFixed(2)} seconds`);
@@ -53,6 +66,11 @@ async function main(): Promise<void> {
 
     console.log("🎉 Job completed successfully");
   } catch (error) {
+    // #476 — lock held = another run is live; skip cleanly (exit 0).
+    if (error instanceof CronLockHeldError) {
+      console.log(`⏭️  ${error.message}`);
+      return;
+    }
     console.error("💥 Job failed:", error);
     if (process.env.GITHUB_ACTIONS && process.env.GITHUB_OUTPUT) {
       fs.appendFileSync(process.env.GITHUB_OUTPUT, "success=false\n");

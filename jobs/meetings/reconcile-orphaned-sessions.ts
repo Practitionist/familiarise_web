@@ -20,6 +20,7 @@ import {
   isStreamConfigured,
 } from "../../lib/stream-client";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import { withCronLock, CronLockHeldError } from "../../lib/cron/with-cron-lock";
 
 export interface ReconciliationResult {
   processed: number;
@@ -30,7 +31,14 @@ export interface ReconciliationResult {
   details: string[];
 }
 
+// #476 — entry-level cron lock; fail-open (repeat-safe side effects).
 export async function reconcileOrphanedSessions(): Promise<ReconciliationResult> {
+  return withCronLock("reconcile-orphaned-sessions", { failMode: "open" }, () =>
+    reconcileOrphanedSessionsUnlocked(),
+  );
+}
+
+async function reconcileOrphanedSessionsUnlocked(): Promise<ReconciliationResult> {
   const result: ReconciliationResult = {
     processed: 0,
     reconciled: 0,
@@ -165,6 +173,11 @@ if (require.main === module) {
 
       if (!result.success) process.exit(1);
     } catch (error) {
+      // #476 — lock held = another run is live; skip cleanly (exit 0).
+      if (error instanceof CronLockHeldError) {
+        console.log(`⏭️  ${error.message}`);
+        return;
+      }
       console.error("Fatal error:", error);
       process.exit(1);
     } finally {

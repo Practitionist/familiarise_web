@@ -39,6 +39,7 @@ import { AUDIT_ACTIONS } from "../../lib/enterprise/audit-actions";
 import { recordSystemError } from "../../lib/enterprise/system-events";
 import { notifyOrgDataExportReady } from "../../lib/novu/org-workflows";
 import { getAppUrl } from "../../lib/url";
+import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 
 export interface DataExportResult {
   picked: number;
@@ -229,7 +230,15 @@ async function emailRequester(params: {
   });
 }
 
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function processDataExports(): Promise<DataExportResult> {
+  return withCronLock("process-data-exports", { failMode: "open", ttlMs: LONG_JOB_TTL_MS }, () =>
+    processDataExportsUnlocked(),
+  );
+}
+
+async function processDataExportsUnlocked(): Promise<DataExportResult> {
   const result: DataExportResult = {
     picked: 0,
     succeeded: 0,

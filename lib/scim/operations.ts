@@ -140,6 +140,19 @@ export async function createOrReprovisionScimUser(
     });
 
     if (existingMembership) {
+      // Terminal tombstones are admin/compliance-owned — an IdP reprovision
+      // heartbeat must not resurrect a REMOVED/ERASED membership. Surfacing
+      // the conflict (instead of silently flipping back to ACTIVE) makes the
+      // IdP-side error visible to the org's IT admin.
+      if (
+        existingMembership.status === "REMOVED" ||
+        existingMembership.status === "ERASED"
+      ) {
+        return {
+          kind: "CONFLICT",
+          detail: `membership is ${existingMembership.status.toLowerCase()} — re-invite via the dashboard instead of re-provisioning`,
+        };
+      }
       const nextStatus = active ? "ACTIVE" : "SUSPENDED";
       // #789 review — only invalidate the session when the role or status
       // actually moves, so an idempotent reprovision (the common IdP heartbeat)
@@ -264,9 +277,15 @@ export async function deprovisionScimUser(
   if (!membership) return { kind: "NOT_FOUND" };
 
   return prisma.$transaction(async (tx) => {
-    const updated = await tx.membership.update({
-      where: { id: membership.id },
+    // Guarded + idempotent: a deprovision retry on an already-SUSPENDED row is
+    // a no-op, and a REMOVED/ERASED tombstone is never resurrected — the IdP
+    // reads those as inactive either way.
+    await tx.membership.updateMany({
+      where: { id: membership.id, status: { in: ["PENDING", "ACTIVE"] } },
       data: { status: "SUSPENDED" },
+    });
+    const updated = await tx.membership.findUniqueOrThrow({
+      where: { id: membership.id },
     });
     // #789 — invalidate the deprovisioned user's cached session memberships so
     // the suspension takes effect immediately instead of lingering for the

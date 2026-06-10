@@ -13,6 +13,7 @@ import {
   type AuditPruneResult,
 } from "../../scripts/cleanup/prune-audit-logs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 
 function outputToGitHubActions(result: AuditPruneResult): void {
   if (!process.env.GITHUB_ACTIONS) return;
@@ -40,6 +41,11 @@ if (require.main === module) {
       outputToGitHubActions(result);
       if (!result.success) process.exit(1);
     } catch (err) {
+      // #476 — lock held = another run is live; skip cleanly (exit 0).
+      if (err instanceof CronLockHeldError) {
+        console.log(`⏭️  ${err.message}`);
+        return;
+      }
       console.error("Fatal error:", err);
       process.exit(1);
     } finally {

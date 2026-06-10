@@ -14,6 +14,7 @@ import {
 } from "../../scripts/cleanup/sweep-stuck-webhook-events";
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 
 function outputToGitHubActions(result: SweepResult): void {
   if (!process.env.GITHUB_ACTIONS) return;
@@ -57,6 +58,13 @@ async function main(): Promise<void> {
 
     outputToGitHubActions(result);
   } catch (error) {
+    // #476 — lock held = another run is live; skipping is the correct
+    // outcome (exit 0, no page). CronLockUnavailableError falls through
+    // to exit 1 so the workflow's notify step pages.
+    if (error instanceof CronLockHeldError) {
+      console.log(`⏭️  ${error.message}`);
+      return;
+    }
     console.error("❌ Fatal error in stuck-webhook sweep:", error);
     process.exit(1);
   } finally {

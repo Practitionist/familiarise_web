@@ -11,6 +11,7 @@
  */
 import prisma from "@/lib/prisma";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 export interface OverageSweepResult {
   success: boolean;
@@ -18,7 +19,20 @@ export interface OverageSweepResult {
   failed: number;
 }
 
+// #476 — locked at the core so the GH Actions entry (jobs/**) and the
+// CRON_SECRET HTTP entry (app/api/cleanup/**) share one mutual exclusion.
+// fail-closed: FAILing a side-charge twice would double-free the ceiling.
 export async function sweepAbandonedOverageCharges(
+  opts: { ageDays?: number; limit?: number } = {},
+): Promise<OverageSweepResult> {
+  return withCronLock(
+    "sweep-abandoned-overage-charges",
+    { failMode: "closed" },
+    () => sweepAbandonedOverageChargesUnlocked(opts),
+  );
+}
+
+async function sweepAbandonedOverageChargesUnlocked(
   opts: { ageDays?: number; limit?: number } = {},
 ): Promise<OverageSweepResult> {
   const ageDays = opts.ageDays ?? 7;

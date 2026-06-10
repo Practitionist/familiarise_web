@@ -15,6 +15,10 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireAdminAuth } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import {
+  IllegalTransitionError,
+  transitionOrganization,
+} from "@/lib/enterprise/transitions";
 
 // #779 §A — `REJECT` added (admin bounces a PENDING org back with a reason;
 // stays PENDING_VERIFICATION). Action is upper-cased + defaults to VERIFY so
@@ -73,6 +77,10 @@ export async function POST(
         });
       }
 
+      // Friendly pre-check only — names the offending action/state in the
+      // error. Enforcement is the CAS WHERE below: a concurrent admin action
+      // landing between this read and the update matches zero rows and 409s
+      // instead of resurrecting a terminal state.
       const allowedFrom: Record<string, string[]> = {
         // #779 §A — REJECT keeps the org PENDING (a sub-state, not a status move).
         PENDING_VERIFICATION: ["VERIFY", "REJECT", "DEACTIVATE"],
@@ -90,33 +98,6 @@ export async function POST(
         );
       }
 
-      // #779 §A — REJECT doesn't transition status; it stamps the sub-state.
-      const nextStatus =
-        body.action === "REJECT"
-          ? "PENDING_VERIFICATION"
-          : body.action === "VERIFY" || body.action === "REACTIVATE"
-            ? "ACTIVE"
-            : body.action === "SUSPEND"
-              ? "SUSPENDED"
-              : "DEACTIVATED";
-
-      const next = await tx.organization.update({
-        where: { id: orgId },
-        data: {
-          status: nextStatus,
-          // #779 §A — VERIFY clears the resubmit-loop sub-state; REJECT sets it.
-          ...(body.action === "VERIFY" && {
-            verificationReason: null,
-            verificationSubmittedAt: null,
-            verificationRejectedAt: null,
-          }),
-          ...(body.action === "REJECT" && {
-            verificationReason: body.reason,
-            verificationRejectedAt: new Date(),
-          }),
-        },
-      });
-
       const actionKey =
         body.action === "VERIFY"
           ? AUDIT_ACTIONS.SYSTEM.VERIFIED
@@ -128,26 +109,73 @@ export async function POST(
                 ? AUDIT_ACTIONS.SYSTEM.REACTIVATED
                 : AUDIT_ACTIONS.SYSTEM.DEACTIVATED;
 
-      await tx.orgAuditLog.create({
-        data: {
-          organizationId: orgId,
-          actorMembershipId: null,
-          category: "SYSTEM",
-          action: actionKey,
-          description:
-            body.action === "REJECT"
-              ? `Admin reject: stays ${current.status}`
-              : `Admin ${body.action.toLowerCase()}: ${current.status} → ${nextStatus}`,
-          details: {
-            adminUserId: auth.session.user.id,
-            from: current.status,
-            to: nextStatus,
-            reason: body.reason ?? null,
+      if (body.action === "REJECT") {
+        // #779 §A — REJECT stamps the resubmit sub-state, not a status move.
+        // Guarded on still-PENDING so a concurrent VERIFY can't be overwritten
+        // back into rejection.
+        const res = await tx.organization.updateMany({
+          where: { id: orgId, status: "PENDING_VERIFICATION" },
+          data: {
+            verificationReason: body.reason,
+            verificationRejectedAt: new Date(),
           },
-        },
-      });
+        });
+        if (res.count === 0) {
+          throw new IllegalTransitionError("Organization", "REJECT");
+        }
+        await tx.orgAuditLog.create({
+          data: {
+            organizationId: orgId,
+            actorMembershipId: null,
+            category: "SYSTEM",
+            action: actionKey,
+            description: `Admin reject: stays ${current.status}`,
+            details: {
+              adminUserId: auth.session.user.id,
+              from: current.status,
+              to: current.status,
+              reason: body.reason ?? null,
+            },
+          },
+        });
+      } else {
+        const nextStatus =
+          body.action === "VERIFY" || body.action === "REACTIVATE"
+            ? ("ACTIVE" as const)
+            : body.action === "SUSPEND"
+              ? ("SUSPENDED" as const)
+              : ("DEACTIVATED" as const);
 
-      return next;
+        await transitionOrganization(tx, {
+          where: { id: orgId },
+          to: nextStatus,
+          // #779 §A — VERIFY clears the resubmit-loop sub-state.
+          data:
+            body.action === "VERIFY"
+              ? {
+                  verificationReason: null,
+                  verificationSubmittedAt: null,
+                  verificationRejectedAt: null,
+                }
+              : undefined,
+          audit: {
+            organizationId: orgId,
+            actorMembershipId: null,
+            category: "SYSTEM",
+            action: actionKey,
+            description: `Admin ${body.action.toLowerCase()}: ${current.status} → ${nextStatus}`,
+            details: {
+              adminUserId: auth.session.user.id,
+              from: current.status,
+              to: nextStatus,
+              reason: body.reason ?? null,
+            },
+          },
+        });
+      }
+
+      // updateMany returns no row — re-read in-tx for the response body.
+      return tx.organization.findUniqueOrThrow({ where: { id: orgId } });
     });
 
     return NextResponse.json({ organization: updated });

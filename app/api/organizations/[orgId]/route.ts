@@ -13,10 +13,13 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
 import { isAtLeastRole } from "@/lib/auth/role-ranks";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { transitionOrganization } from "@/lib/enterprise/transitions";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { encryptPAN } from "@/lib/payments/tax/pan-crypto";
 
 const SizeBucketSchema = z.enum([
@@ -66,10 +69,22 @@ const PatchBodySchema = z
     defaultCancellationPolicy: z.string().max(5000).nullable().optional(),
     defaultRefundPolicy: z.string().max(5000).nullable().optional(),
     isPublic: z.boolean().optional(),
+    expectedVersion: z.coerce.number().int().min(1).optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
     message: "PATCH body must contain at least one field",
-  });
+  })
+  // Capability flips gate the whole billing/payout subsystem — a stale tab must
+  // get a 409, never last-write-wins. Other fields stay back-compatible.
+  .refine(
+    (v) =>
+      (v.canSponsor === undefined && v.canHost === undefined) ||
+      v.expectedVersion !== undefined,
+    {
+      message: "expectedVersion is required when changing capabilities",
+      path: ["expectedVersion"],
+    },
+  );
 
 export async function GET(
   _req: NextRequest,
@@ -184,7 +199,12 @@ export async function PATCH(
   }
 
   try {
-    const updated = await prisma.$transaction(async (tx) => {
+    // Serializable closes the TOCTOU between the wind-down COUNT checks below
+    // and the UPDATE (S2 in the state audit): a concurrent invoice/assignment
+    // insert aborts one side with P2034 (retried, then 503) instead of
+    // slipping into the window and stranding obligations behind a flipped flag.
+    const updated = await withSerializableRetry(() =>
+      prisma.$transaction(async (tx) => {
       const current = await tx.organization.findUnique({
         where: { id: orgId },
         include: { billingAccount: { select: { id: true, walletBalance: true } } },
@@ -193,6 +213,26 @@ export async function PATCH(
         throw Object.assign(new Error("Organization not found"), {
           httpStatus: 404,
         });
+      }
+
+      // Optimistic lock — a stale tab (multi-tab toggle race) 409s instead of
+      // last-write-wins. The CAS also takes the row lock, serializing the rich
+      // nested update below behind it.
+      if (body.expectedVersion !== undefined) {
+        const cas = await tx.organization.updateMany({
+          where: { id: orgId, version: body.expectedVersion },
+          data: { version: { increment: 1 } },
+        });
+        if (cas.count === 0) {
+          throw Object.assign(
+            new Error("Settings were changed in another session — reload and retry"),
+            {
+              httpStatus: 409,
+              code: "VERSION_CONFLICT",
+              currentVersion: current.version,
+            },
+          );
+        }
       }
 
       const nextCanSponsor = body.canSponsor ?? current.canSponsor;
@@ -455,7 +495,10 @@ export async function PATCH(
       });
 
       return next;
-    });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      ),
+    );
 
     return NextResponse.json({ organization: updated });
   } catch (err) {
@@ -463,16 +506,36 @@ export async function PATCH(
       const status =
         typeof err.httpStatus === "number" ? err.httpStatus : 500;
       // #779 §A — forward the structured wind-down code + counts so the UI
-      // can render the per-blocker message instead of a bare 409.
+      // can render the per-blocker message instead of a bare 409. The
+      // VERSION_CONFLICT branch additionally carries currentVersion so the
+      // client can refetch-and-retry without an extra GET.
       const code =
         "code" in err && typeof err.code === "string" ? err.code : undefined;
       const counts =
         "counts" in err && err.counts && typeof err.counts === "object"
           ? err.counts
           : undefined;
+      const currentVersion =
+        "currentVersion" in err && typeof err.currentVersion === "number"
+          ? err.currentVersion
+          : undefined;
       return NextResponse.json(
-        { error: err.message, ...(code && { code }), ...(counts && { counts }) },
+        {
+          error: err.message,
+          ...(code && { code }),
+          ...(counts && { counts }),
+          ...(currentVersion !== undefined && { currentVersion }),
+        },
         { status },
+      );
+    }
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2034"
+    ) {
+      return NextResponse.json(
+        { error: "Transaction conflict — please retry", code: "P2034" },
+        { status: 503 },
       );
     }
     throw err;
@@ -575,12 +638,13 @@ export async function DELETE(
 
       // Soft delete: name/slug/GSTIN/PAN stay (issued invoices reference
       // them — statutory retention); personal contact details are scrubbed
-      // per DPDP. DEACTIVATED is already terminal for every billing,
-      // membership, and notification surface via the org-status tuples.
-      await tx.organization.update({
+      // per DPDP. The CAS in transitionOrganization makes DEACTIVATED
+      // unreachable from itself — a concurrent second DELETE 409s instead of
+      // re-stamping deletedAt.
+      await transitionOrganization(tx, {
         where: { id: orgId },
+        to: "DEACTIVATED",
         data: {
-          status: "DEACTIVATED",
           deletedAt: new Date(),
           billingEmail: null,
           billingContactName: null,
@@ -590,9 +654,7 @@ export async function DELETE(
           supportContactEmail: null,
           escalationContactEmail: null,
         },
-      });
-      await tx.orgAuditLog.create({
-        data: {
+        audit: {
           organizationId: orgId,
           actorMembershipId: access.member.id,
           category: "SETTINGS",

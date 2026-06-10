@@ -21,6 +21,7 @@
 
 import { RequestStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 /**
  * Result structure for cleanup operations
@@ -505,7 +506,15 @@ export async function cleanupInvalidDurationSubscriptions(): Promise<{
  *
  * @returns Combined results from all cleanup operations
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function runAllCleanupTasks(): Promise<CleanupResult> {
+  return withCronLock("cleanup-invalid-appointments", { failMode: "open" }, () =>
+    runAllCleanupTasksUnlocked(),
+  );
+}
+
+async function runAllCleanupTasksUnlocked(): Promise<CleanupResult> {
   const startTime = Date.now();
   console.log(
     `\n🚀 Starting invalid appointment cleanup at ${new Date().toISOString()}\n`,

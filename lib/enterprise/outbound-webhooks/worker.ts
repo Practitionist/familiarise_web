@@ -286,10 +286,13 @@ export async function runDispatchTick(params: {
     // Retry path — 5xx / 408 / 429 / network error.
     const nextAttemptNumber = attemptNumber + 1;
     if (attemptNumber >= MAX_ATTEMPTS) {
+      // DEAD_LETTER, not FAILED: delivery-starved (receiver may be fine
+      // tomorrow), operator-replayable via /redeliver. FAILED stays the
+      // receiver-rejected terminal (permanent 4xx / endpoint paused).
       await prisma.outboundWebhookDelivery.update({
         where: { id: row.id },
         data: {
-          status: "FAILED",
+          status: "DEAD_LETTER",
           httpStatusCode: httpStatusCode ?? null,
           signature,
           attempts: attemptNumber,

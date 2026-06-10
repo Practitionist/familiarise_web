@@ -4,6 +4,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { sweepOrphanedTopupCaptures } from "@/scripts/cleanup/sweep-orphaned-topup-captures";
+import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -25,6 +26,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const status = result.stillFailing > 0 ? 207 : 200;
     return NextResponse.json(result, { status });
   } catch (error) {
+    // #476 — concurrent invocation (schedule overlap / manual re-run)
+    // skips with a 409 instead of double-running.
+    if (error instanceof CronLockHeldError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
     console.error("Error in captured-top-up sweep:", error);
     return NextResponse.json(
       {

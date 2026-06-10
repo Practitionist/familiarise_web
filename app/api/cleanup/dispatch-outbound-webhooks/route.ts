@@ -8,6 +8,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
 import {
   dispatchOutboundWebhooks,
   disconnectDatabase,
@@ -32,6 +33,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const result = await dispatchOutboundWebhooks();
     return NextResponse.json(result, { status: result.success ? 200 : 500 });
   } catch (error) {
+    // #476 — concurrent invocation (schedule overlap / manual re-run)
+    // skips with a 409 instead of double-running.
+    if (error instanceof CronLockHeldError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
     console.error("[cleanup/dispatch-outbound-webhooks] failed:", error);
     return NextResponse.json(
       {

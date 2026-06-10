@@ -457,6 +457,10 @@ model Organization {
   slug String @unique
 
   status    OrgStatus @default(PENDING_VERIFICATION)
+  /// Optimistic-lock clock for owner-editable settings. The PATCH CASes on the
+  /// client's expectedVersion and increments, so a stale tab gets a 409 instead
+  /// of silently overwriting (multi-tab last-write-wins).
+  version   Int       @default(1)
   // #781 §B — financial rows Restrict their parents; removal = soft-delete.
   // Hard delete remains possible only while no money row references this.
   deletedAt DateTime?
@@ -1420,6 +1424,8 @@ model OrganizationPayoutAccount {
 
   status     OrgPayoutAccountStatus @default(PENDING_VERIFICATION)
   verifiedAt DateTime?
+  /// Optimistic-lock clock — same CAS contract as Organization.version.
+  version    Int                    @default(1)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1804,6 +1810,9 @@ model OrganizationSSOSettings {
   /// again (auth layer skips the enforceSSO gate while breakGlassUntil > now).
   /// Who/why lives in the OrgAuditLog row the route emits — no duplicate columns.
   breakGlassUntil DateTime?
+
+  /// Optimistic-lock clock — same CAS contract as Organization.version.
+  version Int @default(1)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4739,6 +4748,10 @@ enum DeliveryStatus {
   SUCCESS
   RETRY
   FAILED
+  /// All retry attempts exhausted — terminal, operator-replayable via the
+  /// redeliver route. FAILED stays for receiver-rejected (permanent 4xx /
+  /// endpoint paused) deliveries.
+  DEAD_LETTER
 }
 
 /// Per-org SCIM 2.0 bearer tokens. Stored as SHA-256 hashes; the raw token
