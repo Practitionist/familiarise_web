@@ -30,8 +30,10 @@ export type TClassPlanDetailsData = Omit<
       classContents: true;
     };
   }>,
-  "classes"
+  "classes" | "price"
 > & {
+  // price is number at runtime via the extended client (#780)
+  price: number;
   classes: TClassSessionWithSchedule[];
   type: "class";
   imageUrl: string;

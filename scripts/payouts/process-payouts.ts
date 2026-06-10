@@ -17,6 +17,7 @@
 import { PayoutStatus, PaymentGateway } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { processOrgPayout } from "@/lib/payments/payouts/org-payout-service";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 /**
  * Result structure for individual payout processing
@@ -454,9 +455,9 @@ export async function getProcessingStats(): Promise<{
 
   return {
     approvedCount: approved._count,
-    approvedAmount: approved._sum.amount || 0,
+    approvedAmount: sumPaise(approved._sum.amount),
     processingCount: processing._count,
-    processingAmount: processing._sum.amount || 0,
+    processingAmount: sumPaise(processing._sum.amount),
   };
 }
 

@@ -1,4 +1,4 @@
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import {
   Prisma,
   type WebinarCollaboratorRole,
@@ -354,7 +354,10 @@ export async function removeCollaborator(
           dashboardUrl: `${getAppUrl()}/dashboard`,
         });
       } catch (error) {
-        console.error("[collaborators] Failed to send removal notification:", error);
+        console.error(
+          "[collaborators] Failed to send removal notification:",
+          error,
+        );
       }
 
       // Stream channel revocation — independent failure
@@ -410,7 +413,10 @@ export async function removeCollaborator(
           dashboardUrl: `${getAppUrl()}/dashboard`,
         });
       } catch (error) {
-        console.error("[collaborators] Failed to send removal notification:", error);
+        console.error(
+          "[collaborators] Failed to send removal notification:",
+          error,
+        );
       }
 
       // Stream channel revocation — independent failure
@@ -421,7 +427,11 @@ export async function removeCollaborator(
         });
         await Promise.all([
           ...classes.map((classEvent) =>
-            removeUserFromEventChannel("class", classEvent.id, classProfile.userId),
+            removeUserFromEventChannel(
+              "class",
+              classEvent.id,
+              classProfile.userId,
+            ),
           ),
           getStreamChatClient()
             .channel("messaging", `collab-class-${planId}`)
@@ -878,7 +888,7 @@ export async function getHostedCollaborations(consultantProfileId: string) {
  * Transaction-safe version that accepts a Prisma transaction client.
  */
 async function validateRevenueSharesTx(
-  db: Prisma.TransactionClient | typeof prisma,
+  db: Tx | typeof prisma,
   planType: PlanType,
   planId: string,
   newShare: number,
@@ -895,10 +905,7 @@ async function validateRevenueSharesTx(
       },
       select: { revenueShareBps: true },
     });
-    currentTotal = collabs.reduce(
-      (sum, c) => sum + c.revenueShareBps,
-      0,
-    );
+    currentTotal = collabs.reduce((sum, c) => sum + c.revenueShareBps, 0);
   } else {
     const collabs = await db.classCollaborator.findMany({
       where: {
@@ -908,10 +915,7 @@ async function validateRevenueSharesTx(
       },
       select: { revenueShareBps: true },
     });
-    currentTotal = collabs.reduce(
-      (sum, c) => sum + c.revenueShareBps,
-      0,
-    );
+    currentTotal = collabs.reduce((sum, c) => sum + c.revenueShareBps, 0);
   }
 
   return currentTotal + pctToBps(newShare) <= MAX_COLLAB_BPS;
@@ -949,9 +953,7 @@ export async function calculateRevenueSplit(
 
   let collaboratorTotal = 0;
   for (const collab of acceptedCollabs) {
-    const share = Math.round(
-      (totalAmount * collab.revenueShareBps) / 10_000,
-    );
+    const share = Math.round((totalAmount * collab.revenueShareBps) / 10_000);
     collaboratorTotal += share;
     splits.push({
       consultantProfileId: collab.consultantProfileId,

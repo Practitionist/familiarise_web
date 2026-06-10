@@ -16,6 +16,7 @@
 
 import prisma from "@/lib/prisma";
 import { PaymentStatus, SupportTicketStatus } from "@prisma/client";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 export type OperatorDashboardStats = {
   totalPayments: number;
@@ -126,12 +127,12 @@ export async function getOperatorDashboardStats(): Promise<OperatorDashboardStat
 
   return {
     totalPayments,
-    totalPaymentsValue: paymentsAggregation._sum.amount ?? 0,
+    totalPaymentsValue: sumPaise(paymentsAggregation._sum.amount),
     pendingPayments,
-    pendingPaymentsValue: pendingPaymentsAggregation._sum.amount ?? 0,
+    pendingPaymentsValue: sumPaise(pendingPaymentsAggregation._sum.amount),
     expiredPayments,
     totalRefunds,
-    totalRefundsValue: refundsAggregation._sum?.amountPaise ?? 0,
+    totalRefundsValue: sumPaise(refundsAggregation._sum?.amountPaise),
     activeDisputes,
     totalDisputes,
     recentPayments,

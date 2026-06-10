@@ -3,7 +3,7 @@
  * Handles the complete checkout flow for all appointment types
  */
 
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
 import {
@@ -63,6 +63,7 @@ import {
   notifyOrgProgramExhausted,
   notifyOrgProgramCapNear,
 } from "@/lib/novu/org-workflows";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -79,13 +80,17 @@ export type { CheckoutInput };
  * Consultant allocates specific slots later via Requests tab
  */
 type SubscriptionCheckoutResult = {
-  plan: Prisma.SubscriptionPlanGetPayload<{
-    include: {
-      consultantProfile: {
-        include: { user: true };
+  // #780 — extended-client reads return price as number; GetPayload says bigint.
+  plan: Omit<
+    Prisma.SubscriptionPlanGetPayload<{
+      include: {
+        consultantProfile: {
+          include: { user: true };
+        };
       };
-    };
-  }>;
+    }>,
+    "price"
+  > & { price: number };
   amount: number;
   subscription: Prisma.SubscriptionGetPayload<Record<string, never>>;
   appointment: Prisma.AppointmentGetPayload<Record<string, never>>;
@@ -523,7 +528,7 @@ export async function calculateAmountAndValidate(
  * 3. Excessive tentative bookings (rate limiting)
  */
 export async function validateSlotAvailability(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   data: CheckoutInput,
   userId?: string,
   consultantUserId?: string, // NEW: Filter by consultant to prevent blocking across different consultants
@@ -971,7 +976,7 @@ async function resolveEventHostOrgId(
  * Prevents race condition where plan is deleted between initial validation and checkout
  */
 async function verifyPlanExistsInsideLock(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   appointmentType: string,
   planId: string,
 ): Promise<void> {
@@ -1108,7 +1113,7 @@ async function revalidateInsideLock(
                     some: {
                       AND: [
                         { startsAt: { lt: new Date(data.slotEndTimeInUTC!) } },
-                        { endsAt:   { gt: new Date(data.slotStartTimeInUTC!) } },
+                        { endsAt: { gt: new Date(data.slotStartTimeInUTC!) } },
                         // userId (User.id) is the right scope — slots are
                         // connected to User records, not ConsulteeProfile records.
                         // This catches conflicts regardless of which org the
@@ -1162,7 +1167,7 @@ async function revalidateInsideLock(
                     some: {
                       AND: [
                         { startsAt: { lt: new Date(data.slotEndTimeInUTC!) } },
-                        { endsAt:   { gt: new Date(data.slotStartTimeInUTC!) } },
+                        { endsAt: { gt: new Date(data.slotStartTimeInUTC!) } },
                         { user: { some: { id: userId } } },
                       ],
                     },
@@ -1260,7 +1265,7 @@ async function revalidateInsideLock(
 // ============================================================================
 
 export async function handleConsultationCheckout(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   data: CheckoutInput,
   consulteeProfileId: string,
   userId: string,
@@ -1361,7 +1366,7 @@ export async function handleConsultationCheckout(
 }
 
 export async function handleSubscriptionCheckout(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   data: CheckoutInput,
   consulteeProfileId: string,
   _skipPayment: boolean,
@@ -1491,7 +1496,7 @@ export async function handleSubscriptionCheckout(
 }
 
 export async function handleWebinarCheckout(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   data: CheckoutInput,
   userId: string,
   _skipPayment: boolean,
@@ -1615,7 +1620,7 @@ export async function handleWebinarCheckout(
 }
 
 export async function handleClassCheckout(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   data: CheckoutInput,
   userId: string,
   _skipPayment: boolean,
@@ -1756,12 +1761,8 @@ export async function handleCheckout(
 
   let organizationId: string | null = null;
   let billingAccountId: string | null = null;
-  let fundingSource:
-    | "PERSONAL"
-    | "WALLET"
-    | "INVOICE"
-    | "LICENSE"
-    | null = null;
+  let fundingSource: "PERSONAL" | "WALLET" | "INVOICE" | "LICENSE" | null =
+    null;
   let programAssignmentId: string | null = null;
   let callerMembershipId: string | null = null;
   // #785 B6 — effective INVOICE credit limit; threaded to the Serializable
@@ -1791,10 +1792,7 @@ export async function handleCheckout(
     // PR-1d: PENDING_VERIFICATION orgs may transact for INVOICE bookings
     // under the credit-limit gate (#687 invoice-fraud guard). Anything
     // else still requires fully ACTIVE status.
-    if (
-      org.status !== "ACTIVE" &&
-      org.status !== "PENDING_VERIFICATION"
-    ) {
+    if (org.status !== "ACTIVE" && org.status !== "PENDING_VERIFICATION") {
       throw new Error(
         `Organization is ${org.status.toLowerCase()}; cannot process bookings.`,
       );
@@ -1854,9 +1852,7 @@ export async function handleCheckout(
     if (fundingSource === "INVOICE") {
       const explicitLimit = org.billingAccount?.creditLimit ?? null;
       const isVerified = org.status === "ACTIVE";
-      const governanceLimit = isVerified
-        ? null
-        : getInvoiceCreditLimitPaise();
+      const governanceLimit = isVerified ? null : getInvoiceCreditLimitPaise();
       const effectiveLimit =
         explicitLimit === null
           ? governanceLimit
@@ -1887,8 +1883,8 @@ export async function handleCheckout(
           }),
         ]);
         const exposure =
-          (accrualAgg._sum.amountPaise ?? 0) +
-          (outstandingAgg._sum.totalPaise ?? 0);
+          sumPaise(accrualAgg._sum.amountPaise) +
+          sumPaise(outstandingAgg._sum.totalPaise);
         if (exposure >= effectiveLimit) {
           throw new Error(
             `Organization has reached its invoice credit limit (${effectiveLimit} paise). Outstanding invoices must be paid before new bookings.`,
@@ -1998,9 +1994,12 @@ export async function handleCheckout(
     // ProgramAssignment (both resolved above). These booleans gate the
     // "skip the gateway entirely" path — org-funded bookings never go
     // through Stripe/Razorpay at checkout time.
-    const isOrgWalletPayment = fundingSource === "WALLET" && !!programAssignmentId;
-    const isOrgInvoicedPayment = fundingSource === "INVOICE" && !!programAssignmentId;
-    const isOrgLicensedPayment = fundingSource === "LICENSE" && !!programAssignmentId;
+    const isOrgWalletPayment =
+      fundingSource === "WALLET" && !!programAssignmentId;
+    const isOrgInvoicedPayment =
+      fundingSource === "INVOICE" && !!programAssignmentId;
+    const isOrgLicensedPayment =
+      fundingSource === "LICENSE" && !!programAssignmentId;
     const isOrgSponsoredPayment =
       isOrgWalletPayment || isOrgInvoicedPayment || isOrgLicensedPayment;
 
@@ -2091,8 +2090,8 @@ export async function handleCheckout(
               }),
             ]);
             const exposure =
-              (accrualAgg._sum.amountPaise ?? 0) +
-              (outstandingAgg._sum.totalPaise ?? 0);
+              sumPaise(accrualAgg._sum.amountPaise) +
+              sumPaise(outstandingAgg._sum.totalPaise);
             // Same gate as the pre-lock check (>= limit), re-run inside the tx so
             // a concurrent sibling's just-committed accrual is visible — SSI then
             // aborts the loser of a racing pair instead of both straddling the cap.
@@ -2306,13 +2305,17 @@ export async function handleCheckout(
                   .then((ctx) => {
                     if (!ctx) return;
                     const orgId = ctx.program.contract.organizationId;
-                    return notifyOrgProgramExhausted(orgId, ctx.membership.userId, {
-                      orgName: ctx.program.contract.organization.name,
-                      programName: ctx.program.name,
-                      assigneeName:
-                        ctx.membership.user.name ?? ctx.membership.user.email,
-                      dashboardUrl: `/dashboard/organization/${orgId}/programs`,
-                    });
+                    return notifyOrgProgramExhausted(
+                      orgId,
+                      ctx.membership.userId,
+                      {
+                        orgName: ctx.program.contract.organization.name,
+                        programName: ctx.program.name,
+                        assigneeName:
+                          ctx.membership.user.name ?? ctx.membership.user.email,
+                        dashboardUrl: `/dashboard/organization/${orgId}/programs`,
+                      },
+                    );
                   })
                   .catch((notifyErr) =>
                     console.error(
@@ -2356,8 +2359,7 @@ export async function handleCheckout(
               // paise (consumedPaise vs creditBudgetPaise). The 80% transition
               // math is unit-agnostic; the Novu payload reports credits for
               // pools (÷100) and engagements for seats.
-              const isCredit =
-                utilizationResult.programType === "CREDIT_POOL";
+              const isCredit = utilizationResult.programType === "CREDIT_POOL";
               const capAfter = isCredit
                 ? utilizationResult.creditBudgetPaise
                 : utilizationResult.cap;
@@ -2882,7 +2884,11 @@ export async function handleCheckout(
           "overlapping dates",
           "insufficient credits",
         ];
-        if (preservedMessages.some((msg) => dbError.message.toLowerCase().includes(msg))) {
+        if (
+          preservedMessages.some((msg) =>
+            dbError.message.toLowerCase().includes(msg),
+          )
+        ) {
           throw dbError;
         }
       }

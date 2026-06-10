@@ -1,3 +1,4 @@
+import type { PrismaLike } from "@/lib/prisma";
 /**
  * Org governance gates (#675, #687).
  *
@@ -40,7 +41,7 @@ export function getInvoiceCreditLimitPaise(): number {
  * a gated operation).
  */
 export async function hasVerifiedDomain(
-  db: PrismaClient | Prisma.TransactionClient,
+  db: PrismaLike,
   orgId: string,
 ): Promise<boolean> {
   const verified = await db.orgDomainClaim.findFirst({
@@ -65,7 +66,7 @@ export class DomainVerificationRequiredError extends Error {
 }
 
 export async function assertVerifiedDomainOrThrow(
-  db: PrismaClient | Prisma.TransactionClient,
+  db: PrismaLike,
   orgId: string,
   feature: "SSO" | "INVOICE_FUNDING" | "BULK_SEATS",
 ): Promise<void> {

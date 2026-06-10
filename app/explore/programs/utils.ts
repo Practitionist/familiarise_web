@@ -42,7 +42,11 @@ export type ProgramConsultantProfile = {
   user?: {
     name?: string | null;
     image?: string | null;
-    workExperiences?: Array<{ company: string; companyDomain: string | null; isCurrent: boolean }>;
+    workExperiences?: Array<{
+      company: string;
+      companyDomain: string | null;
+      isCurrent: boolean;
+    }>;
   };
 };
 
@@ -50,7 +54,9 @@ export type ProgramCollaborator = {
   consultantProfile?: ProgramConsultantProfile | null;
 };
 
-export type ClassPlanProgram = PrismaClassPlan & {
+// #780 — price reaches here as number (extended-client read → JSON), never bigint
+export type ClassPlanProgram = Omit<PrismaClassPlan, "price"> & {
+  price: number;
   classes: ClassInstance[];
   type: "class";
   imageUrl: string;
@@ -59,7 +65,8 @@ export type ClassPlanProgram = PrismaClassPlan & {
   collaborators?: ProgramCollaborator[];
 };
 
-export type WebinarPlanProgram = PrismaWebinarPlan & {
+export type WebinarPlanProgram = Omit<PrismaWebinarPlan, "price"> & {
+  price: number;
   webinars?: WebinarWithAppointment[];
   type: "webinar";
   imageUrl: string;

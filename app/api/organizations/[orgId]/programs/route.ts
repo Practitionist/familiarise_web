@@ -17,6 +17,7 @@ import {
   capabilityOf,
   isReachableOrgFundingPath,
 } from "@/lib/enterprise/reachable-paths";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 const CoveredPlanTypeSchema = z.enum([
   "CONSULTATION",
@@ -41,9 +42,19 @@ const OverageBehaviorSchema = z.enum(["BLOCK", "CHARGE_MEMBER", "CHARGE_ORG"]);
 const LicensedSeatConfigSchema = z.object({
   ratePerSeatPaise: z.coerce.number().int().min(0),
   cycle: BillingCycleSchema,
-  coveredEngagementsPerCycle: z.coerce.number().int().min(0).nullable().optional(),
+  coveredEngagementsPerCycle: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .nullable()
+    .optional(),
   overageBehavior: OverageBehaviorSchema.default("BLOCK"),
-  priceCapPerEngagementPaise: z.coerce.number().int().min(0).nullable().optional(),
+  priceCapPerEngagementPaise: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .nullable()
+    .optional(),
   // #775 — bps markup on the pass-through overage marginal (null = no markup).
   overageSurchargeBps: z.coerce.number().int().min(0).nullable().optional(),
   // #768 #14/#15 — per-cycle overage ceiling (circuit breaker; null = none).
@@ -157,7 +168,7 @@ export async function GET(
       utilization: {
         activeAssignments: u?._count._all ?? 0,
         engagementsUsed: u?._sum.engagementsUsed ?? 0,
-        consumedPaise: u?._sum.consumedPaise ?? 0,
+        consumedPaise: sumPaise(u?._sum.consumedPaise),
       },
     };
   });

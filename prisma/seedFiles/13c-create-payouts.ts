@@ -11,6 +11,7 @@ import {
   PAYOUT_STATUS_WEIGHTS,
   PAYOUT_PROVIDER_WEIGHTS,
 } from "./utils";
+import { sumPaise } from "../../lib/payments/utils/money";
 
 /**
  * Determine payout method based on provider
@@ -234,7 +235,7 @@ export async function createPayouts(): Promise<void> {
 
   console.log("\nPayouts by Status:");
   for (const item of statusSummary) {
-    const totalAmount = item._sum.amount || 0;
+    const totalAmount = sumPaise(item._sum.amount);
     console.log(
       `  ${item.status}: ${item._count} payouts (Total: ${(totalAmount / 100).toFixed(2)} INR)`,
     );

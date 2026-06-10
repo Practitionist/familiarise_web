@@ -53,8 +53,9 @@
  * ───────────────────────────────────────────────────────────────────────────
  */
 
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 // ============================================================================
 // Constants
@@ -142,7 +143,7 @@ export async function getCurrentFYCumulativePayments(
     _sum: { amount: true },
   });
 
-  return result._sum.amount || 0;
+  return sumPaise(result._sum.amount);
 }
 
 /**
@@ -162,7 +163,7 @@ export async function getCumulativeTDSDeducted(
     _sum: { tdsDeducted: true },
   });
 
-  return result._sum.tdsDeducted || 0;
+  return sumPaise(result._sum.tdsDeducted);
 }
 
 export interface TDSCalculationResult {
@@ -273,7 +274,7 @@ export async function recordTDSDeduction(params: {
   earningsId?: string;
   /** #776 — statutory section ("194O" for ECO consultant payouts) for 26Q audit. */
   tdsSection?: string;
-  db?: Prisma.TransactionClient | typeof prisma;
+  db?: Tx | typeof prisma;
 }) {
   const quarter = getIndianFYQuarter();
 
@@ -304,7 +305,7 @@ export async function recordTDSDeduction(params: {
  * through the passed tx so the reversal commits atomically with the cascade.
  */
 export async function recordTdsReversal(
-  tx: Prisma.TransactionClient | typeof prisma,
+  tx: Tx | typeof prisma,
   params: {
     payoutId: string;
     consultantProfileId: string;
@@ -329,7 +330,8 @@ export async function recordTdsReversal(
 
   // Integer paise proportion (floor — never reverse more than the refund earns).
   let tdsToReverse = Math.floor(
-    (original.tdsDeducted * params.refundAmountPaise) / params.paymentAmountPaise,
+    (original.tdsDeducted * params.refundAmountPaise) /
+      params.paymentAmountPaise,
   );
   if (tdsToReverse <= 0) return null;
 
@@ -407,10 +409,10 @@ export async function getTDSSummary(financialYear: string) {
     financialYear,
     quarterWise: records.map((r) => ({
       quarter: r.quarter,
-      totalDeducted: r._sum.tdsDeducted || 0,
+      totalDeducted: sumPaise(r._sum.tdsDeducted),
       count: r._count,
     })),
-    totalDeducted: totalDeducted._sum.tdsDeducted || 0,
+    totalDeducted: sumPaise(totalDeducted._sum.tdsDeducted),
     totalRecords: totalDeducted._count,
     unfiledRecords: unfiled,
   };

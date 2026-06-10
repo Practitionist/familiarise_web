@@ -7,6 +7,8 @@ exports[`humanizeOrgError snapshot of the full mapping table 1`] = `
   "EXPERT_REQUIRES_CANHOST": "Expert can only be assigned on host-capable organizations. Enable hosting under Settings → Capabilities first.",
   "HOST_ORGS_GATED": "Host-capable organizations are not yet enabled on this tenant. Contact ops at support@familiarise.work to flip ENABLE_HOST_ORGS for your account.",
   "LEARNER_REQUIRES_CANSPONSOR": "Learner can only be assigned on sponsor-capable organizations. Enable sponsorship under Settings → Capabilities first.",
+  "NOT_A_CONSULTANT": "This user is not a consultant on Familiarise yet. They need to sign up as an Expert first before they can be added to an organization as one.",
+  "NOT_A_CONSULTEE": "This user does not have a learner profile on Familiarise yet. They need to sign up or complete onboarding before they can be added to an organization as a Learner.",
   "ORG_NOT_VERIFIED": "Your organization is awaiting platform review. This action will be available once a Familiarise admin verifies your account — this usually takes 1–2 business days.",
   "PO_BALANCE_EXCEEDED": "This purchase order doesn't have enough remaining budget for the invoice. Reduce the invoice total or add a new PO.",
   "PO_BALANCE_INSUFFICIENT": "This purchase order doesn't have enough remaining budget for the invoice. Reduce the invoice total or add a new PO.",

@@ -1,3 +1,4 @@
+import type { PrismaLike } from "@/lib/prisma";
 /**
  * Fan-out helper for outbound webhook delivery.
  *
@@ -32,8 +33,6 @@
 
 import type { Prisma, PrismaClient } from "@prisma/client";
 import type { OutboundWebhookEvent } from "./event-types";
-
-type PrismaLike = PrismaClient | Prisma.TransactionClient;
 
 /**
  * Fire-and-forget by design. The caller usually wires this as

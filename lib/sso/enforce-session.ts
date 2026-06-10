@@ -1,3 +1,4 @@
+import type { PrismaLike } from "@/lib/prisma";
 /**
  * Server-side SSO enforcement decision for BetterAuth `session.create.before`.
  *
@@ -14,7 +15,6 @@
  * adding an IdP.
  */
 
-import type { PrismaClient } from "@prisma/client";
 
 export type EnforceDecision =
   | { reject: false }
@@ -48,7 +48,7 @@ export interface EnforcedOrgInfo {
  * Audit Phase B.6. See `docs/enterprise/20-iam-and-security/01-sso-and-authentication.md`.
  */
 export async function lookupEnforcedOrg(
-  prisma: PrismaClient,
+  prisma: PrismaLike, // #780 extended client
   domain: string,
 ): Promise<EnforcedOrgInfo | null> {
   const claim = await prisma.orgDomainClaim.findUnique({

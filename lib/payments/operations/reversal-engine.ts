@@ -1,3 +1,4 @@
+import type { Tx } from "@/lib/prisma";
 /**
  * Unified reversal engine (#776 §C / ARCH #4).
  *
@@ -21,10 +22,7 @@
  */
 
 import { Prisma, RefundStatus } from "@prisma/client";
-import {
-  applyRefundCascade,
-  type ApplyRefundCascadeResult,
-} from "./refund";
+import { applyRefundCascade, type ApplyRefundCascadeResult } from "./refund";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { recordSystemError } from "@/lib/enterprise/system-events";
@@ -63,7 +61,7 @@ export interface ApplyReversalResult {
  * (the booking cascade requires it for race-safety).
  */
 export async function applyReversal(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   input: ApplyReversalInput,
 ): Promise<ApplyReversalResult> {
   switch (input.source.kind) {
@@ -91,7 +89,11 @@ export async function applyReversal(
     }
 
     case "CLASS_MULTI": {
-      const cascades = await reverseClassMulti(tx, input, input.source.paymentIds);
+      const cascades = await reverseClassMulti(
+        tx,
+        input,
+        input.source.paymentIds,
+      );
       return { kind: "CLASS_MULTI", cascades, clawbackPosted: false };
     }
 
@@ -107,7 +109,9 @@ export async function applyReversal(
 
     default: {
       const _exhaustive: never = input.source;
-      throw new Error(`Unhandled ReversalSource: ${JSON.stringify(_exhaustive)}`);
+      throw new Error(
+        `Unhandled ReversalSource: ${JSON.stringify(_exhaustive)}`,
+      );
     }
   }
 }
@@ -121,7 +125,7 @@ export async function applyReversal(
  * children sum exactly to `amountPaise`.
  */
 async function reverseClassMulti(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   input: ApplyReversalInput,
   paymentIds: string[],
 ): Promise<ApplyRefundCascadeResult[]> {
@@ -206,7 +210,7 @@ async function reverseClassMulti(
  * Stamps the clawback amount/timestamp on the payout and writes an audit row.
  */
 async function reversePayoutClawback(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   input: ApplyReversalInput,
   orgPayoutId: string,
   organizationId: string,
@@ -250,7 +254,11 @@ async function reversePayoutClawback(
       kind: "ORG_PAYOUT",
       payoutId: orgPayoutId,
       postings: [
-        { account: { kind: "CASH" }, direction: "DEBIT", amountPaise: input.amountPaise },
+        {
+          account: { kind: "CASH" },
+          direction: "DEBIT",
+          amountPaise: input.amountPaise,
+        },
         {
           account: { kind: "ORG_PAYABLE", organizationId },
           direction: "CREDIT",

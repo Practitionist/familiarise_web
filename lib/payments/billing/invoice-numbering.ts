@@ -1,3 +1,4 @@
+import type { Tx } from "@/lib/prisma";
 /**
  * Per-org invoice numbering — CGST Rule 46 sequential rule.
  *
@@ -65,7 +66,7 @@ export function indianFiscalYear(d: Date): number {
  * Caller must be inside a Prisma $transaction.
  */
 export async function allocateOrgInvoiceSeq(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   organizationId: string,
   fiscalYear: number,
 ): Promise<number> {
@@ -89,7 +90,7 @@ export interface OrgInvoiceNumberInput {
 }
 
 export async function generateOrgInvoiceNumber(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   org: OrgInvoiceNumberInput,
   issuedAt: Date,
 ): Promise<{ invoiceNumber: string; fiscalYear: number; seq: number }> {

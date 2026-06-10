@@ -1,3 +1,4 @@
+import type { PrismaLike } from "@/lib/prisma";
 /**
  * #771 D1/D5 — double-entry posting helper (Batch 2 foundation).
  *
@@ -24,8 +25,7 @@ import type {
   Prisma,
   PrismaClient,
 } from "@prisma/client";
-
-export type LedgerDbClient = PrismaClient | Prisma.TransactionClient;
+import { sumPaise } from "@/lib/payments/utils/money";
 
 export interface AccountRef {
   kind: LedgerAccountKind;
@@ -85,7 +85,7 @@ export function ledgerAccountId(ref: AccountRef): string {
 }
 
 async function resolveAccountId(
-  db: LedgerDbClient,
+  db: PrismaLike,
   ref: AccountRef,
 ): Promise<string> {
   const id = ledgerAccountId(ref);
@@ -108,7 +108,7 @@ async function resolveAccountId(
  * Σ(DEBIT) !== Σ(CREDIT). Idempotent on `idempotencyKey`.
  */
 export async function postLedgerTxn(
-  db: LedgerDbClient,
+  db: PrismaLike,
   input: PostLedgerTxnInput,
 ): Promise<{ transactionId: string; created: boolean }> {
   if (input.postings.length === 0) {
@@ -204,7 +204,7 @@ export async function postLedgerTxn(
  * pre-snapshot data) — that path also returns 0 for a never-posted account.
  */
 export async function ledgerBalancePaise(
-  db: LedgerDbClient,
+  db: PrismaLike,
   ref: AccountRef,
 ): Promise<number> {
   const id = ledgerAccountId(ref);
@@ -225,7 +225,7 @@ export async function ledgerBalancePaise(
  * check and as the fallback in `ledgerBalancePaise`.
  */
 export async function ledgerBalanceFromJournalPaise(
-  db: LedgerDbClient,
+  db: PrismaLike,
   accountId: string,
 ): Promise<number> {
   const rows = await db.ledgerEntry.groupBy({
@@ -233,11 +233,12 @@ export async function ledgerBalanceFromJournalPaise(
     where: { accountId },
     _sum: { amountPaise: true },
   });
-  let debit = BigInt(0);
-  let credit = BigInt(0);
+  // #780 — groupBy _sum bypasses the result extension; still bigint at runtime.
+  let debit = 0;
+  let credit = 0;
   for (const r of rows) {
-    if (r.direction === "DEBIT") debit = r._sum.amountPaise ?? BigInt(0);
-    else credit = r._sum.amountPaise ?? BigInt(0);
+    if (r.direction === "DEBIT") debit = sumPaise(r._sum.amountPaise);
+    else credit = sumPaise(r._sum.amountPaise);
   }
-  return Number(debit - credit);
+  return debit - credit;
 }
