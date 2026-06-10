@@ -977,19 +977,31 @@ export async function runReconcileLedgers(
     const paymentIdsWithCe = ceAgg
       .map((r) => r.paymentId)
       .filter((p): p is string => !!p);
+    // Review fix — no giant `IN` lists (Postgres caps bind params at 65,535):
+    // the org-earnings sum takes the same org filter as ceAgg and joins via
+    // the map; the gross lookup chunks its ids.
     const oeAgg = await prisma.organizationEarnings.groupBy({
       by: ["paymentId"],
-      where: { paymentId: { in: paymentIdsWithCe } },
       _sum: { orgSharePaise: true },
+      ...(opts.organizationId
+        ? { where: { payment: { organizationId: opts.organizationId } } }
+        : {}),
     });
     const oeByPayment = new Map(
       oeAgg.map((r) => [r.paymentId, sumPaise(r._sum.orgSharePaise)]),
     );
-    const grossRows = await prisma.payment.findMany({
-      where: { id: { in: paymentIdsWithCe } },
-      select: { id: true, originalAmount: true, organizationId: true },
-    });
-    const grossById = new Map(grossRows.map((p) => [p.id, p]));
+    const grossById = new Map<
+      string,
+      { id: string; originalAmount: number; organizationId: string | null }
+    >();
+    const CHUNK = 5_000;
+    for (let i = 0; i < paymentIdsWithCe.length; i += CHUNK) {
+      const rows = await prisma.payment.findMany({
+        where: { id: { in: paymentIdsWithCe.slice(i, i + CHUNK) } },
+        select: { id: true, originalAmount: true, organizationId: true },
+      });
+      for (const p of rows) grossById.set(p.id, p);
+    }
     for (const row of ceAgg) {
       if (!row.paymentId) continue;
       const p = grossById.get(row.paymentId);
@@ -1041,11 +1053,20 @@ export async function runReconcileLedgers(
     const sideIds = memberEvents
       .map((e) => e.paymentId)
       .filter((p): p is string => !!p);
-    const overageTxns = await prisma.ledgerTransaction.findMany({
-      where: { idempotencyKey: { in: sideIds.map((id) => `overage:${id}`) } },
-      select: { idempotencyKey: true },
-    });
-    const txnKeys = new Set(overageTxns.map((t) => t.idempotencyKey));
+    // Review-fix class — chunked IN to stay under the bind-param cap.
+    const txnKeys = new Set<string>();
+    const TXN_CHUNK = 5_000;
+    for (let i = 0; i < sideIds.length; i += TXN_CHUNK) {
+      const overageTxns = await prisma.ledgerTransaction.findMany({
+        where: {
+          idempotencyKey: {
+            in: sideIds.slice(i, i + TXN_CHUNK).map((id) => `overage:${id}`),
+          },
+        },
+        select: { idempotencyKey: true },
+      });
+      for (const t of overageTxns) txnKeys.add(t.idempotencyKey);
+    }
     for (const ev of memberEvents) {
       const hasTxn = !!ev.paymentId && txnKeys.has(`overage:${ev.paymentId}`);
       const flag = (note: string) =>

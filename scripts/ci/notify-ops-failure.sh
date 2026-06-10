@@ -11,6 +11,9 @@ if [ -z "${SLACK_OPS_WEBHOOK_URL:-}" ]; then
   exit 0
 fi
 
-payload=$(printf '{"text":":rotating_light: *%s* failed.\n<%s|Run logs>"}' "$JOB_NAME" "$RUN_URL")
+# Review fix — jq-built payload: printf interpolation produced malformed
+# JSON for job names containing quotes/backslashes.
+payload=$(jq -n --arg job "$JOB_NAME" --arg url "$RUN_URL" \
+  '{text: (":rotating_light: *" + $job + "* failed.\n<" + $url + "|Run logs>")}')
 curl -fsS -X POST -H 'Content-Type: application/json' -d "$payload" "$SLACK_OPS_WEBHOOK_URL" \
   || echo "::warning::Slack notification failed for ${JOB_NAME}"
