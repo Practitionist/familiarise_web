@@ -147,7 +147,7 @@ export async function GET() {
       totalRevenue,
       revenueThisMonth: sumPaise(revenueThisMonth._sum.amount),
       avgSessionValue,
-      totalRefunds: refundTotal._sum?.amountPaise ?? 0,
+      totalRefunds: sumPaise(refundTotal._sum?.amountPaise),
 
       // Top domains
       topDomains: formattedTopDomains,
