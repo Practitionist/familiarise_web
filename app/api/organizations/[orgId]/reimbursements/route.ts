@@ -123,7 +123,7 @@ export async function GET(
       userId: b.userId,
       name: userMap.get(b.userId)?.name ?? null,
       email: userMap.get(b.userId)?.email ?? null,
-      totalPaise: b._sum?.amount ?? 0,
+      totalPaise: sumPaise(b._sum?.amount),
       paymentCount:
         typeof b._count === "object" && b._count
           ? ((b._count as { _all?: number })._all ?? 0)
