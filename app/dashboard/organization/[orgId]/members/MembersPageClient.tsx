@@ -23,6 +23,7 @@ import {
   errorMessageFromBody,
 } from "@/lib/fetch-helpers";
 import { humanizeOrgError } from "@/lib/labels/org-errors";
+import { isBlockedRoleTransition } from "@/lib/enterprise/role-transitions";
 import {
   DashboardHeader,
   DashboardContent,
@@ -570,6 +571,14 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
                 </p>
               </div>
             )}
+            {editMember &&
+              isBlockedRoleTransition(editMember.role, editRole) && (
+                <p className="text-sm text-red-600">
+                  Members cannot switch between Learner and Expert roles.
+                  Remove the member and re-invite them with the new role
+                  instead.
+                </p>
+              )}
             {editError && <p className="text-sm text-red-600">{editError}</p>}
           </div>
           <DialogFooter>
@@ -578,7 +587,11 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
             </Button>
             <Button
               onClick={() => editMutation.mutate()}
-              disabled={editMutation.isPending}
+              disabled={
+                editMutation.isPending ||
+                (editMember !== null &&
+                  isBlockedRoleTransition(editMember.role, editRole))
+              }
             >
               {editMutation.isPending ? "Saving…" : "Save changes"}
             </Button>
