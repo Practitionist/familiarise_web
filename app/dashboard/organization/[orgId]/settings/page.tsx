@@ -70,6 +70,8 @@ interface SettingsResponse {
   profile: {
     id: string;
     status: OrgStatus;
+    // Optimistic-lock clock — echoed back as expectedVersion on PATCH.
+    version: number;
     canSponsor: boolean;
     canHost: boolean;
     billingEmail: string | null;
@@ -112,6 +114,7 @@ interface PatchPayload {
   gstin?: string | null;
   gstStateCode?: string | null;
   gstRegStatus?: GstRegStatus;
+  expectedVersion?: number;
 }
 
 async function patchSettings(orgId: string, payload: PatchPayload) {
@@ -121,7 +124,14 @@ async function patchSettings(orgId: string, payload: PatchPayload) {
     body: JSON.stringify(payload),
   });
   const body = await res.json();
-  if (!res.ok) throw new Error(body.error || "Failed to update settings");
+  if (!res.ok) {
+    // Carry the structured code so onError can branch (VERSION_CONFLICT →
+    // stale-tab dialog instead of the generic error banner).
+    throw Object.assign(new Error(body.error || "Failed to update settings"), {
+      code: body.code as string | undefined,
+      currentVersion: body.currentVersion as number | undefined,
+    });
+  }
   return body;
 }
 
@@ -160,6 +170,10 @@ export default function OrgSettingsPage({
   const [pendingDisable, setPendingDisable] = useState<
     null | "canSponsor" | "canHost"
   >(null);
+  // Stale-tab write rejected by the server's version CAS (409
+  // VERSION_CONFLICT) — the dialog offers a reload instead of silently
+  // letting last-write-wins eat the other session's changes.
+  const [conflictOpen, setConflictOpen] = useState(false);
 
   useEffect(() => {
     if (!data) return;
@@ -187,6 +201,8 @@ export default function OrgSettingsPage({
         description: description.trim() || null,
         industry: industry.trim() || null,
         website: website.trim() || null,
+        // Optimistic lock — the server CASes on this and 409s a stale tab.
+        ...(data && { expectedVersion: data.profile.version }),
         ...(isAtLeast("OWNER") && {
           slug: slug.trim() || undefined,
           billingEmail: billingEmail.trim() || null,
@@ -202,7 +218,12 @@ export default function OrgSettingsPage({
       setError(null);
       setTimeout(() => setSuccess(false), 2500);
     },
-    onError: (err: Error) => {
+    onError: (err: Error & { code?: string }) => {
+      if (err.code === "VERSION_CONFLICT") {
+        setConflictOpen(true);
+        setSuccess(false);
+        return;
+      }
       setError(err.message);
       setSuccess(false);
     },
@@ -678,6 +699,33 @@ export default function OrgSettingsPage({
               <AlertDialogCancel>Cancel</AlertDialogCancel>
               <AlertDialogAction onClick={confirmCapabilityDisable}>
                 Disable
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        <AlertDialog open={conflictOpen} onOpenChange={setConflictOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Settings changed elsewhere</AlertDialogTitle>
+              <AlertDialogDescription>
+                Another session (a second tab, or a teammate) saved these
+                settings after you loaded this page. Your change was not
+                applied. Reload to see the latest values, then make your edit
+                again.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogAction
+                onClick={() => {
+                  setConflictOpen(false);
+                  // Refetch resets every form field via the data-sync effect.
+                  queryClient.invalidateQueries({
+                    queryKey: ["org-settings", orgId],
+                  });
+                }}
+              >
+                Reload settings
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
