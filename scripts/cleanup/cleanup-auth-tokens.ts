@@ -18,6 +18,7 @@
  */
 
 import prisma from "../../lib/prisma";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 export interface AuthTokenCleanupResult {
   success: boolean;
@@ -32,7 +33,15 @@ export interface AuthTokenCleanupResult {
 /**
  * Clean up all expired auth tokens
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function cleanupAuthTokens(): Promise<AuthTokenCleanupResult> {
+  return withCronLock("cleanup-auth-tokens", { failMode: "open" }, () =>
+    cleanupAuthTokensUnlocked(),
+  );
+}
+
+async function cleanupAuthTokensUnlocked(): Promise<AuthTokenCleanupResult> {
   const errors: string[] = [];
   let verificationTokensDeleted = 0;
   let sessionsDeleted = 0;

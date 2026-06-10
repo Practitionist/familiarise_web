@@ -22,6 +22,7 @@
 
 import prisma from "../../lib/prisma";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 
 // Grace period before deleting orphaned files (days)
 const ORPHAN_GRACE_PERIOD_DAYS = 7;
@@ -248,7 +249,15 @@ async function deleteOrphanedFiles(
 /**
  * Main function to reconcile document storage
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function reconcileDocumentStorage(): Promise<DocumentReconciliationResult> {
+  return withCronLock("reconcile-document-storage", { failMode: "open", ttlMs: LONG_JOB_TTL_MS }, () =>
+    reconcileDocumentStorageUnlocked(),
+  );
+}
+
+async function reconcileDocumentStorageUnlocked(): Promise<DocumentReconciliationResult> {
   const errors: string[] = [];
   let orphanedFilesFound = 0;
   let orphanedFilesDeleted = 0;

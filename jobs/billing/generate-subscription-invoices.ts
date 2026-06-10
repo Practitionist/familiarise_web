@@ -35,6 +35,7 @@ import { BILLABLE_ORG_STATUSES } from "@/lib/enterprise/org-status";
 import { notifyOrgLicenseRenewalUpcoming } from "@/lib/novu/org-workflows";
 import { getAppUrl } from "@/lib/url";
 import { Currency, OrgInvoiceStatus, Prisma } from "@prisma/client";
+import { withCronLock, CronLockHeldError, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 
 // Reminder fires when nextInvoiceDate is within this many days. Once
 // per cycle (gated by BillingSubscription.renewalReminderSentAt).
@@ -304,12 +305,21 @@ async function main() {
   console.log(
     `[generate-subscription-invoices] Starting at ${new Date().toISOString()}`,
   );
-  await runGenerateSubscriptionInvoices();
+  await withCronLock(
+    "generate-subscription-invoices",
+    { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
+    () => runGenerateSubscriptionInvoices(),
+  );
 }
 
 if (require.main === module) {
   main()
     .catch((err) => {
+      // #476 — lock held = another run is live; skip cleanly (exit 0).
+      if (err instanceof CronLockHeldError) {
+        console.log(`⏭️  ${err.message}`);
+        return;
+      }
       console.error("[generate-subscription-invoices] Failed:", err);
       process.exitCode = 1;
     })

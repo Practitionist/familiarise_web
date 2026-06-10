@@ -23,6 +23,7 @@ import prisma from "../../lib/prisma";
 import { PaymentStatus, AppointmentsType } from "@prisma/client";
 import { AppointmentType } from "../../lib/payments/payouts/constants";
 import { createEarningsFromPayment } from "../../lib/payments/payouts/earnings-service";
+import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 
 // Only sync payments within the last 30 days
 const SYNC_WINDOW_DAYS = 30;
@@ -62,7 +63,15 @@ function mapAppointmentType(type: AppointmentsType): AppointmentType {
  * Find succeeded payments without earnings and create them
  * Uses batch processing to handle large datasets efficiently
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
+  return withCronLock("sync-payment-earnings", { failMode: "closed", ttlMs: LONG_JOB_TTL_MS }, () =>
+    syncPaymentEarningsUnlocked(),
+  );
+}
+
+async function syncPaymentEarningsUnlocked(): Promise<PaymentEarningSyncResult> {
   const errors: string[] = [];
   let totalProcessed = 0;
   let createdCount = 0;

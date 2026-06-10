@@ -23,6 +23,7 @@ import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { notifyOrgWalletLow } from "@/lib/novu/org-workflows";
 import { getAppUrl } from "@/lib/url";
+import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
 
 const COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
@@ -96,7 +97,11 @@ export async function runWalletLowBalance(): Promise<WalletLowStats> {
 
 async function main() {
   console.log(`[wallet-low-balance] Starting at ${new Date().toISOString()}`);
-  const stats = await runWalletLowBalance();
+  const stats = await withCronLock(
+    "wallet-low-balance",
+    { failMode: "open" },
+    () => runWalletLowBalance(),
+  );
   console.log(
     `[wallet-low-balance] Done. scanned=${stats.scanned} notified=${stats.notified}`,
   );
@@ -105,6 +110,11 @@ async function main() {
 if (require.main === module) {
   main()
     .catch((err) => {
+      // #476 — lock held = another run is live; skip cleanly (exit 0).
+      if (err instanceof CronLockHeldError) {
+        console.log(`⏭️  ${err.message}`);
+        return;
+      }
       console.error("[wallet-low-balance] Failed:", err);
       process.exitCode = 1;
     })

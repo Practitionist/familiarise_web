@@ -26,6 +26,7 @@
  */
 
 import prisma from "../../lib/prisma";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 const DEFAULT_GRACE_HOURS = 6; // gateway retry budget + user completion window
 
@@ -46,7 +47,17 @@ export interface AbandonedOrgTopUpCleanupOptions {
 /**
  * Reap pending wallet top-up placeholders older than the grace window.
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function cleanupAbandonedOrgTopUps(
+  options: AbandonedOrgTopUpCleanupOptions = {},
+): Promise<AbandonedOrgTopUpCleanupResult> {
+  return withCronLock("cleanup-abandoned-org-top-ups", { failMode: "closed" }, () =>
+    cleanupAbandonedOrgTopUpsUnlocked(options),
+  );
+}
+
+async function cleanupAbandonedOrgTopUpsUnlocked(
   options: AbandonedOrgTopUpCleanupOptions = {},
 ): Promise<AbandonedOrgTopUpCleanupResult> {
   const graceHours = options.graceHours ?? DEFAULT_GRACE_HOURS;

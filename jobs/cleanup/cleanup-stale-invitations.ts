@@ -17,6 +17,7 @@ import {
   type StaleInvitationsCleanupResult,
 } from "../../scripts/cleanup/cleanup-stale-invitations";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 
 function outputToGitHubActions(result: StaleInvitationsCleanupResult): void {
   if (!process.env.GITHUB_ACTIONS) return;
@@ -60,6 +61,11 @@ async function main(): Promise<void> {
       process.exit(1);
     }
   } catch (error) {
+    // #476 — lock held = another run is live; skip cleanly (exit 0).
+    if (error instanceof CronLockHeldError) {
+      console.log(`⏭️  ${error.message}`);
+      return;
+    }
     console.error("❌ Fatal error in stale invitation cleanup:", error);
     process.exit(1);
   } finally {

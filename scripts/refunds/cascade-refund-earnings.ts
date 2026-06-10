@@ -24,6 +24,7 @@ import { Prisma, RefundStatus } from "@prisma/client";
 
 import prisma from "../../lib/prisma";
 import { applyRefundCascade } from "../../lib/payments/operations/refund";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 export interface RefundEarningCascadeResult {
   success: boolean;
@@ -46,7 +47,15 @@ export interface RefundEarningCascadeResult {
  * signal, and `applyRefundCascade` claims it atomically so this cron, the webhook
  * and the app path can never double-process the same refund.
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function cascadeRefundToEarnings(): Promise<RefundEarningCascadeResult> {
+  return withCronLock("cascade-refund-earnings", { failMode: "closed" }, () =>
+    cascadeRefundToEarningsUnlocked(),
+  );
+}
+
+async function cascadeRefundToEarningsUnlocked(): Promise<RefundEarningCascadeResult> {
   const errors: string[] = [];
   let updatedCount = 0;
   let errorCount = 0;

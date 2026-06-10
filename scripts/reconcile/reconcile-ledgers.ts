@@ -76,6 +76,7 @@ import type { Prisma } from "@prisma/client";
 import { checkPaymentLegsSumToAmount } from "@/lib/payments/payment-legs";
 import { ledgerBalancePaise } from "@/lib/payments/ledger/post";
 import { sumPaise } from "@/lib/payments/utils/money";
+import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 
 export type ReconcileScope = {
   /** Human-readable scope tag, e.g. "full" or "org:<orgId>". */
@@ -179,7 +180,19 @@ export type ReconcileReport = {
   findings: Finding[];
 };
 
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-open: read-only auditor, lock is belt-and-braces.
 export async function runReconcileLedgers(
+  opts: ReconcileScope,
+): Promise<ReconcileReport> {
+  return withCronLock(
+    "reconcile-ledgers",
+    { failMode: "open", ttlMs: LONG_JOB_TTL_MS },
+    () => runReconcileLedgersUnlocked(opts),
+  );
+}
+
+async function runReconcileLedgersUnlocked(
   opts: ReconcileScope,
 ): Promise<ReconcileReport> {
   const startedAt = Date.now();

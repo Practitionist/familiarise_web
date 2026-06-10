@@ -18,6 +18,7 @@
 
 import prisma from "../../lib/prisma";
 import { runDispatchTick } from "../../lib/enterprise/outbound-webhooks/worker";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 export interface DispatchOutboundWebhooksResult {
   scanned: number;
@@ -28,7 +29,15 @@ export interface DispatchOutboundWebhooksResult {
   errors: string[];
 }
 
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function dispatchOutboundWebhooks(): Promise<DispatchOutboundWebhooksResult> {
+  return withCronLock("dispatch-outbound-webhooks", { failMode: "open" }, () =>
+    dispatchOutboundWebhooksUnlocked(),
+  );
+}
+
+async function dispatchOutboundWebhooksUnlocked(): Promise<DispatchOutboundWebhooksResult> {
   const tick = await runDispatchTick({ prisma });
   return {
     scanned: tick.scanned,

@@ -9,6 +9,7 @@ import prisma from "@/lib/prisma";
 import { WaitlistStatus } from "@prisma/client";
 import { sendWaitlistExpiringEmail } from "@/lib/waitlist/notifications";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 export interface SendRemindersResult {
   found: number;
@@ -24,7 +25,14 @@ export interface SendRemindersResult {
  * 2. Send reminder email
  * 3. Mark as reminded
  */
+// #476 — entry-level cron lock; fail-open (repeat-safe side effects).
 export async function sendExpirationRemindersJob(): Promise<SendRemindersResult> {
+  return withCronLock("send-expiration-reminders", { failMode: "open" }, () =>
+    sendExpirationRemindersJobUnlocked(),
+  );
+}
+
+async function sendExpirationRemindersJobUnlocked(): Promise<SendRemindersResult> {
   await abortIfMaintenance("send-expiration-reminders");
   const startTime = Date.now();
   const errors: Array<{ id: string; error: string }> = [];

@@ -19,6 +19,7 @@
 
 import prisma from "../../lib/prisma";
 import { PaymentStatus, PaymentGateway } from "@prisma/client";
+import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 
 // Only reconcile payments older than 5 minutes (give webhooks time)
 const MIN_AGE_MINUTES = 5;
@@ -175,7 +176,15 @@ function mapGatewayStatus(
 /**
  * Find and reconcile stale PENDING payments
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function reconcilePaymentStatus(): Promise<PaymentReconciliationResult> {
+  return withCronLock("reconcile-payment-status", { failMode: "closed", ttlMs: LONG_JOB_TTL_MS }, () =>
+    reconcilePaymentStatusUnlocked(),
+  );
+}
+
+async function reconcilePaymentStatusUnlocked(): Promise<PaymentReconciliationResult> {
   const errors: string[] = [];
   let reconciledCount = 0;
   let succeededCount = 0;

@@ -19,6 +19,7 @@
 
 import prisma from "../../lib/prisma";
 import { DisputeStatus } from "@prisma/client";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 // Alert for disputes due within this many hours
 const ALERT_THRESHOLD_HOURS = 48;
@@ -48,7 +49,15 @@ interface DisputeAlert {
 /**
  * Find disputes with approaching deadlines and generate alerts
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function alertDisputeDeadlines(): Promise<DisputeDeadlineAlertResult> {
+  return withCronLock("alert-dispute-deadlines", { failMode: "open" }, () =>
+    alertDisputeDeadlinesUnlocked(),
+  );
+}
+
+async function alertDisputeDeadlinesUnlocked(): Promise<DisputeDeadlineAlertResult> {
   const now = new Date();
   const alertThreshold = new Date(
     Date.now() + ALERT_THRESHOLD_HOURS * 60 * 60 * 1000,

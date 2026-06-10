@@ -38,6 +38,7 @@ import { X509Certificate } from "node:crypto";
 import prisma from "../../lib/prisma";
 import { AUDIT_ACTIONS } from "../../lib/enterprise/audit-actions";
 import { notifyOrgSsoCertExpiring } from "../../lib/novu/org-workflows";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 type Severity = "WARN" | "CRITICAL" | "EXPIRED";
 
@@ -74,7 +75,15 @@ function parseNotAfter(samlConfigJson: string): Date | null {
   }
 }
 
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function runSsoCertExpiryAlert(): Promise<SsoCertExpiryAlertResult> {
+  return withCronLock("sso-cert-expiry-alert", { failMode: "open" }, () =>
+    runSsoCertExpiryAlertUnlocked(),
+  );
+}
+
+async function runSsoCertExpiryAlertUnlocked(): Promise<SsoCertExpiryAlertResult> {
   const now = new Date();
   const errors: string[] = [];
   let alerted = 0;

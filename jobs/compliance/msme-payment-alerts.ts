@@ -26,11 +26,23 @@ import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { Resend } from "resend";
 import { getAppUrl } from "@/lib/url";
+import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
 
 const ALERT_WINDOW_DAYS = 5;
 const MAX_ROWS_IN_EMAIL = 20;
 
+// #476 — entry-level cron lock; fail-open (repeat-safe side effects).
 export async function runMsmePaymentAlerts(): Promise<{
+  alerted: number;
+  atRisk: number;
+  emailSent: boolean;
+}> {
+  return withCronLock("msme-payment-alerts", { failMode: "open" }, () =>
+    runMsmePaymentAlertsUnlocked(),
+  );
+}
+
+async function runMsmePaymentAlertsUnlocked(): Promise<{
   alerted: number;
   atRisk: number;
   emailSent: boolean;
@@ -174,6 +186,11 @@ if (require.main === module) {
       );
     })
     .catch((err) => {
+      // #476 — lock held = another run is live; skip cleanly (exit 0).
+      if (err instanceof CronLockHeldError) {
+        console.log(`⏭️  ${err.message}`);
+        return;
+      }
       console.error("[MSME] cron failed:", err);
       process.exitCode = 1;
     })

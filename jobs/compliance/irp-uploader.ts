@@ -32,6 +32,7 @@ import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { generateIrn } from "@/lib/compliance/irp";
 import { buildIrpPayload } from "@/lib/compliance/irp-payload";
+import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
 
 // #703 — platform-side seller constants. GSTIN mirrors the invoice-PDF
 // route (PLATFORM_GSTIN); the rest are env-overridable for a future
@@ -48,7 +49,18 @@ const SELLER = {
   stateCode: process.env.SUPPLIER_STATE_CODE ?? "KA",
 };
 
+// #476 — entry-level cron lock; fail-open (repeat-safe side effects).
 export async function runIrpUploader(): Promise<{
+  processed: number;
+  failed: number;
+  skipped: number;
+}> {
+  return withCronLock("irp-uploader", { failMode: "open" }, () =>
+    runIrpUploaderUnlocked(),
+  );
+}
+
+async function runIrpUploaderUnlocked(): Promise<{
   processed: number;
   failed: number;
   skipped: number;
@@ -216,6 +228,11 @@ export async function runIrpUploader(): Promise<{
 if (require.main === module) {
   runIrpUploader()
     .catch((err) => {
+      // #476 — lock held = another run is live; skip cleanly (exit 0).
+      if (err instanceof CronLockHeldError) {
+        console.log(`⏭️  ${err.message}`);
+        return;
+      }
       console.error("[IRP] uploader failed:", err);
       process.exitCode = 1;
     })

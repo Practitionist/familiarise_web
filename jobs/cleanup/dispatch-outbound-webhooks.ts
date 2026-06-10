@@ -20,6 +20,7 @@ import {
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import prisma from "../../lib/prisma";
 import { recordSystemEvent } from "../../lib/enterprise/system-events";
+import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 
 // The delivery table IS the queue (see worker.ts). If overdue rows pile up
 // past this, the worker isn't keeping pace — page someone (#776 §K).
@@ -74,6 +75,11 @@ if (require.main === module) {
       await checkQueueBacklog();
       if (!result.success) process.exit(1);
     } catch (err) {
+      // #476 — lock held = another run is live; skip cleanly (exit 0).
+      if (err instanceof CronLockHeldError) {
+        console.log(`⏭️  ${err.message}`);
+        return;
+      }
       console.error("Fatal error:", err);
       process.exit(1);
     } finally {

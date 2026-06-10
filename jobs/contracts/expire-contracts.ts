@@ -26,6 +26,7 @@
 import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
 
 interface ExpireStats {
   scanned: number;
@@ -111,7 +112,11 @@ export async function runExpireContracts(): Promise<ExpireStats> {
 
 async function main() {
   console.log(`[expire-contracts] Starting at ${new Date().toISOString()}`);
-  const stats = await runExpireContracts();
+  const stats = await withCronLock(
+    "expire-contracts",
+    { failMode: "open" },
+    () => runExpireContracts(),
+  );
   console.log(
     `[expire-contracts] Done. scanned=${stats.scanned} expired=${stats.expired} assignmentsClosed=${stats.assignmentsClosed}`,
   );
@@ -122,6 +127,11 @@ async function main() {
 if (require.main === module) {
   main()
     .catch((err) => {
+      // #476 — lock held = another run is live; skip cleanly (exit 0).
+      if (err instanceof CronLockHeldError) {
+        console.log(`⏭️  ${err.message}`);
+        return;
+      }
       console.error("[expire-contracts] Failed:", err);
       process.exitCode = 1;
     })

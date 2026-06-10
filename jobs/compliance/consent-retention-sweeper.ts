@@ -25,6 +25,7 @@
 
 import prisma from "@/lib/prisma";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
+import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
 
 const DELETE_BATCH_SIZE = 500;
 const MAX_BATCHES_PER_RUN = 40; // caps total work at 20k rows / sweep
@@ -91,7 +92,11 @@ async function main() {
   console.log(
     `[consent-retention-sweeper] Starting at ${new Date().toISOString()}`,
   );
-  const r = await runConsentRetentionSweeper();
+  const r = await withCronLock(
+    "consent-retention-sweeper",
+    { failMode: "open" },
+    () => runConsentRetentionSweeper(),
+  );
   console.log(
     `[consent-retention-sweeper] Done. expired=${r.expired} deleted=${r.deleted} deleteMode=${r.deleteMode}`,
   );
@@ -100,6 +105,11 @@ async function main() {
 if (require.main === module) {
   main()
     .catch((err) => {
+      // #476 — lock held = another run is live; skip cleanly (exit 0).
+      if (err instanceof CronLockHeldError) {
+        console.log(`⏭️  ${err.message}`);
+        return;
+      }
       console.error("[consent-retention-sweeper] Failed:", err);
       process.exitCode = 1;
     })

@@ -16,6 +16,7 @@ import { PaymentGateway, Prisma, RefundStatus } from "@prisma/client";
 import { listRefunds } from "../../lib/payments";
 import { notifyRefundFailed } from "../../lib/novu/service";
 import { getAppUrl } from "../../lib/url";
+import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 
 // Threshold: Only reconcile refunds older than 1 hour
 const RECONCILIATION_THRESHOLD_MS = 60 * 60 * 1000;
@@ -55,7 +56,15 @@ function mapGatewayRefundStatus(status: string): RefundStatus {
 /**
  * Find and reconcile PENDING refunds with placeholder IDs
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function reconcilePendingRefunds(): Promise<RefundReconciliationResult> {
+  return withCronLock("reconcile-pending-refunds", { failMode: "closed", ttlMs: LONG_JOB_TTL_MS }, () =>
+    reconcilePendingRefundsUnlocked(),
+  );
+}
+
+async function reconcilePendingRefundsUnlocked(): Promise<RefundReconciliationResult> {
   const thresholdDate = new Date(Date.now() - RECONCILIATION_THRESHOLD_MS);
   const errors: string[] = [];
   let reconciledCount = 0;
@@ -195,7 +204,15 @@ export interface FailedRefundNotifyResult {
  * else the default copy), notifies the payer, and claim-stamps
  * `failedNotifiedAt` so the same failure isn't paged twice.
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function notifyFailedRefunds(): Promise<FailedRefundNotifyResult> {
+  return withCronLock("reconcile-pending-refunds", { failMode: "closed", ttlMs: LONG_JOB_TTL_MS }, () =>
+    notifyFailedRefundsUnlocked(),
+  );
+}
+
+async function notifyFailedRefundsUnlocked(): Promise<FailedRefundNotifyResult> {
   const now = new Date();
   const failed = await prisma.refund.findMany({
     where: {

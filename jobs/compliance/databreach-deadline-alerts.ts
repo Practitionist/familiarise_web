@@ -37,12 +37,24 @@ import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { Resend } from "resend";
 import { getAppUrl } from "@/lib/url";
+import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
 
 const REPORTING_DEADLINE_HOURS = 72;
 const WARN_HOURS_BEFORE_DEADLINE = 12; // surface breaches when ≤12h remain
 const MAX_ROWS_IN_EMAIL = 50;
 
+// #476 — entry-level cron lock; fail-open (repeat-safe side effects).
 export async function runDataBreachDeadlineAlerts(): Promise<{
+  atRisk: number;
+  overdue: number;
+  emailSent: boolean;
+}> {
+  return withCronLock("databreach-deadline-alerts", { failMode: "open" }, () =>
+    runDataBreachDeadlineAlertsUnlocked(),
+  );
+}
+
+async function runDataBreachDeadlineAlertsUnlocked(): Promise<{
   atRisk: number;
   overdue: number;
   emailSent: boolean;
@@ -164,6 +176,11 @@ if (require.main === module) {
       );
     })
     .catch((err) => {
+      // #476 — lock held = another run is live; skip cleanly (exit 0).
+      if (err instanceof CronLockHeldError) {
+        console.log(`⏭️  ${err.message}`);
+        return;
+      }
       console.error("[DataBreach] cron failed:", err);
       process.exitCode = 1;
     })

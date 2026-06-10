@@ -12,6 +12,7 @@
  */
 import prisma from "@/lib/prisma";
 import { confirmTopUp } from "@/lib/api/organizations/wallet";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 export interface TopupCaptureSweepResult {
   success: boolean;
@@ -29,7 +30,17 @@ export interface TopupCaptureSweepOptions {
   limit?: number;
 }
 
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function sweepOrphanedTopupCaptures(
+  opts: TopupCaptureSweepOptions = {},
+): Promise<TopupCaptureSweepResult> {
+  return withCronLock("sweep-orphaned-topup-captures", { failMode: "closed" }, () =>
+    sweepOrphanedTopupCapturesUnlocked(opts),
+  );
+}
+
+async function sweepOrphanedTopupCapturesUnlocked(
   opts: TopupCaptureSweepOptions = {},
 ): Promise<TopupCaptureSweepResult> {
   const graceMinutes = opts.graceMinutes ?? 5;

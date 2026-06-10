@@ -21,6 +21,7 @@ import Stripe from "stripe";
 import { cancelRazorpayOrder } from "../../lib/payments/core/razorpay";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import prisma from "@/lib/prisma";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 /**
  * Result structure for cleanup operations
@@ -110,7 +111,15 @@ export async function cancelPaymentIntent(
  *
  * @returns CleanupResult with counts and error details
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function cleanupAbandonedPayments(): Promise<CleanupResult> {
+  return withCronLock("cleanup-abandoned-payments", { failMode: "closed" }, () =>
+    cleanupAbandonedPaymentsUnlocked(),
+  );
+}
+
+async function cleanupAbandonedPaymentsUnlocked(): Promise<CleanupResult> {
   console.log("🧹 Starting abandoned payment cleanup...");
 
   const result: CleanupResult = {
@@ -375,7 +384,15 @@ export async function cleanupAbandonedPayments(): Promise<CleanupResult> {
  *
  * @returns CleanupResult with counts and error details
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function cleanupExpiredApprovalPendingPayments(): Promise<CleanupResult> {
+  return withCronLock("cleanup-abandoned-payments", { failMode: "closed" }, () =>
+    cleanupExpiredApprovalPendingPaymentsUnlocked(),
+  );
+}
+
+async function cleanupExpiredApprovalPendingPaymentsUnlocked(): Promise<CleanupResult> {
   console.log(
     "🧹 Starting cleanup of expired APPROVED_PENDING_PAYMENT consultations...",
   );

@@ -15,6 +15,7 @@ import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import { rollupOrgInvoiceAccruals } from "@/lib/payments/billing/invoice-rollup";
+import { withCronLock, CronLockHeldError, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 
 export async function settleInvoiceAccruals(): Promise<{
   orgsProcessed: number;
@@ -86,7 +87,11 @@ async function main() {
   console.log(
     `[settle-invoice-accruals] Starting at ${new Date().toISOString()}`,
   );
-  const r = await settleInvoiceAccruals();
+  const r = await withCronLock(
+    "settle-invoice-accruals",
+    { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
+    () => settleInvoiceAccruals(),
+  );
   console.log(
     `[settle-invoice-accruals] Done. orgsProcessed=${r.orgsProcessed} invoicesCreated=${r.invoicesCreated}`,
   );
@@ -95,6 +100,11 @@ async function main() {
 if (require.main === module) {
   main()
     .catch((err) => {
+      // #476 — lock held = another run is live; skip cleanly (exit 0).
+      if (err instanceof CronLockHeldError) {
+        console.log(`⏭️  ${err.message}`);
+        return;
+      }
       console.error("[settle-invoice-accruals] Failed:", err);
       process.exitCode = 1;
     })

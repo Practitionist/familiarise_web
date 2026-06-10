@@ -24,6 +24,7 @@ import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { notifyMemberOverageTimedOut } from "@/lib/novu/org-workflows";
 import { getAppUrl } from "@/lib/url";
+import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
 
 // #779 — 14-day window before a never-settled member overage times out.
 const TIMEOUT_DAYS = 14;
@@ -110,7 +111,11 @@ async function main() {
   console.log(
     `[timeout-member-overages] Starting at ${new Date().toISOString()}`,
   );
-  const stats = await runTimeoutMemberOverages();
+  const stats = await withCronLock(
+    "timeout-member-overages",
+    { failMode: "closed" },
+    () => runTimeoutMemberOverages(),
+  );
   console.log(
     `[timeout-member-overages] Done. scanned=${stats.scanned} timedOut=${stats.timedOut}`,
   );
@@ -119,6 +124,11 @@ async function main() {
 if (require.main === module) {
   main()
     .catch((err) => {
+      // #476 — lock held = another run is live; skip cleanly (exit 0).
+      if (err instanceof CronLockHeldError) {
+        console.log(`⏭️  ${err.message}`);
+        return;
+      }
       console.error("[timeout-member-overages] Failed:", err);
       process.exitCode = 1;
     })

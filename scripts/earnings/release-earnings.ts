@@ -17,6 +17,7 @@
 import { EarningStatus, Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { sumPaise } from "@/lib/payments/utils/money";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 /**
  * Result structure for release operations
@@ -39,7 +40,15 @@ export interface ReleaseResult {
  *
  * @returns ReleaseResult with counts and error details
  */
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function releaseEarningsFromHold(): Promise<ReleaseResult> {
+  return withCronLock("release-earnings", { failMode: "closed" }, () =>
+    releaseEarningsFromHoldUnlocked(),
+  );
+}
+
+async function releaseEarningsFromHoldUnlocked(): Promise<ReleaseResult> {
   console.log("💰 Starting earnings release from hold...");
 
   const result: ReleaseResult = {

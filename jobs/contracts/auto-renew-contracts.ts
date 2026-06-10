@@ -31,6 +31,7 @@ import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { Prisma } from "@prisma/client";
+import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
 
 const BATCH_SIZE = 500;
 
@@ -163,7 +164,11 @@ export async function runAutoRenewContracts(): Promise<RenewStats> {
 
 async function main() {
   console.log(`[auto-renew-contracts] Starting at ${new Date().toISOString()}`);
-  const stats = await runAutoRenewContracts();
+  const stats = await withCronLock(
+    "auto-renew-contracts",
+    { failMode: "open" },
+    () => runAutoRenewContracts(),
+  );
   console.log(
     `[auto-renew-contracts] Done. scanned=${stats.scanned} renewed=${stats.renewed} skipped=${stats.skipped}`,
   );
@@ -173,6 +178,11 @@ async function main() {
 if (require.main === module) {
   main()
     .catch((err) => {
+      // #476 — lock held = another run is live; skip cleanly (exit 0).
+      if (err instanceof CronLockHeldError) {
+        console.log(`⏭️  ${err.message}`);
+        return;
+      }
       console.error("[auto-renew-contracts] Failed:", err);
       process.exitCode = 1;
     })

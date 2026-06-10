@@ -30,6 +30,7 @@ import prisma from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { notifyOrgInvoiceOverdue } from "@/lib/novu/org-workflows";
 import { getAppUrl } from "@/lib/url";
+import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
 
 // #779 — 7-day cadence between escalations, capped at 3 reminders.
 const REMINDER_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -278,7 +279,11 @@ export async function runDunning(): Promise<DunningStats> {
 
 async function main() {
   console.log(`[dunning] Starting at ${new Date().toISOString()}`);
-  const stats = await runDunning();
+  const stats = await withCronLock(
+    "dunning",
+    { failMode: "closed" },
+    () => runDunning(),
+  );
   console.log(
     `[dunning] Done. scannedStage1=${stats.scannedStage1} markedOverdue=${stats.markedOverdue} scannedStage2=${stats.scannedStage2} remindersSent=${stats.remindersSent} suspended=${stats.suspended}`,
   );
@@ -287,6 +292,11 @@ async function main() {
 if (require.main === module) {
   main()
     .catch((err) => {
+      // #476 — lock held = another run is live; skip cleanly (exit 0).
+      if (err instanceof CronLockHeldError) {
+        console.log(`⏭️  ${err.message}`);
+        return;
+      }
       console.error("[dunning] Failed:", err);
       process.exitCode = 1;
     })
