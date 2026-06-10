@@ -12,6 +12,8 @@ import {
   RequestStatus,
 } from "@prisma/client";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
+import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
+import { recordSystemError } from "@/lib/enterprise/system-events";
 import { validateWebhookMetadata } from "@/schemas/webhooks/metadata";
 import { ZodError } from "zod";
 import { sendPaymentSuccessEmail, sendPaymentFailedEmail } from "@/lib/email";
@@ -1101,6 +1103,68 @@ async function confirmExistingAppointment(
   if (!appointment) {
     console.warn(`Appointment ${appointmentId} not found for confirmation`);
     return;
+  }
+
+  // #827 — first-confirmed-wins recheck for the EXCLUSIVE booking types.
+  // Checkout's hard-overlap check only blocks against isTentative:false
+  // slots and its tentative dedup is same-user-only, so two different users
+  // can both pay for overlapping slots; whichever capture webhook lands
+  // second must NOT flip its slots confirmed over the winner's. The loser
+  // stays tentative (the orphan/refund path picks it up, see #830) and the
+  // conflict is surfaced loudly instead of double-booking the consultant.
+  // Webinars/classes are capacity-based, not exclusive — skipped.
+  if (appointment.consultation || appointment.subscription) {
+    const mySlots = await tx.slotOfAppointment.findMany({
+      where: { appointmentId, isTentative: true },
+      select: {
+        id: true,
+        startsAt: true,
+        endsAt: true,
+        user: { select: { id: true } },
+      },
+    });
+    for (const slot of mySlots) {
+      // The non-booker participants (the consultant) attend both bookings —
+      // a confirmed overlapping slot sharing one of them is a true conflict.
+      const participantIds = slot.user
+        .map((u) => u.id)
+        .filter((id) => id !== userId);
+      if (participantIds.length === 0) continue;
+      const conflict = await tx.slotOfAppointment.findFirst({
+        where: {
+          id: { not: slot.id },
+          startsAt: { lt: slot.endsAt },
+          endsAt: { gt: slot.startsAt },
+          isTentative: false,
+          user: { some: { id: { in: participantIds } } },
+          appointment: { OR: buildOccupiedAppointmentFilter() },
+        },
+        select: { id: true, appointmentId: true },
+      });
+      if (conflict) {
+        console.error(
+          JSON.stringify({
+            event: "confirmation_blocked_double_booking",
+            appointmentId,
+            conflictingAppointmentId: conflict.appointmentId,
+            slotId: slot.id,
+            timestamp: new Date().toISOString(),
+          }),
+        );
+        void recordSystemError({
+          organizationId: null,
+          category: "PAYMENT",
+          summary: `Double-booking blocked at confirmation: appointment ${appointmentId} overlaps an already-confirmed slot — the payment needs a refund`,
+          err: new Error("CONFIRMATION_BLOCKED_DOUBLE_BOOKING"),
+          context: {
+            appointmentId,
+            conflictingAppointmentId: conflict.appointmentId,
+            slotId: slot.id,
+          },
+        }).catch(() => {});
+        return; // slots stay tentative; do not confirm over the winner
+      }
+    }
   }
 
   // FIX Issue #3: For CLASS, confirm ALL user's slots across all sessions
