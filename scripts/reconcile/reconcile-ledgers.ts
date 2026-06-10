@@ -1105,30 +1105,38 @@ export async function runReconcileLedgers(
         { periodStart: "asc" },
       ],
     });
-    let prev: (typeof active)[number] | null = null;
+    // Review fix — track the MAX periodEnd seen in the group, not just the
+    // previous row: one long cycle overlapping several later short ones would
+    // otherwise only flag the first (prev resets to the short row).
+    let maxEnd: (typeof active)[number] | null = null;
     for (const a of active) {
       if (
-        prev &&
-        prev.programId === a.programId &&
-        prev.membershipId === a.membershipId &&
-        prev.periodEnd.getTime() > a.periodStart.getTime()
+        maxEnd &&
+        maxEnd.programId === a.programId &&
+        maxEnd.membershipId === a.membershipId
       ) {
-        findings.push({
-          kind: "ASSIGNMENT_PERIOD_OVERLAP",
-          programAssignmentId: a.id,
-          expectedPaise: 0,
-          actualPaise: 0,
-          deltaPaise: 0,
-          details: {
-            unit: "none",
-            overlapsAssignmentId: prev.id,
-            programId: a.programId,
-            membershipId: a.membershipId,
-            note: "Two ACTIVE assignments overlap for the same (program, membership) — caps/seats double-count.",
-          },
-        });
+        if (maxEnd.periodEnd.getTime() > a.periodStart.getTime()) {
+          findings.push({
+            kind: "ASSIGNMENT_PERIOD_OVERLAP",
+            programAssignmentId: a.id,
+            expectedPaise: 0,
+            actualPaise: 0,
+            deltaPaise: 0,
+            details: {
+              unit: "none",
+              overlapsAssignmentId: maxEnd.id,
+              programId: a.programId,
+              membershipId: a.membershipId,
+              note: "Two ACTIVE assignments overlap for the same (program, membership) — caps/seats double-count.",
+            },
+          });
+        }
+        if (a.periodEnd.getTime() > maxEnd.periodEnd.getTime()) {
+          maxEnd = a;
+        }
+      } else {
+        maxEnd = a;
       }
-      prev = a;
     }
   }
 

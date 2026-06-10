@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { CancellationReason } from "@prisma/client";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 
@@ -209,7 +210,7 @@ export async function GET(req: NextRequest) {
         cancellationRate: `${cancellationRate}%`,
         totalBookingsInPeriod: totalBookings,
         potentialRefundAmount,
-        actualRefundedAmount: refunds._sum?.amountPaise || 0,
+        actualRefundedAmount: sumPaise(refunds._sum?.amountPaise),
         refundCount: refunds._count,
       },
       byReason,

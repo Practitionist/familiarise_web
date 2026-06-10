@@ -132,7 +132,7 @@ export async function getOperatorDashboardStats(): Promise<OperatorDashboardStat
     pendingPaymentsValue: sumPaise(pendingPaymentsAggregation._sum.amount),
     expiredPayments,
     totalRefunds,
-    totalRefundsValue: refundsAggregation._sum?.amountPaise ?? 0,
+    totalRefundsValue: sumPaise(refundsAggregation._sum?.amountPaise),
     activeDisputes,
     totalDisputes,
     recentPayments,

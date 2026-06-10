@@ -640,9 +640,10 @@ async function processSinglePayout(payout: {
         netAmount: payoutAmountAfterTDS,
         // #781 §C — engine returns a decimal fraction (0.001 = 194-O);
         // stored as integer bps so two engines can't disagree on units.
-        tdsRateAppliedBps: tds.tdsRate
-          ? Math.round(tds.tdsRate * 10_000)
-          : null,
+        // Review fix: != null so a legitimate 0% (Sec 197 zero-rate cert)
+        // persists as 0 bps instead of vanishing to null.
+        tdsRateAppliedBps:
+          tds.tdsRate != null ? Math.round(tds.tdsRate * 10_000) : null,
         tdsFinancialYear: financialYear,
         status: PayoutStatus.PROCESSING, // Will be updated via webhook
       },
