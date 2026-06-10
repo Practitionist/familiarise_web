@@ -18,6 +18,12 @@ import prisma from "../../lib/prisma";
 import { UserWithProfiles } from "./1a-create-users";
 import { config, getTotalAppointments } from "./config";
 
+// #780 — the extended client reads plan `price` as number; the raw model
+// types still say bigint.
+type PlanRead<T extends { price: bigint }> = Omit<T, "price"> & {
+  price: number;
+};
+
 // Appointment volumes - configurable via SEED_MODE environment variable
 const NUM_CONSULTATION = config.volumes.appointments.consultation;
 const NUM_SUBSCRIPTION = config.volumes.appointments.subscription;
@@ -159,7 +165,7 @@ const createMeetingSessionData = (
 
 const createConsultationAppointment = (
   consultee: UserWithProfiles,
-  consultationPlans: ConsultationPlan[],
+  consultationPlans: PlanRead<ConsultationPlan>[],
   defaultStatus: RequestStatus,
   isPastAppointment: boolean,
   slotStartTimeInUTC: Date,
@@ -212,7 +218,7 @@ const createConsultationAppointment = (
 
 const createSubscriptionAppointment = (
   consultee: UserWithProfiles,
-  subscriptionPlans: SubscriptionPlan[],
+  subscriptionPlans: PlanRead<SubscriptionPlan>[],
   consultantWeeklySlots: SlotOfAvailabilityWeekly[],
   defaultStatus: RequestStatus,
   isPastAppointment: boolean,
@@ -384,7 +390,7 @@ const createSubscriptionAppointment = (
 
 const createWebinarAppointment = async (
   consultee: UserWithProfiles,
-  webinarPlans: WebinarPlan[],
+  webinarPlans: PlanRead<WebinarPlan>[],
   consultees: UserWithProfiles[],
   isPastAppointment: boolean,
   slotStartTimeInUTC: Date,
@@ -455,7 +461,7 @@ const createWebinarAppointment = async (
 
 const createClassAppointment = async (
   consultee: UserWithProfiles,
-  classPlans: ClassPlan[],
+  classPlans: PlanRead<ClassPlan>[],
   consultees: UserWithProfiles[],
   isPastAppointment: boolean,
   startDate: Date,
@@ -551,10 +557,10 @@ const createClassAppointment = async (
 async function createAppointmentBatch(
   consultees: UserWithProfiles[],
   allSlots: SlotData[],
-  consultationPlans: ConsultationPlan[],
-  subscriptionPlans: SubscriptionPlan[],
-  webinarPlans: WebinarPlan[],
-  classPlans: ClassPlan[],
+  consultationPlans: PlanRead<ConsultationPlan>[],
+  subscriptionPlans: PlanRead<SubscriptionPlan>[],
+  webinarPlans: PlanRead<WebinarPlan>[],
+  classPlans: PlanRead<ClassPlan>[],
   weeklySlots: SlotOfAvailabilityWeekly[],
   startIndex: number,
   batchSize: number,

@@ -25,9 +25,9 @@
  *      the full fee/payable split is known (createEarningsFromPayment).
  */
 
-import type { Prisma, PrismaClient, WalletReason } from "@prisma/client";
+import type { WalletReason } from "@prisma/client";
 
-import prisma from "@/lib/prisma";
+import prisma, { type Db, type Tx } from "@/lib/prisma";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
 
 export class WalletInsufficientFundsError extends Error {
@@ -47,7 +47,7 @@ export class WalletInsufficientFundsError extends Error {
  * account would go negative. Must be called inside a Prisma transaction.
  */
 export async function walletDebit(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   params: {
     billingAccountId: string;
     amountPaise: number;
@@ -58,7 +58,9 @@ export async function walletDebit(
   },
 ): Promise<{ balanceAfter: number }> {
   if (params.amountPaise <= 0) {
-    throw new Error(`walletDebit requires positive amountPaise, got ${params.amountPaise}`);
+    throw new Error(
+      `walletDebit requires positive amountPaise, got ${params.amountPaise}`,
+    );
   }
   // Atomic conditional decrement via the ORM (no raw SQL): updateMany only matches
   // a row whose balance is already sufficient (gte excludes NULL too), so two
@@ -71,7 +73,10 @@ export async function walletDebit(
     data: { walletBalance: { decrement: params.amountPaise } },
   });
   if (updated.count === 0) {
-    throw new WalletInsufficientFundsError(params.billingAccountId, params.amountPaise);
+    throw new WalletInsufficientFundsError(
+      params.billingAccountId,
+      params.amountPaise,
+    );
   }
   const acct = await tx.billingAccount.findUniqueOrThrow({
     where: { id: params.billingAccountId },
@@ -90,7 +95,7 @@ export async function walletDebit(
  * Credit a wallet (top-up or refund). Same transaction semantics as debit.
  */
 export async function walletCredit(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   params: {
     billingAccountId: string;
     amountPaise: number;
@@ -103,7 +108,9 @@ export async function walletCredit(
   },
 ): Promise<{ balanceAfter: number }> {
   if (params.amountPaise <= 0) {
-    throw new Error(`walletCredit requires positive amountPaise, got ${params.amountPaise}`);
+    throw new Error(
+      `walletCredit requires positive amountPaise, got ${params.amountPaise}`,
+    );
   }
   // Atomic increment via the ORM (no raw SQL). WALLET-funded accounts are created
   // with walletBalance=0 (never null), and every mutation is increment/decrement,
@@ -159,7 +166,7 @@ export async function walletCredit(
  * confirmTopUp can assert the webhook amount matches what was authorized.
  */
 export async function initiateTopUp(
-  db: Prisma.TransactionClient | typeof prisma,
+  db: Tx | typeof prisma,
   params: {
     billingAccountId: string;
     amountPaise: number;
@@ -183,7 +190,9 @@ export async function initiateTopUp(
  * is confirmed twice, the second call is a no-op.
  */
 export async function confirmTopUp(
-  prisma: PrismaClient,
+  // #780 — must be the extended client; bare PrismaClient re-introduces bigint
+  // money types and its tx callback type blows the structural-compare limit.
+  prisma: Db,
   params: {
     providerOrderId: string;
     providerPaymentId: string;

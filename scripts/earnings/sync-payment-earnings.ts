@@ -20,12 +20,9 @@
  */
 
 import prisma from "../../lib/prisma";
-import { EarningStatus, EarningRole, PaymentStatus, AppointmentsType } from "@prisma/client";
-import {
-  PAYOUT_CONSTANTS,
-  AppointmentType,
-} from "../../lib/payments/payouts/constants";
-import { calculateRevenueSplit } from "../../lib/collaborators/service";
+import { PaymentStatus, AppointmentsType } from "@prisma/client";
+import { AppointmentType } from "../../lib/payments/payouts/constants";
+import { createEarningsFromPayment } from "../../lib/payments/payouts/earnings-service";
 
 // Only sync payments within the last 30 days
 const SYNC_WINDOW_DAYS = 30;
@@ -59,66 +56,6 @@ function mapAppointmentType(type: AppointmentsType): AppointmentType {
     default:
       return "CONSULTATION"; // Default to consultation hold period
   }
-}
-
-/**
- * Calculate earnings data for a payment
- */
-function calculateEarningsData(
-  payment: {
-    id: string;
-    amount: number;
-    originalAmount: number;
-    createdAt: Date;
-    appointment: {
-      appointmentType: AppointmentsType;
-    } | null;
-  },
-  consultantProfileId: string,
-) {
-  // Use original plan price (before platform-funded discounts/credits/tax) for earnings
-  // Payment.originalAmount is stored in paise (smallest unit) — same as earnings
-  const grossAmount = payment.originalAmount;
-  const platformFeePaise = Math.round(
-    (grossAmount * PAYOUT_CONSTANTS.PLATFORM_FEE_PERCENTAGE) / 100,
-  );
-  const consultantSharePaise = grossAmount - platformFeePaise;
-
-  // Get appointment type for hold period
-  const appointmentType = payment.appointment?.appointmentType
-    ? mapAppointmentType(payment.appointment.appointmentType)
-    : "CONSULTATION";
-
-  // Calculate hold period
-  const holdHours =
-    PAYOUT_CONSTANTS.HOLD_PERIOD_HOURS[appointmentType] ||
-    PAYOUT_CONSTANTS.HOLD_PERIOD_HOURS.CONSULTATION;
-
-  // For old payments, check if hold period has already passed
-  const paymentAge = Date.now() - payment.createdAt.getTime();
-  const holdPeriodMs = holdHours * 60 * 60 * 1000;
-
-  // If payment is older than hold period, set holdUntil in the past (will be released immediately)
-  const holdUntil =
-    paymentAge > holdPeriodMs
-      ? new Date(payment.createdAt.getTime() + holdPeriodMs) // Past date
-      : new Date(Date.now() + holdPeriodMs); // Future date
-
-  // Determine status based on whether hold period has passed
-  const status =
-    paymentAge > holdPeriodMs
-      ? EarningStatus.READY // Old payments go straight to READY
-      : EarningStatus.PENDING; // Recent payments start as PENDING
-
-  return {
-    consultantProfileId,
-    paymentId: payment.id,
-    grossAmount,
-    platformFeePaise,
-    consultantSharePaise,
-    status,
-    holdUntil,
-  };
 }
 
 /**
@@ -223,30 +160,19 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
       existingEarnings.map((e) => e.paymentId),
     );
 
-    // Prepare earnings to create and revenue updates
-    const earningsToCreate: Array<{
-      consultantProfileId: string;
-      paymentId: string;
-      grossAmount: number;
-      platformFeePaise: number;
-      consultantSharePaise: number;
-      status: EarningStatus;
-      holdUntil: Date;
-      role?: EarningRole;
-      shareBps?: number;
-    }> = [];
-
+    // #773 — delegate creation to createEarningsFromPayment, the single
+    // source of truth: it resolves collaborator + HOST-org settlement, nets
+    // shares, and posts the balanced booking:<paymentId> journal txn in the
+    // same operation. The old local writer minted full-share collaborator
+    // rows with NO journal — every synced multi-party payment was born as
+    // EARNINGS_WITHOUT_BOOKING_TXN drift. Old payments get a fresh hold
+    // window (the release cron flips them READY on schedule).
     for (const payment of payments) {
-      // Skip if earnings already exist
       if (existingPaymentIds.has(payment.id)) {
-        console.log(
-          `⏭️ Skipping payment ${payment.id} - earnings already exist`,
-        );
         skippedCount++;
         continue;
       }
 
-      // Get consultant profile ID from the appointment based on type
       const appointment = payment.appointment;
       const consultantProfileId =
         appointment?.consultation?.consultationPlan?.consultantProfileId ||
@@ -254,7 +180,7 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
         appointment?.webinar?.webinarPlan?.consultantProfileId ||
         appointment?.class?.classPlan?.consultantProfileId;
 
-      if (!consultantProfileId) {
+      if (!appointment || !consultantProfileId) {
         console.log(
           `⏭️ Skipping payment ${payment.id} - no consultant profile found`,
         );
@@ -262,97 +188,31 @@ export async function syncPaymentEarnings(): Promise<PaymentEarningSyncResult> {
         continue;
       }
 
-      // FIX #572: For webinar/class payments, check for collaborator revenue splits
-      // instead of giving 100% to the plan owner.
-      const appointmentType = appointment?.appointmentType;
-      const webinarPlanId = appointment?.webinar?.webinarPlan?.id;
-      const classPlanId = appointment?.class?.classPlan?.id;
-
-      const baseEarnings = calculateEarningsData(payment, consultantProfileId);
-      const totalConsultantPool = baseEarnings.consultantSharePaise;
-
-      let splits: Array<{
-        consultantProfileId: string;
-        share: number;
-        role: string;
-      }> = [];
-
-      if (
-        appointmentType === AppointmentsType.WEBINAR &&
-        webinarPlanId
-      ) {
-        try {
-          splits = await calculateRevenueSplit(
-            "webinar",
-            webinarPlanId,
-            totalConsultantPool,
-          );
-        } catch {
-          // Fallback to owner-only if split calculation fails
-        }
-      } else if (
-        appointmentType === AppointmentsType.CLASS &&
-        classPlanId
-      ) {
-        try {
-          splits = await calculateRevenueSplit(
-            "class",
-            classPlanId,
-            totalConsultantPool,
-          );
-        } catch {
-          // Fallback to owner-only if split calculation fails
-        }
-      }
-
-      if (splits.length > 0) {
-        // Multi-party earnings (collaborator splits)
-        // Owner gets full grossAmount/platformFeePaise; collaborators get 0 for those fields.
-        for (const split of splits) {
-          const isOwner = split.role === "OWNER";
-          const splitBase = calculateEarningsData(payment, split.consultantProfileId);
-          const shareBps = totalConsultantPool > 0
-            ? Math.round((split.share / totalConsultantPool) * 10000)
-            : 0;
-
-          earningsToCreate.push({
-            ...splitBase,
-            consultantSharePaise: split.share,
-            grossAmount: isOwner ? baseEarnings.grossAmount : 0,
-            platformFeePaise: isOwner ? baseEarnings.platformFeePaise : 0,
-            role: isOwner ? EarningRole.OWNER : EarningRole.COLLABORATOR,
-            shareBps,
-          });
-        }
-      } else {
-        // Single-party earnings (owner only, or no collaborators)
-        earningsToCreate.push({
-          ...baseEarnings,
-          role: EarningRole.OWNER,
-          shareBps: 10000,
-        });
-      }
-    }
-
-    // Batch create earnings
-    if (earningsToCreate.length > 0) {
       try {
-        const result = await prisma.consultantEarnings.createMany({
-          data: earningsToCreate,
-          skipDuplicates: true,
+        const earningsId = await createEarningsFromPayment({
+          payment: {
+            ...payment,
+            appointment: {
+              consultantProfile: { id: consultantProfileId },
+              webinar: appointment.webinar
+                ? { webinarPlanId: appointment.webinar.webinarPlanId }
+                : null,
+              class: appointment.class
+                ? { classPlanId: appointment.class.classPlanId }
+                : null,
+            },
+          },
+          appointmentType: mapAppointmentType(appointment.appointmentType),
         });
-
-        createdCount += result.count;
-        console.log(`✅ Created ${result.count} earnings records in batch`);
-
-      } catch (createError) {
-        const errorMessage =
-          createError instanceof Error
-            ? createError.message
-            : String(createError);
-        errors.push(`Batch create: ${errorMessage}`);
-        console.error(`❌ Error creating earnings batch:`, errorMessage);
-        errorCount += earningsToCreate.length;
+        if (earningsId) {
+          createdCount++;
+        } else {
+          skippedCount++;
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push(`Payment ${payment.id}: ${msg}`);
+        errorCount++;
       }
     }
   }

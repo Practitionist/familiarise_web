@@ -38,7 +38,9 @@ import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 
-type SubscriptionPlanWithConsultant = SubscriptionPlan & {
+// price arrives as number: extended client + JSON serialization (#780)
+type SubscriptionPlanWithConsultant = Omit<SubscriptionPlan, "price"> & {
+  price: number;
   consultantProfile: ConsultantProfile & {
     user: {
       id: string;
@@ -88,7 +90,9 @@ export default function SubscriptionCheckoutPage({
   const [isApplyingDiscount, setIsApplyingDiscount] = useState(false);
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [useReferralCredits, setUseReferralCredits] = useState(false);
-  const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null);
+  const [selectedOrganizationId, setSelectedOrganizationId] = useState<
+    string | null
+  >(null);
   const [availableCredits, setAvailableCredits] = useState(0);
   const [isLoadingCredits, setIsLoadingCredits] = useState(true);
 
@@ -100,7 +104,8 @@ export default function SubscriptionCheckoutPage({
 
   // Validate search params once with Zod — single source of truth for all checkout flows
   const validatedSearchParams = useMemo((): SubscriptionSearchParams | null => {
-    const result = subscriptionSearchParamsSchema.safeParse(resolvedSearchParams);
+    const result =
+      subscriptionSearchParamsSchema.safeParse(resolvedSearchParams);
     return result.success ? result.data : null;
   }, [resolvedSearchParams]);
 
@@ -175,18 +180,18 @@ export default function SubscriptionCheckoutPage({
   const razorpayHandlers = createRazorpayCheckoutHandlers(toast);
 
   // Common API request logic
-  const makeCheckoutRequest = useCallback(async (
-    checkoutData: CheckoutInput,
-    isMockPayment: boolean = false,
-  ) => {
-    return fetch("/api/checkout", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ ...checkoutData, isMockPayment }),
-    });
-  }, []);
+  const makeCheckoutRequest = useCallback(
+    async (checkoutData: CheckoutInput, isMockPayment: boolean = false) => {
+      return fetch("/api/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ ...checkoutData, isMockPayment }),
+      });
+    },
+    [],
+  );
 
   const handleCheckout = useCallback(
     async (gateway: PaymentGateway, isMockPayment: boolean = false) => {
@@ -232,7 +237,9 @@ export default function SubscriptionCheckoutPage({
         }
 
         // Staleness check: verify scheduling period hasn't expired
-        const periodEnd = new Date(validatedSearchParams.schedulingPeriodEndsAt);
+        const periodEnd = new Date(
+          validatedSearchParams.schedulingPeriodEndsAt,
+        );
         if (periodEnd.getTime() < Date.now()) {
           throw new Error(
             "The scheduling period has expired. Please go back and select new dates.",
@@ -242,12 +249,15 @@ export default function SubscriptionCheckoutPage({
         const checkoutData = createCheckoutData({
           appointmentType: "SUBSCRIPTION",
           planId: planData.data.id,
-          schedulingPeriodStartsAt: validatedSearchParams.schedulingPeriodStartsAt,
+          schedulingPeriodStartsAt:
+            validatedSearchParams.schedulingPeriodStartsAt,
           schedulingPeriodEndsAt: validatedSearchParams.schedulingPeriodEndsAt,
           discountCode: appliedDiscount?.code,
           paymentGateway: gateway,
           displayCurrency: currency,
-          useReferralCredits: selectedOrganizationId ? false : useReferralCredits,
+          useReferralCredits: selectedOrganizationId
+            ? false
+            : useReferralCredits,
           organizationId: selectedOrganizationId ?? undefined,
         });
 
@@ -812,18 +822,22 @@ export default function SubscriptionCheckoutPage({
                   {gateway.isActive ? (
                     <div className="flex gap-2">
                       {validatedSearchParams?.schedulingPeriodStartsAt &&
-                       validatedSearchParams?.schedulingPeriodEndsAt &&
-                       gateway.gateway === "RAZORPAY" ? (
+                      validatedSearchParams?.schedulingPeriodEndsAt &&
+                      gateway.gateway === "RAZORPAY" ? (
                         <RazorpayCheckout
                           checkoutData={createCheckoutData({
                             appointmentType: "SUBSCRIPTION",
                             planId: planData?.data?.id || "",
                             paymentGateway: "RAZORPAY",
-                            schedulingPeriodStartsAt: validatedSearchParams.schedulingPeriodStartsAt,
-                            schedulingPeriodEndsAt: validatedSearchParams.schedulingPeriodEndsAt,
+                            schedulingPeriodStartsAt:
+                              validatedSearchParams.schedulingPeriodStartsAt,
+                            schedulingPeriodEndsAt:
+                              validatedSearchParams.schedulingPeriodEndsAt,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
-                            useReferralCredits: selectedOrganizationId ? false : useReferralCredits,
+                            useReferralCredits: selectedOrganizationId
+                              ? false
+                              : useReferralCredits,
                             organizationId: selectedOrganizationId ?? undefined,
                           })}
                           onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
@@ -838,11 +852,15 @@ export default function SubscriptionCheckoutPage({
                             appointmentType: "SUBSCRIPTION",
                             planId: planData?.data?.id || "",
                             paymentGateway: "STRIPE",
-                            schedulingPeriodStartsAt: validatedSearchParams.schedulingPeriodStartsAt,
-                            schedulingPeriodEndsAt: validatedSearchParams.schedulingPeriodEndsAt,
+                            schedulingPeriodStartsAt:
+                              validatedSearchParams.schedulingPeriodStartsAt,
+                            schedulingPeriodEndsAt:
+                              validatedSearchParams.schedulingPeriodEndsAt,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
-                            useReferralCredits: selectedOrganizationId ? false : useReferralCredits,
+                            useReferralCredits: selectedOrganizationId
+                              ? false
+                              : useReferralCredits,
                             organizationId: selectedOrganizationId ?? undefined,
                           })}
                           onPaymentSuccess={stripeHandlers.onPaymentSuccess}
@@ -854,7 +872,9 @@ export default function SubscriptionCheckoutPage({
                         <Button
                           variant="secondary"
                           onClick={() => handleCheckout(gateway.gateway, true)}
-                          disabled={isCheckoutProcessing || isMaintenanceBlocked}
+                          disabled={
+                            isCheckoutProcessing || isMaintenanceBlocked
+                          }
                         >
                           {isCheckoutProcessing &&
                           processingGateway === `${gateway.gateway}-mock` ? (

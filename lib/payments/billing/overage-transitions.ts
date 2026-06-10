@@ -1,3 +1,4 @@
+import type { Tx } from "@/lib/prisma";
 /**
  * #778 elegance — the OverageEvent chargeStatus state machine, in one guarded
  * transition. Deliberately dependency-light (Prisma types only) so the metering
@@ -38,14 +39,16 @@ const ALLOWED_FROM: Record<OverageChargeStatus, OverageChargeStatus[]> = {
  */
 export async function transitionOverage(
   // Only needs the overageEvent delegate — narrowed so every client shape
-  // (TransactionClient, the cap-helper's CapTx, or the root client) fits.
-  tx: Pick<Prisma.TransactionClient, "overageEvent">,
+  // (Tx, the cap-helper's Tx, or the root client) fits.
+  tx: Pick<Tx, "overageEvent">,
   where: Prisma.OverageEventWhereInput,
   to: OverageChargeStatus,
   data?: {
     paymentId?: string | null;
     invoiceLineItemId?: string | null;
     settledAt?: Date | null;
+    /** #779 §A telemetry — why a FAILED write-off happened (sweep/timeout). */
+    chargeFailureReason?: string | null;
   },
 ): Promise<number> {
   const res = await tx.overageEvent.updateMany({

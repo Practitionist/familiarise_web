@@ -13,7 +13,7 @@
  */
 
 import prisma from "@/lib/prisma";
-import { PaymentGateway, PaymentStatus } from "@prisma/client";
+import { Currency, PaymentGateway, PaymentStatus } from "@prisma/client";
 import { createPaymentIntent } from "../index";
 import { acquireLock, releaseLock } from "@/lib/redis";
 
@@ -39,7 +39,7 @@ export interface ApprovalPaymentResult {
   paymentIntentId: string;
   checkoutUrl: string;
   amount: number;
-  currency: string;
+  currency: Currency;
 }
 
 // ============================================================================
@@ -167,7 +167,7 @@ export async function createApprovalPaymentIntent(
  */
 async function calculateAmount(params: CreateApprovalPaymentParams): Promise<{
   amount: number;
-  currency: string;
+  currency: Currency;
   plan: { title: string };
 }> {
   if (params.appointmentType === "CONSULTATION") {

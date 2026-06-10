@@ -44,7 +44,7 @@
  */
 
 import { createHash } from "node:crypto";
-import type { PrismaClient } from "@prisma/client";
+import type { Db } from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 
@@ -67,8 +67,10 @@ function derivePseudonym(userId: string): string {
   return createHash("sha256").update(`${userId}.${salt}`).digest("hex");
 }
 
+// #780 — extended client, not bare PrismaClient, so the itx client passed to
+// dispatchWebhookEvent satisfies PrismaLike.
 export async function scrubUser(
-  prisma: PrismaClient,
+  prisma: Db,
   userId: string,
 ): Promise<ScrubResult> {
   const existing = await prisma.user.findUnique({
@@ -148,6 +150,10 @@ export async function scrubUser(
       data: {
         headline: null,
         videoIntroUrl: null,
+        // #781 §B — erasure implies the profile leaves every browse/checkout
+        // surface; financial rows stay (statutory retention beats erasure
+        // under DPDP's legal-obligation exemption).
+        deletedAt: new Date(),
       },
     });
     // ConsulteeProfile carries only FK pointers at present — no

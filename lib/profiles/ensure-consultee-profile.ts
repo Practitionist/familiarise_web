@@ -21,9 +21,7 @@
  * and end up with the same id.
  */
 
-import type { Prisma, PrismaClient } from "@prisma/client";
-
-export type PrismaLike = PrismaClient | Prisma.TransactionClient;
+import type { PrismaLike } from "@/lib/prisma";
 
 export async function ensureConsulteeProfile(
   db: PrismaLike,

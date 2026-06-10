@@ -76,14 +76,16 @@ flowchart LR
 | `INVOICE_ACCRUAL` | checkout handler | sponsor org `fundingSource = INVOICE`; no cash at booking, sum-per-cycle becomes the invoice | `ORG_RECEIVABLE(org)` |
 | `OVERAGE_INVOICE_ACCRUAL` | checkout handler | program-overage portion billed via invoice | `ORG_RECEIVABLE(org)` |
 | `LICENSE` | checkout handler | active `LICENSED_SEAT` assignment absorbs the session; `amountPaise = 0` | — (no money) |
+| `INVOICE_ACCRUAL_REVERSAL` | refund cascade | refund against a still-unbilled accrual; carries a **negative** amount that nets against the original sibling (#786) | — (refund posting carries the money) |
+| `OVERAGE_INVOICE_ACCRUAL_REVERSAL` | refund cascade | same as above, for the overage accrual | — |
 
 ---
 
 ## 3. Invariants
 
-1. **Sum identity.** `sum(PaymentLeg.amountPaise) === Payment.amount` (LICENSE is 0). Enforced at checkout; the reconciler's `PAYMENT_LEG_SUM_MISMATCH` is the retroactive detector ([ledger integrity](13-ledger-integrity.md)).
+1. **Sum identity.** `sum(non-reversal PaymentLeg.amountPaise) === Payment.amount` (LICENSE is 0). Since #786 the funding legs are append-only: a refund never mutates the original leg, it nets through a negative `*_REVERSAL` sibling, so the original legs always still sum to `Payment.amount`. Each reversal leg must be negative and may never exceed its original sibling in magnitude. Enforced at checkout; the reconciler's `PAYMENT_LEG_SUM_MISMATCH` (now pair-aware, with a `FUNDING_SUM_DRIFT` vs `REVERSAL_PAIR_VIOLATION` reason) is the retroactive detector ([ledger integrity](13-ledger-integrity.md)).
 2. **Leg count ≥ 1.** A `SUCCEEDED` payment with zero legs is a data bug.
-3. **Source uniqueness per payment.** `@@unique([paymentId, source])` — a duplicate-source leg fails on insert (`P2002`) rather than corrupting the sum. If split-billing across sub-orgs becomes real, drop this and add a `legGroupId` (tracked follow-up).
+3. **Source uniqueness per payment.** `@@unique([paymentId, source])` — a duplicate-source leg fails on insert (`P2002`) rather than corrupting the sum. Reversal legs respect the same rule: there is at most one reversal sibling per source, and subsequent partial refunds net into it. If split-billing across sub-orgs becomes real, drop this and add a `legGroupId` (tracked follow-up).
 4. **`sourceRef` for reversal.** Populated for `REFERRAL_CREDIT` (→ `ReferralCredit.id`) and where a gateway/accrual ref exists. `WALLET` legs no longer reference a per-row wallet log (`WalletEntry` was removed in #772) — the authoritative wallet movement is the booking journal's `Dr WALLET(org)` leg; the cache decrement is `walletDebit()`. `LICENSE`/`CARD` may omit `sourceRef`.
 
 ---

@@ -92,6 +92,52 @@ describe("computeOverage — LICENSED_SEAT pass-through", () => {
     expect(r.marginalPaise).toBe(0);
     expect(r.decision).toBe("PROCEED");
   });
+
+  it("surcharge FLOORs to the paise — residual to the payer's benefit (#778 §C)", () => {
+    const r = computeOverage({
+      ...base,
+      bookingPricePaise: 99_999,
+      coveredEngagementsPerCycle: 5,
+      engagementsUsed: 5,
+      overageSurchargeBps: 1500, // 99_999 × 15% = 14_999.85 → 14_999, never 15_000
+    });
+    expect(r.basePaise).toBe(99_999);
+    expect(r.surchargePaise).toBe(14_999);
+    expect(r.marginalPaise).toBe(114_998);
+  });
+
+  it("multi-session split: only the over-cap sessions are marginal (#710)", () => {
+    // cap 5, used 4 → 1 covered seat; a 3-session CLASS at 100_000 → 2 over-cap
+    // sessions × floor(100_000/3) = 66_666 marginal; per-session floor leaves
+    // the 2-paise residual in coveredPaise (payer's benefit, #778 §C).
+    const r = computeOverage({
+      ...base,
+      coveredEngagementsPerCycle: 5,
+      engagementsUsed: 4,
+      sessionsConsumed: 3,
+    });
+    expect(r.basePaise).toBe(66_666);
+    expect(r.coveredPaise).toBe(33_334);
+    expect(r.coveredPaise + r.basePaise).toBe(100_000);
+  });
+
+  it("sessionsConsumed floors to 1 and never NaN-poisons the split (#710/#713)", () => {
+    const zero = computeOverage({
+      ...base,
+      coveredEngagementsPerCycle: 5,
+      engagementsUsed: 5,
+      sessionsConsumed: 0,
+    });
+    expect(zero.marginalPaise).toBe(100_000); // treated as 1 session, fully over cap
+    const nan = computeOverage({
+      ...base,
+      coveredEngagementsPerCycle: 5,
+      engagementsUsed: 5,
+      sessionsConsumed: Number.NaN,
+    });
+    expect(Number.isInteger(nan.marginalPaise)).toBe(true);
+    expect(nan.marginalPaise).toBe(100_000);
+  });
 });
 
 describe("computeOverage — CREDIT_POOL money-meter", () => {

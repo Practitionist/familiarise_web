@@ -84,10 +84,19 @@ export async function rollupOrgInvoiceAccruals(params: {
       },
       select: {
         id: true,
-        // Bill the base accrual AND any CHARGE_ORG overage (#715) on the booking.
+        // Bill the base accrual AND any CHARGE_ORG overage (#715) on the
+        // booking, NET of refund reversal legs (#786 — refunds append
+        // negative *_REVERSAL siblings instead of mutating the original).
         legs: {
           where: {
-            source: { in: ["INVOICE_ACCRUAL", "OVERAGE_INVOICE_ACCRUAL"] },
+            source: {
+              in: [
+                "INVOICE_ACCRUAL",
+                "OVERAGE_INVOICE_ACCRUAL",
+                "INVOICE_ACCRUAL_REVERSAL",
+                "OVERAGE_INVOICE_ACCRUAL_REVERSAL",
+              ],
+            },
           },
           select: { amountPaise: true },
         },
@@ -95,13 +104,19 @@ export async function rollupOrgInvoiceAccruals(params: {
     });
     if (accrued.length === 0) return EMPTY;
 
-    const lines = accrued.map((p, i) => ({
-      position: i,
-      paymentId: p.id,
-      description: `Sponsored session (booking ${p.id.slice(0, 8)})`,
-      quantity: 1,
-      unitPricePaise: p.legs.reduce((s, l) => s + l.amountPaise, 0),
-    }));
+    const lines = accrued
+      .map((p, i) => ({
+        position: i,
+        paymentId: p.id,
+        description: `Sponsored session (booking ${p.id.slice(0, 8)})`,
+        quantity: 1,
+        unitPricePaise: p.legs.reduce((s, l) => s + l.amountPaise, 0),
+      }))
+      // A fully-refunded-before-billing booking nets to ≤0 — keep it out of
+      // the issued document; the payment is still stamped below so it never
+      // re-enters a future rollup.
+      .filter((l) => l.unitPricePaise > 0)
+      .map((l, i) => ({ ...l, position: i }));
     const subtotal = lines.reduce((s, l) => s + l.unitPricePaise, 0);
     if (subtotal <= 0) return EMPTY;
 

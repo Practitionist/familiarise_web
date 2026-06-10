@@ -47,11 +47,18 @@ const classInclude = {
   appointments: true,
 } satisfies Prisma.ClassInclude;
 
-// Derive types from the include objects
-type PlannerWebinar = Prisma.WebinarGetPayload<{
-  include: typeof webinarInclude;
-}>;
-type PlannerClass = Prisma.ClassGetPayload<{ include: typeof classInclude }>;
+// Derive types from the include objects via the extended client — raw
+// GetPayload would re-introduce bigint money fields (#780).
+type PlannerWebinar = Prisma.Result<
+  typeof prisma.webinar,
+  { include: typeof webinarInclude },
+  "findFirstOrThrow"
+>;
+type PlannerClass = Prisma.Result<
+  typeof prisma.class,
+  { include: typeof classInclude },
+  "findFirstOrThrow"
+>;
 
 // Response types with discriminators and role annotations
 type WebinarEvent = PlannerWebinar & {
@@ -239,7 +246,11 @@ export async function GET(
             ],
           }
         : scopeResolution.scope.kind === "org"
-          ? { appointment: { is: { organizationId: scopeResolution.scope.orgId } } }
+          ? {
+              appointment: {
+                is: { organizationId: scopeResolution.scope.orgId },
+              },
+            }
           : undefined;
     const classApptOrg: Prisma.ClassWhereInput | undefined =
       scopeResolution.scope.kind === "personal"
@@ -263,8 +274,7 @@ export async function GET(
       ownedClassesRaw,
       collabWebinarsRaw,
       collabClassesRaw,
-      webinarCollabRoles,
-      classCollabRoles,
+      collabRoles,
     ] = await Promise.all([
       // Owned plans
       prisma.webinar.findMany({
@@ -304,24 +314,20 @@ export async function GET(
         },
         include: classInclude,
       }),
-      // Collaborator role lookups
-      prisma.webinarCollaborator.findMany({
+      // Collaborator role lookups (#784 — one merged model for both plan types)
+      prisma.collaborator.findMany({
         where: { consultantProfileId: consultantId, status: "ACCEPTED" },
-        select: { webinarPlanId: true, role: true },
-      }),
-      prisma.classCollaborator.findMany({
-        where: { consultantProfileId: consultantId, status: "ACCEPTED" },
-        select: { classPlanId: true, role: true },
+        select: { webinarPlanId: true, classPlanId: true, role: true },
       }),
     ]);
 
-    // Build role lookup maps
-    const webinarRoleMap = Object.fromEntries(
-      webinarCollabRoles.map((c) => [c.webinarPlanId, c.role]),
-    );
-    const classRoleMap = Object.fromEntries(
-      classCollabRoles.map((c) => [c.classPlanId, c.role]),
-    );
+    // Build role lookup maps — exactly one plan FK is set per record (#784)
+    const webinarRoleMap: Record<string, string> = {};
+    const classRoleMap: Record<string, string> = {};
+    for (const c of collabRoles) {
+      if (c.webinarPlanId) webinarRoleMap[c.webinarPlanId] = c.role;
+      else if (c.classPlanId) classRoleMap[c.classPlanId] = c.role;
+    }
 
     // Collect owned IDs for deduplication
     const ownedWebinarIds = new Set(ownedWebinarsRaw.map((w) => w.id));

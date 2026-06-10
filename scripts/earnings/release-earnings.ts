@@ -16,6 +16,7 @@
 
 import { EarningStatus, Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 /**
  * Result structure for release operations
@@ -152,9 +153,9 @@ export async function getPendingEarningsStats(): Promise<{
 
   return {
     pendingCount: pending._count,
-    pendingAmount: pending._sum.consultantSharePaise || 0,
+    pendingAmount: sumPaise(pending._sum.consultantSharePaise),
     readyCount: ready._count,
-    readyAmount: ready._sum.consultantSharePaise || 0,
+    readyAmount: sumPaise(ready._sum.consultantSharePaise),
   };
 }
 

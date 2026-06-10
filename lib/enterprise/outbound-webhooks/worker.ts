@@ -1,3 +1,4 @@
+import type { PrismaLike } from "@/lib/prisma";
 /**
  * Outbound webhook delivery worker.
  *
@@ -51,8 +52,6 @@ import {
 // Re-export silenced — the worker doesn't generate secrets; this keeps
 // the module's surface area clean while preventing an unused-import lint.
 void _unused_re_export;
-
-type PrismaLike = PrismaClient | Prisma.TransactionClient;
 
 const MAX_BATCH = 50;
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -190,7 +189,8 @@ export async function runDispatchTick(params: {
     const inRotationGrace =
       row.endpoint.secretRotatedAt != null &&
       row.endpoint.previousSecretHash != null &&
-      now() - row.endpoint.secretRotatedAt.getTime() <= WEBHOOK_ROTATION_GRACE_MS;
+      now() - row.endpoint.secretRotatedAt.getTime() <=
+        WEBHOOK_ROTATION_GRACE_MS;
     const signature = signPayload(
       row.endpoint.secret,
       body,
@@ -228,7 +228,9 @@ export async function runDispatchTick(params: {
     }
 
     const isSuccess =
-      httpStatusCode !== undefined && httpStatusCode >= 200 && httpStatusCode < 300;
+      httpStatusCode !== undefined &&
+      httpStatusCode >= 200 &&
+      httpStatusCode < 300;
     // 4xx that are NOT 408 / 429 are permanent: the receiver told us
     // the request is malformed. Retrying same body + same signature
     // won't change the outcome.

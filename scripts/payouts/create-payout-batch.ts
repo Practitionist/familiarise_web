@@ -23,6 +23,7 @@ import {
   PayoutLockError,
   PayoutValidationError,
 } from "@/lib/payments/payouts/org-payout-service";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 // Configuration
 const MINIMUM_PAYOUT_AMOUNT = 50000; // ₹500 in paise
@@ -145,7 +146,11 @@ export async function createPayoutBatch(
               status: EarningStatus.READY,
               payoutId: null,
             },
-            select: { id: true, consultantSharePaise: true, refundedShareAmount: true },
+            select: {
+              id: true,
+              consultantSharePaise: true,
+              refundedShareAmount: true,
+            },
           });
 
           if (readyEarnings.length === 0) return null;
@@ -401,13 +406,19 @@ export async function getPayoutStats(): Promise<{
   ]);
 
   return {
-    pending: { count: pending._count, amount: pending._sum.amount || 0 },
-    approved: { count: approved._count, amount: approved._sum.amount || 0 },
+    pending: { count: pending._count, amount: sumPaise(pending._sum.amount) },
+    approved: {
+      count: approved._count,
+      amount: sumPaise(approved._sum.amount),
+    },
     processing: {
       count: processing._count,
-      amount: processing._sum.amount || 0,
+      amount: sumPaise(processing._sum.amount),
     },
-    completed: { count: completed._count, amount: completed._sum.amount || 0 },
+    completed: {
+      count: completed._count,
+      amount: sumPaise(completed._sum.amount),
+    },
   };
 }
 
@@ -443,7 +454,9 @@ export async function runBatchCreationTask(): Promise<BatchResult> {
       console.log(`\n🏢 Org Payout Batch:`);
       console.log(`   Orgs scanned: ${orgBatch.orgsScanned}`);
       console.log(`   Created: ${orgBatch.payoutsCreated}`);
-      console.log(`   Already existed (idempotent): ${orgBatch.payoutsAlreadyExisted}`);
+      console.log(
+        `   Already existed (idempotent): ${orgBatch.payoutsAlreadyExisted}`,
+      );
       console.log(`   Skipped (ineligible): ${orgBatch.skippedNotEligible}`);
       console.log(
         `   Total amount: ₹${(orgBatch.totalAmount / 100).toFixed(2)}`,

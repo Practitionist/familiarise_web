@@ -91,7 +91,7 @@ export async function POST(
       );
     }
 
-    const existingCollab = await prisma.webinarCollaborator.findFirst({
+    const existingCollab = await prisma.collaborator.findFirst({
       where: {
         webinarPlanId: planId,
         consultantProfileId,

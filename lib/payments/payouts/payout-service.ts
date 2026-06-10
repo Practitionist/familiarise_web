@@ -33,6 +33,7 @@ import {
 import { computeTdsForPayout } from "@/lib/compliance/tds";
 import { notifyPayoutProcessed } from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 // ============================================
 // Types
@@ -155,8 +156,8 @@ export async function checkPayoutEligibility(
   });
 
   const readyAmount =
-    (readyEarningsAgg._sum.consultantSharePaise || 0) -
-    (readyEarningsAgg._sum.refundedShareAmount || 0);
+    sumPaise(readyEarningsAgg._sum.consultantSharePaise) -
+    sumPaise(readyEarningsAgg._sum.refundedShareAmount);
 
   // Get default payout account
   const defaultAccount = await prisma.payoutAccount.findFirst({
@@ -278,7 +279,11 @@ export async function createPayoutBatch(
             status: EarningStatus.READY,
             payoutId: null,
           },
-          select: { id: true, consultantSharePaise: true, refundedShareAmount: true },
+          select: {
+            id: true,
+            consultantSharePaise: true,
+            refundedShareAmount: true,
+          },
         });
 
         if (readyEarnings.length === 0) return;
@@ -545,13 +550,22 @@ async function processSinglePayout(payout: {
     // Without this, sub-threshold consultants who legally owe ₹0 are withheld
     // from the first rupee. The rate engine (computeTdsForPayout) then applies
     // the section/PAN/DTAA rate to the taxable portion.
+    //
+    // #778 §E — TDS_ENGINE flag (default LEGACY): LEGACY keeps the ₹50K gate
+    // (the conservative pre-CA-sign-off behavior); 194O drops it and taxes
+    // the full payout under pure Section 194-O semantics (per-FY entity
+    // thresholds move to the TdsRate lookup when the CA confirms in writing).
+    // One env flip at launch, no money-logic redeploy.
+    const pure194O = process.env.TDS_ENGINE === "194O";
     const cumulativeBeforePayout = await getCurrentFYCumulativePayments(
       payout.consultantProfileId,
       financialYear,
     );
     const cumulativeAfterPayout = cumulativeBeforePayout + payout.amount;
     let taxablePaise = 0;
-    if (cumulativeAfterPayout > TDS_THRESHOLD_PAISE) {
+    if (pure194O) {
+      taxablePaise = payout.amount;
+    } else if (cumulativeAfterPayout > TDS_THRESHOLD_PAISE) {
       taxablePaise =
         cumulativeBeforePayout >= TDS_THRESHOLD_PAISE
           ? payout.amount // already over threshold — whole payout is taxable
@@ -569,7 +583,7 @@ async function processSinglePayout(payout: {
               panOnFile: !!consultantTaxInfo?.panEncrypted,
               residencyStatus: "RESIDENT",
               tdsSection: null,
-              tdsRate: null,
+              tdsRateBps: null,
               tdsLowerRateCert: null,
               providerCountry: null,
             },
@@ -624,7 +638,12 @@ async function processSinglePayout(payout: {
         providerPayoutId,
         tdsDeducted: tds.tdsAmountPaise,
         netAmount: payoutAmountAfterTDS,
-        tdsRateApplied: tds.tdsRate || null,
+        // #781 §C — engine returns a decimal fraction (0.001 = 194-O);
+        // stored as integer bps so two engines can't disagree on units.
+        // Review fix: != null so a legitimate 0% (Sec 197 zero-rate cert)
+        // persists as 0 bps instead of vanishing to null.
+        tdsRateAppliedBps:
+          tds.tdsRate != null ? Math.round(tds.tdsRate * 10_000) : null,
         tdsFinancialYear: financialYear,
         status: PayoutStatus.PROCESSING, // Will be updated via webhook
       },
@@ -685,7 +704,7 @@ async function processSinglePayout(payout: {
         retryCount: { increment: 1 },
         tdsDeducted: 0,
         netAmount: null,
-        tdsRateApplied: null,
+        tdsRateAppliedBps: null,
         tdsFinancialYear: null,
       },
     });
@@ -758,7 +777,8 @@ async function processRazorpayPayout(
     // #771 P1-6 — use the deterministic key helper (not Date.now(), which
     // defeats RazorpayX idempotency on retry when payout.idempotencyKey is null).
     idempotencyKey:
-      payout.idempotencyKey || razorpayPayouts.generateIdempotencyKey(payout.id),
+      payout.idempotencyKey ||
+      razorpayPayouts.generateIdempotencyKey(payout.id),
     notes: {
       payoutId: payout.id,
       source: "familiarise_platform",
@@ -885,7 +905,7 @@ export async function handlePayoutWebhook(
         _sum: { amount: true },
       });
       const cumulativeCreditedPayments =
-        (previousCompletedPayouts._sum.amount || 0) + payout.amount;
+        sumPaise(previousCompletedPayouts._sum.amount) + payout.amount;
 
       // Update earnings to PAID
       await tx.consultantEarnings.updateMany({
@@ -911,7 +931,11 @@ export async function handlePayoutWebhook(
             direction: "DEBIT",
             amountPaise: payout.amount + tdsPaise,
           },
-          { account: { kind: "CASH" }, direction: "CREDIT", amountPaise: payout.amount },
+          {
+            account: { kind: "CASH" },
+            direction: "CREDIT",
+            amountPaise: payout.amount,
+          },
         ];
         if (tdsPaise > 0) {
           payoutPostings.push({
@@ -928,7 +952,7 @@ export async function handlePayoutWebhook(
         });
       }
 
-      if (payout.tdsDeducted > 0 && payout.tdsRateApplied) {
+      if (payout.tdsDeducted > 0 && payout.tdsRateAppliedBps) {
         await tx.tDSRecord.deleteMany({
           where: { payoutId: payout.id },
         });
@@ -937,7 +961,7 @@ export async function handlePayoutWebhook(
           consultantProfileId: payout.consultantProfileId,
           financialYear,
           tdsDeducted: payout.tdsDeducted,
-          tdsRate: payout.tdsRateApplied,
+          tdsRateBps: payout.tdsRateAppliedBps,
           cumulativeAmountCredited: cumulativeCreditedPayments,
           payoutId: payout.id,
           // #776 — consultant payouts withhold under Section 194-O (ECO).
@@ -970,7 +994,7 @@ export async function handlePayoutWebhook(
         data: {
           tdsDeducted: 0,
           netAmount: null,
-          tdsRateApplied: null,
+          tdsRateAppliedBps: null,
           tdsFinancialYear: null,
         },
       });
@@ -1054,7 +1078,11 @@ export async function markConsultantPayoutReversed(
     if (payout.amount > 0) {
       const tdsPaise = payout.tdsDeducted ?? 0;
       const reversal: Posting[] = [
-        { account: { kind: "CASH" }, direction: "DEBIT", amountPaise: payout.amount },
+        {
+          account: { kind: "CASH" },
+          direction: "DEBIT",
+          amountPaise: payout.amount,
+        },
         {
           account: {
             kind: "CONSULTANT_PAYABLE",
@@ -1122,19 +1150,19 @@ export async function getPayoutStats() {
   return {
     pending: {
       count: pending._count,
-      amount: pending._sum.amount || 0,
+      amount: sumPaise(pending._sum.amount),
     },
     processing: {
       count: processing._count,
-      amount: processing._sum.amount || 0,
+      amount: sumPaise(processing._sum.amount),
     },
     completed: {
       count: completed._count,
-      amount: completed._sum.amount || 0,
+      amount: sumPaise(completed._sum.amount),
     },
     failed: {
       count: failed._count,
-      amount: failed._sum.amount || 0,
+      amount: sumPaise(failed._sum.amount),
     },
   };
 }

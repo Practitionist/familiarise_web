@@ -1,5 +1,6 @@
 import { cache } from "react";
 import prisma from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
 import { marketplaceVisibilityWhere } from "@/lib/api/plans/visibility";
 import { generateProgramImageUrl } from "@/app/explore/programs/utils";
 import type {
@@ -47,6 +48,13 @@ const planConsultantInclude = {
   },
 };
 
+// #781 §B — soft-deleted profiles leave public surfaces. The owner relation is
+// nullable on Webinar/ClassPlan, so keep ownerless plans and drop only plans
+// whose owner is soft-deleted.
+const liveConsultantWhere = {
+  OR: [{ consultantProfile: null }, { consultantProfile: { deletedAt: null } }],
+} satisfies Prisma.ClassPlanWhereInput & Prisma.WebinarPlanWhereInput;
+
 // ---------------------------------------------------------------------------
 // Curated programs (Featured / Trending / Newest sections)
 // ---------------------------------------------------------------------------
@@ -77,7 +85,7 @@ export const getCuratedPrograms = cache(
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
         const ranked = await prisma.classPlan.findMany({
-          where: marketplaceVisibilityWhere(), // #726 — no ORG_ONLY in curated feed
+          where: { ...marketplaceVisibilityWhere(), ...liveConsultantWhere }, // #726 — no ORG_ONLY in curated feed
           select: {
             id: true,
             classes: {
@@ -113,7 +121,11 @@ export const getCuratedPrograms = cache(
           .map((r) => r.id);
 
         classPlans = await prisma.classPlan.findMany({
-          where: { id: { in: sortedIds }, ...marketplaceVisibilityWhere() }, // #726
+          where: {
+            id: { in: sortedIds },
+            ...marketplaceVisibilityWhere(),
+            ...liveConsultantWhere,
+          }, // #726
           include: {
             consultantProfile: planConsultantInclude,
             topics: true,
@@ -129,7 +141,7 @@ export const getCuratedPrograms = cache(
         );
       } else {
         classPlans = await prisma.classPlan.findMany({
-          where: marketplaceVisibilityWhere(), // #726
+          where: { ...marketplaceVisibilityWhere(), ...liveConsultantWhere }, // #726
           include: {
             consultantProfile: planConsultantInclude,
             topics: true,
@@ -167,7 +179,7 @@ export const getCuratedPrograms = cache(
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
         const ranked = await prisma.webinarPlan.findMany({
-          where: marketplaceVisibilityWhere(), // #726 — no ORG_ONLY in curated feed
+          where: { ...marketplaceVisibilityWhere(), ...liveConsultantWhere }, // #726 — no ORG_ONLY in curated feed
           select: {
             id: true,
             webinars: {
@@ -199,7 +211,11 @@ export const getCuratedPrograms = cache(
           .map((r) => r.id);
 
         webinarPlans = await prisma.webinarPlan.findMany({
-          where: { id: { in: sortedIds }, ...marketplaceVisibilityWhere() }, // #726
+          where: {
+            id: { in: sortedIds },
+            ...marketplaceVisibilityWhere(),
+            ...liveConsultantWhere,
+          }, // #726
           include: {
             consultantProfile: planConsultantInclude,
             topics: true,
@@ -212,7 +228,7 @@ export const getCuratedPrograms = cache(
         );
       } else {
         webinarPlans = await prisma.webinarPlan.findMany({
-          where: marketplaceVisibilityWhere(), // #726
+          where: { ...marketplaceVisibilityWhere(), ...liveConsultantWhere }, // #726
           include: {
             consultantProfile: planConsultantInclude,
             topics: true,
@@ -262,11 +278,26 @@ export const getTopicsWithCount = cache(
         _count: {
           select: {
             // #726 — category counts must exclude ORG_ONLY plans too
+            // #781 §B — and plans whose owner is soft-deleted
             ...(planType === "all" || planType === "class"
-              ? { classPlans: { where: marketplaceVisibilityWhere() } }
+              ? {
+                  classPlans: {
+                    where: {
+                      ...marketplaceVisibilityWhere(),
+                      ...liveConsultantWhere,
+                    },
+                  },
+                }
               : {}),
             ...(planType === "all" || planType === "webinar"
-              ? { webinarPlans: { where: marketplaceVisibilityWhere() } }
+              ? {
+                  webinarPlans: {
+                    where: {
+                      ...marketplaceVisibilityWhere(),
+                      ...liveConsultantWhere,
+                    },
+                  },
+                }
               : {}),
           },
         },

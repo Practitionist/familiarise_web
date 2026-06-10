@@ -86,7 +86,6 @@ interface ProgramListItem {
   creditPoolConfig: {
     cycle: BillingCycle;
     creditsPerCycle: number;
-    minimumCreditsPerPeriod: number | null;
     overageBehavior: OverageBehavior;
     overageSurchargeBps: number | null;
     maxOveragePerCyclePaise: number | null;

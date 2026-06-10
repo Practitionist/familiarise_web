@@ -1,3 +1,4 @@
+import type { PrismaLike } from "@/lib/prisma";
 /**
  * SCIM 2.0 User operations — `createUser`, `patchUser`, `deprovisionUser`,
  * `listUsers`. Pure functions that read + write through Prisma; the
@@ -20,7 +21,6 @@
  * can purge the user from their IdP roster.
  */
 
-import type { Prisma, PrismaClient } from "@prisma/client";
 import {
   applyMembershipRoleEffects,
   bumpUserSessionGeneration,
@@ -28,8 +28,6 @@ import {
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { resolveRoleFromGroupNames } from "./resource-user";
-
-type PrismaLike = PrismaClient | Prisma.TransactionClient;
 
 export type ScimOperationError =
   | { kind: "USER_ERASED"; userId: string }

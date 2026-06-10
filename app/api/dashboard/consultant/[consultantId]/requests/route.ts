@@ -228,25 +228,38 @@ const consultantInclude = {
   classPlans: true,
 } satisfies Prisma.ConsultantProfileInclude;
 
-// Derive types from the include objects
-type RequestsConsultation = Prisma.ConsultationGetPayload<{
-  include: typeof consultationInclude;
-}>;
-type RequestsSubscription = Prisma.SubscriptionGetPayload<{
-  include: typeof subscriptionInclude;
-}>;
-type RequestsWeeklyAvailability = Prisma.SlotOfAvailabilityWeeklyGetPayload<{
-  include: typeof weeklyAvailabilityInclude;
-}>;
-type RequestsCustomAvailability = Prisma.SlotOfAvailabilityCustomGetPayload<{
-  include: typeof customAvailabilityInclude;
-}>;
-type RequestsAppointment = Prisma.AppointmentGetPayload<{
-  include: typeof appointmentInclude;
-}>;
-type RequestsConsultant = Prisma.ConsultantProfileGetPayload<{
-  include: typeof consultantInclude;
-}>;
+// Derive types from the include objects via the extended client — raw
+// GetPayload would re-introduce bigint money fields (#780).
+type RequestsConsultation = Prisma.Result<
+  typeof prisma.consultation,
+  { include: typeof consultationInclude },
+  "findFirstOrThrow"
+>;
+type RequestsSubscription = Prisma.Result<
+  typeof prisma.subscription,
+  { include: typeof subscriptionInclude },
+  "findFirstOrThrow"
+>;
+type RequestsWeeklyAvailability = Prisma.Result<
+  typeof prisma.slotOfAvailabilityWeekly,
+  { include: typeof weeklyAvailabilityInclude },
+  "findFirstOrThrow"
+>;
+type RequestsCustomAvailability = Prisma.Result<
+  typeof prisma.slotOfAvailabilityCustom,
+  { include: typeof customAvailabilityInclude },
+  "findFirstOrThrow"
+>;
+type RequestsAppointment = Prisma.Result<
+  typeof prisma.appointment,
+  { include: typeof appointmentInclude },
+  "findFirstOrThrow"
+>;
+type RequestsConsultant = Prisma.Result<
+  typeof prisma.consultantProfile,
+  { include: typeof consultantInclude },
+  "findFirstOrThrow"
+>;
 
 // Response data interface
 interface RequestsData {

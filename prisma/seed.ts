@@ -63,6 +63,9 @@ import { createCollaborators } from "./seedFiles/14b-create-collaborators";
 // Phase 15: Enterprise Organizations
 import { createOrganizations } from "./seedFiles/15a-create-organizations";
 
+// Phase 16: Statutory lookups (#778 §D)
+import { createTdsRates } from "./seedFiles/16a-create-tds-rates";
+
 async function seed() {
   console.log("Starting seed process...");
 
@@ -194,6 +197,10 @@ async function seed() {
     // Phase 15: Enterprise Organizations
     console.log("\n[Phase 15] Creating enterprise organizations...");
     await createOrganizations(users);
+
+    // Phase 16: Statutory lookups
+    console.log("\n[Phase 16] Seeding statutory TDS rates...");
+    await createTdsRates();
 
     // Summary
     const endTime = Date.now();

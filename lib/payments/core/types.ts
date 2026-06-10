@@ -2,6 +2,11 @@ import { PaymentGateway, RefundStatus, DisputeStatus } from "@prisma/client";
 
 /**
  * Common payment types and interfaces for all payment gateways
+ *
+ * #781 §A — `currency` here is deliberately `string`: these types face the
+ * gateways, which speak free-form ISO codes (incl. display currencies the
+ * Currency enum doesn't model). Database money rows store the Currency enum;
+ * every row-write must coerce through toCurrencyEnum() (currency-guards.ts).
  */
 
 // ============================================================================

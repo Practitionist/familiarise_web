@@ -6,6 +6,7 @@
  */
 import prisma from "@/lib/prisma";
 import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -36,7 +37,9 @@ export async function resolveActivationSignals(orgId: string): Promise<{
     meteredAssignments,
   ] = await Promise.all([
     prisma.contract.count({ where: { organizationId: orgId } }),
-    prisma.contract.count({ where: { organizationId: orgId, status: "ACTIVE" } }),
+    prisma.contract.count({
+      where: { organizationId: orgId, status: "ACTIVE" },
+    }),
     prisma.contract.count({
       where: {
         organizationId: orgId,
@@ -78,7 +81,9 @@ export async function resolveActivationSignals(orgId: string): Promise<{
         program: {
           select: {
             type: true,
-            licensedSeatConfig: { select: { coveredEngagementsPerCycle: true } },
+            licensedSeatConfig: {
+              select: { coveredEngagementsPerCycle: true },
+            },
             creditPoolConfig: { select: { creditsPerCycle: true } },
           },
         },
@@ -105,7 +110,7 @@ export async function resolveActivationSignals(orgId: string): Promise<{
     contractExpiringSoonCount: expiringCount,
     kybVerified: kyb?.kybVerifiedAt != null,
     pendingOverageCount: overageAgg._count._all,
-    pendingOveragePaise: overageAgg._sum.marginalPaise ?? 0,
+    pendingOveragePaise: sumPaise(overageAgg._sum.marginalPaise),
     stuckPayoutCount,
     creditPoolMaxUtilizationPct: maxPct,
   };

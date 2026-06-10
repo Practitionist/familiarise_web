@@ -179,7 +179,7 @@ export async function DELETE(
     }
 
     // Check for active collaborators (PENDING or ACCEPTED)
-    const activeCollaborators = await prisma.webinarCollaborator.count({
+    const activeCollaborators = await prisma.collaborator.count({
       where: {
         webinarPlanId,
         status: { in: ["PENDING", "ACCEPTED"] },

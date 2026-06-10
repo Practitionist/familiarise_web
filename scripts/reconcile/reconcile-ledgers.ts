@@ -75,6 +75,7 @@ import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { checkPaymentLegsSumToAmount } from "@/lib/payments/payment-legs";
 import { ledgerBalancePaise } from "@/lib/payments/ledger/post";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 export type ReconcileScope = {
   /** Human-readable scope tag, e.g. "full" or "org:<orgId>". */
@@ -118,7 +119,30 @@ export type Finding = {
     | "REVERSED_EARNING_WITHOUT_REFUND_TXN"
     // #812 — a COMPLETED OrganizationPayout with no ORG_PAYOUT ledger
     // transaction: the cash left but the payable was never cleared in the journal.
-    | "COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN";
+    | "COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN"
+    // #780 — a stored money value approaching/beyond Number.MAX_SAFE_INTEGER.
+    // The JS boundary converts BigInt → number; past 2^53−1 that conversion
+    // loses precision (and sumPaise() starts throwing mid-flight). This
+    // surfaces the approach before anything crashes.
+    | "MONEY_VALUE_WITHIN_SAFE_RANGE"
+    // #778 §B — two ACTIVE assignments for the same (program, membership)
+    // with overlapping periods double-count caps/seats. The app-level guard
+    // in claimProgramAssignment prevents new ones; this is the retroactive
+    // detector (exclusion constraints aren't Prisma-expressible).
+    | "ASSIGNMENT_PERIOD_OVERLAP"
+    // #773/#778 §G — earnings-bearing payments missing a BOOKING journal txn
+    // beyond the allowed threshold (default 0 now that the splits path posts).
+    | "EARNINGS_WITHOUT_BOOKING_TXN"
+    // #778 §C/§G — per earnings-bearing payment, the recorded split must sum
+    // back to the funded amount to the paise (proves the floor+residual
+    // policy holds end-to-end).
+    | "SPLIT_SUM_MISMATCH"
+    // #775/#782 — CHARGE_MEMBER settlement coherence: a CHARGED event must
+    // have its side-payment SUCCEEDED and the overage:<sidePaymentId> txn
+    // posted; PENDING/FAILED events must have none. The capture-raced-
+    // reversal case (REVERSED + no txn) self-reports via system error and
+    // is deliberately not flagged here.
+    | "OVERAGE_SETTLEMENT_MISMATCH";
   organizationId?: string;
   billingAccountId?: string;
   billingSubscriptionId?: string;
@@ -273,7 +297,8 @@ export async function runReconcileLedgers(
     // CREDIT_POOL assignments carry a money-meter (LICENSED_SEAT leaves
     // consumedPaise at 0).
     if (a.program.type === "CREDIT_POOL") {
-      const priceTotal = ledgerSum._sum?.priceAtBookingPaise ?? 0;
+      // #780 — aggregate _sum bypasses the result extension: bigint at runtime.
+      const priceTotal = sumPaise(ledgerSum._sum?.priceAtBookingPaise);
       if (priceTotal !== a.consumedPaise) {
         findings.push({
           kind: "CREDIT_POOL_CONSUMED_DRIFT",
@@ -357,7 +382,9 @@ export async function runReconcileLedgers(
       programAssignment: {
         select: {
           id: true,
-          program: { select: { contract: { select: { organizationId: true } } } },
+          program: {
+            select: { contract: { select: { organizationId: true } } },
+          },
         },
       },
     },
@@ -457,9 +484,7 @@ export async function runReconcileLedgers(
   // assertion in invoice-rollup.ts prevents new drift; this is the retroactive
   // sweep for legacy / manually-edited rows.
   const invoicesToCheck = await prisma.organizationInvoice.findMany({
-    where: opts.organizationId
-      ? { organizationId: opts.organizationId }
-      : {},
+    where: opts.organizationId ? { organizationId: opts.organizationId } : {},
     select: {
       id: true,
       organizationId: true,
@@ -587,13 +612,10 @@ export async function runReconcileLedgers(
       by: ["transactionId", "direction"],
       _sum: { amountPaise: true },
     });
-    const perTxn = new Map<string, { debit: bigint; credit: bigint }>();
+    const perTxn = new Map<string, { debit: number; credit: number }>();
     for (const row of ledgerSums) {
-      const cur = perTxn.get(row.transactionId) ?? {
-        debit: BigInt(0),
-        credit: BigInt(0),
-      };
-      const amt = row._sum.amountPaise ?? BigInt(0);
+      const cur = perTxn.get(row.transactionId) ?? { debit: 0, credit: 0 };
+      const amt = sumPaise(row._sum.amountPaise);
       if (row.direction === "DEBIT") cur.debit += amt;
       else cur.credit += amt;
       perTxn.set(row.transactionId, cur);
@@ -602,9 +624,9 @@ export async function runReconcileLedgers(
       if (sums.debit !== sums.credit) {
         findings.push({
           kind: "LEDGER_TXN_IMBALANCE",
-          expectedPaise: Number(sums.debit),
-          actualPaise: Number(sums.credit),
-          deltaPaise: Number(sums.debit - sums.credit),
+          expectedPaise: sums.debit,
+          actualPaise: sums.credit,
+          deltaPaise: sums.debit - sums.credit,
           details: {
             transactionId,
             unit: "paise",
@@ -624,10 +646,10 @@ export async function runReconcileLedgers(
       by: ["accountId", "direction"],
       _sum: { amountPaise: true },
     });
-    const journalByAccount = new Map<string, bigint>();
+    const journalByAccount = new Map<string, number>();
     for (const row of entrySums) {
-      const amt = row._sum.amountPaise ?? BigInt(0);
-      const cur = journalByAccount.get(row.accountId) ?? BigInt(0);
+      const amt = sumPaise(row._sum.amountPaise);
+      const cur = journalByAccount.get(row.accountId) ?? 0;
       journalByAccount.set(
         row.accountId,
         row.direction === "DEBIT" ? cur + amt : cur - amt,
@@ -636,7 +658,7 @@ export async function runReconcileLedgers(
     const snapshots = await prisma.ledgerAccountBalance.findMany({
       select: { accountId: true, balancePaise: true },
     });
-    const snapshotByAccount = new Map<string, bigint>(
+    const snapshotByAccount = new Map<string, number>(
       snapshots.map((s) => [s.accountId, s.balancePaise]),
     );
     const allAccountIds = new Set<string>(
@@ -645,16 +667,16 @@ export async function runReconcileLedgers(
       ),
     );
     for (const accountId of Array.from(allAccountIds)) {
-      const journal = journalByAccount.get(accountId) ?? BigInt(0);
+      const journal = journalByAccount.get(accountId) ?? 0;
       const snapshot = snapshotByAccount.get(accountId);
       // A missing snapshot for an account with no entries nets to 0 — fine.
-      const snapshotVal = snapshot ?? BigInt(0);
+      const snapshotVal = snapshot ?? 0;
       if (snapshotVal !== journal) {
         findings.push({
           kind: "LEDGER_BALANCE_SNAPSHOT_DRIFT",
-          expectedPaise: Number(journal),
-          actualPaise: Number(snapshotVal),
-          deltaPaise: Number(snapshotVal - journal),
+          expectedPaise: journal,
+          actualPaise: snapshotVal,
+          deltaPaise: snapshotVal - journal,
           details: {
             ledgerAccountId: accountId,
             unit: "paise",
@@ -764,9 +786,9 @@ export async function runReconcileLedgers(
       }),
     ]);
     const cacheEarnings =
-      (ce._sum.platformFeePaise ?? 0) +
-      (ce._sum.consultantSharePaise ?? 0) +
-      (oe._sum.orgSharePaise ?? 0);
+      sumPaise(ce._sum.platformFeePaise) +
+      sumPaise(ce._sum.consultantSharePaise) +
+      sumPaise(oe._sum.orgSharePaise);
     if (journalEarnings !== cacheEarnings) {
       findings.push({
         kind: "EARNINGS_LEDGER_DRIFT",
@@ -782,15 +804,33 @@ export async function runReconcileLedgers(
     }
   }
 
-  // Coverage metric (informational, NOT a finding): earnings-bearing payments
-  // with no booking journal txn yet — the multi-collaborator + seed gap (#773).
+  // #773/#778 §G — earnings-bearing payments with no booking journal txn.
+  // Now that the multi-collaborator path posts its own balanced booking txn,
+  // this count must be ZERO: any excess over RECONCILE_UNJOURNALED_MAX
+  // (env, default 0) is a finding, not an info metric — the platform must
+  // never silently run partially-journaled again.
   const earningsPaymentRows = await prisma.consultantEarnings.findMany({
     select: { paymentId: true },
     distinct: ["paymentId"],
   });
-  const earningsPaymentsWithoutBookingTxn = earningsPaymentRows.filter(
+  const unjournaled = earningsPaymentRows.filter(
     (e) => e.paymentId && !coveredPaymentIds.has(e.paymentId),
-  ).length;
+  );
+  const earningsPaymentsWithoutBookingTxn = unjournaled.length;
+  const unjournaledMax = Number(process.env.RECONCILE_UNJOURNALED_MAX ?? 0);
+  if (earningsPaymentsWithoutBookingTxn > unjournaledMax) {
+    findings.push({
+      kind: "EARNINGS_WITHOUT_BOOKING_TXN",
+      expectedPaise: unjournaledMax,
+      actualPaise: earningsPaymentsWithoutBookingTxn,
+      deltaPaise: earningsPaymentsWithoutBookingTxn - unjournaledMax,
+      details: {
+        unit: "payments",
+        samplePaymentIds: unjournaled.slice(0, 10).map((e) => e.paymentId),
+        note: "Earnings-bearing payments missing a BOOKING ledger transaction exceed the allowed threshold (#773).",
+      },
+    });
+  }
 
   // #812 — a reversed earning with no REFUND ledger transaction. The new
   // blocking-ledger behaviour prevents this going forward (a refund that can't
@@ -855,7 +895,9 @@ export async function runReconcileLedgers(
   });
   const orgPayoutTxns = await prisma.ledgerTransaction.findMany({
     where: {
-      idempotencyKey: { in: completedPayouts.map((po) => `orgpayout:${po.id}`) },
+      idempotencyKey: {
+        in: completedPayouts.map((po) => `orgpayout:${po.id}`),
+      },
     },
     select: { idempotencyKey: true },
   });
@@ -911,6 +953,274 @@ export async function runReconcileLedgers(
           details: {
             scope: "consultant",
             note: "ConsultantPayout.status=COMPLETED but no PAYOUT ledger transaction.",
+          },
+        });
+      }
+    }
+  }
+
+  // --- (P) #778 §C/§G — split-sums-to-the-paise. Per earnings-bearing
+  // payment: Σ CE.platformFee + Σ CE.consultantShare + Σ OE.orgShare ==
+  // payment.originalAmount exactly (#773 netting model: settled collaborators
+  // store NET share + their org-card fee slice, so the allocation columns
+  // partition the gross with no overlap). Allocation columns never change on
+  // refund (refundedShareAmount is separate), so this holds for refunded
+  // payments too.
+  {
+    const ceAgg = await prisma.consultantEarnings.groupBy({
+      by: ["paymentId"],
+      _sum: { platformFeePaise: true, consultantSharePaise: true },
+      ...(opts.organizationId
+        ? { where: { payment: { organizationId: opts.organizationId } } }
+        : {}),
+    });
+    const paymentIdsWithCe = ceAgg
+      .map((r) => r.paymentId)
+      .filter((p): p is string => !!p);
+    // Review fix — no giant `IN` lists (Postgres caps bind params at 65,535):
+    // the org-earnings sum takes the same org filter as ceAgg and joins via
+    // the map; the gross lookup chunks its ids.
+    const oeAgg = await prisma.organizationEarnings.groupBy({
+      by: ["paymentId"],
+      _sum: { orgSharePaise: true },
+      ...(opts.organizationId
+        ? { where: { payment: { organizationId: opts.organizationId } } }
+        : {}),
+    });
+    const oeByPayment = new Map(
+      oeAgg.map((r) => [r.paymentId, sumPaise(r._sum.orgSharePaise)]),
+    );
+    const grossById = new Map<
+      string,
+      { id: string; originalAmount: number; organizationId: string | null }
+    >();
+    const CHUNK = 5_000;
+    for (let i = 0; i < paymentIdsWithCe.length; i += CHUNK) {
+      const rows = await prisma.payment.findMany({
+        where: { id: { in: paymentIdsWithCe.slice(i, i + CHUNK) } },
+        select: { id: true, originalAmount: true, organizationId: true },
+      });
+      for (const p of rows) grossById.set(p.id, p);
+    }
+    for (const row of ceAgg) {
+      if (!row.paymentId) continue;
+      const p = grossById.get(row.paymentId);
+      if (!p) continue;
+      const splitSum =
+        sumPaise(row._sum.platformFeePaise) +
+        sumPaise(row._sum.consultantSharePaise) +
+        (oeByPayment.get(row.paymentId) ?? 0);
+      if (splitSum !== p.originalAmount) {
+        findings.push({
+          kind: "SPLIT_SUM_MISMATCH",
+          paymentId: p.id,
+          organizationId: p.organizationId ?? undefined,
+          expectedPaise: p.originalAmount,
+          actualPaise: splitSum,
+          deltaPaise: splitSum - p.originalAmount,
+          details: {
+            unit: "paise",
+            note: "Σ(platform fee + consultant shares + org shares) diverges from Payment.originalAmount — a split leaked or minted paise (#778 §C).",
+          },
+        });
+      }
+    }
+  }
+
+  // --- (Q) #775/#782 — CHARGE_MEMBER overage settlement coherence (the
+  // exact semantics from the 2026-06-10 overage audit). settledAt is the
+  // "first settlement milestone", which differs per behavior — CHARGE_ORG
+  // stamps at ACCRUED (issued invoice), CHARGE_MEMBER at CHARGED (collected).
+  {
+    const memberEvents = await prisma.overageEvent.findMany({
+      where: { overageBehavior: "CHARGE_MEMBER" },
+      select: {
+        id: true,
+        chargeStatus: true,
+        marginalPaise: true,
+        paymentId: true,
+        settledAt: true,
+        payment: {
+          select: {
+            paymentStatus: true,
+            amount: true,
+            parentPaymentId: true,
+            organizationId: true,
+          },
+        },
+      },
+    });
+    const sideIds = memberEvents
+      .map((e) => e.paymentId)
+      .filter((p): p is string => !!p);
+    // Review-fix class — chunked IN to stay under the bind-param cap.
+    const txnKeys = new Set<string>();
+    const TXN_CHUNK = 5_000;
+    for (let i = 0; i < sideIds.length; i += TXN_CHUNK) {
+      const overageTxns = await prisma.ledgerTransaction.findMany({
+        where: {
+          idempotencyKey: {
+            in: sideIds.slice(i, i + TXN_CHUNK).map((id) => `overage:${id}`),
+          },
+        },
+        select: { idempotencyKey: true },
+      });
+      for (const t of overageTxns) txnKeys.add(t.idempotencyKey);
+    }
+    for (const ev of memberEvents) {
+      const hasTxn = !!ev.paymentId && txnKeys.has(`overage:${ev.paymentId}`);
+      const flag = (note: string) =>
+        findings.push({
+          kind: "OVERAGE_SETTLEMENT_MISMATCH",
+          paymentId: ev.paymentId ?? undefined,
+          organizationId: ev.payment?.organizationId ?? undefined,
+          expectedPaise: ev.marginalPaise,
+          actualPaise: ev.payment?.amount ?? 0,
+          deltaPaise: (ev.payment?.amount ?? 0) - ev.marginalPaise,
+          details: {
+            overageEventId: ev.id,
+            chargeStatus: ev.chargeStatus,
+            unit: "paise",
+            note,
+          },
+        });
+      if (ev.chargeStatus === "CHARGED") {
+        if (!ev.paymentId || ev.payment?.paymentStatus !== "SUCCEEDED") {
+          flag("CHARGED member overage without a SUCCEEDED side-payment.");
+        } else if (!hasTxn) {
+          flag(
+            "CHARGED member overage but no overage:<sidePaymentId> ledger txn — ORG_PAYABLE was never credited.",
+          );
+        } else if (ev.payment.amount !== ev.marginalPaise) {
+          flag("Side-payment amount diverges from the event's marginalPaise.");
+        } else if (!ev.settledAt) {
+          flag("CHARGED member overage missing settledAt.");
+        }
+      } else if (
+        (ev.chargeStatus === "PENDING" || ev.chargeStatus === "FAILED") &&
+        hasTxn
+      ) {
+        flag(
+          "Un-collected member overage has an overage ledger txn — money posted without a CHARGED event.",
+        );
+      }
+    }
+  }
+
+  // --- (O) #778 §B — no two ACTIVE assignments for the same (program,
+  // membership) may overlap in period. Sort-then-sweep per group; the row
+  // count is bounded by live assignments so the in-memory pass is cheap.
+  {
+    const active = await prisma.programAssignment.findMany({
+      where: { status: "ACTIVE" },
+      select: {
+        id: true,
+        programId: true,
+        membershipId: true,
+        periodStart: true,
+        periodEnd: true,
+      },
+      orderBy: [
+        { programId: "asc" },
+        { membershipId: "asc" },
+        { periodStart: "asc" },
+      ],
+    });
+    // Review fix — track the MAX periodEnd seen in the group, not just the
+    // previous row: one long cycle overlapping several later short ones would
+    // otherwise only flag the first (prev resets to the short row).
+    let maxEnd: (typeof active)[number] | null = null;
+    for (const a of active) {
+      if (
+        maxEnd &&
+        maxEnd.programId === a.programId &&
+        maxEnd.membershipId === a.membershipId
+      ) {
+        if (maxEnd.periodEnd.getTime() > a.periodStart.getTime()) {
+          findings.push({
+            kind: "ASSIGNMENT_PERIOD_OVERLAP",
+            programAssignmentId: a.id,
+            expectedPaise: 0,
+            actualPaise: 0,
+            deltaPaise: 0,
+            details: {
+              unit: "none",
+              overlapsAssignmentId: maxEnd.id,
+              programId: a.programId,
+              membershipId: a.membershipId,
+              note: "Two ACTIVE assignments overlap for the same (program, membership) — caps/seats double-count.",
+            },
+          });
+        }
+        if (a.periodEnd.getTime() > maxEnd.periodEnd.getTime()) {
+          maxEnd = a;
+        }
+      } else {
+        maxEnd = a;
+      }
+    }
+  }
+
+  // --- (M) #780 — money values within Number safe range. Aggregate _max reads
+  // bypass the boundary extension, so compare as bigint — sumPaise() would
+  // throw on exactly the values this check exists to report.
+  {
+    const SAFE_MAX = BigInt(Number.MAX_SAFE_INTEGER);
+    const maxima: Array<[string, bigint | number | null]> = [
+      [
+        "Payment.amount",
+        (await prisma.payment.aggregate({ _max: { amount: true } }))._max
+          .amount,
+      ],
+      [
+        "LedgerEntry.amountPaise",
+        (await prisma.ledgerEntry.aggregate({ _max: { amountPaise: true } }))
+          ._max.amountPaise,
+      ],
+      [
+        "OrganizationInvoice.totalPaise",
+        (
+          await prisma.organizationInvoice.aggregate({
+            _max: { totalPaise: true },
+          })
+        )._max.totalPaise,
+      ],
+      [
+        "OrganizationPayout.amountPaise",
+        (
+          await prisma.organizationPayout.aggregate({
+            _max: { amountPaise: true },
+          })
+        )._max.amountPaise,
+      ],
+      [
+        "ConsultantPayout.amount",
+        (await prisma.consultantPayout.aggregate({ _max: { amount: true } }))
+          ._max.amount,
+      ],
+      [
+        "BillingAccount.walletBalance",
+        (
+          await prisma.billingAccount.aggregate({
+            _max: { walletBalance: true },
+          })
+        )._max.walletBalance,
+      ],
+    ];
+    for (const [column, raw] of maxima) {
+      if (raw === null || raw === undefined) continue;
+      const v = typeof raw === "bigint" ? raw : BigInt(Math.trunc(raw));
+      if (v > SAFE_MAX) {
+        findings.push({
+          kind: "MONEY_VALUE_WITHIN_SAFE_RANGE",
+          expectedPaise: Number.MAX_SAFE_INTEGER,
+          actualPaise: Number(v), // imprecise past 2^53 — exact value in details
+          deltaPaise: Number(v - SAFE_MAX),
+          details: {
+            column,
+            rawValue: v.toString(),
+            unit: "paise",
+            note: "Money value exceeds Number.MAX_SAFE_INTEGER — the bigint→number boundary loses precision here.",
           },
         });
       }

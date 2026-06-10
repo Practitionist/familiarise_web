@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Currency } from "@prisma/client";
 import {
   hasDuplicates,
   isMeaningfulText,
@@ -94,7 +95,7 @@ export const ConsultationPlanSchema = z.object({
     .min(0.5, "Duration must be at least 30 minutes")
     .max(8, "Duration cannot exceed 8 hours"),
   price: z.number().min(0, "Price must be non-negative"),
-  priceCurrency: z.string().min(1, "Currency is required").default("INR"),
+  priceCurrency: z.nativeEnum(Currency).default(Currency.INR),
   language: z.string().min(1, "Language is required"),
   level: z.string().min(1, "Level is required"),
   prerequisites: z
@@ -177,7 +178,7 @@ export const SubscriptionPlanSchema = z.object({
     .min(1, "Duration must be at least 1 month")
     .max(24, "Duration cannot exceed 24 months"),
   price: z.number().min(0, "Price must be non-negative"),
-  priceCurrency: z.string().min(1, "Currency is required").default("INR"),
+  priceCurrency: z.nativeEnum(Currency).default(Currency.INR),
   callsPerWeek: z
     .number()
     .min(0, "Calls per week cannot be negative")
@@ -265,7 +266,7 @@ const BaseEventPlanSchema = z.object({
       "Description contains inappropriate language",
     ),
   price: z.number().min(0, "Price must be non-negative"),
-  priceCurrency: z.string().min(1, "Currency is required").default("INR"),
+  priceCurrency: z.nativeEnum(Currency).default(Currency.INR),
   maxParticipants: z.number().min(1, "At least one participant is required"),
   language: z
     .string()

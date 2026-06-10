@@ -1,3 +1,4 @@
+import type { Tx, PrismaLike } from "@/lib/prisma";
 /**
  * Program / ProgramAssignment helpers — replaces the old seat-helpers.ts
  * (acquireSeat / releaseSeat) with program-entitlement primitives.
@@ -28,30 +29,21 @@
  *   - CHARGE_ORG: overage added to the next invoice cycle.
  */
 
-import type {
-  Prisma,
-  PrismaClient,
-  ProgramAssignment,
-  ProgramType,
-} from "@prisma/client";
+import type { ProgramAssignment, ProgramType } from "@prisma/client";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
+import { sumPaise } from "@/lib/payments/utils/money";
 
-/**
- * Narrowed transaction type for the cap-debit helpers. Structurally
- * identical to `Prisma.TransactionClient` minus the lifecycle methods
- * that aren't usable inside an active transaction anyway. TypeScript's
- * width-subtyping accepts both `Prisma.TransactionClient` and the
- * narrower `PrismaTransaction` defined in `utils/slotAllocation/types.ts`
- * — so callers from either checkout.ts or SlotAllocationService pass
- * without casts.
- */
-export type CapTx = Omit<
-  Prisma.TransactionClient,
-  "$connect" | "$disconnect" | "$on" | "$transaction" | "$use"
->;
+// #780 — reads come through the extended client (money as number); the raw
+// model type still says bigint.
+type ProgramAssignmentRow = Omit<ProgramAssignment, "consumedPaise"> & {
+  consumedPaise: number;
+};
 
 export class ProgramAssignmentLimitError extends Error {
-  constructor(public programId: string, public membershipId: string) {
+  constructor(
+    public programId: string,
+    public membershipId: string,
+  ) {
     super(
       `Program assignment at overage cap for program=${programId} membership=${membershipId}`,
     );
@@ -64,9 +56,9 @@ export class ProgramAssignmentLimitError extends Error {
  * given point in time. Returns null if no active assignment.
  */
 export async function resolveActiveAssignment(
-  prisma: PrismaClient | Prisma.TransactionClient,
+  prisma: PrismaLike,
   params: { programId: string; membershipId: string; at?: Date },
-): Promise<ProgramAssignment | null> {
+): Promise<ProgramAssignmentRow | null> {
   const at = params.at ?? new Date();
   return prisma.programAssignment.findFirst({
     where: {
@@ -75,6 +67,10 @@ export async function resolveActiveAssignment(
       periodStart: { lte: at },
       periodEnd: { gte: at },
     },
+    // #750 — boundary instants (periodEnd == next periodStart) match two
+    // rows; without an order the pick is arbitrary. Latest cycle wins,
+    // consistent with checkout's resolver.
+    orderBy: { periodEnd: "desc" },
   });
 }
 
@@ -86,15 +82,50 @@ export async function resolveActiveAssignment(
  * The unique constraint (programId, membershipId, periodStart) enforces
  * idempotency.
  */
+export class ProgramAssignmentOverlapError extends Error {
+  readonly httpStatus = 409;
+  constructor(
+    public programId: string,
+    public membershipId: string,
+  ) {
+    super(
+      `An assignment for this member already covers an overlapping period on program=${programId}`,
+    );
+    this.name = "ProgramAssignmentOverlapError";
+  }
+}
+
 export async function claimProgramAssignment(
-  tx: CapTx,
+  tx: Tx,
   params: {
     programId: string;
     membershipId: string;
     periodStart: Date;
     periodEnd: Date;
   },
-): Promise<{ assignment: ProgramAssignment; created: boolean }> {
+): Promise<{ assignment: ProgramAssignmentRow; created: boolean }> {
+  // #778 §B — the @@unique on (programId, membershipId, periodStart) can't
+  // stop two OVERLAPPING cycles with different starts, and Postgres exclusion
+  // constraints aren't Prisma-expressible. Overlap double-counts caps/seats in
+  // reconcile, so reject here; the exact-same-periodStart re-claim stays
+  // idempotent via the createMany path below.
+  const overlapping = await tx.programAssignment.findFirst({
+    where: {
+      programId: params.programId,
+      membershipId: params.membershipId,
+      status: "ACTIVE",
+      periodStart: { lt: params.periodEnd, not: params.periodStart },
+      periodEnd: { gt: params.periodStart },
+    },
+    select: { id: true },
+  });
+  if (overlapping) {
+    throw new ProgramAssignmentOverlapError(
+      params.programId,
+      params.membershipId,
+    );
+  }
+
   // #785 — report whether THIS call created the row so the caller can
   // increment activeSeatCount exactly once. `createMany({ skipDuplicates })`
   // is INSERT … ON CONFLICT DO NOTHING: it returns count===1 for the single
@@ -151,7 +182,7 @@ export async function claimProgramAssignment(
  * if cap hit and overageBehavior=BLOCK.
  */
 export async function recordBookingUtilization(
-  tx: CapTx,
+  tx: Tx,
   params: {
     programAssignmentId: string;
     paymentId: string;
@@ -272,18 +303,18 @@ export async function recordBookingUtilization(
   // #775/#753 — LICENSED_SEAT meters by engagement COUNT against
   // `coveredEngagementsPerCycle`; CREDIT_POOL meters by PAISE against
   // `creditsPerCycle × 100` (1 credit = ₹1). Pick the unit + behavior source.
-  const programType: ProgramType =
-    assignment.program.type ?? "LICENSED_SEAT";
+  const programType: ProgramType = assignment.program.type ?? "LICENSED_SEAT";
   const isCredit = programType === "CREDIT_POOL";
   const cap = isCredit
     ? null
-    : assignment.program.licensedSeatConfig?.coveredEngagementsPerCycle ?? null;
+    : (assignment.program.licensedSeatConfig?.coveredEngagementsPerCycle ??
+      null);
   const creditBudgetPaise = isCredit
     ? (assignment.program.creditPoolConfig?.creditsPerCycle ?? 0) * 100
     : null;
   const behavior = isCredit
-    ? assignment.program.creditPoolConfig?.overageBehavior ?? "BLOCK"
-    : assignment.program.licensedSeatConfig?.overageBehavior ?? "BLOCK";
+    ? (assignment.program.creditPoolConfig?.overageBehavior ?? "BLOCK")
+    : (assignment.program.licensedSeatConfig?.overageBehavior ?? "BLOCK");
   const pricePaise = Math.max(0, Math.floor(params.priceAtBookingPaise));
 
   // Atomic conditional increment — mirrors the walletDebit pattern, but via
@@ -453,7 +484,7 @@ export async function recordBookingUtilization(
  * fully exhausts the original consumption.
  */
 export async function reverseBookingUtilization(
-  tx: CapTx,
+  tx: Tx,
   params: {
     paymentId: string;
     reason?: string;
@@ -529,7 +560,8 @@ export async function reverseBookingUtilization(
     return { reversed: false, engagementsReversed: 0, fullyReversed: false };
   }
 
-  const willBeFullyReversed = alreadyReversed + actualReversal >= util.engagementsConsumed;
+  const willBeFullyReversed =
+    alreadyReversed + actualReversal >= util.engagementsConsumed;
 
   // Prorate the price refund so the ledger sum stays consistent with
   // the partial reversal. Round to the nearest paise; the integer
@@ -554,7 +586,7 @@ export async function reverseBookingUtilization(
       _sum: { priceAtBookingPaise: true },
     });
     const alreadyReversedPrice =
-      -1 * (priceLedger._sum.priceAtBookingPaise ?? 0);
+      -1 * sumPaise(priceLedger._sum.priceAtBookingPaise);
     const remainingPrice = Math.max(
       0,
       util.priceAtBookingPaise - alreadyReversedPrice,

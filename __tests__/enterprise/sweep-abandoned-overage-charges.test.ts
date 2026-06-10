@@ -57,11 +57,13 @@ describe("sweepAbandonedOverageCharges (#785)", () => {
         },
       ]),
     );
-    // PENDING→FAILED by id (transitionOverage appends the legal-from guard)
+    // PENDING→FAILED by id (transitionOverage appends the legal-from guard),
+    // stamping an auditable write-off reason (#779 §A).
     expect(mockTransition).toHaveBeenCalledWith(
       expect.anything(),
       { id: { in: ["ov_1", "ov_2"] } },
       "FAILED",
+      { chargeFailureReason: expect.stringContaining("swept at 7d") },
     );
   });
 

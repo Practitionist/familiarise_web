@@ -115,7 +115,9 @@ export type TdsConsultantInput = {
   panOnFile?: boolean;
   residencyStatus: ConsultantProfile["residencyStatus"];
   tdsSection: string | null;
-  tdsRate: number | null;
+  /** #781 §C — integer basis points (1000 = 10%); the engine's internal
+   *  math stays decimal-fraction until the PR-C consolidation. */
+  tdsRateBps: number | null;
   tdsLowerRateCert: string | null;
   providerCountry: string | null;
 };
@@ -184,8 +186,9 @@ export function computeTdsForPayout(params: {
   // --- 3. Section 197 lower-rate certificate — overrides section default
   // when both the cert ref AND a per-consultant rate are populated. The
   // schema doesn't carry a separate `tdsLowerRateCertRate` field, so we
-  // re-purpose `consultant.tdsRate` as the cert's rate.
-  const certRate = decimalToNumber(consultant.tdsRate);
+  // re-purpose the consultant's rate (bps → fraction) as the cert's rate.
+  const certRate =
+    consultant.tdsRateBps === null ? null : consultant.tdsRateBps / 10_000;
   if (consultant.tdsLowerRateCert && certRate !== null) {
     const amt = Math.floor(grossAmountPaise * certRate);
     reasons.push(`Section 197 cert ${consultant.tdsLowerRateCert} → ${(certRate * 100).toFixed(2)}%`);

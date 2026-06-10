@@ -63,10 +63,15 @@ export async function sweepAbandonedOverageCharges(
 
   // PENDING→FAILED is the only legal target; transitionOverage appends the guard,
   // so a side-charge that paid (→CHARGED) between the read and here is skipped.
+  // chargeFailureReason makes the silent write-off auditable (#779 §A) — the
+  // 14d timeout cron distinguishes its own FAILs via chargeTimedOutAt.
   const failed = await transitionOverage(
     prisma,
     { id: { in: abandoned.map((a) => a.id) } },
     "FAILED",
+    {
+      chargeFailureReason: `Abandoned before payment started (swept at ${ageDays}d)`,
+    },
   );
 
   console.log(

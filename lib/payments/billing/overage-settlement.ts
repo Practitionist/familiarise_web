@@ -8,14 +8,15 @@
 import prisma from "@/lib/prisma";
 import {
   PaymentStatus,
+  type Currency,
   type Prisma,
   type PaymentGateway,
   type ProgramType,
 } from "@prisma/client";
 import { computeOverageForBooking } from "@/lib/payments/billing/overage";
 import { notifyOrgProgramOverageDue } from "@/lib/novu/org-workflows";
-
-type Tx = Prisma.TransactionClient;
+import type { Tx } from "@/lib/prisma";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 export interface RecordOverageInput {
   tx: Tx;
@@ -29,7 +30,7 @@ export interface RecordOverageInput {
     creditBudgetPaise: number | null;
   };
   bookingPricePaise: number;
-  currency: string;
+  currency: Currency;
   paymentId: string;
   userId: string;
   organizationId: string | null;
@@ -99,7 +100,7 @@ export async function recordOverageAtCheckout(
     },
     _sum: { marginalPaise: true },
   });
-  const cycleOverageSoFarPaise = soFarAgg._sum.marginalPaise ?? 0;
+  const cycleOverageSoFarPaise = sumPaise(soFarAgg._sum.marginalPaise);
 
   // Drive the decision through the shared computeOverageForBooking() mapper.
   // For LICENSED_SEAT the PRE-booking engagement count is needed (the meter
@@ -184,7 +185,9 @@ export async function recordOverageAtCheckout(
         basePaise,
         surchargePaise,
         marginalPaise,
-        currency: "INR",
+        // Mirrors the booking currency (the side-Payment + timeout notify
+        // read it back); hardcoding INR mislabels a non-INR booking.
+        currency,
         chargeStatus: "PENDING",
         paymentId: sideCharge.id,
       },
@@ -271,8 +274,7 @@ export async function recordOverageAtCheckout(
       where: { paymentId_source: { paymentId, source: "INVOICE_ACCRUAL" } },
       select: { amountPaise: true },
     });
-    const carved =
-      baseLeg && baseLeg.amountPaise >= basePaise ? basePaise : 0;
+    const carved = baseLeg && baseLeg.amountPaise >= basePaise ? basePaise : 0;
     if (carved > 0) {
       await tx.paymentLeg.update({
         where: { paymentId_source: { paymentId, source: "INVOICE_ACCRUAL" } },
@@ -305,7 +307,7 @@ export async function recordOverageAtCheckout(
         basePaise,
         surchargePaise,
         marginalPaise,
-        currency: "INR",
+        currency,
         chargeStatus: "PENDING",
         // paymentId / invoiceLineItemId / settledAt stamped by the rollup.
       },

@@ -60,6 +60,7 @@ import { ClassEvent, ClassPlannerProps } from "../types/event";
 import { PlanMaterialsUpload } from "./PlanMaterialsUpload";
 import { CollaboratorsTab } from "@/components/collaborators/CollaboratorsTab";
 import { PlanImageUploader } from "@/components/plans/PlanImageUploader";
+import { toCurrencyEnum } from "@/lib/payments/validation/currency-guards";
 
 export function EventPlannerForClass({
   isOpen,
@@ -285,7 +286,7 @@ export function EventPlannerForClass({
           title: formData.title,
           description: formData.description || "",
           price: Math.round(formData.price * 100),
-          priceCurrency: formData.priceCurrency ?? "INR",
+          priceCurrency: toCurrencyEnum(formData.priceCurrency),
           durationInMonths: formData.durationInMonths,
           maxParticipants: formData.maxParticipants,
           language: formData.language ?? "English",

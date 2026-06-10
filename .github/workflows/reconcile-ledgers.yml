@@ -44,6 +44,6 @@ jobs:
 
       - name: Notify on discrepancies
         if: failure()
-        run: |
-          echo "::error::Ledger reconciliation found discrepancies or errored. Report id: ${{ steps.reconcile.outputs.report_id }}"
-          # TODO: wire to #ops-alerts Slack channel + page on-call.
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+        run: bash scripts/ci/notify-ops-failure.sh "reconcile-ledgers"

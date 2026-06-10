@@ -15,6 +15,7 @@ import {
   computeOverageForBooking,
   type OverageContext,
 } from "@/lib/payments/billing/overage";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 export interface OveragePreviewParams {
   organizationId: string;
@@ -62,7 +63,10 @@ export async function previewOverageForBooking(
 ): Promise<OveragePreviewResult> {
   const { organizationId, membershipId, coveredPlanType } = params;
   const bookingPricePaise = Math.max(0, Math.floor(params.bookingPricePaise));
-  const sessionsConsumed = Math.max(1, Math.floor(params.sessionsConsumed ?? 1));
+  const sessionsConsumed = Math.max(
+    1,
+    Math.floor(params.sessionsConsumed ?? 1),
+  );
 
   // PERSONAL funding never meters against a program → no overage concept.
   const billingAccount = await prisma.billingAccount.findUnique({
@@ -133,7 +137,7 @@ export async function previewOverageForBooking(
     },
     _sum: { marginalPaise: true },
   });
-  const cycleOverageSoFarPaise = soFarAgg._sum.marginalPaise ?? 0;
+  const cycleOverageSoFarPaise = sumPaise(soFarAgg._sum.marginalPaise);
 
   const isCredit = assignment.program.type === "CREDIT_POOL";
   const lsc = assignment.program.licensedSeatConfig;

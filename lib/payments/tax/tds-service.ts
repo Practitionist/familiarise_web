@@ -53,8 +53,9 @@
  * ───────────────────────────────────────────────────────────────────────────
  */
 
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 // ============================================================================
 // Constants
@@ -142,7 +143,7 @@ export async function getCurrentFYCumulativePayments(
     _sum: { amount: true },
   });
 
-  return result._sum.amount || 0;
+  return sumPaise(result._sum.amount);
 }
 
 /**
@@ -162,7 +163,7 @@ export async function getCumulativeTDSDeducted(
     _sum: { tdsDeducted: true },
   });
 
-  return result._sum.tdsDeducted || 0;
+  return sumPaise(result._sum.tdsDeducted);
 }
 
 export interface TDSCalculationResult {
@@ -187,6 +188,12 @@ export interface TDSCalculationResult {
  * If the threshold is crossed mid-payout, TDS is calculated on:
  * - The excess amount if this payout crosses the threshold
  * - The full payout amount if already above threshold
+ */
+/**
+ * @deprecated #778 §E — the 194J/percent calculator. The engine of record is
+ * lib/compliance/tds.ts (computeTdsForPayout); both payout paths call it via
+ * the TDS_ENGINE-flagged derivation in the payout services. Kept only for
+ * reference until the CA sign-off closes the question; do not add callers.
  */
 export async function calculateTDS(params: {
   consultantProfileId: string;
@@ -267,13 +274,14 @@ export async function recordTDSDeduction(params: {
   consultantProfileId: string;
   financialYear: string;
   tdsDeducted: number;
-  tdsRate: number;
+  /** #781 §C — integer basis points (194-O = 10, no-PAN 206AA = 500). */
+  tdsRateBps: number;
   cumulativeAmountCredited: number;
   payoutId?: string;
   earningsId?: string;
   /** #776 — statutory section ("194O" for ECO consultant payouts) for 26Q audit. */
   tdsSection?: string;
-  db?: Prisma.TransactionClient | typeof prisma;
+  db?: Tx | typeof prisma;
 }) {
   const quarter = getIndianFYQuarter();
 
@@ -286,7 +294,7 @@ export async function recordTDSDeduction(params: {
       quarter,
       cumulativeAmountCredited: params.cumulativeAmountCredited,
       tdsDeducted: params.tdsDeducted,
-      tdsRate: params.tdsRate,
+      tdsRateBps: params.tdsRateBps,
       tdsSection: params.tdsSection ?? null,
       payoutId: params.payoutId,
       earningsId: params.earningsId,
@@ -304,7 +312,7 @@ export async function recordTDSDeduction(params: {
  * through the passed tx so the reversal commits atomically with the cascade.
  */
 export async function recordTdsReversal(
-  tx: Prisma.TransactionClient | typeof prisma,
+  tx: Tx | typeof prisma,
   params: {
     payoutId: string;
     consultantProfileId: string;
@@ -313,6 +321,8 @@ export async function recordTdsReversal(
     refundAmountPaise: number;
     /** Original payment amount in paise; proportion basis denominator. */
     paymentAmountPaise: number;
+    /** Triggering Refund row, when the reversal arises from one (#778 §D). */
+    refundId?: string;
   },
 ) {
   if (params.paymentAmountPaise <= 0) return null;
@@ -329,7 +339,8 @@ export async function recordTdsReversal(
 
   // Integer paise proportion (floor — never reverse more than the refund earns).
   let tdsToReverse = Math.floor(
-    (original.tdsDeducted * params.refundAmountPaise) / params.paymentAmountPaise,
+    (original.tdsDeducted * params.refundAmountPaise) /
+      params.paymentAmountPaise,
   );
   if (tdsToReverse <= 0) return null;
 
@@ -362,20 +373,42 @@ export async function recordTdsReversal(
     : original.financialYear;
   const quarter = filed ? getIndianFYQuarter() : original.quarter;
 
-  return tx.tDSRecord.create({
+  const reversal = await tx.tDSRecord.create({
     data: {
       consultantProfileId: params.consultantProfileId,
       financialYear,
       quarter,
       cumulativeAmountCredited: original.cumulativeAmountCredited,
       tdsDeducted: -tdsToReverse, // signed: reverses prior withholding
-      tdsRate: original.tdsRate,
+      tdsRateBps: original.tdsRateBps,
       tdsSection: original.tdsSection,
       payoutId: params.payoutId,
       earningsId: params.earningsId,
       isReversal: true,
     },
   });
+
+  // #778 §D — the filing artifact. The negative TDSRecord above stays the
+  // YTD/dedup-cap source of truth; TdsAdjustment is what the Form 26Q/140
+  // return generator exports as the revised-statement line. Emitting both is
+  // additive (no reader of TdsAdjustment exists yet) and lets the export land
+  // without re-deriving history.
+  await tx.tdsAdjustment.create({
+    data: {
+      consultantProfileId: params.consultantProfileId,
+      tdsRecordId: reversal.id,
+      payoutId: params.payoutId,
+      refundId: params.refundId ?? null,
+      financialYear,
+      quarter,
+      amountPaise: -tdsToReverse,
+      reason: filed
+        ? "refund reversal — original quarter already filed; adjust current quarter"
+        : "refund reversal — original quarter unfiled; corrected in place",
+    },
+  });
+
+  return reversal;
 }
 
 // ============================================================================
@@ -407,10 +440,10 @@ export async function getTDSSummary(financialYear: string) {
     financialYear,
     quarterWise: records.map((r) => ({
       quarter: r.quarter,
-      totalDeducted: r._sum.tdsDeducted || 0,
+      totalDeducted: sumPaise(r._sum.tdsDeducted),
       count: r._count,
     })),
-    totalDeducted: totalDeducted._sum.tdsDeducted || 0,
+    totalDeducted: sumPaise(totalDeducted._sum.tdsDeducted),
     totalRecords: totalDeducted._count,
     unfiledRecords: unfiled,
   };
@@ -421,7 +454,7 @@ export async function getTDSSummary(financialYear: string) {
  */
 export async function getConsultantTDSBreakdown(financialYear: string) {
   return prisma.tDSRecord.groupBy({
-    by: ["consultantProfileId", "tdsRate"],
+    by: ["consultantProfileId", "tdsRateBps"],
     where: { financialYear },
     _sum: { tdsDeducted: true, cumulativeAmountCredited: true },
     _count: true,

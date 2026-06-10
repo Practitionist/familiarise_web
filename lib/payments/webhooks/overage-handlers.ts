@@ -9,16 +9,21 @@
  * order and stamps it onto `paymentIntent`); these handlers run on the gateway
  * webhook for that order.
  *
- * Money model (org-relief): the booking already charged the org the full
- * price and paid the consultant once. The member's marginal therefore RELIEVES
- * the org — it posts `Dr CASH / Cr ORG_PAYABLE(org)`, a credit the org realises
- * in settlement. (How buyer orgs net that credit against their wallet/invoice
- * is a tracked refinement in #775; the journal stays balanced regardless.)
+ * Money model (org-relief, DECIDED #775): the org funded the covered portion
+ * of the booking and the consultant was paid once at booking; the member's
+ * marginal relieves the org. Capture posts `Dr CASH / Cr ORG_PAYABLE(org)`
+ * for the FULL marginal (base + surcharge), and that credit is REALIZED AT
+ * ORG PAYOUT — it flows to the org through the next payout batch like any
+ * other payable. There is NO invoice-netting and NO wallet credit-back for
+ * member overage money; the ledger payable is the single realization path.
+ * Reconcile asserts every CHARGED member event has its `overage:<sidePaymentId>`
+ * txn with Cr ORG_PAYABLE == marginalPaise (OVERAGE_SETTLEMENT_MISMATCH).
  */
 import prisma from "@/lib/prisma";
 import { PaymentStatus } from "@prisma/client";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
+import { recordSystemError } from "@/lib/enterprise/system-events";
 
 /**
  * Gateway capture succeeded for a CHARGE_MEMBER side-charge. Idempotent on the
@@ -64,9 +69,39 @@ export async function handleOverageMemberSuccess(
       update: {},
     });
 
+    // Transition FIRST so the journal below mirrors the state machine: the
+    // org-relief credit posts only for an event that actually became CHARGED.
+    const moved = await transitionOverage(
+      tx,
+      { paymentId: side.id },
+      "CHARGED",
+      {
+        settledAt: new Date(),
+      },
+    );
+
+    if (moved === 0) {
+      // Capture raced a reversal: the booking refunded (event → REVERSED)
+      // after the order was minted but before this webhook landed. Money was
+      // collected for an obligation that no longer exists — do NOT credit the
+      // org; surface it for a manual side-payment refund instead (#782).
+      void recordSystemError({
+        organizationId: side.organizationId,
+        category: "OVERAGE",
+        summary: `Overage side-payment ${side.id} captured but its OverageEvent could not move to CHARGED (likely REVERSED mid-flight) — refund the side-payment`,
+        err: new Error("OVERAGE_CAPTURED_AFTER_REVERSAL"),
+        context: { sidePaymentId: side.id, paymentIntentId },
+      }).catch(() => {});
+      return;
+    }
+
     if (side.amount > 0 && side.organizationId) {
       const postings: Posting[] = [
-        { account: { kind: "CASH" }, direction: "DEBIT", amountPaise: side.amount },
+        {
+          account: { kind: "CASH" },
+          direction: "DEBIT",
+          amountPaise: side.amount,
+        },
         {
           account: { kind: "ORG_PAYABLE", organizationId: side.organizationId },
           direction: "CREDIT",
@@ -80,10 +115,6 @@ export async function handleOverageMemberSuccess(
         postings,
       });
     }
-
-    await transitionOverage(tx, { paymentId: side.id }, "CHARGED", {
-      settledAt: new Date(),
-    });
   });
 }
 
