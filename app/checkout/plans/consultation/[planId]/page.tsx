@@ -84,7 +84,8 @@ export default function ConsultationCheckoutPage({
   const [error, setError] = useState<string | null>(null);
   const [_reviews, setReviews] = useState<ConsultantReview[]>([]);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
-  const idempotencyKeyRef = useRef(mintClientIdempotencyKey());
+  // #828 — useState's lazy initializer runs once per mount.
+  const [idempotencyKey] = useState(mintClientIdempotencyKey);
   const isProcessingRef = useRef(false);
   const [processingGateway, setProcessingGateway] = useState<string | null>(
     null,
@@ -294,11 +295,11 @@ export default function ConsultationCheckoutPage({
           ...checkoutData,
           isMockPayment,
           // #828 — stable per-mount; the server dedupes retries on this key.
-          clientIdempotencyKey: idempotencyKeyRef.current,
+          clientIdempotencyKey: idempotencyKey,
         }),
       });
     },
-    [],
+    [idempotencyKey],
   );
 
   const handleCheckout = useCallback(

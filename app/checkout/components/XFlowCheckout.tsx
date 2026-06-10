@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState } from "react";
+import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { CheckoutInput, checkoutResponseSchema } from "@/schemas/checkout";
@@ -40,7 +40,9 @@ const XFlowCheckout: React.FC<XFlowCheckoutProps> = ({
 }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   // #828 — stable per-mount; the server dedupes retries on this key.
-  const idempotencyKeyRef = useRef(mintClientIdempotencyKey());
+  // useState's lazy initializer runs once, unlike a useRef(arg) expression
+  // which would mint a key every render.
+  const [idempotencyKey] = useState(mintClientIdempotencyKey);
   const { toast } = useToast();
 
   // Load XFlow script dynamically
@@ -87,7 +89,7 @@ const XFlowCheckout: React.FC<XFlowCheckoutProps> = ({
         body: JSON.stringify({
           ...input,
           gateway: "XFLOW",
-          clientIdempotencyKey: idempotencyKeyRef.current,
+          clientIdempotencyKey: idempotencyKey,
         }),
       });
 

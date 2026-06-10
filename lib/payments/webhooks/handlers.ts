@@ -13,6 +13,7 @@ import {
 } from "@prisma/client";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
 import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { validateWebhookMetadata } from "@/schemas/webhooks/metadata";
 import { ZodError } from "zod";
@@ -138,8 +139,15 @@ export async function handlePaymentSuccess(
   // error logging. The `sync-payment-earnings` background job serves as
   // a safety net for any failures in Phase 2.
 
-  // Phase 1: Critical transaction — payment confirmation + appointment
-  const txResult = await prisma.$transaction(async (tx) => {
+  // Phase 1: Critical transaction — payment confirmation + appointment.
+  // Serializable (#827 review): two concurrent capture webhooks for
+  // overlapping slots both pass the confirm-time conflict findFirst at READ
+  // COMMITTED (each sees the other's slots still tentative). Under SSI the
+  // rw-antidependency aborts one side with P2034; the retry then sees the
+  // winner confirmed and blocks. The SUCCEEDED early-return keeps the retry
+  // idempotent.
+  const txResult = await withSerializableRetry(() =>
+    prisma.$transaction(async (tx) => {
     const payment = await tx.payment.findUnique({
       where: { paymentIntent: paymentIntentId },
       include: { user: { include: { consulteeProfile: true } } },
@@ -280,7 +288,10 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       amount: payment.amount,
       currency: payment.currency,
     };
-  });
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ),
+  );
 
   // If transaction returned null, the payment was already processed or had a metadata error
   if (!txResult) return;

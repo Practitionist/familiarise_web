@@ -23,6 +23,7 @@ async function replayByIdempotencyKey(userId: string, key: string) {
     select: {
       paymentIntent: true,
       paymentStatus: true,
+      paymentGateway: true,
       amount: true,
       currency: true,
       appointmentId: true,
@@ -39,7 +40,14 @@ async function replayByIdempotencyKey(userId: string, key: string) {
       message: "This checkout was already completed.",
     });
   }
-  if (existing.paymentStatus === "PENDING") {
+  // Stripe stores the hosted checkout URL in client_secret (see
+  // StripeCheckout.tsx); we don't persist it, so a Stripe PENDING replay
+  // can't be resumed — fall through to the fresh-key 409 below instead of
+  // returning a null secret the client can't redirect with.
+  if (
+    existing.paymentStatus === "PENDING" &&
+    existing.paymentGateway !== "STRIPE"
+  ) {
     return NextResponse.json({
       success: true,
       reused: true,
