@@ -29,7 +29,9 @@ import {
 import {
   applyRefundCascade,
   mintInvoiceRefundCreditNote,
+  mintRefundCreditNote,
 } from "@/lib/payments/operations/refund";
+import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
 // Re-export payment handlers from lib (architectural fix)
@@ -1137,6 +1139,12 @@ export async function handleDisputeUpdated(
     async (tx) => {
       const dispute = await tx.dispute.findUnique({
         where: { disputeId },
+        // #738-B — payment amount/TCS needed for the lost-dispute tax parity.
+        include: {
+          payment: {
+            select: { id: true, amount: true, gstTcsCollectedPaise: true },
+          },
+        },
       });
 
       if (!dispute) {
@@ -1197,6 +1205,7 @@ export async function handleDisputeUpdated(
             consultantSharePaise: true,
             refundedShareAmount: true,
             consultantProfileId: true,
+            payoutId: true,
           },
         });
         for (const earning of heldEarnings) {
@@ -1215,6 +1224,20 @@ export async function handleDisputeUpdated(
                 : {}),
             },
           });
+
+          // #738-B — statutory parity with the refund path: withholding that
+          // was deposited against a now-charged-back sale must net out of the
+          // next quarter's return. The shared helper's dedup cap prevents a
+          // double reversal when an app refund preceded the chargeback.
+          if (earning.payoutId) {
+            await recordTdsReversal(tx, {
+              payoutId: earning.payoutId,
+              consultantProfileId: earning.consultantProfileId,
+              earningsId: earning.id,
+              refundAmountPaise: dispute.amountPaise,
+              paymentAmountPaise: dispute.payment.amount,
+            });
+          }
 
           console.log(
             `💸 Earnings ${earning.id} refunded (${remainingRefundable} paise) — dispute ${disputeId} lost`,
@@ -1242,6 +1265,36 @@ export async function handleDisputeUpdated(
             amountPaise: dispute.amountPaise,
             disputeId,
           });
+        }
+
+        // #738-B — GST parity with the refund path: a lost chargeback reverses
+        // the sale, so the issued invoice needs a Sec 34 credit note exactly
+        // like a refund would. Idempotent on CreditNote.disputeId; no-op for
+        // non-invoiced (B2C card) payments.
+        await mintRefundCreditNote(tx, {
+          paymentId: dispute.paymentId,
+          disputeId: dispute.id,
+          amountPaise: dispute.amountPaise,
+          reason: `chargeback lost (dispute ${disputeId})`,
+        });
+
+        // #738-B — TCS u/s 52 parity: if collection ever stamped this payment
+        // (flag-gated, schema-live), the chargeback must net it out of the
+        // next GSTR-8. Inert while gstTcsCollectedPaise stays null.
+        if ((dispute.payment.gstTcsCollectedPaise ?? 0) > 0) {
+          const tcsReverse = Math.floor(
+            (dispute.payment.gstTcsCollectedPaise! * dispute.amountPaise) /
+              dispute.payment.amount,
+          );
+          if (tcsReverse > 0) {
+            await tx.gstTcsAdjustment.create({
+              data: {
+                paymentId: dispute.paymentId,
+                amountPaise: -tcsReverse,
+                reason: `chargeback lost (dispute ${disputeId})`,
+              },
+            });
+          }
         }
       }
 

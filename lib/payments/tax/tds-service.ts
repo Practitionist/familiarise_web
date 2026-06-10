@@ -189,6 +189,12 @@ export interface TDSCalculationResult {
  * - The excess amount if this payout crosses the threshold
  * - The full payout amount if already above threshold
  */
+/**
+ * @deprecated #778 §E — the 194J/percent calculator. The engine of record is
+ * lib/compliance/tds.ts (computeTdsForPayout); both payout paths call it via
+ * the TDS_ENGINE-flagged derivation in the payout services. Kept only for
+ * reference until the CA sign-off closes the question; do not add callers.
+ */
 export async function calculateTDS(params: {
   consultantProfileId: string;
   payoutAmountPaise: number;
@@ -315,6 +321,8 @@ export async function recordTdsReversal(
     refundAmountPaise: number;
     /** Original payment amount in paise; proportion basis denominator. */
     paymentAmountPaise: number;
+    /** Triggering Refund row, when the reversal arises from one (#778 §D). */
+    refundId?: string;
   },
 ) {
   if (params.paymentAmountPaise <= 0) return null;
@@ -365,7 +373,7 @@ export async function recordTdsReversal(
     : original.financialYear;
   const quarter = filed ? getIndianFYQuarter() : original.quarter;
 
-  return tx.tDSRecord.create({
+  const reversal = await tx.tDSRecord.create({
     data: {
       consultantProfileId: params.consultantProfileId,
       financialYear,
@@ -379,6 +387,28 @@ export async function recordTdsReversal(
       isReversal: true,
     },
   });
+
+  // #778 §D — the filing artifact. The negative TDSRecord above stays the
+  // YTD/dedup-cap source of truth; TdsAdjustment is what the Form 26Q/140
+  // return generator exports as the revised-statement line. Emitting both is
+  // additive (no reader of TdsAdjustment exists yet) and lets the export land
+  // without re-deriving history.
+  await tx.tdsAdjustment.create({
+    data: {
+      consultantProfileId: params.consultantProfileId,
+      tdsRecordId: reversal.id,
+      payoutId: params.payoutId,
+      refundId: params.refundId ?? null,
+      financialYear,
+      quarter,
+      amountPaise: -tdsToReverse,
+      reason: filed
+        ? "refund reversal — original quarter already filed; adjust current quarter"
+        : "refund reversal — original quarter unfiled; corrected in place",
+    },
+  });
+
+  return reversal;
 }
 
 // ============================================================================

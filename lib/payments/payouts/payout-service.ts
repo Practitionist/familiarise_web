@@ -550,13 +550,22 @@ async function processSinglePayout(payout: {
     // Without this, sub-threshold consultants who legally owe ₹0 are withheld
     // from the first rupee. The rate engine (computeTdsForPayout) then applies
     // the section/PAN/DTAA rate to the taxable portion.
+    //
+    // #778 §E — TDS_ENGINE flag (default LEGACY): LEGACY keeps the ₹50K gate
+    // (the conservative pre-CA-sign-off behavior); 194O drops it and taxes
+    // the full payout under pure Section 194-O semantics (per-FY entity
+    // thresholds move to the TdsRate lookup when the CA confirms in writing).
+    // One env flip at launch, no money-logic redeploy.
+    const pure194O = process.env.TDS_ENGINE === "194O";
     const cumulativeBeforePayout = await getCurrentFYCumulativePayments(
       payout.consultantProfileId,
       financialYear,
     );
     const cumulativeAfterPayout = cumulativeBeforePayout + payout.amount;
     let taxablePaise = 0;
-    if (cumulativeAfterPayout > TDS_THRESHOLD_PAISE) {
+    if (pure194O) {
+      taxablePaise = payout.amount;
+    } else if (cumulativeAfterPayout > TDS_THRESHOLD_PAISE) {
       taxablePaise =
         cumulativeBeforePayout >= TDS_THRESHOLD_PAISE
           ? payout.amount // already over threshold — whole payout is taxable
@@ -631,7 +640,9 @@ async function processSinglePayout(payout: {
         netAmount: payoutAmountAfterTDS,
         // #781 §C — engine returns a decimal fraction (0.001 = 194-O);
         // stored as integer bps so two engines can't disagree on units.
-        tdsRateAppliedBps: tds.tdsRate ? Math.round(tds.tdsRate * 10_000) : null,
+        tdsRateAppliedBps: tds.tdsRate
+          ? Math.round(tds.tdsRate * 10_000)
+          : null,
         tdsFinancialYear: financialYear,
         status: PayoutStatus.PROCESSING, // Will be updated via webhook
       },

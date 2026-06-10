@@ -20,6 +20,7 @@ type Row = Record<string, unknown>;
 
 function makeTx(original: Row | null, priorReversals: Row[] = []) {
   const created: Row[] = [];
+  const adjustments: Row[] = [];
   const tx = {
     tDSRecord: {
       findFirst: jest.fn(async () => original),
@@ -29,8 +30,15 @@ function makeTx(original: Row | null, priorReversals: Row[] = []) {
         return { id: "tdsr_new", ...data };
       }),
     },
+    // #778 §D — every reversal also emits the TdsAdjustment filing artifact.
+    tdsAdjustment: {
+      create: jest.fn(async ({ data }: { data: Row }) => {
+        adjustments.push(data);
+        return { id: "tdsadj_new", ...data };
+      }),
+    },
   };
-  return { tx: tx as never, created };
+  return { tx: tx as never, created, adjustments };
 }
 
 const ORIGINAL = {
@@ -41,7 +49,7 @@ const ORIGINAL = {
   quarter: 2,
   cumulativeAmountCredited: 100_000,
   tdsDeducted: 1_000,
-  tdsRate: 10,
+  tdsRateBps: 1000,
   tdsSection: "194J",
   isReversal: false,
   reportedInForm26Q: false,
