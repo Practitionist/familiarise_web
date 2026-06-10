@@ -161,6 +161,29 @@ export async function PATCH(
         );
       }
 
+      // Self-role-change guard. Caught during the 2026-06 MAINTAINER role
+      // audit — a MAINTAINER could PATCH their own membership to LEARNER
+      // (or any non-OWNER role), losing admin access and bypassing the
+      // #729 strict identity gate (PATCH lazy-creates the profile, POST
+      // refuses). The footgun: a MAINTAINER self-demotes accidentally and
+      // needs an OWNER to restore them. Role changes belong to a
+      // peer-or-superior review path; the actor cannot grade their own
+      // membership. OWNERs are likewise blocked from changing their own
+      // role — OWNER handoff goes through a dedicated promote-then-demote
+      // path that the last-OWNER guard at L172-187 already protects.
+      const isSelfRoleChange =
+        memberId === access.member.id &&
+        patch.role !== undefined &&
+        patch.role !== current.role;
+      if (isSelfRoleChange) {
+        throw Object.assign(
+          new Error(
+            "You cannot change your own role. Ask another operator to do it for you.",
+          ),
+          { httpStatus: 403 },
+        );
+      }
+
       // Last-OWNER guard. Runs inside the TX so two concurrent demotes
       // can't both believe there's a second owner.
       const isDemotingOwner =
@@ -374,7 +397,38 @@ export async function DELETE(
         throw Object.assign(new Error("Member not found"), { httpStatus: 404 });
       }
 
+      // Self-DELETE guard. The trash icon on your own row would
+      // otherwise let a MAINTAINER (or any operator) self-fire in
+      // one click — they'd lose org access immediately and need
+      // another OWNER to restore. "Leave organization" is a real
+      // use case but belongs to a dedicated confirmation flow with
+      // explicit copy ("you will lose access immediately"), not the
+      // same trash button used to evict others. Until that flow
+      // exists, refuse self-DELETE here. Caught during the 2026-06
+      // MAINTAINER role audit alongside the self-role-change guard
+      // in PATCH.
+      if (memberId === access.member.id) {
+        throw Object.assign(
+          new Error(
+            "You cannot remove yourself. Ask another operator, or use the Leave organization flow when it ships.",
+          ),
+          { httpStatus: 403 },
+        );
+      }
+
       if (current.role === "OWNER") {
+        // OWNER-only gate — mirrors PATCH at L154-161. Without this, a
+        // MAINTAINER (rank 80) who passed `requireOrgAccess(..., "MAINTAINER")`
+        // could DELETE an OWNER row as long as it wasn't the last OWNER,
+        // because the last-OWNER guard below only protects org continuity,
+        // not privilege escalation. Caught during the 2026-06 MAINTAINER
+        // role audit.
+        if (!isAtLeastRole(access.member.role, "OWNER")) {
+          throw Object.assign(
+            new Error("Only an OWNER can remove an OWNER"),
+            { httpStatus: 403 },
+          );
+        }
         // Last-OWNER guard — unchanged semantically. Now applied to
         // soft-delete (status → REMOVED) so a sole OWNER can't orphan
         // the org by removing themselves.

@@ -736,8 +736,8 @@ Actions are the rows and the six primary roles are the columns; a checkmark mean
 |---|---|---|---|---|---|---|
 | View org dashboard | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Invite members | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Change member role | ✅ | ✅ (except OWNER) | ❌ | ❌ | ❌ | ❌ |
-| Remove member | ✅ | ✅ (except last OWNER) | ❌ | ❌ | ❌ | ❌ |
+| Change member role | ✅ (except own) | ✅ (except OWNER or own) | ❌ | ❌ | ❌ | ❌ |
+| Remove member | ✅ (except sole OWNER or own) | ✅ (except any OWNER or own) | ❌ | ❌ | ❌ | ❌ |
 | Create Program | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Assign Program to member | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Change billing mode | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
@@ -753,6 +753,12 @@ Actions are the rows and the six primary roles are the columns; a checkmark mean
 | Delete the organization | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 
 (BILLING_ADMIN omitted from the columns above for width; its surface is the union of the MANAGER read rows **plus** write access to every billing/invoice/PO/payout/rate-card/wallet/webhook mutation — see § 9.2.1.)
+
+**Two non-obvious rules baked into the rows above (2026-06 MAINTAINER role audit):**
+
+- **Removing an OWNER ≡ revoking the OWNER role.** Both transitions move someone from "has OWNER power" to "no longer has OWNER power", so they share the same gate. A MAINTAINER cannot remove **any** OWNER (not just the last one). Both the PATCH role-change route and the DELETE route enforce this via `isAtLeastRole(actor, "OWNER")`. Previously, DELETE only protected against orphaning the org (last-OWNER 409) — that left a privilege-escalation path where a MAINTAINER could remove all OWNERs except one. Closed in members/[memberId]/route.ts DELETE handler.
+- **No one can change their own role.** Caller cannot grade their own membership — including OWNER. Role changes belong to a peer-or-superior review path. Self-status changes (e.g., suspending yourself) remain allowed. Without this, a MAINTAINER could self-PATCH to LEARNER (losing admin access by accident) or to EXPERT (lazy-creating a ConsultantProfile, bypassing the #729 strict identity gate that POST /members enforces). Closed in members/[memberId]/route.ts PATCH handler.
+- **No one can remove themselves via the member list.** The trash icon on your own row is refused (403). "Leave organization" is a real use case but belongs to a dedicated confirmation flow ("you will lose access immediately") with stronger copy than the eviction trash. Until that flow exists, self-DELETE is blocked. Closed in members/[memberId]/route.ts DELETE handler.
 
 ### 9.2.1 Field-level RBAC — the billing side-gate (#779 §A)
 
@@ -770,8 +776,10 @@ The blocked transitions:
 |---|---|---|---|
 | LEARNER | EXPERT | ✅ Blocked | Different platform identity (UserRole.CONSULTEE vs CONSULTANT) |
 | EXPERT | LEARNER | ✅ Blocked | Same reason, reverse direction |
-| Any other role → OWNER | ✅ Blocked for MAINTAINERs | Only OWNERs can assign OWNER role |
-| OWNER → Any (last OWNER) | ✅ Blocked | Anti-lockout guard; can't orphan the org |
+| Any other role → OWNER | ✅ Blocked for non-OWNERs | Only OWNERs can assign OWNER role (`touchesOwnerRole` gate on PATCH) |
+| Any OWNER → any role (by non-OWNER) | ✅ Blocked | Same `touchesOwnerRole` gate — covers role-change PATCH **and** member DELETE. Removing an OWNER is functionally identical to revoking the OWNER role, so the gate applies symmetrically. |
+| Any role → any other role (on own row) | ✅ Blocked | Self-role-change guard. Caller cannot grade their own membership; ask another operator. Applies to MAINTAINER, OWNER, everyone. Status-only self-edits (e.g., self-suspend) remain allowed. |
+| OWNER → Any (last OWNER, by an OWNER) | ✅ Blocked | Anti-lockout guard; can't orphan the org. Fires only when an OWNER tries to remove themselves as the sole OWNER, since other paths are caught earlier by `touchesOwnerRole` or self-role-change. |
 
 ### 9.4 Anti-lockout guards
 
