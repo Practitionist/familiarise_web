@@ -68,7 +68,7 @@ export interface StepProps {
   finalRedirectPath?: (orgId: string) => string;
 }
 
-export type StepKey =
+type StepKey =
   | "org-info"
   | "billing"
   | "revenue-rates"

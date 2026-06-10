@@ -42,7 +42,7 @@ import { isRecurringEventType } from "@/utils/slotAllocation/types";
 /**
  * Validation result structure for slot allocation
  */
-export interface ValidationResult {
+interface ValidationResult {
   isValid: boolean;
   errors: string[];
   warnings: string[];
@@ -59,7 +59,7 @@ export interface ValidationResult {
 /**
  * Event-specific constraints configuration
  */
-export interface EventConstraints {
+interface EventConstraints {
   requireConsecutive: boolean;
   maxHoursPerDay?: number;
   maxCallsPerDay?: number;
@@ -73,7 +73,7 @@ export interface EventConstraints {
 /**
  * Slot allocation limits for display and validation
  */
-export interface SlotLimits {
+interface SlotLimits {
   minSlots: number;
   maxSlots: number;
   slotsPerSession: number;
@@ -2220,22 +2220,3 @@ export function useEventSlotAllocation(
     getSlotSuggestions,
   };
 }
-
-// ============================================================================
-// LEGACY COMPATIBILITY EXPORTS
-// ============================================================================
-
-/**
- * @deprecated Use UseEventSlotAllocationOptions instead
- */
-export type UseSlotAllocationOptions = UseEventSlotAllocationOptions;
-
-/**
- * @deprecated Use UseEventSlotAllocationReturn instead
- */
-export type UseSlotAllocationReturn = UseEventSlotAllocationReturn;
-
-/**
- * @deprecated Use useEventSlotAllocation instead
- */
-export const useSlotAllocation = useEventSlotAllocation;

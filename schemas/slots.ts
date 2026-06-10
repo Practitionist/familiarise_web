@@ -47,5 +47,3 @@ export const RequestForApprovalSchema = z
       path: ["slotStartTimeInUTC"],
     },
   );
-
-export type RequestForApprovalInput = z.infer<typeof RequestForApprovalSchema>;

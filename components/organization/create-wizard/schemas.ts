@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { SelfServiceMemberRoleSchema } from "@/lib/labels/org-labels";
 
 export const orgInfoSchema = z.object({
   name: z.string().trim().min(2, "Name must be at least 2 characters").max(100),
@@ -38,14 +37,6 @@ export const brandingSchema = z.object({
     .optional(),
 });
 
-// Reuse the shared self-service role set so the wizard, the invite API,
-// and the label lookups all agree on vocabulary. LEARNER is the default
-// for new invites since it's the least-privileged role.
-export const inviteSchema = z.object({
-  inviteEmails: z.array(z.string().email()).default([]),
-  inviteRole: SelfServiceMemberRoleSchema.default("LEARNER"),
-});
-
 // Basis points (integers summing to 10000) replace float percentages.
 // Integer math keeps rounding deterministic across high-volume settlements
 // and removes the need to chase drift between `SUM(splits) - grossAmount`.
@@ -63,5 +54,4 @@ export const revenueRatesSchema = z
 export type OrgInfoFormData = z.infer<typeof orgInfoSchema>;
 export type BillingFormData = z.infer<typeof billingSchema>;
 export type BrandingFormData = z.infer<typeof brandingSchema>;
-export type InviteFormData = z.infer<typeof inviteSchema>;
 export type RevenueRatesFormData = z.infer<typeof revenueRatesSchema>;

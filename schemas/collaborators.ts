@@ -35,11 +35,3 @@ export const inviteWebinarCollaboratorSchema = inviteCollaboratorSchema.extend({
 export const inviteClassCollaboratorSchema = inviteCollaboratorSchema.extend({
   role: ClassCollaboratorRoleEnum,
 });
-
-export type InviteCollaboratorInput = z.infer<typeof inviteCollaboratorSchema>;
-export type InviteWebinarCollaboratorInput = z.infer<
-  typeof inviteWebinarCollaboratorSchema
->;
-export type InviteClassCollaboratorInput = z.infer<
-  typeof inviteClassCollaboratorSchema
->;

@@ -12,7 +12,7 @@ export type NotificationRoutingMode =
   | "EMAIL_ONLY"
   | "NEITHER";
 
-export interface OrgWorkspaceSettings {
+interface OrgWorkspaceSettings {
   id: string;
   defaultLandingOrganizationId: string | null;
   notificationRoutingMode: NotificationRoutingMode;

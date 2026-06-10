@@ -276,15 +276,6 @@ export const getBadgeStyle = (status: string): string => {
   return BADGE_STYLES.default;
 };
 
-// Constants for time calculations
-export const TIME_CONSTANTS = {
-  MINUTES_IN_HOUR: 60,
-  HOURS_IN_DAY: 24,
-  DAYS_IN_WEEK: 7,
-  DAYS_IN_MONTH: 30.44, // Average days in a month
-  DAYS_IN_YEAR: 365.25, // Account for leap years
-};
-
 // Enum for section names
 export enum DashboardSection {
   Home = "Home",

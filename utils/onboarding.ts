@@ -405,18 +405,14 @@ export type StaffProfileCreateData = z.infer<
 export type AdminProfileCreateData = z.infer<
   typeof BaseAdminProfileCreateInputSchema
 >;
-export type FrontendConsultantProfile = z.infer<
+type FrontendConsultantProfile = z.infer<
   typeof FrontendConsultantProfileSchema
 >;
-export type FrontendConsulteeProfile = z.infer<
-  typeof FrontendConsulteeProfileSchema
->;
-export type FrontendStaffProfile = z.infer<typeof FrontendStaffProfileSchema>;
-export type FrontendAdminProfile = z.infer<typeof FrontendAdminProfileSchema>;
-export type FrontendOnboardingBase = z.infer<
-  typeof FrontendOnboardingBaseSchema
->;
-export type FrontendOnboardingData = FrontendOnboardingBase & {
+type FrontendConsulteeProfile = z.infer<typeof FrontendConsulteeProfileSchema>;
+type FrontendStaffProfile = z.infer<typeof FrontendStaffProfileSchema>;
+type FrontendAdminProfile = z.infer<typeof FrontendAdminProfileSchema>;
+type FrontendOnboardingBase = z.infer<typeof FrontendOnboardingBaseSchema>;
+type FrontendOnboardingData = FrontendOnboardingBase & {
   consultantProfile?: FrontendConsultantProfile;
   consulteeProfile?: FrontendConsulteeProfile;
   staffProfile?: FrontendStaffProfile;

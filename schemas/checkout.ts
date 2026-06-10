@@ -272,13 +272,6 @@ export type SubscriptionSearchParams = z.infer<
   typeof subscriptionSearchParamsSchema
 >;
 export type WebinarSearchParams = z.infer<typeof webinarSearchParamsSchema>;
-export type ClassSearchParams = z.infer<typeof classSearchParamsSchema>;
-export type PaymentMetadata = z.infer<typeof paymentMetadataSchema>;
-export type CheckoutResponse = z.infer<typeof checkoutResponseSchema>;
-export type CheckoutSuccessResponse = z.infer<
-  typeof checkoutSuccessResponseSchema
->;
-export type CheckoutErrorResponse = z.infer<typeof checkoutErrorResponseSchema>;
 
 // Utility functions for validation
 export const validateSearchParamsForAppointmentType = (

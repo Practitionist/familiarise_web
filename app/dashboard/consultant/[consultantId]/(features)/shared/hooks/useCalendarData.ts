@@ -76,14 +76,14 @@ interface AppointmentClass {
   classPlan?: EventPlanInfo;
 }
 
-export interface AppointmentSlotRaw {
+interface AppointmentSlotRaw {
   startsAt: string;
   endsAt: string;
   isTentative?: boolean;
   user?: Array<{ name?: string }>;
 }
 
-export interface Appointment {
+interface Appointment {
   id: string;
   appointmentType: string;
   slotsOfAppointment?: AppointmentSlotRaw[];
@@ -93,7 +93,7 @@ export interface Appointment {
   class?: AppointmentClass;
 }
 
-export interface ConsultantData {
+interface ConsultantData {
   id: string;
   name: string;
   // Add other consultant properties as needed
@@ -120,7 +120,7 @@ export interface RawSlotData {
  * BEFORE: Confusing mix of isBooked, isConflicting, etc.
  * AFTER: Clear separation: isBookedForDisplay (gray), isPartiallyBooked (yellow)
  */
-export interface SlotStatusResult {
+interface SlotStatusResult {
   isAvailable: boolean;
   isBooked: boolean; // For backwards compatibility
   isBookedForDisplay: boolean; // Fully booked (gray) - FIXED: Clear naming
@@ -139,7 +139,7 @@ export interface SlotStatusResult {
   }>;
 }
 
-export interface CalendarData {
+interface CalendarData {
   consultantDetails: ConsultantData | null;
   availableSlots: TimeSlot[];
   existingAppointments: Appointment[];

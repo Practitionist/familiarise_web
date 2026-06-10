@@ -6,7 +6,7 @@ export type ConsultantDetailData = NonNullable<
   Awaited<ReturnType<typeof getConsultantDetail>>
 >;
 
-export type OriginalSlotData = {
+type OriginalSlotData = {
   id: string;
   slotStartTimeInUTC: string;
   slotEndTimeInUTC: string;

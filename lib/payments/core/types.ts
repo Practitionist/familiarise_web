@@ -102,7 +102,7 @@ export interface DisputeResult {
 // ============================================================================
 
 /** Supported currency codes for payment gateway amount conversion. */
-export type SupportedCurrency =
+type SupportedCurrency =
   | "USD"
   | "EUR"
   | "GBP"
@@ -126,20 +126,6 @@ export const CURRENCY_MULTIPLIERS: Record<SupportedCurrency, number> = {
   AED: 100, // fils
   NGN: 100, // kobo (for XFlow)
 };
-
-export interface PaymentGatewayConfig {
-  name: string;
-  isAvailable: boolean;
-  requiresKYC: boolean;
-  kycStatus?: "pending" | "approved" | "rejected";
-  supportedCurrencies: string[];
-  features: {
-    checkout: boolean;
-    refunds: boolean;
-    disputes: boolean;
-    subscriptions: boolean;
-  };
-}
 
 // ============================================================================
 // Error Types

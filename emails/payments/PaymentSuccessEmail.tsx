@@ -151,8 +151,6 @@ export const PaymentSuccessEmail = ({
   );
 };
 
-export default PaymentSuccessEmail;
-
 // Styles
 const main = {
   backgroundColor: "#f5f5f5",

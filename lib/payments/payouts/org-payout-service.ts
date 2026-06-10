@@ -82,7 +82,7 @@ export class PayoutValidationError extends Error {
   }
 }
 
-export interface OrgPayoutEligibility {
+interface OrgPayoutEligibility {
   eligible: boolean;
   readyAmount: number;
   earningsCount: number;

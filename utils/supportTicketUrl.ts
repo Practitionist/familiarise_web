@@ -57,55 +57,6 @@ export const CONTEXTUAL_ISSUE_TYPES = {
  */
 export const ALL_ISSUE_TYPES = Object.values(SupportIssueType);
 
-export interface AppointmentContext {
-  appointmentId: string;
-  appointmentType: "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS";
-  status: AppointmentStatus;
-  consultantName?: string;
-  scheduledAt?: string;
-}
-
-export interface PaymentContext {
-  paymentId: string;
-}
-
-export type SupportContext =
-  | { type: "appointment"; context: AppointmentContext }
-  | { type: "payment"; context: PaymentContext };
-
-/**
- * Generate URL for contextual support ticket creation
- * @param consulteeId - The consultee's profile ID
- * @param context - Appointment or payment context
- * @returns URL string with query parameters
- */
-export function generateSupportTicketUrl(
-  consulteeId: string,
-  context: SupportContext,
-): string {
-  const params = new URLSearchParams();
-  params.set("tab", "support");
-
-  if (context.type === "appointment") {
-    const {
-      appointmentId,
-      appointmentType,
-      status,
-      consultantName,
-      scheduledAt,
-    } = context.context;
-    params.set("appointmentId", appointmentId);
-    params.set("appointmentType", appointmentType);
-    params.set("appointmentStatus", status);
-    if (consultantName) params.set("consultantName", consultantName);
-    if (scheduledAt) params.set("scheduledAt", scheduledAt);
-  } else if (context.type === "payment") {
-    params.set("paymentId", context.context.paymentId);
-  }
-
-  return `/dashboard/consultee/${consulteeId}/feedback?${params.toString()}`;
-}
-
 /**
  * Get filtered issue types based on context
  * @param appointmentStatus - COMPLETED or UPCOMING
@@ -203,24 +154,3 @@ export const ISSUE_TYPE_CATEGORIES = {
     SupportIssueType.OTHER,
   ],
 } as const;
-
-/**
- * Get grouped issue types for dropdown display
- * Filters by context if provided
- */
-export function getGroupedIssueTypes(
-  appointmentStatus?: AppointmentStatus,
-  isPayment?: boolean,
-): Record<string, SupportIssueType[]> {
-  const allowedTypes = getFilteredIssueTypes(appointmentStatus, isPayment);
-  const result: Record<string, SupportIssueType[]> = {};
-
-  for (const [category, types] of Object.entries(ISSUE_TYPE_CATEGORIES)) {
-    const filteredTypes = types.filter((t) => allowedTypes.includes(t));
-    if (filteredTypes.length > 0) {
-      result[category] = filteredTypes;
-    }
-  }
-
-  return result;
-}

@@ -64,12 +64,6 @@ export interface ConsultantData {
   };
 }
 
-export interface CalendarViewConfig {
-  view: "week" | "month";
-  currentDate: Date;
-  browserTimezone: string;
-}
-
 export interface SlotStatus {
   isAvailable: boolean;
   isBooked: boolean;

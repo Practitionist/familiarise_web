@@ -9,7 +9,7 @@ import type {
   TopicWithCount,
 } from "../utils";
 
-export interface WebinarWithAppointment {
+interface WebinarWithAppointment {
   appointment?: {
     slotsOfAppointment?: { user?: { id: string }[] }[];
   } | null;
@@ -27,7 +27,7 @@ export interface WebinarPlanApiItem {
   imageUrl?: string | null;
 }
 
-export type PlanApiItem = ClassPlanApiItem | WebinarPlanApiItem;
+type PlanApiItem = ClassPlanApiItem | WebinarPlanApiItem;
 
 export interface PlanApiResponse {
   data?: PlanApiItem[];

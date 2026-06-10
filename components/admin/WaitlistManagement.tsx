@@ -776,5 +776,3 @@ export function WaitlistManagement() {
     </div>
   );
 }
-
-export default WaitlistManagement;

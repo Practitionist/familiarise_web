@@ -120,5 +120,3 @@ async function sendExpirationRemindersJobUnlocked(): Promise<SendRemindersResult
     duration: Date.now() - startTime,
   };
 }
-
-export default sendExpirationRemindersJob;

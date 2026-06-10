@@ -135,8 +135,6 @@ export const WaitlistJoinedEmail = ({
   );
 };
 
-export default WaitlistJoinedEmail;
-
 // Styles
 const main = {
   backgroundColor: "#f5f5f5",

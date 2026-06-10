@@ -33,24 +33,6 @@ interface PlannerData {
   participantCounts: Record<string, number>;
 }
 
-export interface QueryConfig {
-  queryKey: readonly unknown[];
-  queryFn: () => Promise<unknown>;
-  staleTime: number;
-  gcTime: number;
-  retry?: number | boolean;
-  refetchOnWindowFocus?: boolean;
-  enabled?: boolean;
-}
-
-export interface DashboardQueryResult<T> {
-  data: T | undefined;
-  isLoading: boolean;
-  error: Error | null;
-  isStale: boolean;
-  refetch: () => void;
-}
-
 // =============================================================================
 // Fetch Functions
 // =============================================================================
@@ -156,31 +138,8 @@ export const consulteeFetchers = {
     ).catch((): Record<string, unknown>[] => []),
 };
 
-// Admin fetchers
-export const adminFetchers = {
-  stats: () =>
-    fetchWithErrorHandling(`/api/admin/stats`, "Admin stats fetch failed"),
-
-  users: () => fetchWithErrorHandling(`/api/admin/users`, "Users fetch failed"),
-
-  payments: (page = 1, limit = 20) =>
-    fetchWithErrorHandling(
-      `/api/admin/payments?page=${page}&limit=${limit}`,
-      "Payments fetch failed",
-    ),
-
-  analytics: () =>
-    fetchWithErrorHandling(`/api/admin/analytics`, "Analytics fetch failed"),
-
-  disputes: () =>
-    fetchWithErrorHandling(`/api/admin/disputes`, "Disputes fetch failed"),
-
-  refunds: () =>
-    fetchWithErrorHandling(`/api/admin/refunds`, "Refunds fetch failed"),
-};
-
 // User fetchers (shared)
-export const userFetchers = {
+const userFetchers = {
   details: (userId: string) =>
     fetchWithErrorHandling(`/api/user/${userId}`, "User details fetch failed"),
 };
@@ -346,59 +305,6 @@ export function createConsulteeQueries(
 }
 
 /**
- * Admin Dashboard Queries
- */
-export function createAdminQueries() {
-  return {
-    // Overview stats
-    stats: {
-      queryKey: ["admin-stats"] as const,
-      queryFn: () => adminFetchers.stats(),
-      staleTime: STALE_TIMES.SHORT,
-      gcTime: GC_TIME,
-      retry: 2,
-      refetchInterval: 2 * 60 * 1000, // Auto-refresh every 2 minutes
-    },
-
-    // User management
-    users: {
-      queryKey: ["admin-users"] as const,
-      queryFn: () => adminFetchers.users(),
-      staleTime: STALE_TIMES.MEDIUM,
-      gcTime: GC_TIME,
-      retry: 2,
-    },
-
-    // Analytics data
-    analytics: {
-      queryKey: ["admin-analytics"] as const,
-      queryFn: () => adminFetchers.analytics(),
-      staleTime: STALE_TIMES.MEDIUM,
-      gcTime: GC_TIME,
-      retry: 2,
-    },
-
-    // Disputes
-    disputes: {
-      queryKey: ["admin-disputes"] as const,
-      queryFn: () => adminFetchers.disputes(),
-      staleTime: STALE_TIMES.SHORT,
-      gcTime: GC_TIME,
-      retry: 2,
-    },
-
-    // Refunds
-    refunds: {
-      queryKey: ["admin-refunds"] as const,
-      queryFn: () => adminFetchers.refunds(),
-      staleTime: STALE_TIMES.SHORT,
-      gcTime: GC_TIME,
-      retry: 2,
-    },
-  };
-}
-
-/**
  * User Queries (shared across all dashboards)
  */
 export function createUserQueries(userId: string) {
@@ -418,48 +324,6 @@ export function createUserQueries(userId: string) {
 // =============================================================================
 
 /**
- * Priority levels for prefetching
- */
-export type PrefetchPriority = "high" | "medium" | "low";
-
-/**
- * Get delay based on priority
- */
-export function getPrefetchDelay(priority: PrefetchPriority): number {
-  switch (priority) {
-    case "high":
-      return 0;
-    case "medium":
-      return 500;
-    case "low":
-      return 1000;
-  }
-}
-
-/**
- * Batch prefetch with priority scheduling
- */
-export async function batchPrefetch(
-  queryClient: { prefetchQuery: (query: QueryConfig) => Promise<unknown> },
-  queries: QueryConfig[],
-  priority: PrefetchPriority = "medium",
-): Promise<void> {
-  const delay = getPrefetchDelay(priority);
-
-  const execute = async () => {
-    await Promise.allSettled(
-      queries.map((query) => queryClient.prefetchQuery(query)),
-    );
-  };
-
-  if (delay > 0) {
-    setTimeout(execute, delay);
-  } else {
-    await execute();
-  }
-}
-
-/**
  * Schedule prefetch using requestIdleCallback when available
  */
 export function schedulePrefetch(callback: () => void, timeout = 2000): void {
@@ -469,46 +333,3 @@ export function schedulePrefetch(callback: () => void, timeout = 2000): void {
     setTimeout(callback, 100);
   }
 }
-
-// =============================================================================
-// Query Keys for Invalidation
-// =============================================================================
-
-export const queryKeys = {
-  consultant: {
-    all: (consultantId: string) => ["consultant", consultantId] as const,
-    dashboard: (consultantId: string) =>
-      ["consultant-dashboard", consultantId] as const,
-    appointments: (consultantId: string) =>
-      ["consultant-appointments", consultantId] as const,
-    details: (consultantId: string) =>
-      ["consultant-details", consultantId] as const,
-    requests: (consultantId: string) =>
-      ["consultant-requests", consultantId] as const,
-    planner: (consultantId: string) =>
-      ["consultant-planner", consultantId] as const,
-    documents: (consultantId: string) =>
-      ["consultant-documents", consultantId] as const,
-  },
-  consultee: {
-    all: (consulteeId: string) => ["consultee", consulteeId] as const,
-    events: (consulteeId: string) => ["consultee-events", consulteeId] as const,
-    profile: (consulteeId: string) =>
-      ["consultee-profile", consulteeId] as const,
-    feedback: () => ["consultee-feedback"] as const,
-    supportTickets: () => ["consultee-support-tickets"] as const,
-    messages: (consulteeId: string) =>
-      ["consultee-messages", consulteeId] as const,
-  },
-  admin: {
-    all: () => ["admin"] as const,
-    stats: () => ["admin-stats"] as const,
-    users: () => ["admin-users"] as const,
-    analytics: () => ["admin-analytics"] as const,
-    disputes: () => ["admin-disputes"] as const,
-    refunds: () => ["admin-refunds"] as const,
-  },
-  user: {
-    details: (userId: string) => ["user-details", userId] as const,
-  },
-};

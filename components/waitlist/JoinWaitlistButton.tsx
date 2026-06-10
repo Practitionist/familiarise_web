@@ -133,5 +133,3 @@ export function JoinWaitlistButton({
     </Button>
   );
 }
-
-export default JoinWaitlistButton;

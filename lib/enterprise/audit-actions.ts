@@ -237,5 +237,3 @@ export const AUDIT_ACTIONS = {
 } as const satisfies Record<OrgAuditCategory, Record<string, string>>;
 
 export type AuditCategory = keyof typeof AUDIT_ACTIONS;
-export type AuditAction<C extends AuditCategory> =
-  (typeof AUDIT_ACTIONS)[C][keyof (typeof AUDIT_ACTIONS)[C]];

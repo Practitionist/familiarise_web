@@ -151,7 +151,7 @@ export async function getOperatorDashboardStats(): Promise<OperatorDashboardStat
 // (pending reviews) rather than payments. Keeping the staff variant
 // separate avoids forcing one giant union type on either caller.
 
-export type StaffDashboardRecentTicket = {
+type StaffDashboardRecentTicket = {
   id: string;
   subject: string;
   user: string;

@@ -28,13 +28,3 @@ export const CreateSupportResponseSchema = z.object({
   message: z.string().trim().min(1, "Message is required"),
   isInternal: z.boolean().default(false),
 });
-
-export type CreateSupportTicketInput = z.infer<
-  typeof CreateSupportTicketSchema
->;
-export type UpdateSupportTicketInput = z.infer<
-  typeof UpdateSupportTicketSchema
->;
-export type CreateSupportResponseInput = z.infer<
-  typeof CreateSupportResponseSchema
->;

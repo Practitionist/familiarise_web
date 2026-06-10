@@ -52,7 +52,7 @@ import type { PaymentLegSource } from "@prisma/client";
  *                      negative refund counter-entries for unbilled
  *                      accruals; one per source, partials net into it.
  */
-export type PaymentLegSourceRefKind =
+type PaymentLegSourceRefKind =
   | "GATEWAY_PAYMENT_ID"
   | "PROGRAM_ASSIGNMENT_ID"
   | "REFERRAL_CREDIT_USAGE_ID";
@@ -92,7 +92,7 @@ export function sourceRefKindFor(
  *   makeLeg({ source: "WALLET",  amountPaise:  50000, programAssignmentId: "asg_x" })
  *   makeLeg({ source: "LICENSE", amountPaise:      0, programAssignmentId: "asg_x" })
  */
-export type PaymentLegInput =
+type PaymentLegInput =
   | {
       source: "CARD";
       amountPaise: number;

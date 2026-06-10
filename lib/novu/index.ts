@@ -1,6 +1,5 @@
 export { getNovuClient, isNovuConfigured, validateNovuConfig } from "./client";
 export { NOVU_WORKFLOWS } from "./workflows";
-export type { NovuWorkflowId } from "./workflows";
 export {
   syncSubscriber,
   deleteSubscriber,

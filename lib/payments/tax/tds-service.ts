@@ -54,7 +54,6 @@
  */
 
 import prisma, { type Tx } from "@/lib/prisma";
-import { Prisma } from "@prisma/client";
 import { sumPaise } from "@/lib/payments/utils/money";
 
 // ============================================================================
@@ -146,27 +145,7 @@ export async function getCurrentFYCumulativePayments(
   return sumPaise(result._sum.amount);
 }
 
-/**
- * Get cumulative TDS already deducted for a consultant in a FY.
- */
-export async function getCumulativeTDSDeducted(
-  consultantProfileId: string,
-  financialYear?: string,
-): Promise<number> {
-  const fy = financialYear || getIndianFinancialYear();
-
-  const result = await prisma.tDSRecord.aggregate({
-    where: {
-      consultantProfileId,
-      financialYear: fy,
-    },
-    _sum: { tdsDeducted: true },
-  });
-
-  return sumPaise(result._sum.tdsDeducted);
-}
-
-export interface TDSCalculationResult {
+interface TDSCalculationResult {
   /** TDS amount to deduct, in paise */
   tdsAmount: number;
   /** TDS rate applied (10 or 20) */

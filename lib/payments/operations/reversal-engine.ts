@@ -27,7 +27,7 @@ import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 
-export type ReversalSource =
+type ReversalSource =
   // A single booking payment (the common case).
   | { kind: "BOOKING"; paymentId: string }
   // An overage side-charge — itself a Payment (parentPaymentId-linked), so it

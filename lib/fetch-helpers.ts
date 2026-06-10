@@ -33,8 +33,6 @@ export const apiErrorSchema = z.object({
   detail: z.unknown().optional(),
 });
 
-export type ApiErrorBody = z.infer<typeof apiErrorSchema>;
-
 /**
  * Lift a human-readable error message out of an arbitrary response body.
  * Falls back to `fallback` when the body doesn't match `apiErrorSchema`

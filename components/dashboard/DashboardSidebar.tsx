@@ -80,7 +80,7 @@ const iconMap: Record<string, typeof Home> = {
   gift: Gift,
 };
 
-export interface NavItem {
+interface NavItem {
   name: string;
   path: string;
   icon?: string;

@@ -50,8 +50,8 @@ export interface OverageInput {
   consumedPaise?: number;
 }
 
-export type OverageDecision = "PROCEED" | "BLOCK";
-export type OverageChargeTarget = "MEMBER" | "ORG" | null;
+type OverageDecision = "PROCEED" | "BLOCK";
+type OverageChargeTarget = "MEMBER" | "ORG" | null;
 
 export interface OverageResult {
   coveredPaise: number;

@@ -30,6 +30,3 @@ export const UpdateTrialSchema = z.object({
   // Required when status = CONVERTED — the subscription created via checkout
   subscriptionId: z.string().optional(),
 });
-
-export type CreateTrialInput = z.infer<typeof CreateTrialSchema>;
-export type UpdateTrialInput = z.infer<typeof UpdateTrialSchema>;

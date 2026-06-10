@@ -3,7 +3,7 @@
  * Used by both the API route and the frontend page.
  */
 
-export interface VerificationWorkExperience {
+interface VerificationWorkExperience {
   id: string;
   company: string;
   title: string;
@@ -12,7 +12,7 @@ export interface VerificationWorkExperience {
   current: boolean;
 }
 
-export interface VerificationEducation {
+interface VerificationEducation {
   id: string;
   institution: string;
   degree: string;
@@ -21,14 +21,14 @@ export interface VerificationEducation {
   endYear: number | null;
 }
 
-export interface VerificationCertification {
+interface VerificationCertification {
   id: string;
   name: string;
   issuer: string;
   issueDate: string;
 }
 
-export interface VerificationConsultant {
+interface VerificationConsultant {
   profileId: string;
   userId: string;
   name: string | null;
@@ -48,7 +48,7 @@ export interface VerificationConsultant {
   certifications: VerificationCertification[];
 }
 
-export interface VerificationDocument {
+interface VerificationDocument {
   id: string;
   fileName: string;
   originalName: string;
