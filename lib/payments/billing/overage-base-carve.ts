@@ -70,17 +70,22 @@ export async function restoreOverageBaseCarve(
 ): Promise<CarveOutcome> {
   const ctx = await loadCarveContext(tx, ref);
   if (!ctx) return "none";
-  if (ctx.parent.billableToOrgInvoiceId !== null) return "invoiced";
+
+  // Guarded parent-first write: the invoiced check rides the UPDATE's WHERE
+  // (re-evaluated under the row lock), so a rollup stamping
+  // billableToOrgInvoiceId between our read and this write yields count 0
+  // instead of silently diverging the leg from the issued document.
+  const parentBumped = await tx.payment.updateMany({
+    where: { id: ctx.parent.id, billableToOrgInvoiceId: null },
+    data: { amount: { increment: ctx.event.basePaise } },
+  });
+  if (parentBumped.count === 0) return "invoiced";
 
   await tx.paymentLeg.update({
     where: {
       paymentId_source: { paymentId: ctx.parent.id, source: "INVOICE_ACCRUAL" },
     },
     data: { amountPaise: { increment: ctx.event.basePaise } },
-  });
-  await tx.payment.update({
-    where: { id: ctx.parent.id },
-    data: { amount: { increment: ctx.event.basePaise } },
   });
   return "restored";
 }
@@ -98,9 +103,18 @@ export async function recarveOverageBase(
 ): Promise<CarveOutcome> {
   const ctx = await loadCarveContext(tx, ref);
   if (!ctx) return "none";
-  if (ctx.parent.billableToOrgInvoiceId !== null) return "invoiced";
+
+  // Guarded parent-first write — same TOCTOU shape as the restore above.
+  const parentCut = await tx.payment.updateMany({
+    where: { id: ctx.parent.id, billableToOrgInvoiceId: null },
+    data: { amount: { decrement: ctx.event.basePaise } },
+  });
+  if (parentCut.count === 0) return "invoiced";
 
   // Guarded decrement — mirrors the original carve's fail-closed stance.
+  // Count 0 here means the leg lacks the restored base while the parent is
+  // still uninvoiced: an invariant breach, not a billing race. Throw so the
+  // caller's tx rolls the parent decrement back instead of half-applying.
   const carved = await tx.paymentLeg.updateMany({
     where: {
       paymentId: ctx.parent.id,
@@ -109,10 +123,10 @@ export async function recarveOverageBase(
     },
     data: { amountPaise: { decrement: ctx.event.basePaise } },
   });
-  if (carved.count === 0) return "invoiced";
-  await tx.payment.update({
-    where: { id: ctx.parent.id },
-    data: { amount: { decrement: ctx.event.basePaise } },
-  });
+  if (carved.count === 0) {
+    throw new Error(
+      `recarveOverageBase: INVOICE_ACCRUAL leg on payment ${ctx.parent.id} is missing the restored basePaise=${ctx.event.basePaise} — rolling back`,
+    );
+  }
   return "recarved";
 }
