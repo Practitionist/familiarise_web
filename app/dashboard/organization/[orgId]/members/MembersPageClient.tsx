@@ -169,7 +169,14 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
   // requires canSponsor, EXPERT requires canHost — symmetric server gates).
   const { isAtLeast, canSponsor, canHost } = useOrgRole(orgId);
   const { data: session } = useSession();
-  const viewerUserId = session?.user?.id;
+  // Compare by email — BetterAuth's session.user.id can be the BetterAuth
+  // internal id rather than the Familiarise `User.id` mirrored on
+  // `MemberRow.user.id`, so a literal id-equality check missed the
+  // self-row case. Email is invariant across both stores (set via
+  // emailVerified flow), so it's the reliable self-detection key.
+  const viewerEmail = session?.user?.email?.toLowerCase();
+  const isOwnRow = (m: { user: { email: string } }) =>
+    viewerEmail !== undefined && m.user.email.toLowerCase() === viewerEmail;
   // #777 FDE Group B P1 — operator read floor (OWNER/MAINTAINER/MANAGER/
   // SUPPORT). SUPPORT gets the roster READ-ONLY for ticket investigation,
   // so the sidebar Members entry isn't a dead redirect. Mutation controls
@@ -387,29 +394,36 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
                                     functionally identical to revoking the
                                     OWNER role.
                                  Both rules are also enforced server-side as
-                                 defense-in-depth. */}
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              aria-label="Remove member"
+                                 defense-in-depth. The wrapping <span> exists
+                                 to surface the `title` tooltip — browsers
+                                 don't fire mouseover events on disabled
+                                 <button> elements, so a title on the button
+                                 itself is silently dropped. The span owns
+                                 the title and receives hover regardless. */}
+                            <span
                               title={
-                                viewerUserId !== undefined &&
-                                m.user.id === viewerUserId
+                                isOwnRow(m)
                                   ? "You cannot remove yourself"
                                   : m.role === "OWNER" && !isAtLeast("OWNER")
                                     ? "Only an OWNER can remove an OWNER"
                                     : undefined
                               }
-                              onClick={() => setMemberToRemove(m)}
-                              disabled={
-                                removeMutation.isPending ||
-                                (viewerUserId !== undefined &&
-                                  m.user.id === viewerUserId) ||
-                                (m.role === "OWNER" && !isAtLeast("OWNER"))
-                              }
+                              className="inline-flex"
                             >
-                              <Trash2 className="h-4 w-4 text-red-500" />
-                            </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label="Remove member"
+                                onClick={() => setMemberToRemove(m)}
+                                disabled={
+                                  removeMutation.isPending ||
+                                  isOwnRow(m) ||
+                                  (m.role === "OWNER" && !isAtLeast("OWNER"))
+                                }
+                              >
+                                <Trash2 className="h-4 w-4 text-red-500" />
+                              </Button>
+                            </span>
                           </div>
                         </TableCell>
                       )}
@@ -556,11 +570,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
               <Select
                 value={editRole}
                 onValueChange={(v) => setEditRole(v as MemberRole)}
-                disabled={
-                  editMember !== null &&
-                  viewerUserId !== undefined &&
-                  editMember.user.id === viewerUserId
-                }
+                disabled={editMember !== null && isOwnRow(editMember)}
               >
                 <SelectTrigger id="edit-role">
                   <SelectValue />
@@ -573,14 +583,12 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
                   ))}
                 </SelectContent>
               </Select>
-              {editMember !== null &&
-                viewerUserId !== undefined &&
-                editMember.user.id === viewerUserId && (
-                  <p className="text-xs text-zinc-500">
-                    You cannot change your own role. Ask another operator
-                    to do it for you.
-                  </p>
-                )}
+              {editMember !== null && isOwnRow(editMember) && (
+                <p className="text-xs text-zinc-500">
+                  You cannot change your own role. Ask another operator
+                  to do it for you.
+                </p>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="edit-status">Status</Label>
