@@ -15,6 +15,9 @@
  * predicates do the right thing.
  */
 
+import { readFileSync } from "fs";
+import { join } from "path";
+
 import { isOnboardingBlocked } from "@/lib/enterprise/org-status";
 
 describe("invitation-accept guards", () => {
@@ -41,4 +44,34 @@ describe("invitation-accept guards", () => {
   // route handler — confirms the loop and Prisma import are present.
   // A full unit test would require mocking the entire $transaction
   // chain, which the integration smoke covers more robustly.
+});
+
+// #819 — who-is-acting identity rule, pinned at the source level (the
+// route handlers need the full auth/tx harness, which the integration
+// smoke owns; these pins stop the gates from drifting between surfaces).
+// Rule: identity creation requires the user's OWN action. Invitation
+// accept is the user's consenting click, so LEARNER lazy-creates the
+// lightweight ConsulteeProfile there (lib/auth.ts sanctions exactly this)
+// while EXPERT stays strict. Admin direct-add is strict for BOTH roles.
+describe("who-is-acting identity gates (#819)", () => {
+  // __dirname-relative so the pins survive jest being invoked from any cwd.
+  const read = (p: string) =>
+    readFileSync(join(__dirname, "..", "..", p), "utf8");
+
+  it("invitation-accept keeps the EXPERT strict gate but NOT a LEARNER gate", () => {
+    const src = read("app/api/organizations/invitations/accept/route.ts");
+    expect(src).toContain("NOT_A_CONSULTANT");
+    expect(src).not.toContain("NOT_A_CONSULTEE");
+  });
+
+  it("admin direct-add (POST /members) keeps strict gates for BOTH roles", () => {
+    const src = read("app/api/organizations/[orgId]/members/route.ts");
+    expect(src).toContain("NOT_A_CONSULTANT");
+    expect(src).toContain("NOT_A_CONSULTEE");
+  });
+
+  it("the lazy-create sanction for invite-accept-as-LEARNER still stands in lib/auth.ts", () => {
+    const src = read("lib/auth.ts");
+    expect(src).toContain("invite-accept as LEARNER");
+  });
 });

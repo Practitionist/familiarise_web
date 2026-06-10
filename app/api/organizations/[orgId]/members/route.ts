@@ -265,15 +265,18 @@ export async function POST(
   }
   const userId = user.id;
 
-  // #729 §AC4/AC5 — strict identity gate. The shared
-  // `applyMembershipRoleEffects` helper lazy-creates the matching
-  // profile when one is missing, which silently promotes strangers
-  // to consultant / consumer identities. For the dashboard
-  // add-member surface we want the safer interpretation: the target
-  // must already have the correct profile before being added under
-  // that role. SSO JIT auto-join keeps the lazy-create path because
-  // that is a separate provisioning channel with its own
-  // authorization layer.
+  // #729 §AC4/AC5 + #819 — who-is-acting identity rule. Direct-add is an
+  // ADMIN acting on someone else, so BOTH roles require a pre-existing
+  // profile: the shared `applyMembershipRoleEffects` helper would
+  // otherwise lazy-create one and silently promote a stranger to a
+  // consultant / consumer identity they never asked for. Contrast
+  // invitation-accept, where the LEARNER gate is deliberately absent —
+  // accepting is the user's OWN consenting click, so the lightweight
+  // ConsulteeProfile lazy-creates there (EXPERT stays strict on every
+  // surface). SSO JIT auto-join keeps its lazy path as a separate
+  // provisioning channel with its own authorization layer. The
+  // who-is-acting pins in __tests__/enterprise/invitation-accept.test.ts
+  // keep the three surfaces from drifting apart.
   if (role === "EXPERT") {
     const existingConsultant = await prisma.consultantProfile.findUnique({
       where: { userId },
