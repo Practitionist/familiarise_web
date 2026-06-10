@@ -47,6 +47,8 @@ export async function transitionOverage(
     paymentId?: string | null;
     invoiceLineItemId?: string | null;
     settledAt?: Date | null;
+    /** #779 §A telemetry — why a FAILED write-off happened (sweep/timeout). */
+    chargeFailureReason?: string | null;
   },
 ): Promise<number> {
   const res = await tx.overageEvent.updateMany({

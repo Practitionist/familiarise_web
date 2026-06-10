@@ -58,7 +58,12 @@ const PatchBodySchema = z
       .min(0)
       .nullable()
       .optional(),
-    maxOveragePerCyclePaise: z.coerce.number().int().min(0).nullable().optional(),
+    maxOveragePerCyclePaise: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .nullable()
+      .optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
     message: "PATCH body must contain at least one field",
@@ -104,7 +109,12 @@ export async function GET(
       licensedSeatConfig: true,
       creditPoolConfig: true,
       contract: {
-        select: { id: true, status: true, effectiveFrom: true, effectiveTo: true },
+        select: {
+          id: true,
+          status: true,
+          effectiveFrom: true,
+          effectiveTo: true,
+        },
       },
       _count: { select: { assignments: true } },
     },
@@ -169,9 +179,73 @@ export async function PATCH(
     const updated = await prisma.$transaction(async (tx) => {
       const current = await tx.program.findFirst({
         where: { id: programId, contract: { organizationId: orgId } },
+        include: { licensedSeatConfig: true, creditPoolConfig: true },
       });
       if (!current) {
-        throw Object.assign(new Error("Program not found"), { httpStatus: 404 });
+        throw Object.assign(new Error("Program not found"), {
+          httpStatus: 404,
+        });
+      }
+
+      // #768 #14/#15 — the create route validates overage combos on the WHOLE
+      // config; a piecemeal PATCH could still assemble CHARGE_* with no
+      // circuit-breaker ceiling (unbounded liability) or dead knobs. Merge
+      // current + patch and re-check the combined state.
+      if (touchesMoney) {
+        const cfg = current.licensedSeatConfig ?? current.creditPoolConfig;
+        const merged = {
+          overageBehavior:
+            body.overageBehavior ?? cfg?.overageBehavior ?? "BLOCK",
+          overageSurchargeBps:
+            body.overageSurchargeBps !== undefined
+              ? body.overageSurchargeBps
+              : (cfg?.overageSurchargeBps ?? null),
+          maxOveragePerCyclePaise:
+            body.maxOveragePerCyclePaise !== undefined
+              ? body.maxOveragePerCyclePaise
+              : (cfg?.maxOveragePerCyclePaise ?? null),
+          coveredEngagementsPerCycle:
+            body.coveredEngagementsPerCycle !== undefined
+              ? body.coveredEngagementsPerCycle
+              : (current.licensedSeatConfig?.coveredEngagementsPerCycle ??
+                null),
+        };
+        const fail = (message: string) => {
+          throw Object.assign(new Error(message), {
+            httpStatus: 400,
+            code: "INVALID_OVERAGE_CONFIG",
+          });
+        };
+        if (
+          current.type === "LICENSED_SEAT" &&
+          merged.coveredEngagementsPerCycle == null &&
+          (merged.overageBehavior !== "BLOCK" ||
+            (merged.overageSurchargeBps ?? 0) > 0 ||
+            merged.maxOveragePerCyclePaise != null)
+        ) {
+          fail(
+            "Overage settings have no effect while coveredEngagementsPerCycle is unlimited — clear them or set a cap.",
+          );
+        }
+        if (
+          merged.overageBehavior !== "BLOCK" &&
+          (merged.coveredEngagementsPerCycle != null ||
+            current.type === "CREDIT_POOL") &&
+          (merged.maxOveragePerCyclePaise == null ||
+            merged.maxOveragePerCyclePaise < 1)
+        ) {
+          fail(
+            `overageBehavior=${merged.overageBehavior} requires a positive maxOveragePerCyclePaise circuit-breaker ceiling.`,
+          );
+        }
+        if (
+          merged.overageBehavior === "BLOCK" &&
+          (merged.overageSurchargeBps ?? 0) > 0
+        ) {
+          fail(
+            "overageSurchargeBps has no effect with overageBehavior=BLOCK — remove it or pick CHARGE_MEMBER/CHARGE_ORG.",
+          );
+        }
       }
 
       // #777 §B — archiving guard: an archived program is skipped by the cycle
@@ -314,8 +388,7 @@ export async function PATCH(
     return NextResponse.json({ program: updated });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
     throw err;
@@ -353,7 +426,9 @@ export async function DELETE(
           include: { _count: { select: { assignments: true } } },
         });
         if (!current) {
-          throw Object.assign(new Error("Program not found"), { httpStatus: 404 });
+          throw Object.assign(new Error("Program not found"), {
+            httpStatus: 404,
+          });
         }
         if (current._count.assignments > 0) {
           throw Object.assign(
@@ -399,8 +474,7 @@ export async function DELETE(
     return new NextResponse(null, { status: 204 });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
     throw err;
