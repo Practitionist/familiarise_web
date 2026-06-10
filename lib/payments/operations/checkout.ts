@@ -8,6 +8,7 @@ import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
 import {
   AppointmentsType,
+  type Currency,
   PaymentGateway,
   PaymentStatus,
   Prisma,
@@ -227,7 +228,7 @@ export async function calculateAmountAndValidate(
   return await prisma.$transaction(async (tx) => {
     let amount = 0;
     let plan;
-    let priceCurrency = "INR";
+    let priceCurrency: Currency = "INR";
 
     // Lazy-create ConsulteeProfile if this is the user's first
     // consumer action. ORG_WORKSPACE / CONSULTANT users who also book
@@ -262,6 +263,11 @@ export async function calculateAmountAndValidate(
           throw new Error("Consultation plan not found");
         }
 
+        // #781 §B — soft-deleted expert is not bookable
+        if (plan.consultantProfile?.deletedAt) {
+          throw new Error("Consultation plan not found");
+        }
+
         await validateSlotAvailability(
           tx,
           validatedData,
@@ -283,6 +289,11 @@ export async function calculateAmountAndValidate(
         });
 
         if (!plan) {
+          throw new Error("Subscription plan not found");
+        }
+
+        // #781 §B — soft-deleted expert is not bookable
+        if (plan.consultantProfile?.deletedAt) {
           throw new Error("Subscription plan not found");
         }
 
@@ -325,6 +336,12 @@ export async function calculateAmountAndValidate(
         }
 
         plan = webinar.webinarPlan;
+
+        // #781 §B — soft-deleted expert is not bookable
+        if (plan.consultantProfile?.deletedAt) {
+          throw new Error("Webinar not found");
+        }
+
         const consultantUserId = plan.consultantProfile?.userId;
         const currentWebinarParticipants = countWebinarParticipants(
           webinar.appointment,
@@ -367,6 +384,12 @@ export async function calculateAmountAndValidate(
         }
 
         plan = classInstance.classPlan;
+
+        // #781 §B — soft-deleted expert is not bookable
+        if (plan.consultantProfile?.deletedAt) {
+          throw new Error("Class not found");
+        }
+
         const classConsultantUserId = plan.consultantProfile?.userId;
         // FIX: Count unique participants, not total slots
         // A user enrolled in a class with 8 sessions should count as 1 participant, not 8

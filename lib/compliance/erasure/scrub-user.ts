@@ -150,6 +150,10 @@ export async function scrubUser(
       data: {
         headline: null,
         videoIntroUrl: null,
+        // #781 §B — erasure implies the profile leaves every browse/checkout
+        // surface; financial rows stay (statutory retention beats erasure
+        // under DPDP's legal-obligation exemption).
+        deletedAt: new Date(),
       },
     });
     // ConsulteeProfile carries only FK pointers at present — no

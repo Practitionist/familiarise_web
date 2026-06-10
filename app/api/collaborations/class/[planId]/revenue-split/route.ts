@@ -28,7 +28,7 @@ export async function GET(
       const isOwner =
         session.user.consultantProfileId === plan.consultantProfileId;
       if (!isOwner) {
-        const collab = await prisma.classCollaborator.findFirst({
+        const collab = await prisma.collaborator.findFirst({
           where: {
             classPlanId: planId,
             consultantProfileId: session.user.consultantProfileId ?? "__none__",

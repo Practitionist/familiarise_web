@@ -24,6 +24,18 @@ function fn<K extends string>(field: K) {
   };
 }
 
+// #781 §C — nullable Decimal → number. Prisma.Decimal instances can't cross
+// the RSC boundary; FX snapshots are 6-dp, well within double precision.
+function dn<K extends string>(field: K) {
+  return {
+    needs: { [field]: true } as { [P in K]: true },
+    compute: (row: { [P in K]: { toNumber(): number } | null }) => {
+      const v = row[field];
+      return v === null ? null : v.toNumber();
+    },
+  };
+}
+
 const adapter = new PrismaPg({
   // Use pooled connection (DATABASE_URL) for runtime queries to avoid connection exhaustion
   // DIRECT_URL is only for migrations (handled by prisma.config.ts)
@@ -116,9 +128,13 @@ function makeClient() {
         originalAmount: f("originalAmount"),
         taxAmount: f("taxAmount"),
         gstTcsCollectedPaise: fn("gstTcsCollectedPaise"),
+        exchangeRateAtCheckout: dn("exchangeRateAtCheckout"),
       },
       paymentLeg: { amountPaise: f("amountPaise") },
-      refund: { amountPaise: f("amountPaise") },
+      refund: {
+        amountPaise: f("amountPaise"),
+        exchangeRateAtRefund: dn("exchangeRateAtRefund"),
+      },
       dispute: { amountPaise: f("amountPaise") },
       consultantEarnings: {
         grossAmount: f("grossAmount"),
@@ -136,6 +152,7 @@ function makeClient() {
         cumulativeAmountCredited: f("cumulativeAmountCredited"),
         tdsDeducted: f("tdsDeducted"),
       },
+      tdsRate: { thresholdPaise: fn("thresholdPaise") },
       creditNote: {
         subtotalPaise: f("subtotalPaise"),
         igstPaise: f("igstPaise"),

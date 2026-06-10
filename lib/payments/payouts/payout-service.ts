@@ -574,7 +574,7 @@ async function processSinglePayout(payout: {
               panOnFile: !!consultantTaxInfo?.panEncrypted,
               residencyStatus: "RESIDENT",
               tdsSection: null,
-              tdsRate: null,
+              tdsRateBps: null,
               tdsLowerRateCert: null,
               providerCountry: null,
             },
@@ -629,7 +629,12 @@ async function processSinglePayout(payout: {
         providerPayoutId,
         tdsDeducted: tds.tdsAmountPaise,
         netAmount: payoutAmountAfterTDS,
-        tdsRateApplied: tds.tdsRate || null,
+        // #781 §C — engine returns a decimal fraction (0.001 = 194-O);
+        // stored as integer bps so two engines can't disagree on units.
+        // Review fix: != null so a legitimate 0% (Sec 197 zero-rate cert)
+        // persists as 0 bps instead of vanishing to null.
+        tdsRateAppliedBps:
+          tds.tdsRate != null ? Math.round(tds.tdsRate * 10_000) : null,
         tdsFinancialYear: financialYear,
         status: PayoutStatus.PROCESSING, // Will be updated via webhook
       },
@@ -690,7 +695,7 @@ async function processSinglePayout(payout: {
         retryCount: { increment: 1 },
         tdsDeducted: 0,
         netAmount: null,
-        tdsRateApplied: null,
+        tdsRateAppliedBps: null,
         tdsFinancialYear: null,
       },
     });
@@ -938,7 +943,7 @@ export async function handlePayoutWebhook(
         });
       }
 
-      if (payout.tdsDeducted > 0 && payout.tdsRateApplied) {
+      if (payout.tdsDeducted > 0 && payout.tdsRateAppliedBps) {
         await tx.tDSRecord.deleteMany({
           where: { payoutId: payout.id },
         });
@@ -947,7 +952,7 @@ export async function handlePayoutWebhook(
           consultantProfileId: payout.consultantProfileId,
           financialYear,
           tdsDeducted: payout.tdsDeducted,
-          tdsRate: payout.tdsRateApplied,
+          tdsRateBps: payout.tdsRateAppliedBps,
           cumulativeAmountCredited: cumulativeCreditedPayments,
           payoutId: payout.id,
           // #776 — consultant payouts withhold under Section 194-O (ECO).
@@ -980,7 +985,7 @@ export async function handlePayoutWebhook(
         data: {
           tdsDeducted: 0,
           netAmount: null,
-          tdsRateApplied: null,
+          tdsRateAppliedBps: null,
           tdsFinancialYear: null,
         },
       });

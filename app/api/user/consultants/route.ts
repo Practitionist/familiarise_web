@@ -44,6 +44,10 @@ export async function GET(request: NextRequest) {
       conditions.push({ verificationStatus: "VERIFIED" });
     }
 
+    // #781 §B — soft-deleted profiles leave public surfaces (this route is
+    // unauthenticated; admin surfaces read soft-deleted rows elsewhere)
+    conditions.push({ deletedAt: null });
+
     // Domain filter
     if (domain) {
       conditions.push({ domainId: domain });

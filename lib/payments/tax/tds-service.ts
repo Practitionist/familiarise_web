@@ -268,7 +268,8 @@ export async function recordTDSDeduction(params: {
   consultantProfileId: string;
   financialYear: string;
   tdsDeducted: number;
-  tdsRate: number;
+  /** #781 §C — integer basis points (194-O = 10, no-PAN 206AA = 500). */
+  tdsRateBps: number;
   cumulativeAmountCredited: number;
   payoutId?: string;
   earningsId?: string;
@@ -287,7 +288,7 @@ export async function recordTDSDeduction(params: {
       quarter,
       cumulativeAmountCredited: params.cumulativeAmountCredited,
       tdsDeducted: params.tdsDeducted,
-      tdsRate: params.tdsRate,
+      tdsRateBps: params.tdsRateBps,
       tdsSection: params.tdsSection ?? null,
       payoutId: params.payoutId,
       earningsId: params.earningsId,
@@ -371,7 +372,7 @@ export async function recordTdsReversal(
       quarter,
       cumulativeAmountCredited: original.cumulativeAmountCredited,
       tdsDeducted: -tdsToReverse, // signed: reverses prior withholding
-      tdsRate: original.tdsRate,
+      tdsRateBps: original.tdsRateBps,
       tdsSection: original.tdsSection,
       payoutId: params.payoutId,
       earningsId: params.earningsId,
@@ -423,7 +424,7 @@ export async function getTDSSummary(financialYear: string) {
  */
 export async function getConsultantTDSBreakdown(financialYear: string) {
   return prisma.tDSRecord.groupBy({
-    by: ["consultantProfileId", "tdsRate"],
+    by: ["consultantProfileId", "tdsRateBps"],
     where: { financialYear },
     _sum: { tdsDeducted: true, cumulativeAmountCredited: true },
     _count: true,

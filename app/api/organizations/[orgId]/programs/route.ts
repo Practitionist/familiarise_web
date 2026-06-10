@@ -74,7 +74,6 @@ const LicensedSeatConfigSchema = z.object({
 const CreditPoolConfigSchema = z.object({
   cycle: BillingCycleSchema,
   creditsPerCycle: z.coerce.number().int().min(1),
-  minimumCreditsPerPeriod: z.coerce.number().int().min(0).nullable().optional(),
   // #775 — over-budget routing + markup + ceiling (parity with LICENSED_SEAT).
   overageBehavior: OverageBehaviorSchema.default("BLOCK"),
   overageSurchargeBps: z.coerce.number().int().min(0).nullable().optional(),
@@ -275,8 +274,6 @@ export async function POST(
             create: {
               cycle: body.creditPoolConfig.cycle,
               creditsPerCycle: body.creditPoolConfig.creditsPerCycle,
-              minimumCreditsPerPeriod:
-                body.creditPoolConfig.minimumCreditsPerPeriod ?? null,
               overageBehavior: body.creditPoolConfig.overageBehavior,
               overageSurchargeBps:
                 body.creditPoolConfig.overageSurchargeBps ?? null,

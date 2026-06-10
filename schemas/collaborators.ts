@@ -1,10 +1,24 @@
 import { z } from "zod";
-import { WebinarCollaboratorRole, ClassCollaboratorRole } from "@prisma/client";
+import { CollaboratorRole } from "@prisma/client";
 
-export const WebinarCollaboratorRoleEnum = z.nativeEnum(
-  WebinarCollaboratorRole,
-);
-export const ClassCollaboratorRoleEnum = z.nativeEnum(ClassCollaboratorRole);
+// #784 — one DB enum, but each plan type still only accepts its own role
+// subset (the old per-type enums enforced this at the DB layer).
+export const WEBINAR_COLLABORATOR_ROLES = [
+  CollaboratorRole.CO_HOST,
+  CollaboratorRole.MODERATOR,
+  CollaboratorRole.GUEST_SPEAKER,
+  CollaboratorRole.TECHNICAL_SUPPORT,
+] as const;
+
+export const CLASS_COLLABORATOR_ROLES = [
+  CollaboratorRole.CO_INSTRUCTOR,
+  CollaboratorRole.TEACHING_ASSISTANT,
+  CollaboratorRole.GUEST_LECTURER,
+  CollaboratorRole.CONTENT_CREATOR,
+] as const;
+
+export const WebinarCollaboratorRoleEnum = z.enum(WEBINAR_COLLABORATOR_ROLES);
+export const ClassCollaboratorRoleEnum = z.enum(CLASS_COLLABORATOR_ROLES);
 
 export const inviteCollaboratorSchema = z.object({
   consultantProfileId: z.string().min(1, "Consultant profile ID is required"),

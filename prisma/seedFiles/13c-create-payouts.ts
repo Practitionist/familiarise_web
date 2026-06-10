@@ -1,5 +1,5 @@
 import { faker } from "@faker-js/faker";
-import { PaymentGateway, PayoutMethod } from "@prisma/client";
+import { Currency, PaymentGateway, PayoutMethod } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import {
   generateBatchId,
@@ -39,8 +39,8 @@ function generateProviderPayoutId(provider: PaymentGateway): string {
 /**
  * Get currency based on provider
  */
-function getCurrency(provider: PaymentGateway): string {
-  return provider === PaymentGateway.STRIPE ? "USD" : "INR";
+function getCurrency(provider: PaymentGateway): Currency {
+  return provider === PaymentGateway.STRIPE ? Currency.USD : Currency.INR;
 }
 
 /**

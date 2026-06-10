@@ -47,6 +47,10 @@ import type { PaymentLegSource } from "@prisma/client";
  *                      time; the leg exists so every Payment still has
  *                      ≥1 leg and reconciliation can prove the booking
  *                      was lawfully fulfilled without a gateway charge.
+ *   INVOICE_ACCRUAL_REVERSAL / OVERAGE_INVOICE_ACCRUAL_REVERSAL
+ *                    → same sourceRef as the original sibling. #786 —
+ *                      negative refund counter-entries for unbilled
+ *                      accruals; one per source, partials net into it.
  */
 export type PaymentLegSourceRefKind =
   | "GATEWAY_PAYMENT_ID"
@@ -64,6 +68,8 @@ export function sourceRefKindFor(
     case "WALLET":
     case "INVOICE_ACCRUAL":
     case "OVERAGE_INVOICE_ACCRUAL":
+    case "INVOICE_ACCRUAL_REVERSAL":
+    case "OVERAGE_INVOICE_ACCRUAL_REVERSAL":
     case "LICENSE":
       return "PROGRAM_ASSIGNMENT_ID";
     default: {
@@ -134,7 +140,23 @@ export function makeLeg(input: PaymentLegInput): {
 }
 
 /**
- * Per-payment invariant: `sum(legs.amountPaise) === Payment.amount`.
+ * #786 — reversal sources net against their original sibling. The map is
+ * the single place that knows the pairing; refund + reconcile + rollup
+ * readers all derive from it.
+ */
+export const REVERSAL_LEG_PAIRS = {
+  INVOICE_ACCRUAL_REVERSAL: "INVOICE_ACCRUAL",
+  OVERAGE_INVOICE_ACCRUAL_REVERSAL: "OVERAGE_INVOICE_ACCRUAL",
+} as const satisfies Partial<Record<PaymentLegSource, PaymentLegSource>>;
+
+export function isReversalLegSource(
+  source: PaymentLegSource,
+): source is keyof typeof REVERSAL_LEG_PAIRS {
+  return source in REVERSAL_LEG_PAIRS;
+}
+
+/**
+ * Per-payment invariant: `sum(non-reversal legs.amountPaise) === Payment.amount`.
  *
  * `LICENSE` legs intentionally carry `amountPaise = 0` (the cost is
  * absorbed at contract time) — they're still part of the sum and the
@@ -145,34 +167,56 @@ export function makeLeg(input: PaymentLegInput): {
  * they sum to `Payment.amount` (which is post-credit per the field-
  * level comment on `Payment.amount`).
  *
+ * #786 — `*_REVERSAL` legs are negative refund counter-entries. They are
+ * excluded from the funding sum (originals stay immutable and still sum to
+ * `Payment.amount`); instead each reversal must (a) be negative and (b)
+ * never exceed its original sibling in magnitude.
+ *
  * Returns `null` when the invariant holds, or a `PaymentLegSumMismatch`
  * payload describing the drift otherwise. Callers pick policy: hard
  * throw for tests + reconciliation jobs, structured log for hot paths
  * where breaking checkout is worse than surfacing a warning.
- *
- * The `amountPaise` values on individual legs can be negative (refund
- * adjustments write negative legs to keep the ledger immutable), so the
- * check is signed — do not `Math.abs` the sum.
  */
 export type PaymentLegSumMismatch = {
   paymentAmountPaise: number;
   legSumPaise: number;
   deltaPaise: number;
   legs: Array<{ source: PaymentLegSource; amountPaise: number }>;
+  /** Distinguishes a funding-sum drift from a reversal-pair violation. */
+  reason: "FUNDING_SUM_DRIFT" | "REVERSAL_PAIR_VIOLATION";
 };
 
 export function checkPaymentLegsSumToAmount(args: {
   paymentAmountPaise: number;
   legs: Array<{ source: PaymentLegSource; amountPaise: number }>;
 }): PaymentLegSumMismatch | null {
-  const legSum = args.legs.reduce((acc, leg) => acc + leg.amountPaise, 0);
-  if (legSum === args.paymentAmountPaise) return null;
-  return {
-    paymentAmountPaise: args.paymentAmountPaise,
-    legSumPaise: legSum,
-    deltaPaise: legSum - args.paymentAmountPaise,
-    legs: args.legs,
-  };
+  const originals = args.legs.filter((l) => !isReversalLegSource(l.source));
+  const legSum = originals.reduce((acc, leg) => acc + leg.amountPaise, 0);
+  if (legSum !== args.paymentAmountPaise) {
+    return {
+      paymentAmountPaise: args.paymentAmountPaise,
+      legSumPaise: legSum,
+      deltaPaise: legSum - args.paymentAmountPaise,
+      legs: args.legs,
+      reason: "FUNDING_SUM_DRIFT",
+    };
+  }
+  for (const leg of args.legs) {
+    if (!isReversalLegSource(leg.source)) continue;
+    const sibling = args.legs
+      .filter((l) => l.source === REVERSAL_LEG_PAIRS[leg.source as keyof typeof REVERSAL_LEG_PAIRS])
+      .reduce((acc, l) => acc + l.amountPaise, 0);
+    if (leg.amountPaise > 0 || -leg.amountPaise > sibling) {
+      return {
+        paymentAmountPaise: args.paymentAmountPaise,
+        legSumPaise: legSum,
+        deltaPaise: leg.amountPaise,
+        legs: args.legs,
+        reason: "REVERSAL_PAIR_VIOLATION",
+      };
+    }
+  }
+  return null;
 }
 
 /**

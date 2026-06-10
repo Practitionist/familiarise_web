@@ -107,7 +107,7 @@ const callArgs = (price: number) => ({
     creditBudgetPaise: null,
   },
   bookingPricePaise: price,
-  currency: "INR",
+  currency: "INR" as const,
   paymentId: "pay1",
   userId: "user1",
   organizationId: "org1",

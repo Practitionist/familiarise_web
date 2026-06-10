@@ -18,6 +18,7 @@ import {
   notifyOrgWalletTopupConfirmed,
 } from "@/lib/novu/org-workflows";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
+import { toCurrencyEnum } from "@/lib/payments/validation/currency-guards";
 import { getAppUrl } from "@/lib/url";
 import {
   confirmTopUp,
@@ -952,7 +953,9 @@ export async function handleRefundCreated(
     const createdRefund = await tx.refund.create({
       data: {
         amountPaise: amount,
-        currency,
+        // #781 §A — gateway hands back a free-form ISO code; an unsupported
+        // one throws here and dead-letters the event rather than booking it.
+        currency: toCurrencyEnum(currency),
         status: mapRefundStatus(status),
         refundId,
         paymentGateway: gateway,
@@ -1077,7 +1080,7 @@ export async function handleDisputeCreated(
     await tx.dispute.create({
       data: {
         amountPaise: amount,
-        currency,
+        currency: toCurrencyEnum(currency),
         reason,
         status: mapDisputeStatus(status),
         disputeId,

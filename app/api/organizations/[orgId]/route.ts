@@ -488,44 +488,125 @@ export async function DELETE(
   if (access.error) return access.error;
 
   try {
-    await prisma.$transaction(async (tx) => {
+    const outcome = await prisma.$transaction(async (tx) => {
+      // #781 §B — three-way delete. LIVE obligations block (wind-down
+      // first, per the #779 guard doctrine). Settled financial HISTORY
+      // makes the org soft-delete (DEACTIVATED + deletedAt + contact-PII
+      // scrub) — the Restrict FKs on earnings/payouts make a hard delete
+      // impossible at the DB level anyway. Only a money-untouched shell
+      // may hard-delete.
       const current = await tx.organization.findUnique({
         where: { id: orgId },
-        include: {
+        select: {
+          deletedAt: true,
+          billingAccount: { select: { walletBalance: true } },
+          _count: {
+            select: {
+              contracts: { where: { status: { in: ["DRAFT", "ACTIVE"] } } },
+              invoices: { where: { status: { in: ["ISSUED", "OVERDUE"] } } },
+              purchaseOrders: { where: { remainingAmountPaise: { gt: 0 } } },
+              earnings: {
+                where: {
+                  status: { in: ["PENDING_TRUST", "PENDING", "HELD", "READY"] },
+                },
+              },
+              payouts: {
+                where: { status: { in: ["PENDING", "APPROVED", "PROCESSING"] } },
+              },
+            },
+          },
+        },
+      });
+      if (!current || current.deletedAt) {
+        throw Object.assign(new Error("Organization not found"), {
+          httpStatus: 404,
+        });
+      }
+
+      const live: string[] = [];
+      if (current._count.contracts > 0)
+        live.push(`${current._count.contracts} draft/active contract(s)`);
+      if (current._count.invoices > 0)
+        live.push(`${current._count.invoices} unpaid invoice(s)`);
+      if (current._count.purchaseOrders > 0)
+        live.push(`${current._count.purchaseOrders} open purchase order(s)`);
+      if (current._count.earnings > 0)
+        live.push(`${current._count.earnings} unsettled earning(s)`);
+      if (current._count.payouts > 0)
+        live.push(`${current._count.payouts} in-flight payout(s)`);
+      if ((current.billingAccount?.walletBalance ?? 0) !== 0)
+        live.push("a non-zero wallet balance");
+      if (live.length > 0) {
+        throw Object.assign(
+          new Error(
+            `Wind-down required before deletion: this organization still has ${live.join(", ")}.`,
+          ),
+          { httpStatus: 409 },
+        );
+      }
+
+      const history = await tx.organization.findUniqueOrThrow({
+        where: { id: orgId },
+        select: {
           _count: {
             select: {
               contracts: true,
               invoices: true,
               purchaseOrders: true,
               earnings: true,
+              payouts: true,
             },
           },
+          billingAccountId: true,
         },
       });
-      if (!current) {
-        throw Object.assign(new Error("Organization not found"), {
-          httpStatus: 404,
-        });
+      const hasHistory =
+        history._count.contracts +
+          history._count.invoices +
+          history._count.purchaseOrders +
+          history._count.earnings +
+          history._count.payouts >
+          0 || history.billingAccountId !== null;
+
+      if (!hasHistory) {
+        await tx.organization.delete({ where: { id: orgId } });
+        return "hard" as const;
       }
 
-      const refs =
-        current._count.contracts +
-        current._count.invoices +
-        current._count.purchaseOrders +
-        current._count.earnings;
-      if (refs > 0) {
-        throw Object.assign(
-          new Error(
-            `Cannot delete an organization with contracts (${current._count.contracts}), invoices (${current._count.invoices}), POs (${current._count.purchaseOrders}), or earnings (${current._count.earnings}). Use the admin DEACTIVATE path instead.`,
-          ),
-          { httpStatus: 409 },
-        );
-      }
-
-      await tx.organization.delete({ where: { id: orgId } });
+      // Soft delete: name/slug/GSTIN/PAN stay (issued invoices reference
+      // them — statutory retention); personal contact details are scrubbed
+      // per DPDP. DEACTIVATED is already terminal for every billing,
+      // membership, and notification surface via the org-status tuples.
+      await tx.organization.update({
+        where: { id: orgId },
+        data: {
+          status: "DEACTIVATED",
+          deletedAt: new Date(),
+          billingEmail: null,
+          billingContactName: null,
+          billingContactEmail: null,
+          billingContactPhone: null,
+          supportContactName: null,
+          supportContactEmail: null,
+          escalationContactEmail: null,
+        },
+      });
+      await tx.orgAuditLog.create({
+        data: {
+          organizationId: orgId,
+          actorMembershipId: access.member.id,
+          category: "SETTINGS",
+          action: AUDIT_ACTIONS.SETTINGS.ORG_SOFT_DELETED,
+          description:
+            "Organization soft-deleted (financial history retained)",
+        },
+      });
+      return "soft" as const;
     });
 
-    return new NextResponse(null, { status: 204 });
+    return outcome === "hard"
+      ? new NextResponse(null, { status: 204 })
+      : NextResponse.json({ softDeleted: true }, { status: 200 });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
       const status =

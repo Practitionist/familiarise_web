@@ -563,13 +563,53 @@ export async function DELETE(
     // Verify the caller owns this consultant profile
     const ownerCheck = await prisma.consultantProfile.findUnique({
       where: { id },
-      select: { userId: true },
+      select: {
+        userId: true,
+        deletedAt: true,
+        // #781 §B — earnings/payouts/TDS Restrict this profile; a profile
+        // that ever moved money can only soft-delete.
+        _count: {
+          select: { earnings: true, payouts: true, tdsRecords: true },
+        },
+      },
     });
     if (!ownerCheck || ownerCheck.userId !== session.user.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
+    if (ownerCheck.deletedAt) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
 
-    // Delete all related records first
+    const hasMoneyHistory =
+      ownerCheck._count.earnings +
+        ownerCheck._count.payouts +
+        ownerCheck._count.tdsRecords >
+      0;
+
+    if (hasMoneyHistory) {
+      // Soft delete: financial rows (and the PAN they were withheld
+      // against) survive for statutory retention. Slots go so nothing is
+      // bookable; plans stay (historical bookings reference them) but the
+      // browse/checkout surfaces filter deletedAt profiles out.
+      await prisma.$transaction([
+        prisma.slotOfAvailabilityWeekly.deleteMany({
+          where: { consultantProfileId: id },
+        }),
+        prisma.slotOfAvailabilityCustom.deleteMany({
+          where: { consultantProfileId: id },
+        }),
+        prisma.consultantProfile.update({
+          where: { id },
+          data: { deletedAt: new Date() },
+        }),
+      ]);
+      return NextResponse.json({
+        message: "Consultant deactivated (financial history retained)",
+        softDeleted: true,
+      });
+    }
+
+    // No money ever moved — full hard delete is safe.
     await prisma.$transaction([
       // Delete slots
       prisma.slotOfAvailabilityWeekly.deleteMany({

@@ -38,18 +38,21 @@ import { getAppUrl } from "@/lib/url";
 // Type Definitions
 // ============================================================================
 
-// #780 — the extended client converts EVERY BigInt column to number on read,
-// but GetPayload (incl. nested includes) still says bigint. Deep-map to match
-// runtime; Date/Bytes/Decimal pass through untouched.
+// #780/#781 — the extended client converts every BigInt column (and the FX
+// Decimal snapshots) to number on read, but GetPayload (incl. nested
+// includes) still says bigint/Decimal. Deep-map to match runtime;
+// Date/Bytes pass through untouched.
 type MoneyAsNumber<T> = T extends bigint
   ? number
-  : T extends Date | Uint8Array | Prisma.Decimal
-    ? T
-    : T extends Array<infer U>
-      ? Array<MoneyAsNumber<U>>
-      : T extends object
-        ? { [K in keyof T]: MoneyAsNumber<T[K]> }
-        : T;
+  : T extends Prisma.Decimal
+    ? number
+    : T extends Date | Uint8Array
+      ? T
+      : T extends Array<infer U>
+        ? Array<MoneyAsNumber<U>>
+        : T extends object
+          ? { [K in keyof T]: MoneyAsNumber<T[K]> }
+          : T;
 
 /**
  * Payment type with user and consultee profile included

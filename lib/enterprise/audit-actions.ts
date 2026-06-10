@@ -114,6 +114,9 @@ export const AUDIT_ACTIONS = {
   },
   SETTINGS: {
     SETTINGS_CHANGED: "SETTINGS_CHANGED",
+    // #781 §B — org with financial history is soft-deleted (DEACTIVATED +
+    // deletedAt + contact-PII scrub), never hard-deleted.
+    ORG_SOFT_DELETED: "ORG_SOFT_DELETED",
     SSO_ENABLED: "SSO_ENABLED",
     SSO_DISABLED: "SSO_DISABLED",
     DOMAIN_CLAIMED: "DOMAIN_CLAIMED",

@@ -239,6 +239,10 @@ export async function getDisputeByDisputeId(tx: Tx, disputeId: string) {
 
 /**
  * Delete expired pending payments within a transaction
+ *
+ * #781 §B — this hard-delete is deliberate and safe: PENDING payments never
+ * settled, so the Restrict FKs (Refund/Earnings) cannot exist yet; legs and
+ * credit-usage rows are intent-stage and cascade with their payment.
  */
 export async function deleteExpiredPayments(tx: Tx, beforeDate: Date) {
   return tx.payment.deleteMany({
