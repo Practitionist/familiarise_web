@@ -2859,6 +2859,12 @@ model WebinarPlan {
   @@index([visibility, organizationId])
 }
 
+// #784 §4 (investigated 2026-06-10) — Webinar/Class deliberately lack the
+// request/feedback/cancellation fields Consultation/Subscription carry: those
+// are 1:1 engagements where the wrapper IS the relationship, while group
+// events are 1:N — per-attendee cancellation/feedback lives on each
+// Appointment (status=CANCELLED) and the wrapper keeps only the aggregate
+// feedbackSummary. Asymmetry is intentional; do not "fix" it with columns.
 model Webinar {
   id              String        @id @default(cuid())
   status          WebinarStatus @default(SCHEDULED)
@@ -2933,6 +2939,12 @@ model ClassPlan {
   @@index([visibility, organizationId])
 }
 
+// #784 §4 (investigated 2026-06-10) — Webinar/Class deliberately lack the
+// request/feedback/cancellation fields Consultation/Subscription carry: those
+// are 1:1 engagements where the wrapper IS the relationship, while group
+// events are 1:N — per-attendee cancellation/feedback lives on each
+// Appointment (status=CANCELLED) and the wrapper keeps only the aggregate
+// feedbackSummary. Asymmetry is intentional; do not "fix" it with columns.
 model Class {
   id                       String      @id @default(cuid())
   schedulingPeriodStartsAt DateTime?   @db.Timestamptz
