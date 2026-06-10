@@ -44,7 +44,15 @@ export const getHomeExperts = cache(async () => {
       },
     },
   });
-  return consultants;
+  // BigInt `price` (paise) is non-serializable across Server→Client.
+  // Convert to Number — paise comfortably fits Number.MAX_SAFE_INTEGER.
+  return consultants.map((c) => ({
+    ...c,
+    subscriptionPlans: c.subscriptionPlans.map((p) => ({
+      ...p,
+      price: Number(p.price),
+    })),
+  }));
 });
 
 export const getHomeReviews = cache(async () => {

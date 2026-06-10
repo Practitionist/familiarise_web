@@ -87,7 +87,17 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
       classPlans: true,
     },
   });
-  return consultant;
+  if (!consultant) return null;
+
+  // The Prisma client extension at lib/prisma.ts:121-124 converts BigInt
+  // `price` → Number for all four plan models. But the rows returned by
+  // the extended client are Proxy-wrapped; Next.js's RSC serializer
+  // flags them as "objects with symbol properties (nodejs.util.inspect.custom)".
+  // JSON round-trip strips every non-serializable artifact (Proxies,
+  // symbols, methods) and yields true plain objects. Dates become ISO
+  // strings — downstream client components already format them via
+  // formatInTimeZone / date-fns, so this is safe here.
+  return JSON.parse(JSON.stringify(consultant)) as typeof consultant;
 });
 
 export const getConsultantReviews = cache(
