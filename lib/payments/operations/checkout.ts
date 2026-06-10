@@ -264,7 +264,7 @@ export async function calculateAmountAndValidate(
         }
 
         // #781 §B — soft-deleted expert is not bookable
-        if (plan.consultantProfile.deletedAt) {
+        if (plan.consultantProfile?.deletedAt) {
           throw new Error("Consultation plan not found");
         }
 
@@ -293,7 +293,7 @@ export async function calculateAmountAndValidate(
         }
 
         // #781 §B — soft-deleted expert is not bookable
-        if (plan.consultantProfile.deletedAt) {
+        if (plan.consultantProfile?.deletedAt) {
           throw new Error("Subscription plan not found");
         }
 
