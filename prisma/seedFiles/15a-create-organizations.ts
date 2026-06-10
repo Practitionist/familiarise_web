@@ -463,7 +463,7 @@ async function seedLearnPro(owner: UserWithProfiles, agencyConsultants: UserWith
         panNumber: `ABCDE${String(1000 + idx)}F`,
         residencyStatus: ResidencyStatus.RESIDENT,
         tdsSection: "194J",
-        tdsRate: 0.1,
+        tdsRateBps: 1000, // 10% (#781 §C — bps)
         msmeStatus: idx < 2 ? MsmeStatus.MICRO : MsmeStatus.NONE,
         udyamNumber:
           idx < 2 ? `UDYAM-KA-01-000000${idx + 1}` : null,

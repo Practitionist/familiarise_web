@@ -70,7 +70,8 @@ export async function GET(req: NextRequest) {
         financialYear: r.financialYear,
         quarter: r.quarter,
         tdsDeducted: r.tdsDeducted,
-        tdsRate: r.tdsRate,
+        // 26Q wants a percent column; storage is bps (#781 §C).
+        tdsRatePercent: r.tdsRateBps / 100,
         cumulativeAmountCredited: r.cumulativeAmountCredited,
         isReversal: r.isReversal,
         consultantPAN: r.consultantProfile.taxInfo?.panEncrypted

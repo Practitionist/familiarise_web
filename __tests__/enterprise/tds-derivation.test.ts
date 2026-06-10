@@ -23,7 +23,7 @@ function profile(overrides: Partial<TdsConsultantInput> = {}): TdsConsultantInpu
     panNumber: "ABCDE1234F",
     residencyStatus: "RESIDENT",
     tdsSection: null,
-    tdsRate: null,
+    tdsRateBps: null,
     tdsLowerRateCert: null,
     providerCountry: "IN",
     ...overrides,
@@ -132,12 +132,12 @@ describe("computeTdsForPayout — DTAA (NON_RESIDENT)", () => {
 });
 
 describe("computeTdsForPayout — Section 197 lower-rate certificate", () => {
-  it("uses cert rate (5%) when both cert ref and tdsRate are set", () => {
+  it("uses cert rate (5%) when both cert ref and tdsRateBps are set", () => {
     const result = computeTdsForPayout({
       grossAmountPaise: 100_000,
       consultant: profile({
         tdsLowerRateCert: "CERT-2025-00042",
-        tdsRate: 0.05,
+        tdsRateBps: 500, // #781 §C — 5% as integer bps
       }),
     });
     expect(result.tdsRate).toBeCloseTo(0.05);

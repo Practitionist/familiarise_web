@@ -455,7 +455,10 @@ model Organization {
   name String
   slug String @unique
 
-  status OrgStatus @default(PENDING_VERIFICATION)
+  status    OrgStatus @default(PENDING_VERIFICATION)
+  // #781 §B — financial rows Restrict their parents; removal = soft-delete.
+  // Hard delete remains possible only while no money row references this.
+  deletedAt DateTime?
 
   /// #779 §A — PENDING_VERIFICATION self-serve resubmit. When an admin rejects,
   /// verificationReason explains why so the OWNER can fix + resubmit (bumps
@@ -1429,10 +1432,10 @@ enum OrgPayoutAccountStatus {
 model OrganizationEarnings {
   id             String       @id @default(uuid())
   organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
   paymentId String
-  payment   Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  payment   Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
 
   grossAmountPaise     BigInt
   platformFeePaise     BigInt
@@ -1468,7 +1471,7 @@ model OrganizationEarnings {
 model OrganizationPayout {
   id             String       @id @default(uuid())
   organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
   amountPaise    BigInt
   currency       Currency       @default(INR)
@@ -2101,10 +2104,13 @@ model DataBreach {
 //////////////////////////////////////////////////// USER PROFILES and SLOTTING MECHANISM ////////////////////////////////////////////////////
 
 model ConsultantProfile {
-  id          String  @id @default(uuid())
-  description String? @db.Text
+  id          String    @id @default(uuid())
+  // #781 §B — financial rows Restrict their parents; removal = soft-delete.
+  // Hard delete remains possible only while no money row references this.
+  deletedAt   DateTime?
+  description String?   @db.Text
   experience  Float?
-  rating      Float   @default(0)
+  rating      Float     @default(0)
 
   // New fields for enhanced consultant profile
   headline                    String?                      @db.VarChar(120) // Professional headline, max 120 chars
@@ -2182,10 +2188,9 @@ model ConsultantProfile {
   // ₹50K/194J threshold path (#778 §E/§F). Threshold logic deferred.
   taxEntityType                   TaxEntityType   @default(INDIVIDUAL)
   tdsSection                      String? // "194J" | "194O" | "194C"
-  // Stored as Float (not Decimal) so the field can safely cross the
-  // Server→Client boundary in Next.js. TDS rates are at most 2 decimal
-  // places (10.00, 7.50, 0.10), well within Float precision.
-  tdsRate                         Float?
+  // #781 §C — integer basis points (1000 = 10%): exact, RSC-boundary-safe,
+  // and the same convention as every revenue-split *Bps field.
+  tdsRateBps                      Int?
   tdsLowerRateCert                String? // Section 197 cert reference
   msmeStatus                      MsmeStatus      @default(NONE)
   udyamNumber                     String?         @db.VarChar(19)
@@ -3380,14 +3385,17 @@ model Payment {
   paymentIntent  String         @unique
   paymentGateway PaymentGateway
   paymentStatus  PaymentStatus
+  // #781 §B — financial rows Restrict their parents; removal = soft-delete.
+  // Hard delete remains possible only while no money row references this.
+  deletedAt      DateTime?
   expiresAt      DateTime? // For tracking payment intent expiration
   isMockPayment  Boolean        @default(false) // For development: mock payments skip gateway calls
 
   // International payment tracking
   buyerCountry              String? // ISO 3166-1 alpha-2 code detected at checkout
-  isInternational           Boolean @default(false) // Denormalized for query efficiency
-  displayCurrencyAtCheckout String? @db.VarChar(3) // Currency code shown to the buyer at checkout
-  exchangeRateAtCheckout    Float? // Snapshot of INR→displayCurrencyAtCheckout for audit
+  isInternational           Boolean  @default(false) // Denormalized for query efficiency
+  displayCurrencyAtCheckout String?  @db.VarChar(3) // Currency code shown to the buyer at checkout
+  exchangeRateAtCheckout    Decimal? @db.Decimal(18, 6) // #781 §C — exact FX snapshot of INR→displayCurrencyAtCheckout for audit
 
   // #778 §D — GST place-of-supply (Sec 12/13) for B2C: buyer's state code, else
   // every interstate sale wrongly defaults. Derivation/IGST-vs-CGST split deferred.
@@ -3543,10 +3551,10 @@ model Refund {
   refundId             String         @unique // Gateway-specific refund ID (Stripe/Razorpay)
   paymentGateway       PaymentGateway
   metadata             Json? // Additional gateway-specific metadata
-  exchangeRateAtRefund Float? // INR→displayCurrency rate snapshot at refund time
+  exchangeRateAtRefund Decimal?       @db.Decimal(18, 6) // #781 §C — exact INR→displayCurrency snapshot at refund time
   displayCurrency      String?        @db.VarChar(3) // Currency the buyer originally saw
 
-  payment   Payment @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  payment   Payment @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   paymentId String
 
   // #776 — idempotency stamp for applyRefundCascade. Set once the canonical
@@ -3593,7 +3601,7 @@ model Dispute {
   dueBy              DateTime? // Deadline to respond to dispute
   isChargeRefundable Boolean        @default(true)
 
-  payment   Payment @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  payment   Payment @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   paymentId String
 
   createdAt DateTime @default(now())
@@ -3688,8 +3696,8 @@ model ConsultantEarnings {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  consultantProfile ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  payment           Payment           @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultantProfile ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Restrict)
+  payment           Payment           @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   payout            ConsultantPayout? @relation(fields: [payoutId], references: [id])
 
   @@unique([paymentId, consultantProfileId, role])
@@ -3715,10 +3723,10 @@ model ConsultantPayout {
   batchId             String?
 
   // TDS (Tax Deducted at Source) — Section 194J
-  tdsDeducted      BigInt  @default(0) // TDS amount deducted from this payout, in paise
-  netAmount        BigInt? // Amount after TDS deduction (amount - tdsDeducted), sent to gateway
-  tdsRateApplied   Float? // TDS rate reserved for this payout, used when creating the final audit record
-  tdsFinancialYear String? // FY when TDS was calculated (e.g. "2026-27"). Persisted to avoid FY-boundary drift.
+  tdsDeducted       BigInt  @default(0) // TDS amount deducted from this payout, in paise
+  netAmount         BigInt? // Amount after TDS deduction (amount - tdsDeducted), sent to gateway
+  tdsRateAppliedBps Int? // #781 §C — bps; rate reserved for this payout, stamped into the final audit record
+  tdsFinancialYear  String? // FY when TDS was calculated (e.g. "2026-27"). Persisted to avoid FY-boundary drift.
 
   // MSME 43B(h) settlement deadline; mirrors OrganizationPayout. #776 — the
   // consultant is the supplier here, so the deadline derives from the
@@ -3740,7 +3748,7 @@ model ConsultantPayout {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  consultantProfile ConsultantProfile    @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultantProfile ConsultantProfile    @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   earnings          ConsultantEarnings[]
   tdsRecords        TDSRecord[]
 
@@ -3816,7 +3824,7 @@ model TDSRecord {
   // Amounts in paise
   cumulativeAmountCredited BigInt // FY cumulative of amounts credited/paid to consultant (sum of completed payouts)
   tdsDeducted              BigInt // TDS amount deducted this record
-  tdsRate                  Float // Rate at time of deduction
+  tdsRateBps               Int // #781 §C — bps at time of deduction
   // #776 — statutory section applied ("194O" | "194J" | "195" | …) for forensic
   // audit + Form 26Q/27Q line classification. Consultant payouts are 194-O (ECO)
   // post-consolidation; org payouts already stamp the section on OrganizationPayout.
@@ -3833,7 +3841,7 @@ model TDSRecord {
   reportedInForm26Q Boolean   @default(false)
   form26QFilingDate DateTime?
 
-  consultantProfile ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultantProfile ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   payout            ConsultantPayout? @relation(fields: [payoutId], references: [id])
 
   createdAt DateTime @default(now())
@@ -4821,6 +4829,9 @@ model OverageEvent {
   /// CHARGE_MEMBER: Payment row for the instant overage charge.
   /// CHARGE_ORG: Payment row of the rolled-up cycle invoice.
   paymentId            String?
+  // #781 §B — SetNull kept deliberately: the abandoned-side-charge sweep
+  // deletes never-captured PENDING payments; the event row (and its
+  // chargeStatus history) must survive that. #782 invariants guard state.
   payment              Payment?            @relation(fields: [paymentId], references: [id], onDelete: SetNull)
   /// CHARGE_ORG: the InvoiceLineItem the cycle-close cron emitted.
   invoiceLineItemId    String?

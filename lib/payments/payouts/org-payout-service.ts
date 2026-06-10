@@ -379,7 +379,7 @@ export async function createOrgPayoutBatch(
             panOnFile: !!orgForCompliance?.taxInfo?.panEncrypted,
             residencyStatus: "RESIDENT",
             tdsSection: null,
-            tdsRate: null,
+            tdsRateBps: null,
             tdsLowerRateCert: null,
             providerCountry: null,
           },
