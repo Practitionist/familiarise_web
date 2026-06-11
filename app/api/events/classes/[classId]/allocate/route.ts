@@ -18,6 +18,7 @@ import {
 } from "@/schemas/slotAllocation/validationSchemas";
 import { ZodError } from "zod";
 import { requireApiAuth, authorizeEventAccess } from "@/lib/auth-helpers";
+import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 
 export async function PATCH(
   request: NextRequest,
@@ -36,6 +37,13 @@ export async function PATCH(
       classId,
     );
     if (authzError) return authzError;
+
+    // #831 — event mutations previously had no limiter
+    const rl = await applyRateLimit(
+      eventMutationLimiter,
+      authResult.session.user.id,
+    );
+    if (rl) return rl;
 
     // LAYER 1: Zod Schema Validation (type-safe, automatic type inference)
     try {

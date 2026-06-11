@@ -1,11 +1,12 @@
 import { z } from "zod";
 import { TrialSessionStatusEnum } from "./enums";
+import { MAX_TEXT_LENGTH } from "@/lib/validation/limits";
 
 export const CreateTrialSchema = z.object({
   consulteeProfileId: z.string().min(1, "Consultee profile ID is required"),
   consultantProfileId: z.string().min(1, "Consultant profile ID is required"),
   subscriptionPlanId: z.string().min(1, "Subscription plan ID is required"),
-  notes: z.string().optional(),
+  notes: z.string().max(MAX_TEXT_LENGTH).optional(), // #831
   // Enterprise (arch-4) — optional org attribution. When the booker is a
   // LEARNER of an org, passing the orgId here stamps the trial with
   // `TrialSession.organizationId` so analytics can segment org-tagged
@@ -26,7 +27,7 @@ export const UpdateTrialSchema = z.object({
       slotType: z.enum(["WEEKLY", "CUSTOM"]),
     })
     .optional(),
-  notes: z.string().optional(),
+  notes: z.string().max(MAX_TEXT_LENGTH).optional(), // #831
   // Required when status = CONVERTED — the subscription created via checkout
   subscriptionId: z.string().optional(),
 });

@@ -21,6 +21,8 @@ import {
   unlockSlotBooking,
   lockEventCheckout,
   unlockEventCheckout,
+  extendLock,
+  CHECKOUT_LOCK_TTL_MS,
   ApprovalLock,
 } from "@/utils/appointmentlock";
 import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
@@ -895,7 +897,11 @@ async function acquireCheckoutLock(
       }),
     );
 
-    return await lockSlotBooking(consultantProfileId, data.slotStartTimeInUTC);
+    return await lockSlotBooking(
+      consultantProfileId,
+      data.slotStartTimeInUTC,
+      CHECKOUT_LOCK_TTL_MS[appointmentType], // #832 — per-type budget
+    );
   }
 
   // Strategy B: Event-based locking (WEBINAR, CLASS, scheduling-period SUBSCRIPTION)
@@ -914,7 +920,11 @@ async function acquireCheckoutLock(
       }),
     );
 
-    return await lockEventCheckout(appointmentType, data.eventId);
+    return await lockEventCheckout(
+      appointmentType,
+      data.eventId,
+      CHECKOUT_LOCK_TTL_MS[appointmentType], // #832 — per-type budget
+    );
   }
 
   // Scheduling period SUBSCRIPTION (no slots during checkout)
@@ -929,7 +939,11 @@ async function acquireCheckoutLock(
       }),
     );
 
-    return await lockEventCheckout(appointmentType, data.planId);
+    return await lockEventCheckout(
+      appointmentType,
+      data.planId,
+      CHECKOUT_LOCK_TTL_MS[appointmentType], // #832 — per-type budget
+    );
   }
 
   // Should not reach here if validation is correct
@@ -2063,6 +2077,25 @@ export async function handleCheckout(
     const isZeroAmountPayment = amount === 0 && creditsApplied > 0;
 
     // STEP 4: Create payment intent (INSIDE LOCK)
+
+    // #832 — one checked renewal at the long-latency boundary (gateway call
+    // + tentative-booking tx still ahead). A false return means the lock
+    // already expired and another buyer may hold it; proceeding is exactly
+    // the double-booking hazard the lock exists to prevent. A timer-based
+    // heartbeat is deliberately avoided: serverless freeze makes intervals
+    // unreliable, and the message must contain "already in progress" so
+    // classifyError maps it to LOCK_CONTENTION → 409.
+    if (lock) {
+      const renewed = await extendLock(
+        lock,
+        CHECKOUT_LOCK_TTL_MS[validatedData.appointmentType] ?? 60_000,
+      );
+      if (!renewed) {
+        throw new Error(
+          "Checkout took too long and its hold expired — another checkout for this slot may be already in progress. Please try again.",
+        );
+      }
+    }
 
     // Enterprise org funding skips the gateway entirely.
     if (isOrgSponsoredPayment) {

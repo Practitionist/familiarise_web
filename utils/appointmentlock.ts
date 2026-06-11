@@ -51,6 +51,18 @@ const DEFAULT_RETRY_CONFIG: LockRetryConfig = {
 const DEFAULT_LOCK_TTL = 60000; // 60 seconds
 const DEFAULT_EVENT_SLOT_TTL = 300000; // 5 minutes for payment completion
 
+// #832 — one 60s budget cannot cover every checkout shape: a class checkout
+// writes N sessions × M slots plus a gateway round-trip and can outlive its
+// lock, silently admitting a second buyer. Sized per checkout type (mirrors
+// the LONG_JOB_TTL_MS precedent in lib/cron/with-cron-lock.ts); checkout
+// also renews once before the gateway call and aborts if ownership is lost.
+export const CHECKOUT_LOCK_TTL_MS: Record<string, number> = {
+  CONSULTATION: 60_000,
+  SUBSCRIPTION: 120_000,
+  WEBINAR: 120_000,
+  CLASS: 300_000,
+};
+
 // ============================================================================
 // Helper Functions
 // ============================================================================

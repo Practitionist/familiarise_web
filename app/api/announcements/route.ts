@@ -4,6 +4,7 @@ import { notifyGeneralAnnouncement } from "@/lib/novu";
 import { CreateAnnouncementSchema } from "@/schemas/announcements";
 
 import { getSession } from "@/lib/auth-server";
+import { assertBodySize } from "@/lib/validation/limits";
 /**
  * GET /api/announcements
  * Public endpoint to get active announcements
@@ -60,6 +61,10 @@ export async function POST(request: NextRequest) {
         { status: 403 },
       );
     }
+
+    // #831 — cap request body before parsing
+    const tooLarge = assertBodySize(request);
+    if (tooLarge) return tooLarge;
 
     const body = await request.json();
     const result = CreateAnnouncementSchema.safeParse(body);
