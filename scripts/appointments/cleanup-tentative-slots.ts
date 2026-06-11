@@ -163,6 +163,14 @@ async function cleanupTentativeSlotsUnlocked(): Promise<TentativeSlotCleanupResu
       const result = await prisma.slotOfAppointment.deleteMany({
         where: {
           id: { in: staleTentativeSlots.map((s) => s.id) },
+          // #829 — re-state the tentative + unpaid conditions so a slot whose
+          // capture webhook confirmed it between the findMany above and this
+          // delete no longer matches (re-evaluated under the row lock). An
+          // id-only delete here destroyed paid bookings.
+          isTentative: true,
+          appointment: {
+            payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
+          },
         },
       });
 
