@@ -3,7 +3,7 @@ title: Enterprise Subsystem — Production Readiness Checklist
 band: 90-audits
 audience: sde4
 status: live
-last-reviewed: 2026-06-05
+last-reviewed: 2026-06-11
 ---
 
 # Enterprise Subsystem — Production Readiness Checklist
@@ -617,6 +617,53 @@ GST derivation, MSME deadline calculator, and IRP connector are all live. Cron s
 | Internal IRP integration | Use licensed connector; `lib/compliance/irp.ts` calls ClearTax |
 | Parent–child org hierarchy UI | Schema columns exist; defer until first customer request |
 | Programs v2 (PROJECT/RETAINER) | Enum values **dropped** in v2 (#779) — `ProgramType` is now LICENSED_SEAT/CREDIT_POOL only; revisit only on design-partner demand |
+
+---
+
+## B2C Hardening Train Addendum — 2026-06-11
+
+This file historically tracked only the enterprise subsystem; the consumer
+side's readiness now warrants its own dated record because the launch gate
+(#837) spans both.
+
+**Closed before this train (verified against issue state on 2026-06-11):**
+the slot-picker availability-ID mis-binding (#788), the cross-user
+tentative-slot double-booking with its confirm-time recheck (#827), the
+checkout request-level idempotency key (#828), the cleanup-versus-webhook
+confirmation race (#829), and the orphaned-SUCCEEDED-payment recovery sweep
+(#830). The two money-critical script defects from the payments audit are
+also resolved: the payout idempotency key is deterministic
+(#677 PM-2), and the reconciliation scripts read the canonical
+`RAZORPAY_SECRET` with the legacy name accepted as a fallback only
+(#677 PM-1, finished by this train's wrapper-gate fix).
+
+**Shipped by this train:** the B2C transition map (`lib/booking/transitions.ts`)
+guards approval, decline, expiry, and completion the same way #825 guarded
+the enterprise lifecycles, and removes `requestStatus` from the writable PUT
+surface (#836); checkout locks carry per-type TTLs with a checked renewal at
+the gateway boundary (#832); tentative holds expire in hours, not days
+(#833); every waitlist mutation is CAS-guarded (#834 code half); consumer
+mutation routes carry input bounds, body-size caps, and rate limiters
+(#831); the timezone offset lookup and overnight-slot resolution are
+canonical and DST-exact (#503 items 1–2); and the booking/payment CHECK
+constraints ride the `db:constraints` sidecar awaiting the pre-MVP reset
+(#676 A1–A4).
+
+**Demonstrated and resolved blocker:** the real-API chaos extension
+(scenarios 9–16 in the
+[chaos runbook](../50-operations/07-chaos-test-runbook.md)) initially failed
+4 of 7 implemented scenarios against the shared dev database solely because
+the schema declared by the merged hardening train had not been pushed
+(`Appointment.cancellationPolicySnapshot`, `organizations.version`). The
+owed `db push` was applied on 2026-06-11 — with a data-preserving manual
+migration for the `CreditPoolConfig` column rename and the ledger triggers
+re-applied — after which **all seven implemented scenarios pass**. The
+lesson stands for production: entire route families 500 on environments
+whose schema lags, so push must always precede deploy.
+
+**Still open for launch:** the #780/#781 schema-freeze stack and the
+staging go/no-go run (runbook scenarios 1–4 plus the 2× peak ramp, now
+joined by scenarios 9–13/15/16).
 
 ---
 

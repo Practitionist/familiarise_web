@@ -3,7 +3,7 @@ title: Chaos test runbook — pre-launch concurrency and failure drills
 band: 50-operations
 audience: sde3
 status: live
-last-reviewed: 2026-06-10
+last-reviewed: 2026-06-11
 ---
 
 # Chaos test runbook
@@ -75,9 +75,84 @@ report and feedback endpoints, and a burst of POSTs against the event
 routes. The pass condition is 413/422 on size and 429 on burst (issue #831
 tracks the known gaps).
 
+## Scenarios 9–16: the real-API extension (#837 train)
+
+The first eight scenarios were authored before the suite had a harness that
+drives the live application. Scenarios 9 through 16 run through
+`npm run test:chaos:api`, which executes the `07-real-api-booking` and
+`09-webhook-storm` categories of the race-condition suite against a seeded
+database and a running server. `CHAOS_BASE_URL` selects the target and
+defaults to the local dev server; unlike the sandbox-payment drills above,
+these scenarios move no money, restore their fixtures, and delete the rows
+they create, so a local run against seeded development data is sanctioned.
+The staging clone remains the venue for the go/no-go record. Each scenario
+is a standalone script under `tests/typescript/race-conditions/scenarios/`
+that exits non-zero on failure, so the master runner's report is the
+pass/fail record.
+
+**9. Cancel versus reschedule on the same appointment (implemented:
+`test-cancel-vs-reschedule-race`).** Two tabs act on one appointment
+simultaneously, one cancelling and one rescheduling. Ordering decides the
+winner count — the reschedule-first interleaving legally admits both
+actions, because reschedule resets the request to PENDING and a PENDING
+request is cancellable. The invariants are therefore: no server errors,
+never zero winners, a successful cancel is never resurrected by the racing
+reschedule, and the slots never end in a CANCELLED+RESCHEDULED mix.
+
+**10. Reschedule storm (implemented: `test-reschedule-storm`).** Ten
+concurrent reschedules of one appointment. Reschedule is re-entrant, so
+multiple winners are legal; the invariants are zero server errors, terminal
+slots never resurrected to RESCHEDULED, and a single coherent final state.
+
+**11. Approve versus decline race (implemented:
+`test-approve-decline-race`).** A consultant approves while the same pending
+request is concurrently declined. The #836 allowed-from guard must admit
+exactly one transition; the loser receives 409, never a silent overwrite.
+
+**12. Multi-device login (implemented: `test-multi-device-login`).** Five
+concurrent credential sign-ins for one user. Every login must succeed with
+its own session token, and all five sessions must be concurrently valid.
+
+**13. Onboarding double-submit (implemented for organizations:
+`test-onboarding-double-submit-org`).** A stuttering click submits creation
+twice concurrently. The slug-unique guard inside the creation transaction
+must admit exactly one; exactly one row may exist afterwards. The consumer
+profile-completion variant is staged for a follow-up.
+
+**14. Enterprise allocation races (staged).** Seat/program-assignment
+over-allocation (N+1 concurrent assignments against N seats), invoice
+generate-versus-void, and wallet top-up webhook replay. The underlying CAS
+guards shipped with #825/#826 and are exercised at the service level; the
+API-level chaos scripts need org fixture scaffolding and are tracked as
+first-month work on #837.
+
+**15. Webhook bulk replay (implemented: `test-webhook-bulk-replay`).** Ten
+deliveries of one signed `payment.captured` envelope, five of them
+concurrent. Every delivery must be ACKed 2xx (a 5xx provokes gateway retry
+storms) and exactly one `WebhookEvent` row may exist for the envelope.
+
+**16. Webhook out-of-order delivery (implemented:
+`test-webhook-out-of-order`).** A `refund.created` lands before its
+`payment.captured`. Both must be ACKed, each envelope recorded exactly once
+under its composite event id, and a replay of either must not create a
+second row.
+
+A run of this extension on 2026-06-11 surfaced exactly the failure class it
+exists to catch: scenarios 9, 10, 11, and 13 initially failed against the
+shared dev database because schema declared by the merged hardening train
+(`Appointment.cancellationPolicySnapshot`, `organizations.version`) had not
+been pushed to it — the `db push` owed by #837. The push was applied the
+same day (with a data-preserving manual migration for the
+`CreditPoolConfig.creditsPerCycle` → `creditBudgetPerCycle` rename, and the
+ledger triggers re-applied per the sidecar contract), after which all seven
+implemented scenarios pass. The production deploy must follow the same
+order: push before deploy, or the same route families 500.
+
 ## Go/no-go
 
 Scenarios 1 through 4 must pass with zero duplicate charges and zero double
-bookings, and scenario 6 must pass at twice the expected launch peak. The
-others inform the first-month backlog (#829–#834) rather than blocking
-launch, unless a failure reveals money loss.
+bookings, and scenario 6 must pass at twice the expected launch peak.
+Scenarios 9 through 13, 15, and 16 must pass on the staging clone after the
+schema push; they are cheap enough to run on every hardening PR. The others
+inform the first-month backlog (#829–#834) rather than blocking launch,
+unless a failure reveals money loss.
