@@ -1,8 +1,9 @@
 /**
- * Send Waitlist Expiration Reminders
+ * Send Waitlist Expiration Reminders (core)
  *
- * This script sends reminder emails to users whose waitlist spot offers will expire in ~12 hours.
- * Run via: npx tsx scripts/waitlist/send-expiration-reminders.ts
+ * Sends reminder emails to users whose waitlist spot offers will expire in
+ * ~12 hours. Importable core in the standard cron shape (#856): the GitHub
+ * Actions entry is jobs/waitlist/send-expiration-reminders.ts.
  *
  * Schedule: Every hour (via GitHub Actions workflow)
  */
@@ -10,11 +11,29 @@
 import prisma from "@/lib/prisma";
 import { WaitlistStatus } from "@prisma/client";
 import { sendWaitlistExpiringEmail } from "@/lib/waitlist/notifications";
-import { CronLockHeldError, withCronLock } from "@/lib/cron/with-cron-lock";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { withDbConnectRetry } from "@/lib/db/connect-retry";
 
-async function sendReminders(): Promise<void> {
-  const startTime = Date.now();
+export interface SendRemindersResult {
+  found: number;
+  sent: number;
+  errors: Array<{ id: string; error: string }>;
+  success: boolean;
+}
+
+/**
+ * #814/#821 — the locked, connect-retrying entry. The lock was previously
+ * imported but never taken; the connect-retry absorbs the GH-runner →
+ * Supabase-pooler ETIMEDOUTs that failed whole runs on the first query.
+ * A retried body is safe — the reminderSentAt stamp keeps re-sends bounded.
+ */
+export async function sendExpirationReminders(): Promise<SendRemindersResult> {
+  return withCronLock("send-expiration-reminders", { failMode: "open" }, () =>
+    withDbConnectRetry(sendRemindersCore),
+  );
+}
+
+async function sendRemindersCore(): Promise<SendRemindersResult> {
   const now = new Date();
   const twelveHoursFromNow = new Date(now.getTime() + 12 * 60 * 60 * 1000);
   const thirteenHoursFromNow = new Date(now.getTime() + 13 * 60 * 60 * 1000);
@@ -51,8 +70,8 @@ async function sendReminders(): Promise<void> {
 
   console.log(`📧 Found ${entriesToRemind.length} entries to remind`);
 
-  let sentCount = 0;
-  let errorCount = 0;
+  let sent = 0;
+  const errors: Array<{ id: string; error: string }> = [];
 
   for (const entry of entriesToRemind) {
     const eventTitle =
@@ -65,11 +84,14 @@ async function sendReminders(): Promise<void> {
 
     if (!entry.user.email || !entry.expiresAt || !planId || !eventId) {
       console.warn(`⚠️ Skipping entry ${entry.id}: missing required data`);
+      errors.push({ id: entry.id, error: "missing required data" });
       continue;
     }
 
     try {
-      // Send reminder email
+      // Send reminder email — the rejoin link wants the PLAN id (the
+      // deleted jobs/ duplicate drifted to the event id here; the plan id
+      // is what the explore route resolves).
       await sendWaitlistExpiringEmail({
         email: entry.user.email,
         name: entry.user.name || "Valued User",
@@ -86,12 +108,13 @@ async function sendReminders(): Promise<void> {
         data: { reminderSentAt: now },
       });
 
-      sentCount++;
+      sent++;
       console.log(
         `  ✅ Sent reminder to ${entry.user.email} for "${eventTitle}"`,
       );
     } catch (error) {
-      errorCount++;
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push({ id: entry.id, error: message });
       console.error(
         `  ❌ Failed to send reminder for entry ${entry.id}:`,
         error,
@@ -99,35 +122,17 @@ async function sendReminders(): Promise<void> {
     }
   }
 
-  const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-  console.log(
-    `\n🎉 Completed in ${duration}s. Reminders sent: ${sentCount}, Errors: ${errorCount}`,
-  );
+  return {
+    found: entriesToRemind.length,
+    sent,
+    errors,
+    success: errors.length === 0,
+  };
 }
 
-async function main() {
-  console.log("🔔 Starting expiration reminder sender...");
-
-  try {
-    // #814/#821 — the lock was previously imported but never taken (the
-    // CronLockHeldError catch below was dead code). Same lock name as the
-    // jobs/waitlist wrapper so both entry points mutually exclude. The
-    // connect-retry absorbs the GH-runner → Supabase-pooler ETIMEDOUTs that
-    // were failing whole runs on the first query; a retried body is safe —
-    // the reminderSentAt stamp keeps re-sends bounded.
-    await withCronLock("send-expiration-reminders", { failMode: "open" }, () =>
-      withDbConnectRetry(sendReminders),
-    );
-    process.exit(0);
-  } catch (error) {
-    // #476 — lock held = another run is live; skip cleanly (exit 0).
-    if (error instanceof CronLockHeldError) {
-      console.log(`⏭️  ${error.message}`);
-      process.exit(0);
-    }
-    console.error("❌ Error sending expiration reminders:", error);
-    process.exit(1);
-  }
+/**
+ * Disconnect from database - call this when done
+ */
+export async function disconnectDatabase(): Promise<void> {
+  await prisma.$disconnect();
 }
-
-main();

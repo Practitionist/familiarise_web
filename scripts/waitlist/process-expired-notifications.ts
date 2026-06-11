@@ -1,8 +1,9 @@
 /**
- * Process Expired Waitlist Notifications
+ * Process Expired Waitlist Notifications (core)
  *
- * This script processes expired waitlist notifications and notifies the next person in queue.
- * Run via: npx tsx scripts/waitlist/process-expired-notifications.ts
+ * Processes expired waitlist notifications and notifies the next person in
+ * queue. Importable core in the standard cron shape (#856): the GitHub
+ * Actions entry is jobs/waitlist/process-expired-notifications.ts.
  *
  * Schedule: Every hour (via GitHub Actions workflow)
  */
@@ -12,17 +13,40 @@ import { WaitlistStatus } from "@prisma/client";
 import { processExpiredNotifications, handleSlotOpening } from "@/lib/waitlist";
 import { sendWaitlistExpiredEmail } from "@/lib/waitlist/notifications";
 import { getAppUrl } from "../../lib/url";
-import { CronLockHeldError, withCronLock } from "@/lib/cron/with-cron-lock";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { withDbConnectRetry } from "@/lib/db/connect-retry";
 
-async function processExpirations(): Promise<void> {
-  const startTime = Date.now();
+export interface ProcessExpirationsResult {
+  processed: number;
+  emailed: number;
+  errors: Array<{ id: string; error: string }>;
+  success: boolean;
+}
 
+/**
+ * #814/#821 — the locked, connect-retrying entry. The lock was previously
+ * imported but never taken; the connect-retry absorbs the GH-runner →
+ * Supabase-pooler ETIMEDOUTs that failed whole runs on the first query.
+ * A retried body is safe — expiry processing is CAS-guarded and the
+ * 5-minute respondedAt window bounds duplicate notify attempts.
+ */
+export async function processWaitlistExpirations(): Promise<ProcessExpirationsResult> {
+  return withCronLock(
+    "process-expired-notifications",
+    { failMode: "open" },
+    () => withDbConnectRetry(processExpirationsCore),
+  );
+}
+
+async function processExpirationsCore(): Promise<ProcessExpirationsResult> {
   // Process expired notifications
   const result = await processExpiredNotifications();
 
   console.log(`✅ Processed ${result.processed} expired notifications`);
 
+  const errors: Array<{ id: string; error: string }> = result.errors.map(
+    ({ id, error }) => ({ id, error: String(error) }),
+  );
   if (result.errors.length > 0) {
     console.warn(`⚠️ ${result.errors.length} errors occurred:`);
     result.errors.forEach(({ id, error }) => {
@@ -58,6 +82,7 @@ async function processExpirations(): Promise<void> {
     },
   });
 
+  let emailed = 0;
   for (const entry of expiredEntries) {
     const eventTitle =
       entry.webinar?.webinarPlan.title ||
@@ -66,60 +91,46 @@ async function processExpirations(): Promise<void> {
     const eventType = entry.webinarId ? "webinar" : "class";
     const eventId = entry.webinarId || entry.classId;
 
-    // Send expired notification email
-    if (entry.user.email) {
-      await sendWaitlistExpiredEmail({
-        email: entry.user.email,
-        name: entry.user.name || "Valued User",
-        eventTitle,
-        eventType,
-        rejoinUrl: eventId
-          ? `${getAppUrl()}/explore/programs/plans/${eventType}s/${eventId}`
-          : undefined,
+    try {
+      // Send expired notification email
+      if (entry.user.email) {
+        await sendWaitlistExpiredEmail({
+          email: entry.user.email,
+          name: entry.user.name || "Valued User",
+          eventTitle,
+          eventType,
+          rejoinUrl: eventId
+            ? `${getAppUrl()}/explore/programs/plans/${eventType}s/${eventId}`
+            : undefined,
+        });
+        emailed++;
+      }
+
+      // Notify next person in queue
+      await handleSlotOpening({
+        webinarId: entry.webinarId ?? undefined,
+        classId: entry.classId ?? undefined,
+        slotsAvailable: 1,
+        reason: "cancellation",
       });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push({ id: entry.id, error: message });
+      console.error(`  ❌ Failed post-expiry handling for ${entry.id}:`, error);
     }
-
-    // Notify next person in queue
-    await handleSlotOpening({
-      webinarId: entry.webinarId ?? undefined,
-      classId: entry.classId ?? undefined,
-      slotsAvailable: 1,
-      reason: "cancellation",
-    });
   }
 
-  const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-  console.log(
-    `\n🎉 Completed in ${duration}s. Processed: ${result.processed}, Emails sent: ${expiredEntries.length}`,
-  );
+  return {
+    processed: result.processed,
+    emailed,
+    errors,
+    success: errors.length === 0,
+  };
 }
 
-async function main() {
-  console.log("🕐 Starting expired notification processor...");
-
-  try {
-    // #814/#821 — the lock was previously imported but never taken (the
-    // CronLockHeldError catch below was dead code). Same lock name as the
-    // jobs/waitlist wrapper so both entry points mutually exclude. The
-    // connect-retry absorbs the GH-runner → Supabase-pooler ETIMEDOUTs that
-    // were failing whole runs on the first query; a retried body is safe —
-    // expiry processing is CAS-guarded and the 5-minute respondedAt window
-    // bounds duplicate notify attempts.
-    await withCronLock(
-      "process-expired-notifications",
-      { failMode: "open" },
-      () => withDbConnectRetry(processExpirations),
-    );
-    process.exit(0);
-  } catch (error) {
-    // #476 — lock held = another run is live; skip cleanly (exit 0).
-    if (error instanceof CronLockHeldError) {
-      console.log(`⏭️  ${error.message}`);
-      process.exit(0);
-    }
-    console.error("❌ Error processing expired notifications:", error);
-    process.exit(1);
-  }
+/**
+ * Disconnect from database - call this when done
+ */
+export async function disconnectDatabase(): Promise<void> {
+  await prisma.$disconnect();
 }
-
-main();
