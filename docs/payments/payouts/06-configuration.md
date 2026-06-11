@@ -237,7 +237,7 @@ Added to `package.json`:
   "scripts": {
     "scripts:release-earnings": "npx tsx scripts/release-earnings.ts",
     "scripts:create-payout-batch": "npx tsx scripts/create-payout-batch.ts",
-    "scripts:process-payouts": "npx tsx scripts/process-payouts.ts"
+    "scripts:process-payouts": "npx tsx jobs/payouts/process-payouts.ts"
   }
 }
 ```
@@ -251,7 +251,8 @@ npm run scripts:release-earnings
 # Create weekly batch
 npm run scripts:create-payout-batch
 
-# Process approved payouts
+# Process approved payouts (drives lib/payments/payouts — the
+# standalone scripts/payouts copy was deleted in #850)
 npm run scripts:process-payouts
 ```
 

@@ -106,7 +106,7 @@ export async function walletCredit(
     providerOrderId?: string;
     providerPaymentId?: string;
   },
-): Promise<{ balanceAfter: number }> {
+): Promise<{ balanceAfter: number; ownerOrgId: string }> {
   if (params.amountPaise <= 0) {
     throw new Error(
       `walletCredit requires positive amountPaise, got ${params.amountPaise}`,
@@ -153,7 +153,10 @@ export async function walletCredit(
     });
   }
 
-  return { balanceAfter };
+  // ownerOrgId lets the refund cascade attribute the credit to the org even
+  // when the payment itself carries no organizationId (#835 — the wallet is
+  // the org's money regardless of how the payment was tagged).
+  return { balanceAfter, ownerOrgId: acct.ownerOrgId };
 }
 
 /**

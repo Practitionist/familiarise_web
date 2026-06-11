@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -11,6 +11,7 @@ import {
   Clock,
   ExternalLink,
   Loader2,
+  X,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useCurrency } from "@/hooks/useCurrency";
@@ -48,11 +49,13 @@ export function PendingPaymentsWidget({
   const [pendingPayments, setPendingPayments] = useState<PendingPayment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [cancelNotice, setCancelNotice] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function fetchPendingPayments() {
+  const fetchPendingPayments = useCallback(
+    async (showSpinner = true) => {
       try {
-        setLoading(true);
+        if (showSpinner) setLoading(true);
         const response = await fetch(
           `/api/dashboard/consultee/${consulteeId}/pending-payments`,
         );
@@ -71,16 +74,53 @@ export function PendingPaymentsWidget({
             : "Failed to load pending payments",
         );
       } finally {
-        setLoading(false);
+        if (showSpinner) setLoading(false);
       }
-    }
+    },
+    [consulteeId],
+  );
 
+  useEffect(() => {
     fetchPendingPayments();
 
     // Poll for updates every 2 minutes
-    const interval = setInterval(fetchPendingPayments, 120000);
+    const interval = setInterval(() => fetchPendingPayments(false), 120000);
     return () => clearInterval(interval);
-  }, [consulteeId]);
+  }, [fetchPendingPayments]);
+
+  // #849 — release the caller's own tentative hold instead of waiting out
+  // the 24h cleanup window.
+  const handleCancelPending = useCallback(
+    async (paymentId: string) => {
+      if (
+        !window.confirm(
+          "Cancel this pending booking? Your held slot will be released.",
+        )
+      ) {
+        return;
+      }
+      setCancellingId(paymentId);
+      setCancelNotice(null);
+      try {
+        const response = await fetch(`/api/checkout/pending/${paymentId}`, {
+          method: "DELETE",
+        });
+        if (response.status === 409) {
+          setCancelNotice(
+            "This payment was already confirmed or expired — refreshing.",
+          );
+        } else if (!response.ok) {
+          setCancelNotice("Could not cancel the pending booking. Try again.");
+        }
+        await fetchPendingPayments(false);
+      } catch {
+        setCancelNotice("Could not cancel the pending booking. Try again.");
+      } finally {
+        setCancellingId(null);
+      }
+    },
+    [fetchPendingPayments],
+  );
 
   if (loading) {
     return null;
@@ -142,6 +182,11 @@ export function PendingPaymentsWidget({
           {pendingPayments.length === 1 ? "Payment" : "Payments"}
         </h3>
       </div>
+      {cancelNotice && (
+        <div className="px-5 py-2 text-xs text-amber-800 bg-amber-100 border-b border-amber-200">
+          {cancelNotice}
+        </div>
+      )}
       <div className="divide-y divide-amber-100 flex-1">
         {pendingPayments.map((payment) => {
           const isGatewayPending = payment.source === "gateway_pending";
@@ -188,9 +233,27 @@ export function PendingPaymentsWidget({
                   )}
                 </div>
                 {isGatewayPending ? (
-                  <span className="inline-flex items-center gap-1 h-7 px-3 text-xs font-semibold text-amber-700 bg-amber-100 rounded-md">
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    Processing
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="inline-flex items-center gap-1 h-7 px-3 text-xs font-semibold text-amber-700 bg-amber-100 rounded-md">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Processing
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={cancellingId === payment.id}
+                      className="h-7 px-2 text-xs text-zinc-500 hover:text-red-600 hover:bg-red-50 font-semibold"
+                      onClick={() => handleCancelPending(payment.id)}
+                    >
+                      {cancellingId === payment.id ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <>
+                          <X className="h-3 w-3 mr-0.5" />
+                          Cancel
+                        </>
+                      )}
+                    </Button>
                   </span>
                 ) : (
                   <Button

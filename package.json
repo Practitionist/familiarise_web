@@ -41,7 +41,7 @@
     "scripts:cleanup-abandoned-payments": "npx ts-node scripts/cleanup-abandoned-payments.ts",
     "scripts:release-earnings": "npx tsx scripts/release-earnings.ts",
     "scripts:create-payout-batch": "npx tsx scripts/create-payout-batch.ts",
-    "scripts:process-payouts": "npx tsx scripts/process-payouts.ts",
+    "scripts:process-payouts": "npx tsx jobs/payouts/process-payouts.ts",
     "scripts:delete-dependabot-prs": "npx ts-node scripts/delete-dependabot-prs.ts",
     "test:race": "npx tsx tests/typescript/race-conditions/master-runner.ts",
     "test:race:parallel": "npx tsx tests/typescript/race-conditions/master-runner.ts parallel",

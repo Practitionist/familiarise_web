@@ -336,12 +336,15 @@ async function main() {
   const report = generateMasterReport(categories, totalDuration, mode);
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const reportPath = path.join(
+  const reportsDir = path.join(
     process.cwd(),
     "tests/typescript/race-conditions/results/reports",
-    `master-report-${timestamp}.md`,
   );
+  const reportPath = path.join(reportsDir, `master-report-${timestamp}.md`);
 
+  // results/ is gitignored run output — a fresh checkout doesn't have it,
+  // and failing here after every scenario passed fails the whole run.
+  await fs.mkdir(reportsDir, { recursive: true });
   await fs.writeFile(reportPath, report, "utf-8");
 
   // Print final summary
