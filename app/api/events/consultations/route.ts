@@ -69,21 +69,21 @@ export async function GET(request: NextRequest) {
             include: {
               consultantProfile: {
                 include: {
-                  user: true,
+                  user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
                 },
               },
             },
           },
           requestedBy: {
             include: {
-              user: true,
+              user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
             },
           },
           appointment: {
             include: {
               slotsOfAppointment: {
                 include: {
-                  user: true,
+                  user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
                 },
                 orderBy: {
                   startsAt: "asc",
@@ -192,21 +192,21 @@ export async function PATCH(request: NextRequest) {
           include: {
             consultantProfile: {
               include: {
-                user: true,
+                user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
               },
             },
           },
         },
         requestedBy: {
           include: {
-            user: true,
+            user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
           },
         },
         appointment: {
           include: {
             slotsOfAppointment: {
               include: {
-                user: true,
+                user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
               },
             },
             payment: true,

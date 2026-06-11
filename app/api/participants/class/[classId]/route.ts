@@ -6,6 +6,25 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
+import {
+  applyRateLimit,
+  eventMutationLimiter,
+  participantReadLimiter,
+} from "@/lib/rate-limit";
+
+// Display fields only — the old `user: true` shipped every User scalar
+// (role, verification state, timestamps…) for every participant on every
+// poll of the roster page.
+const PARTICIPANT_USER_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+  image: true,
+} as const;
+
+// Bound the waitlist payload; the UI shows a roster, not an export. The
+// truncated flag tells the client the count is a floor, not an exact size.
+const WAITLIST_CAP = 500;
 
 export async function GET(
   request: Request,
@@ -14,6 +33,9 @@ export async function GET(
   const authResult = await requireApiAuth();
   if (authResult.error) return authResult.error;
   const { session } = authResult;
+
+  const rl = await applyRateLimit(participantReadLimiter, session.user.id);
+  if (rl) return rl;
 
   try {
     const { classId } = await params;
@@ -33,10 +55,12 @@ export async function GET(
       include: {
         classPlan: true,
         appointments: {
-          include: {
+          select: {
+            id: true,
             slotsOfAppointment: {
-              include: {
-                user: true,
+              select: {
+                id: true,
+                user: { select: PARTICIPANT_USER_SELECT },
               },
             },
           },
@@ -71,17 +95,19 @@ export async function GET(
         },
       },
       include: {
-        user: true,
+        user: { select: PARTICIPANT_USER_SELECT },
       },
       orderBy: {
         joinedAt: "asc",
       },
+      take: WAITLIST_CAP,
     });
 
     return NextResponse.json({
       classEvent,
       participants,
       waitlist,
+      waitlistTruncated: waitlist.length === WAITLIST_CAP,
     });
   } catch (error) {
     console.error("[CLASS_PARTICIPANTS_GET]", error);
@@ -101,6 +127,9 @@ export async function DELETE(
     return forbiddenResponse("Only consultants can remove participants");
   }
 
+  const rl = await applyRateLimit(eventMutationLimiter, session.user.id);
+  if (rl) return rl;
+
   try {
     const { classId } = await params;
 
@@ -111,8 +140,9 @@ export async function DELETE(
       return new NextResponse("User ID is required", { status: 400 });
     }
 
-    // Remove user from all slots in all appointments for this class
-    // Non-privileged users can only modify classes they own as consultant
+    // Ownership check only — the old shape loaded the entire roster
+    // (every appointment × every slot × every full User row) just to find
+    // the one participant being removed.
     const classEvent = await prisma.class.findUnique({
       where: {
         id: classId,
@@ -125,40 +155,33 @@ export async function DELETE(
               },
             }),
       },
-      include: {
-        appointments: {
-          include: {
-            slotsOfAppointment: {
-              include: {
-                user: true,
-              },
-            },
-          },
-        },
-      },
+      select: { id: true },
     });
 
     if (!classEvent) {
       return new NextResponse("Class not found", { status: 404 });
     }
 
-    // Disconnect user from all slots they are in
-    let participantRemoved = false;
-    for (const appointment of classEvent.appointments) {
-      for (const slot of appointment.slotsOfAppointment) {
-        if (slot.user.some((user) => user.id === userId)) {
-          await prisma.slotOfAppointment.update({
-            where: { id: slot.id },
-            data: {
-              user: {
-                disconnect: { id: userId },
-              },
-            },
-          });
-          participantRemoved = true;
-        }
-      }
+    // Only the slots this user actually occupies.
+    const userSlots = await prisma.slotOfAppointment.findMany({
+      where: {
+        appointment: { classId },
+        user: { some: { id: userId } },
+      },
+      select: { id: true },
+    });
+
+    for (const slot of userSlots) {
+      await prisma.slotOfAppointment.update({
+        where: { id: slot.id },
+        data: {
+          user: {
+            disconnect: { id: userId },
+          },
+        },
+      });
     }
+    const participantRemoved = userSlots.length > 0;
 
     // Trigger waitlist notification if a participant was removed
     if (participantRemoved) {

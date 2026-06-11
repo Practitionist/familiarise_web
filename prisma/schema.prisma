@@ -2631,6 +2631,10 @@ model Consultation {
 
   @@index([requestedById])
   @@index([consultationPlanId])
+  // Requests-tab hot path: all consultations for a plan filtered by status,
+  // newest first — without this the planner-side list falls back to the
+  // single-column indexes + sort.
+  @@index([consultationPlanId, requestStatus, requestedAt])
   @@index([requestStatus])
   @@index([requestedById, requestStatus])
   @@index([requestedAt])
@@ -2716,6 +2720,8 @@ model Subscription {
 
   @@index([requestedById])
   @@index([subscriptionPlanId])
+  // Requests-tab hot path — mirror of the Consultation composite.
+  @@index([subscriptionPlanId, requestStatus, requestedAt])
   @@index([requestStatus])
   @@index([requestedById, requestStatus])
   @@index([requestedAt])

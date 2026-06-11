@@ -74,7 +74,7 @@ export async function GET(request: NextRequest) {
             include: {
               consultantProfile: {
                 include: {
-                  user: true,
+                  user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
                   domain: true,
                   subDomains: true,
                   tags: true,
@@ -98,7 +98,7 @@ export async function GET(request: NextRequest) {
             include: {
               slotsOfAppointment: {
                 include: {
-                  user: true,
+                  user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
                 },
               },
               payment: true,
@@ -161,14 +161,14 @@ export async function PATCH(request: NextRequest) {
           include: {
             consultantProfile: {
               include: {
-                user: true,
+                user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
               },
             },
           },
         },
         requestedBy: {
           include: {
-            user: true,
+            user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
           },
         },
       },
@@ -235,21 +235,21 @@ export async function PATCH(request: NextRequest) {
             include: {
               consultantProfile: {
                 include: {
-                  user: true,
+                  user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
                 },
               },
             },
           },
           requestedBy: {
             include: {
-              user: true,
+              user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
             },
           },
           appointments: {
             include: {
               slotsOfAppointment: {
                 include: {
-                  user: true,
+                  user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
                 },
               },
               payment: true,

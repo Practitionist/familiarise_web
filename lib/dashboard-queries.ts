@@ -71,14 +71,6 @@ export const consultantFetchers = {
       "Consultant details fetch failed",
     ),
 
-  requests: (consultantId: string, orgScope?: string | null) =>
-    fetchWithErrorHandling<TAppointment[]>(
-      orgScope && orgScope !== "personal"
-        ? `/api/dashboard/consultant/${consultantId}/requests?orgScope=${encodeURIComponent(orgScope)}`
-        : `/api/dashboard/consultant/${consultantId}/requests`,
-      "Requests fetch failed",
-    ),
-
   planner: (consultantId: string, orgScope?: string | null) =>
     fetchWithErrorHandling<PlannerData>(
       orgScope && orgScope !== "personal"
@@ -201,15 +193,6 @@ export function createConsultantQueries(
       queryKey: ["consultant-details", consultantId] as const,
       queryFn: () => consultantFetchers.details(consultantId),
       staleTime: STALE_TIMES.LONG,
-      gcTime: GC_TIME,
-      retry: 2,
-    },
-
-    // Pending requests
-    requests: {
-      queryKey: ["consultant-requests", consultantId, scopeKey] as const,
-      queryFn: () => consultantFetchers.requests(consultantId, orgScope),
-      staleTime: STALE_TIMES.SHORT,
       gcTime: GC_TIME,
       retry: 2,
     },
