@@ -3126,6 +3126,10 @@ model Waitlist {
   @@index([status, webinarId])
   @@index([status, classId])
   @@index([expiresAt])
+  // Cron hot path: reminder + expiration jobs range-scan NOTIFIED entries
+  // by expiresAt window; the single-column indexes force a bitmap AND or a
+  // seq scan as the table grows.
+  @@index([status, expiresAt])
   @@index([priority, joinedAt])
   @@index([organizationId, createdAt])
 }
