@@ -27,7 +27,7 @@ export const LOCKED_PROGRAM_FIELDS = [
   "coveredPlanTypes",
   "ratePerSeatPaise",
   "coveredEngagementsPerCycle",
-  "creditsPerCycle",
+  "engagementsPerCycle",
   "overageBehavior",
   "overageSurchargeBps",
   "priceCapPerEngagementPaise",

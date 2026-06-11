@@ -623,7 +623,7 @@ A Program is a commercial package describing **what the org has bought for its m
 
 | Field | Meaning |
 |---|---|
-| `creditsPerCycle` | Credits granted per Program cycle (replenished each rollover) |
+| `engagementsPerCycle` | Credits granted per Program cycle (replenished each rollover) |
 | `minimumCreditsPerPeriod` | Minimum commitment per cycle; nullable (no floor when null) |
 
 The pool's running balance lives in the double-entry journal as the org's WALLET account (a credit-normal liability); `BillingAccount.walletBalance` (paise) is a **derived cache** of that account, asserted nightly by the reconciler (`WALLET_BALANCE_DRIFT` finding if it diverges). 1 credit = ₹1 = 100 paise by convention; the legacy `creditValuePaise` and `premiumMultiplier` fields were dropped (removed in #772) — premium pricing is now expressed via per-plan rate cards instead of a flat multiplier.

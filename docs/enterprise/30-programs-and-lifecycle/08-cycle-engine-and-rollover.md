@@ -148,7 +148,7 @@ chained pair's periods.
 ### Worked example — IIT Madras's credit pool rolls a month
 
 Take a student on the seeded **IIT Madras** `IIT Student Coaching Pool`
-(`CREDIT_POOL`, `MONTHLY`, `creditsPerCycle = 10,000` ⇒ ₹10,000/month) whose
+(`CREDIT_POOL`, `MONTHLY`, `engagementsPerCycle = 10,000` ⇒ ₹10,000/month) whose
 contract is **ACTIVE + auto-renewing** with a year-out `effectiveTo`. Their
 March assignment (`[2026-03-01, 2026-04-01]`) drew ₹6,300 of credit before the
 month closed. On the night of 2026-04-01 the cron sees `periodEnd <= now`, runs

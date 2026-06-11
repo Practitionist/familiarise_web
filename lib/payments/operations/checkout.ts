@@ -1373,6 +1373,8 @@ export async function handleConsultationCheckout(
           startsAt: chunk.startsAt,
           endsAt: chunk.endsAt,
           isTentative: !skipPayment,
+          // #440 — denormalized for the DB-level overlap guard.
+          consultantProfileId: plan.consultantProfileId,
           // Connect BOTH consultant and consultee so the user-scoped conflict
           // filter in validateNoConflicts (user.some.id === consultantUserId)
           // can see this slot. dev branch only connected the consultee, which

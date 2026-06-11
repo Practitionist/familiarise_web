@@ -251,7 +251,7 @@ export async function recordBookingUtilization(
           },
           creditPoolConfig: {
             select: {
-              creditsPerCycle: true,
+              engagementsPerCycle: true,
               overageBehavior: true,
             },
           },
@@ -302,7 +302,7 @@ export async function recordBookingUtilization(
 
   // #775/#753 — LICENSED_SEAT meters by engagement COUNT against
   // `coveredEngagementsPerCycle`; CREDIT_POOL meters by PAISE against
-  // `creditsPerCycle × 100` (1 credit = ₹1). Pick the unit + behavior source.
+  // `engagementsPerCycle × 100` (1 credit = ₹1). Pick the unit + behavior source.
   const programType: ProgramType = assignment.program.type ?? "LICENSED_SEAT";
   const isCredit = programType === "CREDIT_POOL";
   const cap = isCredit
@@ -310,7 +310,7 @@ export async function recordBookingUtilization(
     : (assignment.program.licensedSeatConfig?.coveredEngagementsPerCycle ??
       null);
   const creditBudgetPaise = isCredit
-    ? (assignment.program.creditPoolConfig?.creditsPerCycle ?? 0) * 100
+    ? (assignment.program.creditPoolConfig?.engagementsPerCycle ?? 0) * 100
     : null;
   const behavior = isCredit
     ? (assignment.program.creditPoolConfig?.overageBehavior ?? "BLOCK")

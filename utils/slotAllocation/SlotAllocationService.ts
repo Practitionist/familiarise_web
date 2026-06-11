@@ -1380,6 +1380,13 @@ export class SlotAllocationService {
       );
     }
 
+    // #440 — denormalize the consultant onto each slot for the DB-level
+    // overlap guard. One lookup per allocation; nullable for legacy rows.
+    const consultantProfileRow = await tx.consultantProfile.findFirst({
+      where: { user: { id: consultantUserId } },
+      select: { id: true },
+    });
+
     // Create appointment for each call
     const appointments = await Promise.all(
       calls.map((callSlots) => {
@@ -1389,6 +1396,7 @@ export class SlotAllocationService {
             startsAt: slotStart,
             endsAt: endTime,
             isTentative: false,
+            consultantProfileId: consultantProfileRow?.id ?? null,
             user: {
               connect: consulteeUserId
                 ? [{ id: consultantUserId }, { id: consulteeUserId }]

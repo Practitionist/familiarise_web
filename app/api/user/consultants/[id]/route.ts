@@ -384,14 +384,26 @@ export async function PUT(
           : 0;
 
         const weeklySlotData: Prisma.SlotOfAvailabilityWeeklyCreateManyInput[] =
-          slotsOfAvailabilityWeekly.map((slot) => ({
-            consultantProfileId: id,
-            startDay: slot.dayOfWeekforStartTimeInUTC,
-            endDay: slot.dayOfWeekforEndTimeInUTC,
-            startTimeUtc: dateToMinuteUtc(new Date(slot.slotStartTimeInUTC)),
-            endTimeUtc: dateToMinuteUtc(new Date(slot.slotEndTimeInUTC)),
-            utcOffsetMinutes,
-          }));
+          slotsOfAvailabilityWeekly.map((slot) => {
+            const startTimeUtc = dateToMinuteUtc(
+              new Date(slot.slotStartTimeInUTC),
+            );
+            const endTimeUtc = dateToMinuteUtc(new Date(slot.slotEndTimeInUTC));
+            return {
+              consultantProfileId: id,
+              startDay: slot.dayOfWeekforStartTimeInUTC,
+              endDay: slot.dayOfWeekforEndTimeInUTC,
+              startTimeUtc,
+              endTimeUtc,
+              utcOffsetMinutes,
+              // #503 — DST-proof columns written alongside the frozen offset.
+              timezone: userTimezone,
+              localStartMinutes:
+                (((startTimeUtc + utcOffsetMinutes) % 1440) + 1440) % 1440,
+              localEndMinutes:
+                (((endTimeUtc + utcOffsetMinutes) % 1440) + 1440) % 1440,
+            };
+          });
 
         // Validate each weekly slot before saving
         for (const slot of weeklySlotData) {
